@@ -8,6 +8,8 @@
     <string name="assistant_profile">Assistant profile</string>
     <string name="assistant_got_it">Got it</string>
     <string name="assistant_composer_placeholder">Ask %1$s…</string>
+    <string name="assistant_model_setup_title">Connect a model to use Assistant</string>
+    <string name="assistant_model_setup_detail">Assistant runs on %1$s. Its Claude Code setup has no usable connection. Choose a provider or add the gateway you already use.</string>
     <string name="assistant_info_settings">Assistant settings</string>
     <string name="assistant_info_knowledge">Knowledge</string>
     <string name="assistant_info_schedule">Scheduled tasks</string>
@@ -33,6 +35,8 @@
     <string name="assistant_voice_chat">Voice chat</string>
     <string name="assistant_compact">Compact context</string>
     <string name="assistant_new_main">New main chat</string>
+    <string name="assistant_clear_context">Clear context</string>
+    <string name="assistant_clear_context_failed">Couldn\'t clear the context: %1$s</string>
     <string name="assistant_archive">Archive</string>
     <string name="assistant_archived">Archived</string>
     <string name="assistant_copy_session_id">Copy session ID</string>
@@ -71,13 +75,27 @@
     <string name="assistant_greeting_noon">Good afternoon</string>
     <string name="assistant_greeting_afternoon">Good afternoon</string>
     <string name="assistant_greeting_evening">Good evening</string>
-    <string name="assistant_home_lead">Hand me your messages, plans and whatever\'s on your plate.</string>
-    <string name="assistant_home_note">What you send goes to the main chat. Offline, it\'s saved on this device first.</string>
+    <string name="assistant_home_lead_main">This is your main chat: I\'ll remember what we talk about here. I can see your computers, phone, email, Lark, and organized projects, and I can keep an eye on things and remind you when it\'s time.</string>
+    <string name="assistant_home_lead_side">Start a new side chat. I can see your computers, phone, email, Lark, and organized projects, and I can keep an eye on things and remind you when it\'s time.</string>
+    <string name="assistant_time_just_now">Just now</string>
+    <plurals name="assistant_time_minutes_ago">
+        <item quantity="one">%1$d min ago</item>
+        <item quantity="other">%1$d min ago</item>
+    </plurals>
+    <string name="assistant_time_yesterday">Yesterday</string>
     <string name="assistant_online_devices">Online devices</string>
     <string name="assistant_this_phone">This phone</string>
     <string name="assistant_phone_tools_unavailable">Phone tools unavailable</string>
     <string name="assistant_phone_permissions_pending">Phone permissions pending</string>
     <string name="assistant_search_chats">Search chats</string>
+    <string name="assistant_hide_sidebar">Hide sidebar</string>
+    <string name="assistant_search_partial">Still going through older chats; some may not show yet.</string>
+    <!-- Full-window search on a regular window (#9171), as the open iPhone Duo -->
+    <plurals name="assistant_full_search_chats">
+        <item quantity="one">%1$d chat</item>
+        <item quantity="other">%1$d chats</item>
+    </plurals>
+    <string name="assistant_full_search_no_results">No results for “%1$s”</string>
     <string name="assistant_start_main">Start the main chat</string>
     <string name="assistant_main_chat">Main chat</string>
     <!-- The drawer's newest eligible chats, between 常驻 and All chats (#4922, #5196) -->
@@ -102,8 +120,13 @@
     <string name="assistant_open_settings">Settings</string>
     <string name="assistant_make_leader">Pin</string>
     <string name="assistant_end_leader">Unpin</string>
-    <string name="assistant_leader_working">%1$d working</string>
+    <string name="assistant_make_leader_title">Pin this chat?</string>
+    <string name="assistant_make_leader_text">The chat moves to Pinned and no longer appears in Recent.</string>
+    <string name="assistant_end_leader_title">Unpin this chat?</string>
+    <string name="assistant_end_leader_text">“%1$s” returns to Recent. Its open tasks go back to the main chat\'s supervision; nothing is closed or deleted.</string>
     <string name="assistant_leader_needs_you">%1$d need you</string>
+    <string name="assistant_direction_todos_of">To-dos of %1$s</string>
+    <string name="assistant_direction_agents_of">Agents of %1$s</string>
     <string name="assistant_conversation_actions">Chat actions</string>
     <string name="assistant_demo_title">Demo mode</string>
     <string name="assistant_demo_notice">Content is only kept for this demo.</string>
@@ -167,6 +190,16 @@
     <string name="assistant_rename_field">Session name</string>
     <string name="assistant_save">Save</string>
     <string name="assistant_renamed">Renamed</string>
+    <string name="assistant_edit_tags_menu">Edit tags…</string>
+    <string name="assistant_tags_title">Edit tags</string>
+    <string name="assistant_tags_filter">Filter by tag</string>
+    <string name="assistant_tags_add">Add</string>
+    <string name="assistant_tags_placeholder">Add a tag</string>
+    <string name="assistant_tags_remove">Remove %1$s</string>
+    <string name="assistant_tags_hint">Press Enter to add. Up to %1$d tags, each at most %2$d characters.</string>
+    <string name="assistant_tag_too_long">Each tag can be at most %1$d characters.</string>
+    <string name="assistant_tag_count_limit">A chat can have at most %1$d tags.</string>
+    <string name="assistant_tags_saved">Tags saved for %1$s</string>
     <string name="assistant_copy_diagnostics">Copy diagnostics</string>
     <string name="assistant_diagnostics_copied">Diagnostics copied</string>
     <string name="assistant_end_menu">End…</string>

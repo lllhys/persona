@@ -385,7 +385,8 @@ class HttpExtensionManagementTest {
     @Test fun theDeviceContextIsThePhones() {
         val context = HttpExtensionManagement.deviceContext()
         assertEquals("android", (context.platform).zhAny())
-        assertEquals(6, context.uiVersion)
+        // UI version 8 (#9158): the columns layout and a section's span, icon, link and rows side by side are drawn.
+        assertEquals(8, context.uiVersion)
         assertEquals(java.util.TimeZone.getDefault().id, context.tz)
         assertFalse(context.locale.isNullOrEmpty())
     }

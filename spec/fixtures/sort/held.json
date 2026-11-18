@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "operation": "agents_list",
+  "cases": [
+    {
+      "name": "held_quiet_row_keeps_unread_state_section",
+      "description": "打开后变为已看的 held 行仍保留完成未看分段，另一个普通已看行仍折叠。",
+      "source": [
+        "apple/Persona/Views/Chats/AgentListOrder.swift: rank(_:) returns the Unread rank for a quiet session whose key equals held",
+        "apple/Persona/App/AppModel.swift: visibleSession clears heldInList when the visible chat changes; markSeen sets it for an opened Unread row",
+        "apple/PersonaTests/AgentListOrderTests.swift: theOpenAgentSeenByOpeningKeepsItsPlaceUntilLeft"
+      ],
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "held",
+            "title": "Opened summary",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "Example project",
+            "updated_at": "2026-01-01T00:00:20Z"
+          },
+          {
+            "machine_id": "machine-a",
+            "session_id": "working",
+            "title": "Working example",
+            "cwd": "/home/user/project",
+            "status": "working",
+            "state": "working",
+            "space_id": "space-a",
+            "space_name": "Example project",
+            "updated_at": "2026-01-01T00:00:10Z"
+          },
+          {
+            "machine_id": "machine-a",
+            "session_id": "seen",
+            "title": "Seen example",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-b",
+            "space_name": "Other project",
+            "updated_at": "2026-01-01T00:00:30Z"
+          }
+        ],
+        "machines": [
+          {
+            "id": "machine-a",
+            "name": "Example computer"
+          }
+        ],
+        "pins": {
+          "spaces": [],
+          "sessions": []
+        },
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "grouping": "state",
+          "quick": "all",
+          "query": "",
+          "machine_filter": "",
+          "kept": [],
+          "folded": [],
+          "expanded_idle": [],
+          "expanded_quiet": [],
+          "compact": false,
+          "held": "machine-a/held"
+        }
+      },
+      "expected": {
+        "counts": {
+          "needsYou": 0,
+          "unread": 0,
+          "working": 1,
+          "backgroundWaiting": 0
+        },
+        "groups": [
+          {
+            "id": "state/unread",
+            "title": "完成未看",
+            "rows": [
+              "machine-a/held"
+            ],
+            "visible_rows": [
+              "machine-a/held"
+            ],
+            "folded": false
+          },
+          {
+            "id": "state/working",
+            "title": "工作中",
+            "rows": [
+              "machine-a/working"
+            ],
+            "visible_rows": [
+              "machine-a/working"
+            ],
+            "folded": false
+          },
+          {
+            "id": "state/idle",
+            "title": "已看",
+            "rows": [
+              "machine-a/seen"
+            ],
+            "visible_rows": [],
+            "folded": true
+          }
+        ],
+        "unread_shown": []
+      },
+      "derived": true
+    },
+    {
+      "name": "held_quiet_space_stays_active",
+      "description": "held 行所在的全已看空间不收进空闲空间，held 行保持完成未看次序且不被空闲行折叠。",
+      "source": [
+        "apple/Persona/Views/Chats/AgentListOrder.swift: stays(_:) keeps a held quiet row out of idle folds; isQuiet(_:) excludes its space",
+        "apple/Persona/Views/Chats/ChatsView.swift: spaceSection(_:) uses ordered rows for an active space and slot order only for a quiet space",
+        "apple/PersonaTests/AgentListOrderTests.swift: aQuietSpaceWithTheHeldAgentIsNotQuiet and theHeldAgentStaysWhereTheArrowsFoundIt"
+      ],
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "seen",
+            "title": "Earlier slot",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "Example project",
+            "slot_index": 0,
+            "updated_at": "2026-01-01T00:00:30Z"
+          },
+          {
+            "machine_id": "machine-a",
+            "session_id": "held",
+            "title": "Opened summary",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "Example project",
+            "slot_index": 1,
+            "updated_at": "2026-01-01T00:00:20Z"
+          },
+          {
+            "machine_id": "machine-a",
+            "session_id": "other-seen",
+            "title": "Quiet space",
+            "cwd": "/home/user/other",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-b",
+            "space_name": "Other project",
+            "slot_index": 0,
+            "updated_at": "2026-01-01T00:00:10Z"
+          }
+        ],
+        "machines": [
+          {
+            "id": "machine-a",
+            "name": "Example computer"
+          }
+        ],
+        "pins": {
+          "spaces": [],
+          "sessions": []
+        },
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "grouping": "space",
+          "quick": "all",
+          "query": "",
+          "machine_filter": "",
+          "kept": [],
+          "folded": [],
+          "expanded_idle": [],
+          "expanded_quiet": [],
+          "compact": false,
+          "held": "machine-a/held"
+        }
+      },
+      "expected": {
+        "counts": {
+          "needsYou": 0,
+          "unread": 0,
+          "working": 0,
+          "backgroundWaiting": 0
+        },
+        "groups": [
+          {
+            "id": "machine-a/space-a",
+            "title": "Example project",
+            "rows": [
+              "machine-a/held",
+              "machine-a/seen"
+            ],
+            "visible_rows": [
+              "machine-a/held"
+            ],
+            "folded": false,
+            "state_counts": {
+              "needs_you": 0,
+              "working": 0,
+              "unread": 0,
+              "idle": 2,
+              "unknown": 0
+            },
+            "spoken": "2 个空闲"
+          },
+          {
+            "id": "machine-a/space-b",
+            "title": "Other project",
+            "rows": [
+              "machine-a/other-seen"
+            ],
+            "visible_rows": [],
+            "folded": true,
+            "parent": "quiet",
+            "state_counts": {
+              "needs_you": 0,
+              "working": 0,
+              "unread": 0,
+              "idle": 1,
+              "unknown": 0
+            },
+            "spoken": "1 个空闲"
+          }
+        ],
+        "unread_shown": [],
+        "quiet_title": "空闲的空间"
+      },
+      "derived": true
+    },
+    {
+      "name": "held_row_stays_out_of_quiet_idle_fold",
+      "description": "held 行所在工作树保持展开且只显示 held 行，普通空闲行仍归空闲折叠。",
+      "source": [
+        "apple/Persona/Views/Chats/AgentListOrder.swift: stays(_:) includes a held quiet row even when it has no waiting work",
+        "apple/Persona/Views/Chats/ChatsView.swift: the space's busy and idle rows are partitioned with stays(_:); isQuiet(_:) excludes the held row's space",
+        "apple/PersonaTests/AgentListOrderTests.swift: aSpaceListsBusyRowsAndItsIdleOnesOnlyWhenOpened and theHeldAgentStaysWhereTheArrowsFoundIt"
+      ],
+      "input": {
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "held",
+            "title": "Opened summary",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "Example project",
+            "slot_index": 0,
+            "updated_at": "2026-01-01T00:00:20Z"
+          },
+          {
+            "machine_id": "machine-a",
+            "session_id": "idle",
+            "title": "Folded idle row",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "Example project",
+            "slot_index": 1,
+            "updated_at": "2026-01-01T00:00:10Z"
+          }
+        ],
+        "machines": [
+          {
+            "id": "machine-a",
+            "name": "Example computer"
+          }
+        ],
+        "pins": {
+          "spaces": [],
+          "sessions": []
+        },
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "grouping": "space",
+          "quick": "all",
+          "query": "",
+          "machine_filter": "",
+          "kept": [],
+          "folded": [],
+          "expanded_idle": [],
+          "expanded_quiet": [],
+          "compact": false,
+          "held": "machine-a/held"
+        }
+      },
+      "expected": {
+        "counts": {
+          "needsYou": 0,
+          "unread": 0,
+          "working": 0,
+          "backgroundWaiting": 0
+        },
+        "groups": [
+          {
+            "id": "machine-a/space-a",
+            "title": "Example project",
+            "rows": [
+              "machine-a/held",
+              "machine-a/idle"
+            ],
+            "visible_rows": [
+              "machine-a/held"
+            ],
+            "folded": false,
+            "state_counts": {
+              "needs_you": 0,
+              "working": 0,
+              "unread": 0,
+              "idle": 2,
+              "unknown": 0
+            },
+            "spoken": "2 个空闲"
+          }
+        ],
+        "unread_shown": [],
+        "quiet_title": null
+      },
+      "derived": true
+    }
+  ]
+}

@@ -4,7 +4,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { policyFor, policySummary, type InboxItem, type InboxPolicy } from "../../lib/inbox";
+import { type InboxItem, type InboxPolicy } from "../../lib/inbox";
+import { policyFor, policySummary } from "../../lib/inbox-page";
 import { resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 
 vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: vi.fn() }));

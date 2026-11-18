@@ -20,8 +20,9 @@ import (
 
 // Saved places (docs/apple/phone-tools.md "Saved places", #1598): the places the user names (home, the office) with their
 // coordinates. The user sets them in Settings › Assistant › Saved Places; the assistant reads them (list_places) for
-// reminders by place and adds one (save_place) only after the user confirmed it in a conversation. Reminders take their
-// coordinates from here, not from the assistant's memory, so the user can see and correct them.
+// reminders by place and for routes and directions to or from them (#6386), and adds one (save_place) only after the user
+// confirmed it in a conversation. Reminders and routes take their coordinates from here, not from the assistant's memory,
+// so the user can see and correct them.
 
 // placesKey is where the places are kept, in the order they were added.
 const placesKey = "assistant.places"

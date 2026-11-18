@@ -6,12 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
-	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/channel"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -25,6 +24,7 @@ import (
 // FleetRoutes are those routes.
 var FleetRoutes = []string{
 	"POST /api/v1/interactions/{id}/resolve",
+	"POST /api/v1/interactions/{id}/clarify",
 	"POST /api/v1/interactions/{id}/reanswer",
 	"GET /api/v1/interactions/history",
 	"POST /api/v1/sessions/{mid}/{sid}/seen",
@@ -41,18 +41,19 @@ func (s *Service) fleetHandler(next http.Handler) http.Handler {
 		}
 		res.AnsweredBy, res.Reason = "", "" // only the assistant's interaction_answer says it answered
 		res.Remembered = false              // only the manager's own "Always allow" answers say so
+		res.Late = false                    // only the history's record of an answer after expiry says so
 		id := r.PathValue("id")
 		var approver *assistantwire.HandoffApprover // the device the hub vouched may approve a hand-off card
 		if a, ok := assistantwire.HandoffApproverOf(r.Context()); ok {
 			approver = &a
 		}
-		if err := s.resolveApproved(id, res, approver); err != nil {
+		if err := s.resolveApproved(r.Context(), id, res, approver); err != nil {
 			switch {
 			case errors.Is(err, errHandoffElsewhere):
 				apierr.WriteCode(w, http.StatusForbidden, proto.CodeSecretHandoffElsewhere, err)
 			case errors.Is(err, errNotPending):
 				s.writeEnded(r.Context(), w, id, res, err)
-			case errors.Is(err, errInvalidElicitation), errors.Is(err, errInvalidQuestionCancel):
+			case errors.Is(err, errInvalidElicitation), errors.Is(err, errInvalidQuestionCancel), errors.Is(err, errInvalidEditedAnswer):
 				apierr.Write(w, http.StatusBadRequest, err)
 			default:
 				apierr.Call(w, err) // prompt_changed: 409, nothing pressed
@@ -61,35 +62,32 @@ func (s *Service) fleetHandler(next http.Handler) http.Handler {
 		}
 		apierr.WriteJSON(w, map[string]any{"ok": true})
 	})
-	mux.HandleFunc("POST /api/v1/interactions/{id}/reanswer", s.serveReanswer) // "Change answer" (fleet_delegate.go)
-	mux.HandleFunc("GET /api/v1/interactions/history", func(w http.ResponseWriter, r *http.Request) {
-		st := s.fleetStore()
-		if st == nil {
-			apierr.WriteJSON(w, map[string]any{"interactions": []any{}})
+	mux.HandleFunc("POST /api/v1/interactions/{id}/clarify", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Text        string `json:"text"`
+			ClientMsgID string `json:"client_msg_id"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
+			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
-		q := r.URL.Query()
-		mid := q.Get("machine_id")
-		if m, ok := s.fleetMachine(mid); ok {
-			mid = m.ID
-		}
-		limit, _ := strconv.Atoi(q.Get("limit"))
-		recs, err := st.Interactions(r.Context(), mid, q.Get("session_id"), limit)
-		if err != nil {
-			apierr.Write(w, http.StatusInternalServerError, err)
-			return
-		}
-		if r.Header.Get(assistantwire.ElicitationHeader) != "1" {
-			filtered := make([]db.InteractionRecord, 0, len(recs))
-			for _, rec := range recs {
-				if rec.Interaction.Kind != proto.IxElicitation {
-					filtered = append(filtered, rec)
-				}
+		// This endpoint has no resolution or field-value envelope: clarification
+		// cannot allow, deny, dismiss or attribute the card.
+		if err := s.clarify(r.Context(), r.PathValue("id"), in.Text, strings.TrimSpace(in.ClientMsgID), nil); err != nil {
+			switch {
+			case errors.Is(err, errClarifyUnavailable):
+				apierr.Write(w, http.StatusGone, err)
+			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				apierr.Call(w, err)
+			default:
+				apierr.Write(w, http.StatusBadRequest, err)
 			}
-			recs = filtered
+			return
 		}
-		apierr.WriteJSON(w, map[string]any{"interactions": recs})
+		apierr.WriteJSON(w, map[string]any{"ok": true, "pending": true})
 	})
+	mux.HandleFunc("POST /api/v1/interactions/{id}/reanswer", s.serveReanswer)    // "Change answer" (fleet_delegate.go)
+	mux.HandleFunc("GET /api/v1/interactions/history", s.serveInteractionHistory) // interaction_history.go
 	mux.HandleFunc("POST /api/v1/sessions/{mid}/{sid}/seen", func(w http.ResponseWriter, r *http.Request) {
 		m, ok := s.fleetMachine(r.PathValue("mid"))
 		if !ok {
@@ -134,6 +132,28 @@ func (s *Service) writeEnded(ctx context.Context, w http.ResponseWriter, id stri
 }
 
 // ---- the queue as the assistant's own code asks for it (it was the hub's: device.call, app.call) ----
+
+// localSessions is sessions.list as localFleetDeviceCall answers it, for this manager's own readers: the decorated rows
+// and the muted ones themselves, not encoded to JSON and decoded again, which was most of what a read cost (#3197).
+// The rows share their slices and pointers with the devices' list, as every decorated row does: read, never written
+// in place (proto.Session). false when the fleet is not this process's (the hub answers then).
+func (s *Service) localSessions(machine string) (list []proto.Session, muted map[string]bool, ok bool, err error) {
+	if !s.fleetOn() || machine == DeviceAll {
+		return nil, nil, false, nil
+	}
+	m, found := s.fleetMachine(machine)
+	if !found {
+		return nil, map[string]bool{}, true, ErrNoDevice
+	}
+	list = s.decorated(m.ID)
+	muted = map[string]bool{}
+	for i := range list {
+		if s.mutedAs(m.ID, list[i].SessionID, list[i].SpaceName) { // mutedSessions, as a set
+			muted[list[i].SessionID] = true
+		}
+	}
+	return list, muted, true, nil
+}
 
 // localFleetDeviceCall answers the device methods the hub answered from what was its (the pending interactions, the
 // session lists as the apps get them, one session); false for the others.
@@ -185,9 +205,7 @@ func (s *Service) localFleetDeviceCall(ctx context.Context, p DeviceCall) (json.
 			if sess.Assistant {
 				sess.Space = identity.SpaceOf(sess.Cwd)
 			}
-			if title := s.agentDisplayName(m.ID, sess); title != "" {
-				sess.Title = title
-			}
+			s.nameAgentRow(m.ID, &sess)
 			// The node fills in no unified state: the callers that ask whether it works or waits for the user
 			// (sessionBusy, waitTurnEnd, a repair's end) read the manager's, as the lists have it.
 			if d, found := s.decoratedSession(m.ID, a.SessionID); found {
@@ -213,6 +231,10 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 		Answers       map[string]string `json:"answers"`
 		Reason        string            `json:"reason"` // interactions.answer: why the assistant answered so (interaction_answer)
 		Resolution    proto.Resolution  `json:"resolution"`
+		Text          string            `json:"text"`
+		ClientMsgID   string            `json:"client_msg_id"`
+		ChatID        string            `json:"chat_id"`
+		MessageID     string            `json:"message_id"`
 		Action        string            `json:"action"`
 		Channel       string            `json:"channel"`
 	}
@@ -243,6 +265,13 @@ func (s *Service) localFleetAppCall(ctx context.Context, p AppCall) (json.RawMes
 			return nil, true, err
 		}
 		out = r
+	case assistantwire.InteractionsClarify:
+		r, err := s.channelClarify(ctx, a.Channel, a.InteractionID, a.Text, a.ClientMsgID, a.Action,
+			&clarificationOrigin{Channel: a.Channel, ChatID: a.ChatID, MessageID: a.MessageID})
+		if err != nil {
+			return nil, true, err
+		}
+		out = r
 	default:
 		return nil, false, nil
 	}
@@ -268,6 +297,9 @@ func (s *Service) channelResolve(ctx context.Context, ch, id string, r proto.Res
 		}
 		r.Values = nil
 	}
+	if !editedAnswerAllowed(ix, r) {
+		return nil, errInvalidEditedAnswer
+	}
 	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsOwnerAction, map[string]any{"interaction_id": id,
 		"action": action, "channel": ch, "kind": ix.Kind}, nil); err != nil {
 		return nil, err
@@ -280,4 +312,32 @@ func (s *Service) channelResolve(ctx context.Context, ch, id string, r proto.Res
 		return nil, err
 	}
 	return map[string]any{"ok": true}, nil
+}
+
+// channelClarify verifies the same fresh owner action as channelResolve, then
+// takes the separate non-final path. Blank and over-limit input is rejected
+// before that action is consumed. Field values never enter this envelope.
+func (s *Service) channelClarify(ctx context.Context, ch, id, text, clientMsgID, action string, origin *clarificationOrigin) (any, error) {
+	if err := validateClarifyQuestion(text); err != nil {
+		return nil, err
+	}
+	id = strings.TrimSpace(id)
+	ix, ok := s.pendingIx(id)
+	if !ok {
+		return map[string]any{"ok": false, "status": s.interactionOutcome(ctx, id)}, nil
+	}
+	if ch != channel.Feishu || !ix.CanClarify || ix.Private {
+		return nil, errClarifyUnavailable
+	}
+	if err := s.appCall(ctx, AppInteractions, assistantwire.InteractionsOwnerAction, map[string]any{"interaction_id": id,
+		"action": action, "channel": ch, "kind": ix.Kind}, nil); err != nil {
+		return nil, err
+	}
+	if err := s.clarify(ctx, id, text, clientMsgID, origin); err != nil {
+		if errors.Is(err, errClarifyUnavailable) {
+			return map[string]any{"ok": false, "status": s.interactionOutcome(ctx, id)}, nil
+		}
+		return nil, err
+	}
+	return map[string]any{"ok": true, "pending": true}, nil
 }

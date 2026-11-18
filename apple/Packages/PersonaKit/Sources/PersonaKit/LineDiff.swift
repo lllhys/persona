@@ -204,7 +204,7 @@ public nonisolated struct LineDiff: Sendable, Equatable {
     /// Word comparisons at most over the whole diff, each pair of lines counted as one's words times the other's (what
     /// comparing them can cost), so a long stretch of long changed lines stays quick: a few of the worst lines that
     /// pass the checks above (tens of milliseconds on a Mac), hundreds of ordinary ones.
-    static let maxWordWork = 1_000_000
+    public static let maxWordWork = 1_000_000
 
     /// In each change, the first removed line is paired with the first added one, the second with the second…, and
     /// each pair compared word by word.
@@ -226,7 +226,7 @@ public nonisolated struct LineDiff: Sendable, Equatable {
 
     /// The ranges that changed between an old line and the new one it became, word by word; nil when the lines are
     /// too long or too unlike for it to help. Whitespace between two changed words joins them into one range.
-    static func words(_ a: String, _ b: String, budget: inout Int) -> (old: [Range<Int>], new: [Range<Int>])? {
+    public static func words(_ a: String, _ b: String, budget: inout Int) -> (old: [Range<Int>], new: [Range<Int>])? {
         if a == b { return ([], []) }
         let la = a.utf16.count, lb = b.utf16.count
         // A line against an empty one is all changed: the row's color says so.

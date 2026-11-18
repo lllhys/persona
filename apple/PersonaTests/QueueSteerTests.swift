@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import UIKit
 @testable import Persona
+import PersonaWire
 
 /// Steering a Claude's queue (#6088): which agents get Send Now and Move Up / Down, and the order a move asks for.
 @MainActor
@@ -67,6 +68,42 @@ struct QueueSteerTests {
         await model.sendQueuedNow(key)
         #expect(hub.sent("POST", "/api/v1/sessions/m/s/queue").isEmpty, "relayed messages are not queue-edit indexes")
         #expect(hub.sent("POST", "/api/v1/sessions/m/s/queue/send-now").isEmpty, "nothing of the user's own waits to send")
+    }
+
+    /// The shared wire samples of a Persona chat's take-back (spec/fixtures/wire/queue.json): a message without photos
+    /// is `null` among the others' photos, and no `images` at all when none has any (#5858).
+    private static func wireSample(_ name: String) throws -> Data {
+        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let all = try JSONSerialization.jsonObject(with: Data(contentsOf: repo.appending(path: "spec/fixtures/wire/queue.json"))) as? [[String: Any]]
+        let sample = try #require(all?.first { $0["name"] as? String == name }?["input"])
+        return try JSONSerialization.data(withJSONObject: sample)
+    }
+
+    @Test func theWireSamplesDecode() throws {
+        let mixed = try JSON.decoder.decode(APIClient.QueueResponse.self, from: Self.wireSample("queue_edit_images"))
+        #expect(mixed.queue == ["请看这张图。", "再检查一遍。"])
+        #expect(mixed.images?.map(\.count) == [1, 0])
+        #expect(mixed.images?.first?.first?.mime == "image/png")
+        let words = try JSON.decoder.decode(APIClient.QueueResponse.self, from: Self.wireSample("queue_edit_words"))
+        #expect(words.queue.count == 2 && words.images == nil)
+    }
+
+    /// Taking either message back from a queue where only one has photos works, and each comes back with its own
+    /// photos (#5858: the null element failed the whole take-back).
+    @Test func takeBackFromAQueueWhereOnlySomeHavePhotos() async throws {
+        let answer = try Self.wireSample("queue_edit_images")
+        for (index, text, photos) in [(1, "再检查一遍。", 0), (0, "请看这张图。", 1)] {
+            let hub = FakeHub()
+            hub.on("POST", "/api/v1/sessions/m/s/queue", json: String(decoding: answer, as: UTF8.self))
+            let model = AppModel()
+            model.apiForTests = hub.client
+            model.applySessions([MachineRef(group: "", id: "m"): [try session(#","assistant":true,"queued":["请看这张图。","再检查一遍。"]"#)]])
+            let key = SessionKey(machineID: "m", sessionID: "s")
+            await model.editQueued(key, index: index, delete: false)
+            #expect(model.toast?.style != .error, "message \(index): \(String(describing: model.toast?.message))")
+            #expect(model.drafts[key] == text)
+            #expect(model.composerAttachments(key).images.count == photos)
+        }
     }
 
     @Test func personaPhotoOnlyTakeBackOmitsStandInWords() async throws {

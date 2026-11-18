@@ -1,0 +1,660 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "short_values",
+      "description": "The issue's 4,000 rows of three short strings must fit the whole-input budget.",
+      "source": [
+        "https://github.com/nwverse/persona/issues/2907 item 2",
+        "server/internal/transcript/clip.go: clipJSON",
+        "integrations/runtime-sdk/lib/items.js: clipInput"
+      ],
+      "input": {
+        "values": {
+          "$repeat": 4000,
+          "value": [
+            {
+              "$index": 0
+            },
+            {
+              "$string": "a",
+              "count": 17
+            },
+            {
+              "$string": "b",
+              "count": 18
+            }
+          ]
+        }
+      },
+      "expected": {
+        "check": "short_values",
+        "input_bytes": 198902,
+        "output_bytes": 24569,
+        "remaining": 501,
+        "array_items": 3499,
+        "object_fields": 0,
+        "marker": true
+      }
+    },
+    {
+      "name": "nested_arrays",
+      "description": "Both outer rows and their retained nested arrays are shortened without processing detached arrays.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSON",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "outer": {
+          "$repeat": 200,
+          "value": {
+            "$repeat": 100,
+            "value": "x"
+          }
+        }
+      },
+      "expected": {
+        "check": "nested_arrays",
+        "marker": true,
+        "input_bytes": 80411,
+        "output_bytes": 24306,
+        "array_items": 2070,
+        "object_fields": 0,
+        "remaining": 77,
+        "inner": [78]
+      }
+    },
+    {
+      "name": "object_array",
+      "description": "A MultiEdit array loses only whole tail objects and keeps every retained edit's field types.",
+      "source": [
+        "web/src/views/chat/ActionRow.tsx: editDiffs",
+        "apple/Persona/Views/Chat/ToolViews.swift: ToolDetail",
+        "android/feature/chat/src/main/kotlin/persona/feature/chat/ContentPresentation.kt: toolDiff"
+      ],
+      "input": {
+        "file_path": "/home/user/project/a.go",
+        "edits": {
+          "$repeat": 2000,
+          "value": {
+            "old_string": "a",
+            "new_string": "b"
+          }
+        }
+      },
+      "expected": {
+        "check": "object_array",
+        "marker": true,
+        "input_bytes": 72049,
+        "output_bytes": 24574,
+        "array_items": 1322,
+        "object_fields": 0,
+        "remaining": 678
+      }
+    },
+    {
+      "name": "todo_array",
+      "description": "A TodoWrite list loses only whole tail objects, leaving every retained to-do decodable.",
+      "source": [
+        "server/internal/transcript/fold_tasks.go: foldTaskSnapshots",
+        "web/src/lib/work-groups.ts: planTodos",
+        "apple/Persona/Views/Chat/ChatPlan.swift: todos",
+        "android/core/domain/src/main/kotlin/persona/core/domain/lines/TaskProgress.kt: rebuildTaskProgress"
+      ],
+      "input": {
+        "todos": {
+          "$repeat": 2000,
+          "value": {
+            "content": "Do the work",
+            "activeForm": "Doing the work",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "check": "todo_array",
+        "marker": true,
+        "input_bytes": 150011,
+        "output_bytes": 24504,
+        "array_items": 1675,
+        "object_fields": 0,
+        "remaining": 325
+      }
+    },
+    {
+      "name": "question_array",
+      "description": "A question list and its retained options keep their object shapes and value types.",
+      "source": [
+        "web/src/lib/tool-detail.ts: toolQuestions",
+        "apple/Persona/Views/Chat/ToolViews.swift: AskUserDetail",
+        "android/feature/chat/src/main/kotlin/persona/feature/chat/ToolDetails.kt: toolQuestions"
+      ],
+      "input": {
+        "questions": {
+          "$repeat": 1000,
+          "value": {
+            "question": "Choose one?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              }
+            ],
+            "multi_select": false
+          }
+        }
+      },
+      "expected": {
+        "check": "question_array",
+        "marker": true,
+        "input_bytes": 114015,
+        "output_bytes": 24528,
+        "array_items": 786,
+        "object_fields": 0,
+        "remaining": 214
+      }
+    },
+    {
+      "name": "wide_object",
+      "description": "After the only nonempty array is empty, trailing fields of the widest object are omitted.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSON",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "values": {
+          "$repeat": 100,
+          "value": "short"
+        },
+        "wide": {
+          "$fields": 2000,
+          "key": "a_long_field_name_with_many_bytes_",
+          "pad": 4,
+          "value": {
+            "$index": 0
+          }
+        }
+      },
+      "expected": {
+        "check": "wide_object",
+        "marker": true,
+        "input_bytes": 95711,
+        "output_bytes": 24565,
+        "array_items": 100,
+        "object_fields": 1478,
+        "remaining": 522
+      }
+    },
+    {
+      "name": "root_wide_object",
+      "description": "When the root itself is widest, trailing fields go but the fixed marker remains.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: dropInputClipTail",
+        "integrations/runtime-sdk/lib/input-clip.js: dropInputClipTail"
+      ],
+      "input": {
+        "$fields": 2000,
+        "key": "root_field_",
+        "pad": 4,
+        "value": {
+          "$index": 0
+        }
+      },
+      "expected": {
+        "check": "root_wide",
+        "key_prefix": "root_field_",
+        "marker": true,
+        "input_bytes": 48891,
+        "output_bytes": 24557,
+        "array_items": 0,
+        "object_fields": 978,
+        "remaining": 1022
+      }
+    },
+    {
+      "name": "escaped_root_object",
+      "description": "Escaped keys and values are counted with each implementation's own JSON encoder.",
+      "source": [
+        "server/internal/transcript/clip.go: marshalPlain",
+        "integrations/runtime-sdk/lib/items.js: jsonLen"
+      ],
+      "input": {
+        "$fields": 2000,
+        "key": "quote_\"_slash_\\_control_\u0001_<>&_",
+        "pad": 4,
+        "value": "quote_\"_slash_\\_control_\u0001_<>&_  "
+      },
+      "expected": {
+        "check": "root_wide",
+        "key_prefix": "quote_\"_slash_\\_control_\u0001_<>&_",
+        "value": "quote_\"_slash_\\_control_\u0001_<>&_  ",
+        "marker": true,
+        "input_bytes": 180001,
+        "go_input_bytes": 192001,
+        "sdk_input_bytes": 180001,
+        "go_output_bytes": 24503,
+        "sdk_output_bytes": 24509,
+        "go_remaining": 254,
+        "sdk_remaining": 271,
+        "go_object_fields": 1746,
+        "sdk_object_fields": 1729,
+        "array_items": 0,
+        "object_fields": 1746
+      }
+    },
+    {
+      "name": "single_long_key",
+      "description": "One oversized root key is removed without removing the marker itself.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: dropInputClipTail",
+        "integrations/runtime-sdk/lib/input-clip.js: dropInputClipTail"
+      ],
+      "input": {
+        "$single_field": {
+          "$string": "k",
+          "count": 25000
+        },
+        "value": "short"
+      },
+      "expected": {
+        "check": "single_long_key",
+        "array_items": 0,
+        "object_fields": 1,
+        "marker": true,
+        "input_bytes": 25012,
+        "output_bytes": 115
+      }
+    },
+    {
+      "name": "mixed_strings",
+      "description": "The two string passes run before many short array values are omitted.",
+      "source": [
+        "server/internal/transcript/clip.go: clipJSON",
+        "integrations/runtime-sdk/lib/items.js: clipInput"
+      ],
+      "input": {
+        "long": {
+          "$string": "abcdef",
+          "count": 1000
+        },
+        "values": {
+          "$repeat": 3000,
+          "value": [
+            "short",
+            {
+              "$index": 0
+            },
+            true,
+            null
+          ]
+        }
+      },
+      "expected": {
+        "check": "mixed_strings",
+        "marker": true,
+        "input_bytes": 85912,
+        "output_bytes": 24555,
+        "array_items": 2068,
+        "object_fields": 0,
+        "remaining": 932
+      }
+    },
+    {
+      "name": "one_byte_over",
+      "description": "An object exactly one byte over the budget pays for both its omissions and their marker.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSON",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "$pad_object_to": 24577,
+        "value": {
+          "values": {
+            "$repeat": 2430,
+            "value": "1234567"
+          }
+        }
+      },
+      "expected": {
+        "check": "one_byte_over",
+        "input_bytes": 24577,
+        "output_bytes": 24572,
+        "remaining": 2418,
+        "array_items": 12,
+        "object_fields": 0,
+        "marker": true
+      }
+    },
+    {
+      "name": "exact_budget",
+      "description": "A boundary fixture finishes at exactly the budget so an unaccounted marker byte fails.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSON",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "$pad_object_to": 24581,
+        "value": {
+          "values": {
+            "$repeat": 2430,
+            "value": "1234567"
+          }
+        }
+      },
+      "expected": {
+        "check": "one_byte_over",
+        "input_bytes": 24581,
+        "output_bytes": 24576,
+        "remaining": 2418,
+        "array_items": 12,
+        "object_fields": 0,
+        "marker": true
+      }
+    },
+    {
+      "name": "marker_growth_boundary",
+      "description": "Changing omission-count digits is part of the marker's encoded size at the stopping boundary.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSONBudgetWork",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "$pad_object_to": 24582,
+        "value": {
+          "values": {
+            "$repeat": 2430,
+            "value": "1234567"
+          }
+        }
+      },
+      "expected": {
+        "check": "one_byte_over",
+        "input_bytes": 24582,
+        "marker": true,
+        "output_bytes": 24567,
+        "array_items": 13,
+        "object_fields": 0,
+        "remaining": 2417
+      }
+    },
+    {
+      "name": "empty_nested_boundary",
+      "description": "A nested container can become empty at the boundary without charging a comma that does not exist.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: dropTail",
+        "integrations/runtime-sdk/lib/input-clip.js: dropInputClipTail"
+      ],
+      "input": {
+        "$pad_object_to": 26046,
+        "value": {
+          "a": {
+            "small": [
+              1,
+              2,
+              3
+            ],
+            "wide": {
+              "$fields": 2600,
+              "key": "k",
+              "pad": 4,
+              "value": 1
+            }
+          }
+        }
+      },
+      "expected": {
+        "check": "nested_empty",
+        "input_bytes": 26046,
+        "marker": true,
+        "output_bytes": 24567,
+        "array_items": 3,
+        "object_fields": 159,
+        "remaining": 2441
+      }
+    },
+    {
+      "name": "unsorted_root",
+      "description": "Removal follows sorted keys even when the SDK input document puts telling fields first.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: build",
+        "integrations/runtime-sdk/lib/input-clip.js: InputClipTree.build"
+      ],
+      "input": {
+        "$fields": 3000,
+        "base": {
+          "title": "Quarterly numbers",
+          "url": "https://example.com/sheet"
+        },
+        "key": "c",
+        "pad": 4,
+        "value": {
+          "$index": 0
+        }
+      },
+      "expected": {
+        "check": "unsorted_root",
+        "key_prefix": "c",
+        "total": 3000,
+        "absent": [
+          "title",
+          "url"
+        ],
+        "marker": true,
+        "input_bytes": 43953,
+        "output_bytes": 24568,
+        "array_items": 0,
+        "object_fields": 1298,
+        "remaining": 1704
+      }
+    },
+    {
+      "name": "unsorted_two_arrays",
+      "description": "Equal-length arrays under unsorted keys break the tie in sorted-key preorder in both implementations.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: inputClipHeap.Less",
+        "integrations/runtime-sdk/lib/input-clip.js: heapLess"
+      ],
+      "input": {
+        "b": {
+          "$repeat": 2001,
+          "value": [
+            {
+              "$index": 0
+            },
+            {
+              "$string": "a",
+              "count": 17
+            },
+            {
+              "$string": "b",
+              "count": 18
+            }
+          ]
+        },
+        "a": {
+          "$repeat": 2001,
+          "value": [
+            {
+              "$index": 0
+            },
+            {
+              "$string": "a",
+              "count": 17
+            },
+            {
+              "$string": "b",
+              "count": 18
+            }
+          ]
+        }
+      },
+      "expected": {
+        "check": "two_arrays",
+        "marker": true,
+        "input_bytes": 197893,
+        "output_bytes": 24558,
+        "array_items": 3499,
+        "object_fields": 0,
+        "a_remaining": 251,
+        "b_remaining": 252
+      }
+    },
+    {
+      "name": "integer_keys",
+      "description": "Integer-like keys are removed in UTF-8 lexicographic order, not JavaScript's integer-first key order.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: build",
+        "integrations/runtime-sdk/lib/input-clip.js: InputClipTree.build"
+      ],
+      "input": {
+        "rows": {
+          "$fields": 4000,
+          "key": "",
+          "pad": 0,
+          "value": {
+            "$index": 0
+          }
+        }
+      },
+      "expected": {
+        "check": "integer_keys",
+        "marker": true,
+        "input_bytes": 53790,
+        "output_bytes": 24575,
+        "array_items": 0,
+        "object_fields": 2225,
+        "remaining": 1775,
+        "last_key": "2595"
+      }
+    },
+    {
+      "name": "unicode_keys",
+      "description": "A key above U+FFFF sorts after a U+E000 key by code point, unlike JavaScript's default UTF-16 sort.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: build",
+        "integrations/runtime-sdk/lib/input-clip.js: InputClipTree.build"
+      ],
+      "input": {
+        "rows": {
+          "$keyed_fields": ["c", "\ud800\udc00", "\ue000"],
+          "suffix": "k",
+          "count": 8000,
+          "value": {
+            "$string": "x",
+            "count": 200
+          }
+        }
+      },
+      "expected": {
+        "check": "unicode_keys",
+        "remaining": 2,
+        "array_items": 0,
+        "object_fields": 1,
+        "present": ["c", "\ue000"],
+        "absent": ["\ud800\udc00"],
+        "marker": true,
+        "input_bytes": 24636,
+        "output_bytes": 16540
+      }
+    },
+    {
+      "name": "marker_collision_base",
+      "description": "With only the base user key present, the first synthetic collision suffix is exactly _2.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSONBudgetWork",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "zz_persona_clipped": "keep this user value",
+        "values": {
+          "$repeat": 4000,
+          "value": [
+            {
+              "$index": 0
+            },
+            {
+              "$string": "a",
+              "count": 17
+            },
+            {
+              "$string": "b",
+              "count": 18
+            }
+          ]
+        }
+      },
+      "expected": {
+        "check": "marker_collision_base",
+        "marker": true,
+        "marker_key": "zz_persona_clipped_2",
+        "input_bytes": 198946,
+        "output_bytes": 24566,
+        "array_items": 3500,
+        "object_fields": 0,
+        "remaining": 500
+      }
+    },
+    {
+      "name": "at_budget",
+      "description": "An input already at the budget is returned without structural clipping or a marker.",
+      "source": [
+        "server/internal/transcript/clip.go: clipJSON",
+        "integrations/runtime-sdk/lib/items.js: clipInput"
+      ],
+      "input": {
+        "$pad_object_to": 24576,
+        "value": {
+          "values": {
+            "$repeat": 2430,
+            "value": "1234567"
+          }
+        }
+      },
+      "expected": {
+        "check": "unchanged",
+        "input_bytes": 24576,
+        "output_bytes": 24576,
+        "marker": false
+      }
+    },
+    {
+      "name": "marker_collision",
+      "description": "An existing marker-like user field is preserved and the synthetic marker gets a deterministic suffix.",
+      "source": [
+        "server/internal/transcript/clip_bound.go: boundInputJSON",
+        "integrations/runtime-sdk/lib/input-clip.js: boundInput"
+      ],
+      "input": {
+        "zz_persona_clipped": "keep this user value",
+        "zz_persona_clipped_2": "keep this second user value",
+        "values": {
+          "$repeat": 4000,
+          "value": [
+            {
+              "$index": 0
+            },
+            {
+              "$string": "a",
+              "count": 17
+            },
+            {
+              "$string": "b",
+              "count": 18
+            }
+          ]
+        }
+      },
+      "expected": {
+        "check": "marker_collision",
+        "marker": true,
+        "marker_key": "zz_persona_clipped_3",
+        "input_bytes": 198999,
+        "output_bytes": 24570,
+        "array_items": 3501,
+        "object_fields": 0,
+        "remaining": 499
+      }
+    }
+  ]
+}

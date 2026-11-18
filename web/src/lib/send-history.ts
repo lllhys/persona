@@ -1,10 +1,10 @@
+import { conversationKeyDeleted } from "./conversation-deleted";
 // What was sent from the composer, per conversation, for ↑/↓ recall and the Ctrl+R search (issue #2434; Moshi keeps the
 // last 100 sent messages of each session and searches the ones of all of them). Stored on this browser only, never
 // sent anywhere. Everything here is pure or takes the storage as an argument, so it is tested without a DOM.
 
 export const HISTORY_MAX = 100;
-export const SEARCH_MAX = 100;
-const PREFIX = "persona.sent.";
+export const HISTORY_PREFIX = "persona.sent.";
 
 export interface SentEntry {
   /** The message as it was typed. */
@@ -13,10 +13,10 @@ export interface SentEntry {
   at: number;
 }
 
-type Store = Pick<Storage, "getItem" | "setItem" | "length" | "key">;
+export type HistoryStore = Pick<Storage, "getItem" | "setItem" | "length" | "key">;
 
 /** localStorage, or nothing where the browser has none (a private mode that throws, a test without a DOM). */
-function browserStore(): Store | undefined {
+export function browserStore(): HistoryStore | undefined {
   try {
     return typeof localStorage === "undefined" ? undefined : localStorage;
   } catch {
@@ -24,7 +24,7 @@ function browserStore(): Store | undefined {
   }
 }
 
-const storageKey = (draftKey: string) => PREFIX + draftKey;
+const storageKey = (draftKey: string) => HISTORY_PREFIX + draftKey;
 
 function parse(raw: string | null): SentEntry[] {
   if (!raw) return [];
@@ -40,7 +40,8 @@ function parse(raw: string | null): SentEntry[] {
 }
 
 /** The conversation's sent messages, oldest first. */
-export function readHistory(draftKey: string, store: Store | undefined = browserStore()): SentEntry[] {
+export function readHistory(draftKey: string, store: HistoryStore | undefined = browserStore()): SentEntry[] {
+  if (conversationKeyDeleted(draftKey)) return [];
   try {
     return store ? parse(store.getItem(storageKey(draftKey))) : [];
   } catch {
@@ -56,7 +57,8 @@ export function withSent(list: SentEntry[], text: string, at: number): SentEntry
 }
 
 /** Remembers a message that went out. A full or blocked storage loses the entry, never the send. */
-export function recordSent(draftKey: string, text: string, store: Store | undefined = browserStore(), at: number = Date.now()): SentEntry[] {
+export function recordSent(draftKey: string, text: string, store: HistoryStore | undefined = browserStore(), at: number = Date.now()): SentEntry[] {
+  if (conversationKeyDeleted(draftKey)) return [];
   const next = withSent(readHistory(draftKey, store), text, at);
   try {
     store?.setItem(storageKey(draftKey), JSON.stringify(next));
@@ -64,37 +66,6 @@ export function recordSent(draftKey: string, text: string, store: Store | undefi
     /* storage full or disabled */
   }
   return next;
-}
-
-/** Every conversation's sent messages, newest first: the candidates of the search. */
-export function readAllHistory(store: Store | undefined = browserStore()): SentEntry[] {
-  const all: SentEntry[] = [];
-  try {
-    if (store) for (let i = 0; i < store.length; i++) {
-      const k = store.key(i);
-      if (k?.startsWith(PREFIX)) all.push(...parse(store.getItem(k)));
-    }
-  } catch {
-    /* unreadable storage: no candidates */
-  }
-  return all.sort((a, b) => b.at - a.at);
-}
-
-/** The search: the query is split on spaces and every word must be in the message (case-insensitive); newest first,
- *  one row per text, at most `max`. An empty query lists the newest. */
-export function searchSent(candidates: SentEntry[], query: string, max: number = SEARCH_MAX): string[] {
-  const words = query.toLowerCase().split(" ").filter(Boolean);
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const e of candidates) {
-    if (seen.has(e.text)) continue;
-    const text = e.text.toLowerCase();
-    if (!words.every((w) => text.includes(w))) continue;
-    seen.add(e.text);
-    out.push(e.text);
-    if (out.length >= max) break;
-  }
-  return out;
 }
 
 // ── ↑ / ↓ recall ─────────────────────────────────────────────────────────────
@@ -139,32 +110,14 @@ export interface KeyLike {
 /** An input method is composing (the Enter or arrow that picks a candidate is not ours). */
 export const composing = (e: Pick<KeyLike, "isComposing" | "keyCode">): boolean => Boolean(e.isComposing) || e.keyCode === 229;
 
-const plainCtrl = (e: KeyLike, k: string) => e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === k;
+export const plainCtrl = (e: KeyLike, k: string) => e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === k;
 
 /** Ctrl+R in the box opens the search (⌃ on a Mac too: ⌘R stays the browser's reload). */
 export function opensSearch(e: KeyLike): boolean {
   return !composing(e) && plainCtrl(e, "r");
 }
 
-export type SearchAction = "up" | "down" | "pick" | "cancel";
-
-/** The search panel's keys: ↑ ↓ and Emacs' Ctrl+R / Ctrl+P (up) and Ctrl+S / Ctrl+N (down) move, Enter or Tab picks,
- *  Esc or Ctrl+G cancels. null: the key is the search box's own (typing). */
-export function searchAction(e: KeyLike): SearchAction | null {
-  if (composing(e)) return null;
-  const bare = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
-  if (bare && e.key === "ArrowUp") return "up";
-  if (bare && e.key === "ArrowDown") return "down";
-  if (bare && (e.key === "Enter" || e.key === "Tab")) return "pick";
-  if (bare && e.key === "Escape") return "cancel";
-  if (plainCtrl(e, "r") || plainCtrl(e, "p")) return "up";
-  if (plainCtrl(e, "s") || plainCtrl(e, "n")) return "down";
-  if (plainCtrl(e, "g")) return "cancel";
-  return null;
-}
-
-/** The highlighted row after a move: ↑ goes toward the top row (the newest) and wraps to the last. */
-export function moveActive(active: number, count: number, action: "up" | "down"): number {
-  if (count <= 0) return 0;
-  return action === "up" ? (active - 1 + count) % count : (active + 1) % count;
+// Sent-text recall is also a local copy of the deleted conversation, including selected skill references.
+export function forgetSentHistory(draftKey: string) {
+  try { localStorage.removeItem(storageKey(draftKey)); } catch { /* Storage may be unavailable. */ }
 }

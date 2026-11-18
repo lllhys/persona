@@ -45,7 +45,7 @@ func (n *Node) subagentFile(id string) (*transcript.File, error) {
 	}
 	dir := n.subagentDir(parent)
 	if dir == "" {
-		return nil, fmt.Errorf("transcript for session %s not found", parent)
+		return nil, noTranscript{parent}
 	}
 	p := filepath.Join(dir, "agent-"+agent+".jsonl")
 	if _, err := os.Stat(p); err != nil {

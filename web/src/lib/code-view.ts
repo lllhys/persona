@@ -372,8 +372,8 @@ export function useDiffMode(): ["unified" | "split", (m: "unified" | "split") =>
   return [mode, setDiffMode];
 }
 
-/** Whether a view needs the room of a wide page: split, or with code or diffs in it. */
+/** Whether a view needs the room of a wide page: split or columns (UI version 8), or with code or diffs in it. */
 export function wideView(view?: { layout?: string; sections: { items: { type: string }[] }[] } | null): boolean {
   if (!view) return false;
-  return view.layout === "split" || view.sections.some((s) => s.items.some((it) => it.type === "diff" || it.type === "code"));
+  return view.layout === "split" || view.layout === "columns" || view.sections.some((s) => s.items.some((it) => it.type === "diff" || it.type === "code"));
 }

@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import PersonaWire
 
 /// "Ask Persona": sends the sentence into the assistant's main conversation (the Persona tab) and waits a little for the
 /// answer, so Siri can speak it. Runs in the background straight against the hub (Keychain.serverConfig).
@@ -10,6 +11,7 @@ struct AskPersonaIntent: AppIntent {
         categoryName: "Chat",
         searchKeywords: ["Persona", "Assistant", "ask [Ask Persona Intent 4628c0]", "assistant", "ask"]
     )
+    @available(iOS 26.0, *)
     nonisolated static var supportedModes: IntentModes { .background }
 
     @Parameter(title: "Question [Ask Persona Intent 33a861]", requestValueDialog: "What do you want to ask Persona?")
@@ -58,13 +60,12 @@ nonisolated enum AskPersonaFlow {
 
     static func ask(_ api: APIClient, text: String) async throws -> String? {
         let state = try await api.assistant()
-        guard let main = state.main, !main.isEmpty else {
+        guard let key = state.mainKey() else {
             // No main conversation yet: the first one becomes it. The prompt rides with the start request.
             // Marked: what Siri or a Shortcut sends (a locked phone's too) never counts as typed in the app (`via`).
             let s = try await api.startConversation(prompt: text, main: true, via: .intent)
             return try await waitForAnswer(api, key: SessionKey(machineID: s.machineID, sessionID: s.sessionID), after: 0)
         }
-        let key = SessionKey(machineID: state.machineID, sessionID: main)
         let last = (try? await api.items(key, beforeSeq: nil, turns: 1).toSeq) ?? 0
         try await api.send(key, text: text, clientMsgID: UUID().uuidString, via: .intent)
         return try await waitForAnswer(api, key: key, after: last ?? 0)

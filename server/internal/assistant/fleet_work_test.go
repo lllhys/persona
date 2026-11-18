@@ -151,6 +151,148 @@ func TestWorkOnTheListsIsTheReport(t *testing.T) {
 	}
 }
 
+// A done turn nobody has seen is Just finished on the lists while it ended less than the window ago (#9751); not one
+// already seen, nor one past the window, nor a turn the triage did not call done, nor any with the triage off. Seeing
+// it takes it out, and so does a new turn.
+func TestJustFinished(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	s := ft.s
+	now := time.Now().UTC().Truncate(time.Second)
+	recent, old := now.Add(-time.Hour), now.Add(-4*time.Hour)
+	ended := func(id string, at time.Time) proto.Session {
+		c := stopped(id, "合好了")
+		c.UpdatedAt = at
+		return c
+	}
+	done := func(at time.Time) proto.WorkState {
+		return proto.WorkState{Phase: proto.WorkDone, Line: "已合并", TurnAt: at}
+	}
+	ft.d.setSessions("mac", []proto.Session{ended("fresh", recent), ended("old", old), ended("seen", recent), ended("asks", recent)})
+	s.markSeen(context.Background(), "mac", "seen")
+	s.fleetTakeSnapshot(Snapshot{Work: workReport(true, map[string]proto.WorkState{"fresh": done(recent), "old": done(old),
+		"seen": done(recent), "asks": {Phase: proto.WorkBlocked, On: proto.WaitUser, Line: "选哪个", TurnAt: recent}})})
+	for _, c := range []struct {
+		sid   string
+		state string
+		just  bool
+	}{
+		{"fresh", proto.StateIdle, true},
+		{"old", proto.StateIdle, false},
+		{"seen", proto.StateIdle, false},
+		{"asks", proto.StateUnread, false},
+	} {
+		sess := listed(t, s, "mac", c.sid)
+		if sess.State != c.state || sess.Work == nil || sess.Work.JustFinished != c.just {
+			t.Errorf("%s: %s %+v, want %s just finished %v", c.sid, sess.State, sess.Work, c.state, c.just)
+		}
+	}
+	s.fleet.rep.mu.RLock()
+	report := s.fleet.rep.work[[2]string{"mac", "fresh"}]
+	s.fleet.rep.mu.RUnlock()
+	if report.JustFinished {
+		t.Error("the flag reached the report the lists are made from")
+	}
+	var told bool
+	for _, sess := range ft.lastList("mac") {
+		told = told || sess.SessionID == "fresh" && sess.Work != nil && sess.Work.JustFinished
+	}
+	if !told {
+		t.Error("the hub was not told the Just finished row")
+	}
+
+	s.markSeen(context.Background(), "mac", "fresh")
+	if sess := listed(t, s, "mac", "fresh"); sess.Work == nil || sess.Work.JustFinished {
+		t.Fatalf("seen: %+v", sess.Work)
+	}
+
+	ft.d.setSessions("mac", []proto.Session{ended("next", recent)})
+	s.fleetTakeSnapshot(Snapshot{Work: workReport(true, map[string]proto.WorkState{"next": done(recent)})})
+	if sess := listed(t, s, "mac", "next"); sess.Work == nil || !sess.Work.JustFinished {
+		t.Fatalf("before the next turn: %+v", sess.Work)
+	}
+	working := ended("next", now)
+	working.Status = proto.StatusWorking
+	ft.d.setSessions("mac", []proto.Session{working})
+	if sess := listed(t, s, "mac", "next"); sess.Work == nil || sess.Work.JustFinished {
+		t.Fatalf("a new turn: %+v", sess.Work)
+	}
+
+	ft.d.setSessions("mac", []proto.Session{ended("next", recent)})
+	s.fleetTakeSnapshot(Snapshot{Work: &WorkReport{On: false}})
+	if sess := listed(t, s, "mac", "next"); sess.Work != nil || sess.State != proto.StateUnread {
+		t.Fatalf("the triage off: %s %+v", sess.State, sess.Work)
+	}
+}
+
+// Nothing else tells a list again when only time passes: once the first Just finished row's window ends, the manager
+// tells the hub the machine's list without it, and notes the next one (#9751).
+func TestJustFinishedRunsOut(t *testing.T) {
+	ft := newFleetTestNoStore(t)
+	s := ft.s
+	now := time.Now().UTC().Truncate(time.Second)
+	first, second := now.Add(-2*time.Hour), now.Add(-30*time.Minute)
+	ended := func(id string, at time.Time) proto.Session {
+		c := stopped(id, "合好了")
+		c.UpdatedAt = at
+		return c
+	}
+	ft.d.setSessions("mac", []proto.Session{ended("a", first), ended("b", second)})
+	s.fleetTakeSnapshot(Snapshot{Work: workReport(true, map[string]proto.WorkState{
+		"a": {Phase: proto.WorkDone, TurnAt: first}, "b": {Phase: proto.WorkDone, TurnAt: second}})})
+	justFinished := func() map[string]bool {
+		out := map[string]bool{}
+		for _, sess := range ft.lastList("mac") {
+			out[sess.SessionID] = sess.Work != nil && sess.Work.JustFinished
+		}
+		return out
+	}
+	if got := justFinished(); !got["a"] || !got["b"] {
+		t.Fatalf("told before: %v", got)
+	}
+	s.fleet.shownMu.Lock()
+	due := s.fleet.finishedDue["mac"]
+	s.fleet.shownMu.Unlock()
+	if !due.Equal(first.Add(3 * time.Hour)) {
+		t.Fatalf("due %v, want the first row's end and three hours", due)
+	}
+
+	before := len(ft.toldOf(assistantwire.EventFleetSessions))
+	s.republishFinished(due.Add(-time.Second))
+	if len(ft.toldOf(assistantwire.EventFleetSessions)) != before {
+		t.Fatal("told again before the window ended")
+	}
+	// The window ends for "a" (an hour-long window stands in for three hours passing).
+	ft.f.mu.Lock()
+	ft.f.hello.Agents.Triage.JustFinishedHours = 1
+	ft.f.mu.Unlock()
+	s.republishFinished(due)
+	if got := justFinished(); got["a"] || !got["b"] {
+		t.Fatalf("told after a's window: %v", got)
+	}
+	s.fleet.shownMu.Lock()
+	next := s.fleet.finishedDue["mac"]
+	s.fleet.shownMu.Unlock()
+	if !next.Equal(second.Add(time.Hour)) {
+		t.Fatalf("next due %v, want b's end and the window", next)
+	}
+}
+
+func TestFinishedDue(t *testing.T) {
+	at := func(id string, end time.Time, just bool) proto.Session {
+		return proto.Session{SessionID: id, UpdatedAt: end.Add(time.Second), Work: &proto.WorkState{Phase: proto.WorkDone, TurnAt: end, JustFinished: just}}
+	}
+	early, late := turnEnd, turnEnd.Add(time.Hour)
+	if due := finishedDue([]proto.Session{at("a", late, true), at("b", early, false), {SessionID: "c"}}, time.Hour); !due.Equal(late.Add(time.Hour)) {
+		t.Fatalf("due %v: the Just finished row's end and the window", due)
+	}
+	if due := finishedDue([]proto.Session{at("a", late, true), at("b", early, true)}, time.Hour); !due.Equal(early.Add(time.Hour)) {
+		t.Fatalf("due %v: the first to run out", due)
+	}
+	if due := finishedDue([]proto.Session{at("b", early, false)}, time.Hour); !due.IsZero() {
+		t.Fatalf("due %v with none", due)
+	}
+}
+
 // The assistant's own cards (its snapshot's interactions) are shown like any card; one that left the snapshot is
 // withdrawn and nothing is said to its Action.
 func TestWithdrawnCardSaysNothing(t *testing.T) {

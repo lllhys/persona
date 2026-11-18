@@ -70,6 +70,31 @@ struct PendingDeleteTests {
         #expect(try await relaunched().map(\.id) == [first.id, second.id])
     }
 
+    /// Don't Send acts on the message as it is when the tap lands, not as the menu saw it (#8171): one the outbox started
+    /// sending since stays, sending, with no Undo, so it neither goes out with its bubble gone nor comes back stuck sending.
+    @Test func dontSendOnAMessageThatStartedSendingMeanwhileLeavesIt() async throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let seen = message(.waiting), kept = message(.waiting, "And on Monday?")
+        let model = AppModel(stateFolder: folder)
+        model.chat(key).pending = [seen, kept]
+        for state in [PendingMessage.State.sending, .sent] {
+            model.chat(key).pending[0].state = state // flushOutbox took it after the menu opened
+            model.toast = nil
+            model.discard(key, seen)
+            #expect(model.chat(key).pending.map(\.id) == [seen.id, kept.id], "\(state)")
+            #expect(model.chat(key).pending.first?.state == state)
+            #expect(model.toast?.message == String(localized: "It's already being sent, so it can't be stopped."))
+            #expect(model.toast?.action == nil) // nothing was deleted, so nothing to undo
+        }
+        // the one still waiting goes as before, and so would the first had it failed meanwhile
+        model.discard(key, kept)
+        try #require(model.chat(key).pending.map(\.id) == [seen.id])
+        model.chat(key).pending[0].state = .failed
+        model.discard(key, seen)
+        #expect(model.chat(key).pending.isEmpty)
+        #expect(try await relaunched().isEmpty)
+    }
+
     /// Deleted, then its transcript copy came in after all (a send whose outcome was unknown): Undo adds no second one.
     @Test func undoAfterItsCopyArrivedAddsNothing() throws {
         defer { try? FileManager.default.removeItem(at: folder) }

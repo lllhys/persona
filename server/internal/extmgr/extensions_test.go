@@ -23,6 +23,7 @@ import (
 	"github.com/nwverse/persona/server/internal/extension/sandbox"
 	"github.com/nwverse/persona/server/internal/extension/sourcevalidate"
 	"github.com/nwverse/persona/server/internal/voice"
+	"github.com/nwverse/persona/server/internal/volc"
 )
 
 // TestMain doubles as a plugin: re-run with PERSONA_TEST_PLUGIN=1 the test binary serves on PERSONA_PLUGIN_SOCKET.
@@ -36,6 +37,17 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) > 1 && os.Args[1] == sandbox.RunCommand { // a sandbox's first process (extension_sandbox_test.go)
 		os.Exit(sandbox.Run(os.Args[2:], os.Stderr))
+	}
+	// A transcription contribution's program, also run as the built-in voice extension (transcription_test.go).
+	if os.Getenv("PERSONA_TEST_PLUGIN") == "transcription" {
+		serveTranscriptionExtensionForTest()
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "volc" { // the built-in Volcengine speech extension run by the hub (volc_extension_test.go)
+		if err := volc.Run(context.Background(), "test"); err != nil { // newTestManager's version
+			log.Fatal(err)
+		}
+		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "voice" { // the built-in voice extension run by the hub (voice_extension_test.go)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -79,6 +91,10 @@ func TestMain(m *testing.M) {
 	}
 	if os.Getenv("PERSONA_TEST_PLUGIN") == "secrets" {
 		serveSecretProviderExtensionForTest()
+		return
+	}
+	if os.Getenv("PERSONA_TEST_PLUGIN") == "repos" {
+		serveRepositoryProviderExtensionForTest()
 		return
 	}
 	if os.Getenv("PERSONA_TEST_PLUGIN") == "secretuser" {

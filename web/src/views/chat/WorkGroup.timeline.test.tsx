@@ -129,11 +129,44 @@ describe.each(["agents", "assistant"] as const)("%s: the timeline", (style) => {
     expect(host.querySelector("[data-latest-text]")?.textContent).toContain("Checking once more.");
     tap(head(outer()));
     await loaded();
-    const [done, going] = inner();
-    expect(title(done)).toBe("已工作 5s");
+    const [first, second, going] = inner();
+    expect([title(first), title(second)]).toEqual(["已工作 5s", "已工作 7s"]);
     expect(going.dataset.workGroup).toBe("live");
     expect(title(going)).toMatch(/^正在工作…\d/);
     expect(rows().join(" ")).toContain("echo 13");
+  });
+
+  it("shows current narration once, then restores it between its tools when newer words arrive (#10246)", async () => {
+    const prefix = [tool(1), words(3, "Current narration B."), tool(4)];
+    draw(seg(prefix), true, style);
+    expect(head(outer()).getAttribute("aria-expanded")).toBe("false");
+    tap(head(outer()));
+    await loaded();
+    const occurrences = (text: string) => (host.textContent ?? "").split(text).length - 1;
+    expect(occurrences("Current narration B.")).toBe(1);
+    expect(outer().textContent).not.toContain("Current narration B.");
+    expect(rows().join(" ")).toContain("echo 4");
+    // A newly streamed segment replaces B in the slot: B is now inspectable in chronology.
+    const ctx: ChatContextValue = { tasks: emptyTaskIndex(), subagents: [], scope: "x:", lineStyle: style };
+    act(() => root.render(<ChatContext.Provider value={ctx}><SegmentView key={segmentIdentity(seg(prefix))} seg={seg(prefix)} live mid="m" sid="s" streaming="New narration D." expandFold={async () => {}} /></ChatContext.Provider>));
+    expect(occurrences("Current narration B.")).toBe(1);
+    expect(occurrences("New narration D.")).toBe(1);
+    const detail = outer().querySelector("[data-work-detail]")!.textContent!;
+    expect(detail.indexOf("echo 1")).toBeLessThan(detail.indexOf("Current narration B."));
+    expect(detail.indexOf("Current narration B.")).toBeLessThan(detail.indexOf("echo 4"));
+    draw(seg([...prefix, words(6, "New narration D.")]), true, style);
+    expect(occurrences("New narration D.")).toBe(1);
+    draw(seg([...prefix, words(6, "New narration D."), words(7, "Final answer.")]), false, style);
+    expect(head(outer()).getAttribute("aria-expanded")).toBe("false");
+    tap(head(outer()));
+    expect(occurrences("Final answer.")).toBe(1);
+    expect(occurrences("Current narration B.")).toBe(1);
+    expect(occurrences("New narration D.")).toBe(1);
+    act(() => root.unmount());
+    root = createRoot(host);
+    draw(seg([...prefix, words(6, "New narration D."), words(7, "Final answer.")]), false, style);
+    expect(occurrences("Final answer.")).toBe(1);
+    expect(occurrences("Current narration B.")).toBe(1);
   });
 
   it("the live Thinking line is drawn once, in the innermost live group", () => {
@@ -142,7 +175,7 @@ describe.each(["agents", "assistant"] as const)("%s: the timeline", (style) => {
     tap(head(outer()));
     const lines = host.querySelectorAll('[data-thinking="live"]');
     expect(lines).toHaveLength(1);
-    expect(inner()[1].contains(lines[0])).toBe(true);
+    expect(inner().at(-1)?.contains(lines[0])).toBe(true);
     expect(lines[0].textContent).toContain("正在思考");
     // without a timeline the outer group is the live one
     draw(seg([tool(1), tool(2, false)]), true, style);

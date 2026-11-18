@@ -27,3 +27,12 @@ func ImageFile(path string, maxAge int) (*wire.UIImage, error) {
 	}
 	return Image("", data, maxAge), nil
 }
+
+// ToolImage is one picture of a connector's tools.call answer (wire.ConnectorCallResult.Images, #8484), for the model
+// after the text, on a hub whose initialize lists wire.HubCapabilityToolImages (Init.Info().Hub.Capabilities); an
+// older hub ignores it, so the text must stand on its own. data is a whole JPEG, PNG or WebP of at most 1 MiB and
+// 2000 pixels a side; caption is one short line said before it (a time in a video). The hub leaves out a picture over
+// a limit, and one over the answer's 16 pictures, 4 MiB or 8 million pixels in all, and says so after the text.
+func ToolImage(data []byte, caption string) wire.ConnectorToolImage {
+	return wire.ConnectorToolImage{Mime: http.DetectContentType(data), Data: base64.StdEncoding.EncodeToString(data), Caption: caption}
+}

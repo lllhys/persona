@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/kb"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -100,8 +101,9 @@ func TestTaskOutcomeRecorded(t *testing.T) {
 		t.Fatalf("log again = %v", log)
 	}
 
-	// Handed to an agent for the same todo, the outcome rows are not passed off as the user's own calls.
-	if res, _ := s.TodoHandoff(context.Background(), TodoHandoff{TodoID: todo.ID, Text: "再看看"}); !strings.Contains(res.Text, "Agent 做完时记的，不是用户定的") {
+	// This fixture records an outcome without closing the todo. On handoff, it is an earlier phase's record,
+	// not a current completion or a decision the user made.
+	if res, _ := s.TodoHandoff(context.Background(), TodoHandoff{TodoID: todo.ID, Text: "再看看"}); !strings.Contains(res.Text, "前一阶段的记录，不代表待办当前已完成，也不是用户定的") {
 		t.Fatalf("decisions handed on = %q", res.Text)
 	}
 
@@ -186,7 +188,11 @@ func TestReviewAcceptedRecordsOutcome(t *testing.T) {
 				f.outcome = `{"outcome":"修好了","links":[],"decisions":[],"pitfalls":[]}`
 				ctx := context.Background()
 				s.superviseTodo(ctx, todo.ID, "conv1", []string{"PR 合并"}, 0)
-				raw, _ := json.Marshal(map[string]any{"todo_id": todo.ID, "verdict": c.verdict, "note": "看过了"})
+				args := map[string]any{"todo_id": todo.ID, "verdict": c.verdict, "note": "看过了"}
+				if c.verdict == reviewAccepted {
+					args["checks"] = completeReviewChecks(todoNow(s, todo.ID))
+				}
+				raw, _ := json.Marshal(args)
 				if _, err := s.runTool(ctx, "server", "conv1", "task_review", raw); err != nil {
 					t.Fatalf("%s: %v", c.verdict, err)
 				}
@@ -238,11 +244,40 @@ func TestAgentStartCarriesProjectContext(t *testing.T) {
 	}
 	p, _ := f.starts[0]["prompt"].(string)
 	if !strings.HasPrefix(p, `<persona-context kind="context" title="项目 · 天气 App · 背景"`) || !strings.Contains(p, "结论：修好了") ||
-		!strings.HasSuffix(p, "\n\n加深色模式") {
+		!strings.Contains(p, "\n\n加深色模式\n\nPersona task handoffs:") {
 		t.Fatalf("prompt = %q", p)
 	}
 	if len(f.tabAsked) == 0 || strings.Contains(f.tabAsked[len(f.tabAsked)-1], "persona-context") {
 		t.Fatalf("tab named from %q", f.tabAsked)
+	}
+}
+
+// What an extension wrote for the project goes into the background a new agent gets, asked for the project's slug;
+// a project with nothing else to say still gets it; without an extension manager that knows the call, it is as before.
+func TestAgentStartCarriesExtensionProjectContext(t *testing.T) {
+	s, f, _ := outcomeEnv(t, nil, outcomeReply)
+	var asked []string
+	f.answerApp(AppPlugins, PluginsProjectContext, func(params json.RawMessage) (any, error) {
+		var a assistantwire.ProjectContextParams
+		_ = json.Unmarshal(params, &a)
+		asked = append(asked, a.Projects...)
+		return assistantwire.ExtensionContextResult{Blocks: []assistantwire.ExtensionContextBlock{
+			{Extension: "notes", Name: "Notes", Project: "天气-app", Text: "Builds run on the second machine.\nAsk before changing the release script."},
+			{Extension: "notes", Name: "Notes", Project: "other", Text: "not this project"},
+		}}, nil
+	})
+	got := s.projectContext(context.Background(), "box", "/code/weather")
+	if len(asked) == 0 || asked[0] != "天气-app" {
+		t.Fatalf("asked for %q", asked)
+	}
+	want := "扩展「Notes」为这个项目整理的背景：\nBuilds run on the second machine.\nAsk before changing the release script.\n</persona-context>"
+	if !strings.HasSuffix(got, want) || strings.Contains(got, "not this project") {
+		t.Fatalf("background = %q", got)
+	}
+
+	s2, _, _ := outcomeEnv(t, nil, outcomeReply) // no answer: the call fails, nothing from extensions
+	if got := s2.projectContext(context.Background(), "box", "/code/weather"); strings.Contains(got, "扩展") {
+		t.Fatalf("without extensions: %q", got)
 	}
 }
 
@@ -270,5 +305,82 @@ func TestOutcomeLogLineKeepsLinks(t *testing.T) {
 	}
 	if got := outcomeLogLine(taskOutcome{Outcome: "修好了"}); got != "结论：修好了" {
 		t.Fatalf("no links = %q", got)
+	}
+}
+
+type phaseOutcomeStore struct {
+	*ctxAwareLinkStore
+	decisions []db.TodoDecisionRow
+}
+
+func (s *phaseOutcomeStore) ListTodoDecisions(context.Context, string, bool) ([]db.TodoDecisionRow, error) {
+	return append([]db.TodoDecisionRow(nil), s.decisions...), nil
+}
+
+func TestTodoOutcomeAfterReopening(t *testing.T) {
+	ctx := context.Background()
+	store := &phaseOutcomeStore{ctxAwareLinkStore: newCtxAwareLinkStore()}
+	s := newServiceOn(t, newFakeHub(), store)
+	first := time.Date(2026, 11, 14, 1, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+	todo := db.TodoRow{ID: "td_phases", Title: "Publish the report", Notes: "Keep the original brief", CreatedAt: first.Add(-time.Hour)}
+	store.rows = []db.TodoRow{todo}
+	store.decisions = []db.TodoDecisionRow{{
+		ID: "dec_first", TodoID: todo.ID, Question: "Outcome", Choice: "Ready to begin",
+		Source: db.DecisionOutcome, SourceMachine: "box", SourceSession: "read-only",
+		SourceMessage: outcomeKey(todo.ID, first) + "#o", CreatedAt: second.Add(time.Minute),
+	}}
+	if err := s.ensureTodosLoaded(ctx); err != nil {
+		t.Fatal(err)
+	}
+	setDone := func(at *time.Time) {
+		s.todos.mu.Lock()
+		s.todos.todos[todo.ID].DoneAt = at
+		s.todos.mu.Unlock()
+	}
+	read := func() (string, []any) {
+		t.Helper()
+		output, err := s.toolTodoGet(ctx, "", "", json.RawMessage(`{"id":"td_phases"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(output, todo.Title) || !strings.Contains(output, todo.Notes) {
+			t.Fatalf("to-do brief lost: %s", output)
+		}
+		status, body := serveJSON(t, s, "GET", "/api/v1/todos/td_phases/decisions", "en", "")
+		if status != 200 {
+			t.Fatalf("decisions: %d, %v", status, body)
+		}
+		return output, body["decisions"].([]any)
+	}
+	setDone(&first)
+	_, rows := read()
+	if d := rows[0].(map[string]any); d["question"] != "Outcome" {
+		t.Fatalf("first completion: %v", d)
+	}
+
+	setDone(nil)
+	out, rows := read()
+	if !strings.Contains(out, "Earlier phase outcome → Ready to begin") || !strings.Contains(out, "read-only") {
+		t.Fatalf("reopened tool result: %s", out)
+	}
+	if d := rows[0].(map[string]any); d["question"] != "Earlier phase outcome" ||
+		d["phase_completed_at"] != first.Format(time.RFC3339) || d["source_session"] != "read-only" || d["source_message"] != store.decisions[0].SourceMessage {
+		t.Fatalf("reopened decisions: %v", d)
+	}
+
+	setDone(&second)
+	store.decisions = append(store.decisions, db.TodoDecisionRow{
+		ID: "dec_second", TodoID: todo.ID, Question: "Outcome", Choice: "Report published",
+		Source: db.DecisionOutcome, SourceMachine: "box", SourceSession: "publish",
+		SourceMessage: outcomeKey(todo.ID, second) + "#o", CreatedAt: second,
+	})
+	out, rows = read()
+	if !strings.Contains(out, "Earlier phase outcome → Ready to begin") ||
+		!strings.Contains(out, "Outcome → Report published") || strings.Contains(out, "Earlier phase outcome → Report published") {
+		t.Fatalf("completed tool result: %s", out)
+	}
+	if rows[0].(map[string]any)["question"] != "Earlier phase outcome" || rows[1].(map[string]any)["question"] != "Outcome" {
+		t.Fatalf("completed decisions: %v", rows)
 	}
 }

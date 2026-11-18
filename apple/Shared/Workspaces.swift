@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// A real host workspace, independent of the agents running in it. Parent IDs are source-local, never paths.
 nonisolated struct HostWorkspace: Decodable, Hashable, Identifiable, Sendable {
@@ -18,6 +19,8 @@ nonisolated struct HostWorkspace: Decodable, Hashable, Identifiable, Sendable {
     var unread: Bool? = nil
     var sidebarStatus: String? = nil
     var workspaceKind: String? = nil
+    /// The owning engine's pin, kept separately from Persona's session and project preferences.
+    var pinnedAt: Date? = nil
     var group: String = ""
     var online = true
     var available = true
@@ -31,6 +34,7 @@ nonisolated struct HostWorkspace: Decodable, Hashable, Identifiable, Sendable {
         case parentSourceID = "parent_source_id", index, online, available
         case projectID = "project_id", projectName = "project_name", projectPath = "project_path", isMain = "is_main"
         case unread, sidebarStatus = "sidebar_status", workspaceKind = "workspace_kind"
+        case pinnedAt = "pinned_at"
     }
 
     /// Explicit Orca placement wins. Older providers may only know a directory; use that only when it is unambiguous.
@@ -82,6 +86,7 @@ extension HostWorkspace {
         unread = try c.decodeIfPresent(Bool.self, forKey: .unread)
         sidebarStatus = try c.decodeIfPresent(String.self, forKey: .sidebarStatus)
         workspaceKind = try c.decodeIfPresent(String.self, forKey: .workspaceKind)
+        pinnedAt = (try? c.decodeIfPresent(String.self, forKey: .pinnedAt)).flatMap(JSON.parseDate)
         online = try c.decodeIfPresent(Bool.self, forKey: .online) ?? true
         available = try c.decodeIfPresent(Bool.self, forKey: .available) ?? true
     }

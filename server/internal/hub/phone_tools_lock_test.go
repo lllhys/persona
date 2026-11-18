@@ -51,6 +51,7 @@ func TestPhoneToolsWriteStallsNothingElse(t *testing.T) {
 	go func() {
 		defer close(done)
 		h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "d1", Tools: []proto.Tool{{Name: "phone_device_info"}}})
+		h.waitHelloWrites()
 	}()
 	<-st.started
 	if !lockWithin(t, h, time.Second) {
@@ -78,6 +79,7 @@ func TestPhoneToolsRevokedDuringTheWrite(t *testing.T) {
 	go func() {
 		defer close(done)
 		h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "d1", CredentialID: "dev_1", Tools: []proto.Tool{{Name: "phone_device_info"}}})
+		h.waitHelloWrites()
 	}()
 	<-st.started
 	revoked := make(chan struct{})

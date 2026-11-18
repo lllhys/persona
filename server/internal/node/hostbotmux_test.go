@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -33,8 +34,10 @@ const (
 type fakeBotmux struct {
 	mu       sync.Mutex
 	rows     []map[string]any
-	offline  bool  // no daemon answers
-	fail     error // observe fails
+	offline  bool             // no daemon answers
+	fail     error            // observe fails
+	more     []map[string]any // daemons listed after bmxApp's
+	exit     error            // returned with the snapshot: botmux exits 1 when a daemon's probe failed
 	observes int
 	block    chan struct{} // observe waits on it (nil: answers at once)
 	token    string        // the dashboard's current token
@@ -95,9 +98,15 @@ func (f *fakeBotmux) run(_ context.Context, args ...string) ([]byte, error) {
 		if f.offline {
 			status = "daemon_offline"
 		}
-		return json.Marshal(map[string]any{"schemaVersion": 1, "daemons": []any{
-			map[string]any{"larkAppId": bmxApp, "probe": map[string]any{"status": status}, "sessions": f.rows},
-		}})
+		daemons := []any{map[string]any{"larkAppId": bmxApp, "probe": map[string]any{"status": status}, "sessions": f.rows}}
+		for _, d := range f.more {
+			daemons = append(daemons, d)
+		}
+		out, err := json.Marshal(map[string]any{"schemaVersion": 1, "observedAt": time.Now().UnixMilli(), "daemons": daemons})
+		if err != nil {
+			return nil, err
+		}
+		return out, f.exit
 	case "dashboard current":
 		port := f.srv.URL[strings.LastIndex(f.srv.URL, ":")+1:]
 		if f.hides {
@@ -477,6 +486,101 @@ func TestBotmuxFailedObserveKeepsSessions(t *testing.T) {
 	_, err := h.Agents(context.Background())
 	if err == nil || errors.Is(err, host.ErrNotRunning) {
 		t.Fatalf("a failed observe = %v, want an error that is not ErrNotRunning", err)
+	}
+}
+
+// botmux exits 1 when one daemon's probe failed and still prints every daemon's answer (#8949): the sessions of the
+// daemons that answered are listed and take messages; the failed daemon's stay as last listed, and a message to one is
+// refused with its probe error, nothing posted. Only when no daemon answered is the observe a failure.
+func TestBotmuxPartialObserveListsTheDaemonsThatAnswered(t *testing.T) {
+	n, f, _, home := bmxNode(t)
+	h := n.hosts.Get(host.Botmux).(*botmuxHost)
+	var logs []string
+	h.logf = func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+	const other = "cli_other_app"
+	rowB := bmxRow(sidB, "claude-code", "alive", "idle", false, "b")
+	rowB["identity"] = map[string]any{"sessionId": sidB, "larkAppId": other}
+	f.rows = []map[string]any{bmxRow(sidA, "claude-code", "alive", "idle", false, "a")}
+	answered := map[string]any{"larkAppId": other, "probe": map[string]any{"status": "ok", "source": "daemon-ipc"}, "sessions": []any{rowB}}
+	f.more = []map[string]any{answered}
+	for _, id := range []string{sidA, sidB} {
+		writeTranscript(t, home, bmxCwd, id, time.Now().Add(-time.Minute), `{"type":"user","message":{"role":"user","content":"hi"}}`)
+	}
+	listSessions(t, n)
+
+	// The other bot does not answer in time.
+	f.mu.Lock()
+	f.more = []map[string]any{{"larkAppId": other, "sessions": []any{},
+		"probe": map[string]any{"status": "unreachable", "source": "daemon-ipc", "larkAppId": other, "error": "timeout after 5000ms"}}}
+	f.exit = errors.New("exit status 1")
+	f.mu.Unlock()
+	h.at = time.Time{}
+	agents, err := h.Agents(context.Background())
+	if err != nil {
+		t.Fatalf("a partial observe failed: %v", err)
+	}
+	listed := map[string]bool{}
+	for _, a := range agents {
+		listed[host.ParsePane(a.PaneID).ID] = true
+	}
+	if !listed[sidA] || !listed[sidB] {
+		t.Fatalf("listed %v, want both: the answering bot's and the other's as last listed", listed)
+	}
+	if err := n.send(context.Background(), sidA, "继续", nil, sendOpts{}); err != nil {
+		t.Fatalf("a send to the answering bot's session: %v", err)
+	}
+	err = n.send(context.Background(), sidB, "接着做", nil, sendOpts{})
+	if refusalCode(err) != notDelivered || !strings.Contains(err.Error(), "unreachable: timeout after 5000ms") {
+		t.Fatalf("a send to the failed bot's session = %v", err)
+	}
+	if got := f.sent(); len(got) != 1 || got[0]["target"].(map[string]any)["sessionId"] != sidA {
+		t.Fatalf("triggers %v, want only the answering bot's", got)
+	}
+	h.at = time.Time{}
+	if _, err := h.Agents(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := "botmux: listing the daemons that answered; not answering: " + other + " unreachable: timeout after 5000ms"; len(logs) != 1 || logs[0] != want {
+		t.Fatalf("logs %q, want once: %q", logs, want)
+	}
+
+	// It answers again.
+	f.mu.Lock()
+	f.more, f.exit = []map[string]any{answered}, nil
+	f.mu.Unlock()
+	h.at = time.Time{}
+	if err := n.send(context.Background(), sidB, "接着做", nil, sendOpts{}); err != nil {
+		t.Fatalf("a send once the bot answers: %v", err)
+	}
+	if len(logs) != 2 || logs[1] != "botmux: every daemon answers again" {
+		t.Fatalf("logs %q", logs)
+	}
+
+	// No daemon answers: the observe failed (the node keeps its list), saying why.
+	f.mu.Lock()
+	f.offline, f.more, f.exit = true, []map[string]any{{"larkAppId": other, "probe": map[string]any{"status": "unauthorized"}, "sessions": []any{}}}, errors.New("exit status 1")
+	f.mu.Unlock()
+	h.at = time.Time{}
+	if _, err := h.Agents(context.Background()); err == nil || errors.Is(err, host.ErrNotRunning) || !strings.Contains(err.Error(), other+" unauthorized") {
+		t.Fatalf("no daemon answered = %v", err)
+	}
+
+	// A daemon that did not answer and cannot be named: its sessions cannot be told apart, so the observe failed.
+	f.mu.Lock()
+	f.offline, f.more = false, []map[string]any{{"probe": map[string]any{"status": "unreachable"}, "sessions": []any{}}}
+	f.mu.Unlock()
+	h.at = time.Time{}
+	if _, err := h.Agents(context.Background()); err == nil || errors.Is(err, host.ErrNotRunning) {
+		t.Fatalf("an unnamed daemon failed = %v", err)
+	}
+
+	// No snapshot: the CLI's stderr says why.
+	f.mu.Lock()
+	f.fail = &exec.ExitError{Stderr: []byte("botmux: cannot read the daemon registry\n")}
+	f.mu.Unlock()
+	h.at = time.Time{}
+	if _, err := h.Agents(context.Background()); err == nil || !strings.Contains(err.Error(), "cannot read the daemon registry") {
+		t.Fatalf("no snapshot = %v", err)
 	}
 }
 

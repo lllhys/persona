@@ -3,10 +3,12 @@ import SwiftUI
 
 // The composer's dictation and stop buttons, the shell's (docs/apple/ios.md「New shell」): every composer draws these two, so an
 // agent's chat and the assistant's look and behave alike (#1079). Each is a size up like the shell's chrome
-// (`shellScaled`), wherever it sits. A field outside the composer dictates with the same tap (`FieldMicButton`).
+// (`shellScaled`), wherever it sits. A field outside the composer dictates with the same tap (`FieldMicButton`). Every mic
+// takes a touch the same way (`MicPress`, #9619): a tap turns dictation on or off, a hold dictates while held.
 
-/// Speech to text into the draft: what is heard goes after what was typed; a second tap ends it. The composer owns the
-/// `Dictation` (sending, stopping and leaving the page end it too).
+/// Speech to text into the draft: what is heard goes after what was typed; a second tap ends it, and held it dictates
+/// until the finger lifts (`WritingMicPress`). The composer owns the `Dictation` (sending, stopping and leaving the page
+/// end it too).
 struct ComposerMicButton: View {
     let dictation: Dictation
     @Binding var text: String
@@ -15,17 +17,15 @@ struct ComposerMicButton: View {
     var hints: () -> [String] = { [] }
 
     var body: some View {
-        Button { dictation.toggle(into: $text, hints: hints) } label: { ComposerMicFace(listening: dictation.isListening) }
-            .buttonStyle(.plain)
-            .accessibilityLabel(dictation.isListening ? String(localized: "Stop Dictation") : String(localized: "Dictate"))
-            .accessibilityIdentifier(id)
+        ComposerMicFace(listening: dictation.isListening)
+            .modifier(WritingMicPress(dictation: dictation, text: $text, id: id, hints: hints))
             .shellScaled()
     }
 }
 
-/// The mic of a text field outside the composer (a to-do's notes, #2188): the composer's tap, drawn like the text buttons
-/// beside it (the caller gives the font and color). `willStart` runs just before listening starts, for a field that has
-/// to open first. The view owns the `Dictation`: saving, cancelling and leaving end it.
+/// The mic of a text field outside the composer (a to-do's notes, #2188): the composer's tap and hold, drawn like the
+/// text buttons beside it (the caller gives the font and color). `willStart` runs just before listening starts, for a
+/// field that has to open first. The view owns the `Dictation`: saving, cancelling and leaving end it.
 struct FieldMicButton: View {
     let dictation: Dictation
     @Binding var text: String
@@ -33,33 +33,57 @@ struct FieldMicButton: View {
     var willStart: () -> Void = {}
 
     var body: some View {
-        Button {
-            if !dictation.isListening { willStart() }
-            dictation.toggle(into: $text)
-        } label: {
-            ThemedIcon(dictation.isListening ? Theme.Icon.dictating : Theme.Icon.dictate)
-                .symbolEffect(.pulse, isActive: dictation.isListening)
-                .padding(.horizontal, Theme.Space.xs)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel(dictation.isListening ? String(localized: "Stop Dictation") : String(localized: "Dictate"))
-        .accessibilityIdentifier(id)
+        ThemedIcon(dictation.isListening ? Theme.Icon.dictating : Theme.Icon.dictate)
+            .symbolEffect(.pulse, isActive: dictation.isListening)
+            .padding(.horizontal, Theme.Space.xs)
+            .contentShape(.rect)
+            .modifier(WritingMicPress(dictation: dictation, text: $text, id: id, willStart: willStart))
+    }
+}
+
+/// The tap and the hold of a mic that writes into its text as it hears (`ComposerMicButton`, `FieldMicButton`, #9619):
+/// a tap turns dictation on or off (`Dictation.toggle`); a hold dictates until the finger lifts, and a slide left puts
+/// back what the text held when it began.
+private struct WritingMicPress: ViewModifier {
+    let dictation: Dictation
+    @Binding var text: String
+    var id: String
+    var hints: () -> [String] = { [] }
+    var willStart: () -> Void = {}
+    /// The text as the hold began.
+    @State private var before: String?
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(MicPress(holds: !dictation.isListening, tap: tapped, began: {
+                willStart()
+                before = text
+                Haptics.tap()
+                dictation.toggle(into: $text, hints: hints)
+            }, ended: { outcome in
+                dictation.stop()
+                if outcome == .cancel, let before { text = before }
+                before = nil
+            }))
+            .micAccessibility(listening: dictation.isListening, id: id, tap: tapped)
+    }
+
+    private func tapped() {
+        if !dictation.isListening { willStart() }
+        dictation.toggle(into: $text, hints: hints)
     }
 }
 
 extension Dictation {
     /// A mic's tap: a second one ends it; otherwise what is heard goes after what `text` holds, and why it could not
     /// start shows as a toast. The draft and `hints` tell it the language spoken (`DictationLanguage`).
-    func toggle(into text: Binding<String>, hints: () -> [String] = { [] }) {
+    func toggle(into text: Binding<String>, hints: () -> [String] = { [] }, onFailure: (() -> Void)? = nil) {
         if isListening { stop(); return }
         let typed = text.wrappedValue
         let base = typed.isEmpty || typed.last?.isWhitespace == true ? typed : typed + " "
-        let told = [typed] + hints()
-        Task {
-            if let problem = await start(hints: told, update: { heard in text.wrappedValue = base + heard }) {
-                AppModel.shared.toast = Toast(problem, style: .error)
-            }
+        start(hints: [typed] + hints(), update: { heard in text.wrappedValue = base + heard }) { problem in
+            AppModel.shared.toast = Toast(problem, style: .error)
+            onFailure?()
         }
     }
 }
@@ -87,16 +111,35 @@ struct ComposerRoundButton: View {
     var id: String
     /// Shrinks while pressed (Telegram's send); the others keep the plain button's press.
     var pressScales = false
+    /// The quieter grey circle with the ink's symbol (the dictation bar's cancel and stop), under the ink one.
+    var muted = false
+    /// Working on it: a spinner in the symbol's place.
+    var busy = false
     var action: () -> Void
     @Environment(\.buiTheme) private var theme
 
+    private var symbolInk: Color {
+        if muted { return AppStyle.current.usesBeautifulUI ? theme.colors.ink : Theme.Shell.ink }
+        return AppStyle.current.usesBeautifulUI ? theme.colors.canvas : Theme.Shell.inkText
+    }
+
+    private var fill: Color {
+        if muted { return AppStyle.current.usesBeautifulUI ? theme.colors.inset : Theme.Shell.roundMuted }
+        return AppStyle.current.usesBeautifulUI ? theme.colors.ink : Theme.Shell.ink
+    }
+
     var body: some View {
         Button(action: action) {
-            ThemedIcon(symbol)
-                .font(Theme.Font.bodyHeavy)
-                .foregroundStyle(AppStyle.current.usesBeautifulUI ? theme.colors.canvas : Theme.Shell.inkText)
+            ZStack {
+                if busy {
+                    ProgressView().tint(symbolInk)
+                } else {
+                    ThemedIcon(symbol).font(Theme.Font.bodyHeavy)
+                }
+            }
+                .foregroundStyle(symbolInk)
                 .scaledFrame(width: Theme.Size.wellL, height: Theme.Size.wellL)
-                .background(AppStyle.current.usesBeautifulUI ? theme.colors.ink : Theme.Shell.ink, in: .circle)
+                .background(fill, in: .circle)
                 .scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
                 .contentShape(.circle)
         }
@@ -116,16 +159,18 @@ extension ComposerRoundButton {
 }
 
 /// Voice Chat from the composer (docs/assistant/voice.md 6.1, `Theme.Icon.voiceChannel`): in send's place a round ink button like
-/// send; beside stop (the agent works) a plain icon like dictation's.
+/// send; beside stop (the agent works) a plain icon like dictation's. `label`: what a tap does, for VoiceOver (#9887: the
+/// conversation's phone icon calls it on the iPhone or shows its call, `VoiceEntry.iconLabel`); Voice Chat by default.
 struct ComposerVoiceButton: View {
     var round: Bool
     var id = "composer-voice"
+    var label = String(localized: "Voice Chat")
     var action: () -> Void
     @Environment(\.buiTheme) private var theme
 
     var body: some View {
         if round {
-            ComposerRoundButton(symbol: Theme.Icon.voiceChannel, label: String(localized: "Voice Chat"), id: id, action: action)
+            ComposerRoundButton(symbol: Theme.Icon.voiceChannel, label: label, id: id, action: action)
         } else {
             Button(action: action) {
                 ThemedIcon(Theme.Icon.voiceChannel)
@@ -136,7 +181,7 @@ struct ComposerVoiceButton: View {
                     .contentShape(.circle)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Voice Chat")
+            .accessibilityLabel(label)
             .accessibilityIdentifier(id)
             .shellScaled()
             .transition(.scale.combined(with: .opacity))

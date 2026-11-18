@@ -16,11 +16,11 @@ function Description({ text }: { text: string }) {
     ref.current?.scrollIntoView({ block: "nearest" });
   };
   return <div>
-    {long && !expanded && <div className="line-clamp-3"><Markdown text={text} small /></div>}
+    {long && !expanded && <div className="line-clamp-3"><Markdown text={text} small askImages /></div>}
     {long && <button type="button" ref={ref} className="touch-hit mt-1 inline-flex min-h-8 items-center whitespace-nowrap rounded-control text-xs text-accent-ink focus-visible:outline-2 focus-visible:outline-accent" onClick={() => expanded ? collapse() : setExpanded(true)} aria-expanded={expanded}>
       {t(expanded ? "inbox-connectorthread.collapse_description" : "inbox-connectorthread.expand_description")}
     </button>}
-    {(!long || expanded) && <Markdown text={text} small />}
+    {(!long || expanded) && <Markdown text={text} small askImages />}
     {long && expanded && <Button tone="quiet" className="mt-2" onClick={collapse}>{t("inbox-connectorthread.collapse_description")}</Button>}
   </div>;
 }

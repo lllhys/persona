@@ -237,8 +237,8 @@ describe("Machines metrics across managers", () => {
       { id: "assistant", name: "Default assistant", online: true },
     ],
   };
-  const first: MachineMetrics = { machine_id: "mac", online: true, points: [], latest: { t: 1, cpu: 11, mem_used: 25, mem_total: 100, disk_used: 40, disk_total: 100 } };
-  const second: MachineMetrics = { machine_id: "nas", online: true, points: [], latest: { t: 1, cpu: 62, mem_used: 50, mem_total: 100, disk_used: 75, disk_total: 100 } };
+  const first: MachineMetrics = { machine_id: "mac", online: true, points: [], latest: { t: 1, cpu: 11, mem_used: 25, mem_total: 100, net_rx: 1024, net_tx: 0 } };
+  const second: MachineMetrics = { machine_id: "nas", online: true, points: [], latest: { t: 1, cpu: 62, mem_used: 50, mem_total: 100, net_rx: 2048, net_tx: 1024 } };
   const reads = () => vi.mocked(fetch).mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("/api/v1/metrics"));
   const showManager = async (id: string) => {
     act(() => chooseManager(id));
@@ -254,14 +254,14 @@ describe("Machines metrics across managers", () => {
     metricsReplies = { "/api/v1/metrics": [first], "/api/v1/metrics?manager=m-1": [second] };
   });
 
-  it("loads both managers' CPU, memory and disk, keeping the first machine ID", async () => {
+  it("loads both managers' CPU, memory and network, keeping the first machine ID", async () => {
     metricsReplies["/api/v1/metrics?manager=m-1"] = [second, { ...first, latest: { t: 1, cpu: 99 } }];
     act(() => root.render(<Machines onToggleSidebar={() => {}} />));
     await flush();
-    for (const value of ["11%", "25%", "40%"]) expect(host.textContent).toContain(value);
+    for (const value of ["11%", "25%", "↓ 1.00 KB/s"]) expect(host.textContent).toContain(value);
     expect(host.textContent).not.toContain("99%");
     await showManager("m-1");
-    for (const value of ["62%", "50%", "75%"]) expect(host.textContent).toContain(value);
+    for (const value of ["62%", "50%", "↓ 2.00 KB/s"]) expect(host.textContent).toContain(value);
     expect(reads()).toEqual(["/api/v1/metrics", "/api/v1/metrics?manager=m-1"]);
     expect(alert()).toBeNull();
   });
@@ -271,7 +271,7 @@ describe("Machines metrics across managers", () => {
     chooseManager(failed === "assistant" ? "m-1" : "assistant");
     act(() => root.render(<Machines onToggleSidebar={() => {}} />));
     await flush();
-    for (const value of failed === "assistant" ? ["62%", "50%", "75%"] : ["11%", "25%", "40%"]) expect(host.textContent).toContain(value);
+    for (const value of failed === "assistant" ? ["62%", "50%", "↓ 2.00 KB/s"] : ["11%", "25%", "↓ 1.00 KB/s"]) expect(host.textContent).toContain(value);
     expect(alert()).toBeNull();
   });
 
@@ -284,7 +284,7 @@ describe("Machines metrics across managers", () => {
     await flush();
     expect(host.textContent).toContain("23%");
     await showManager("m-1");
-    for (const value of ["62%", "50%", "75%"]) expect(host.textContent).toContain(value);
+    for (const value of ["62%", "50%", "↓ 2.00 KB/s"]) expect(host.textContent).toContain(value);
     expect(alert()).toBeNull();
 
     metricsReplies["/api/v1/metrics"] = 503;
@@ -377,5 +377,30 @@ describe("Machines in a hidden tab", () => {
     show("visible");
     await flush();
     expect(metricsReads()).toBe(1);
+  });
+});
+
+describe("Machines today's tokens", () => {
+  const usage = (machine_id: string, tokens: number): MachineMetrics => ({ machine_id, online: true, points: [], usage: { today: { in: tokens }, per_minute: 0, recent: [] } });
+  // the share legend's rows, each its name and count, and the bar's segments
+  const rows = () => [...host.querySelectorAll('[data-testid="machines-tokens"] .whitespace-nowrap')].map((r) => r.textContent);
+  const segments = () => host.querySelector('[data-testid="machines-tokens"] div[aria-hidden]')!.children.length;
+
+  it("keeps one row per computer when two share a name and the ranking changes", async () => {
+    fake.machines = [
+      { id: "a", name: "Mac", online: true },
+      { id: "b", name: "Linux", online: true },
+      { id: "c", name: "Mac", online: true },
+    ];
+    metricsReplies = { "/api/v1/metrics": [usage("a", 300), usage("b", 200), usage("c", 100)] };
+    act(() => root.render(<Machines onToggleSidebar={() => {}} />));
+    await flush();
+    expect(rows()).toEqual(["Mac300", "Linux200", "Mac100"]);
+
+    metricsReplies = { "/api/v1/metrics": [usage("a", 300), usage("b", 500), usage("c", 100)] };
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    await flush();
+    expect(rows()).toEqual(["Linux500", "Mac300", "Mac100"]);
+    expect(segments()).toBe(3);
   });
 });

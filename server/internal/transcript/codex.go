@@ -12,6 +12,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/tokenuse"
 )
 
 // Codex rollouts (~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl) are a different JSONL: every line is
@@ -45,22 +46,11 @@ type codexPayload struct {
 	} `json:"sandbox_policy"`
 	Effort string `json:"effort"`
 	// event_msg
-	Item   *codexItem      `json:"item"`
-	Goal   json.RawMessage `json:"goal"` // thread_goal_updated (goal.go)
-	Reason string          `json:"reason"`
-	Info   *struct {
-		Total struct {
-			OutputTokens int   `json:"output_tokens"`
-			TotalTokens  int64 `json:"total_tokens"`
-		} `json:"total_token_usage"`
-		Last struct {
-			InputTokens       int   `json:"input_tokens"`
-			CachedInputTokens int64 `json:"cached_input_tokens"`
-			OutputTokens      int64 `json:"output_tokens"`
-		} `json:"last_token_usage"`
-		ModelContextWindow int `json:"model_context_window"`
-	} `json:"info"`
-	RateLimits *codexRateLimits `json:"rate_limits"` // token_count: the account's limits as the last response gave them
+	Item       *codexItem          `json:"item"`
+	Goal       json.RawMessage     `json:"goal"` // thread_goal_updated (goal.go)
+	Reason     string              `json:"reason"`
+	Info       *tokenuse.CodexInfo `json:"info"`        // token_count
+	RateLimits *codexRateLimits    `json:"rate_limits"` // token_count: the account's limits as the last response gave them
 }
 
 // codexRateLimits is a token_count's rate_limits (node/usagewindows.go reads the same for the usage windows).
@@ -124,6 +114,9 @@ type codexItem struct {
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
+			// An image block (MCP content: base64 data and its type), a connector's or computer use's picture.
+			Data     string `json:"data"`
+			MimeType string `json:"mimeType"`
 		} `json:"content"`
 		IsError bool `json:"isError"`
 	} `json:"result"`
@@ -298,12 +291,11 @@ func parseCodexLine(seq int, line []byte, meta *Meta) []proto.Item {
 	switch p.Type {
 	case "token_count":
 		if p.Info != nil {
-			meta.ContextTokens, meta.OutputTokens = p.Info.Last.InputTokens, p.Info.Total.OutputTokens
+			meta.ContextTokens, meta.OutputTokens = int(p.Info.Last.Input), int(p.Info.Total.Output)
 			if p.Info.ModelContextWindow > 0 {
 				meta.ContextWindow = p.Info.ModelContextWindow
 			}
-			last := p.Info.Last
-			meta.codexRequest(p.Info.Total.TotalTokens, int64(last.InputTokens), last.CachedInputTokens, last.OutputTokens)
+			meta.codexRequest(p.Info.Total.Total, p.Info.Last)
 		}
 		if p.RateLimits != nil { // none: the provider gave none this time, the last ones stand
 			if until, ok := p.RateLimits.fullUntil(); ok {
@@ -391,6 +383,9 @@ func (m *Meta) codexWorked(items []proto.Item) {
 
 // codexItemLines maps one finished item (UserMessage, AgentMessage, CommandExecution…) to chat items, once per id.
 func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.Item {
+	if it.Type == "CommandExecution" { // its call and result can be on two lines (backgrounded, then its end)
+		return codexCommandLines(seq, ts, it, meta)
+	}
 	if it.ID != "" {
 		if meta.codexSeen[it.ID] {
 			return nil
@@ -412,15 +407,39 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 		for _, c := range it.Content {
 			switch {
 			case c.Type == "text" && strings.TrimSpace(c.Text) != "":
-				parts = append(parts, codexUserText(c.Text))
+				parts = append(parts, c.Text)
 			case c.Type == "local_image" && c.Path != "":
 				images = append(images, strings.TrimPrefix(c.Path, "file://"))
 			}
 		}
-		text := strings.TrimSpace(strings.Join(parts, "\n"))
-		if len(images) > 0 { // the apps show these paths as thumbnails (the phone's own photos travel the same way)
-			text = strings.TrimSpace(text + "\n\n<attached_images>\n" + strings.Join(images, "\n") + "\n</attached_images>")
+		// Match the envelope before removing other kinds of input metadata or clipping long prompts.
+		if len(parts) == 1 && len(images) == 0 {
+			if prompt, ok := codexHeartbeatPrompt(strings.TrimSpace(parts[0])); ok {
+				u := mk(0, it.ID, "user", proto.KindText)
+				u.Source = &proto.MessageSource{Kind: proto.SourceScheduledTask}
+				u.Text = clip(prompt)
+				if meta.codexUserID == "" {
+					meta.codexUserID = u.ID
+				}
+				return []proto.Item{u}
+			}
 		}
+		for i := range parts {
+			parts[i] = codexUserText(parts[i])
+		}
+		text := strings.TrimSpace(strings.Join(parts, "\n"))
+		items, paseo := paseoInput(func(n int, role, kind string) proto.Item { return mk(n, it.ID, role, kind) }, 0, text)
+		if paseo && (len(images) == 0 || attachImages(items, images)) {
+			if meta.codexUserID == "" && len(items) > 0 { // it started the turn: its notices woke the agent
+				markWake(items)
+				meta.codexUserID = items[0].ID
+			}
+			if meta.FirstUser == "" && len(items) > 0 && items[0].Kind == proto.KindText {
+				meta.FirstUser = items[0].Text
+			}
+			return items
+		}
+		text = strings.TrimSpace(text + imagesNote(images))
 		if text == "" {
 			return nil
 		}
@@ -438,20 +457,23 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 		for _, c := range it.Content {
 			b.WriteString(c.Text)
 		}
-		text := codexThreadLinks(strings.TrimSpace(b.String()))
+		text := strings.TrimSpace(b.String())
+		quiet := false
+		if it.Phase == "final_answer" {
+			text, quiet = codexHeartbeatAnswer(text)
+		}
+		text = codexThreadLinks(text)
 		if text == "" {
 			return nil
 		}
-		// Narration between tool calls ("commentary") reads like Claude's thinking blocks: part of the work, not
-		// the answer.
-		kind := proto.KindText
-		if it.Phase == "commentary" {
-			kind = proto.KindThinking
-		} else if t := withoutBotmuxSentinel(text); t != "" {
+		// AgentMessage is what Codex said, including narration between tool calls; only Reasoning is thinking.
+		if t := withoutBotmuxSentinel(text); t != "" {
 			meta.LastText = t
 			meta.turnSaid(t)
 		}
-		a := mk(0, it.ID, "assistant", kind)
+		a := mk(0, it.ID, "assistant", proto.KindText)
+		a.Narration = it.Phase == "commentary"
+		a.CodexHeartbeatQuiet = quiet
 		a.Text = clip(text)
 		return []proto.Item{a}
 	case "Reasoning":
@@ -462,20 +484,6 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 		t := mk(0, it.ID, "assistant", proto.KindThinking)
 		t.Text = clip(text)
 		return []proto.Item{t}
-	case "CommandExecution":
-		input, _ := json.Marshal(map[string]string{"command": shellCommand(it.Command)})
-		out := it.AggregatedOutput
-		if out == "" {
-			out = strings.TrimSpace(it.Stdout + "\n" + it.Stderr)
-		}
-		failed := it.Status == "failed" || (it.ExitCode != nil && *it.ExitCode != 0)
-		if it.ExitCode != nil && *it.ExitCode != 0 { // older apps read the exit code from the text: it stays there too
-			out = strings.TrimSpace(out + fmt.Sprintf("\n(exit code %d)", *it.ExitCode))
-		}
-		items := codexTool(mk, it.ID, "Bash", input, out, failed)
-		o := items[1].Outcome
-		o.Status, o.ExitCode, o.DurationMS = codexStatus(it.Status, failed), it.ExitCode, it.Duration.ms
-		return items
 	case "FileChange":
 		// One Edit per file, the patch as a unified diff (the apps draw "diff" when there is no old/new string).
 		// In path order: map order would give the same file a different id on every parse.
@@ -509,12 +517,16 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 			args = json.RawMessage(`{}`)
 		}
 		var parts []string
+		var images []*proto.Image
 		isErr := it.Status == "failed" || len(it.Error) > 0 && string(it.Error) != "null"
 		if it.Result != nil {
 			isErr = isErr || it.Result.IsError
 			for _, c := range it.Result.Content {
-				if c.Type == "text" {
+				switch {
+				case c.Type == "text":
 					parts = append(parts, c.Text)
+				case c.Type == "image" && c.Data != "" && len(c.Data) <= maxImageLen && strings.HasPrefix(c.MimeType, "image/"):
+					images = append(images, &proto.Image{Mime: c.MimeType, Data: c.Data})
 				}
 			}
 		}
@@ -523,6 +535,11 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 		}
 		items := codexTool(mk, it.ID, "mcp__"+it.Server+"__"+it.Tool, args, strings.Join(parts, "\n"), isErr)
 		items[1].Outcome.Status = codexStatus(it.Status, isErr)
+		for j, img := range images { // after the result, on the call's card, as a Claude tool result's pictures are
+			im := mk(2+j, it.ID, "user", proto.KindImage)
+			im.ToolUseID, im.Image = it.ID, img
+			items = append(items, im)
+		}
 		return items
 	case "ImageView":
 		input, _ := json.Marshal(map[string]string{"file_path": strings.TrimPrefix(it.Path, "file://")})
@@ -548,6 +565,105 @@ func codexItemLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.It
 	return []proto.Item{n}
 }
 
+// codexPendingKept bounds the backgrounded command ids a Meta keeps: a rollout that starts commands and never records
+// their end must not grow the parser's state with every one.
+const codexPendingKept = 1024
+
+// codexSeenAdd marks an item id as read in the turn under way.
+func (m *Meta) codexSeenAdd(id string) {
+	if m.codexSeen == nil {
+		m.codexSeen = map[string]bool{}
+	}
+	m.codexSeen[id] = true
+}
+
+// codexPendingAdd remembers a backgrounded command until its terminal record. codexPendingIDs holds exactly the pending
+// ids, oldest first, so the cap evicts the oldest genuinely pending command.
+func (m *Meta) codexPendingAdd(id string) {
+	if m.codexPending == nil {
+		m.codexPending = map[string]bool{}
+	}
+	if m.codexPending[id] {
+		return
+	}
+	m.codexPending[id] = true
+	m.codexPendingIDs = append(m.codexPendingIDs, id)
+	for len(m.codexPending) > codexPendingKept && len(m.codexPendingIDs) > 0 {
+		oldest := m.codexPendingIDs[0]
+		m.codexPendingIDs = m.codexPendingIDs[1:]
+		delete(m.codexPending, oldest)
+	}
+}
+
+// codexPendingDone says whether id is a backgrounded command waiting for this terminal record, and stops waiting. Its
+// queue entry goes too: a later command that reuses the id starts a new entry and is not tied to this one.
+func (m *Meta) codexPendingDone(id string) bool {
+	if !m.codexPending[id] {
+		return false
+	}
+	delete(m.codexPending, id)
+	for i, pending := range m.codexPendingIDs {
+		if pending == id {
+			m.codexPendingIDs = append(m.codexPendingIDs[:i], m.codexPendingIDs[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
+// codexCommandLines maps a CommandExecution to its call and result. A backgrounded command is still running: its call
+// is shown at once, without a result, and the terminal record with the same id (completed, failed or declined) gives
+// the result later, in this turn or a later one. A record with no backgrounded call before it is a synchronous call
+// and still gives both items on its line.
+func codexCommandLines(seq int, ts time.Time, it *codexItem, meta *Meta) []proto.Item {
+	mk := func(idx int, id, role, kind string) proto.Item {
+		if id == "" {
+			id = fmt.Sprintf("line%d", seq)
+		}
+		return proto.Item{ID: fmt.Sprintf("%s#%d", id, idx), Seq: seq, TS: ts, Role: role, Kind: kind}
+	}
+	input, _ := json.Marshal(map[string]string{"command": shellCommand(it.Command)})
+	if it.Status == "backgrounded" {
+		if it.ID != "" {
+			// A genuinely pending command suppresses its repeated background record, even after task_started (the
+			// record can be written again in a later turn); a terminal record of this turn suppresses a late repeat.
+			if meta.codexPending[it.ID] || meta.codexSeen[it.ID] {
+				return nil
+			}
+			meta.codexPendingAdd(it.ID)
+		}
+		use := mk(0, it.ID, "assistant", proto.KindToolUse)
+		use.ToolUseID, use.ToolName, use.ToolInput = it.ID, "Bash", clipJSON(input)
+		return []proto.Item{use}
+	}
+	out := it.AggregatedOutput
+	if out == "" {
+		out = strings.TrimSpace(it.Stdout + "\n" + it.Stderr)
+	}
+	failed := it.Status == "failed" || (it.ExitCode != nil && *it.ExitCode != 0)
+	if it.ExitCode != nil && *it.ExitCode != 0 { // older apps read the exit code from the text: it stays there too
+		out = strings.TrimSpace(out + fmt.Sprintf("\n(exit code %d)", *it.ExitCode))
+	}
+	if it.ID != "" && meta.codexPendingDone(it.ID) {
+		// The terminal record of a backgrounded call: only its result, under the call already shown.
+		res := mk(1, it.ID, "user", proto.KindToolResult)
+		res.ToolUseID, res.Text, res.IsError = it.ID, clip(out), failed
+		res.Outcome = &proto.ToolOutcome{Status: codexStatus(it.Status, failed), ExitCode: it.ExitCode, DurationMS: it.Duration.ms, Tail: outputTail(out)}
+		meta.codexSeenAdd(it.ID) // a repeat of this terminal record is dropped
+		return []proto.Item{res}
+	}
+	if it.ID != "" {
+		if meta.codexSeen[it.ID] { // a finished command recorded again in this turn
+			return nil
+		}
+		meta.codexSeenAdd(it.ID)
+	}
+	items := codexTool(mk, it.ID, "Bash", input, out, failed)
+	o := items[1].Outcome
+	o.Status, o.ExitCode, o.DurationMS = codexStatus(it.Status, failed), it.ExitCode, it.Duration.ms
+	return items
+}
+
 // LocalMachine is the id the hub gave this node's machine (set by the node): links to its sessions name it.
 var LocalMachine atomic.Value
 
@@ -571,9 +687,31 @@ var (
 	codexAmbientRe = lazyre.New(`(?s)<in-app-browser-context[^>]*>.*?</in-app-browser-context>`)
 )
 
+// imagesNote is the note a user message's pictures become after its words ("" for none): their local paths, which the
+// apps show as thumbnails (the phone's own photos travel the same way).
+func imagesNote(images []string) string {
+	if len(images) == 0 {
+		return ""
+	}
+	return "\n\n<attached_images>\n" + strings.Join(images, "\n") + "\n</attached_images>"
+}
+
+// attachImages puts a message's pictures (imagesNote) after the words of the last user text among items: false when
+// none can carry them.
+func attachImages(items []proto.Item, images []string) bool {
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Role == "user" && items[i].Kind == proto.KindText {
+			items[i].Text = strings.TrimSpace(items[i].Text + imagesNote(images))
+			return true
+		}
+	}
+	return false
+}
+
 // codexUserText cleans what Codex records as the user's message: ambient context (and Persona's) goes, and the answer to a question
 // Codex asked (request_user_input, stored as JSON) reads as the answer itself ("question: answer", with a full-width colon, when several).
 func codexUserText(s string) string {
+	s = StripInterject(s)
 	s = legacyLarkAgent(strings.TrimSpace(ContextRe.ReplaceAllString(dropTagged(ViewErrorsRe, "<persona-view-errors", codexAmbientRe.ReplaceAllString(s, "")), "")))
 	return strings.TrimSpace(CodexReplyRe.ReplaceAllStringFunc(s, func(block string) string {
 		var replies []struct {

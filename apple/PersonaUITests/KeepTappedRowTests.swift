@@ -5,6 +5,7 @@ import XCTest
 /// in the flipped list are wrong. In the middle and at the oldest end the row stays within 2 pt; at the newest end,
 /// following, a row opened rises to the top bar at most while the newest end stays on screen, and one closed takes the
 /// list back to the newest end, smoothly both. Prints `KEEP <case> <what>: moved … end … step … gap … top … ys …` per tap.
+/// On an iPhone and on an iPad alike (there the chat beside the sidebar: #8619).
 ///   Persona's main conversation: PORT=… MOCK_LONG_ASSISTANT=1 MOCK_FOLD_DELAY=2 python3 scripts/mock/mock_hub.py
 ///   (`PERSONA_FOLDS_HUB`, else `PERSONA_MOCK_HUB`): sixty finished turns, each one's work folded by the hub and its
 ///   steps fetched when it is opened, 2 s later: after a hold of the usual 1.5 s is over, which let the steps push the
@@ -19,6 +20,13 @@ final class KeepTappedRowTests: XCTestCase {
     private static let main = "server/b2e4d6f8-0000-4000-8000-000000000001"
     private static let widget = "macbook/a1f3c2d4-0000-4000-8000-000000000001" // long history, a work line in the last turn
     private static let toolTurn = "macbook/a1f3c2d4-0000-4000-8000-0000000000f5" // a work line in every turn
+    /// Where the open part of the screen ends (window y): `overComposer` above the composer's field, set at launch.
+    private var openBottom: CGFloat = 0
+    /// The footer under the list (the composer, and over it an Agent's plan pill or Persona's capsules) is as tall on
+    /// every device, so the open part ends this far above the composer's field, not at a share of the window: 0.72 of
+    /// an iPad's taller window left out the newest work line, as far above the composer there as on a phone (#8619).
+    /// 166 pt is where 0.72 of an iPhone 17 Pro's window ended.
+    private static let overComposer: CGFloat = 166
 
     private struct Result: Decodable {
         var what: String
@@ -55,6 +63,9 @@ final class KeepTappedRowTests: XCTestCase {
         XCTAssertTrue(app.buttons["work-head"].firstMatch.waitForExistence(timeout: 30), "the conversation's work lines show")
         // The chat measures itself at rest 6 s after it shows (`UnfoldTrace.idle`): left alone until that is in.
         sleep(8)
+        let field = app.descendants(matching: .any)["shell-composer-field"].firstMatch
+        XCTAssertTrue(field.exists, "the composer shows")
+        openBottom = field.frame.minY - Self.overComposer
     }
 
     private func pair(_ hub: String) -> String {
@@ -96,11 +107,12 @@ final class KeepTappedRowTests: XCTestCase {
 
     /// The work line headers in the open part of the screen, by where they are: the headers of the mocks' turns read
     /// alike, and a query bound by index finds another one once the list has changed. Hittable is not enough: one under
-    /// the composer or the top bar counts as hittable, and the tap went to the composer.
+    /// the composer or the top bar counts as hittable, and the tap went to the composer. The open part: under the top bar,
+    /// down to `openBottom`.
     private func heads() -> [XCUIElement] {
         let h = app.windows.firstMatch.frame.height
         return app.buttons.matching(identifier: "work-head").allElementsBoundByIndex
-            .filter { $0.isHittable && $0.frame.midY > h * 0.15 && $0.frame.midY < h * 0.72 }
+            .filter { $0.isHittable && $0.frame.midY > h * 0.15 && $0.frame.midY < openBottom }
     }
 
     private func point(_ e: XCUIElement) -> XCUICoordinate {
@@ -172,22 +184,39 @@ final class KeepTappedRowTests: XCTestCase {
         sleep(1)
     }
 
-    /// Back to the oldest end: swiped until what is on screen stops moving (each swipe may load an older page): the work
-    /// line headers, and the first texts, since a screen there may hold no header. Twice in a row unchanged: a page still
-    /// loading leaves it unchanged once.
-    private func toOldest() {
-        var was: [Int] = [], same = 0
+    /// Back to the oldest end: swiped until what the list shows stops changing (each swipe may load an older page): where
+    /// its work line headers are, and which messages it holds (`chat.user.…`, `chat.answer.…`), since a screen there may
+    /// hold no header. Twice in a row unchanged: a page still loading leaves it unchanged once. By where things were
+    /// alone, an iPad took a page's end for the oldest end (#8619): the mocks' turns are drawn alike, and there each swipe
+    /// stopped at the end of what was loaded with the headers where the page before had left them, a point or two apart;
+    /// the first texts on screen, read with them, were the top bar's, the composer's and the sidebar's, which never move.
+    @MainActor private func toOldest() {
+        var was: [String] = [], same = 0
         for _ in 0..<80 {
             app.swipeDown(velocity: .fast)
             sleep(1)
-            let on = app.buttons.matching(identifier: "work-head").allElementsBoundByIndex
-                + app.staticTexts.allElementsBoundByIndex.prefix(6)
-            let now = on.map { Int($0.frame.minY) }.sorted()
+            let now = shown()
             same = !now.isEmpty && now == was ? same + 1 : 0
             if same >= 2 { return }
             was = now
         }
         XCTFail("the oldest end was not reached")
+    }
+
+    /// What the list shows, from one snapshot of the app: each work line header's top, and each message's id.
+    @MainActor private func shown() -> [String] {
+        guard let root = try? app.snapshot() else { return [] }
+        var out: [String] = []
+        func visit(_ s: XCUIElementSnapshot) {
+            if s.identifier == "work-head" {
+                out.append("head \(Int(s.frame.minY))")
+            } else if s.identifier.hasPrefix("chat.user.") || s.identifier.hasPrefix("chat.answer.") {
+                out.append(s.identifier)
+            }
+            s.children.forEach(visit)
+        }
+        visit(root)
+        return out.sorted()
     }
 
     // MARK: Persona's main conversation

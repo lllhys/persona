@@ -166,7 +166,8 @@ struct TaskNoteRow: View {
                                     .rotationEffect(.degrees(open ? 90 : 0))
                             }
                             .padding(.vertical, grouped ? 10 : 7)
-                            .padding(.horizontal, pad)
+                            .padding(.leading, grouped ? WorkCardSlice.iconLeading : pad)
+                            .padding(.trailing, pad)
                             .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
@@ -175,7 +176,8 @@ struct TaskNoteRow: View {
                 .accessibilityIdentifier("task-note")
                 if open {
                     detail(n, call: call)
-                        .padding(.horizontal, pad)
+                        .padding(.leading, grouped ? WorkCardSlice.iconLeading : pad)
+                        .padding(.trailing, pad)
                         .padding(.bottom, Theme.Space.m)
                         .unfolding(unfold)
                         .transition(.opacity.combined(with: .move(edge: .top)))

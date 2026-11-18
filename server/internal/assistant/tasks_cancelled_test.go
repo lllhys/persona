@@ -67,8 +67,8 @@ func TestCancelledTaskStaysClosed(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "agent_send":
-					// A message also resumes an agent whose idle pane was closed.
-					f.setSessions("box", proto.Session{MachineID: "box", SessionID: "s1000000", Status: proto.StatusOffline})
+					// The owner has resumed the agent; a follow-up still must not reopen the cancelled task.
+					f.setSessions("box", boxAgent("s1000000"))
 					if _, err := runJSON(t, s, "conv1", "agent_send", map[string]any{
 						"machine": "box", "session_id": "s1000000", "text": "Revert the changes.",
 					}); err != nil {

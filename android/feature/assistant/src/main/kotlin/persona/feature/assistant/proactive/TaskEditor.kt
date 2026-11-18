@@ -8,6 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import persona.core.contracts.SessionKey
@@ -25,7 +27,7 @@ private val DraftSaver = Saver<TaskDraft?, Any>(
     save = { draft ->
         draft?.let {
             arrayListOf<Any>(it.title, it.prompt, it.repeat.name, it.at?.toEpochMilli() ?: -1L, it.time, it.weekdays.joinToString(","),
-                it.everyMinutes, it.enabled, it.continues, it.permissionMode, it.push)
+                it.everyMinutes, it.enabled, it.continues, it.permissionMode, it.push, it.inbox)
         }
     },
     restore = { saved ->
@@ -35,12 +37,14 @@ private val DraftSaver = Saver<TaskDraft?, Any>(
                 (values[3] as Long).takeIf { it >= 0 }?.let(Instant::ofEpochMilli), values[4] as String,
                 (values[5] as String).split(",").mapNotNull { it.toIntOrNull() }, values[6] as Int, values[7] as Boolean,
                 values[8] as Boolean, values[9] as String, values.getOrNull(10) as? String ?: "",
+                values.getOrNull(11) as? String ?: "",
             )
         }
     },
 )
 
 private const val HistoryShown = 5
+private const val LargeTextScale = 1.3f
 
 /**
  * One scheduled task (iOS AssistantTaskEditor): name, on / off, when ("Once" / "Daily" / "Every"), what to do, "Run with" (model and
@@ -230,6 +234,10 @@ internal fun TaskEditorPage(
         runsWithSection(draft, isNew, task, busy, onModelConfiguration, onChooseMode = { choosingMode = true })
         // A hub without "Push when done" would not keep it; one already set on the task still shows, to be turned back.
         if (ScheduledTask.PUSH_FEATURE in features || task?.pushesOnlyAsked == true) pushSection(draft, busy, onPush = { edit(draft.pushing(it)) })
+        // The Inbox choice is independent of push; a task with an existing value can still turn it off on an older hub.
+        if (ScheduledTask.INBOX_FEATURE in features || task?.inbox?.isNotEmpty() == true) {
+            inboxSection(draft, busy, onInbox = { edit(draft.copy(inbox = it)) })
+        }
         conversationSection(draft, task, busy, state, store, onOpenConversation, onContinues = { edit(draft.copy(continues = it)) })
         if (task == null && !isNew) return@JListPage
         val runs = task?.let { state.runsOf(it.id) }.orEmpty()
@@ -355,6 +363,42 @@ private fun androidx.compose.foundation.lazy.LazyListScope.pushSection(draft: Ta
             )
         }
         SectionNote(stringResource(if (draft.pushesOnlyAsked) R.string.assistant_proactive_push_asked_note else R.string.assistant_proactive_push_every_note))
+    }
+}
+
+/** Nothing, only a result worth a look, or a row after every answered run. This never changes the push choice. */
+private fun androidx.compose.foundation.lazy.LazyListScope.inboxSection(draft: TaskDraft, busy: Boolean, onInbox: (String) -> Unit) {
+    val choices = listOf("", ScheduledTask.INBOX_WORTHY, ScheduledTask.INBOX_EVERY)
+    item("inbox-header") {
+        JSectionHeader(stringResource(if (LocalDensity.current.fontScale >= LargeTextScale)
+            R.string.assistant_proactive_inbox_compact else R.string.assistant_proactive_inbox))
+    }
+    item("inbox") {
+        val selected = choices.indexOf(draft.inbox).coerceAtLeast(0)
+        val labels = listOf(stringResource(R.string.assistant_proactive_inbox_off),
+            stringResource(R.string.assistant_proactive_inbox_worthy),
+            stringResource(R.string.assistant_proactive_inbox_every))
+        if (LocalDensity.current.fontScale >= LargeTextScale) {
+            Column {
+                labels.forEachIndexed { index, label ->
+                    JGroupItem(GroupPosition.of(index, labels.size)) {
+                        JRow(enabled = !busy, selected = index == selected, chevron = false, role = Role.RadioButton,
+                            onClick = { onInbox(choices[index]) }) {
+                            JRadio(index == selected, null, enabled = !busy)
+                            Spacer(Modifier.width(Tokens.Space.s))
+                            Text(label, Modifier.weight(1f), style = PersonaTheme.type.body, color = PersonaTheme.palette.ink)
+                        }
+                    }
+                }
+            }
+        } else JCard {
+            JSegmented(labels.map(::JSegment), selected, { if (!busy) onInbox(choices[it]) }, Modifier.fillMaxWidth())
+        }
+        SectionNote(stringResource(when (draft.inbox) {
+            ScheduledTask.INBOX_WORTHY -> R.string.assistant_proactive_inbox_worthy_note
+            ScheduledTask.INBOX_EVERY -> R.string.assistant_proactive_inbox_every_note
+            else -> R.string.assistant_proactive_inbox_off_note
+        }))
     }
 }
 

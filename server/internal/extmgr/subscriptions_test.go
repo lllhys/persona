@@ -147,6 +147,13 @@ func TestSubscriptionGenerate(t *testing.T) {
 	if _, err := m.JSON(ctx, in); !errors.Is(err, subscriptions.ErrNoModel) {
 		t.Fatalf("nothing set up: %v", err)
 	}
+	modelFailure := &rpc.Error{Code: assistantwire.CodeModelFailed, Message: "the upstream model is missing"}
+	answer = func(json.RawMessage) (json.RawMessage, error) {
+		return nil, modelFailure
+	}
+	if _, err := m.JSON(ctx, in); err != modelFailure || errors.Is(err, subscriptions.ErrNoModel) {
+		t.Fatalf("an upstream model failure was rewritten: %v", err)
+	}
 	until := time.Now().Add(10 * time.Minute).UTC().Format(time.RFC3339)
 	answer = func(json.RawMessage) (json.RawMessage, error) {
 		return nil, &rpc.Error{Code: assistantwire.CodeModelPaused, Message: "held", Data: json.RawMessage(`{"reason":"quota","until":"` + until + `"}`)}
@@ -197,7 +204,7 @@ func TestSubscriptionsAreInboxAndKnowledgeBaseSources(t *testing.T) {
 	from, mark := now.Add(-time.Minute), now.Add(-30*time.Second)
 	sub := subscriptions.Subscription{ID: "sub_example", Connector: "example", Source: "notices", Label: "Notices",
 		Recipe: subscriptions.Recipe{Mode: "items", Kind: "sub_notice", GroupBy: "source"}, ToInbox: true, ToKB: true,
-		InboxFrom: &from, InboxCatchup: &mark, KBFrom: &from, Revision: 1, CreatedAt: now.Add(-time.Hour)}
+		InboxFrom: &from, InboxCatchup: &mark, InboxGroup: "source", KBFrom: &from, Revision: 1, CreatedAt: now.Add(-time.Hour)}
 	if err := store.CreateSubscription(ctx, sub); err != nil {
 		t.Fatal(err)
 	}
@@ -216,11 +223,36 @@ func TestSubscriptionsAreInboxAndKnowledgeBaseSources(t *testing.T) {
 			src = &r.Sources[i]
 		}
 	}
-	if r.Names[sub.ID] != "Notices" || src == nil || !src.Extension || src.Kinds["sub_digest"] == "" || len(src.Things) != 3 {
+	// One row for the subscription grouped by source (#5671) and the failure notice's end; its count is the Inbox's to read.
+	if r.Names[sub.ID] != "Notices" || src == nil || !src.Extension || !src.Counts || src.Kinds["sub_digest"] == "" || len(src.Things) != 2 {
 		t.Fatalf("the round: names %v, source %+v", r.Names, src)
+	}
+	// What it reads and its row's knowledge-base chat, for the AI twin (#6222).
+	if src.Via != "example" || src.ViaSource != "notices" || len(src.Chats) != 1 {
+		t.Fatalf("what the subscription reads: %q %q %v", src.Via, src.ViaSource, src.Chats)
 	}
 	if chats := h.readInbox(ctx, roundChats); chats.Names[sub.ID] != "Notices" || len(chats.Sources) != 0 {
 		t.Fatalf("a round of the Feishu chats: %+v", chats)
+	}
+	// A run that failed: the next round says the subscription is behind, as a built-in's failed read does, and still
+	// hands its rows (#6189).
+	cur, _ := store.GetSubscription(ctx, sub.ID)
+	failing := *cur
+	failing.RunState = subscriptions.StateFailing
+	if ok, err := store.UpdateSubscription(ctx, failing, cur.Revision); !ok || err != nil {
+		t.Fatalf("update: %v %v", ok, err)
+	}
+	found := false
+	for _, s := range h.readInbox(ctx, roundPoll).Sources {
+		if s.ID == sub.ID {
+			found = true
+			if s.ReadError != assistantwire.ReadFailed || len(s.Things) != 2 {
+				t.Fatalf("a failing subscription's source: %+v", s)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the failing subscription left the round")
 	}
 
 	archives := h.kbArchives(ctx)

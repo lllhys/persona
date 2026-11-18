@@ -1,0 +1,192 @@
+{
+  "id": "hardware-shortcuts",
+  "manifestId": "hardware-shortcuts",
+  "description": "Close exactly one large-window transient per Escape, open shortcut help above the current dialog, and leave terminal-consumed keys with the terminal.",
+  "requires": {
+    "fields": ["route", "selectedKey"]
+  },
+  "manualCoverageRequired": [
+    "Open FullTextReader from a genuine message or tool action, then verify one Escape closes only the reader.",
+    "Open MessageSharePage through the message menu's Share action, then verify one Escape closes only sharing.",
+    "Verify ExpandedComposer and JPointerMenu with their owning lanes; this scenario must not close those layers a second time.",
+    "Verify Meta+Return and real IME composition with instrumentation or a physical keyboard; adb ASCII input is not IME evidence.",
+    "Verify focus and draft restoration after closing help with a physical keyboard."
+  ],
+  "steps": [
+    {
+      "step": "launch",
+      "tab": "Persona"
+    },
+    {
+      "step": "tap",
+      "content-desc": "Settings"
+    },
+    {
+      "step": "tap",
+      "text": "Search settings"
+    },
+    {
+      "step": "key",
+      "keycombination": ["CTRL_LEFT", "SLASH"]
+    },
+    {
+      "step": "capture",
+      "name": "01-help-over-settings",
+      "state": "help-over-settings"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "capture",
+      "name": "02-settings-after-help",
+      "state": "settings-after-help-escape"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "Persona"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-empty-stack-noop",
+      "state": "assistant-after-empty-escape"
+    },
+    {
+      "step": "open",
+      "session": "chat",
+      "conversationKind": "agent"
+    },
+    {
+      "step": "tap",
+      "content-desc": "More actions"
+    },
+    {
+      "step": "capture",
+      "name": "04-actions-sheet",
+      "state": "actions-sheet"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "tap",
+      "content-desc": "More actions"
+    },
+    {
+      "step": "tap",
+      "text": "Rename"
+    },
+    {
+      "step": "capture",
+      "name": "05-rename-dialog",
+      "state": "rename-dialog"
+    },
+    {
+      "step": "key",
+      "keycombination": ["CTRL_LEFT", "SLASH"]
+    },
+    {
+      "step": "capture",
+      "name": "06-help-over-dialog",
+      "state": "help-over-rename-dialog"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "tap",
+      "content-desc": "More actions"
+    },
+    {
+      "step": "tap",
+      "text": "Search"
+    },
+    {
+      "step": "capture",
+      "name": "07-chat-search",
+      "state": "chat-search"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "capture",
+      "name": "08-chat-after-search",
+      "state": "chat-after-search-escape"
+    },
+    {
+      "step": "tap",
+      "content-desc": "More actions"
+    },
+    {
+      "step": "tap",
+      "text": "Terminal"
+    },
+    {
+      "step": "capture",
+      "name": "09-terminal-focus",
+      "state": "terminal-focus"
+    },
+    {
+      "step": "key",
+      "key": "ESCAPE"
+    },
+    {
+      "step": "key",
+      "key": "TAB"
+    },
+    {
+      "step": "key",
+      "keycombination": ["SHIFT_LEFT", "TAB"]
+    },
+    {
+      "step": "key",
+      "keycombination": ["CTRL_LEFT", "C"]
+    },
+    {
+      "step": "key",
+      "keycombination": ["CTRL_LEFT", "SLASH"]
+    },
+    {
+      "step": "capture",
+      "name": "10-terminal-after-keys",
+      "state": "terminal-after-owned-keys"
+    },
+    {
+      "step": "tap",
+      "content-desc": "Close terminal"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "11-terminal-closed",
+      "state": "chat-after-terminal-close"
+    }
+  ]
+}

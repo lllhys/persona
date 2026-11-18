@@ -5,9 +5,6 @@ import android.content.ComponentName
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.ContentTransform
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -131,10 +128,12 @@ class AgentsTabNavigationShotsTest {
                                     entry.Content()
                                 }
                             }
+                            val pageTransitions = rememberPageTransitions()
                             NavDisplay(backStack = stacks.getValue(selected), onBack = navigator::back,
                                 entryDecorators = listOf(rememberSaveableStateHolderNavEntryDecorator(), rememberViewModelStoreNavEntryDecorator(), chrome),
-                                transitionSpec = { ContentTransform(EnterTransition.None, ExitTransition.None) },
-                                popTransitionSpec = { ContentTransform(EnterTransition.None, ExitTransition.None) },
+                                transitionSpec = { pageTransitions.push },
+                                popTransitionSpec = { pageTransitions.pop },
+                                predictivePopTransitionSpec = { pageTransitions.predictivePop },
                                 entryProvider = entryProvider {
                                     entry<AssistantRoute> {
                                         JPage("Assistant") { padding ->
@@ -163,7 +162,9 @@ class AgentsTabNavigationShotsTest {
             capture("direct-detail", style, dark, large)
             rule.runOnIdle { navigator.selectTab(AppTab.Persona) }
             awaitText("Agents")
-            rule.onNodeWithText("Agents", useUnmergedTree = true).performClick()
+            rule.onAllNodesWithText("Agents", useUnmergedTree = true)
+                .filter(SemanticsMatcher("placed in the top bar") { it.boundsInRoot.top > 0f })
+                .onFirst().performClick()
             frames()
             capture("after-tab", style, dark, large)
             rule.runOnIdle {

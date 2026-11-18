@@ -1,7 +1,7 @@
 import { byAttention, stateOf } from "./format";
 import { summaryState, type ChildStates } from "./herdr-tree";
 import type { Machine, Session } from "./types";
-import { workspaceKey, workspaceTarget, type HostWorkspace, type WorkspaceTarget } from "./workspace-catalog";
+import { byWorkspacePin, workspaceKey, workspacePinTime, workspaceTarget, type HostWorkspace, type WorkspaceTarget } from "./workspace-catalog";
 import { sessionHost } from "./agent-groups";
 
 /** Where a session's cwd sits: the repository it belongs to and the working tree inside it. */
@@ -23,6 +23,8 @@ export type RepoWorktree = {
   navigationTree?: Session[];
   workspace?: HostWorkspace;
   target?: WorkspaceTarget;
+  /** Newest host pin in this visible subtree; ordering only, ancestors do not acquire a pin. */
+  latestPinTime?: number;
   /** Orca child worktrees, sorted by name. */
   children: RepoWorktree[];
   /** This worktree's own sessions, followed by every descendant's sessions. */
@@ -39,6 +41,8 @@ export type RepoTree = {
   repo: string;
   count: number;
   worktrees: RepoWorktree[];
+  /** Newest host pin among this repository's visible workspaces. */
+  latestPinTime?: number;
 };
 
 /** One computer's section in the repository tree: its live repositories ordered by name. */
@@ -351,11 +355,28 @@ export function sessionWorkspace(s: Session, catalog: readonly HostWorkspace[], 
   }
   return undefined;
 }
+
+/** A saved Agent remains in its host-pinned workspace even after its process stops. Never infer that pin from cwd. */
+export function hasWorkspacePin(s: Session, catalog: readonly HostWorkspace[], manager?: string): boolean {
+  if (s.archived || !s.workspace_id || !(s.space_kind || s.host || s.pane_id)) return false;
+  return workspacePinTime(sessionWorkspace(s, catalog, manager)) !== undefined;
+}
 const catalogPath = (value?: string) => {
   const path = (value ?? "").replaceAll("\\", "/");
   const clean = path.replace(/\/+$/, "") || (path.startsWith("/") ? "/" : "");
   return /^[a-z]:/i.test(clean) ? clean[0].toLowerCase() + clean.slice(1) : clean;
 };
+
+/** Runtime logical spaces share a repository display row at a verified checkout. Action attribution continues
+ *  to use sessionWorkspace and its native binding rules. */
+function repositoryWorkspace(s: Session, catalog: readonly HostWorkspace[], manager: string): HostWorkspace | undefined {
+  const bound = sessionWorkspace(s, catalog, manager);
+  if (bound || s.workspace_id || s.source_kind !== "runtime") return bound;
+  const checkout = catalogPath(s.worktree);
+  if (!checkout) return undefined;
+  const candidate = sessionWorkspace({ ...s, space_id: undefined, cwd: checkout }, catalog, manager);
+  return candidate && catalogPath(candidate.cwd) === checkout ? candidate : undefined;
+}
 
 /** Older hubs still get title navigation for pinned Agents, without rendering or counting them twice. */
 function legacyNavigationRepos(sessions: Session[], machineId: string, options: RepoCatalogOptions): RepoTree[] {
@@ -397,13 +418,13 @@ function catalogRepos(sessions: Session[], machineId: string, options: RepoCatal
   }
   const loose: Session[] = [];
   for (const s of sessions) {
-    const w = sessionWorkspace(s, inventory, options.manager);
+    const w = repositoryWorkspace(s, inventory, options.manager);
     const node = w && nodes.get(keyOf(w));
     if (node) node.sessions.push(s); else loose.push(s);
   }
   for (const s of options.navigationSessions ?? sessions) {
     if (s.assistant || s.machine_id !== machineId) continue;
-    const w = sessionWorkspace(s, inventory, options.manager);
+    const w = repositoryWorkspace(s, inventory, options.manager);
     if (w) nodes.get(keyOf(w))?.directSessions!.push(s);
   }
   const parentOf = (node: RepoWorktree) => {
@@ -421,7 +442,10 @@ function catalogRepos(sessions: Session[], machineId: string, options: RepoCatal
     const parent = !cycle && parentOf(node);
     if (parent) parent.children.push(node); else top.push(node);
   }
-  const order = (a: RepoWorktree, b: RepoWorktree) => Number(b.main) - Number(a.main) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key);
+  // Keep a pin inside its real ancestry, but lift that branch and repository ahead of ordinary ones. Only visible
+  // descendants contribute: a pin hidden by the current search or filter cannot reorder the remaining tree.
+  const order = (a: RepoWorktree, b: RepoWorktree) => byWorkspacePin(a, b)
+    || Number(b.main) - Number(a.main) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key);
   const query = options.search?.trim().toLocaleLowerCase();
   const fill = (node: RepoWorktree): boolean => {
     node.sessions.sort(options.compareSessions ?? byAttention);
@@ -433,6 +457,8 @@ function catalogRepos(sessions: Session[], machineId: string, options: RepoCatal
       node.directSessions = node.directSessions!.filter((s) => `${s.title} ${s.cwd} ${s.branch ?? ""}`.toLocaleLowerCase().includes(query!));
     }
     node.children = node.children.filter(fill).sort(order);
+    const pinned = Math.max(workspacePinTime(w) ?? -Infinity, node.children[0]?.latestPinTime ?? -Infinity);
+    if (Number.isFinite(pinned)) node.latestPinTime = pinned;
     node.tree = [...node.sessions, ...node.children.flatMap((c) => c.tree)];
     node.navigationTree = [...node.directSessions!, ...node.children.flatMap((c) => c.navigationTree ?? [])];
     for (const c of node.children) {
@@ -451,22 +477,26 @@ function catalogRepos(sessions: Session[], machineId: string, options: RepoCatal
     let repo = repos.get(key);
     if (!repo) {
       repo = { key, machineId, name: w.project_name || baseName(w.project_path || "") || root.name, repo: w.project_path || `${w.source}:${project}`, count: 0, worktrees: [] };
+      // Roots are already ordered by pin, so the first member holds this repository's newest one.
+      if (root.latestPinTime !== undefined) repo.latestPinTime = root.latestPinTime;
       repos.set(key, repo);
     }
     repo.worktrees.push(root);
     repo.count += root.tree.length;
   }
   const unmatched = query ? loose.filter((s) => `${s.title} ${s.cwd}`.toLocaleLowerCase().includes(query)) : loose;
-  const navigation = options.navigationSessions?.filter((s) => !sessionWorkspace(s, inventory, options.manager)
+  const groupedNavigation = new Set([...nodes.values()].flatMap((node) => node.directSessions!));
+  const navigation = options.navigationSessions?.filter((s) => !groupedNavigation.has(s)
     && (!query || `${s.title} ${s.cwd}`.toLocaleLowerCase().includes(query)));
-  return [...repos.values(), ...legacyNavigationRepos(unmatched, machineId, { ...options, navigationSessions: navigation })].sort((a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
+  return [...repos.values(), ...legacyNavigationRepos(unmatched, machineId, { ...options, navigationSessions: navigation })]
+    .sort((a, b) => byWorkspacePin(a, b) || a.name.localeCompare(b.name) || a.key.localeCompare(b.key));
 }
 
 export function buildRepoMachineTree(all: Session[], machines: Machine[], options?: RepoCatalogOptions): RepoMachine[] {
   const online = new Set(machines.filter((m) => m.online).map((m) => m.id));
   const byMachine = new Map<string, Session[]>();
   for (const s of all) {
-    if (s.assistant || !online.has(s.machine_id)) continue;
+    if (s.assistant || (!online.has(s.machine_id) && !(options && hasWorkspacePin(s, options.workspaces, options.manager)))) continue;
     let list = byMachine.get(s.machine_id);
     if (!list) {
       list = [];

@@ -4,23 +4,9 @@
 // page is the hub's own, so its localStorage is too), and holds ids only, never a message.
 import { BASE } from "./base";
 import { removeStoredValue, storedValue, storeValue } from "./compatibility";
+import type { RecentSetup } from "./recents-wire";
 
-export interface RecentSetup {
-  /** The machine's id. */
-  machine: string;
-  cwd: string;
-  /** "": follows the model configuration. */
-  launcher: string;
-  /** "": the launcher's default. */
-  model: string;
-  /** What the launcher ran: `claude`, `codex` or another runtime. */
-  agent_type: string;
-  /** Claude Code's permission mode and effort; "" for every other agent (and for the launcher's own). */
-  mode: string;
-  effort: string;
-  /** RFC 3339, when it started. */
-  at: string;
-}
+export type { RecentSetup };
 
 export const MAX_RECENT_SETUPS = 20;
 export const MAX_RECENT_CARDS = 3;

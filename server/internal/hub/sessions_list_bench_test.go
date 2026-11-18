@@ -229,10 +229,10 @@ func TestAgents8000Measurement(t *testing.T) {
 	}
 }
 
-// The whole list (GET /api/v1/sessions) is every machine's sessions as decorated gives them, read from the kept
-// lists and written out a session at a time: the bytes writeJSON gives for them all, the lists unchanged, and what
-// an answer allocates bounded by the write buffer rather than the answer's size: 67,450 B for this 403 KB answer
-// measured, 2,445,645 B (6.07x the answer) when it was copied and encoded whole.
+// The whole list (GET /api/v1/sessions) is every machine's sessions as bounded summaries of the decorated rows,
+// read from the kept lists and written out a session at a time: the bytes writeJSON gives for them all, the lists
+// unchanged, and what an answer allocates bounded by the write buffer rather than the answer's size: 67,450 B for
+// this 403 KB answer measured, 2,445,645 B (6.07x the answer) when it was copied and encoded whole.
 func TestLegacyListStreams(t *testing.T) {
 	if !isolatedSessionAllocation(t) {
 		return
@@ -244,9 +244,16 @@ func TestLegacyListStreams(t *testing.T) {
 		m.sessions = busyList()
 		m.sessions[0].Manager = "someone-else"
 	}
+	// The legacy answer's rows are the decorated lists' sessions bounded (sessions_list.go legacyListCut): the same
+	// keys as before with long texts cut and the task arrays left out, stamped with each machine's manager.
 	var decorated []proto.Session
 	for _, m := range h.machines {
-		decorated = append(decorated, h.shown(m.cfg.ID, h.decorated(m))...)
+		for _, s := range h.shown(m.cfg.ID, h.decorated(m)) {
+			cut := s
+			cut.Manager = h.machineOwner(m.cfg.ID)
+			legacyListCut(&cut)
+			decorated = append(decorated, cut)
+		}
 	}
 	for _, c := range []struct {
 		query string
@@ -257,7 +264,7 @@ func TestLegacyListStreams(t *testing.T) {
 		got := httptest.NewRecorder()
 		h.listSessions(got, httptest.NewRequest("GET", "/api/v1/sessions"+c.query, nil))
 		if got.Body.String() != want.Body.String() || got.Header().Get("Content-Type") != want.Header().Get("Content-Type") {
-			t.Fatalf("%q: the whole list differs from the decorated lists", c.query)
+			t.Fatalf("%q: the whole list differs from the bounded decorated lists", c.query)
 		}
 	}
 	if h.machines[0].sessions[0].Manager != "someone-else" || h.machines[1].sessions[1].Manager != "" {

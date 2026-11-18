@@ -1,7 +1,9 @@
 package persona.core.contracts
 
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import persona.core.contracts.api.*
@@ -81,5 +83,43 @@ class ConnectorsContractTest {
         val json = JsonCodec.encodeToString(HubConnector.serializer(), connector)
         val decoded = JsonCodec.decodeFromString(HubConnector.serializer(), json)
         assertEquals(connector, decoded)
+        assertFalse(json.contains("options"))
+    }
+
+    @Test
+    fun gitHubAuthAndInboxOptionsTolerateMissingFields() {
+        val auth = JsonCodec.decodeFromString(GitHubAuth.serializer(), """{"source":"device","scopes_known":false,"extra":1}""")
+        assertEquals("device", auth.source)
+        assertNull(auth.machine)
+        assertEquals(emptyList<GitHubMachine>(), auth.machines)
+        assertEquals(false, auth.scopesKnown)
+        assertNull(auth.missing)
+
+        val machine = JsonCodec.decodeFromString(
+            GitHubAuth.serializer(),
+            """{"source":"machine","machine":"studio","machines":[{"id":"studio","name":"Studio","state":"offline","extra":true}]}""",
+        )
+        assertEquals("studio", machine.machine)
+        assertEquals("offline", machine.machines.single().state)
+        assertNull(machine.machines.single().account)
+
+        val options = GitHubInboxOptions.parse(JsonCodec.parseToJsonElement("{}"))
+        assertEquals(GitHubInboxOptions.CI_MINE, options?.ci)
+        assertEquals(emptyList<String>(), options?.mutedRepos)
+        assertNull(options?.ignoreBranches)
+        assertEquals(listOf("train/*"), options?.ignoreBranchesShown)
+        assertNull(GitHubInboxOptions.parse(null))
+        assertNull(GitHubInboxOptions.parse(JsonPrimitive("x")))
+
+        val connector = JsonCodec.decodeFromString(
+            HubConnector.serializer(),
+            """{"id":"github","name":"GitHub","options":{"muted_repos":["acme/app"]}}""",
+        )
+        val parsed = GitHubInboxOptions.parse(connector.options)
+        assertEquals(listOf("acme/app"), parsed?.mutedRepos)
+        assertEquals(GitHubInboxOptions.CI_MINE, parsed?.ci)
+        val explicitNull = GitHubInboxOptions.parse(JsonCodec.parseToJsonElement("""{"ci":"off","muted_repos":[],"ignore_branches":null}"""))
+        assertEquals("off", explicitNull?.ci)
+        assertNull(explicitNull?.ignoreBranches)
     }
 }

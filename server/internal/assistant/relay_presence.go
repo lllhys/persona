@@ -14,6 +14,11 @@ import (
 // came. A scheduled run into such a conversation waits as well (runHold, schedule.go runDue). The rules hold for the
 // main conversation and leader conversations alike; they are the manager's, and the queue (assistant.relay) keeps
 // its shape.
+//
+// On top of the presence window stands the owner-turn gate (#6394): when the owner sends a message, every queued
+// message waits for the whole of the round that starts for them, not only for the fixed presence window and whatever
+// rank it carries. The gate ends when a session list shows the conversation stopped after showing it working, and on
+// safety limits when the list says nothing.
 
 var (
 	// ownerPresentFor is how long after the owner's last message in a conversation nothing from the system is
@@ -22,6 +27,12 @@ var (
 	// relayDecisionMax is the longest a message that waits on a decision is held for a present owner, counted from
 	// when it queued: the time a card stays on one rung (askHoldFor).
 	relayDecisionMax = 5 * time.Minute
+	// ownerTurnStartWait is the safety limit for an owner-turn gate whose round no session list ever shows working
+	// (a send the node refused, a conversation the list dropped): it releases anyway so the queue cannot stick.
+	ownerTurnStartWait = time.Minute
+	// ownerTurnMax is the hard cap for a gate whose round a list keeps showing working without an end (a reconnect
+	// back to the same turn, a stuck node). The owner speaking again refreshes it.
+	ownerTurnMax = 30 * time.Minute
 )
 
 // The ranks of the queue, first to go first; within a rank the one that queued first.
@@ -109,9 +120,33 @@ func (msg relayMsg) decisionSince() time.Time {
 // held. A message that waits on a decision and does not say when it queued is not held, and neither is the owner's
 // own answer on a card asked without waiting (relayMsg.Owner, #4928): the hold keeps the system out of the owner's
 // way, and that answer is the owner speaking.
+//
+// While the conversation is on the owner's round (ownerTurns, #6394) every queued message waits whatever its rank,
+// even one that waits on a decision: the owner's own message always goes before the queue. The gate releases when a
+// session list shows the round ended (ownerRoundsSeen), or on its safety limits if the list never shows the round
+// working or never shows it stop.
 func (b *relayBook) holdLocked(to string, msg relayMsg, now time.Time) time.Duration {
+	if wait := msg.Due.Sub(now); !msg.Due.IsZero() && wait > 0 {
+		return wait // past the relay rate: it waits for the window (#10400)
+	}
+	if msg.Owner {
+		return 0
+	}
+	if turn, ok := b.ownerTurns[to]; ok {
+		limit := turn.at.Add(ownerTurnStartWait)
+		if turn.working {
+			limit = turn.at.Add(ownerTurnMax)
+		}
+		if wait := limit.Sub(now); wait > 0 {
+			return wait
+		}
+		// The safety limit is authoritative: an expired gate releases at once and does not fall back onto the
+		// presence window, or the queue could wait longer than the cap.
+		delete(b.ownerTurns, to)
+		return 0
+	}
 	spoke, ok := b.st.Spoke[to]
-	if !ok || msg.Owner {
+	if !ok {
 		return 0
 	}
 	until := spoke.Add(ownerPresentFor)
@@ -167,12 +202,63 @@ func (b *relayBook) frontLocked(to string, i int) {
 	q[0] = msg
 }
 
-// ownerSpokeLocked notes that the owner sent conversation id a message at now; b.mu is held.
+// ownerSpokeLocked notes that the owner sent conversation id a message at now; b.mu is held. It also arms the
+// owner-turn gate (#6394): from now until the round is seen over, nothing of the queue goes into that conversation.
+// A gate already armed keeps its working mark, since the owner may have spoken into a round already running (the
+// interject case), and the new message refreshes the safety limits.
 func (b *relayBook) ownerSpokeLocked(id string, now time.Time) {
 	if b.st.Spoke == nil {
 		b.st.Spoke = map[string]time.Time{}
 	}
 	b.st.Spoke[id] = now.UTC()
+	if b.ownerTurns == nil {
+		b.ownerTurns = map[string]ownerTurn{}
+	}
+	turn := b.ownerTurns[id]
+	turn.at = now.UTC()
+	b.ownerTurns[id] = turn
+}
+
+// ownerRoundsSeen walks a node's session list and releases owner-turn gates whose rounds are over (#6394). A
+// conversation shown working is on its round; one shown stopped after that releases at once. A gate no list ever
+// shows working releases after ownerTurnStartWait (the send never ran), and any gate older than ownerTurnMax
+// releases as a hard cap, including one whose conversation the list no longer contains.
+func (s *Service) ownerRoundsSeen(list []proto.Session) {
+	b := &s.relays
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.ownerRoundsSeenLocked(list, time.Now())
+}
+
+// ownerRoundsSeenLocked is ownerRoundsSeen with b.mu held and the clock given (the unit tests construct a bare
+// relayBook).
+func (b *relayBook) ownerRoundsSeenLocked(list []proto.Session, now time.Time) {
+	if len(b.ownerTurns) == 0 {
+		return
+	}
+	for id, turn := range b.ownerTurns {
+		if now.Sub(turn.at) > ownerTurnMax {
+			delete(b.ownerTurns, id)
+		}
+	}
+	for i := range list { // by index: a range value copies every (large) session it passes
+		id, status := list[i].SessionID, list[i].Status
+		turn, ok := b.ownerTurns[id]
+		if !ok {
+			continue
+		}
+		switch {
+		case status == proto.StatusWorking:
+			if !turn.working {
+				turn.working = true
+				b.ownerTurns[id] = turn
+			}
+		case status == proto.StatusDone || status == proto.StatusIdle || status == proto.StatusInterrupted:
+			if turn.working || now.Sub(turn.at) > ownerTurnStartWait {
+				delete(b.ownerTurns, id)
+			}
+		}
+	}
 }
 
 // ownersPresent is when the owner last spoke in each conversation they are present in at now.
@@ -213,8 +299,8 @@ func runHold(present map[string]time.Time, t Task, due, now time.Time) time.Dura
 }
 
 // relayWaits: msg can't go into conversation to right now even though it is not running: others wait in its queue
-// already, or the owner is talking in it. The caller queues it and drains (drainRelays), which delivers what may go
-// and comes back when the hold ends.
+// already, the owner is talking in it, or it is a background supervisor being replaced (replacing). The caller queues
+// it and drains (drainRelays), which delivers what may go and comes back when the hold ends.
 func (s *Service) relayWaits(to string, msg relayMsg) bool {
 	b := &s.relays
 	b.mu.Lock()
@@ -222,7 +308,16 @@ func (s *Service) relayWaits(to string, msg relayMsg) bool {
 	if !s.relayLocked(context.Background()) {
 		return false
 	}
-	return len(b.st.Queue[to]) > 0 || b.holdLocked(to, msg, time.Now()) > 0
+	return b.replacing[to] || len(b.st.Queue[to]) > 0 || b.holdLocked(to, msg, time.Now()) > 0
+}
+
+// relayReplacing: conversation to is a background supervisor reserved for its replacement (supervise_round.go
+// backgroundOutgrown): nothing goes in straight, not even a decision reply that may interject into a running turn.
+func (s *Service) relayReplacing(to string) bool {
+	b := &s.relays
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.replacing[to]
 }
 
 // drainAfter drains conversation id's queue once more in wait, when the hold on what waits there ends. One timer per
@@ -273,6 +368,17 @@ func (s *Service) drainHeldRelays(ctx context.Context, now time.Time) {
 		return
 	}
 	var due []string
+	// A message that waited for the relay rate (#10400) whose timer a restart lost.
+	for id, q := range b.st.Queue {
+		if _, spoke := b.st.Spoke[id]; spoke || b.holds[id] != nil || b.draining[id] {
+			continue
+		}
+		if slices.ContainsFunc(q, func(m relayMsg) bool { return !m.Due.IsZero() }) {
+			if i, _ := b.pickLocked(id, now); i >= 0 {
+				due = append(due, id)
+			}
+		}
+	}
 	for id, spoke := range b.st.Spoke {
 		if len(b.st.Queue[id]) == 0 {
 			if now.Sub(spoke) >= ownerPresentFor {

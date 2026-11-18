@@ -11,14 +11,16 @@
     <string name="settings_ext_sandbox_off">未启用沙箱</string>
     <string name="settings_ext_sandbox_title">运行隔离</string>
     <string name="settings_ext_sandbox_note">沙箱只隔离 hub 上运行的已装扩展；到底开没开，看上面显示的状态。只能在 hub 所在的机器上或管理界面里改。</string>
-    <string name="settings_ext_sandbox_egress">经出网代理：%1$s · %2$s</string>
+    <string name="settings_ext_sandbox_footer">放行地址、开关沙箱在管理界面里做，要管理员密码。</string>
+    <string name="settings_ext_sandbox_network">出网</string>
     <plurals name="settings_ext_sandbox_allowed">
-        <item quantity="other">放行 %d 次</item>
+        <item quantity="other">放行 %d</item>
     </plurals>
-    <plurals name="settings_ext_sandbox_denied">
-        <item quantity="other">拒绝 %d 次</item>
+    <plurals name="settings_ext_sandbox_blocked">
+        <item quantity="other">拦下 %d</item>
     </plurals>
-    <string name="settings_ext_sandbox_last_denied">最近拒绝：%1$s</string>
+    <string name="settings_ext_sandbox_blocked_sentence">%1$s 想连 %2$s，这个地址不在它申请的范围里，被拦下了。</string>
+    <string name="settings_ext_sandbox_go_admin">去管理界面放行</string>
     <string name="settings_ext_depends">依赖</string>
     <string name="settings_ext_pack_members">合集成员</string>
     <string name="settings_ext_pack_note">已安装且版本够用的成员不重复安装；下面列出这次要一起安装或升级的扩展。</string>
@@ -66,6 +68,7 @@
     <string name="settings_ext_state_error">出错了</string>
     <string name="settings_ext_state_unknown">状态未知</string>
     <string name="settings_ext_run_pack">合集本身不运行程序；成员独立启用、设置和卸载。</string>
+    <string name="settings_ext_run_pack_members_follow">合集本身不运行程序；成员独立设置和卸载。</string>
     <string name="settings_ext_run_running">正在运行</string>
     <string name="settings_ext_run_idle">暂未运行，用到时自动启动</string>
     <string name="settings_ext_source_builtin">内置</string>
@@ -159,6 +162,12 @@
     <string name="settings_ext_read_only">这个扩展写在它所属助手的 manager.json 里：开关和设置去那里改，改完重启这个助手。</string>
     <string name="settings_ext_enabled">启用</string>
     <string name="settings_ext_enabled_note">停用后它不再运行，提供的连接器等也一起关掉；设置和密钥留着。</string>
+    <string name="settings_ext_enable_footer_pack">停用合集会一起停用它的成员，成员随之停止运行。重新启用合集时，会重新启用当初由合集停用的成员；你自己单独启用或停用过的成员保持你的选择。</string>
+    <string name="settings_ext_enable_footer_pack_off">重新启用合集会重新启用 %1$s。你自己单独启用或停用过的成员保持你的选择。</string>
+    <string name="settings_ext_enable_footer_pack_alone">停用合集只会停用合集本身。请到每个成员自己的页面启用或停用它。</string>
+    <string name="settings_ext_disable_pack_title">停用「%1$s」和它的成员？</string>
+    <string name="settings_ext_disable_pack_body">它的成员也会一起停用：%1$s。只是停用，不会卸载，设置和数据都会保留。重新启用合集时会重新启用它们。</string>
+    <string name="settings_ext_disable_all">一起停用</string>
     <string name="settings_ext_unavailable">读不到</string>
     <string name="settings_ext_still_needed">还缺：%1$s</string>
     <string name="settings_ext_channel_link">这是一个对话渠道</string>
@@ -229,6 +238,12 @@
     <string name="settings_ext_preview_again">重新预览</string>
     <string name="settings_ext_uninstall_title">卸载 %1$s？</string>
     <string name="settings_ext_uninstall_text">会停掉它，删掉它的设置和密钥；它提供的连接器也一起去掉。</string>
+    <string name="settings_ext_uninstall_keep_result">软件包也会删除，数据文件夹会保留在 hub 所在的机器上。卸载后若还有需要手动清理的项目，会逐条列出。</string>
+    <string name="settings_ext_uninstall_delete_data_result">软件包和数据文件夹也会删除。卸载后若还有需要手动清理的项目，会逐条列出。</string>
+    <string name="settings_ext_removal_warnings_text">已卸载。还有一些项目需要你手动清理。</string>
+    <string name="settings_ext_removal_warnings_header">需要手动清理</string>
+    <string name="settings_ext_removal_copy">复制全部警告</string>
+    <string name="settings_ext_removal_done">好</string>
     <string name="settings_ext_dependents_title">一起停用依赖它的扩展？</string>
     <string name="settings_ext_dependents_text">%1$s 依赖 %2$s，会一起停用。</string>
     <string name="settings_ext_dependents_unnamed">其他扩展依赖 %1$s，会一起停用。</string>
@@ -371,4 +386,22 @@
     <string name="settings_subscriptions_counts_on">%1$d 个开着</string>
     <string name="settings_subscriptions_counts_failing">%1$d 个开着 · %2$d 个出错</string>
     <string name="settings_subscriptions_counts_none">可以订阅</string>
+    <string name="settings_ext_notification_expired">通知已过期，请在扩展页重试。</string>
+    <string name="settings_ext_notification_wrong_scope">找不到原 hub 或助手，请重新连接后在扩展页重试。</string>
+    <string name="settings_ext_notification_unlock">请先解锁手机，再执行这条通知的操作。</string>
+    <plurals name="settings_ext_node_running">
+        <item quantity="other">在 %1$d 台机器上运行</item>
+    </plurals>
+    <plurals name="settings_ext_node_abnormal">
+        <item quantity="other">%1$d 台机器异常</item>
+    </plurals>
+    <plurals name="settings_ext_node_offline">
+        <item quantity="other">%1$d 台机器离线</item>
+    </plurals>
+    <plurals name="settings_ext_node_starting">
+        <item quantity="other">正在 %1$d 台机器上启动</item>
+    </plurals>
+    <plurals name="settings_ext_node_stopped">
+        <item quantity="other">%1$d 台机器已停止</item>
+    </plurals>
 </resources>

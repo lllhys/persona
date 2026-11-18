@@ -1,10 +1,12 @@
 from contextlib import redirect_stdout
+import datetime
 import gzip
 import hashlib
 import io
 import ipaddress
 from pathlib import Path
 import plistlib
+import shutil
 import struct
 import subprocess
 import sys
@@ -12,6 +14,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -105,6 +108,22 @@ class BinaryNoiseEmailTests(unittest.TestCase):
                 self.assertIn("email", cbp.text_kinds(local + "@" + domain, ()))
 
 
+class RustBridgeConstantTests(unittest.TestCase):
+    """persona-iphone-bridge's upstream credits are public in their exact context, and only there."""
+
+    def test_aws_lc_credits_are_classified(self):
+        for text in ("SHA256 block transform for ARMv8, CRYPTOGAMS by <" + "appro@" + "openssl.org>",
+                     "AES GCM module for ARMv8, SPDX BSD-3-Clause by <" + "xiaokang.qian@" + "arm.com>"):
+            with self.subTest(text=text):
+                self.assertEqual(cbp.text_kinds(text, ()), set())
+
+    def test_the_same_addresses_elsewhere_still_count(self):
+        for text in ("mail " + "appro@" + "openssl.org", "<" + "xiaokang.qian@" + "arm.com>",
+                     "by <" + "person@" + "openssl.org>", "by <" + "appro@" + "openssl.org.cn>"):
+            with self.subTest(text=text):
+                self.assertIn("email", cbp.text_kinds(text, ()))
+
+
 class PublicConstantTests(unittest.TestCase):
     def kinds(self, text, words=(), dependencies=DEPENDENCIES):
         return cbp.text_kinds(text, words, whole_short=True, dependencies=dependencies)
@@ -162,7 +181,22 @@ class PublicConstantTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn("email", self.kinds(text))
 
-    def test_full_rfc1918_networks_are_not_host_addresses(self):
+    def test_adjacent_public_mail_field_is_not_an_email(self):
+        field = "title_mail@" + "gmail.com"
+        self.assertEqual(self.kinds("constant" + field + "nextConstant"), set())
+        self.assertIn("email", self.kinds(field + ".cn"))
+        self.assertIn(f"private value ({len(field)} chars)", self.kinds(field, words=(field,)))
+
+    def test_gitlab_ssh_identity_is_not_an_email_or_a_domain_exemption(self):
+        identity = "git@" + "gitlab.com"
+        self.assertEqual(self.kinds(identity + "/-/issues/not_member"), set())
+        self.assertEqual(self.kinds("prefix" + identity + "suffix"), set())
+        for text in ("person@" + "gitlab.com", identity + ".cn", "git+owner@" + "gitlab.com",
+                     "prefix-" + identity, identity + "-user"):
+            with self.subTest(text=text):
+                self.assertIn("email", self.kinds(text))
+        self.assertIn(f"private value ({len(identity)} chars)", self.kinds(identity, words=(identity,)))
+
         for network in NETWORKS:
             with self.subTest(network=str(network)):
                 self.assertEqual(self.kinds("constant" + str(network) + "nextConstant"), set())
@@ -210,6 +244,39 @@ class PublicConstantTests(unittest.TestCase):
         text = f"{SSH_REQUEST} {CONTACT} {NETWORKS[0]} http://{METADATA} {EMAIL} {address} secret-placeholder"
         self.assertEqual(self.kinds(text, words=("secret-placeholder",)),
                          {"email", "private IP", "private value (18 chars)"})
+
+    def test_adjacent_go_constants_are_not_a_banned_name_or_email(self):
+        join = "applink.feishu.cn/client/chat/" + "open" + "Lark" + " via lark-cli"
+        self.assertEqual(self.kinds("edit_titlerecipe.other_tool" + join + "devices.reconnect"), set())
+        # The wrong dependency set, other joins and look-alikes still count, and the kind is named truthfully.
+        banned = self.kinds("x" + join + "y", dependencies=())
+        self.assertEqual(len(banned), 1)
+        self.assertTrue(next(iter(banned)).startswith("banned name"))
+        for text in (join.replace("feishu.cn", "example.cn"), join.replace(" via lark-cli", ""),
+                     "chat/open" + "Lark via other", join + " open" + "Lark"):
+            with self.subTest(text=text):
+                self.assertTrue(self.kinds(text))
+        # Gmail's source-domain constants next to a field name are not addresses; other domains still are.
+        gmail = "title_mail@" + "gmail.com" + "extension. updated" + "@googlemail.com" + "no extension"
+        self.assertEqual(self.kinds(gmail), set())
+        self.assertIn("email", self.kinds("title_mail@" + "company.com"))
+
+    def test_wireguard_identifier_needs_its_dependency_and_exact_text(self):
+        identifier = "WireGuard v1 zx2c4 Jason@" + "zx2c4.com"
+        text = "byte string" + identifier + "Received message with unknown type"
+        for dependency in ("github.com/tailscale/wireguard-go", "golang.zx2c4.com/wireguard"):
+            self.assertEqual(self.kinds(text, dependencies={dependency}), set())
+        spaced = "byte string " + identifier + " Received"
+        self.assertEqual(self.kinds(spaced, dependencies={"golang.zx2c4.com/wireguard"}), set())
+        for dependencies in (frozenset(), DEPENDENCIES):
+            self.assertIn("email", self.kinds(spaced, dependencies=dependencies))
+        wireguard = {"github.com/tailscale/wireguard-go"}
+        for other in ("Jason@" + "zx2c4.com", "WireGuard v1 zx2c4 Other@" + "zx2c4.com", identifier + ".cn",
+                      "x" + identifier, identifier.replace("zx2c4.com", "zx2c4.io")):
+            with self.subTest(text=other):
+                self.assertIn("email", self.kinds(other, dependencies=wireguard))
+        self.assertIn("private value (%d chars)" % len(identifier),
+                      self.kinds(text, words=(identifier,), dependencies=wireguard))
 
     def test_short_word_matching_remains_unchanged(self):
         self.assertEqual(self.kinds("foobar", words=("foo",)), set())
@@ -404,7 +471,28 @@ class GoDependenciesTests(unittest.TestCase):
         self.assertEqual(cbp.go_dependencies("binary", str(self.sums), str(self.tags)), set())
 
 
-class BundleScanIntegrationTests(unittest.TestCase):
+    def test_archive_members_preserve_public_go_context_and_reject_unsafe_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            exe = root / "personad"
+            exe.write_bytes(b"public binary")
+            with patch.object(cbp, "go_dependencies", return_value={"tailscale.com"}):
+                with tarfile.open(root / "release.tar.gz", "w:gz") as archive:
+                    archive.add(exe, arcname="Persona-0.6.0-linux-amd64/personad")
+                members = list(cbp.archive_members(str(root / "release.tar.gz")))
+                self.assertEqual(members, [("Persona-0.6.0-linux-amd64/personad", b"public binary")])
+                with zipfile.ZipFile(root / "release.zip", "w") as archive:
+                    archive.write(exe, "Persona-0.6.0-windows-amd64/personad.exe")
+                    archive.writestr("Persona-0.6.0-windows-amd64/persona-link-windows-amd64.exe", b"link")
+                self.assertEqual(len(list(cbp.archive_members(str(root / "release.zip")))), 2)
+                with tarfile.open(root / "unsafe.tar.gz", "w:gz") as archive:
+                    archive.add(exe, arcname="../outside")
+                with self.assertRaisesRegex(ValueError, "unsafe path"):
+                    list(cbp.archive_members(str(root / "unsafe.tar.gz")))
+                self.assertEqual(cbp.public_archive_dependencies("personad", True), {"tailscale.com"})
+                self.assertEqual(cbp.public_archive_dependencies("other.exe", True), set())
+                self.assertEqual(cbp.public_archive_dependencies("other", True), set())
+
     def scan(self, text, words=(), public=True, config=None, dependencies=DEPENDENCIES):
         with tempfile.TemporaryDirectory(prefix="bundle-privacy-test-") as directory:
             (Path(directory) / "binary").write_bytes(text if isinstance(text, bytes) else text.encode())
@@ -647,6 +735,84 @@ class MacBundleTests(unittest.TestCase):
         self.assertNotEqual(code, 0, output)
 
 
+# Every kind of value `plutil -convert xml1` prints, and the text it prints for them (macOS 27.2), read as text like the
+# scan used to: key order by UTF-16 code unit, reals as %.17g, a UID as CF$UID, data lines of 68 columns at one tab and
+# 12 columns at the 8-tab cap, CR LF read as LF.
+EVERY_VALUE = {
+    "text": "a & b < c > d\r\ne",
+    "\U0001f600": True,
+    "\uffef": False,
+    "numbers": [-1, 2 ** 64 - 1, 0.1, -0.0, float("inf"), 1e300],
+    "date": datetime.datetime(2026, 11, 14, 10, 19, 52, 500000),
+    "data": bytes(range(52)),
+    "deep": [[[[[[[[bytes(range(12))]]]]]]]],
+    "archive": plistlib.UID(7),
+    "empty": [[], {}],
+}
+EVERY_VALUE_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    '<plist version="1.0">\n'
+    "<dict>\n"
+    "\t<key>archive</key>\n"
+    "\t<dict>\n"
+    "\t\t<key>CF$UID</key>\n"
+    "\t\t<integer>7</integer>\n"
+    "\t</dict>\n"
+    "\t<key>data</key>\n"
+    "\t<data>\n"
+    "\tAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEy\n"
+    "\tMw==\n"
+    "\t</data>\n"
+    "\t<key>date</key>\n"
+    "\t<date>2026-11-14T10:19:52Z</date>\n"
+    "\t<key>deep</key>\n"
+    "\t<array>\n"
+    "\t\t<array>\n"
+    "\t\t\t<array>\n"
+    "\t\t\t\t<array>\n"
+    "\t\t\t\t\t<array>\n"
+    "\t\t\t\t\t\t<array>\n"
+    "\t\t\t\t\t\t\t<array>\n"
+    "\t\t\t\t\t\t\t\t<array>\n"
+    "\t\t\t\t\t\t\t\t\t<data>\n"
+    "\t\t\t\t\t\t\t\tAAECAwQFBgcI\n"
+    "\t\t\t\t\t\t\t\tCQoL\n"
+    "\t\t\t\t\t\t\t\t\t</data>\n"
+    "\t\t\t\t\t\t\t\t</array>\n"
+    "\t\t\t\t\t\t\t</array>\n"
+    "\t\t\t\t\t\t</array>\n"
+    "\t\t\t\t\t</array>\n"
+    "\t\t\t\t</array>\n"
+    "\t\t\t</array>\n"
+    "\t\t</array>\n"
+    "\t</array>\n"
+    "\t<key>empty</key>\n"
+    "\t<array>\n"
+    "\t\t<array/>\n"
+    "\t\t<dict/>\n"
+    "\t</array>\n"
+    "\t<key>numbers</key>\n"
+    "\t<array>\n"
+    "\t\t<integer>-1</integer>\n"
+    "\t\t<integer>18446744073709551615</integer>\n"
+    "\t\t<real>0.10000000000000001</real>\n"
+    "\t\t<real>0.0</real>\n"
+    "\t\t<real>+infinity</real>\n"
+    "\t\t<real>1.0000000000000001e+300</real>\n"
+    "\t</array>\n"
+    "\t<key>text</key>\n"
+    "\t<string>a &amp; b &lt; c &gt; d\n"
+    "e</string>\n"
+    "\t<key>\U0001f600</key>\n"
+    "\t<true/>\n"
+    "\t<key>\uffef</key>\n"
+    "\t<false/>\n"
+    "</dict>\n"
+    "</plist>\n"
+)
+
+
 class BinaryPlistTests(unittest.TestCase):
     address = str(ipaddress.ip_address(0x0A01010B))
 
@@ -807,6 +973,63 @@ class BinaryPlistTests(unittest.TestCase):
             path.write_bytes(self.plist([self.string("safe")]))
             snapshot = self.plist([self.string(self.address, True)])
             self.assertTrue(any("private IP" in cbp.text_kinds(text, ()) for text in cbp.texts(str(path), snapshot)))
+
+    def odd_plists(self):
+        """Plists the scan reads differently: unvalidated object tables, values without printable bytes, empty XML."""
+        unreachable = b"\x7f"  # an unsupported object no reference reaches: the object table doesn't validate
+        return {
+            "integer": self.plist([b"\xd1\x00\x01\x00\x02", self.string("port"), b"\x11\x20\xfb", unreachable]),
+            "UTF-16": self.plist([b"\xd1\x00\x01\x00\x02", self.string("name"), self.string("\u5f20\u4e09", True),
+                                  unreachable]),
+            "float32": self.plist([b"\xa1\x00\x01", b"\x22" + struct.pack(">f", 0.1)]),
+            "16-byte integer": self.plist([b"\xa1\x00\x01", b"\x14" + bytes(15) + b"\x05"]),
+            "shared object": self.plist([b"\xa2\x00\x01\x00\x01", self.string("twice")]),
+            "cycle": self.plist([b"\xa1\x00\x01", b"\xa1\x00\x00"]),
+            "integer key": self.plist([b"\xd1\x00\x01\x00\x02", b"\x10\x05", self.string("value")]),
+            "NUL": self.plist([self.string("a\0b")]),
+            "set": self.plist([b"\xc1\x00\x01", self.string("member")]),
+            "not a plist": b"bplist00" + bytes(40),
+        }
+
+    def test_the_xml_view_is_plutils_text_without_plutil(self):
+        """#7571: plutil is macOS only; the XML view is the text the scan read from `plutil -convert xml1` before."""
+        for sort_keys in (True, False):
+            with self.subTest(sort_keys=sort_keys):
+                data = plistlib.dumps(EVERY_VALUE, fmt=plistlib.FMT_BINARY, sort_keys=sort_keys)
+                self.assertEqual(cbp.plist_xml(data), EVERY_VALUE_XML)
+        plists = self.odd_plists()
+        self.assertEqual(cbp.plist_xml(plists["integer"]).count("<integer>8443</integer>"), 1)
+        self.assertEqual(cbp.plist_xml(plists["float32"]).count("<real>0.10000000149011612</real>"), 1)
+        self.assertEqual(cbp.plist_xml(plists["shared object"]).count("<string>twice</string>"), 2)
+        for name in ("cycle", "integer key", "NUL", "set", "not a plist"):
+            with self.subTest(name=name):
+                self.assertEqual(cbp.plist_xml(plists[name]), "")
+
+    # The reference is macOS's plutil: swift-corelibs-foundation's Linux plutil reads a string with NUL and refuses
+    # some values macOS prints.
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("plutil"), "plutil is macOS only")
+    def test_the_xml_view_matches_plutil(self):
+        samples = dict(self.odd_plists(), every=plistlib.dumps(EVERY_VALUE, fmt=plistlib.FMT_BINARY, sort_keys=False))
+        with tempfile.TemporaryDirectory(prefix="bundle-privacy-plutil-") as directory:
+            for name, data in samples.items():
+                with self.subTest(name=name):
+                    path = Path(directory) / "Info.plist"
+                    path.write_bytes(data)
+                    printed = subprocess.run(["plutil", "-convert", "xml1", "-o", "-", str(path)],
+                                             capture_output=True, text=True).stdout
+                    self.assertEqual(cbp.plist_xml(data), printed)
+
+    def test_values_only_the_xml_view_decodes_still_fail(self):
+        # An integer has no printable bytes, and a UTF-16 value outside ASCII reads only decoded: with an object table
+        # that doesn't validate, the XML view is the one text that holds them.
+        plists = self.odd_plists()
+        for word, name in (("8443", "integer"), ("\u5f20\u4e09", "UTF-16")):
+            with self.subTest(name=name):
+                self.assertEqual(cbp.plist_references(plists[name]), ([], []))
+                code, output = self.scan(plists[name], (word,))
+                self.assertNotEqual(code, 0)
+                self.assertIn("private value (%d chars)" % len(word), output)
+                self.assertNotIn(word, output)
 
 
 class MachOSignatureTests(unittest.TestCase):

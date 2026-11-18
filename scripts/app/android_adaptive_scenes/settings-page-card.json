@@ -1,0 +1,192 @@
+{
+  "id": "settings-page-card",
+  "manifestId": "settings-page-card",
+  "description": "Keep one Settings stack, its search edit and third-level page alive while the outer sheet changes between full-window and page-sized presentations.",
+  "requires": {
+    "fields": ["route", "selectedKey"]
+  },
+  "evidenceGaps": [
+    "The existing shell probe does not expose settingsSheetStack routes, the selected settings row, Settings list anchors or a Settings editor HMAC. Do not substitute the Assistant route for those fields.",
+    "Run the root Close, child Back, placeholder, ViewModel continuity and edit-state assertions with the integrated Settings probe before treating this scenario as acceptance evidence."
+  ],
+  "steps": [
+    {
+      "step": "launch",
+      "tab": "Persona",
+      "windowingMode": 5
+    },
+    {
+      "step": "tap",
+      "content-desc": "Settings"
+    },
+    {
+      "step": "capture",
+      "name": "01-root-placeholder",
+      "state": "expanded-root-placeholder"
+    },
+    {
+      "step": "tap",
+      "text": "Search settings"
+    },
+    {
+      "step": "text",
+      "text": "agent"
+    },
+    {
+      "step": "capture",
+      "name": "02-editing-search",
+      "state": "expanded-editing-search"
+    },
+    {
+      "step": "tap",
+      "text": "Agent"
+    },
+    {
+      "step": "tap",
+      "text": "Claude Code settings"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "Persona"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-third-level",
+      "state": "expanded-third-level"
+    },
+    {
+      "step": "freeform-resize",
+      "widthDp": 599,
+      "heightDp": 480
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "window.widthDp": 599,
+        "window.heightDp": 480
+      }
+    },
+    {
+      "step": "capture",
+      "name": "04-full-window-599",
+      "state": "full-window-third-level-599"
+    },
+    {
+      "step": "freeform-resize",
+      "widthDp": 600,
+      "heightDp": 480
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "window.widthDp": 600,
+        "window.heightDp": 480
+      }
+    },
+    {
+      "step": "capture",
+      "name": "05-minimum-page-600",
+      "state": "minimum-page-third-level-600"
+    },
+    {
+      "step": "freeform-resize",
+      "widthDp": 839,
+      "heightDp": 480
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "window.widthDp": 839
+      }
+    },
+    {
+      "step": "freeform-resize",
+      "widthDp": 840,
+      "heightDp": 480
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "window.widthDp": 840
+      }
+    },
+    {
+      "step": "capture",
+      "name": "06-expanded-page-840",
+      "state": "expanded-page-third-level-840"
+    },
+    {
+      "step": "rotate",
+      "orientation": "portrait"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "window.orientation": "portrait"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "07-rotated",
+      "state": "rotated-third-level"
+    },
+    {
+      "step": "freeform-resize",
+      "widthDp": 840,
+      "heightDp": 900
+    },
+    {
+      "step": "tap",
+      "content-desc": "Back"
+    },
+    {
+      "step": "capture",
+      "name": "08-child-after-back",
+      "state": "child-after-one-back"
+    },
+    {
+      "step": "tap",
+      "content-desc": "Back"
+    },
+    {
+      "step": "capture",
+      "name": "09-placeholder-after-back",
+      "state": "placeholder-after-two-backs"
+    },
+    {
+      "step": "tap",
+      "content-desc": "Close"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "10-root-close",
+      "state": "assistant-after-root-close"
+    }
+  ]
+}

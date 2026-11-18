@@ -86,8 +86,11 @@ func (h *Manager) syncNodesFor(ctx context.Context, op *extOp, p *extension.Exte
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			h.syncExtensionNodes(ctx, m) // after the one the change started (one at a time per machine)
+			syncErr := h.syncExtensionNodes(ctx, m) // after the one the change started (one at a time per machine)
 			why := ""
+			if syncErr != nil {
+				why = syncErr.Error()
+			}
 			for _, st := range ps.nodes.views(id) {
 				if st.MachineID == m.cfg.ID && st.Error != "" {
 					why = st.Error

@@ -7,10 +7,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Catalog, Market } from "../../lib/extension-market";
 
-const catalog = vi.hoisted(() => ({ value: null as unknown }));
+const catalog = vi.hoisted(() => ({ value: null as unknown, impl: null as null | ((q: string, market: string) => Promise<unknown>) }));
 vi.mock("../../lib/extension-market", async (original) => ({
   ...(await original<typeof import("../../lib/extension-market")>()),
-  getCatalog: () => Promise.resolve(catalog.value),
+  getCatalog: (q: string, m: string) => (catalog.impl ? catalog.impl(q, m) : Promise.resolve(catalog.value)),
 }));
 import { MarketCatalog } from "./ExtensionMarket";
 
@@ -105,5 +105,60 @@ describe("MarketCatalog rate-limited GitHub market", () => {
     const create = [...document.querySelectorAll('[role="dialog"] a')].find((a) => a.textContent?.includes("去 GitHub 生成")) as HTMLAnchorElement | undefined;
     expect(create?.href).toContain("https://github.com/settings/personal-access-tokens/new?");
     expect(create?.target).toBe("_blank");
+  });
+});
+
+describe("MarketCatalog updating state (#6468)", () => {
+  type Ask = { q: string; market: string; resolve: (c: Catalog) => void };
+  const asks: Ask[] = [];
+  const item = (id: string) => ({ id, name: id, version: "1.0.0", market: "official", market_name: "official" }) as unknown as Catalog["extensions"][number];
+  const reply = (ids: string[]): Catalog => ({ markets: [market("official"), market("team")], extensions: ids.map(item) });
+  const type = (value: string) => {
+    const input = host.querySelector("input") as HTMLInputElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => { set.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  };
+  const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
+
+  beforeEach(() => {
+    asks.length = 0;
+    catalog.impl = (q, m) => new Promise<Catalog>((resolve) => asks.push({ q, market: m, resolve }));
+  });
+  afterEach(() => { catalog.impl = null; });
+
+  it("shows the updating state while a newly picked market loads", async () => {
+    act(() => root.render(<MarketCatalog onBack={() => {}} onOpen={() => {}} onMarkets={() => {}} />));
+    await wait(10);
+    await act(async () => asks[0].resolve(reply(["a", "b"])));
+    expect(host.textContent).toContain("2 个扩展");
+    act(() => (button("team") as HTMLElement).click());
+    await flush();
+    expect(asks.at(-1)?.market).toBe("team");
+    expect(host.querySelector("[role=status]")?.textContent).toContain("正在更新");
+    expect(host.textContent).not.toContain("2 个扩展");
+    await act(async () => asks.at(-1)!.resolve(reply(["c"])));
+    expect(host.querySelector("[role=status]")).toBeNull();
+    expect(host.textContent).toContain("1 个扩展");
+  });
+
+  it("does not present an older query's answer as current, and keeps the newest results out of order", async () => {
+    act(() => root.render(<MarketCatalog onBack={() => {}} onOpen={() => {}} onMarkets={() => {}} />));
+    await wait(10);
+    await act(async () => asks[0].resolve(reply(["a", "b", "c"])));
+    type("zz");
+    await wait(300);
+    const first = asks.at(-1)!;
+    expect(first.q).toBe("zz");
+    type("zzz"); // the typing pause for the second query is still running
+    await act(async () => first.resolve(reply([])));
+    expect(host.querySelector("[role=status]")).not.toBeNull(); // the answer is for "zz", not "zzz"
+    expect(host.textContent).not.toContain("没有找到");
+    await wait(300);
+    const second = asks.at(-1)!;
+    expect(second.q).toBe("zzz");
+    await act(async () => second.resolve(reply(["d"])));
+    await act(async () => first.resolve(reply(["old"]))); // late, out of order
+    expect(host.textContent).toContain("1 个扩展");
+    expect(host.querySelector("[role=status]")).toBeNull();
   });
 });

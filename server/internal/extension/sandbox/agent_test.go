@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // agentDial connects to the unix socket at path: 0 when it answers the connection, 1 when it cannot.
@@ -212,6 +215,102 @@ func TestWrapAgentFallsBack(t *testing.T) {
 		if st.State != c.state || st.Why == "" || !slices.Equal(a, argv) || !slices.Equal(e, env) {
 			t.Errorf("%s: %+v %v %v", name, st, a, e)
 		}
+	}
+}
+
+func TestWrapAgentAttachesOwnedReasonMetadata(t *testing.T) {
+	f := newAgentFixture(t)
+	argv := []string{"/bin/echo", "hi"}
+	ok := func() Support { return Support{OS: "darwin", SandboxExec: true} }
+	home := f.plan()
+	home.DataDirs, home.Cwd, home.Probe = []string{f.home}, "", ok
+	badProfile := f.plan()
+	badProfile.Probe, badProfile.Check = ok, func(string) error { return errors.New("syntax") }
+	structuredInner := f.plan()
+	structuredInner.Probe = ok
+	structuredInner.Inner = "external raw text is superseded"
+	structuredInner.InnerReason = NewStatusReason("extension-sandbox.agent_nested", nil)
+	for _, tc := range []struct {
+		name       string
+		plan       AgentPlan
+		argv, env  []string
+		key, state string
+	}{
+		{name: "nested", argv: argv, env: []string{AgentEnv + "=1"}, key: "extension-sandbox.agent_nested", state: AgentActive},
+		{name: "no command", key: "extension-sandbox.agent_no_command", state: AgentSkipped},
+		{name: "unsupported OS", plan: AgentPlan{Probe: func() Support { return Support{OS: "windows"} }}, argv: argv,
+			key: "extension-sandbox.agent_unsupported", state: AgentUnsupported},
+		{name: "unsafe data directory", plan: home, argv: argv, key: "extension-sandbox.agent_home", state: AgentSkipped},
+		{name: "structured inner wins", plan: structuredInner, argv: argv, key: "extension-sandbox.agent_nested", state: AgentSkipped},
+		{name: "profile refused", plan: badProfile, argv: argv, key: "extension-sandbox.agent_profile_refused", state: AgentUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, st := WrapAgent(tc.plan, tc.argv, tc.env)
+			if st.State != tc.state || st.Reason == nil || st.Reason.Key != tc.key || st.Why != st.Reason.Error() {
+				t.Fatalf("%+v; want state %q and reason %q", st, tc.state, tc.key)
+			}
+			for _, lang := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja, i18n.Resolve("fr")} {
+				if got, want := st.WhyIn(lang), st.Reason.Text(lang); got != want {
+					t.Errorf("%s: got %q, want %q", lang, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWrapAgentRawInnerStaysOpaque(t *testing.T) {
+	f := newAgentFixture(t)
+	plan := f.plan()
+	plan.Probe = func() Support { return Support{OS: "darwin", SandboxExec: true} }
+	plan.Inner = "external caller's exact reason"
+	_, _, st := WrapAgent(plan, []string{"/bin/echo"}, nil)
+	if st.State != AgentSkipped || st.Why != plan.Inner || st.Reason != nil || st.WhyIn(i18n.En) != plan.Inner {
+		t.Errorf("raw Inner changed: %+v", st)
+	}
+}
+
+func TestAgentStatusReasonJSONRoundTrip(t *testing.T) {
+	status := agentStatusReason(AgentSkipped, "extension-sandbox.agent_too_many_args", i18n.Args{"count": 9001, "limit": linuxAgentMaxArgs})
+	raw, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old struct {
+		State string `json:"state"`
+		Why   string `json:"why"`
+	}
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.State != status.State || old.Why != status.Why {
+		t.Errorf("old reader sees %+v instead of %+v; JSON: %s", old, status, raw)
+	}
+	var decoded AgentStatus
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Reason == nil || decoded.Why != status.Why {
+		t.Fatalf("metadata did not round trip: %+v; JSON: %s", decoded, raw)
+	}
+	for _, lang := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja, i18n.Resolve("fr")} {
+		if got, want := decoded.WhyIn(lang), status.Reason.Text(lang); got != want {
+			t.Errorf("%s: got %q, want %q", lang, got, want)
+		}
+	}
+	legacy := AgentStatus{State: AgentSkipped, Why: status.Why}
+	if got := legacy.WhyIn(i18n.En); got != status.Why {
+		t.Errorf("legacy why changed from %q to %q", status.Why, got)
+	}
+}
+
+func TestLinuxAgentProbeHasStructuredReason(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // no bwrap: this probe returns before executing another program
+	sup := probeLinuxAgent()
+	if sup.Reason == nil || sup.Reason.Key != "extension-status.sandbox_no_bwrap" || sup.Why != sup.Reason.Error() {
+		t.Fatalf("%+v", sup)
+	}
+	if got, want := sup.WhyIn(i18n.En), i18n.T(i18n.En, "extension-status.sandbox_no_bwrap"); got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

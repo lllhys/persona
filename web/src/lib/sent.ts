@@ -27,6 +27,8 @@ export interface SentLetThrough {
   /** card: the card the user was asked on, and "assistant" when the assistant answered it for them. */
   interaction_id?: string;
   answered_by?: string;
+  /** The card's original text when the user allowed an edited version; text keeps what was actually sent. */
+  edited_from?: string;
   /** auto: the extension setting that let it send without asking. */
   setting?: string;
 }

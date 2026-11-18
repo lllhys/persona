@@ -78,9 +78,11 @@ func otherNoReader(agent string) string {
 }
 
 // otherAgent: an agent herdr reports that no branch of setAgents reads (gemini, amp…): listed with its terminal only.
+// A work agent is read elsewhere (pi through its extension, cursor and agy through the pane herdr drives), so it is not
+// one of these.
 func otherAgent(a host.Agent) bool {
 	switch a.Agent {
-	case "", "claude", "codex", traexAgent, piAgent, ompAgent, opencodeAgent:
+	case "", "claude", "codex", traexAgent, piAgent, ompAgent, opencodeAgent, cursorAgent, agyAgent:
 		return false
 	}
 	return host.ParsePane(a.PaneID).Kind != host.Botmux

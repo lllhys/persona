@@ -93,22 +93,28 @@ func (n *Node) watchCodexCards(ctx context.Context) {
 }
 
 func (n *Node) syncCodexCards(ctx context.Context) {
-	cards := n.codexCardsNow(ctx, "")
+	var cards []proto.Interaction
+	for _, c := range n.codexCardsNow(ctx, "") {
+		cards = append(cards, c.ix)
+	}
+	// The questions of Claude sessions outside Persona's terminals ride along: the hub keeps them as it keeps these
+	// (claudeoutside_ask.go).
+	cards = append(cards, n.outsideAskCards()...)
 	now := time.Now()
 	n.cx.mu.Lock()
 	var list []proto.Interaction
 	var ids []string
-	for _, c := range cards {
-		if d, gone := n.cx.dismissed[c.ix.ID]; gone {
+	for _, ix := range cards {
+		if d, gone := n.cx.dismissed[ix.ID]; gone {
 			d.seen = now // still asked: still the computer's
-			n.cx.dismissed[c.ix.ID] = d
+			n.cx.dismissed[ix.ID] = d
 			continue
 		}
-		if now.Before(n.cx.held[c.ix.ID]) {
+		if now.Before(n.cx.held[ix.ID]) {
 			continue
 		}
-		list = append(list, c.ix)
-		ids = append(ids, c.ix.ID)
+		list = append(list, ix)
+		ids = append(ids, ix.ID)
 	}
 	sort.Strings(ids)
 	key := strings.Join(ids, ",")
@@ -333,7 +339,11 @@ func askCard(session string, a codexAgent, title string, ask transcript.CodexAsk
 	}
 	for _, q := range ask.Questions {
 		key += fmt.Sprintf("\x00%d", q.Index)
-		ix.Questions = append(ix.Questions, proto.Question{Question: q.Question, Header: q.Header, Options: q.Options})
+		options := q.Options
+		if options == nil {
+			options = []proto.QuestionOption{}
+		}
+		ix.Questions = append(ix.Questions, proto.Question{Question: q.Question, Header: q.Header, Options: options})
 	}
 	if ix.CreatedAt.IsZero() {
 		ix.CreatedAt = time.Now().UTC()
@@ -452,6 +462,9 @@ func (n *Node) codexApprovalOn(ctx context.Context, pane string) (d *screen.Code
 // codexAnswer answers a card from the phone: only into the question or approval it was made from, as it is on screen
 // and in the rollout now. A refusal (rpc error with a code) typed nothing.
 func (n *Node) codexAnswer(ctx context.Context, session, id string, r proto.Resolution) error {
+	if strings.HasPrefix(id, outsideAskPrefix) {
+		return n.outsideAnswer(ctx, session, id, r) // a Claude session's question outside Persona's terminals
+	}
 	if r.Cancel {
 		return fmt.Errorf("question cancellation is unavailable for terminal-only questions")
 	}
@@ -555,6 +568,27 @@ func (n *Node) codexType(ctx context.Context, pane, text string, shows func(draf
 		}
 	}
 	return uncertain(n.sendKeys(ctx, pane, "enter"))
+}
+
+// codexSubmitted confirms that a terminal send left the composer, not just that the host accepted Enter.
+// A remaining draft or another view is never cleared, submitted again, or treated as proof of delivery.
+func (n *Node) codexSubmitted(ctx context.Context, pane string) error {
+	ctx, cancel := context.WithTimeout(ctx, codexConfirm)
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return uncertain(fmt.Errorf("Codex submission was not confirmed; check the computer before sending again: %w", ctx.Err()))
+		case <-time.After(codexStep):
+		}
+		s, err := n.codexScreen(ctx, pane)
+		if err != nil {
+			return uncertain(err)
+		}
+		if s.View == screen.CodexComposer && s.Draft == "" {
+			return nil
+		}
+	}
 }
 
 // pastedRE is how Codex shows a long paste in its box.

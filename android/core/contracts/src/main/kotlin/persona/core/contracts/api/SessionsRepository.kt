@@ -2,6 +2,7 @@ package persona.core.contracts.api
 
 import persona.core.contracts.Machine
 import persona.core.contracts.Session
+import persona.core.contracts.SessionKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -25,11 +26,19 @@ data class SessionListStatus(
 )
 
 private val legacySessionListStatus: StateFlow<SessionListStatus> = MutableStateFlow(SessionListStatus(loaded = true))
+private val noAdoptedSessions: StateFlow<List<Session>> = MutableStateFlow(emptyList())
+private val noStartedThreads: StateFlow<Map<SessionKey, Session>> = MutableStateFlow(emptyMap())
 
 interface SessionsRepository {
     val machines: StateFlow<List<Machine>>
     val sessions: StateFlow<List<Session>>
+    /** Start/send receipts for chat metadata, independent of the filtered list's membership and counts. */
+    val adoptedSessions: StateFlow<List<Session>> get() = noAdoptedSessions
+    /** Confirmed first-message handoffs, keyed by the exact waiting session that received the message. */
+    val startedThreads: StateFlow<Map<SessionKey, Session>> get() = noStartedThreads
     val listStatus: StateFlow<SessionListStatus> get() = legacySessionListStatus
+    /** Capabilities of the hub owning this machine; merged lists must not borrow the selected hub's. */
+    fun supportsFeature(machineId: String, feature: String): Boolean = false
     suspend fun refresh()
     suspend fun setListFilter(filter: SessionListFilter) {}
     /** Hub-group scope, separate from the server's machine-local group filter; null includes all hubs. */
@@ -44,6 +53,7 @@ interface SessionsRepository {
      * once, so its chat has metadata before the next `sessions` push. A session already listed is left as it is.
      */
     suspend fun adopt(session: Session) {}
+    suspend fun adoptThread(previous: SessionKey, session: Session) { adopt(session) }
 
     /** A machine the hub just returned (PUT …/engine): shown at once, before the next `machines` push. */
     suspend fun applyMachine(machine: Machine) {}

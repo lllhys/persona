@@ -200,7 +200,7 @@ func TestWorkStatsCountReworkAfterJudgedDone(t *testing.T) {
 	// An acceptance after the judge's done is no rework.
 	s2, f2, other := newSupervisedService(t)
 	waitsForReview(t, s2, f2, other.ID, "做完了，PR 已合并")
-	reviewTask(t, s2, other.ID, map[string]any{"verdict": "accepted", "note": "核对过了"})
+	reviewTask(t, s2, other.ID, map[string]any{"verdict": "accepted", "note": "核对过了", "checks": completeReviewChecks(todoNow(s2, other.ID))})
 	if n := len(eventsOf(testEvents(s2), reviewReworkEvent)); n != 0 {
 		t.Fatalf("an acceptance recorded %d reworks", n)
 	}

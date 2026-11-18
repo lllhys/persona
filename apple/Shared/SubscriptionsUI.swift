@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// Source subscriptions (#2041, docs/extensions/subscriptions.md "Pages"): the manager draws their pages as declarative UI at
 /// `POST /api/v1/subscriptions/-/ui`, and the app opens them as an extension page under a reserved id.
@@ -16,6 +17,16 @@ nonisolated enum SubscriptionsUI {
     static let askMost = 8000
     /// The manager's route for drawing and pressing the pages.
     static let path = "/api/v1/subscriptions/-/ui"
+    /// Beside them once the manager has the relationship view (#5741): `GET /api/v1/subscriptions/-/graph`.
+    static let graphFeature = "inbox_sources_graph"
+
+    /// The pages' Source Relationships row (`persona://sources-graph`, an older name's scheme too): the app pushes its own
+    /// view. Only these pages may answer it (`ExtensionViewModel.opens`), and they draw it only for an app that says it
+    /// has the view (`context.graph`).
+    static func isGraph(_ url: URL) -> Bool {
+        guard HubNaming.accepts(scheme: url.scheme), let c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        return c.host?.lowercased() == "sources-graph" && (c.path.isEmpty || c.path == "/")
+    }
 
     /// The text of the pages' Set Up with … (`persona://ask?text=…`, an older name's scheme too), for the assistant's main
     /// conversation; nil for any other link or an empty text. Only these pages may answer it (`ExtensionViewModel.opens`).
@@ -29,19 +40,25 @@ nonisolated enum SubscriptionsUI {
     }
 
     /// A page request with the assistant's name in its context (`context.assistant`): the name the composer shows
-    /// ("Ask {name}…"), which the pages' Set Up with … takes. Only these pages get it, never an extension.
+    /// ("Ask {name}…"), which the pages' Set Up with … takes. Only these pages get it, never an extension. It is sent even
+    /// without a name (""): the key says this app opens Set Up with …, and the pages draw it only then (#5661).
     struct Request: Encodable {
         var request: ExtensionUIRequest
         var assistant: String?
 
         private struct Context: Encodable {
             var base: ExtensionUIContext?
-            var assistant: String?
-            private enum Keys: String, CodingKey { case assistant }
+            var assistant: String
+            private enum Keys: String, CodingKey { case assistant, graph }
             func encode(to encoder: Encoder) throws {
                 try base?.encode(to: encoder)
                 var c = encoder.container(keyedBy: Keys.self)
-                try c.encodeIfPresent(assistant, forKey: .assistant)
+                try c.encode(assistant, forKey: .assistant)
+                // The iPhone app pushes its own relationship view from the list's Source Relationships row (#5741);
+                // the frozen Mac app gets no new feature (docs/apple/mac.md).
+                #if os(iOS)
+                try c.encode(true, forKey: .graph)
+                #endif
             }
         }
 
@@ -49,7 +66,7 @@ nonisolated enum SubscriptionsUI {
 
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: Keys.self)
-            try c.encode(Context(base: request.context, assistant: assistant?.isEmpty == false ? assistant : nil), forKey: .context)
+            try c.encode(Context(base: request.context, assistant: assistant ?? ""), forKey: .context)
             try c.encodeIfPresent(request.state, forKey: .state)
             try c.encodeIfPresent(request.action, forKey: .action)
             try c.encodeIfPresent(request.values, forKey: .values)

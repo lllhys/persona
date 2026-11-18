@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,34 @@ func TestStopReportingStopsItsTasks(t *testing.T) {
 	s.UserSpoke(context.Background(), SessionRef{MachineID: "server", SessionID: "lark1"})
 	if s.reporterStopped(context.Background(), "lark1") {
 		t.Fatal("still stopped after the user spoke")
+	}
+}
+
+// A reporting conversation whose turn ended while a background command still runs is interrupted by a stop: for an
+// assistant conversation that ends its process with the command, which would otherwise wake it later (#8960).
+func TestStopReportingStopsItsBackgroundWork(t *testing.T) {
+	s, f := reportingWithTask(t)
+	bg := []proto.BackgroundTask{{ID: "b1", Kind: "shell", Command: "sleep 90", StartedAt: time.Now()}}
+	f.setSessions("server", proto.Session{SessionID: "conv1", MachineID: "server", Assistant: true, Status: proto.StatusIdle},
+		proto.Session{SessionID: "lark1", MachineID: "server", Assistant: true, Status: proto.StatusIdle, Background: bg})
+	w := serve(s, "POST", "/api/v1/assistant/conversations/lark1/stop", "")
+	var res stopResult
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if !res.Conversation || res.Already || !slices.Contains(f.interrupted(), "server/lark1") {
+		t.Fatalf("result = %+v, interrupted %q", res, f.interrupted())
+	}
+
+	// A TUI agent's interrupt is Escape in its terminal and stops no background command: an idle one is not sent it (#3793).
+	f.setSessions("server", proto.Session{SessionID: "conv1", MachineID: "server", Assistant: true, Status: proto.StatusIdle},
+		proto.Session{SessionID: "lark1", MachineID: "server", Status: proto.StatusIdle, Background: bg})
+	before := len(f.interrupted())
+	if w := serve(s, "POST", "/api/v1/assistant/conversations/lark1/stop", ""); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if got := f.interrupted()[before:]; slices.Contains(got, "server/lark1") {
+		t.Fatalf("an idle TUI agent was interrupted: %q", got)
 	}
 }
 

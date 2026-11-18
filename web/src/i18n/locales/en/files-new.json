@@ -1,0 +1,12 @@
+{
+  "new": "New",
+  "new_folder": "New folder",
+  "new_text": "New text file",
+  "untitled_folder": "untitled folder",
+  "untitled_text": "Untitled.txt",
+  "in_folder": "In “{name}”.",
+  "in_folder_opens": "In “{name}”. It opens once it’s made.",
+  "name": "Name",
+  "create": "Create",
+  "cancel": "Cancel"
+}

@@ -713,11 +713,44 @@ func TestTailSkippedLineIsTheSameInTheTree(t *testing.T) {
 		{`{"type":"user","uuid":"u","parentUuid":"p","isCompactSummary":true,"timestamp":"2026-11-05T10:00:00Z","message":{"role":"user","content":"` + big + `"}}`, false},
 	} {
 		var whole, skipped Tail
-		var m Meta
-		whole.Line(&m, ParseLine(0, []byte(c.line), &m))
-		skipped.Skipped([]byte(c.line))
-		if len(skipped.tree.recs) != 1 || skipped.tree.recs[0] != whole.tree.recs[0] || whole.tree.recs[0].prompt != c.prompt {
-			t.Fatalf("%.80s…: skipped %+v, whole %+v", c.line, skipped.tree.recs, whole.tree.recs)
+		var wm, sm Meta
+		for i, line := range []string{prompt("seed", "go"), replyLine, turnEndLine} {
+			whole.Line(&wm, ParseLine(i, []byte(line), &wm))
+			skipped.Line(&sm, ParseLine(i, []byte(line), &sm))
 		}
+		whole.Line(&wm, ParseLine(3, []byte(c.line), &wm))
+		skipped.Skipped([]byte(c.line))
+		if len(skipped.tree.recs) != 4 {
+			t.Fatalf("%.80s…: skipped %+v, want the seed and one record", c.line, skipped.tree.recs)
+		}
+		got, want := skipped.tree.recs[3], whole.tree.recs[3]
+		if got.uuid != want.uuid || got.parent != want.parent || got.prompt != want.prompt || got.reply != want.reply ||
+			got.system != want.system || got.turnEnd != want.turnEnd || got.prompt != c.prompt || got.hasOutcome != c.prompt {
+			t.Fatalf("%.80s…: skipped %+v, whole %+v; a skipped line must keep only the tree shape, not new outcome evidence", c.line, got, want)
+		}
+	}
+}
+
+func TestTailSkippedLineDoesNotResetOutcomeEvidence(t *testing.T) {
+	var whole, skipped Tail
+	var wm, sm Meta
+	for i, line := range []string{prompt("seed", "go"), replyLine, turnEndLine} {
+		whole.Line(&wm, ParseLine(i, []byte(line), &wm))
+		skipped.Line(&sm, ParseLine(i, []byte(line), &sm))
+	}
+	big := strings.Repeat("A", 20<<10)
+	line := `{"type":"user","uuid":"big","parentUuid":"p","timestamp":"2026-11-05T10:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"` + big + `"}]},"toolUseResult":{"stdout":"` + big + `"}}`
+	whole.Line(&wm, ParseLine(3, []byte(line), &wm))
+	skipped.Skipped([]byte(line))
+	recap := `{"type":"system","subtype":"away_summary","uuid":"recap","parentUuid":"p","timestamp":"2026-11-05T10:01:00Z","content":"recap"}`
+	whole.Line(&wm, ParseLine(4, []byte(recap), &wm))
+	skipped.Line(&sm, ParseLine(4, []byte(recap), &sm))
+	whole.Settle(&wm)
+	skipped.Settle(&sm)
+	if sm.TurnOpen != wm.TurnOpen || sm.TurnClosed != wm.TurnClosed || sm.TurnSucceeded() != wm.TurnSucceeded() ||
+		sm.TurnError != wm.TurnError || sm.TurnErrorResumes != wm.TurnErrorResumes {
+		t.Fatalf("a visible recap after a skipped line reset outcome evidence: skipped open=%v closed=%v success=%v error=%q resumes=%v; whole open=%v closed=%v success=%v error=%q resumes=%v",
+			sm.TurnOpen, sm.TurnClosed, sm.TurnSucceeded(), sm.TurnError, sm.TurnErrorResumes,
+			wm.TurnOpen, wm.TurnClosed, wm.TurnSucceeded(), wm.TurnError, wm.TurnErrorResumes)
 	}
 }

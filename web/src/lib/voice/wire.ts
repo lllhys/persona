@@ -104,6 +104,9 @@ export interface VoiceRun {
   /** The hub's 409 `clearable` text: only when the node can clear that line, not always the same as `draft` (an IDE
    *  selection marker stays out of it). Clear and Send sends it back as `clear_draft` exactly (docs/assistant/voice.md 3.2). */
   clearable?: string;
+  /** The extension keeps it for a resend (#5904): what the user-speech gate held back offers Send anyway only then (one
+   *  longer than its quoted task, or from before it, is not kept). */
+  resendable?: boolean;
 }
 
 export type VoiceAskState = "asking" | "answered" | "released" | (string & {});
@@ -125,6 +128,10 @@ export interface VoiceFailure {
   /** The extension closes the socket after a fatal one: the call is over, nothing reconnects. */
   fatal: boolean;
 }
+
+/** The extension sends anyway what its user-speech gate held back (a resend of a run refused `unprompted`), and its
+ *  `start` takes `speech_gate` (#5904, docs/assistant/voice.md 3.1). */
+export const SPEECH_GATE_FEATURE = "speech_gate";
 
 /** The `ready` frame: the extension is connected upstream and the rates are known. */
 export interface VoiceReady {
@@ -172,6 +179,9 @@ export interface VoiceStart {
   resume?: VoiceRun[];
   /** False: the microphone records without echo cancellation, so a caption of the user's may be the voice's own. */
   echoCancellation?: boolean;
+  /** The user-speech gate on (true) or off (false) for the call (#5904, docs/assistant/voice.md 3.2). Saying it also tells
+   *  the extension this page has Send anyway; a page from before it says nothing, and an older extension ignores it. */
+  speechGate?: boolean;
 }
 
 /** Extension ids are a-z, 0-9, `_` and `-` (docs/extensions/extensions.md): anything else must not become a path. */

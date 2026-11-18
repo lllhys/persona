@@ -49,12 +49,15 @@ func voiceManifest(h *Manager, id, name string) *extension.Manifest {
 		name = "实时语音"
 	}
 	items, _ := json.Marshal([]extension.VoiceItem{{ID: id, Name: name}})
+	// Meeting transcription on the hub (docs/assistant/meeting-minutes.md "The built-in adapter"), with the same
+	// upstream and key: the manager dials it, never the apps.
+	transcription, _ := json.Marshal([]extension.TranscriptionItem{{ID: voice.TranscriptionContribution, Name: "GPT-Live"}})
 	return &extension.Manifest{ManifestVersion: extension.ManifestVersion, ID: id, Name: name, Version: h.version,
 		Description:      "在 App 里和 Persona 实时语音对话，语音来自 GPT-Live 兼容的实时服务。填服务地址和 Key 后打开；manager.json 里写的上游照常可用。",
 		Engines:          extension.Engines{ExtensionProtocol: extension.Protocol},
 		Runtime:          &extension.Runtime{Command: extension.Command{Path: "personad"}, Args: []string{"voice"}, RPC: "none", HTTP: true},
 		ActivationEvents: []string{extension.OnStartup}, Permissions: extension.Permissions{HubAPI: true},
-		Contributes:   map[string]json.RawMessage{"voice": items},
+		Contributes:   map[string]json.RawMessage{"voice": items, transcriptionPoint: transcription},
 		Configuration: json.RawMessage(voiceConfig),
 		Secrets:       []extension.SecretSpec{{Name: voiceSecretKey, Title: "API Key", Description: "作为 Authorization: Bearer 发给服务；只发给上面的服务地址，换了主机要重新填"}}}
 }

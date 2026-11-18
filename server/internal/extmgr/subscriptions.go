@@ -33,6 +33,10 @@ const subscriptionPushFeature = "subscription_push"
 // row only with it; an older manager's pages list subscriptions alone.
 const inboxSourcesFeature = "inbox_sources"
 
+// inboxSourcesGraphFeature says GET /api/v1/subscriptions/-/graph answers (#5741): the apps offer Inbox Sources'
+// relationship view only with it.
+const inboxSourcesGraphFeature = "inbox_sources_graph"
+
 // subscriptionsShown says whether the report carries subscriptionsFeature.
 func (h *Manager) subscriptionsShown() bool { return h.subs != nil && h.subs.Features().Deliver }
 
@@ -45,6 +49,7 @@ func (h *Manager) startSubscriptions(ctx context.Context) {
 		store = subscriptions.NewMemStore() // no database (tests): kept in memory only
 	}
 	h.subs = subscriptions.New(h.subscriptionOptions(store))
+	h.subsLive.Store(h.subs)
 	go h.subs.Run(ctx)
 }
 
@@ -113,8 +118,18 @@ func (h *Manager) readSubscriptions(ctx context.Context, r *assistantwire.InboxR
 	}
 	for _, src := range srcs {
 		r.Names[src.ID] = src.Name
-		r.Sources = append(r.Sources, assistantwire.InboxSource{ID: src.ID, Name: src.Name, Extension: true, Kinds: src.Kinds,
-			Things: src.Things})
+		if c := h.connectorOf(src.ID); src.Switched && c != nil {
+			// A built-in read through its default subscription (#6381): its round entry is the built-in's, with the
+			// subscription's rows and read error.
+			in := assistantwire.InboxSource{ID: c.ID(), Name: connector.DisplayName(ctx, c), Extension: fromExtension(c.ID()),
+				Migrated: isMigrated(c.ID()), Counts: !src.ConnectorRows, Things: src.Things, ReadError: src.ReadError}
+			withAbilities(&in, c)
+			r.Names[src.ID] = in.Name
+			r.Sources = append(r.Sources, in)
+			continue
+		}
+		r.Sources = append(r.Sources, assistantwire.InboxSource{ID: src.ID, Name: src.Name, Extension: true, Counts: true, Kinds: src.Kinds,
+			Things: src.Things, ReadError: src.ReadError, Via: src.Connector, ViaSource: src.SourceName, Chats: src.Chats})
 	}
 }
 
@@ -285,6 +300,7 @@ func (h *Manager) subscriptionRoutes(mux *http.ServeMux) {
 	})
 	// The pages (#2041): every device may draw them; the actions they carry check full access themselves.
 	api.HandleFunc("POST /api/v1/subscriptions/-/ui", h.subscriptionUI)
+	api.HandleFunc("GET /api/v1/subscriptions/-/graph", h.subscriptionGraph)
 	api.HandleFunc("POST /api/v1/subscriptions/-/dry-run", h.subscriptionChange(func(w http.ResponseWriter, r *http.Request, _ subscriptions.Actor) {
 		var in subscriptions.DryRunRequest
 		if !readSubscriptionJSON(w, r, &in) {

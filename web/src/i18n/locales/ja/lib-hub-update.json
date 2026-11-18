@@ -17,6 +17,9 @@
   "cannot_update": "このハブは自動で更新されません。",
   "warning_bad": "このバージョンは前回インストール後に起動できず、ロールバックされました。自動更新では再インストールされません。",
   "warning_held": "自動更新ではこのバージョンをインストールしません：{why}。問題がなければ手動で更新できます。",
+  "warning_source_behind": "更新元 {url}（{from}）の最新は {version} で、このハブより古いため、更新が止まっているようです。hub.json の update.url で別の更新元を指定してください。",
+  "source_from_build": "ビルド時に設定",
+  "source_from_config": "hub.json の update.url",
   "new_image": "新しいイメージ {version}",
   "docker_set_image": "ハブのマシンで、composeファイルと同じ場所にある.envのPERSONA_IMAGEを次に変更します：",
   "docker_then_run": "続いて、そのディレクトリで実行します：",
@@ -30,5 +33,8 @@
   "notice_turn_off": "オフにする",
   "notice_got_it": "了解",
   "notice_dismiss": "今後表示しない",
-  "notice_open": "設定 › ハブを開く"
+  "notice_open": "設定 › ハブを開く",
+  "state_building": "ビルド中…",
+  "state_backing_up": "バックアップ中…",
+  "state_applying_backup": "バックアップのプログラムを準備中…"
 }

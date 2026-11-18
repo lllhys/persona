@@ -17,6 +17,22 @@ import java.time.OffsetDateTime
 
 // Wire types mirror docs/protocol/protocol.md and tolerate optional enhancements according to D5.
 
+/** How long past its reset a usage-limit wait still counts (the hub's limitResumeGrace). */
+internal const val USAGE_LIMIT_GRACE_MS = 10 * 60 * 1000L
+
+/**
+ * The time half of a usage-limit line (iOS `usageLimitWhen`): "Resets <time>", "Resumes <time>", or "Resumes after
+ * the reset". The assistant's rows and card format it; the shared [Session.interrupted] flag does not.
+ */
+sealed class UsageLimitWhen {
+    /** "Resets <time>": nothing continues the turn on its own. */
+    data class Resets(val at: Instant) : UsageLimitWhen()
+    /** "Resumes <time>": the Agent or the hub continues it. */
+    data class Resumes(val at: Instant) : UsageLimitWhen()
+    /** No reset time, and something continues it after the reset. */
+    data object AfterReset : UsageLimitWhen()
+}
+
 val JsonCodec = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
@@ -60,6 +76,11 @@ data class Machine(
     @SerialName("node_mismatch") val nodeMismatch: Boolean? = null,
     /** The terminal engine chosen for this machine (docs/integrations/engines.md); hubs send it always, herdr when never chosen. */
     @SerialName("engine") val engine: String = "herdr",
+    /**
+     * The terminal hosts this machine enables side by side (#2576 / #3302); empty when none are enabled; null from an older
+     * hub that only sent [engine]. Resume in Terminal (#5565) reads the empty set as "no terminal engine".
+     */
+    @SerialName("engine_hosts") val engineHosts: List<String>? = null,
     /** What the node found there; empty from older hubs and nodes, and while the machine is offline. */
     @SerialName("engines") val engines: List<DetectedEngine> = emptyList(),
     /** The hub is installing its own personad build there ("Redeploy"). */
@@ -220,7 +241,10 @@ data class BackgroundTask(
     val isWorkflow: Boolean get() = kind == "workflow"
 }
 
-/** What a session with a [Session.sourceKind] allows; a missing field is a refusal (docs/protocol/protocol.md "Codex sources and capabilities"). */
+/**
+ * What a session with a [Session.sourceKind] allows; a missing field is a refusal (docs/protocol/protocol.md "Codex sources
+ * and capabilities"), except the optional ones, whose null keeps the app's own rule.
+ */
 @KeepGeneratedSerializer
 @Serializable(with = SessionCapabilitiesSerializer::class)
 data class SessionCapabilities(
@@ -232,6 +256,22 @@ data class SessionCapabilities(
     val attach: Boolean = false,
     /** Null on an older hub: the client keeps its agent-based rule instead of treating the field as a refusal. */
     val modes: Boolean? = null,
+    /** Close the agent, terminal or not (a runtime's session, #6294); null from an older node: the app keeps its terminal rule. */
+    val close: Boolean? = null,
+    /** Rename it, terminal or not (a runtime's session, #6294); null from an older node: the app keeps its terminal rule. */
+    val rename: Boolean? = null,
+    /** Switch its model through `POST …/modes`; null from an older node: the app keeps its Claude-in-a-terminal rule. */
+    val model: Boolean? = null,
+    /** Rewind to before one of your messages; null from an older node: the app keeps its Claude-in-a-terminal rule. */
+    val rewind: Boolean? = null,
+    /** A rewind may put the files back too ("Code and conversation"); null from an older node: as its [rewind] rule says. */
+    @SerialName("rewind_code") val rewindCode: Boolean? = null,
+    /**
+     * The permission modes it takes when its agent is not Claude Code (#8261, Paseo's Grok, OpenCode or Codex): `default`,
+     * its own approval, and `bypassPermissions` where it has an Allow everything. With two the chat offers a switch
+     * between them (`persona.core.domain.sort.listedModes`); null from an older node and wherever Claude Code's modes stand.
+     */
+    @SerialName("permission_modes") val permissionModes: List<String>? = null,
 )
 
 /**
@@ -247,6 +287,8 @@ data class WorkState(
     val wait: String? = null,
     val then: String? = null,
     @WireTime @SerialName("wake_at") val wakeAt: String? = null,
+    /** When a usage limit that blocked this turn resets, if the session's own time is absent. */
+    @WireTime @SerialName("resets_at") val resetsAt: String? = null,
     val attempts: Int? = null,
     val max: Int? = null,
     @SerialName("interaction_id") val interactionId: String? = null,
@@ -301,6 +343,24 @@ data class SessionTodo(
     val title: String = "",
 )
 
+/**
+ * What Paseo's bridge calls every agent but Claude Code and Codex (integrations/paseo/lib/map.js `appAgent`): its
+ * engine's id, never the agent's name. Such a session names its provider by `agent_label` (Paseo's label for it,
+ * "Grok") and `launcher` (the provider's id, "grok"); the app never names it after the engine (#8143).
+ */
+const val PaseoAgent = "paseo"
+
+/**
+ * The name of an agent the app does not know by its id ([agent]): what the hub calls it ([label], a runtime's own name,
+ * "DSH"), else the id. Paseo's [PaseoAgent] is its engine, not the agent: there it is the provider's label, else its
+ * launcher (the provider's id), and the engine's name only while neither is known (#8143).
+ */
+fun unknownAgentName(agent: String?, label: String?, launcher: String?): String {
+    val said = label?.trim()?.takeIf(String::isNotEmpty)
+    if (agent != PaseoAgent) return said ?: agent.orEmpty()
+    return said?.takeUnless { it.equals(PaseoAgent, ignoreCase = true) } ?: launcher?.trim()?.takeIf(String::isNotEmpty) ?: said ?: agent
+}
+
 @KeepGeneratedSerializer
 @Serializable(with = SessionSerializer::class)
 data class Session(
@@ -308,7 +368,7 @@ data class Session(
     @SerialName("session_id") val sessionId: String,
     @SerialName("title") val title: String = "",
     @SerialName("cwd") val cwd: String = "",
-    @WireEnum("idle", "working", "blocked", "done", "offline", "unknown")
+    @WireEnum("idle", "working", "blocked", "done", "offline", "interrupted", "unknown")
     @SerialName("status") val status: String = "unknown",
     @SerialName("tab_id") val tabId: String? = null,
     @SerialName("workspace_id") val workspaceId: String? = null,
@@ -344,6 +404,23 @@ data class Session(
     @SerialName("parent_session_id") val parentSessionId: String? = null,
     @SerialName("root_session_id") val rootSessionId: String? = null,
     @SerialName("is_subagent") val isSubagent: Boolean = false,
+    @SerialName("asking_parent_session_id") val askingParentSessionId: String? = null,
+    /** The listed ancestor whose chat owns this child (sessions_hierarchy). */
+    @SerialName("folded_under") val foldedUnder: String? = null,
+    /** Why a row that is no child folds: [FoldedAs.WORKER] (a tab's worker, #5180) or [FoldedAs.SIDE] (#7944). */
+    @SerialName("folded_as") val foldedAs: String? = null,
+    /**
+     * The nearest side session a folded row belongs to when it folds through one and is not that side itself (a side's
+     * own Codex children, #7944): its card and child card are that side's chat's, not the topmost parent's.
+     */
+    @SerialName("folded_side") val foldedSide: String? = null,
+    val children: SessionChildren? = null,
+    /**
+     * The session on the same machine this one was started from while staying a conversation of its own (a Claude
+     * desktop app's side chat or /btw question, #5935). Whether it folds is the hub's [foldedAs], never this.
+     */
+    @SerialName("parent_agent_id") val parentAgentId: String? = null,
+    @WireTime @SerialName("started_at") val startedAt: String? = null,
     /** Why the source only lets the phone read this session. */
     @SerialName("read_only_reason") val readOnlyReason: String? = null,
     val capabilities: SessionCapabilities? = null,
@@ -360,6 +437,8 @@ data class Session(
     @SerialName("assistant") val assistant: Boolean = false,
     /** An assistant conversation put away (POST /api/v1/assistant/conversations/{id}/archive): kept, not listed. */
     @SerialName("archived") val archived: Boolean = false,
+    /** User-defined labels; null on an older hub and where the hub omits an empty set. */
+    @SerialName("tags") val tags: List<String>? = null,
     /** The manager it belongs to (docs/assistant/managers.md「Ownership」); null from an older hub: the default manager. */
     @SerialName("manager") val manager: String? = null,
     /**
@@ -426,6 +505,15 @@ data class Session(
     /** Its latest turn ended in a model API error (the hub sets it while it is stopped, #1516): its task is interrupted. */
     @SerialName("turn_error") val turnError: String? = null,
     /**
+     * What the agent or the hub called [turnError] (docs/protocol/protocol.md): `usage_limit` is a subscription limit
+     * until it resets, not a turn to continue as an interruption. Older hubs never send it.
+     */
+    @SerialName("turn_error_kind") val turnErrorKind: String? = null,
+    /** When a `usage_limit` resets (RFC3339). Absent when that time is not known. */
+    @WireTime @SerialName("turn_error_resets_at") val turnErrorResetsAt: String? = null,
+    /** The CLI goes on by itself once a usage limit resets. Absent or false: nothing of the CLI will. */
+    @SerialName("turn_error_resumes") val turnErrorResumes: Boolean? = null,
+    /**
      * What the hub recognized of [turnError] (docs/protocol/protocol.md): not_logged_in, auth_failed, model_route,
      * rate_limited or model_fallback_unavailable (the model Claude Code fell back to after a refusal can't be used, #2528:
      * "Continue" would only go to it again). Older hubs never send it.
@@ -451,10 +539,14 @@ data class Session(
     @SerialName("can_fork") val canFork: Boolean = false,
     @SerialName("rev") val rev: Long? = null,
     @SerialName("suggestion") val suggestion: String? = null,
+    /** The suggested message must be reviewed in the composer, never sent in one action; absent on older hubs. */
+    @SerialName("suggestion_risky") val suggestionRisky: Boolean = false,
     /** Persona is still opening its tab and starting the agent (docs/protocol/protocol.md "New session"); sends wait for it. */
     @SerialName("starting") val starting: Boolean = false,
     /** Why starting it failed; the session is offline and sends get the same error. */
     @SerialName("start_error") val startError: String? = null,
+    /** Codex is open in its pane and has no thread until its first message. */
+    @SerialName("awaiting_first_message") val awaitingFirstMessage: Boolean = false,
     /**
      * The channels messages came into this conversation from, newest first (`wechat`, `feishu`; docs/extensions/channels.md
      * "Source marks"): the conversation list draws the latest's mark. Older hubs never send it.
@@ -535,20 +627,70 @@ data class Session(
     /** A chat of the health space ([space]), which the assistant's own lists leave out. */
     val isHealth: Boolean get() = space == persona.core.contracts.api.AssistantSpace.HEALTH
     val agentState: AgentState get() = AgentState.of(state, status)
+    /**
+     * The list state of this session and its folded children; its own wire state stays intact. A side session's result
+     * not looked at yet makes it unread (`sides_unread`, #7944: sides only; Codex children and workers do not), unless it
+     * works itself.
+     */
+    val foldedState: AgentState get() = when {
+        agentState == AgentState.NeedsYou || (children?.needsYou ?: 0) > 0 -> AgentState.NeedsYou
+        (children?.working ?: 0) > 0 && agentState != AgentState.Unread &&
+            !(agentState == AgentState.Idle && awaitsReply) -> AgentState.Working
+        agentState != AgentState.Working && (children?.sidesUnread ?: 0) > 0 -> AgentState.Unread
+        else -> agentState
+    }
     /** Stopped on a model API error ([turnError]): cut off, not finished (#1516). */
     val interrupted: Boolean get() = !turnError.isNullOrBlank() && (agentState == AgentState.Unread || agentState == AgentState.Idle)
+
+    /**
+     * Stopped on a subscription usage limit whose reset is still ahead, or not known (#8237). A known reset more than
+     * [USAGE_LIMIT_GRACE_MS] ago is over: the turn reads as interrupted again. [now] is epoch millis.
+     */
+    fun isUsageLimited(now: Long = System.currentTimeMillis()): Boolean {
+        if (turnError.isNullOrBlank() || turnErrorKind != "usage_limit") return false
+        if (agentState != AgentState.Unread && agentState != AgentState.Idle) return false
+        val at = parseTime(turnErrorResetsAt ?: work?.resetsAt)?.toEpochMilli() ?: return true
+        return now <= at + USAGE_LIMIT_GRACE_MS
+    }
+
+    /** The CLI said it goes on by itself, or the hub scheduled this limit's continuation. */
+    fun usageLimitContinues(): Boolean {
+        if (turnErrorResumes == true) return true
+        val waiting = work ?: return false
+        return waiting.phase == "blocked" && parseTime(waiting.resetsAt) != null && parseTime(waiting.wakeAt) != null
+    }
+
+    /**
+     * Only the time half of a usage-limit line (iOS `usageLimitWhen`), for a row that already says "Usage Limit".
+     * Null when this is not a usage-limit wait, or nothing says when. [now] is epoch millis: callers pass the
+     * minute tick, so the line changes at the grace boundary.
+     */
+    fun usageLimitWhen(now: Long = System.currentTimeMillis()): UsageLimitWhen? {
+        if (!isUsageLimited(now)) return null
+        val goesOn = usageLimitContinues()
+        val at = parseTime(turnErrorResetsAt ?: work?.resetsAt)
+        return when {
+            at == null && goesOn -> UsageLimitWhen.AfterReset
+            at == null -> null
+            goesOn -> UsageLimitWhen.Resumes(at)
+            else -> UsageLimitWhen.Resets(at)
+        }
+    }
     val folderName: String get() = cwd.trimEnd('/').substringAfterLast('/')
     val displayTitle: String get() = if (title.isEmpty() || title == "Claude Code") folderName.ifEmpty { sessionId.take(8) } else title
     /** Codex in a terminal, or a thread from a Codex app-server / Codex history. */
     val isCodex: Boolean get() = agent == "codex" || sourceKind == "codex_app_server" || sourceKind == "codex_history"
     /** Claude Code, or an older hub that does not name the agent: what Claude-only controls (modes, /model, /clear) need. */
     val isClaude: Boolean get() = !isCodex && (agent.isNullOrEmpty() || agent == "claude")
-    /** Who the user talks to: Claude, Codex, a compatible CLI, or what the hub calls a runtime's agent ("DSH"). */
+    /**
+     * Who the user talks to: Claude, Codex, a compatible CLI, what the hub calls a runtime's agent ("DSH"), or a Paseo
+     * provider by its own name ("Grok", [unknownAgentName]), never the engine's.
+     */
     val agentLabel: String get() = when {
         isCodex -> "Codex"
         agent == "traex" -> "TRAEX"
         isClaude -> "Claude"
-        else -> agentLabelHint?.takeIf(String::isNotBlank) ?: agent.orEmpty()
+        else -> unknownAgentName(agent, agentLabelHint, launcher)
     }
     val isLive: Boolean get() = status != "offline"
     /** [failureReason] without the warning sign botmux starts it with (the app draws its own); null when there is none. */
@@ -572,8 +714,13 @@ data class Session(
      */
     val canDelete: Boolean get() = !assistant && !starting && status in setOf("offline", "done", "idle", "unknown", "interrupted")
     val updated: Instant? get() = parseTime(updatedAt)
-    /** Its workflows still running, newest first. */
-    val runningWorkflows: List<Workflow> get() = workflows.orEmpty().filter { it.isRunning }
+    /**
+     * Its workflows still running, newest first. On a summary row (`summary=1`, one with [waiting]) its [workflowProgress],
+     * the newest running run without its agents and phases, stands for them (#5888), even when the row kept an older
+     * complete row's [workflows] (`keepingDetails`): fresh summary counts win, as in `backgroundWork()`.
+     */
+    val runningWorkflows: List<Workflow> get() = if (waiting != null) listOfNotNull(workflowProgress?.takeIf { it.isRunning })
+        else workflows.orEmpty().filter { it.isRunning }
     /**
      * How much runs in the background without counting a workflow twice: its other background tasks and its running
      * workflows. An older hub sends no [workflows]: every background entry counts, as before.
@@ -588,6 +735,30 @@ data class Session(
 
 /** A host's failure notice without its leading warning signs (U+26A0, U+FE0F) and spaces, as iOS `Session.failureText`. */
 fun failureNoticeText(reason: String): String = reason.trim().trimStart('\u26A0', '\uFE0F').trim()
+
+/** All descendants folded under a listed session, counted by their own states. */
+@Serializable
+data class SessionChildren(
+    val total: Int = 0,
+    val working: Int = 0,
+    @SerialName("needs_you") val needsYou: Int = 0,
+    val workers: Int = 0,
+    /**
+     * The side sessions among them (`folded_as: "side"`, sessions_side_fold, #7944), by their own states, also counted in
+     * the fields above. The app reads them only for a row whose sides it does not hold (core:domain `foldRows`).
+     */
+    val sides: Int = 0,
+    @SerialName("sides_working") val sidesWorking: Int = 0,
+    @SerialName("sides_needs_you") val sidesNeedsYou: Int = 0,
+    @SerialName("sides_unread") val sidesUnread: Int = 0,
+)
+
+/** The hub's `folded_as` values. */
+object FoldedAs {
+    const val WORKER = "worker"
+    /** A side session (a Claude desktop app's side chat or /btw question), folded under its topmost listed parent (#7944). */
+    const val SIDE = "side"
+}
 
 @KeepGeneratedSerializer
 @Serializable(with = SessionCompactionSerializer::class)
@@ -619,6 +790,39 @@ data class ImagePayload(
     val size: Int? = null,
 )
 
+/**
+ * What one model request used (`proto.TokenUsage`, docs/protocol/protocol.md "Token usage on items"). Counts are tokens;
+ * [cacheWrite1h] is the part of [cacheWrite] kept for an hour. [id] (`agent:<id>`) marks one subagent's report, counted
+ * once per model and speed. Older nodes omit the list.
+ */
+@Serializable
+data class TokenUsage(
+    val id: String? = null,
+    val model: String? = null,
+    @SerialName("in") val input: Long = 0,
+    @SerialName("out") val output: Long = 0,
+    @SerialName("cache_read") val cacheRead: Long = 0,
+    @SerialName("cache_write") val cacheWrite: Long = 0,
+    @SerialName("cache_write_1h") val cacheWrite1h: Long = 0,
+    val fast: Boolean = false,
+) {
+    /** A subagent's or workflow agent's report. Entries with the same id, model and speed are one report. */
+    val report: Boolean get() = !id.isNullOrBlank()
+}
+
+/**
+ * The built-in catalog's reference price in USD per one million tokens (`proto.ModelPrice`). A missing kind is unknown,
+ * not free. Input and output are present whenever the catalog has a price.
+ */
+@Serializable
+data class ModelPrice(
+    val input: Double? = null,
+    val output: Double? = null,
+    @SerialName("cache_read") val cacheRead: Double? = null,
+    @SerialName("cache_write") val cacheWrite: Double? = null,
+    @SerialName("cache_write_1h") val cacheWrite1h: Double? = null,
+)
+
 @KeepGeneratedSerializer
 @Serializable(with = ItemSerializer::class)
 data class Item(
@@ -640,6 +844,8 @@ data class Item(
     @SerialName("wake") val wake: Boolean? = null,
     val task: TaskNote? = null,
     val fold: Fold? = null,
+    /** A user-visible action hidden in this work range; repeated full items retain it as on iOS. */
+    @SerialName("supervision_user") val supervisionUser: Boolean? = null,
     @SerialName("turn_duration") val turnDuration: TurnDuration? = null,
     /** The client message id of the message sent from a phone that this item came from (#968): its text, images,
      *  queued copy, or the notice it became. Older hubs never send it. */
@@ -658,12 +864,20 @@ data class Item(
      * model); null where it does not say (user items, older hubs). The chat marks where the replies' model changes by it.
      */
     val model: String? = null,
+    /** What the model requests this item stands for used (#5426). Older hubs omit it. */
+    val usage: List<TokenUsage> = emptyList(),
 )
 
 /**
  * A Claude Code model_refusal_* record as the hub gives it (server proto.ModelRefusal, #2528): its known fields with
  * values as recorded (unknown ones included) and [text], the refusal's own words. Never the record's line: older hubs
  * also sent it as `raw`, which is not decoded, so it is never shown or kept.
+ *
+ * The recovery fields are present only when the node projects its own bounded recovery onto this shape (#7824): a
+ * runtime-written record never sets them, so they decode to their defaults and older records render unchanged.
+ * [recoveryReset] says when the configured model is available again; [recoveryExhausted] marks an exhausted chain
+ * (then [fallbackModel] is empty); [recoveryReturning] that the configured model answered a probe and the next request
+ * runs on it again; [recoveryTried] lists every model tried, in order, joined by arrows.
  */
 @KeepGeneratedSerializer
 @Serializable(with = ModelRefusalSerializer::class)
@@ -675,6 +889,10 @@ data class ModelRefusal(
     val scope: String? = null,
     val explanation: String? = null,
     val text: String? = null,
+    @WireTime @SerialName("recovery_reset") val recoveryReset: String? = null,
+    @SerialName("recovery_exhausted") val recoveryExhausted: Boolean = false,
+    @SerialName("recovery_returning") val recoveryReturning: Boolean = false,
+    @SerialName("recovery_tried") val recoveryTried: String? = null,
 )
 
 object ModelRefusalSerializer : WireSerializer<ModelRefusal>(ModelRefusal.generatedSerializer())
@@ -689,6 +907,23 @@ data class ModelPick(
 )
 
 object ModelPickSerializer : WireSerializer<ModelPick>(ModelPick.generatedSerializer())
+
+/**
+ * What POST …/queue answers (docs/protocol/protocol.md, `spec/fixtures/wire/queue.json`): the messages that were queued before
+ * the edit, in order ([queue]) and, in a Persona conversation, each one's photos for the composer ([images]: entry i is
+ * message i's, null for a message without photos; empty when no message had any).
+ */
+@KeepGeneratedSerializer
+@Serializable(with = QueueEditSerializer::class)
+data class QueueEdit(
+    val queue: List<String> = emptyList(),
+    val images: List<List<ImagePayload>?> = emptyList(),
+) {
+    /** The photos of the message at [index]; none when it had none. */
+    fun imagesOf(index: Int): List<ImagePayload> = images.getOrNull(index).orEmpty()
+}
+
+object QueueEditSerializer : WireSerializer<QueueEdit>(QueueEdit.generatedSerializer())
 
 /**
  * A launcher switch waiting for the user's next message (server proto.PendingSwitch): the launcher, the model and effort
@@ -743,6 +978,8 @@ data class Injected(
     val line: String = "",
     /** followup once | daily | interval: what the task asks. */
     val detail: String? = null,
+    /** system/supervise: info | triage | user — "user" must stay visible in the chat (web `supervisionVisible`); older hubs omit it. */
+    val level: String? = null,
 )
 
 object InjectedSerializer : WireSerializer<Injected>(Injected.generatedSerializer())
@@ -771,7 +1008,12 @@ object TurnDurationSerializer : WireSerializer<TurnDuration>(TurnDuration.genera
 
 @KeepGeneratedSerializer
 @Serializable(with = QuestionOptionSerializer::class)
-data class QuestionOption(@SerialName("label") val label: String = "", @SerialName("description") val description: String? = null)
+data class QuestionOption(
+    @SerialName("label") val label: String = "",
+    @SerialName("description") val description: String? = null,
+    /** A manager-local answer (`defer`); absent from older hubs and from choices that message the Agent. */
+    @SerialName("action") val action: String? = null,
+)
 
 @KeepGeneratedSerializer
 @Serializable(with = QuestionSerializer::class)
@@ -803,6 +1045,14 @@ data class ScreenDialog(
     @SerialName("multi") val multi: Boolean = false,
     /** The submit row's own label ("Submit", or "Next" when another question follows). */
     @SerialName("submit") val submit: String? = null,
+    /** Claude Code's command prompt, read off the terminal (#5265); absent on older hubs and other dialogs. */
+    @SerialName("command") val command: String? = null,
+    @SerialName("description") val description: String? = null,
+    @SerialName("warning") val warning: String? = null,
+    @SerialName("risk") val risk: String? = null,
+    @SerialName("deadline") val deadline: String? = null,
+    @SerialName("deadline_action") val deadlineAction: String? = null,
+    @WireTime @SerialName("deadline_at") val deadlineAt: String? = null,
 )
 
 /** Something a permission card asks to fill in before approving (`proto.Field`, a password); see [Interaction.fields]. */
@@ -823,6 +1073,10 @@ data class Interaction(
     @SerialName("machine_id") val machineId: String = "",
     @SerialName("session_id") val sessionId: String = "",
     @SerialName("session_title") val sessionTitle: String? = null,
+    @SerialName("folded_under") val foldedUnder: String? = null,
+    @SerialName("folded_as") val foldedAs: String? = null,
+    /** The side session whose chat this card belongs to when it comes from a row folded through one (#7944). */
+    @SerialName("folded_side") val foldedSide: String? = null,
     /** The task its agent works for (docs/assistant/unified-entry.md), named by the hub. */
     @SerialName("task_title") val taskTitle: String? = null,
     @SerialName("cwd") val cwd: String? = null,
@@ -871,15 +1125,27 @@ data class Interaction(
     @SerialName("tool_title") val toolTitle: String? = null,
     /** The tool alone, without what this call does, for the scope of "Always allow". */
     @SerialName("tool_name_title") val toolNameTitle: String? = null,
+    /** The rule a question a supervisor passed up suggests (#4929); the card comes again without it once it was answered. */
+    val suggestion: RuleSuggestion? = null,
 ) {
     val sessionKey: SessionKey get() = SessionKey(machineId, sessionId)
+    /** The page that answers it; resolution still uses this interaction's own id and session. */
+    val homeKey: SessionKey get() = SessionKey(machineId, foldedUnder?.takeIf(String::isNotBlank) ?: sessionId)
 
-    /** The agent's name on a card not from Claude Code ("Codex", "a compatible CLI", "DSH"); null for Claude's. */
+    /** Asked by an agent other than Claude Code (Codex, a compatible CLI, a runtime's): the card is that agent's, never Claude's. */
+    val fromOtherAgent: Boolean get() = !agent.isNullOrEmpty() && agent != "claude"
+
+    /**
+     * The agent's name on a card not from Claude Code ("Codex", "a compatible CLI", "DSH", a Paseo provider's "Grok");
+     * null for Claude's, and for one that names only Paseo, its engine (a node before #8142 labels every card of Paseo's
+     * other providers so): that card reads as one whose agent can't be named (#8143). [fromOtherAgent] says whose card it is.
+     */
     val agentDisplayName: String?
         get() = when (agent) {
             "codex" -> "Codex"
             "traex" -> "TRAEX"
             null, "", "claude" -> null
+            PaseoAgent -> agentLabelHint?.trim()?.takeUnless { it.isEmpty() || it.equals(PaseoAgent, ignoreCase = true) }
             else -> agentLabelHint?.takeIf(String::isNotBlank) ?: agent
         }
 
@@ -904,7 +1170,10 @@ data class Interaction(
     /** One line for a notification or a list row. */
     val headline: CoreText
         get() = when (kind) {
-            "question" -> questions?.firstOrNull()?.question?.let(CoreText::plain) ?: CoreText.of(Key.HeadlineQuestion, agentDisplayName ?: "Claude")
+            // Another agent's card that can't name it says only that it asks (DESIGN_SYSTEM.md 5.6), never "Claude".
+            "question" -> questions?.firstOrNull()?.question?.let(CoreText::plain)
+                ?: agentDisplayName?.let { CoreText.of(Key.HeadlineQuestion, it) }
+                ?: if (fromOtherAgent) CoreText.of(Key.AskQuestion) else CoreText.of(Key.HeadlineQuestion, "Claude")
             "elicitation" -> CoreText.of(Key.HeadlineElicitation)
             "plan" -> CoreText.of(Key.FleetPlanWaiting)
             // A password card names the computer it runs on; its commands are in the card.

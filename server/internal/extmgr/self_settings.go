@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/extwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/mail"
@@ -59,7 +60,7 @@ func (h *Manager) selfSettings() []selfSetting {
 	if h.mail != nil {
 		out = append(out, selfSetting{key: "mail.accounts", title: ss(l, "title_mail"),
 			about: "the user's mail accounts: Persona reads them in the inbox and mail_* use them. add connects (IMAP and SMTP) before saving; " +
-				"the password is typed on the phone, never pass one. Gmail can only be added in the app (Google sign-in)",
+				"the password is typed on the phone, never pass one. Gmail: with Google sign-in set up it is added in the app (Sign In with Google); otherwise a Gmail address with an app password (not the Google password; needs 2-Step Verification, made at myaccount.google.com/apppasswords) is typed in the app's Add Mail Account page. If the hub machine cannot reach Gmail, an admin sets google.proxy (http://[user:pass@]host:port or socks5://[user:pass@]host:port) in manager.json and restarts the hub",
 			value: `add: {"email", "provider": "imap|feishu" (default imap; feishu = Feishu / Lark mail), "name"?, "username"?, "imap_host"?, ` +
 				`"imap_port"?, "smtp_host"?, "smtp_port"?, "smtp_security"?: "tls|starttls"}; most providers need only the email. remove: the account id`,
 			get: h.getMailAccounts, add: h.addMailAccount, remove: h.removeMailAccount})
@@ -307,6 +308,19 @@ func (h *Manager) removeMailAccount(_ context.Context, id string) (*selfChange, 
 }
 
 func (h *Manager) toolPersonaSettings(ctx context.Context, machineID, sessionID string, args json.RawMessage) (string, error) {
+	out, err := h.personaSettings(ctx, machineID, sessionID, args)
+	// iPhone control's own setting read or changed while no iPhone is allowed: the rest of its setup (this iPhone's
+	// consent, pairing, Developer Mode) happens on the iPhone, in the guided setup (#8199).
+	var a struct {
+		Key string `json:"key"`
+	}
+	if err == nil && json.Unmarshal(args, &a) == nil && a.Key == "extension."+iphoneExtensionID && !h.iphoneSomeAllowed() {
+		out += "\n" + iphoneSetupHint
+	}
+	return out, err
+}
+
+func (h *Manager) personaSettings(ctx context.Context, machineID, sessionID string, args json.RawMessage) (string, error) {
 	var a struct {
 		Action string          `json:"action"`
 		Key    string          `json:"key"`
@@ -350,20 +364,57 @@ func (h *Manager) toolPersonaSettings(ctx context.Context, machineID, sessionID 
 	ix := proto.Interaction{ID: "ix_" + randomHex(6), MachineID: machineID, SessionID: sessionID, Kind: proto.IxPermission,
 		ToolName: "persona_settings", Summary: change.summary, ToolInput: shown, Fields: change.fields, SessionTitle: "Persona",
 		CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(15 * time.Minute).UTC()}
-	r, err := h.waitInteraction(ctx, ix)
-	if err != nil {
-		return "", err
-	}
-	if !r.UserAllowed() { // only the user's own answer counts: an expired card, or one answered for them, is no decline (#3722)
-		if r.UserDenied() {
-			return "The user declined the change: nothing changed.", nil
-		}
-		return prompts.RenderSettingUnanswered(), nil
-	}
-	for _, f := range change.fields {
-		if !f.Optional && strings.TrimSpace(r.Values[f.Key]) == "" {
-			return "", fmt.Errorf("%s was left empty on the phone: nothing changed", f.Label)
-		}
-	}
-	return change.apply(ctx, r.Values)
+	proposal := change.summary
+	outcome, err := h.waitPrepared(ctx, ix, approval.Operation{
+		Replacement: machineID + "\x00" + sessionID + "\x00setting\x00" + s.key,
+		Denied:      "The user declined the change: nothing changed.",
+		Unanswered:  prompts.RenderSettingUnanswered(),
+		Apply: func(ctx context.Context, r proto.Resolution) (string, error) {
+			// Before clarification the original caller still owns this apply. If it
+			// stopped waiting while the answer arrived, preserve the old no-caller/
+			// no-change behavior. A clarified apply receives the final owner action's
+			// live context from the coordinator instead.
+			if err := ctx.Err(); err != nil {
+				return "", fmt.Errorf("the change was approved after its caller stopped waiting: nothing changed (%w)", err)
+			}
+			// Rebuild the operation from the registry and current state. Only the
+			// exact visible proposal on the card may execute.
+			var current *selfSetting
+			for _, candidate := range h.selfSettings() {
+				if candidate.key == a.Key {
+					candidate := candidate
+					current = &candidate
+					break
+				}
+			}
+			if current == nil {
+				return "", approval.ErrStale
+			}
+			var fresh *selfChange
+			var err error
+			switch {
+			case a.Action == "set" && current.set != nil:
+				fresh, err = current.set(ctx, a.Value)
+			case a.Action == "add" && current.add != nil:
+				fresh, err = current.add(ctx, a.Value)
+			case a.Action == "remove" && current.remove != nil:
+				fresh, err = current.remove(ctx, a.ID)
+			default:
+				return "", approval.ErrStale
+			}
+			if err != nil {
+				return "", err
+			}
+			if fresh == nil || fresh.apply == nil || fresh.summary != proposal {
+				return "", fmt.Errorf("%s changed since the card was shown; nothing saved: get it again (%w)", s.key, approval.ErrStale)
+			}
+			for _, f := range fresh.fields {
+				if !f.Optional && strings.TrimSpace(r.Values[f.Key]) == "" {
+					return "", fmt.Errorf("%s was left empty on the phone: nothing changed", f.Label)
+				}
+			}
+			return fresh.apply(ctx, r.Values)
+		},
+	})
+	return outcome.Text, err
 }

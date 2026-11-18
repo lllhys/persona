@@ -121,9 +121,14 @@ describe("<persona-action> 尾标签", () => {
       '选 B\n<persona-action action="b" view="v">{"values":{}}</persona-action>', // other order
       '选 B\n<persona-action view="v" action="b">{"values":{"a":1}}</persona-action>', // not a string
       '选 B\n<persona-action view="v" action="b">{"values":{},"x":1}</persona-action>', // another key
+      '选 B\n<persona-action view="v" action="b">{"html":"yes","values":{}}</persona-action>', // html not true
       '选 B\n<persona-action view="" action="b">{"values":{}}</persona-action>',
       "选 B",
     ])
       expect(cardReply(bad), bad).toBeUndefined();
+  });
+
+  it("an HTML card's answer hides the same way (view_actions.go writes html: true, #6281)", () => {
+    expect(cardReply('Open the map\n<persona-action view="msg-b/0" action="map">{"html":true,"values":{}}</persona-action>')).toEqual({ text: "Open the map", view: "msg-b/0", action: "map", values: {} });
   });
 });

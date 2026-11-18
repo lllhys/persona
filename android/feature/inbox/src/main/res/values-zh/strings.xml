@@ -3,7 +3,7 @@
     <string name="inbox_title">收件箱</string>
     <string name="inbox_retry">重试</string>
     <string name="inbox_done">已处理</string>
-    <string name="inbox_move_back">移回收件箱</string>
+    <string name="inbox_move_back">移回</string>
     <string name="inbox_hand_to_ai">交给 AI</string>
     <string name="inbox_ai_draft">AI 草拟</string>
     <string name="inbox_ai_summary">AI 摘要</string>
@@ -87,9 +87,18 @@
     <string name="inbox_empty_search_text">没有和「%1$s」匹配的消息或邮件。</string>
     <string name="inbox_empty_title">收件箱是空的</string>
     <string name="inbox_empty_text">hub 配好飞书（飞书网关）或在设置里加了邮箱后，需要你看的消息和邮件会出现在这里。</string>
-    <string name="inbox_empty_filtered_title">都看完了</string>
-    <string name="inbox_empty_filtered_text">这个筛选下没有东西。</string>
-    <string name="inbox_group_fyi">看看就好</string>
+    <string name="inbox_empty_filtered_title">没有符合筛选的未处理内容</string>
+    <string name="inbox_empty_filtered_text">清除筛选后，可以看到整个收件箱。</string>
+    <string name="inbox_empty_caught_up_title">都看完了</string>
+    <string name="inbox_empty_caught_up_text">新的消息和邮件会出现在这里。</string>
+    <string name="inbox_grouping_title">分组方式</string>
+    <string name="inbox_empty_action_title">没有需要你处理的</string>
+    <string name="inbox_empty_working_title">没有进行中的</string>
+    <string name="inbox_empty_fyi_title">没有要看的</string>
+    <string name="inbox_empty_done_title">还没有已处理的</string>
+    <string name="inbox_empty_section_text">其余的在上面的其他分区里。</string>
+    <string name="inbox_empty_done_text">标为已处理的会出现在这里。</string>
+    <string name="inbox_group_fyi">知悉即可</string>
     <string name="inbox_mark_all_seen">全部看过</string>
     <string name="inbox_clear_all">全部清除</string>
     <string name="inbox_translated">已翻译</string>
@@ -166,6 +175,19 @@
     <string name="inbox_handoff_last_gone">上次交给的 Agent 已经结束，这次默认交给 Persona。</string>
     <string name="inbox_handoff_mark_done">同时标为已处理</string>
     <string name="inbox_handoff_sending">正在交过去…</string>
+    <string name="inbox_handoff_chip_summary">总结并建议回复</string>
+    <string name="inbox_handoff_chip_background">调查背景</string>
+    <string name="inbox_handoff_chip_handle">帮我处理</string>
+    <string name="inbox_draft_reply">草拟回复</string>
+    <string name="inbox_handoff_hint">交给 AI…</string>
+    <string name="inbox_handoff_agents">Agents</string>
+    <string name="inbox_handoff_more">更多…</string>
+    <string name="inbox_handoff_view">查看</string>
+    <string name="inbox_handoff_queued">等待交给 %1$s，可撤销</string>
+    <string name="inbox_handoff_queued_done">等待交给 %1$s，可撤销；将标为已处理</string>
+    <string name="inbox_handoff_sending_to">正在交给 %1$s…</string>
+    <string name="inbox_handoff_sent_to">已交给 %1$s</string>
+    <string name="inbox_handoff_sent_done">已交给 %1$s，并已标为已处理</string>
     <string name="inbox_hand_to_persona">交给 Persona</string>
     <plurals name="inbox_triage_waiting">
         <item quantity="other">有 %1$d 条消息在等分拣</item>
@@ -269,6 +291,9 @@
     <string name="inbox_event_view_source">看原文</string>
     <string name="inbox_done_by_manager">助手处理了</string>
     <string name="inbox_event_related">有关</string>
-    <!-- Source subscriptions (#2041): with the Inbox's other settings -->
+    <string name="inbox_open_chat">打开对话</string>
+    <string name="inbox_content">正文</string>
+    <!-- Source subscriptions (#2041): with the Inbox's other settings. Inbox Sources (#5308) once the hub says so. -->
     <string name="inbox_subscriptions">订阅来源</string>
+    <string name="inbox_sources">收件箱来源</string>
 </resources>

@@ -80,6 +80,32 @@ export function hasModes(s: Session | undefined): boolean {
   return !s.agent || s.agent === "claude";
 }
 
+/** A session's own approval, the first of the modes a session lists (`listedModesOf`): "Launcher default", not "Ask",
+ *  since the agent's own settings may already approve everything (#8261). */
+export const LAUNCHER_DEFAULT: ModeOption = { id: "default", title: t("lib-session-actions.mode_launcher_default"), detail: t("lib-session-actions.mode_launcher_default_detail") };
+
+/** The permission modes the composer switches a session of an agent that is not Claude Code between (#8261, the node's
+ *  `capabilities.permission_modes`): its own approval and Full access, on Paseo's Grok, OpenCode or Codex. Undefined with
+ *  fewer than two, for a Persona conversation, and where Claude Code's chips stand (`hasModes`). */
+export function listedModesOf(s: Session | undefined): string[] | undefined {
+  const modes = s?.capabilities?.permission_modes;
+  if (!s || s.assistant || hasModes(s) || !modes || modes.length < 2) return undefined;
+  return modes;
+}
+
+/** The listed mode `s` runs in: the one it reports when listed, else its own (`default`): no mode reported is its own. */
+export function listedModeNow(s: Session, listed: string[]): string {
+  return s.permission_mode && listed.includes(s.permission_mode) ? s.permission_mode : "default";
+}
+
+/** A listed mode's name and description: its own approval is "Launcher default", Full access says it can be switched
+ *  back (a switch, unlike Claude Code's start-only Full access), the rest as Claude Code names them. */
+export function listedModeOption(id: string): ModeOption {
+  if (id === "default") return LAUNCHER_DEFAULT;
+  if (id === BYPASS_MODE) return { id, title: t("lib-session-actions.mode_bypass_permissions"), detail: t("lib-session-actions.mode_bypass_listed_detail") };
+  return PERMISSION_MODES.find((m) => m.id === id) ?? { id, title: id, detail: "" };
+}
+
 /** The effort chip and its speed submenu for protocol-driven Codex threads with advertised choices. */
 export function hasEffortOnly(s: Session | undefined): boolean {
   return Boolean(s && !s.assistant && !hasModes(s) && (s.efforts?.length || s.service_tiers?.length) && sessionCan(s, "send"));

@@ -6,6 +6,7 @@ import { sessionHost, sessionSource, type AgentMutes } from "./agent-groups";
 import { backgroundWaiting, stateOf } from "./format";
 import { agentKey, isSpacePinned, type AgentPins } from "./pins";
 import { isMuted } from "./session-actions";
+import { unseen } from "./seen-outbox";
 import type { AgentState, Session } from "./types";
 import { byTime, timeMs } from "./times";
 import { stateName } from "./state-labels";
@@ -86,9 +87,9 @@ export function matchingKeys(sessions: Session[], f: AgentFilter, mutes: AgentMu
   return new Set(f === "all" ? [] : sessions.filter((s) => matchesFilter(s, f, mutes)).map(agentKey));
 }
 
-/** The finished-unread ones among these (what "Mark all as seen" marks). */
+/** The finished ones nobody has seen among these, Unread or Just finished (what "Mark all as seen" marks). */
 export function unreadOf(sessions: Session[]): Session[] {
-  return sessions.filter((s) => stateOf(s) === "unread");
+  return sessions.filter(unseen);
 }
 
 // ── the spaces' order (iOS ChatsView) ──

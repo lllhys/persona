@@ -9,23 +9,18 @@ import Testing
 struct AllSessionsReadersTests {
     private static let apple = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
 
-    /// The files under `Persona/Views` and `Mac` that may read it, how many times, and why. Exact: a read taken out
+    /// The files under `Persona/Views` that may read it, how many times, and why. Exact: a read taken out
     /// lowers its number here, a new one needs a reason here.
     private static let allowed: [String: (count: Int, why: String)] = [
         "SpaceView.swift": (1, "a space's agents"),
         "MachineSpacesView.swift": (1, "a machine's spaces and agents"),
         "MachineDetailView.swift": (1, "机器: each machine's agents for its card, through allSessions(inFront:) (behind another section, as they are now)"),
         "InboxActions.swift": (1, "交给 Agent: the agents to pick from"),
-        "MacAgentCommands.swift": (1, "Agent › 下一个需要你的 is enabled while one needs you"),
-        "MacAttention.swift": (3, "the Dock badge and notifications follow every agent (not a view)"),
-        "MacDockMenu.swift": (1, "the Dock menu lists the agents"),
-        "MacMenuBar.swift": (1, "the menu bar extra lists the agents (MacMenuBarState, not a view: the label and the menu read its snapshot)"),
-        "MacQuickOpenPanel.swift": (1, "快速打开 searches every agent"),
         "TodoHandoffSheet.swift": (1, "hand-off to an Agent: the agents to pick from, as InboxActions does"),
-        "TodosView.swift": (2, "the todo list shows each Agent's progress (its latest line), so it follows every Agent, like the Dock and the menu bar"),
-        "MacTodosPage.swift": (2, "the Mac todo list shows each Agent's progress (its latest line), like the Dock and the menu bar"),
+        "TodosView.swift": (2, "the todo list shows each Agent's progress (its latest line), so it follows every Agent"),
         "TodoDetailView.swift": (1, "the Agent rows show each Agent's latest line, the same way the todo list does"),
         "TodoCalendarView.swift": (1, "the calendar colors each to-do by its Agents' state, the same way the todo list does (#2029)"),
+        "AssistantFullSearch.swift": (1, "Search's Agents scope lists the Agents found, over the whole window while it is open (#4206)"),
     ]
 
     private static func reads(_ text: String) -> Int {
@@ -43,7 +38,7 @@ struct AllSessionsReadersTests {
 
     @Test func onlyListsOfAgentsReadThemAll() {
         var found: [String: Int] = [:]
-        for dir in ["Persona/Views", "Mac"] {
+        for dir in ["Persona/Views"] {
             let files = (FileManager.default.enumerator(at: Self.apple.appending(path: dir), includingPropertiesForKeys: nil)?
                 .compactMap { $0 as? URL } ?? []).filter { $0.pathExtension == "swift" }
             for file in files {
@@ -63,5 +58,35 @@ struct AllSessionsReadersTests {
             a new list of agents → add it to `allowed` with why:
             \(wrong.joined(separator: "\n"))
             """)
+    }
+
+    /// `childRows` used to read `allSessions` from inside `AppModel`, which this file's view scan cannot see
+    /// (docs/apple/ios-state.md "Step 5"). The open chat must read that parent's cell.
+    @Test func theOpenChatDoesNotReadEveryAgentForItsChildren() throws {
+        let model = try String(contentsOf: Self.apple.appending(path: "Persona/App/AppModel.swift"), encoding: .utf8)
+        for name in ["func childRows(", "func foldedChildren("] {
+            let body = Self.function(model, named: name)
+            #expect(!body.isEmpty, "\(name) not found")
+            #expect(Self.reads(body) == 0, "\(name) reads allSessions")
+        }
+        let chat = try String(contentsOf: Self.apple.appending(path: "Persona/Views/Chat/ChatView.swift"), encoding: .utf8)
+        let card = try String(contentsOf: Self.apple.appending(path: "Persona/Views/Chat/ChildSessionCard.swift"), encoding: .utf8)
+        #expect(Self.reads(chat) == 0)
+        #expect(Self.reads(card) == 0)
+    }
+
+    private static func function(_ text: String, named: String) -> String {
+        guard let start = text.range(of: named)?.lowerBound, let brace = text[start...].firstIndex(of: "{") else { return "" }
+        var depth = 0
+        var index = brace
+        while index < text.endIndex {
+            if text[index] == "{" { depth += 1 }
+            if text[index] == "}" {
+                depth -= 1
+                if depth == 0 { return String(text[start...index]) }
+            }
+            text.formIndex(after: &index)
+        }
+        return ""
     }
 }

@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.res.Resources
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -39,7 +41,7 @@ internal class FakeManagers(list: List<HubManager> = ManagersSample) : HubManage
         reads++
         if (unsupported) throw ManagersUnsupported()
         fail?.let { throw it }
-        return ManagerRoster(list.toList(), list.firstOrNull { it.isDefault }?.id.orEmpty())
+        return ManagerRoster(list.map { effective(it) }, list.firstOrNull { it.isDefault }?.id.orEmpty())
     }
     override suspend fun create(name: String): ManagerCode {
         calls += "create $name"; fail?.let { throw it }
@@ -68,7 +70,23 @@ internal class FakeManagers(list: List<HubManager> = ManagersSample) : HubManage
         calls += "delete $id"; fail?.let { throw it }
         list.removeAll { it.id == id }
     }
+    /** Managers that own a computer: hiding one of them is refused, and its choice is not in effect. */
+    var inUse = emptySet<String>()
+    /** A hub from before the choice: it takes `hide` without a word and keeps none. */
+    var keepsNoChoice = false
+    /** Held until completed: what the page shows while the hub is asked. */
+    var gate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override suspend fun setHide(id: String, hide: Boolean) {
+        calls += "hide $id $hide"; gate?.await(); fail?.let { throw it }
+        val manager = list.first { it.id == id }
+        if (!manager.builtin) throw HubFailure(HubError.Server, "only the built-in assistant can be hidden", 400)
+        if (hide && (manager.isDefault || id in inUse)) throw HubFailure(HubError.Server, "it is in use", 409, "builtin_in_use")
+        if (!keepsNoChoice) list = list.map { if (it.id == id) it.copy(hide = hide) else it }.toMutableList()
+    }
 }
+
+/** What the hub answers for each manager: the choice in effect only while it is not the default and owns no computer. */
+private fun FakeManagers.effective(m: HubManager) = m.copy(hidden = m.hide && !m.isDefault && m.id !in inUse)
 
 /** This device's prefs as a hub keeps them: only `muted_managers` matters to 推送通知. */
 internal class FakeDevices(var muted: List<String>? = emptyList()) : DeviceSettings {
@@ -153,6 +171,8 @@ class ManagersStateTest {
         assertEquals("它还没装好，装好后才能改名或设为默认", words(refused(409, "installing")))
         assertEquals("名字要 1 到 40 个字", words(refused(400)))
         assertEquals("这台设备没有修改权限", words(refused(403, "read_only")))
+        assertEquals("它是默认助手或名下有电脑，所以切换器里仍显示它", words(refused(409, "builtin_in_use")))
+        assertEquals("这台 hub 的版本还不能让切换器不显示它，升级 hub 后再来", words(HideUnsupported()))
         // Anything else: what did not happen, and the app's usual reason.
         assertEquals("没有改成：连不上 hub", words(HubFailure(HubError.Timeout)))
     }
@@ -192,6 +212,55 @@ class ManagersStateTest {
         assertFalse(model.delete("m-3fa21c"))
         assertEquals("这是默认助手，先把别的设为默认再删除", model.state.value.failure?.resolve(res))
         assertFalse(model.state.value.busy)
+    }
+
+    /**
+     * Show in the switcher (#9055): off sends `{"hide": true}`, on `{"hide": false}`, and the list is read again for what
+     * is in effect; the switch moves at once and goes back when the hub refuses.
+     */
+    @Test fun showInTheSwitcherSendsHideAndGoesBackWhenRefused() = runBlocking {
+        // 工作 is the default; the hub's own assistant has no computers.
+        val api = FakeManagers(ManagersSample.map { it.copy(isDefault = it.id == work.id) })
+        val model = ManagersModel(api)
+        model.load()
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        api.gate = gate
+        val off = async { model.showInSwitcher(own.id, false) }
+        yield()
+        // Off on screen before the hub answers.
+        assertTrue(model.state.value.manager(own.id)!!.hide)
+        assertTrue(model.state.value.busy)
+        api.gate = null; gate.complete(Unit)
+        assertTrue(off.await())
+        assertEquals("hide assistant true", api.calls.last())
+        model.state.value.manager(own.id)!!.let { assertTrue(it.hide && it.hidden) }
+        // Already where it is: nothing sent.
+        assertFalse(model.showInSwitcher(own.id, false))
+        assertEquals(1, api.calls.count { it.startsWith("hide") })
+        // On again: always taken.
+        assertTrue(model.showInSwitcher(own.id, true))
+        assertEquals("hide assistant false", api.calls.last())
+        model.state.value.manager(own.id)!!.let { assertFalse(it.hide || it.hidden) }
+        // In use (a computer went back to it): refused, back on, and why.
+        api.inUse = setOf(own.id)
+        assertFalse(model.showInSwitcher(own.id, false))
+        assertEquals("hide assistant true", api.calls.last())
+        assertFalse(model.state.value.manager(own.id)!!.hide)
+        assertEquals("它是默认助手或名下有电脑，所以切换器里仍显示它", model.state.value.failure?.resolve(res))
+        assertFalse(model.state.value.busy)
+    }
+
+    /** A hub from before the choice takes `hide` and keeps showing it: the switch goes back and says to update the hub. */
+    @Test fun anOlderHubThatKeepsNoChoiceSaysSo() = runBlocking {
+        val api = FakeManagers(ManagersSample.map { it.copy(isDefault = it.id == work.id) }).apply { keepsNoChoice = true }
+        val model = ManagersModel(api)
+        model.load()
+        assertFalse(model.showInSwitcher(own.id, false))
+        assertFalse(model.state.value.manager(own.id)!!.hide)
+        assertEquals("这台 hub 的版本还不能让切换器不显示它，升级 hub 后再来", model.state.value.failure?.resolve(res))
+        // Showing it (what an older hub does anyway) is not asked of it again: the switch is already on.
+        assertFalse(model.showInSwitcher(own.id, true))
+        assertEquals(1, api.calls.count { it.startsWith("hide") })
     }
 
     @Test fun anOldHubIsUnsupportedAndAFailedReadSaysSo() = runBlocking {

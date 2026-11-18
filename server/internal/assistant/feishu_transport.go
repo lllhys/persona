@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/nwverse/persona/server/internal/feishubot"
@@ -44,7 +45,9 @@ func (t feishuTarget) params(p map[string]any) map[string]any {
 	return p
 }
 
-// botPostTo is botPostKeyed to a target.
+// botPostTo is botPostKeyed to a target. Every card the bot sends goes through here, and each one that lands is logged
+// with what it was (feishuSendAs): how many went out, of which kind and for which conversation, can be counted from
+// the log (#8270).
 func (s *Service) botPostTo(ctx context.Context, to feishuTarget, replyTo string, card *feishubot.Card, fallback, key string) (string, error) {
 	var res struct {
 		MessageID string `json:"message_id"`
@@ -55,7 +58,23 @@ func (s *Service) botPostTo(ctx context.Context, to feishuTarget, replyTo string
 	}
 	to.params(p)
 	err := s.appCall(ctx, AppFeishu, FeishuPost, p, &res)
+	if err == nil {
+		l, _ := ctx.Value(feishuSendKey{}).(feishuSend)
+		s.logf("bots: card sent: kind=%s machine=%s session=%s message=%s", cmp.Or(l.kind, "other"), cmp.Or(l.machine, "-"),
+			cmp.Or(l.session, "-"), res.MessageID)
+	}
 	return res.MessageID, err
+}
+
+// feishuSend is what a card is, for the line botPostTo logs when it lands: its kind (agent_done, push, sync, task,
+// answer, progress, or an agent's card: question, permission, plan, screen) and the computer and session it is about.
+type feishuSend struct{ kind, machine, session string }
+
+type feishuSendKey struct{}
+
+// feishuSendAs labels the cards posted within ctx; one posted without a label is logged as kind "other".
+func feishuSendAs(ctx context.Context, kind, machine, session string) context.Context {
+	return context.WithValue(ctx, feishuSendKey{}, feishuSend{kind: kind, machine: machine, session: session})
 }
 
 // botNote replies to a message with a line of text.

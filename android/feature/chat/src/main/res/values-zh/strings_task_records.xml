@@ -8,8 +8,8 @@
     <string name="chat_report_done">说做完了：%1$s</string>
     <string name="chat_report_step_of">第 %1$d/%2$d 步 · %3$s</string>
     <string name="chat_report_step">第 %1$d 步 · %2$s</string>
-    <string name="chat_supervision_record">督办记录</string>
-    <string name="chat_supervision_record_live">督办记录 · 处理中</string>
+    <string name="chat_supervision_record">已在后台处理</string>
+    <string name="chat_supervision_record_live">正在后台处理…</string>
     <string name="chat_tasks_message_edit">改一下</string>
     <string name="chat_tasks_message_edit_done">改好了</string>
 </resources>

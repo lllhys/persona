@@ -6,12 +6,14 @@
   "edit": "改后重发",
   "fork": "开启一个新会话",
   "copy_message": "复制消息",
-  "copy_reply": "拷贝回复",
+  "copy_reply": "复制回复",
   "more": "更多",
   "done": "完成",
-  "copy_all": "全部拷贝",
+  "copy_all": "全部复制",
   "use_as_context": "作为上下文",
   "context_title": "{title} · 消息",
   "fork_chat": "开启一个新对话",
-  "cut_short": "此回复未完成，内容仅供参考。"
+  "cut_short": "此回复未完成，内容仅供参考。",
+  "save_as_prompt": "存为常用提示词…",
+  "pick": "多选"
 }

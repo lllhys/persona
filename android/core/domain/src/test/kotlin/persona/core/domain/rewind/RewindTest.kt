@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import persona.core.contracts.Item
 import persona.core.contracts.Session
+import persona.core.contracts.SessionCapabilities
 import persona.core.contracts.api.DeliveryState
 import persona.core.contracts.api.RewindTarget
 
@@ -39,6 +40,36 @@ class RewindTest {
         assertEquals(Rewind.Block.ClaudeOnly, Rewind.block(idle.copy(agent = "codex"), false))
         assertEquals(Rewind.Block.ClaudeOnly, Rewind.block(idle.copy(assistant = true), false))
         assertEquals(Rewind.Block.ClaudeOnly, Rewind.block(null, false))
+    }
+
+    // #6294 (web rewindBlock): the node's capabilities.rewind wins where it says; without it, only Claude in a terminal.
+    @Test fun theNodesWordDecidesWhereItSaysIt() {
+        val runtime = Session("m", "s", status = "idle", state = "idle", agent = "agy", sourceKind = "runtime",
+            capabilities = SessionCapabilities(read = true, send = true, rewind = true, rewindCode = false))
+        assertNull(Rewind.block(runtime, busy = false))
+        assertEquals(Rewind.Block.Working, Rewind.block(runtime, busy = true))
+        assertEquals(Rewind.Block.NeedsYou, Rewind.block(runtime.copy(pendingInteractions = 1), false))
+        assertEquals(Rewind.Block.Offline, Rewind.block(runtime.copy(status = "offline", state = "offline"), false))
+        assertEquals(Rewind.Block.Unsupported, Rewind.block(runtime.copy(capabilities = runtime.capabilities!!.copy(rewind = false)), false))
+        // An older node says nothing: a runtime's session is no Claude in a terminal.
+        assertEquals(Rewind.Block.ClaudeOnly, Rewind.block(runtime.copy(capabilities = SessionCapabilities(read = true, send = true)), false))
+        // Persona's conversations never, whatever is said.
+        assertEquals(Rewind.Block.ClaudeOnly, Rewind.block(runtime.copy(assistant = true), false))
+        // A Codex thread the node can rewind; a Claude terminal the node says can't.
+        val claude = Session("m", "s", status = "idle", state = "idle")
+        assertNull(Rewind.block(claude.copy(agent = "codex", capabilities = SessionCapabilities(read = true, send = true, terminal = true, rewind = true)), false))
+        assertEquals(Rewind.Block.Unsupported, Rewind.block(claude.copy(capabilities = SessionCapabilities(read = true, send = true, terminal = true, rewind = false)), false))
+    }
+
+    @Test fun codeGoesBackOnlyWhereTheNodeSaysOrNothingIsDeclared() {
+        val claude = Session("m", "s", status = "idle", state = "idle")
+        // A Claude terminal, nothing declared: both choices, as before.
+        assertTrue(Rewind.restoresCode(claude))
+        assertTrue(Rewind.restoresCode(claude.copy(capabilities = SessionCapabilities(read = true, send = true, terminal = true))))
+        // A declared rewind without rewind_code, or with it false: the conversation only.
+        assertFalse(Rewind.restoresCode(claude.copy(capabilities = SessionCapabilities(read = true, rewind = true))))
+        assertFalse(Rewind.restoresCode(claude.copy(capabilities = SessionCapabilities(read = true, rewind = true, rewindCode = false))))
+        assertTrue(Rewind.restoresCode(claude.copy(capabilities = SessionCapabilities(read = true, rewind = true, rewindCode = true))))
     }
 
     @Test fun aFailedMessageDoesNotHoldTheRewind() {

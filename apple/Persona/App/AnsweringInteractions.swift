@@ -30,3 +30,52 @@ nonisolated struct AnsweringInteractions {
         endedByHub.remove(uid)
     }
 }
+
+/// What a question card shows while its answer is on its way (#6279): the card stays where it is, greyed, until the hub
+/// has the answer; a failed answer leaves it with its picks and the error. One op id per answer: the same answer sent
+/// again (Retry) goes with the id it had, so the hub does it once; a different answer is a new one.
+nonisolated struct AnswerAttempts {
+    enum Progress: Equatable {
+        case sending
+        case failed(String)
+    }
+
+    private struct Attempt {
+        var op: UUID
+        var resolution: Resolution
+        var progress: Progress
+    }
+
+    private var attempts: [String: Attempt] = [:]
+
+    /// Starts sending `resolution` for the card; nil when its answer is already on its way (a second tap sends nothing).
+    mutating func begin(_ uid: String, _ resolution: Resolution, newOp: () -> UUID = UUID.init) -> UUID? {
+        if let a = attempts[uid] {
+            if a.progress == .sending { return nil }
+            if a.resolution == resolution {
+                attempts[uid]?.progress = .sending
+                return a.op
+            }
+        }
+        let op = newOp()
+        attempts[uid] = Attempt(op: op, resolution: resolution, progress: .sending)
+        return op
+    }
+
+    /// The answer failed: the card keeps the error until the next try.
+    mutating func fail(_ uid: String, _ message: String) {
+        guard attempts[uid] != nil else { return }
+        attempts[uid]?.progress = .failed(message)
+    }
+
+    /// The card is over (answered, ended by the hub or gone): nothing more to remember.
+    mutating func finish(_ uid: String) { attempts[uid] = nil }
+
+    func progress(_ uid: String) -> Progress? { attempts[uid]?.progress }
+
+    /// The answer a failed card sends again.
+    func retryable(_ uid: String) -> Resolution? {
+        guard let a = attempts[uid], case .failed = a.progress else { return nil }
+        return a.resolution
+    }
+}

@@ -16,8 +16,8 @@ var assistantCLIMCPFlags = func(flags []string) ([]string, func(), error) {
 // assistantCLIMCPFlagsForOS keeps JSON out of Windows shell argv: Git Bash/MSYS can consume its doubled
 // backslashes while parsing the incoming native command line (even builtin printf sees the loss).
 // This happens before Bash launches a child; reproduced with native Claude, not an npm shim (#3402).
-// Only the CLI calls this helper; the SDK carries its config over stdin. The caller removes the file
-// on failed start or process exit. Use a slash path for argv, without changing the JSON inside the file.
+// The caller removes the file on failed start or process exit. Use a slash path for argv, without changing the JSON
+// inside the file.
 func assistantCLIMCPFlagsForOS(goos string, flags []string) ([]string, func(), error) {
 	cleanup := func() {}
 	if goos != "windows" {

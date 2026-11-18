@@ -163,3 +163,66 @@ func TestMainChatPickerUsesCurrentLauncherFacts(t *testing.T) {
 		}
 	})
 }
+
+// A Paseo provider only starts Agents; a runtime set up to run the assistant for it (integrations/grok's grok-chat,
+// declared with assistant_for) is what the main chat's picker points it at, by the name people know it by. Nothing is
+// matched on a likeness of names or agents, and nothing runs on one in the other's place.
+func TestMainChatPointsAnAgentLauncherAtTheAssistantDeclaredForIt(t *testing.T) {
+	ctx := context.Background()
+	s, f := mainChatFixture(t)
+	f.launcherList = append(f.launcherList,
+		proto.Launcher{Name: "grok", Source: "paseo", Agent: "paseo", DisplayName: "Grok · Official"},
+		proto.Launcher{Name: "grok-chat", Source: "grok-chat", Agent: "grok", Assistant: true, AssistantFor: "grok", DisplayName: "Grok"},
+		proto.Launcher{Name: "grok-other", Source: "paseo", Agent: "paseo", DisplayName: "Grok · Work"}, // the same agent, another account: not pointed
+	)
+	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.gw"})
+	f.setSessions("server", proto.Session{SessionID: "ok", Launcher: "cx", Assistant: true})
+
+	r := appRequest(t, s, "GET", "/api/v1/machines/server/launchers?purpose=assistant", "", "zh-Hans")
+	if r.Code != 200 {
+		t.Fatalf("%d %s", r.Code, r.Body.String())
+	}
+	var out struct {
+		Launchers   []ConfiguredLauncher  `json:"launchers"`
+		Unavailable []unavailableLauncher `json:"unavailable"`
+	}
+	if err := json.Unmarshal(r.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(out.Launchers, func(l ConfiguredLauncher) bool { return l.Name == "grok-chat" && l.DisplayName == "Grok" }) {
+		t.Fatalf("the assistant runtime is not offered by its name: %s", r.Body.String())
+	}
+	reasons := map[string]unavailableLauncher{}
+	for _, u := range out.Unavailable {
+		reasons[u.Name] = u
+	}
+	if u := reasons["grok"]; u.Code != unavailableNotMainChat || u.Instead != "grok-chat" || u.DisplayName != "Grok · Official" ||
+		!strings.Contains(u.Reason, "助手对话请选「Grok」") {
+		t.Fatalf("grok: %+v", u)
+	}
+	for _, name := range []string{"grok-other", "cc-relay"} {
+		if u := reasons[name]; u.Code != unavailableNotMainChat || u.Instead != "" || strings.Contains(u.Reason, "请选") {
+			t.Fatalf("%s pointed at an assistant nobody declared for it: %+v", name, u)
+		}
+	}
+
+	// A message or a pick on it is refused and names the one to choose; it never runs on grok-chat in its place.
+	_, err := s.SendParams(ctx, SendParams{MachineID: "server", SessionID: "ok", Lang: "en", Params: map[string]any{"text": "hi", "launcher": "grok"}})
+	if err == nil || !strings.Contains(err.Error(), "Grok · Official can start Agents") || !strings.Contains(err.Error(), "Choose Grok in the menu") {
+		t.Fatalf("send on grok: %v", err)
+	}
+	if len(f.sends) != 0 {
+		t.Fatalf("reached the node: %v", f.sends)
+	}
+	setSettings(t, s, func(v *Settings) { v.Main = "ok" })
+	w := putPick(t, s, "ok", `{"machine_id":"server","launcher":"grok"}`)
+	if code, msg := errorBody(t, w); w.Code != 400 || !strings.Contains(msg, "Choose Grok for assistant chats") {
+		t.Fatalf("pick grok: %d %s %s", w.Code, code, msg)
+	}
+	if w := putPick(t, s, "ok", `{"machine_id":"server","launcher":"grok-other"}`); w.Code != 400 || strings.Contains(w.Body.String(), "for assistant chats") {
+		t.Fatalf("pick grok-other: %d %s", w.Code, w.Body.String())
+	}
+	if p, err := s.SendParams(ctx, SendParams{MachineID: "server", SessionID: "ok", Params: map[string]any{"text": "hi", "launcher": "grok-chat"}}); err != nil || p["launcher"] != "grok-chat" {
+		t.Fatalf("the declared assistant runtime: %v %v", p, err)
+	}
+}

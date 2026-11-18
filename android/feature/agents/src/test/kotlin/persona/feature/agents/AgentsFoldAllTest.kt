@@ -19,6 +19,8 @@ import org.junit.Before
 import org.junit.Test
 import persona.core.contracts.*
 import persona.core.contracts.api.*
+import persona.core.designsystem.ListTapMotion
+import persona.core.designsystem.ListTapMotionKind
 import persona.core.domain.sort.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -165,5 +167,81 @@ class AgentsFoldAllTest {
         runCurrent()
         assertTrue(model.page.value.list.machines.single { it.machine.id == "hidden" }.folded)
         assertFalse(model.page.value.list.machines.single { it.machine.id == "shown" }.folded)
+    }
+
+    @Test fun collapseAllArmsEachComposedList() = runTest {
+        startModel()
+        val page = ListTapMotion()
+        val overlay = ListTapMotion()
+        model.attachListTap(page)
+        model.attachListTap(overlay)
+        model.foldAll(true)
+        assertEquals(ListTapMotionKind.State, page.kind)
+        assertEquals(ListTapMotionKind.State, overlay.kind)
+        model.detachListTap(overlay)
+        val overlayGeneration = overlay.generation
+        model.foldAll(false)
+        assertEquals(overlayGeneration, overlay.generation)
+        assertEquals(ListTapMotionKind.State, page.kind)
+    }
+
+    @Test fun aHubPushRacingTheTapDoesNotTakeIt() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val rows = MutableStateFlow(sessions)
+        val list = StandardTestDispatcher(testScheduler)
+        preferences.grouping(AgentGrouping.MachineSpace)
+        model = AgentsViewModel(object : SessionsRepository {
+            override val sessions = rows
+            override val machines = MutableStateFlow(listOf(Machine("shown", online = true), Machine("hidden", online = true)))
+            override suspend fun refresh() = Unit
+        }, object : InteractionCenter {
+            override val pending = MutableStateFlow<List<Interaction>>(emptyList())
+            override suspend fun refresh() = Unit
+            override suspend fun resolve(id: String, resolution: Resolution) = Unit
+        }, object : HubConnection {
+            override val state = MutableStateFlow(ConnectionState.Online)
+            override val events = MutableSharedFlow<ServerEvent>()
+            override fun reconnect() = Unit
+            override fun send(message: JsonObject) = true
+        }, object : MessageSender {
+            override val outbox = MutableStateFlow<List<OutboxMessage>>(emptyList())
+            override suspend fun send(session: SessionKey, text: String, clientMessageId: String, clearDraft: String?) = Unit
+        }, preferences, listContext = list)
+        val motion = ListTapMotion()
+        val accepted = mutableListOf<AgentsPageState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            model.page.collect { page ->
+                val before = motion.landings
+                motion.land(page.tapEpoch)
+                if (motion.kind != null && motion.landings != before) accepted += page
+            }
+        }
+        model.attachListTap(motion)
+        runCurrent()
+        advanceTimeBy(20)
+        runCurrent()
+        rows.value = sessions + Session("shown", "hub-racer", state = "working", spaceId = "space", spaceName = "project",
+            slotId = "tab", slotIndex = 1, paneId = "space:hub", paneIndex = 2)
+        runCurrent()
+        model.foldAll(true)
+        advanceTimeBy(50)
+        runCurrent()
+        assertEquals(ListTapMotionKind.State, motion.kind)
+        assertTrue("the tap's page was still held: ${accepted.map { it.tapEpoch }}", accepted.isNotEmpty())
+        assertTrue(accepted.all { it.tapEpoch > 0 })
+        assertTrue(accepted.first().list.groups.isNotEmpty() && accepted.first().list.groups.all { it.folded })
+        advanceTimeBy(400)
+        runCurrent()
+        assertTrue(model.page.value.sessions.any { it.sessionId == "hub-racer" })
+    }
+
+    @Test fun choosingAComputerDoesNotArm() = runTest {
+        startModel()
+        val motion = ListTapMotion()
+        model.attachListTap(motion)
+        model.machine("shown")
+        assertNull(motion.kind)
+        model.machine("")
+        assertNull(motion.kind)
     }
 }

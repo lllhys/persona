@@ -35,6 +35,11 @@ import java.util.UUID
 internal data class ConversationGroups(
     val main: Session?, val directions: List<Session> = emptyList(), val others: List<Session> = emptyList(),
     val names: Map<String, String> = emptyMap(), val counts: Map<String, LeaderCounts> = emptyMap(),
+    /**
+     * The hub's direction tree (#4352), the same one [counts] is read from: each 常驻 lead folds open to its to-dos. Null
+     * from an older hub: the rows stay as they are.
+     */
+    val tree: persona.core.contracts.DirectionTree? = null,
     val recent: List<Session> = emptyList(),
     val background: String? = null,
 )
@@ -75,14 +80,16 @@ internal fun AssistantConversationOrigin.accessibilityLabel(resources: android.c
 
 /**
  * The drawer's Recent (#4922, #5196; web `recentConversations`, iOS `AssistantSidebarGroups.recent`): every conversation
- * that is not the main one, not a leader, not archived and not the built-in background supervisor, newest first, equal
- * times by session id, at most [limit]. Automatic chats carry their source's mark; only the supervisor stays in All chats.
+ * that is not the main one, not a leader, not archived, not the built-in background supervisor and not a scheduled
+ * task's own chat (#6228: the Scheduled Tasks entry and All chats keep those), newest first, equal times by session id,
+ * at most [limit]. The other automatic chats carry their source's mark; only the supervisor stays in All chats.
  */
 internal fun recentConversations(snapshot: AssistantSnapshot, limit: Int = RECENT_LIMIT): List<Session> {
     val leaders = snapshot.leaders.toSet()
     return snapshot.conversations.distinctBy { it.key }
         .filter { it.key != snapshot.mainSession && it.sessionId !in leaders && !it.archived &&
-            it.sessionId != snapshot.backgroundSupervisor }
+            it.sessionId != snapshot.backgroundSupervisor &&
+            automaticConversationOrigin(it.origin) != AssistantConversationOrigin.Task }
         .map { it to it.updated }
         .sortedWith(compareByDescending<Pair<Session, java.time.Instant?>> { it.second }.thenBy { it.first.sessionId })
         .take(limit).map { it.first }
@@ -92,11 +99,15 @@ internal fun conversationGroups(
     snapshot: AssistantSnapshot,
     query: String,
     words: ConversationWords,
+    activeTag: String? = null,
 ): ConversationGroups {
+    // Filter the source snapshot once so main, directions, Recent and All chats all use the same exact tag match.
+    val filtered = if (activeTag.isNullOrEmpty()) snapshot
+        else snapshot.copy(conversations = snapshot.conversations.withConversationTag(activeTag))
     // The background supervisor (#4927) is built in: a conversation with the scheduled tasks' ones under All chats, found
     // by its name too, and never a direction whatever the leaders say.
-    val background = snapshot.backgroundSupervisor?.takeIf(String::isNotBlank)
-    val matches = snapshot.conversations.distinctBy { it.key }.filter {
+    val background = filtered.backgroundSupervisor?.takeIf(String::isNotBlank)
+    val matches = filtered.conversations.distinctBy { it.key }.filter {
         !it.archived && (query.isBlank() || it.conversationTitle(words).contains(query.trim(), ignoreCase = true) ||
                 it.lastText.orEmpty().contains(query.trim(), ignoreCase = true) ||
                 (it.sessionId == background && words.background.contains(query.trim(), ignoreCase = true)))
@@ -105,28 +116,27 @@ internal fun conversationGroups(
     // The leaders are the drawer's 常驻 group, under their names; a search matches the name too. Every other
     // conversation waits under one "All chats" row (there is no all-conversations page on this app): main and the
     // leaders are not listed twice.
-    val names = snapshot.directionNames
-    val directions = snapshot.leaders.filter { it != background }.mapNotNull { id ->
-        snapshot.conversations.firstOrNull { it.sessionId == id && it.key != snapshot.mainSession && !it.archived }
+    val names = filtered.directionNames
+    val directions = filtered.leaders.filter { it != background }.mapNotNull { id ->
+        filtered.conversations.firstOrNull { it.sessionId == id && it.key != filtered.mainSession && !it.archived }
     }.filter { query.isBlank() || it in matches || names[it.sessionId].orEmpty().contains(query.trim(), ignoreCase = true) }
     val listed = directions.mapTo(HashSet()) { it.key }
-    val others = matches.filter { it.key != snapshot.mainSession && it.key !in listed }
+    val others = matches.filter { it.key != filtered.mainSession && it.key !in listed }
     return ConversationGroups(
-        snapshot.conversations.firstOrNull { it.key == snapshot.mainSession && !it.archived },
-        directions, others, names, snapshot.leaderCounts,
-        recent = if (query.isBlank()) recentConversations(snapshot) else emptyList(),
+        filtered.conversations.firstOrNull { it.key == filtered.mainSession && !it.archived },
+        directions, others, names, filtered.leaderCounts,
+        tree = filtered.directionTree,
+        recent = if (query.isBlank()) recentConversations(filtered) else emptyList(),
         background = background,
     )
 }
 
-/** A leader's open tasks 「在做 1 · 等你 2」 (#4331): only the parts that are not zero, null when both are. */
-internal fun leaderCountsLabel(counts: LeaderCounts?, resources: android.content.res.Resources): String? {
-    counts ?: return null
-    return listOfNotNull(
-        counts.working.takeIf { it > 0 }?.let { resources.getString(R.string.assistant_leader_working, it) },
-        counts.needsYou.takeIf { it > 0 }?.let { resources.getString(R.string.assistant_leader_needs_you, it) },
-    ).takeIf { it.isNotEmpty() }?.joinToString(" · ")
-}
+/**
+ * What a leader's row says in words (#4331): its tasks waiting on you, 「等你 2」, null while none do. What runs under it
+ * is the row's spinner alone ([LeaderCounts.running]), never 「在做 N」 as well (#6626: one meaning, one expression).
+ */
+internal fun leaderCountsLabel(counts: LeaderCounts?, resources: android.content.res.Resources): String? =
+    counts?.needsYou?.takeIf { it > 0 }?.let { resources.getString(R.string.assistant_leader_needs_you, it) }
 
 @StringRes
 internal fun greeting(hour: Int): Int = when (hour) {
@@ -282,6 +292,28 @@ internal fun conversationTime(at: java.time.Instant?, locale: java.util.Locale,
     zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String? =
     at?.let { LocalizedFormats.format(it, LocalizedFormats.MONTH_DAY_TIME, locale, zone) }
 
+/**
+ * When a conversation last moved, as the history writes it (iOS `Fmt.relative`): "Just now" under 45 seconds, "5 min ago"
+ * under an hour, today the time ("14:30"), "Yesterday", within six days the weekday ("Tuesday"), else the month and day
+ * ("Nov 5"). Null when there is no time.
+ */
+internal fun historyTime(at: java.time.Instant?, res: android.content.res.Resources, now: java.time.Instant = java.time.Instant.now(),
+    zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): String? {
+    at ?: return null
+    val locale = res.configuration.locales[0]
+    val seconds = java.time.Duration.between(at, now).seconds
+    val day = at.atZone(zone).toLocalDate()
+    val today = now.atZone(zone).toLocalDate()
+    return when {
+        seconds < 45 -> res.getString(R.string.assistant_time_just_now)
+        seconds < 3600 -> maxOf(1, (seconds / 60).toInt()).let { res.getQuantityString(R.plurals.assistant_time_minutes_ago, it, it) }
+        day == today -> LocalizedFormats.format(at, LocalizedFormats.TIME, locale, zone)
+        day == today.minusDays(1) -> res.getString(R.string.assistant_time_yesterday)
+        seconds < 6 * 86_400 -> LocalizedFormats.format(at, LocalizedFormats.WEEKDAY, locale, zone)
+        else -> LocalizedFormats.format(at, LocalizedFormats.MONTH_DAY, locale, zone)
+    }
+}
+
 /** The composition root adapts these options to the shared chat lane's presentation parameters. */
 data class AssistantChatOptions(
     val assistant: Boolean = true,
@@ -289,6 +321,8 @@ data class AssistantChatOptions(
     val showTopBar: Boolean = false,
     /** The conversation's manager is offline (docs/assistant/managers.md step 4): history only, this note where the composer was. */
     val readOnlyNote: String? = null,
+    /** Known before the live session row arrives: ordinary files still upload to Health storage. */
+    val healthChat: Boolean = false,
 )
 
 /**

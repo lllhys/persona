@@ -27,8 +27,17 @@ private actor DeferredItemPages {
     }
 }
 
+private final class MutexBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+    init(_ value: Value) { self.value = value }
+    func withLock<T>(_ body: (inout Value) -> T) -> T { lock.withLock { body(&value) } }
+}
+
 /// Exercise real APIClient decoding and every asynchronous fill/reload boundary with manually released responses.
 @MainActor struct RetainedChatSyncFenceTests {
+    init() { ProductionContinuityShadow.shared.installForTests() }
+
     private func item(_ seq: Int) -> Item {
         Item(id: "\(seq)#0", seq: seq, ts: nil, role: "assistant", kind: .text, text: "Synthetic item \(seq)",
              toolUseID: nil, toolName: nil, toolInput: nil, isError: nil, image: nil)
@@ -52,6 +61,23 @@ private actor DeferredItemPages {
         {"items":[{"id":"\(seq)#0","seq":\(seq),"role":"assistant","kind":"text","text":"Synthetic item \(seq)"}],
          "history":"\(history)","from_seq":\(seq - 1),"to_seq":\(seq),"has_more":false,"more_after":\(more)}
         """
+    }
+
+    @Test func prefetchReloadCancellationFinishesItsCoreRequest() async throws {
+        let (model, key, store, _, gate) = setup()
+        // A prefetch that arrives ahead of a replaced transcript uses an independent reload, outside the fill gate.
+        _ = store.apply(.batch(.latest, items: [item(1)], span: ItemSpan(history: "replacement", from: 2, to: 3), backlog: true))
+        let allowed = MutexBox(true)
+        let task = Task { await model.reload(key, shouldApply: { allowed.withLock { $0 } }) }
+        try await gate.waitForRequests(1)
+        allowed.withLock { $0 = false }
+        try await gate.release(page(2, history: "replacement"))
+        await task.value
+        _ = store.apply(.batch(.pushed, items: [item(5)], span: ItemSpan(history: "replacement", from: 5, to: 5)))
+        let result = try await ProductionContinuityShadow.shared.compare(store)
+        #expect(result.compared == 3)
+        #expect(result.mismatches == 0)
+        ProductionContinuityShadow.shared.close(store)
     }
 
     @Test func anInflightFirstPageCannotApplyAfterTheLastOwnerLeaves() async throws {

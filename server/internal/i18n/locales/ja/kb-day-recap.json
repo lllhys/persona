@@ -1,0 +1,21 @@
+{
+  "title": "{day} の1日のまとめ",
+  "covers": "時間帯：{from}–{to}",
+  "so_far": "（現時点まで）",
+  "not_recorded": "録音なし：{gaps}",
+  "list_sep": "、",
+  "gap": "{from}–{to}（{reason}）",
+  "gap_paused": "一時停止",
+  "gap_interrupted": "中断",
+  "gap_stopped": "停止",
+  "gap_pending": "未アップロード",
+  "gap_lost": "消失",
+  "gap_erased": "消去済み",
+  "gap_unknown": "原因不明",
+  "meetings": "会議",
+  "outside": "会議以外",
+  "actions": "提案されたToDo",
+  "aside": "（{text}）",
+  "owner": "{who}：",
+  "partial": "この日は長すぎたため、途中の一部の時間帯はまとめに入っていません。"
+}

@@ -6,9 +6,9 @@
       "name": "task_notices_find_calls",
       "description": "通知通过调用标识或后台任务标识回配调用，并生成中文结果和徽标。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/TaskNoteTests.swift: noticesFindTheirCalls"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/TaskNoteTests.swift: noticesFindTheirCalls"
       ],
       "input": {
         "items": [
@@ -420,9 +420,9 @@
       "name": "task_title_containing_interrupt_is_not_interrupt",
       "description": "任务标题含中断字样也不作为用户中断通知。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/TaskNoteTests.swift: aNoticeAboutAnInterruptIsNotTheInterrupt"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/TaskNoteTests.swift: aNoticeAboutAnInterruptIsNotTheInterrupt"
       ],
       "input": {
         "items": [
@@ -576,8 +576,8 @@
       "name": "monitor_event_uses_first_detail_line",
       "description": "监控事件优先用详情首个非空行作主题。",
       "source": [
-        "ios/Persona/Views/Chat/TaskNoteRow.swift: TaskNoteText.subject / TaskNoteRow",
-        "ios/PersonaTests/TaskNoteTests.swift: noticesFindTheirCalls"
+        "apple/Persona/Views/Chat/TaskNoteRow.swift: TaskNoteText.subject / TaskNoteRow",
+        "apple/PersonaTests/TaskNoteTests.swift: noticesFindTheirCalls"
       ],
       "input": {
         "items": [
@@ -702,8 +702,8 @@
       "name": "task_without_loaded_call_uses_title",
       "description": "发起调用不在窗口时，任务通知使用自身标题且不推断耗时。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -835,8 +835,8 @@
       "name": "background_running_badge",
       "description": "后台调用尚未收到通知时保留运行中徽标。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -962,8 +962,8 @@
       "name": "task_status_outcomes",
       "description": "后台任务的停止、等待和非零退出码使用各自结果文案。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [

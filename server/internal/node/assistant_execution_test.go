@@ -12,7 +12,7 @@ import (
 func TestAssistantExecutionReportsRegisteredNativeProcess(t *testing.T) {
 	t.Setenv("PERSONA_EXECUTION_CONTAINER", "")
 	n := &Node{procs: map[string]*assistantProc{
-		"main": {id: "main", agent: "claude", runtime: proto.AssistantRuntimeAgentSDK, ready: make(chan struct{})},
+		"main": {id: "main", agent: "claude", ready: make(chan struct{})},
 	}}
 	ctx := context.Background()
 	if got := n.assistantExecution(ctx, "main"); got.State != proto.ExecutionStarting {
@@ -24,7 +24,7 @@ func TestAssistantExecutionReportsRegisteredNativeProcess(t *testing.T) {
 		t.Fatalf("execution hostname: %q %v", host, err)
 	}
 	if got := n.assistantExecution(ctx, "main"); got.State != proto.ExecutionRunning || got.Source != "native" ||
-		got.Harness != proto.AssistantRuntimeAgentSDK || got.Location == nil || got.Location.Host != host || got.Location.Container != "" {
+		got.Harness != "claude" || got.Location == nil || got.Location.Host != host || got.Location.Container != "" {
 		t.Fatalf("native execution: %+v", got)
 	}
 	t.Setenv("PERSONA_EXECUTION_CONTAINER", "example-container")

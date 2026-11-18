@@ -10,7 +10,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
+
+	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
 // Attending a meeting (docs/assistant/meeting-minutes.md "Attending a meeting"): a meeting recording uploaded with a
@@ -21,9 +24,12 @@ import (
 // the hub's, so it is not in an upload's undo journal (recordingFiles). Never searched (find.go searchable) and never
 // shown by Get; a delete or the retention takes it with the directory.
 
-// Attendance roles. Off is stored as "" (omitted in meta.json).
+// Attendance roles. Off is stored as "" (omitted in meta.json). Notes is a room meeting's only (#8851): its room keeps
+// the live log, the topics and the highlights while Persona answers nothing (Answering), so a meeting Persona was not
+// invited to still has its live view; #2981's top-level attendance never takes it.
 const (
 	AttendanceOff         = "off"
+	AttendanceNotes       = "notes"
 	AttendanceListener    = "listener"
 	AttendanceParticipant = "participant"
 )
@@ -64,6 +70,9 @@ type LiveSegment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
 	Text  string  `json:"text"`
+	// Source is whose sentence it is in hub mode (SourceHub, SourceDevice: filled from the phone's uploads); absent in
+	// device mode. Only the hub sets it.
+	Source string `json:"source,omitempty"`
 }
 
 // AskSource is an earlier meeting (kind recordings) or a project (kind projects) an answer drew on; When, Start and End
@@ -138,6 +147,63 @@ type Live struct {
 	Asks []LiveAsk `json:"asks,omitempty"`
 	// AsksRev is the asks' revision (the meeting_live event's asks): it goes up whenever they change (LiveUpdate).
 	AsksRev int64 `json:"asks_rev,omitempty"`
+	// Topics are the meeting's topics as its room set them (meeting_topics_set, TopicsSet), TopicsAt their last change
+	// and TopicsRev their revision (the meeting_live event's topics), which goes up whenever they change (LiveUpdate).
+	// Kept here, they go with the transcript: the trim takes live.json.
+	Topics    []LiveTopic `json:"topics,omitempty"`
+	TopicsAt  time.Time   `json:"topics_at,omitzero"`
+	TopicsRev int64       `json:"topics_rev,omitempty"`
+	// Highlights are the meeting's highlights so far as its room set them (meeting_highlights_set, HighlightsSet),
+	// the earliest first; HighlightsAt their last change and HighlightsRev their revision (the meeting_live event's
+	// highlights), which goes up whenever they change (LiveUpdate). They go with the transcript as the topics do.
+	Highlights    []LiveHighlight `json:"highlights,omitempty"`
+	HighlightsAt  time.Time       `json:"highlights_at,omitzero"`
+	HighlightsRev int64           `json:"highlights_rev,omitempty"`
+}
+
+// The topics of a room meeting (docs/assistant/meeting-minutes.md "Phase 2: live view"): each done, current (at most
+// one) or open, set whole by the room.
+const (
+	TopicDone    = "done"
+	TopicCurrent = "current"
+	TopicOpen    = "open"
+	// The limits of meeting_topics_set: a call over one is refused, saying which.
+	MaxTopics     = 20
+	MaxTopicTitle = 80  // characters
+	MaxTopicNote  = 200 // characters
+)
+
+// LiveTopic is one topic of the meeting: its title, its state, the seconds from the start when it began (nil: not
+// said) and the room's short note on it.
+type LiveTopic struct {
+	Title string   `json:"title"`
+	State string   `json:"state"`
+	At    *float64 `json:"at,omitempty"`
+	Note  string   `json:"note,omitempty"`
+}
+
+// The limits of meeting_highlights_set (docs/assistant/meeting-minutes.md "Phase 2b: highlights"): a call over one is
+// refused, saying which.
+const (
+	MaxHighlights    = 4
+	MaxHighlightText = 80 // characters, once on one line
+)
+
+// LiveHighlight is one highlight of the meeting so far: one short sentence and the minute of the live log it was
+// made in, At the start of that minute's first line and End the end of its last, in seconds from the recording's
+// start.
+type LiveHighlight struct {
+	Text string  `json:"text"`
+	At   float64 `json:"at"`
+	End  float64 `json:"end"`
+}
+
+// HighlightSaid is one highlight as the room names it (meeting_highlights_set): its text and SaidAt, the clock time
+// (H:MM or HH:MM) of a batch line it was made in. Malformed: the room's item was not an object with a string text and
+// a string said_at, which CleanHighlights refuses in its place.
+type HighlightSaid struct {
+	Text, SaidAt string
+	Malformed    bool
 }
 
 var (
@@ -149,6 +215,10 @@ var (
 	ErrLiveFull = errors.New("the live log of this recording is full")
 	// ErrBadLive wraps what is wrong with a live request (a negative from, too many sentences).
 	ErrBadLive = errors.New("invalid live sentences")
+	// ErrBadTopics wraps the limit a meeting_topics_set call broke (CleanTopics).
+	ErrBadTopics = errors.New("invalid topics")
+	// ErrBadHighlights wraps the limit a meeting_highlights_set call broke (CleanHighlights, HighlightsSet).
+	ErrBadHighlights = errors.New("invalid highlights")
 )
 
 // LiveGapError is ErrLiveGap with how many positions the hub holds: the phone sends again from Next. errors.As finds
@@ -167,7 +237,8 @@ func (e LiveGapError) As(target any) bool {
 	return false
 }
 
-// AttendanceRole is the role r is attended in: AttendanceOff, AttendanceListener or AttendanceParticipant. A room
+// AttendanceRole is the role r is attended in: AttendanceOff, AttendanceNotes (a room meeting's only),
+// AttendanceListener or AttendanceParticipant. A room
 // meeting's is its room's (meeting.json), never meta.json's; a trimmed recording is attended no more.
 func (r Recording) AttendanceRole() string {
 	role := r.Attendance
@@ -182,7 +253,8 @@ func (r Recording) AttendanceRole() string {
 
 // UnmarshalJSON reads an upload like the default does, except that a value of the wrong type for attendance or
 // attending_session does not fail it (the same request carries the transcript): normalizeAttendance turns attending
-// off for it.
+// off for it. Nor does one for room, private, transcription or timeline (readRoomAndPrivate, readTranscription), nor
+// a malformed spoken (readSpoken).
 func (u *RecordingUpload) UnmarshalJSON(data []byte) error {
 	type plain RecordingUpload
 	aux := struct {
@@ -191,11 +263,16 @@ func (u *RecordingUpload) UnmarshalJSON(data []byte) error {
 		AttendingSession json.RawMessage `json:"attending_session"`
 		Room             json.RawMessage `json:"room"`
 		Private          json.RawMessage `json:"private"`
+		Transcription    json.RawMessage `json:"transcription"`
+		Timeline         json.RawMessage `json:"timeline"`
+		Spoken           json.RawMessage `json:"spoken"`
 	}{plain: (*plain)(u)}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	u.Spoken = readSpoken(aux.Spoken)
 	u.readRoomAndPrivate(aux.Room, aux.Private)
+	u.readTranscription(aux.Transcription, aux.Timeline)
 	u.Attendance, u.AttendingSession, u.badRole, u.badSession = "", nil, false, false
 	if raw := aux.Attendance; !jsonNull(raw) {
 		u.badRole = json.Unmarshal(raw, &u.Attendance) != nil
@@ -367,7 +444,8 @@ func cutBytes(s string, n int) string {
 // LiveAppend stores sentences of recording id's live log, segs[0] at position from: the positions held already are
 // skipped (a replay or a retry stores nothing twice) and the rest appended. Errors in the contract's order:
 // ErrRecordingDeleted, ErrNotFound (no upload yet), ErrReadOnly, ErrBadLive (a negative from, over MaxLiveRequest
-// sentences), ErrNotAttending (the stored upload has attendance off), a LiveGapError (from above the positions held),
+// sentences), ErrNotAttending (the stored upload has attendance off), ErrHubTranscribes (the hub transcribes it: its
+// live log is the hub's, LiveAppendHub), a LiveGapError (from above the positions held),
 // ErrLiveFull (the request would pass maxLivePositions or maxLiveBytes; nothing of it is stored). The Live returned is
 // the log after it, also with ErrLiveGap and ErrLiveFull. Engine.LiveChanged hears of every append.
 func (e *Engine) LiveAppend(rawID string, from int, segs []LiveSegment) (Live, Recording, error) {
@@ -376,8 +454,11 @@ func (e *Engine) LiveAppend(rawID string, from int, segs []LiveSegment) (Live, R
 		return Live{}, Recording{}, ErrNotFound
 	}
 	l, r, stored, err := e.liveAppend(id, from, segs)
-	if stored && e.LiveChanged != nil {
-		e.LiveChanged(id)
+	if stored {
+		if e.LiveChanged != nil {
+			e.LiveChanged(id)
+		}
+		e.meetingChanged(id, []string{PartLines}) // its revision is the live log's length
 	}
 	return l, r, err
 }
@@ -398,6 +479,8 @@ func (e *Engine) liveAppend(id string, from int, segs []LiveSegment) (Live, Reco
 		return l, r, false, fmt.Errorf("%w: at most %d sentences a request", ErrBadLive, MaxLiveRequest)
 	case !r.Attending():
 		return l, r, false, ErrNotAttending
+	case r.HubTranscribed():
+		return l, r, false, ErrHubTranscribes
 	case from > len(l.Segments):
 		return l, r, false, LiveGapError{Next: len(l.Segments)}
 	}
@@ -430,6 +513,77 @@ func (e *Engine) liveAppend(id string, from int, segs []LiveSegment) (Live, Reco
 	return next, r, true, nil
 }
 
+// LiveAppendHub appends the hub's sentences at the end of recording rawID's live log: no from and no role check (the
+// caller applied the timeline), each Source SourceHub unless it is SourceDevice (the phone's text filling in), mended
+// as LiveAppend mends them. first is the position of segs[0] (the live log's length when segs is empty). Errors:
+// ErrRecordingDeleted, ErrNotFound, ErrReadOnly, ErrTranscriptExpired (trimmed), ErrNotHub (not transcribed on the
+// hub), ErrLiveFull (past maxLivePositions or maxLiveBytes; nothing of it is stored). LiveChanged and MeetingChanged
+// (PartLines) hear of an append.
+func (e *Engine) LiveAppendHub(rawID string, segs []LiveSegment) (first int, err error) {
+	id, ok := RecordingID(rawID)
+	if !ok {
+		return 0, ErrNotFound
+	}
+	first, stored, err := e.liveAppendHub(id, segs)
+	if stored {
+		if e.LiveChanged != nil {
+			e.LiveChanged(id)
+		}
+		e.meetingChanged(id, []string{PartLines})
+	}
+	return first, err
+}
+
+func (e *Engine) liveAppendHub(id string, segs []LiveSegment) (int, bool, error) {
+	st := e.Store
+	st.liveMu.Lock()
+	defer st.liveMu.Unlock()
+	l, r, err := st.liveState(id)
+	switch {
+	case err != nil:
+		return 0, false, err
+	case st.ReadOnly():
+		return len(l.Segments), false, ErrReadOnly
+	case r.Trimmed():
+		return len(l.Segments), false, ErrTranscriptExpired
+	case !r.HubTranscribed():
+		return len(l.Segments), false, ErrNotHub
+	}
+	first := len(l.Segments)
+	if len(segs) == 0 {
+		return first, false, nil
+	}
+	add, size := make([]LiveSegment, len(segs)), 0
+	for i, sg := range segs {
+		if sg.Source != SourceDevice {
+			sg.Source = SourceHub
+		}
+		add[i] = cleanLive(sg)
+		size += len(add[i].Text)
+	}
+	if len(l.Segments)+len(add) > maxLivePositions || l.Bytes+size > maxLiveBytes {
+		if !l.Full {
+			l.Full = true
+			if _, err := st.putLive(id, &l); err != nil {
+				e.logf("recording %s: live full: %v", id, err)
+			}
+		}
+		return first, false, ErrLiveFull
+	}
+	next := l
+	next.Segments = append(append(make([]LiveSegment, 0, len(l.Segments)+len(add)), l.Segments...), add...)
+	next.Bytes += size
+	if ok, err := st.putLive(id, &next); err != nil {
+		return first, false, err
+	} else if !ok {
+		if err := st.goneError(id); !errors.Is(err, ErrNotAttending) {
+			return first, false, err
+		}
+		return first, false, ErrTranscriptExpired // trimmed meanwhile
+	}
+	return first, true, nil
+}
+
 // goneError is why recording id takes no live log any more: deleted, trimmed (attending it is over) or never uploaded.
 func (s *Store) goneError(id string) error {
 	if _, gone := s.tombstones()[id]; gone {
@@ -452,59 +606,265 @@ func (e *Engine) LiveRead(rawID string) (Live, Recording, error) {
 }
 
 // LiveUpdate changes recording id's live log with fn (given it and the stored upload) and writes the result unless fn
-// fails or changed nothing; the live log after it. ErrNotFound when the recording's meta.json is gone (also deleted
-// meanwhile) or the recording was trimmed meanwhile, ErrReadOnly on a read-only knowledge base. fn runs with the live log locked: it must be quick and call
-// no Engine method of the live log or the recordings.
+// fails or changed nothing; the live log after it. The asks', the topics' and the highlights' revisions go up when fn
+// changed them, and MeetingChanged hears of them. ErrNotFound when the recording's meta.json is gone (also deleted
+// meanwhile) or the recording was trimmed meanwhile, ErrReadOnly on a read-only knowledge base. fn runs with the live
+// log locked: it must be quick and call no Engine method of the live log or the recordings.
 func (e *Engine) LiveUpdate(rawID string, fn func(l *Live, r Recording) error) (Live, error) {
 	id, ok := RecordingID(rawID)
 	if !ok {
 		return Live{}, ErrNotFound
 	}
-	l, asks, err := e.liveUpdate(id, fn)
-	if asks {
-		e.meetingChanged(id, []string{PartAsks})
-	}
+	l, parts, err := e.liveUpdate(id, fn)
+	e.meetingChanged(id, parts)
 	return l, err
 }
 
-func (e *Engine) liveUpdate(id string, fn func(l *Live, r Recording) error) (Live, bool, error) {
+func (e *Engine) liveUpdate(id string, fn func(l *Live, r Recording) error) (Live, []string, error) {
 	st := e.Store
 	st.liveMu.Lock()
 	defer st.liveMu.Unlock()
 	r, ok := st.Recording(id)
 	if !ok {
-		return Live{}, false, ErrNotFound
+		return Live{}, nil, ErrNotFound
 	}
 	if st.ReadOnly() {
-		return Live{}, false, ErrReadOnly
+		return Live{}, nil, ErrReadOnly
 	}
 	l, err := st.readLive(id)
 	if err != nil {
-		return Live{}, false, err
+		return Live{}, nil, err
 	}
 	before, err := json.Marshal(l)
 	if err != nil {
-		return Live{}, false, err
+		return Live{}, nil, err
 	}
 	asksBefore, _ := json.Marshal(l.Asks)
+	topicsBefore, _ := json.Marshal(l.Topics)
+	highlightsBefore, _ := json.Marshal(l.Highlights)
 	if err := fn(&l, *r); err != nil {
-		return Live{}, false, err
+		return Live{}, nil, err
 	}
 	after, err := json.Marshal(l)
 	if err != nil || bytes.Equal(before, after) {
-		return l, false, err
+		return l, nil, err
 	}
-	asksAfter, _ := json.Marshal(l.Asks)
-	asks := !bytes.Equal(asksBefore, asksAfter)
-	if asks {
+	var parts []string
+	if asksAfter, _ := json.Marshal(l.Asks); !bytes.Equal(asksBefore, asksAfter) {
 		l.AsksRev++
+		parts = append(parts, PartAsks)
+	}
+	if topicsAfter, _ := json.Marshal(l.Topics); !bytes.Equal(topicsBefore, topicsAfter) {
+		l.TopicsRev++
+		parts = append(parts, PartTopics)
+	}
+	if highlightsAfter, _ := json.Marshal(l.Highlights); !bytes.Equal(highlightsBefore, highlightsAfter) {
+		l.HighlightsRev++
+		parts = append(parts, PartHighlights)
 	}
 	if ok, err := st.putLive(id, &l); err != nil {
-		return Live{}, false, err
+		return Live{}, nil, err
 	} else if !ok {
-		return Live{}, false, ErrNotFound
+		return Live{}, nil, ErrNotFound
 	}
-	return l, asks, nil
+	return l, parts, nil
+}
+
+// CleanTopics is topics as the live log keeps them, or ErrBadTopics saying which limit they break: at most MaxTopics,
+// each with a title of at most MaxTopicTitle characters and a state done, current or open (at most one current), at
+// (when given) 0 or more seconds, a note of at most MaxTopicNote characters. Titles and notes are put on one line
+// first; none at all is nil.
+func CleanTopics(topics []LiveTopic) ([]LiveTopic, error) {
+	if len(topics) > MaxTopics {
+		return nil, fmt.Errorf("%w: %d topics, over the %d the meeting may have", ErrBadTopics, len(topics), MaxTopics)
+	}
+	var out []LiveTopic
+	current := 0
+	for i, t := range topics {
+		n := i + 1
+		t.Title, t.Note = topicLine(t.Title), topicLine(t.Note)
+		t.State = strings.ToLower(strings.TrimSpace(t.State))
+		switch c := utf8.RuneCountInString(t.Title); {
+		case c == 0:
+			return nil, fmt.Errorf("%w: topic %d has no title", ErrBadTopics, n)
+		case c > MaxTopicTitle:
+			return nil, fmt.Errorf("%w: topic %d's title is %d characters, over the %d a title may have", ErrBadTopics, n, c, MaxTopicTitle)
+		}
+		switch t.State {
+		case TopicDone, TopicOpen:
+		case TopicCurrent:
+			current++
+		default:
+			return nil, fmt.Errorf("%w: topic %d's state is %q, not done, current or open", ErrBadTopics, n, t.State)
+		}
+		if t.At != nil && (math.IsNaN(*t.At) || math.IsInf(*t.At, 0) || *t.At < 0) {
+			return nil, fmt.Errorf("%w: topic %d's at is not 0 or more seconds from the meeting's start", ErrBadTopics, n)
+		}
+		if c := utf8.RuneCountInString(t.Note); c > MaxTopicNote {
+			return nil, fmt.Errorf("%w: topic %d's note is %d characters, over the %d a note may have", ErrBadTopics, n, c, MaxTopicNote)
+		}
+		if t.At != nil {
+			at := *t.At
+			t.At = &at
+		}
+		out = append(out, t)
+	}
+	if current > 1 {
+		return nil, fmt.Errorf("%w: %d topics are current, and at most one may be", ErrBadTopics, current)
+	}
+	return out, nil
+}
+
+// topicLine is a topic's title or note on one line, valid UTF-8.
+func topicLine(s string) string {
+	return strings.Join(strings.Fields(strings.ToValidUTF8(s, "\uFFFD")), " ")
+}
+
+// TopicsSet replaces recording rawID's topics with topics (CleanTopics: ErrBadTopics names the limit broken), at now;
+// false when they were those already, which changes nothing. LiveUpdate's errors otherwise; MeetingChanged hears of
+// PartTopics.
+func (e *Engine) TopicsSet(rawID string, topics []LiveTopic, now time.Time) (bool, error) {
+	clean, err := CleanTopics(topics)
+	if err != nil {
+		return false, err
+	}
+	want, _ := json.Marshal(clean)
+	changed := false
+	_, err = e.LiveUpdate(rawID, func(l *Live, _ Recording) error {
+		if have, _ := json.Marshal(l.Topics); bytes.Equal(have, want) {
+			return nil
+		}
+		l.Topics, l.TopicsAt, changed = clean, now.UTC(), true
+		return nil
+	})
+	return changed && err == nil, err
+}
+
+// LiveClock is the clock time a batch gives the moment sec seconds from recording r's start, in loc ("15:04"): the
+// [HH:MM] of a batch's lines (the assistant's feedText) and the minute a highlight's said_at names (HighlightsSet), one
+// function so the two never differ.
+func LiveClock(r Recording, sec float64, loc *time.Location) string {
+	return r.StartedAt.Add(time.Duration(sec * float64(time.Second))).In(loc).Format("15:04")
+}
+
+// highlightSaidAt is H:MM or HH:MM, hours 0 to 23.
+var highlightSaidAt = lazyre.New(`^([01]?[0-9]|2[0-3]):[0-5][0-9]$`)
+
+// highlightMinute is the minute said (a said_at) names, as LiveClock writes it ("9:05" is "09:05"), brackets and
+// spaces around it dropped; false when it is not H:MM or HH:MM.
+func highlightMinute(said string) (string, bool) {
+	said = strings.TrimFunc(said, func(r rune) bool { return unicode.IsSpace(r) || r == '[' || r == ']' })
+	if !highlightSaidAt.MatchString(said) {
+		return "", false
+	}
+	if len(said) == len("9:05") {
+		said = "0" + said
+	}
+	return said, true
+}
+
+// CleanHighlights is said as HighlightsSet resolves it, or ErrBadHighlights saying which limit it breaks: at most
+// MaxHighlights, each an object with a string text and a string said_at, a text of 1 to MaxHighlightText characters
+// once on one line, a said_at H:MM or HH:MM (put as HH:MM). None at all is nil.
+func CleanHighlights(said []HighlightSaid) ([]HighlightSaid, error) {
+	if len(said) > MaxHighlights {
+		return nil, fmt.Errorf("%w: %d highlights, over the %d the meeting may have", ErrBadHighlights, len(said), MaxHighlights)
+	}
+	var out []HighlightSaid
+	for i, h := range said {
+		n := i + 1
+		if h.Malformed {
+			return nil, fmt.Errorf("%w: highlight %d is not an object with a string text and a string said_at", ErrBadHighlights, n)
+		}
+		h.Text = topicLine(h.Text)
+		switch c := utf8.RuneCountInString(h.Text); {
+		case c == 0:
+			return nil, fmt.Errorf("%w: highlight %d has no text", ErrBadHighlights, n)
+		case c > MaxHighlightText:
+			return nil, fmt.Errorf("%w: highlight %d's text is %d characters, over the %d a highlight may have", ErrBadHighlights, n, c, MaxHighlightText)
+		}
+		minute, ok := highlightMinute(h.SaidAt)
+		if !ok {
+			return nil, fmt.Errorf("%w: highlight %d's said_at is %q, not the H:MM or HH:MM of a batch line", ErrBadHighlights, n, h.SaidAt)
+		}
+		out = append(out, HighlightSaid{Text: h.Text, SaidAt: minute})
+	}
+	return out, nil
+}
+
+// HighlightsSet replaces recording rawID's highlights with said (CleanHighlights), each resolved against the live log
+// so far in loc, the time zone the batches are written in (highlightsResolved), at now; false when the resolved list
+// is the one there already (each text, at and end), which changes nothing. A list that breaks a limit (among them a
+// said_at whose minute has no line) is refused with ErrBadHighlights naming it, and nothing changes; [] clears them.
+// LiveUpdate's errors otherwise; MeetingChanged hears of PartHighlights.
+func (e *Engine) HighlightsSet(rawID string, said []HighlightSaid, loc *time.Location, now time.Time) (bool, error) {
+	clean, err := CleanHighlights(said)
+	if err != nil {
+		return false, err
+	}
+	if loc == nil { // the caller's zone is the batches' (s.location); without one, the archive's (never the machine's)
+		loc = e.Store.Zone()
+	}
+	changed := false
+	_, err = e.LiveUpdate(rawID, func(l *Live, r Recording) error {
+		hs, err := highlightsResolved(clean, l.Segments, r, loc)
+		if err != nil {
+			return err
+		}
+		have, _ := json.Marshal(l.Highlights)
+		if want, _ := json.Marshal(hs); bytes.Equal(have, want) {
+			return nil
+		}
+		l.Highlights, l.HighlightsAt, changed = hs, now.UTC(), true
+		return nil
+	})
+	return changed && err == nil, err
+}
+
+// highlightsResolved are clean's highlights with the moments of their minutes in recording r's live log segs
+// (highlightLines), sorted by at (those of one minute in the order given); ErrBadHighlights for one whose minute has
+// no line.
+func highlightsResolved(clean []HighlightSaid, segs []LiveSegment, r Recording, loc *time.Location) ([]LiveHighlight, error) {
+	if len(clean) == 0 {
+		return nil, nil
+	}
+	clocks := make([]string, len(segs)) // each line's minute as a batch writes it; "" for a placeholder, which never counts
+	for i, sg := range segs {
+		if sg.Text != "" {
+			clocks[i] = LiveClock(r, sg.Start, loc)
+		}
+	}
+	var out []LiveHighlight
+	for i, h := range clean {
+		at, end, ok := highlightLines(segs, clocks, h.SaidAt)
+		if !ok {
+			return nil, fmt.Errorf("%w: highlight %d's said_at %s is not the minute of any line of the meeting so far", ErrBadHighlights, i+1, h.SaidAt)
+		}
+		out = append(out, LiveHighlight{Text: h.Text, At: at, End: end})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At < out[j].At })
+	return out, nil
+}
+
+// highlightLines is minute (HH:MM) in the live log segs, whose lines a batch writes at clocks: the earliest start and
+// the latest end of the positions whose clock is minute. A minute the clock shows twice (it went back an hour) is its
+// first occurrence: the lines that start within a minute of the earliest. False when no line is in it.
+func highlightLines(segs []LiveSegment, clocks []string, minute string) (at, end float64, ok bool) {
+	for i, sg := range segs {
+		if clocks[i] == minute && (!ok || sg.Start < at) {
+			at, ok = sg.Start, true
+		}
+	}
+	if !ok {
+		return 0, 0, false
+	}
+	end = at
+	for i, sg := range segs {
+		if clocks[i] == minute && sg.Start-at < 60 {
+			end = max(end, sg.End)
+		}
+	}
+	return at, end, true
 }
 
 // AttendingRecordings is every recording whose stored attendance is not off and whose end batch has not gone out,

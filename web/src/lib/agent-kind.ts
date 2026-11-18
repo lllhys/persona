@@ -8,39 +8,64 @@ import type { Session } from "./types";
 export const MARKED_AGENTS = ["claude", "codex", "opencode", "pi", "gemini", "cursor", "trae"] as const;
 export type MarkedAgent = (typeof MARKED_AGENTS)[number];
 
-/** Other names for the same program (the CLI's binary, the product's own name), by the lowercased `agent` string. */
+/** Other names for the same program (the CLI's binary, the product's own name), by the lowercased `agent` string with
+ *  its spaces, dots, dashes and underscores left out ("trae-cli", "TRAE CLI" → traecli). */
 const ALIASES: Record<string, string> = {
-  "claude-code": "claude",
   claudecode: "claude",
-  "codex-cli": "codex",
-  "gemini-cli": "gemini",
-  "cursor-agent": "cursor",
-  "pi-web": "pi",
-  "trae-cli": "trae",
+  codexcli: "codex",
+  geminicli: "gemini",
+  cursoragent: "cursor",
+  piweb: "pi",
   traecli: "trae",
 };
 
 /** The agent a reported `agent` string names: lowercase, aliases folded in, "" (Claude Code reports nothing) is Claude. */
 export function agentId(raw: string | undefined | null): string {
   const id = (raw ?? "").trim().toLowerCase();
-  return ALIASES[id] ?? (id || "claude");
+  return ALIASES[id.replace(/[\s._-]/g, "")] ?? (id || "claude");
 }
 
 export function isMarked(id: string): id is MarkedAgent {
   return (MARKED_AGENTS as readonly string[]).includes(id);
 }
 
+/** The agent whose mark is drawn: the reported one, else the one its name says when the app has that mark (a runtime's
+ *  provider named "Cursor" or "TRAE CLI", #8142). */
+export function markId(raw: string | undefined | null, label?: string): string {
+  const id = agentId(raw);
+  const named = label?.trim() ? agentId(label) : "";
+  return !isMarked(id) && isMarked(named) ? named : id;
+}
+
+/** The id Paseo reports as the agent of each provider the app has no id for (Grok, Kimi, Cursor…: the bridge's
+ *  appAgent, integrations/paseo/lib/map.js). It names the engine, never an agent (DESIGN_SYSTEM.md 5.6). */
+const ENGINE_AGENT = "paseo";
+
+/** The agent a row or a launcher runs as the app tells agents apart: its reported `agent`, except the engine's own id
+ *  (above), where its provider is the agent (`provider`: the row's launcher, the launcher's name), so each provider has
+ *  its own mark, name and filter (#8142). */
+export function providerAgent(agent: string | undefined | null, provider: string | undefined): string {
+  return provider && agent?.trim().toLowerCase() === ENGINE_AGENT ? provider : (agent ?? "");
+}
+
 /** What the agent is called: the product's name for the ones the app knows, else the runtime's own label, else the string as reported. */
 export function agentName(raw: string | undefined | null, label?: string): string {
   const id = agentId(raw);
-  if (isMarked(id) || id === "traex") return t(`agent-mark.${id}`);
+  if (isMarked(id) || id === "traex" || id === "omp") return t(`agent-mark.${id}`); // spec/fixtures/agent-names
   return label?.trim() || (raw ?? "").trim() || t("agent-mark.unknown");
 }
 
-/** The agent of a session, the same way `agentLabel` (lib/mentions.ts) tells: a Codex thread read off the app-server or history is Codex whatever it reports. */
-export function sessionAgent(s: Pick<Session, "agent" | "agent_label" | "source_kind" | "agent_surface">): { agent: string; label?: string; surface?: AgentSurface } {
+/** The agent of a session, the same way `agentLabel` (lib/mentions.ts) tells: a Codex thread read off the app-server or history is Codex whatever it reports;
+ *  one of Paseo's providers is that provider (providerAgent). */
+export function sessionAgent(s: Pick<Session, "agent" | "agent_label" | "source_kind" | "agent_surface" | "launcher">): { agent: string; label?: string; surface?: AgentSurface } {
   const codex = s.source_kind === "codex_app_server" || s.source_kind === "codex_history";
-  return { agent: codex ? "codex" : s.agent ?? "", label: s.agent_label, surface: agentSurface(s.agent_surface) };
+  return { agent: codex ? "codex" : providerAgent(s.agent, s.launcher), label: s.agent_label, surface: agentSurface(s.agent_surface) };
+}
+
+/** What a session's agent is called (agentName): "Claude Code", "Codex", a provider's label ("Grok"). */
+export function sessionAgentName(s: Parameters<typeof sessionAgent>[0]): string {
+  const { agent, label } = sessionAgent(s);
+  return agentName(agent, label);
 }
 
 /** The client an agent runs in (the node's `agent_surface`, #6390): its desktop app, or its command line in a terminal. */

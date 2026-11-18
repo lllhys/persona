@@ -3,6 +3,17 @@
   "codex_footer": "Edits ~/.codex/config.toml on that machine, only the options below; everything else in the file (model providers, trusted projects…) stays as is. New Codex sessions pick them up.",
   "agy_footer": "Edits ~/.gemini/antigravity-cli/settings.json on that machine, only the options below. New Antigravity (agy) sessions pick them up.",
   "omp_footer": "Edits ~/.omp/agent/config.yml on that machine, only the options below. New omp sessions pick them up.",
+  "grok_footer": "Edits ~/.grok/config.toml on that machine ($GROK_HOME/config.toml when GROK_HOME is set), only the options below. New Grok sessions pick them up.",
+  "setting_models.default": "Default model",
+  "setting_models.default_detail": "The model new Grok sessions use. Leave it empty to use Grok's own default.",
+  "setting_models.default_reasoning_effort": "Reasoning effort",
+  "setting_models.default_reasoning_effort_detail": "The default model's reasoning effort, when the model supports it, such as low or high.",
+  "setting_ui.permission_mode": "Permission mode",
+  "setting_ui.permission_mode_detail": "Whether Grok asks before it uses a tool. always-approve approves every tool call without asking.",
+  "setting_ui.yolo": "Approve all tool calls",
+  "setting_ui.yolo_detail": "Always approves tool calls without asking (yolo mode).",
+  "setting_ui.compact_mode": "Compact mode",
+  "setting_ui.compact_mode_detail": "Tighter spacing between messages in the terminal.",
   "applied_to_one": "Applied to {count} machine",
   "applied_to_other": "Applied to {count} machines",
   "saved": "Saved",
@@ -98,5 +109,6 @@
   "setting_agentMode": "Execution mode",
   "setting_agentMode_detail": "Auto approves safe operations and asks when needed. Full bypass is controlled by tool permission.",
   "setting_service_tier": "Speed",
-  "setting_service_tier_detail": "Fast increases usage or cost. Applies to new Codex sessions on supported models."
+  "setting_service_tier_detail": "Fast increases usage or cost. Applies to new Codex sessions on supported models.",
+  "speed_standard": "Standard"
 }

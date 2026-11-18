@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -154,6 +155,12 @@ var larkActions = []struct {
 
 // larkSummary is the phone card's text: what each write does, then its method, path and body.
 func larkSummary(gates []proto.CommandGate, calls []larkCall) string {
+	return larkSummaryWithContext(gates, calls, nil, i18n.Default)
+}
+
+// larkSummaryWithContext uses the readable message context when it was fetched; a failed lookup leaves that call's
+// old summary untouched. Other gated calls keep their existing text.
+func larkSummaryWithContext(gates []proto.CommandGate, calls []larkCall, contexts []larkCardContext, lang i18n.Lang) string {
 	var b strings.Builder
 	for i, c := range calls {
 		if i > 0 {
@@ -177,6 +184,12 @@ func larkSummary(gates []proto.CommandGate, calls []larkCall) string {
 		if c.CLI {
 			b.WriteString(larkCLIActor(c.Args) + "在飞书上" + what + larkRiskNote(c) + "\n" + prettyBody("lark-cli "+shellJoin(c.Args)))
 			continue
+		}
+		if i < len(contexts) {
+			if summary, ok := larkMessageSummary(c, contexts[i], lang); ok {
+				b.WriteString(summary)
+				continue
+			}
 		}
 		b.WriteString("以你的身份在" + callTitle(gates, c) + "上" + what + "\n" + c.Method + " " + c.Path)
 		if c.Query != "" {

@@ -13,6 +13,8 @@ import dagger.hilt.components.SingletonComponent
 data class ChatChromeBindings(
     val covered: Boolean = false,
     val requestId: String? = null,
+    /** A child link opens its parent's work summary and this card. */
+    val childSessionId: String? = null,
     val onFiles: (() -> Unit)? = null,
     val onGit: (() -> Unit)? = null,
     val gitLabel: String = "Git",
@@ -21,6 +23,13 @@ data class ChatChromeBindings(
     /** Worktree status and removal for Close Agent / Delete Chat (#4532), by the group's own machine ids; null: none offered. */
     val worktrees: (() -> persona.core.contracts.api.AgentCreationService?)? = null,
     val onOpenSession: ((SessionKey) -> Unit)? = null,
+    /**
+     * Opens a side session's own chat over this one (#7944, `ChatRoute.side`): from the header's Side sessions, and
+     * when a link to a side landed on its parent. Null: sides are not offered.
+     */
+    val onOpenSide: ((SessionKey) -> Unit)? = null,
+    /** The waiting pane became a thread: replace this page's route, preserving its Back destination. */
+    val onFollowSession: ((SessionKey) -> Unit)? = null,
     /**
      * The cards other agents wait on you with, in the Persona home's order, and how one opens: its chat with that card
      * first. With both, an agent's chat that has just answered its last card offers the next one (#4325).
@@ -51,6 +60,18 @@ data class ChatChromeBindings(
     val agentShares: (() -> persona.core.contracts.api.AgentShares)? = null,
     /** Opens what fixes a turn's model error ([TurnErrorFix]): the model's set-up, or the [launcher]'s provider; null: no button. */
     val onFixModel: ((action: persona.core.designsystem.ReadinessActionId, launcher: String?, manager: String?) -> Unit)? = null,
+    /**
+     * Opens the settings page a briefing's recommended mechanism is turned on at (#5085), for the conversation's
+     * [manager]; null: the recommended-setup rows have no button.
+     */
+    val onOpenSetup: ((page: persona.core.contracts.BriefSetupPage, manager: String?) -> Unit)? = null,
+    /**
+     * The hub's leader (direction) conversations for this manager (#6595): their patrol, supervision and relayed
+     * rounds fold like the main conversation's. Empty from an older hub or a non-assistant surface.
+     */
+    val leaderConversations: Set<String> = emptySet(),
+    /** Parent/child rows resolved for a cold link outside the root page; not list membership. */
+    val lookupRows: List<persona.core.contracts.Session> = emptyList(),
 )
 
 /** Where a branch made by "Branch to new chat" opens: an assistant's branch is an assistant conversation, an agent's an agent chat. */

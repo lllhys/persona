@@ -74,7 +74,7 @@ final class LarkTopicGroupTests: XCTestCase {
         shot("topics-recalled-on")
         history.tap()
         XCTAssertTrue(app.staticTexts["周三上架"].waitForExistence(timeout: 5), "the old version is not in 编辑历史:\n\(app.debugDescription)")
-        app.buttons["完成"].firstMatch.tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         app.terminate()
         try await display("anti_recall", false)
         try await display("show_edit_history", false)
@@ -140,7 +140,7 @@ final class LarkTopicGroupTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["来自 版本发布"].exists, "the thread does not say which group it is from")
         XCTAssertTrue(app.staticTexts["周二晚上 8 点冻结，之后只收修复"].waitForExistence(timeout: 10), "no replies in the thread")
         shot("topic-thread")
-        app.buttons["完成"].tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["话题详情"].waitForNonExistence(timeout: 5))
     }
 
@@ -205,7 +205,7 @@ final class LarkTopicGroupTests: XCTestCase {
         let focused = NSPredicate { _, _ in box.value(forKey: "hasKeyboardFocus") as? Bool == true }
         XCTAssertEqual(XCTWaiter.wait(for: [expectation(for: focused, evaluatedWith: nil)], timeout: 5), .completed,
                        "回复 did not focus the thread's box:\n\(app.debugDescription)")
-        app.buttons["完成"].tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         XCTAssertTrue(app.navigationBars["话题详情"].waitForNonExistence(timeout: 5))
         card.buttons["lark.topic.react"].tap()
         XCTAssertTrue(app.navigationBars["表情回复"].waitForExistence(timeout: 5), "表情回复 did not open the picker")
@@ -261,11 +261,18 @@ final class LarkTopicGroupTests: XCTestCase {
         return reads
     }
 
+    @MainActor private func expandSource() {
+        let source = app.buttons["inbox.detail.source"]
+        XCTAssertTrue(source.waitForExistence(timeout: 20), "the original-source control did not appear:\n\(app.debugDescription)")
+        source.tap()
+    }
+
     @MainActor private func open(scheme: String) {
         app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         app.launchArguments = ["-pairURL", pair, "-tab", "mail", "-openInboxItem", "lark:f4:405", "-ui.scheme", scheme]
         app.launchPinned()
+        expandSource()
         XCTAssertTrue(topics.firstMatch.waitForExistence(timeout: 20), "the topic group did not open:\n\(app.debugDescription)")
         sleep(1)
     }

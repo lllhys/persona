@@ -1,6 +1,8 @@
 package persona.core.contracts.api
 
 import persona.core.contracts.FeedItem
+import persona.core.contracts.LnModeResponse
+import persona.core.contracts.PushInterceptsResponse
 import persona.core.contracts.FeedResponse
 import persona.core.contracts.TaskPlan
 import persona.core.contracts.Todo
@@ -15,11 +17,17 @@ fun interface FeedPageReader {
 
 /** Tasks dispatched from an assistant conversation (docs/assistant/unified-entry.md; docs/protocol/protocol.md "Tasks and the chat feed"). */
 interface TasksApi {
+    /** Low-distraction mode and today's held pushes; demo/older test hubs keep the entry hidden. */
+    suspend fun lnMode(): LnModeResponse = LnModeResponse(false)
+    suspend fun pushIntercepts(): PushInterceptsResponse = PushInterceptsResponse(emptyList())
     /** Exact metadata for a bound agent, independent of the Agents list filter and page. */
     suspend fun taskAgent(key: persona.core.contracts.SessionKey): persona.core.contracts.Session? = null
     suspend fun todos(): List<Todo>
-    suspend fun createTodo(title: String, notes: String = ""): Todo = error("createTodo not implemented")
+    /** A new to-do (`POST /api/v1/todos`), due at [due] when given (`due_at` or `due_date`: the calendar's tap, #4200). */
+    suspend fun createTodo(title: String, notes: String = "", due: persona.core.contracts.TodoDue? = null): Todo = error("createTodo not implemented")
     suspend fun patchTodo(id: String, title: String? = null, notes: String? = null, done: Boolean? = null): Todo = error("patchTodo not implemented")
+    /** Files a Just finished to-do under Done, or removes only that seen mark for Undo (`PUT` / `DELETE …/{id}/seen`). */
+    suspend fun setTodoSeen(id: String, seen: Boolean): Todo = error("setTodoSeen not implemented")
     /** Moves a to-do's due date (`PATCH /api/v1/todos/{id}` with `due_at` or `due_date`, the other cleared; #2045). */
     suspend fun setTodoDue(id: String, due: persona.core.contracts.TodoDue): Todo = error("setTodoDue not implemented")
     /** The detail page's due date, reminder and priority, all three in one PATCH (#4636). */
@@ -61,6 +69,13 @@ interface TasksApi {
     suspend fun answerTask(todoId: String, askedAt: String, answer: AskAnswer): Unit = error("Task answers unavailable")
     /** Mark a question left for a briefing as handled (`POST /api/v1/later/{id}/handled`). */
     suspend fun markLaterHandled(questionId: String): Unit = error("Later-question handling unavailable")
+    /**
+     * "Always" on a card's suggested rule (#4929, `POST /api/v1/assistant/rule-suggestions/{id}/always`): the hub counts
+     * the answers again and makes the rule only if they still earn it. 404: not earned any more, or already answered.
+     */
+    suspend fun ruleAlways(suggestionId: String): persona.core.contracts.RuleSuggestionMade = error("Rule suggestions unavailable")
+    /** "Not now": the line is not shown for its kind and scope for 30 days (`…/rule-suggestions/{id}/not-now`). */
+    suspend fun ruleNotNow(suggestionId: String): Unit = error("Rule suggestions unavailable")
     /** Sends text straight to a task's agent; the answer is the conversation's new `routed` item. */
     suspend fun route(conversation: String, todoId: String, text: String): FeedItem
     /** The conversation's "Today" card for the user's day (made on the first call of the day). */

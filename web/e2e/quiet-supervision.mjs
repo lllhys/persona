@@ -136,13 +136,11 @@ async function run(browser, size, theme, scenario) {
     assert(await page.getByRole("button", { name: "Small batch", exact: false }).count() > 0, "pending answer options are visible");
     await shot("pending-question");
   } else {
-    await page.getByText("由 Persona 跟进", { exact: true }).waitFor();
-    assert.equal(await page.getByText("等 Persona 验收", { exact: false }).count(), 0, "checking is not pending acceptance");
-    const progress = page.locator('[data-testid="progress-report"]');
-    assert.equal(await progress.locator('[data-testid="report-line"]').count(), 0, "progress defaults to folded");
-    await shot("followup-and-progress");
-    await progress.locator("button").first().click();
-    await progress.getByText("Checked two of three fictional criteria.", { exact: false }).waitFor();
+    // a task's receipt and its Agent's progress report are its row in the trays, not lines in the chat (#8237)
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator("[data-receipt]").count(), 0, "no receipt card in the chat");
+    assert.equal(await page.locator('[data-testid="progress-report"]').count(), 0, "no report line in the chat");
+    await shot("no-receipt-or-report");
   }
   console.log(`PASS ${tag}: real app, synthetic data, quiet/visible boundaries verified`);
   await context.close();

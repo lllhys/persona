@@ -48,4 +48,11 @@ nonisolated struct RFBRegion: Equatable, Sendable {
         for x in rects { out.add(x.intersection(r)) }
         return out
     }
+
+    /// Moved by dx, dy (a part of the framebuffer in that part's own pixels).
+    func offsetBy(dx: CGFloat, dy: CGFloat) -> RFBRegion {
+        var out = RFBRegion()
+        for x in rects { out.add(x.offsetBy(dx: dx, dy: dy)) }
+        return out
+    }
 }

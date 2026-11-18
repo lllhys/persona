@@ -53,7 +53,7 @@ func routePatterns(t *testing.T) []string {
 			})
 		}
 	}
-	for _, p := range slices.Concat(assistantwire.Routes, assistantwire.InboxRoutes, devicewire.Routes, devicewire.ShareRoutes, devicewire.MetricsRoutes, devicewire.UsageRoutes, devicewire.AdminUsageRoutes, extwire.Routes) {
+	for _, p := range slices.Concat(assistantwire.Routes, assistantwire.InboxRoutes, assistantwire.SocketRoutes, devicewire.Routes, devicewire.ShareRoutes, devicewire.MetricsRoutes, devicewire.UsageRoutes, devicewire.AdminUsageRoutes, extwire.Routes) {
 		seen[p] = true // the manager's, relayed
 	}
 	return slices.Sorted(func(yield func(string) bool) {
@@ -133,5 +133,18 @@ func TestRouteScopes(t *testing.T) {
 	if string(want) != b.String() {
 		t.Fatalf("the hub's routes changed: decide whether an extension's token opens the new ones (extwire.RouteScopes), " +
 			"then PERSONA_UPDATE_ROUTE_SCOPES=1 go test ./internal/hub -run TestRouteScopes and check the diff of testdata/route_scopes.txt")
+	}
+}
+
+func TestCodexTakeoverRequiresFullCredentials(t *testing.T) {
+	patterns := routePatterns(t)
+	for _, method := range []string{"GET", "POST"} {
+		pattern := method + " /api/v1/machines/{mid}/codex/{sid}/takeover"
+		if !slices.Contains(patterns, pattern) {
+			t.Fatalf("missing takeover route: %s", pattern)
+		}
+		if scope := extwire.RouteScopes[pattern]; scope != "" {
+			t.Fatalf("an extension token must not authorize takeover: %s has scope %s", pattern, scope)
+		}
 	}
 }

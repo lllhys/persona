@@ -1,5 +1,9 @@
 package persona.core.domain.sort
 
+import persona.core.contracts.api.AgentWorkspace
+import persona.core.contracts.Session
+import java.time.Instant
+
 /** Where a session's cwd sits: the repository it belongs to and the working tree inside it. */
 data class RepoPlace(val repo: String, val name: String, val worktree: String, val main: Boolean)
 
@@ -48,16 +52,20 @@ data class AgentWorktree(
     val id: String, val name: String, val path: String, val main: Boolean, val members: List<AgentSession>, val branch: String? = null,
     /** The node placed its sessions in git (#1805) and named no branch: HEAD is detached there ([worktreeLine]). */
     val detached: Boolean = false,
+    /** Exact source workspace, when known; its pin is independent of Persona's session/project pins. */
+    val workspace: AgentWorkspace? = null,
+    val pinnedAt: Instant? = null,
 )
 
-/** One repository on one computer, its working trees the main checkout first, then by name. */
+/** One repository on one computer: native pinned workspaces first, then the main checkout and names. */
 data class AgentRepo(val id: String, val machineId: String, val name: String, val path: String, val worktrees: List<AgentWorktree>) {
     val members: List<AgentSession> get() = worktrees.flatMap { it.members }
+    val pinnedAt: Instant? get() = worktrees.mapNotNull { it.pinnedAt }.maxOrNull()
     /**
      * Only its main checkout and no branch the node named: its sessions sit right under the repository, without a
      * working-tree heading. A named branch keeps its heading (#1805: machine → project → branch → sessions).
      */
-    val flat: Boolean get() = worktrees.size == 1 && worktrees[0].main && worktrees[0].branch == null
+    val flat: Boolean get() = worktrees.size == 1 && worktrees[0].main && worktrees[0].branch == null && worktrees[0].workspace == null
 }
 
 /**
@@ -119,8 +127,46 @@ private fun hostPlaceName(members: List<AgentSession>): String? =
     members.mapNotNullTo(mutableSetOf()) { m -> m.session.slotName?.trim()?.takeIf { it.isNotEmpty() && m.session.slotId.isNullOrBlank() } }
         .singleOrNull()
 
-/** The repositories of [rows] by name in natural order (then path), with each computer's repositories kept apart. */
-fun agentRepos(rows: List<AgentSession>): List<AgentRepo> =
+/** Each computer's repositories, native pins first, then names in natural order. Source IDs override path inference. */
+fun agentRepos(rows: List<AgentSession>, workspaces: List<AgentWorkspace> = emptyList()): List<AgentRepo> {
+    if (workspaces.isEmpty()) return inferredAgentRepos(rows)
+    // Paseo's project may contain several workspaces at the same folder. Their source IDs, never cwd, own the rows
+    // and pins. Other engines retain the existing projection until they expose the same catalog behavior.
+    val catalog = workspaces.filter { it.source == "paseo" && it.machineId.isNotEmpty() && it.sourceId.isNotEmpty() }
+        .distinctBy { it.machineId to it.sourceId }
+    val byID = catalog.associateBy { it.machineId to it.sourceId }
+    val assigned = rows.groupBy { row ->
+        row.session.paseoWorkspaceKey()?.let(byID::get)
+    }
+    val native = catalog.filter { assigned[it].orEmpty().isNotEmpty() || it.nativePinTime != null }
+        .groupBy { it.machineId to (it.projectId?.takeIf(String::isNotBlank) ?: it.sourceId) }.map { (key, entries) ->
+        val first = entries.first()
+        val path = first.projectPath?.takeIf(String::isNotBlank) ?: first.cwd
+        val name = first.projectName?.takeIf(String::isNotBlank) ?: baseName(path).ifEmpty { UnnamedRepo }
+        val trees = entries.map { w ->
+            AgentWorktree("tree/catalog/${w.machineId}/${w.source}/${w.sourceId}", w.title.ifBlank { w.branch ?: baseName(w.cwd) },
+                w.cwd, w.isMain == true, assigned[w].orEmpty(), w.branch?.takeIf(String::isNotBlank),
+                detached = w.workspaceKind == "git" && w.branch.isNullOrBlank(), workspace = w,
+                pinnedAt = w.nativePinTime)
+        }.sortedWith(compareByDescending<AgentWorktree> { it.pinnedAt }.thenBy { !it.main }
+            .thenComparing({ it.name to it.id }, byName))
+        AgentRepo("repo/catalog/${key.first}/paseo/${key.second}", key.first, name, path, trees)
+    }
+    return (inferredAgentRepos(assigned[null].orEmpty()) + native)
+        .sortedWith(compareByDescending<AgentRepo> { it.pinnedAt }
+            .thenComparing({ it.name to it.path }, byName).thenBy { it.id })
+}
+
+/** Invalid or cleared source timestamps are not pins. */
+internal val AgentWorkspace.nativePinTime: Instant? get() =
+    pinnedAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
+
+/** Exact source attribution; another engine at the same folder or with the same ID is not this workspace. */
+internal fun Session.paseoWorkspaceKey(): Pair<String, String>? = workspaceId?.takeIf(String::isNotBlank)?.let {
+    if (sourceKind == "runtime" && (sourceInstanceId?.takeIf(String::isNotBlank) ?: spaceKind) == "paseo") machineId to it else null
+}
+
+private fun inferredAgentRepos(rows: List<AgentSession>): List<AgentRepo> =
     rows.groupBy { it.session.machineId to it.place.repo }.map { (key, members) ->
         val (machine, repo) = key
         val place = members.first().place

@@ -27,14 +27,17 @@ final class QueuedAttachEditUITests: XCTestCase {
         }
     }
 
-    /// Two photos, a file (its path in the words) and words: all of them come back, and sending again sends the photos.
+    /// Two photos, a file (a card, never words, #8361) and words: all of them come back, and sending again sends the
+    /// photos and the file.
     @MainActor func testPhotosFileAndWordsComeBackAndGoAgain() throws {
         let app = launch(["-openUploadDemo", "report.pdf"])
         let field = composerField(app)
-        XCTAssertTrue(waitFor(field, timeout: 40) { ($0.value as? String ?? "").contains("/tmp/report-") }, "the file's path did not land in the box: \(String(describing: field.value))")
-        // The path's arrival focuses the box, which opens up: a tap aimed before that lands on the model button.
-        sleep(1)
-        field.typeText(" 把这两张截图里的问题一起修了")
+        let card = app.descendants(matching: .any)["file-attachment-ready"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 40), "the file did not become a card:\n\(app.debugDescription)")
+        XCTAssertFalse((field.value as? String ?? "").contains("report"), "the file went into the words: \(String(describing: field.value))")
+        field.tap()
+        sleep(1) // the box opens up as it takes the focus
+        field.typeText("把这两张截图里的问题一起修了")
         dismissKeyboardTip(app)
         let picked = pickPhotos(app, 2)
         XCTAssertEqual(picked, 2)
@@ -52,6 +55,7 @@ final class QueuedAttachEditUITests: XCTestCase {
         shot(app, "3-taken-back")
         XCTAssertTrue(app.buttons["移除图片 2"].waitForExistence(timeout: 10), "the photos did not come back to the attachment bar")
         XCTAssertEqual(removeButtons(app).count, 2, "as many photos as were sent")
+        XCTAssertTrue(app.descendants(matching: .any)["file-attachment-ready"].waitForExistence(timeout: 10), "the file did not come back as a card")
         let back = (composerField(app).value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(back, written, "the box does not hold what was written")
         XCTAssertFalse(app.descendants(matching: .any)["queue-strip"].exists, "the strip stayed with nothing queued")
@@ -66,6 +70,7 @@ final class QueuedAttachEditUITests: XCTestCase {
         for junk in ["[Image #", "attached_images", "path: "] {
             XCTAssertFalse(words.contains(junk), "sent again with \(junk): \(words)")
         }
+        XCTAssertNotNil(words.range(of: #"<[a-z]+-file kind="file""#, options: .regularExpression), "the file did not go with it again: \(words)")
         let queuedAgain = openQueue(app)
         shot(app, "4-queued-again")
 

@@ -13,9 +13,12 @@ import kotlinx.coroutines.flow.*
 import java.time.Instant
 import java.time.ZoneId
 
-/** The groupings the list offers: By To-do only while the hub has to-dos, as iOS's `DevGrouping.offered` (#4338 A5). */
-internal fun offeredGroupings(todosSupported: Boolean): List<AgentGrouping> =
-    if (todosSupported) AgentGrouping.selectable else AgentGrouping.selectable - AgentGrouping.Todo
+/**
+ * The groupings the list offers: By To-do only while the hub has to-dos, as iOS's `DevGrouping.offered` (#4338 A5); By
+ * pinned only with [directions] (a hub with the direction tree, or while it is the one chosen, #4352).
+ */
+internal fun offeredGroupings(todosSupported: Boolean, directions: Boolean = false): List<AgentGrouping> =
+    AgentGrouping.selectable.filter { (it != AgentGrouping.Todo || todosSupported) && (it != AgentGrouping.Direction || directions) }
 
 /** The grouping the list shows: a saved By To-do reads By project on a hub without to-dos, as iOS's `DevGrouping.resolved`. */
 internal fun resolvedGrouping(stored: AgentGrouping, todosSupported: Boolean): AgentGrouping =
@@ -84,11 +87,18 @@ internal fun visibleAgentRequests(
     }.sortedWith(compareBy<Interaction> { parseTime(it.expiresAt) ?: Instant.MAX }.thenBy { it.id })
 }
 
-/** Another agent's card (Codex, a compatible CLI, a runtime's) says who asks; Claude's reads as before. */
+/**
+ * Another agent's card (Codex, a compatible CLI, a runtime's) says who asks; Claude's reads as before. One that can't
+ * name its agent (a Paseo card naming only the engine, [Interaction.agentDisplayName]) says only what it wants.
+ */
 internal fun Interaction.cardTitle(res: Resources): String {
     val who = agentDisplayName
     return when (kind) {
-        "question" -> if (who != null) res.getString(R.string.agents_card_question_by, who) else res.getString(R.string.agents_card_question)
+        "question" -> when {
+            who != null -> res.getString(R.string.agents_card_question_by, who)
+            fromOtherAgent -> CoreText.of(CoreText.Key.AskQuestion).resolve(res)
+            else -> res.getString(R.string.agents_card_question)
+        }
         // A password card names the computer it runs on (#1137).
         // One title per kind on every client (#3690); the card's summary line names the tool and what it runs.
         "permission" -> if (isSecretRun) headline.resolve(res) else {

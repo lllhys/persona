@@ -63,18 +63,27 @@ func ensureLaunchKey(path string) (string, error) {
 // launcherEnvFor answers launcher.env: the launcher's settings for a request that carries the machine's launch key.
 // Any other request gets the same error whatever it names, with none of the settings in it.
 func (n *Node) launcherEnvFor(req sockRequest) map[string]any {
+	if refused := n.launchKeyRefusal(req); refused != nil {
+		return refused
+	}
+	return n.launcherEnv(req.Name)
+}
+
+// launchKeyRefusal is the answer to a request for a provider's secrets (launcher.env, launcher.pi) that does not
+// carry the machine's launch key; nil for one that does.
+func (n *Node) launchKeyRefusal(req sockRequest) map[string]any {
 	path := nodeclient.LaunchKeyPath()
 	key, err := ensureLaunchKey(path)
 	if err != nil {
-		n.logf("launcher.env %q: launch key: %v", req.Name, err)
+		n.logf("%s %q: launch key: %v", req.Kind, req.Name, err)
 		return map[string]any{"error": "the node cannot read its launch key " + path + ": " + err.Error()}
 	}
 	if subtle.ConstantTimeCompare([]byte(req.LaunchKey), []byte(key)) != 1 {
-		n.logf("launcher.env %q refused: the request did not carry this machine's launch key", req.Name)
+		n.logf("%s %q refused: the request did not carry this machine's launch key", req.Kind, req.Name)
 		return map[string]any{"error": "refused: launcher settings go only to a personad launch that can read " + path +
 			" (a sandboxed process cannot, and a personad older than the node does not send it)"}
 	}
-	return n.launcherEnv(req.Name)
+	return nil
 }
 
 // launcherEnvRequest is what `personad launch` asks the node for: name's settings, with the launch key when this

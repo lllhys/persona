@@ -12,6 +12,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
@@ -165,7 +167,12 @@ fun ErrorCard(
     val inner = if (style == AppStyle.Board) PaddingValues(start = 20.dp.dense, end = 14.dp.dense, top = 12.dp.dense, bottom = 12.dp.dense)
         else PaddingValues(horizontal = 16.dp.dense, vertical = 14.dp.dense)
     val spoken = stringResource(R.string.designsystem_api_error, reason)
-    Column(modifier.fillMaxWidth().padding(vertical = 6.dp.dense).then(frame).padding(inner), verticalArrangement = Arrangement.spacedBy(10.dp.dense)) {
+    val detailGap = 10.dp.dense
+    // Raw details fade in place (APIErrorCard.swift:118 and :189, ChatPin.swift:707-726). The action stays outside the fade.
+    val edge = rememberOpenEdge()
+    val revealing = edge.revealing(expanded)
+    // A details block with nothing in it takes no gap, so the action stays where it was.
+    ErrorStack(modifier.fillMaxWidth().padding(vertical = 6.dp.dense).then(frame).padding(inner), detailGap) {
         Column(
             Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = stringResource(if (expanded) R.string.designsystem_details_collapse else R.string.designsystem_details_expand), onClick = onToggle)
                 .semantics { contentDescription = spoken },
@@ -180,8 +187,28 @@ fun ErrorCard(
             }
             if (tags.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp.dense)) { tags.forEach { ErrorTagLabel(it) } }
         }
-        if (expanded) details()
+        if (expanded) Column(Modifier.unfolding(revealing), verticalArrangement = Arrangement.spacedBy(detailGap)) { details() }
         action?.invoke()
+    }
+}
+
+/** The error card's stack: the same gap as before, and a child with no height (empty details) does not add one. */
+@Composable
+private fun ErrorStack(modifier: Modifier, gap: Dp, content: @Composable () -> Unit) {
+    val gapPx = with(LocalDensity.current) { gap.roundToPx() }
+    Layout(content, modifier) { measurables, constraints ->
+        // Loose width, as the Column this replaced. A tight minWidth stretches Retry to the card.
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        val shown = placeables.filter { it.height > 0 }
+        val height = shown.sumOf { it.height } + gapPx * (shown.size - 1).coerceAtLeast(0)
+        layout(constraints.maxWidth, height) {
+            var y = 0
+            placeables.forEach { child ->
+                if (child.height == 0) return@forEach
+                child.placeRelative(0, y)
+                y += child.height + gapPx
+            }
+        }
     }
 }
 

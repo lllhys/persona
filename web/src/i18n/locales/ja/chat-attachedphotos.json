@@ -1,3 +1,5 @@
 {
-  "photo": "画像 {n}、開いて表示"
+  "photo": "画像 {n}、開いて表示",
+  "files_more_other": "ほか{count}個のファイル",
+  "files_less": "閉じる"
 }

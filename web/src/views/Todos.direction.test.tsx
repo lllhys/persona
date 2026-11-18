@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // The To-dos page's third grouping, 常驻 (#4352): offered only with a leader in the hub's direction tree, one section per
-// direction in the tree's order (empty ones skipped, the secretary's titled 书记官), the page's own rows, the Completed
-// fold kept, closed to-dos only there; the rows keep their menu; a saved choice waits for the first read (loading, not
-// the status grouping) and falls back to status with no leaders or on a hub without the tree.
+// direction in the tree's order (empty ones skipped, the secretary's titled 书记官), the page's own open rows, the to-dos
+// the tree does not list as open (closed in the last day, inactive) under their status sections after the directions, as
+// on Android, and the Completed fold kept for the Done section's; the rows keep their menu; a saved choice waits for the
+// first read (loading, not the status grouping) and falls back to status with no leaders or on a hub without the tree.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,10 +39,10 @@ const todo = (id: string, title: string, extra: Partial<Todo> = {}): Todo => ({ 
 const counts = (working = 0, needs_you = 0) => ({ working, needs_you, stuck: 0, review: 0 });
 const TREE: DirectionTree = {
   directions: [
-    { id: "lead-b", name: "Infrastructure", counts: counts(1, 0), tasks: [{ id: "t-infra", title: "Infra", state: "working" }, { id: "t-done", title: "Shipped", state: "working" }] },
-    { id: "lead-empty", name: "Nothing yet", counts: counts(), tasks: [] },
-    { id: "lead-a", name: "Product", counts: counts(1, 1), tasks: [{ id: "t-ask", title: "Ask", state: "needs_you" }, { id: "t-card", title: "Card", state: "working" }] },
-    { id: "main", name: "", secretary: true, counts: counts(1, 0), tasks: [{ id: "t-own", title: "Own", state: "working" }] },
+    { id: "lead-b", name: "Infrastructure", counts: counts(1, 0), running: true, tasks: [{ id: "t-infra", title: "Infra", state: "working" }, { id: "t-done", title: "Shipped", state: "working" }] },
+    { id: "lead-empty", name: "Nothing yet", counts: counts(), running: false, tasks: [] },
+    { id: "lead-a", name: "Product", counts: counts(1, 1), running: false, tasks: [{ id: "t-ask", title: "Ask", state: "needs_you" }, { id: "t-card", title: "Card", state: "working" }] },
+    { id: "main", name: "", secretary: true, counts: counts(1, 0), running: false, tasks: [{ id: "t-own", title: "Own", state: "working" }] },
   ],
 };
 const TODOS = [todo("t-card", "Card"), todo("t-ask", "Ask"), todo("t-infra", "Infra"), todo("t-own", "Own"), todo("t-done", "Shipped", { done_at: at })];
@@ -83,10 +84,15 @@ describe("To-dos grouped by 常驻", () => {
     const [infra, product, secretary] = sections();
     expect(infra.querySelector("button")!.textContent).toContain("Infrastructure");
     expect(secretary.querySelector("button")!.textContent).toContain(t("lib-todo-tree.secretary"));
-    // the hub's counts on the title, and its rows in the tree's order (needs you first), not the page's own
-    expect(product.querySelector("button")!.textContent).toContain(countsLabel({ working: 1, needs_you: 1 }, t));
-    // the sidebar's shape: only the parts above zero
-    expect(infra.querySelector("[data-direction-counts]")!.getAttribute("title")).toBe(t("sidebar.leader_working", { count: 1 }));
+    // what it has going on the title as the sidebar's 常驻 rows show it (#6626), and its rows in the tree's order (needs
+    // you first), not the page's own: Product waits on you and nothing under it runs (its working task's Agents stopped)
+    expect(product.querySelector("button")!.textContent).toContain(countsLabel({ needs_you: 1 }, t));
+    expect(product.querySelector("[data-direction-counts] [data-shape=\"arc\"]")).toBeNull();
+    // something runs under Infrastructure: the same working arc as a conversation running its own turn (#6230), and
+    // no "在做 N" beside it (one meaning, one expression)
+    expect(infra.querySelector("[data-direction-counts] [data-shape=\"arc\"][data-state=\"working\"]")).not.toBeNull();
+    expect(infra.querySelector("[data-direction-counts]")!.textContent).toBe("");
+    expect(infra.querySelector("button")!.textContent).not.toContain("在做");
     const text = product.textContent ?? "";
     expect(text.indexOf("Ask")).toBeGreaterThan(-1);
     expect(text.indexOf("Ask")).toBeLessThan(text.indexOf("Card"));
@@ -147,6 +153,35 @@ describe("To-dos grouped by 常驻", () => {
     expect(host.querySelector('[data-testid="todos-direction-unlisted"]')).toBeNull();
   });
 
+  it("puts a to-do closed in the last day and an inactive one under their status sections below the directions, counted as the header says", async () => {
+    localStorage.setItem("persona.todos.grouping", "direction");
+    const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+    const daysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    // closed an hour ago (Just finished, not open), and a handed-out task with nothing for three days (Shelved): the
+    // hub's tree lists neither, as neither counts as open
+    const fresh = todo("t-fresh", "Fresh", { done_at: hourAgo, updated_at: hourAgo });
+    const quiet = todo("t-quiet", "Quiet", { origin: "conv", created_at: daysAgo, updated_at: daysAgo });
+    const header = t("todos.summary_triage", { open: 4, parked: 0, shelved: 1, done: 1 });
+    for (const listed of [false, true]) {
+      // and a tree whose push has not caught up yet still lists the one just ticked
+      tree.current = listed ? { directions: TREE.directions.map((d) => (d.id === "lead-b" ? { ...d, tasks: [...(d.tasks ?? []), { id: "t-fresh", title: "Fresh", state: "working" }] } : d)) } : TREE;
+      seed({ todos: [...TODOS, fresh, quiet] });
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      await render();
+      expect(sections().some((s) => s.textContent?.includes("Fresh"))).toBe(false);
+      const justDone = host.querySelector<HTMLElement>("[data-testid=todo-section][data-section=just_done]");
+      expect(justDone?.textContent).toContain("Fresh");
+      expect(justDone?.getAttribute("data-todos")).toBe("1");
+      const shelved = host.querySelector<HTMLElement>("[data-testid=todo-section][data-section=shelved]");
+      expect(shelved?.getAttribute("data-todos")).toBe("1");
+      // neither is "an open to-do no direction lists"
+      expect(host.querySelector('[data-testid="todos-direction-unlisted"]')).toBeNull();
+      expect(host.querySelector("[data-testid=todos-summary]")?.textContent).toBe(header);
+      expect(host.textContent).toContain(t("todos.done_section", { count: 1 }));
+    }
+  });
+
   it("narrows each section by the due-date filter (#3740) and keeps the tree's order under any sort", async () => {
     localStorage.setItem("persona.todos.grouping", "direction");
     localStorage.setItem("persona.todos.sort", "priority");
@@ -174,7 +209,7 @@ describe("To-dos grouped by 常驻", () => {
 
   it("is not offered with no leader, and a saved choice shows by status", async () => {
     localStorage.setItem("persona.todos.grouping", "direction");
-    tree.current = { directions: [{ id: "main", name: "", secretary: true, counts: counts(1), tasks: [{ id: "t-own", title: "Own", state: "working" }] }] };
+    tree.current = { directions: [{ id: "main", name: "", secretary: true, counts: counts(1), running: false, tasks: [{ id: "t-own", title: "Own", state: "working" }] }] };
     await render();
     expect(option(t("todos.grouping_direction"))).toBeUndefined();
     expect(option(t("todos.grouping_status"))?.getAttribute("aria-checked")).toBe("true");

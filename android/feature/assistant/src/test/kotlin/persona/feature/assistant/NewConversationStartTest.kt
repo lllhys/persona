@@ -75,14 +75,17 @@ class NewConversationStartTest {
         rule.onNodeWithContentDescription("Send").performClick()
         rule.waitForIdle()
     }
-    private fun note() = rule.onAllNodesWithText("What you send goes to the main chat", substring = true)
+    /** The blank page's lead (iOS `ShellHome`): the page that starts the main conversation says so, New chat's starts a side chat. */
+    private fun mainLead() = rule.onAllNodesWithText("This is your main chat", substring = true)
+    private fun sideLead() = rule.onAllNodesWithText("Start a new side chat", substring = true)
 
     @Test fun newChatStartsItsConversationWithTheFirstMessageAndBackLeavesNothing() {
         val hub = mount()
         newChat()
         assertEquals("New chat alone starts nothing on the hub", emptyList<SessionKey>(), hub.starts)
         rule.onAllNodesWithText("chat:main").assertCountEquals(0)
-        note().assertCountEquals(0)
+        sideLead().assertCountEquals(1)
+        mainLead().assertCountEquals(0)
 
         rule.activity.onBackPressedDispatcher.onBackPressed()
         rule.waitForIdle()
@@ -105,10 +108,13 @@ class NewConversationStartTest {
     @Test fun switchingManagerLeavesTheNewChatPage() {
         val hub = mount()
         newChat()
-        note().assertCountEquals(0)
+        sideLead().assertCountEquals(1)
+        mainLead().assertCountEquals(0)
         AssistantManagerChoice.pick("work")
         rule.waitForIdle()
-        note().assertCountEquals(1)
+        // The other assistant has no main conversation yet: the page that starts it, not a side chat.
+        mainLead().assertCountEquals(1)
+        sideLead().assertCountEquals(0)
         AssistantManagerChoice.pick("assistant")
         rule.waitForIdle()
         rule.onNodeWithText("chat:main").assertExists()

@@ -1,10 +1,11 @@
-Wake yourself up later: at the given time Persona sends `prompt` into this conversation (or a new one) as if the user wrote it, you do the work, and the user gets a push with your answer (with `push: "asked"`, only what you send with notify_user). Use for "remind me…", "check again in an hour", meeting prep 10 minutes before a meeting, watching something until it changes. `at` is RFC 3339 (2026-10-27T09:50:00+08:00) or relative ("30m", "2h", "1d"). For something to do again and again (a patrol every 30 minutes) pass `every` ("30m", "2h", at least 5m) once: Persona repeats it by itself and the user sees, edits and stops it in the app; never schedule the next run from inside a run. For times an interval can't say (every 30 minutes from 9:00 to 18:30 on weekdays, 10:00 on the 1st of each month) pass `cron` instead of `at` / `every`: a standard 5-field cron expression `minute hour day-of-month month day-of-week` read in the user's time zone (`*/30 9-18 * * 1-5`, `0 10 1 * *`, or @hourly / @daily / @weekly / @monthly / @yearly; day of week 0 and 7 are Sunday; when both day fields are restricted, a day matching either runs; runs at least 5 minutes apart). It first runs at its next match and repeats by itself like `every`; a bad expression is refused with what is wrong, and the reply lists the next runs to check. An `every` task can take `until`, an instant after which the task stops (RFC 3339 or 30m / 2h / 1d, the same forms as `at`, not a bare clock time and not a condition to watch for): after that instant Persona turns it off and records a skipped run instead of running. A one-off ignores `until`. Omit it to keep an existing task's end time; null clears it. The task runs on Main chat's launcher, model and thinking effort unless you give it its own with `launcher`, `model` and `effort`; the permission mode stays the user's choice in the app. A follow-up that continues this conversation (`new_conversation` false) runs on that conversation's launcher, so giving it its own needs `new_conversation: true`; the call is refused otherwise.
+Wake yourself up later: Persona sends `prompt` into this conversation (or a new one) as if the user wrote it, you do the work (a new hop chain, at most every 10 minutes), and the user gets a push with your answer (with `push: "asked"`, only what you send with notify_user). `at` is RFC 3339 or relative ("30m", "2h", "1d"). For a recurring task pass `every` ("30m", "2h", at least 5m) once: Persona repeats it; the user edits or stops it in the app; never schedule the next run from inside a run. Otherwise pass `cron` instead of `at` / `every`: a standard 5-field `minute hour day-of-month month day-of-week` in the user's time zone (`*/30 9-18 * * 1-5`, `0 10 1 * *`, or @hourly / @daily / @weekly / @monthly / @yearly; day of week 0 and 7 are Sunday; restricted day fields match either; runs at least 5 minutes apart). A bad expression is refused with the next runs listed. An `every` task can take `until` (RFC 3339 or 30m / 2h / 1d, not a bare clock time): after it the task turns off and records a skipped run. A one-off ignores `until`; omit it to keep an existing end time, null clears it. The task runs on Main chat's launcher, model and effort unless overridden with `launcher`, `model` and `effort`; permission mode stays the user's choice. A follow-up continuing this conversation (`new_conversation` false) runs on that conversation's launcher, so overrides require `new_conversation: true`. Pass `inbox` (the user's Inbox setting) only when requested. With `fresh_each_run: true`, a recurring task starts a new chat on every run and carries its state note.
 
 ```json
 {
   "type": "object",
   "required": ["prompt"],
   "properties": {
+    "fresh_each_run": { "type": "boolean" },
     "at": {
       "type": "string",
       "description": "when (the first run, with every); default with every: one interval from now"
@@ -33,6 +34,11 @@ Wake yourself up later: at the given time Persona sends `prompt` into this conve
       "type": "string",
       "enum": ["every", "asked"],
       "description": "every (default for a new task): each run's answer is pushed to the user; asked: only what a run sends with notify_user, for a task that watches something or a standing loop (a patrol, a daily round). Continuing this conversation, a run's answer is then not pushed or sent to channels; from Main chat it runs in its own conversation instead. Omit to keep an existing task's"
+    },
+    "inbox": {
+      "type": "string",
+      "enum": ["off", "worthy", "every"],
+      "description": "what of a run goes into the user's Inbox, independent of push: off (default for a new task), worthy (a run puts a row there with inbox_post only when it finds something worth a look), every (every run ends with a row made by Persona). Set it only when the user asked for it. Omit to keep an existing task's"
     },
     "until": {
       "type": ["string", "null"],

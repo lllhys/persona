@@ -18,8 +18,11 @@ import { SUBSCRIPTIONS_UI } from "./subscriptions-ui";
 
 export { isHttps };
 
-/** The UI version the web draws (context.ui_version). */
-export const UI_VERSION = 6;
+/**
+ * The UI version the web draws (context.ui_version): all of 9, the columns layout's (views/extensions/ViewBody8.tsx) and a
+ * tile's gauge (views/extensions/ViewBody9.tsx) too.
+ */
+export const UI_VERSION = 9;
 
 export type UITone = "neutral" | "positive" | "caution" | "danger";
 
@@ -228,6 +231,21 @@ export interface UISection {
   more?: UIMore;
   /** UI version 4: in a split view, side is the column at the start (the file tree) */
   pane?: "main" | "side" | string;
+  /** UI version 8: in a columns view, full takes the whole row */
+  span?: "full" | string;
+  /** UI version 8: an icon before the title (from the row icons), in its color */
+  icon?: string;
+  icon_color?: UIColor;
+  /** UI version 8: a link beside the title */
+  link?: UISectionLink;
+  /** UI version 8: how many rows sit side by side on a wide screen (2 or 3; absent, one) */
+  columns?: number;
+}
+
+/** A link beside a section's title (UI version 8): pressed, it does its action like a row's. */
+export interface UISectionLink {
+  title: string;
+  action: UIAction;
 }
 
 export interface UIView {
@@ -241,7 +259,8 @@ export interface UIView {
   filter?: UIFilter;
   /** UI version 4 */
   tabs?: UITabs;
-  layout?: "stack" | "split" | string;
+  /** UI version 4: split; 8: columns */
+  layout?: "stack" | "split" | "columns" | string;
   /** UI version 5: the pending review's bar */
   review?: UIReview;
 }
@@ -275,6 +294,8 @@ export interface UIPlace {
   badge?: UIBadge | null;
   /** The connector whose inbox items an inbox_item draws (the items' `source`). */
   connector?: string;
+  /** The sidebar group a nav_page goes in unless the user put it elsewhere (#9071), its title in the app's language. */
+  group?: { id: string; title: string };
 }
 
 export interface UIBadge {
@@ -647,6 +668,7 @@ export function readView(raw: unknown, opts: { html?: boolean } = {}): UIView {
       ...(typeof s.key === "string" && s.key ? { key: s.key } : {}),
       ...(more ? { more } : {}),
       ...(s.pane === "side" ? { pane: "side" } : {}),
+      ...readSection8(s),
     });
   }
   const view: UIView = { sections };
@@ -660,7 +682,7 @@ export function readView(raw: unknown, opts: { html?: boolean } = {}): UIView {
       ...(typeof raw.search.value === "string" ? { value: raw.search.value } : {}),
     };
   }
-  if (raw.layout === "split") view.layout = "split";
+  if (raw.layout === "split" || raw.layout === "columns") view.layout = raw.layout;
   const tb = raw.tabs;
   if (isObject(tb) && typeof tb.name === "string" && tb.name && readAction(tb.action) && Array.isArray(tb.items)) {
     const items = tb.items.flatMap((i) =>
@@ -697,6 +719,16 @@ export function readView(raw: unknown, opts: { html?: boolean } = {}): UIView {
     }
   }
   return view;
+}
+
+/** A section's fields of UI version 8 (views/extensions/ViewBody8.tsx draws them): its span, icon and icon color, link, and columns. */
+function readSection8(s: Record<string, unknown>): Partial<UISection> {
+  const out: Partial<UISection> = {};
+  for (const k of ["span", "icon", "icon_color"]) if (typeof s[k] === "string" && s[k]) (out as Record<string, unknown>)[k] = s[k];
+  if (typeof s.columns === "number" && s.columns > 1) out.columns = Math.min(3, Math.floor(s.columns));
+  const l = s.link;
+  if (isObject(l) && typeof l.title === "string" && l.title && readAction(l.action)) out.link = { title: l.title, action: readAction(l.action)! };
+  return out;
 }
 
 /** An item with its actions read; an empty's button (`action: {title, action}`) under `button`. */

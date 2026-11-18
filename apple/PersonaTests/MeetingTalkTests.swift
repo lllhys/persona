@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import UserNotifications
 @testable import Persona
+import PersonaWire
 
 /// Talk about this meeting (#3862 phase 6; contract docs/assistant/meeting-minutes.md「Phase 6: talk about this meeting」,
 /// the phone's side docs/apple/recording.md「Talk about this meeting (phase 6)」): which recordings' pages offer it, that a
@@ -100,7 +101,7 @@ import UserNotifications
 
     /// `hasText` says what `sentences` holds that isn't blank, without building it: any segment, in any order, and not the
     /// lines Persona said out loud in the meeting.
-    @Test func hasTextIsTheTranscriptsWords() {
+    @Test func hasTextIsTheTranscriptsWords() throws {
         #expect(MeetingTalk.hasText(recording()))
         #expect(!MeetingTalk.hasText(recording(lines: [])))
         #expect(!MeetingTalk.hasText(recording(lines: [" ", "\n\t"])))
@@ -109,11 +110,17 @@ import UserNotifications
                           RecordingSegment(index: 0, start: 0, duration: 60, sentences: nil)]
         #expect(MeetingTalk.hasText(later), "a segment not transcribed yet doesn't hide another's words")
         var spoken = recording(meeting: true, attendance: .room(.participant, private: false, photos: false), lines: ["You kept the cap."])
-        spoken.attendance?.spoken = [RecordingSpan(start: 0, end: 4)]
+        spoken.attendance?.spoken = [try JSONDecoder().decode(RecordingSpan.self, from: Data(#"{"start":0,"end":4,"text":"You kept the cap."}"#.utf8))]
         #expect(spoken.sentences.isEmpty)
-        #expect(!MeetingTalk.hasText(spoken), "Persona's own answer out loud isn't the meeting's")
+        #expect(!MeetingTalk.hasText(spoken), "Persona's echo isn't the meeting's")
+        var other = spoken
+        other.segments[0].sentences?.append(RecordingSentence(start: 2, end: 3.8, text: "Who owns the test?"))
+        #expect(MeetingTalk.hasText(other), "someone speaking while Persona answers is (#5905)")
         spoken.segments[0].sentences?.append(RecordingSentence(start: 10, end: 14, text: "Who owns the test?"))
         #expect(MeetingTalk.hasText(spoken))
+        var old = recording(meeting: true, attendance: .room(.participant, private: false, photos: false), lines: ["Who owns the test?"])
+        old.attendance?.spoken = [RecordingSpan(start: 0, end: 4)]
+        #expect(!MeetingTalk.hasText(old), "a stretch saved without its answer keeps the time rule")
     }
 
     // MARK: Writing the follow-up of a recording without a room

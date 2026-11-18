@@ -30,6 +30,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -87,19 +88,27 @@ class AssistantLiveWorkShotsTest {
     @Test fun collapsedToolsAndLatestTextSurviveUpdatesCompletionAndManualTogglesInEveryStyle() =
         rendersTransitionsInEveryStyle(running, latest, ended)
 
-    @Test fun anAutomaticWakeKeepsItsTailToolsExpandableBeforeNewTextInEveryStyle() {
+    /** #9140: the work a wake started is an exchange of its own. The answer before it stays on screen throughout, and
+     *  the woken work has its own collapsed, manually expandable summary and latest-text slot. */
+    @Test fun anAutomaticWakeKeepsTheEarlierAnswerAndItsOwnToolsExpandableInEveryStyle() {
+        // Two calls: the collapsed running summary names the newest one, so the earlier one's words show only when opened.
         val resumed = ended + Item("wake13", 13, role = "system", kind = "notice", text = "Background work resumed", wake = true, ts = at(13)) +
-            use(14, "Read", "file_path" to "/notes/follow-up.md")
-        val newest = resumed + reply(15, "I am checking the follow-up after the background wake.")
-        rendersTransitionsInEveryStyle(resumed, newest, newest + result(16, 14) + reply(17, "The background follow-up is complete."),
+            use(14, "Grep", "pattern" to "harbour") + result(15, 14) + use(16, "Read", "file_path" to "/notes/follow-up.md")
+        val newest = resumed + reply(17, "I am checking the result after the background wake.")
+        rendersTransitionsInEveryStyle(resumed, newest, newest + result(18, 16) + reply(19, "The background check is complete."),
             initialText = "Two meetings tomorrow. The tasks are sorted by date.",
-            latestText = "I am checking the follow-up after the background wake.", finalText = "The background follow-up is complete.",
-            lastResult = result(16, 14), snapshotPrefix = "wake-")
+            latestText = "I am checking the result after the background wake.", finalText = "The background check is complete.",
+            lastResult = result(18, 16), snapshotPrefix = "wake-", toolText = "harbour", earlierAnswer = true)
     }
 
     private fun rendersTransitionsInEveryStyle(running: List<Item>, latest: List<Item>, ended: List<Item>,
         initialText: String = "I will first check the calendar.", latestText: String = "The calendar is checked; I am sorting the tasks.",
-        finalText: String = "Two meetings tomorrow. The tasks are sorted by date.", lastResult: Item = result(11, 9), snapshotPrefix: String = "") {
+        finalText: String = "Two meetings tomorrow. The tasks are sorted by date.", lastResult: Item = result(11, 9), snapshotPrefix: String = "",
+        /** Words only the opened summary under test shows (one of its tool rows). */
+        toolText: String = "deadline",
+        /** [initialText] is the answer of the exchange before the one under test (a wake opened that one): it stays on
+         *  screen throughout, and the summary and text slot under test are the last ones. */
+        earlierAnswer: Boolean = false) {
         var items by mutableStateOf(running)
         var live by mutableStateOf(true)
         var state by mutableStateOf(WorkOpenState())
@@ -147,10 +156,11 @@ class AssistantLiveWorkShotsTest {
             parses.runCurrent()
             repeat(3) { rule.mainClock.advanceTimeByFrame() }
         }
-        fun summary() = rule.onNode(hasClickAction() and (hasContentDescription("，已展开", substring = true) or
-            hasContentDescription("，已收起", substring = true)))
+        fun summary() = rule.onAllNodes(hasClickAction() and (hasContentDescription("，已展开", substring = true) or
+            hasContentDescription("，已收起", substring = true))).onLast()
         fun expanded(expected: Boolean) = summary().assert(hasContentDescription(if (expected) "，已展开" else "，已收起", substring = true))
-        fun toolsHidden() = rule.onNodeWithText("deadline", substring = true).assertDoesNotExist()
+        fun toolsHidden() = rule.onNodeWithText(toolText, substring = true).assertDoesNotExist()
+        fun earlierGone() { if (earlierAnswer) rule.onNodeWithText(initialText).assertIsDisplayed() else rule.onNodeWithText(initialText).assertDoesNotExist() }
         fun shoot(name: String, host: String): Int {
             val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
             File(out(), "$snapshotPrefix$host-$name-${style.name.lowercase()}-${if (dark) "dark" else "light"}.png").outputStream()
@@ -165,12 +175,14 @@ class AssistantLiveWorkShotsTest {
                     style = s; dark = d; items = running; live = true; state = WorkOpenState(); updates = emptyMap(); settle()
                     expanded(false); toolsHidden()
                     rule.onNodeWithText(initialText).assertIsDisplayed()
-                    val slot = lines().last().contentKey
+                    // A woken exchange has no words of its own yet: its text slot is the one its first words take.
+                    val runningSlot = if (earlierAnswer) null else lines().last().contentKey
                     corners += shoot("running", host)
 
                     items = latest; settle()
+                    val slot = runningSlot ?: lines().last().contentKey
                     assertEquals(slot, lines().last().contentKey)
-                    rule.onNodeWithText(initialText).assertDoesNotExist()
+                    earlierGone()
                     rule.onNodeWithText(latestText).assertIsDisplayed()
                     toolsHidden(); expanded(false)
                     shoot("latest", host)
@@ -182,7 +194,7 @@ class AssistantLiveWorkShotsTest {
 
                     // Both directions work during the run; collapse is not overridden by a new tool result.
                     summary().performClick(); settle(); expanded(true)
-                    rule.onNodeWithText("deadline", substring = true).assertIsDisplayed()
+                    rule.onNodeWithText(toolText, substring = true).assertIsDisplayed()
                     rule.onNodeWithText(initialText).assertIsDisplayed()
                     summary().performClick(); settle(); expanded(false); toolsHidden()
                     items = latest + lastResult; settle(); toolsHidden()
@@ -197,7 +209,7 @@ class AssistantLiveWorkShotsTest {
                     rule.onNodeWithText(finalText).assertIsDisplayed()
                     shoot("completed", host)
                     summary().performClick(); settle(); expanded(true)
-                    rule.onNodeWithText("deadline", substring = true).assertIsDisplayed()
+                    rule.onNodeWithText(toolText, substring = true).assertIsDisplayed()
                     rule.onNodeWithText(initialText).assertIsDisplayed()
                     rule.onNodeWithText(latestText).assertIsDisplayed()
                     shoot("reopened", host)

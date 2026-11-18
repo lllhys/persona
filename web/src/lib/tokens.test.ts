@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { compactTokens, formatTokens, hitRate, hitRuns, nearestStep, offlineRuns, perMinute, stackLayers, totalTokens, type MachineUsage } from "./tokens";
+import { compactTokens, formatTokens, hitRate, hitRuns, nearestStep, offlineRuns, totalTokens, type MachineUsage } from "./tokens";
+import { perMinute, stackLayers, stepMinutes } from "./usage-rate";
 
 describe("formatTokens", () => {
   // The same table as the apps' TokenUsageTests (#4973).
@@ -23,7 +24,24 @@ describe("usage charts", () => {
     expect(totalTokens(u)).toBe(305);
     expect(hitRate(u)).toBe(0.9);
     expect(hitRate({ out: 5 })).toBeUndefined();
-    expect(perMinute(600, 600)).toBe(60);
+    expect(perMinute(600, { step: 600 }, 0)).toBe(60);
+  });
+
+  // The step under way covers only what had passed when the report came (#9205): 3 minutes into a 10-minute step its
+  // sums are 3 minutes' worth, so its rate is the same as a whole step's at the same pace, and as the 1h view's minutes.
+  it("divides the step under way by the part that has passed", () => {
+    const tenMinutes = { step: 600, at: 6_000 + 180 };
+    expect(stepMinutes(tenMinutes, 6_000)).toBe(3); // 3 minutes in
+    expect(perMinute(3_000, tenMinutes, 6_000)).toBe(1_000);
+    expect(stepMinutes(tenMinutes, 5_400)).toBe(10); // the step before: whole
+    expect(stepMinutes({ step: 600, at: 6_000 + 20 }, 6_000)).toBe(1); // at least a minute
+    expect(stepMinutes({ step: 600, at: 5_900 }, 6_000)).toBe(1); // this device's clock behind the hub's
+    expect(stepMinutes({ step: 3_600, at: 7_200 + 1_800 }, 7_200)).toBe(30); // half an hour of an hourly step
+    expect(stepMinutes({ step: 60, at: 6_030 }, 6_000)).toBe(1); // the 1h view's minutes, as before
+    expect(stepMinutes({ step: 600 }, 6_000)).toBe(10); // no arrival time: whole steps
+    const u = usage([{ t: 5_400, out: 10_000 }, { t: 6_000, out: 3_000 }], 600);
+    u.at = 6_000 + 180;
+    expect(stackLayers(u, ["out"])[0].points.map((p) => p.y1)).toEqual([1_000, 1_000]);
   });
 
   it("stacks the kinds from the bottom, per minute", () => {

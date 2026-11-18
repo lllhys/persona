@@ -98,6 +98,11 @@ struct HubUpdateDeps {
         do { apply(try await api.setHubUpdate(auto: on)) } catch { deps.report(error) }
     }
 
+    func setBeta(_ on: Bool) async {
+        guard let api = deps.api() else { return }
+        do { apply(try await api.setHubUpdate(beta: on)) } catch { deps.report(error) }
+    }
+
     /// 「自动更新已开启」 seen: not shown again.
     func noticeSeen() async {
         guard let api = deps.api() else { return }
@@ -286,8 +291,18 @@ struct HubSettingsPage: View {
                 Text("Update Hub Automatically").lineLimit(1)
             }
             .accessibilityIdentifier("hub.auto")
+            if s.source != nil, s.channel == "release" {
+                Toggle(isOn: Binding(get: { s.betaUpdates }, set: { on in Task { await model.setBeta(on) } })) {
+                    Text("Beta Updates").lineLimit(1)
+                }
+                .accessibilityIdentifier("hub.beta")
+            }
         } footer: {
-            Text("When on, new versions install themselves once the assistant and all agents are idle, and you get a notification afterward.")
+            if s.betaUpdates {
+                Text("Beta updates install prereleases from the beta channel. Turn this off to return to stable releases. An update already in progress must finish before changing channels.")
+            } else {
+                Text("When on, new versions install themselves once the assistant and all agents are idle, and you get a notification afterward.")
+            }
         }
     }
 
@@ -372,9 +387,7 @@ struct HubNoticeRow: View {
     }
 
     private var closeButton: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button { page = false } label: { ThemedIcon(Theme.Icon.close) }.accessibilityLabel("Close")
-        }
+        SheetClose { page = false }
     }
 
     private func text(_ n: HubNotice) -> String {
@@ -427,13 +440,17 @@ struct HubNoticeRow: View {
     }
 }
 
-/// Settings › Assistant › Skills: the assistant's skills on its machine (GET /api/v1/skills), read only for now.
+/// Settings › Assistant › Skills: the current assistant's skills on its machine (GET /api/v1/skills), read only for now.
+/// The route isn't one of the assistant's own (`APIClient.assistantRoute`), so the page names the assistant it opened for
+/// (`currentAssistantSettings`): none for the default's.
 @Observable final class SkillsModel {
     private(set) var skills: [AgentSkill] = []
     private(set) var machine: String?
     private(set) var loaded = false
     private(set) var error: String?
     @ObservationIgnored private let api: () -> APIClient?
+    /// The client of the assistant the page opened for, kept from its first read.
+    @ObservationIgnored private var scoped: APIClient?
 
     init(api: @escaping () -> APIClient? = { AppModel.shared.api }) { self.api = api }
 
@@ -452,7 +469,8 @@ struct HubNoticeRow: View {
     }
 
     func load() async {
-        guard let api = api() else {
+        if scoped == nil { scoped = api()?.currentAssistantSettings() }
+        guard let api = scoped else {
             error = Self.noHub
             loaded = true
             return

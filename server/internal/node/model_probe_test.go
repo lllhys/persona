@@ -21,11 +21,19 @@ func TestModelProbeVerifiesForwardingAfterEnvironmentUnset(t *testing.T) {
 	definitions := `clearing() { unset ANTHROPIC_MODEL; command claude "$@" }
 not_forwarding() { command claude }
 fixed() { command claude --model fixed-model "$@" }
+fixed_same() { command claude --model requested-model "$@" }
+fixed_same_eq() { command claude --model=requested-model "$@" }
+fixed_both() { command claude --model requested-model --model fixed-model "$@" }
 `
 	for _, tc := range []struct {
 		name  string
 		valid bool
-	}{{"clearing", true}, {"not_forwarding", false}, {"fixed", false}} {
+	}{
+		{"clearing", true}, {"not_forwarding", false}, {"fixed", false},
+		// It pins the very model asked for and forwards it too: claude sees it twice and runs it (#6205).
+		{"fixed_same", true}, {"fixed_same_eq", true},
+		{"fixed_both", false}, // one of its own flags names another model
+	} {
 		out, err := exec.Command(zsh, "-fc", definitions+"\n"+probeScript(tc.name, "--model", "requested-model")).Output()
 		if err != nil {
 			t.Fatal(err)

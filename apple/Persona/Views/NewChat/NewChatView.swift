@@ -1,6 +1,7 @@
 import PersonaKit
 import PhotosUI
 import SwiftUI
+import PersonaWire
 
 /// Start a session inside an existing space (a new herdr tab next to the other agents).
 nonisolated struct SpacePreset {
@@ -32,22 +33,40 @@ struct NewChatView: View {
     /// A todo handed to a new Agent (TodoHandoffSheet): the todo's context block goes ahead of the first message, the
     /// session is named after the todo, and only the todo's hub's machines are offered.
     var contextBlock: String? = nil
-    /// A message forwarded to a new Agent (#3807): its card over the first message, which carries it as `contextBlock`,
-    /// and the pictures it had, attached.
-    var forwarded: ContextRef? = nil
+    /// A message forwarded to a new Agent (#3807), or several together (#3838): its card over the first message, which
+    /// carries it as `contextBlock`, and the pictures it had, attached.
+    var forwarded: [ContextRef] = []
+    /// One card's icon: a forward's, or an Inbox item's when Hand to AI starts the Agent with it (#5933).
+    var forwardedIcon = Theme.Icon.forwardMessage
     var forwardedImages: [UIImage] = []
     var nameHint: String? = nil
     var onlyGroup: String? = nil
+    /// An inbox hand-off follows the ordinary first message's outbox delivery. The message is nil when the local send
+    /// rejected it; Codex keeps its existing start-accepted path and does not use this callback.
+    var onFirstMessage: ((Session, PendingMessage?) -> Void)? = nil
     var onStarted: (Session) -> Void
 
     @AppStorage("newChat.machine") private var machineID = ""
     @State private var cwd = ""
+    /// The folder was picked on this sheet (a row, the browser, a card, a workspace), not filled in from the last start: a
+    /// start in Claude's desktop app with none goes to the app's scratch folder (`desktopScratch`, #5480).
+    @State private var cwdPicked = false
+    /// Where browsing starts for a start in the desktop app: the folder holding the app's projects on this computer
+    /// (`DesktopStart.projectsFolder`), worked out when the computer or the launcher changes, not as the sheet draws.
+    @State private var desktopProjects = ""
     @State private var launcher = ""
     @State private var unifiedModels = false
     @State private var defaultLauncher = ""
     /// Model Settings › New Agent's model: what runs with no pick when its launcher does.
     @State private var configuredModel = ""
     @State private var mode = ""   // "" = whatever the launcher uses
+    /// The mode picked for a launcher that takes its own modes, not Claude Code's (`StartModes.limited`: Paseo's Grok,
+    /// OpenCode or Codex): Allow Everything or its own, picked on this sheet and never remembered. The remembered `mode`
+    /// is Claude Code's and never goes to such a start (#8144, #8261).
+    @State private var providerMode = ""
+    /// The thinking effort picked for such a launcher, one its model lists: picked here and never remembered either, so
+    /// the remembered `effort` stays Claude Code's (#8261).
+    @State private var providerEffort = ""
     @State private var effort = ""
     /// Claude Code's ultracode for this start (#1307): off each time the sheet opens and never saved, unlike the effort
     /// (no choice carries over, the server's rule); only an explicit on is sent.
@@ -73,6 +92,9 @@ struct NewChatView: View {
     @State private var starting = false
     @State private var error: String?
     @State private var workspaceCatalog = WorkspaceCatalog()
+    /// The selected computer's workspaces New Agent offers, by project (#7259): derived when the computer or the catalog
+    /// changes, not as the form draws.
+    @State private var workspaceGroups: [WorkspaceStart.Group] = []
     @State private var pickedWorkspace: HostWorkspace?
     @State private var childSource: HostWorkspace?
     /// The picked folder's repository, as its computer says (#6115); nil: not in one, or it cannot say.
@@ -108,9 +130,6 @@ struct NewChatView: View {
     private var ref: MachineRef { MachineRef(path: machineID) }
     private var machine: Machine? { model.machine(ref) }
     private var targetPreset: SpacePreset? { SpacePreset.destination(preset: preset, workspace: pickedWorkspace) }
-    private var workspaceChoices: [HostWorkspace] {
-        workspaceCatalog.workspaces.filter { $0.machineRef == ref && $0.source == "orca" }
-    }
 
     /// The launcher that will run: the one picked, or Model Settings'.
     private var runLauncher: String { launcher.isEmpty && unifiedModels ? defaultLauncher : launcher }
@@ -130,6 +149,10 @@ struct NewChatView: View {
     /// A Codex this computer opens only with its first message (an older computer); a newer one opens it waiting for
     /// one, sent later here or typed in its terminal (docs/integrations/codex.md「Starting without a first message」).
     private var codexNeedsFirst: Bool { launchers.first(where: { $0.name == runLauncher })?.needsFirstMessage == true }
+    /// The launcher that will run starts the session in Claude's desktop app (#5480).
+    private var desktopStart: Bool { launchers.first(where: { $0.name == runLauncher })?.startsInDesktopApp == true }
+    /// That start goes to the app's scratch folder: no folder picked here (nor a space's).
+    private var desktopScratch: Bool { desktopStart && !cwdPicked && targetPreset == nil }
 
     /// The list for `runLauncher`; nil: none to pick (not loaded, an older hub).
     private var models: LauncherModels? { modelList.list }
@@ -149,10 +172,31 @@ struct NewChatView: View {
         return typesWithoutList && ModelID.isValid(pickedModel) ? pickedModel : nil
     }
 
-    /// The efforts the model that will run takes (all of them when that is not known).
-    private var effortOptions: [SessionModes.Option] {
-        guard let efforts = modelChoice?.efforts else { return SessionModes.startEffortLevels }
-        return SessionModes.startEffortLevels.filter { efforts.contains($0.id) }
+    /// The efforts the model that will run takes (all of them when that is not known; none for a Paseo provider other
+    /// than Claude Code and Codex then, `StartModes.efforts`).
+    private var effortOptions: [SessionModes.Option] { StartModes.efforts(known: modelChoice?.efforts, for: runEntry) }
+
+    /// The launcher that will run, as this computer lists it; nil before its launchers are in.
+    private var runEntry: Launcher? { launchers.first(where: { $0.name == runLauncher }) }
+    /// What the picked launcher is called (Paseo's "Grok" for `grok`, #8261): its title, else its name.
+    private var launcherTitle: String { launchers.first(where: { $0.name == launcher })?.title ?? launcher }
+    /// It takes its own modes, not Claude Code's: it lists them (#8261), or it is a Paseo provider other than Claude Code
+    /// and Codex on an older computer (#8144). Use Launcher's and, where it has one, Allow Everything, picked in
+    /// `providerMode`; only the efforts its model lists, picked in `providerEffort`.
+    private var limitedModes: Bool { StartModes.limited(runEntry) }
+    /// The launcher lists the modes a start on it takes (#8261): a Codex of Paseo's takes them too, and its chat can
+    /// switch between them, which the footer says.
+    private var listsModes: Bool { StartModes.listed(runEntry) != nil }
+    /// The mode the picker shows and the start sends: Claude Code's remembered one, or the limited launcher's own pick.
+    private var startMode: String { limitedModes ? providerMode : mode }
+    /// There is a mode to pick besides the launcher's own (none for a launcher whose own approval is all it lists).
+    private var offersModes: Bool { !StartModes.modes(for: runEntry).isEmpty }
+    /// Permissions & Thinking is shown: Claude Code's modes and efforts, or a limited launcher's that has a choice to
+    /// make; never a Codex that lists no modes, which keeps its own.
+    private var modesShown: Bool { (!codex || listsModes) && (offersModes || !effortOptions.isEmpty || ultracodeShown) }
+    /// The effort a limited launcher's start sends: its pick, when its model lists it.
+    private var providerEffortSent: String? {
+        providerEffort.isEmpty || !effortOptions.contains(where: { $0.id == providerEffort }) ? nil : providerEffort
     }
 
     /// What the launcher that will run starts: its model list's agent, else the launcher's; Claude Code by default.
@@ -174,12 +218,25 @@ struct NewChatView: View {
     private var promptHint: String {
         if codexNeedsFirst { return String(localized: "What should Codex do? (Required: Codex starts a session only after the first message)") }
         if codex { return String(localized: "What should Codex do? (Optional: you can also send it later, here or in its terminal)") }
+        // Claude only for Claude Code: a Paseo provider such as Grok, TRAEX or a runtime's agent is just the agent (#8144).
+        if startAgent != "claude" { return String(localized: "What should the agent do? (Optional)") }
         return String(localized: "What should Claude do? (Optional)")
+    }
+
+    /// Permissions & Thinking's footer while no mode is picked. A limited launcher is told as it is: its own approval
+    /// unless Allow Everything. One that lists its modes (#8261) can be switched in the chat later, which it says; one
+    /// from an older computer promises nothing about that, its mode can't be changed in the chat there (#8144). No words
+    /// where there is no mode to pick.
+    private var modesFooter: String {
+        if listsModes { return offersModes ? String(localized: "This agent uses its own approval settings unless you choose Allow Everything. You can switch in the chat later.") : "" }
+        if limitedModes { return String(localized: "This agent uses its own approval settings unless you choose Allow Everything.") }
+        return effortOptions.isEmpty ? String(localized: "This model's thinking effort can't be changed. You can change the permission mode anytime in the chat.")
+            : String(localized: "You can change the permission mode and thinking effort anytime in the chat.")
     }
 
     /// Nothing missing for Start Chat, and the machine's own launchers and directories are in.
     private var ready: Bool {
-        machine?.online == true && defaultsFor == machineID && !cwd.isEmpty && (!launcher.isEmpty || unifiedModels)
+        machine?.online == true && defaultsFor == machineID && (!cwd.isEmpty || desktopScratch) && (!launcher.isEmpty || unifiedModels)
             && !codexNeedsMessage && attachmentsHold == nil
     }
 
@@ -206,7 +263,7 @@ struct NewChatView: View {
         }
         // Until this machine's launchers and directories are in, cwd and launcher are not its own yet.
         guard defaultsFor == machineID else { return nil }
-        if cwd.isEmpty { return String(localized: "Choose a directory first") }
+        if cwd.isEmpty && !desktopScratch { return String(localized: "Choose a directory first") }
         if launcher.isEmpty && !unifiedModels { return launchers.isEmpty ? String(localized: "This computer has no launchers") : String(localized: "Choose a launcher first") }
         if codexNeedsMessage { return String(localized: "Codex needs a first message") }
         return attachmentsHold
@@ -263,51 +320,74 @@ struct NewChatView: View {
                     .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.page, bottom: Theme.Space.s, trailing: Theme.Space.page))
                 } header: { Text("Machines") }
 
-                if !workspaceChoices.isEmpty {
+                if !workspaceGroups.isEmpty || pickedWorkspace != nil {
                     Section {
                         NavigationLink {
-                            WorkspacePicker(workspaces: workspaceChoices, selectedID: pickedWorkspace?.sourceID, allowDirectory: true) { picked in
+                            WorkspaceStartPicker(groups: workspaceGroups, selectedKey: pickedWorkspace?.key, home: machine?.home) { picked in
                                 pickedWorkspace = picked
-                                if let picked { cwd = picked.cwd }
+                                if let picked { cwd = picked.cwd; cwdPicked = true }
                             }
                         } label: {
-                            LabeledContent(String(localized: "workspace.target", defaultValue: "Worktree"),
-                                           value: pickedWorkspace?.title ?? String(localized: "workspace.useDirectory", defaultValue: "Choose by Folder"))
+                            LabeledContent(String(localized: "workspace.start", defaultValue: "Workspace"),
+                                           value: pickedWorkspace.map(WorkspaceStart.title) ?? String(localized: "workspace.useDirectory", defaultValue: "Choose by Folder"))
                         }
                         .accessibilityIdentifier("newChat.workspace")
-                        if let pickedWorkspace {
+                        // A Git workspace can make a worktree first; Orca nests it under this one, Paseo has no nesting.
+                        if let pickedWorkspace, WorkspaceStart.kind(pickedWorkspace) != .folder {
                             Button { childSource = pickedWorkspace } label: {
-                                Label(String(localized: "workspace.newChild", defaultValue: "New Child Worktree…"), systemImage: Theme.Icon.newWorktree)
+                                Label(pickedWorkspace.source == "orca" ? String(localized: "workspace.newChild", defaultValue: "New Child Worktree…")
+                                                                        : String(localized: "New Worktree…"), systemImage: Theme.Icon.newWorktree)
                             }
                             .accessibilityIdentifier("newChat.newChild")
+                        }
+                    } footer: {
+                        if let pickedWorkspace {
+                            Text(WorkspaceStartRow.detail(pickedWorkspace, home: machine?.home))
                         }
                     }
                 }
                 if pickedWorkspace == nil {
                 Section {
                     NavigationLink {
-                        DirectoryBrowser(ref: ref, start: cwd.isEmpty ? "" : cwd) { picked in cwd = picked }
+                        DirectoryBrowser(ref: ref, start: desktopScratch ? desktopProjects : cwd, newFolder: desktopStart) { picked in
+                            cwd = picked
+                            cwdPicked = true
+                        }
                     } label: {
                         HStack {
                             ThemedIcon(Theme.Icon.folderFilled).foregroundStyle(Theme.accent)
                             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                                Text(cwd.isEmpty ? String(localized: "Choose Directory") : (cwd as NSString).lastPathComponent).font(Theme.Font.heading)
-                                if !cwd.isEmpty {
-                                    Text(Fmt.path(cwd, home: machine?.home)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                                if desktopScratch {
+                                    Text("Temporary Session").font(Theme.Font.heading)
+                                    Text(codex ? String(localized: "Among the Codex App's chats in no project") : String(localized: "Grouped together in the Claude app's sidebar"))
+                                        .font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                                } else {
+                                    Text(cwd.isEmpty ? String(localized: "Choose Directory") : (cwd as NSString).lastPathComponent).font(Theme.Font.heading)
+                                    if !cwd.isEmpty {
+                                        Text(Fmt.path(cwd, home: machine?.home)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                                    }
                                 }
                             }
                         }
                     }
                     .accessibilityIdentifier("newChat.directory")
+                    if desktopStart, !desktopScratch, targetPreset == nil {
+                        Button {
+                            cwdPicked = false
+                            Haptics.tap()
+                        } label: { Label("Use a Temporary Session", systemImage: Theme.Icon.temporarySession) }
+                        .accessibilityIdentifier("newChat.temporarySession")
+                    }
                     if !recent.isEmpty {
                         ForEach(recent.prefix(6)) { r in
                             Button {
                                 cwd = r.path
+                                cwdPicked = true
                                 Haptics.tap()
                             } label: {
                                 HStack {
-                                    ThemedIcon(cwd == r.path ? Theme.Icon.successFilled : Theme.Icon.recent)
-                                        .foregroundStyle(cwd == r.path ? Theme.accent : .secondary)
+                                    ThemedIcon(cwd == r.path && !desktopScratch ? Theme.Icon.successFilled : Theme.Icon.recent)
+                                        .foregroundStyle(cwd == r.path && !desktopScratch ? Theme.accent : .secondary)
                                     VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                                         Text(r.name).foregroundStyle(Color.primary)
                                         Text(Fmt.path((r.path as NSString).deletingLastPathComponent, home: machine?.home))
@@ -319,8 +399,14 @@ struct NewChatView: View {
                             }
                         }
                     }
-                } header: { Text("Folder [Task Views 52daa7]") }
-                if let repo, !repo.path.isEmpty {
+                } header: { Text("Folder [Task Views 52daa7]") } footer: {
+                    if desktopStart && codex {
+                        Text("Starts in the Codex App. With no folder it goes where the App keeps chats in no project; a new folder is made when it starts.")
+                    } else if desktopStart {
+                        Text("Starts in Claude's desktop app. With no folder it goes to one temporary folder beside the app's projects; a new folder is made when it starts.")
+                    }
+                }
+                if let repo, !repo.path.isEmpty, !desktopScratch {
                     NewAgentWorktreeSection(repo: repo, on: $inWorktree, branch: $worktreeBranch,
                                             suggested: AgentWorktree.branch(nameHint: worktreeNameHint), home: machine?.home)
                 }
@@ -335,7 +421,7 @@ struct NewChatView: View {
                             ThemedIcon(Theme.Icon.model).foregroundStyle(Theme.accent)
                             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                                 HStack(spacing: Theme.Space.sm) {
-                                    Text(launcher.isEmpty ? (unifiedModels ? defaultLabel : String(localized: "Choose Launcher")) : launcher).font(Theme.Font.heading.monospaced()).lineLimit(1)
+                                    Text(launcher.isEmpty ? (unifiedModels ? defaultLabel : String(localized: "Choose Launcher")) : launcherTitle).font(Theme.Font.heading.monospaced()).lineLimit(1)
                                     // A pick over the default is for this start only.
                                     if unifiedModels, !launcher.isEmpty { Chip(text: String(localized: "Just Once")) }
                                 }
@@ -354,17 +440,20 @@ struct NewChatView: View {
                 } header: { Text(models?.models.isEmpty == false || modelChoice?.canPick == true ? String(localized: "Launcher & Model (This Time Only)") : String(localized: "Launcher (This Time Only)")) } footer: {
                     let about = unifiedModels ? String(localized: "Uses Model Configuration › New Agent by default. A choice here applies to this session only and doesn't change the global default.")
                         : String(localized: "Claude Code / Codex launchers from this machine. It runs in a new tab in the terminal engine.")
-                    Text(modelChoice?.canPick == true ? String(localized: "\(about) Models are the same as what /model shows in the terminal.") : about)
+                    // A Paseo provider of another kind has no terminal and no /model (#8144).
+                    Text(modelChoice?.canPick == true && !limitedModes ? String(localized: "\(about) Models are the same as what /model shows in the terminal.") : about)
                 }
 
-                if !codex { // Claude Code's modes; a Codex keeps its own
+                if modesShown { // Claude Code's modes, or a limited launcher's (`StartModes`); a Codex that lists none keeps its own
                     Section {
-                        Picker(selection: $mode) {
-                            Text("Use Launcher's").tag("")
-                            ForEach(SessionModes.permissionModes) { o in Label(o.title, systemImage: o.symbol).tag(o.id) }
-                        } label: { Label { Text("Permission Mode") } icon: { ThemedIcon(Theme.Icon.permissions).foregroundStyle(Theme.accent) } }
+                        if offersModes {
+                            Picker(selection: limitedModes ? $providerMode : $mode) {
+                                Text("Use Launcher's").tag("")
+                                ForEach(StartModes.modes(for: runEntry)) { o in Label(o.title, systemImage: o.symbol).tag(o.id) }
+                            } label: { Label { Text("Permission Mode") } icon: { ThemedIcon(Theme.Icon.permissions).foregroundStyle(Theme.accent) } }
+                        }
                         if !effortOptions.isEmpty {
-                            Picker(selection: $effort) {
+                            Picker(selection: limitedModes ? $providerEffort : $effort) {
                                 Text("Use Launcher's").tag("")
                                 ForEach(effortOptions) { o in Label(o.title, systemImage: o.symbol).tag(o.id) }
                             } label: { Label { Text("Thinking Effort") } icon: { ThemedIcon(Theme.Icon.effort).foregroundStyle(Theme.accent) } }
@@ -372,19 +461,27 @@ struct NewChatView: View {
                         if ultracodeShown {
                             UltracodeStartRow(on: $ultracode, blocked: ultracodeBlocked, group: ref.group)
                         }
-                    } header: { Text("Permissions & Thinking") } footer: {
-                        Text(SessionModes.mode(mode)?.detail
-                             ?? (effortOptions.isEmpty ? String(localized: "This model's thinking effort can't be changed. You can change the permission mode anytime in the chat.")
-                                                    : String(localized: "You can change the permission mode and thinking effort anytime in the chat.")))
+                    } header: {
+                        if offersModes { Text("Permissions & Thinking") } else { Text("Thinking Effort") }
+                    } footer: {
+                        // What the picked mode does as this launcher runs it (Allow Everything that can be switched back where
+                        // the launcher lists its modes), else what holds with none picked.
+                        let words = StartModes.detail(startMode, for: runEntry) ?? modesFooter
+                        if !words.isEmpty { Text(words) }
                     }
                     .pickerStyle(.menu)
                     .tint(Theme.accent)
                 }
 
                 Section {
-                    if let forwarded {
-                        QuoteCard(heading: forwarded.quoteHeading, icon: Theme.Icon.forwardMessage, meta: ForwardMessage.meta(forwarded),
-                                  summary: forwarded.forwardSummary, lines: QuoteBlock.forwardLines, tint: Theme.accent, ink: .secondary) {}
+                    if forwarded.count == 1, let one = forwarded.first {
+                        QuoteCard(heading: one.quoteHeading, icon: forwardedIcon, meta: ForwardMessage.meta(one),
+                                  summary: one.forwardSummary, lines: QuoteBlock.forwardLines, tint: Theme.accent, ink: .secondary) {}
+                            .accessibilityIdentifier("newChat.forward")
+                    } else if !forwarded.isEmpty {
+                        QuoteCard(heading: ForwardMessage.groupHeading(forwarded), icon: Theme.Icon.forwardMessage,
+                                  meta: forwarded[0].extra?["machine"], summary: forwarded.map(ForwardMessage.line).joined(separator: "\n"),
+                                  lines: QuoteBlock.forwardLines, tint: Theme.accent, ink: .secondary) {}
                             .accessibilityIdentifier("newChat.forward")
                     }
                     promptField
@@ -421,11 +518,9 @@ struct NewChatView: View {
             .navigationTitle("New Chat [Quick Actions ea4b29]")
             .navigationBarTitleDisplayMode(.inline)
             .pageToolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        attachments.cancelUploads()
-                        dismiss()
-                    }
+                SheetClose {
+                    attachments.cancelUploads()
+                    dismiss()
                 }
                 #if os(macOS)
                 // A Mac sheet's primary button sits beside Cancel and answers ⏎ (docs/apple/mac.md「Mapping from iOS」).
@@ -477,7 +572,13 @@ struct NewChatView: View {
                 .padding(.bottom, Theme.Space.s)
             }
             .task(id: machineID) { await loadMachine() }
+            .task(id: "\(machineID)|\(desktopStart)|\(codex)") {
+                desktopProjects = desktopStart ? DesktopStart.projectsFolder(model.sessionsByMachine[ref] ?? [], codex: codex) ?? "" : ""
+            }
             .task(id: machineID) { await workspaceCatalog.refresh([ref.group]) { model.api($0) } }
+            .task(id: "\(machineID)|\(workspaceCatalog.revision)") {
+                workspaceGroups = WorkspaceStart.groups(WorkspaceStart.choices(workspaceCatalog.workspaces, machine: ref))
+            }
             // A provider added from a grayed-out launcher's help (Add Provider): this computer's list again.
             .onChange(of: model.launchersRevision) { _, _ in Task { await loadMachine() } }
             #if DEBUG
@@ -498,7 +599,11 @@ struct NewChatView: View {
                 }
             }
             .onChange(of: effortOptions.map(\.id)) { _, ids in
-                if !effort.isEmpty, !ids.contains(effort) { effort = "" } // the picked model does not take it
+                // The picked model does not take it. Only the picker on screen: the remembered Claude Code effort is not
+                // dropped for a limited launcher's model, whose own pick is `providerEffort`.
+                if limitedModes {
+                    if !providerEffort.isEmpty, !ids.contains(providerEffort) { providerEffort = "" }
+                } else if !effort.isEmpty, !ids.contains(effort) { effort = "" }
             }
             .onAppear {
                 if prompt.isEmpty { prompt = initialPrompt }
@@ -567,6 +672,7 @@ struct NewChatView: View {
                 pickedWorkspace = HostWorkspace(machineID: source.machineID, source: source.source, sourceID: made.workspaceID,
                                                 title: made.branch, cwd: made.path, parentSourceID: made.parentWorkspaceID, group: source.group)
                 cwd = made.path
+                cwdPicked = true
                 childSource = nil
             }
         }
@@ -582,7 +688,8 @@ struct NewChatView: View {
         LauncherPicker(launchers: launchers, selection: $launcher, allowDefault: unifiedModels, defaultLabel: defaultLabel,
                        defaultBlock: unifiedModels ? launchers.first(where: { $0.name == defaultLauncher })?.block : nil,
                        // The provider wizard saves to the hub-level group: on another group's computer it would land elsewhere.
-                       addsProvider: ref.group == (model.hub?.group ?? ""))
+                       addsProvider: ref.group == (model.hub?.group ?? ""),
+                       unavailable: model.launcherUnavailable[ref] ?? [])
     }
 
     /// The machines offered: the current assistant's (`AppModel.scopedMachines`), and of them this hub's when a todo is
@@ -632,6 +739,7 @@ struct NewChatView: View {
         pendingFill = nil
         pickedWorkspace = nil
         cwd = fill.cwd
+        cwdPicked = !fill.cwd.isEmpty
         launcher = fill.launcher
         if let m = fill.mode { mode = m }
         if let e = fill.effort { effort = e }
@@ -663,7 +771,7 @@ struct NewChatView: View {
     /// The setup a start records (#2134): the fields as they are, the model the start sends ("" for the default).
     private func recentSetup(agent: String) -> RecentSetup {
         let claude = agent == "claude"
-        return RecentSetup(machine: machineID, cwd: cwd, launcher: launcher, model: sentModel ?? "", agentType: agent,
+        return RecentSetup(machine: machineID, cwd: desktopScratch ? "" : cwd, launcher: launcher, model: sentModel ?? "", agentType: agent,
                            mode: claude ? mode : "", effort: claude ? effort : "", at: "")
     }
 
@@ -800,12 +908,15 @@ struct NewChatView: View {
         launchers = []
         launcher = ""
         mode = ""
+        providerMode = ""
+        providerEffort = ""
         effort = ""
         restoredModel = nil
         defaultsFor = ""
         loading = false
         error = nil
         if preset == nil { cwd = "" }
+        cwdPicked = false
         if purposeGroup != ref.group {
             unifiedModels = false
             defaultLauncher = ""
@@ -865,7 +976,7 @@ struct NewChatView: View {
                 .accessibilityElement(children: .combine) // one row, read with why, like the pickable one
                 .accessibilityIdentifier("newChat.model.locked")
         } else if modelsLoading {
-            modelLabel(title: String(localized: "Model [Assistant View c98e11]"), detail: String(localized: "Loading models for \(runLauncher)…"), trailing: nil)
+            modelLabel(title: String(localized: "Model [Assistant View c98e11]"), detail: String(localized: "Loading models for \(runEntry?.title ?? runLauncher)…"), trailing: nil)
                 .accessibilityIdentifier("newChat.model.loading")
         }
     }
@@ -931,8 +1042,8 @@ struct NewChatView: View {
         defer { starting = false }
         let setup = recentSetup(agent: codex ? "codex" : startAgent)
         // In a worktree of its own (#6115): made first; a failure says why, and nothing starts.
-        var dir = cwd
-        if inWorktree, targetPreset == nil, repo?.path.isEmpty == false {
+        var dir = desktopScratch ? "" : cwd // the desktop app's scratch folder, which the computer picks (#5480)
+        if inWorktree, !desktopScratch, targetPreset == nil, repo?.path.isEmpty == false {
             do {
                 dir = try await api.addAgentWorktree(machine: ref.id, cwd: cwd, nameHint: worktreeNameHint, branch: worktreeBranch).path
             } catch {
@@ -950,8 +1061,12 @@ struct NewChatView: View {
                 // Codex picks its thread's id once it has the first message: it goes with the start, which answers
                 // with that thread (one session, already working on it). With none, the start answers with Codex
                 // waiting for it (Session.awaitingFirstMessage).
+                // A Codex of Paseo's that lists its modes (#8261) takes the mode and effort picked for it; any other keeps its own.
                 let s = try await api.start(.init(machineID: ref.id, cwd: dir, launcher: launcher, prompt: contextBlock == nil ? prompt : outgoing,
-                                                  workspaceID: targetPreset?.workspaceID, host: targetPreset?.host, model: sentModel, tabName: name.isEmpty ? nil : name,
+                                                  workspaceID: targetPreset?.workspaceID, host: targetPreset?.host,
+                                                  permissionMode: listsModes ? StartModes.sent(providerMode, for: runEntry) : nil,
+                                                  effort: listsModes ? providerEffortSent : nil,
+                                                  model: sentModel, tabName: name.isEmpty ? nil : name,
                                                   nameHint: nameHint ?? (p.isEmpty ? nil : p), todoID: todoID))
                 UserDefaults.standard.set(launcher, forKey: "launcher.\(machineID)")
                 UserDefaults.standard.set(cwd, forKey: "cwd.\(machineID)")
@@ -963,16 +1078,22 @@ struct NewChatView: View {
             }
             // The hub answers at once and starts claude in the background; the first message goes out as an ordinary
             // message (on screen right away, typed in once claude is ready).
+            // Only a mode the launcher runs (`StartModes.sent`): a Plan Only remembered from a Claude Code start never
+            // reaches a Paseo provider of another kind, which refuses it (#8144).
             let s = try await api.start(.init(machineID: ref.id, cwd: dir, launcher: launcher, prompt: nil,
-                                              workspaceID: targetPreset?.workspaceID, host: targetPreset?.host, permissionMode: mode.isEmpty ? nil : mode,
-                                              effort: effort.isEmpty ? nil : effort, model: sentModel, tabName: name.isEmpty ? nil : name,
+                                              workspaceID: targetPreset?.workspaceID, host: targetPreset?.host,
+                                              permissionMode: StartModes.sent(startMode, for: runEntry),
+                                              effort: limitedModes ? providerEffortSent : (effort.isEmpty ? nil : effort),
+                                              model: sentModel, tabName: name.isEmpty ? nil : name,
                                               async: true, nameHint: nameHint ?? (p.isEmpty ? nil : p), todoID: todoID,
                                               ultracode: sendsUltracode ? true : nil))
             if !unifiedModels {
                 UserDefaults.standard.set(launcher, forKey: "launcher.\(machineID)")
-                UserDefaults.standard.set(effort, forKey: "effort.\(machineID)")
+                // The remembered effort is Claude Code's: a limited launcher's start leaves it as it was (#8261).
+                if !limitedModes { UserDefaults.standard.set(effort, forKey: "effort.\(machineID)") }
             }
-            UserDefaults.standard.set(mode, forKey: "mode.\(machineID)")
+            // The remembered mode is Claude Code's: a limited launcher's start leaves it as it was.
+            if !limitedModes { UserDefaults.standard.set(mode, forKey: "mode.\(machineID)") }
             UserDefaults.standard.set(cwd, forKey: "cwd.\(machineID)")
             record(setup)
             Haptics.success()
@@ -980,7 +1101,18 @@ struct NewChatView: View {
             // The photos and the uploaded files' paths go with it (#2321).
             let photos = attachments.images.map(\.1)
             let first = FirstMessage.text(prompt: prompt, contextBlock: contextBlock, paths: attachments.paths, photos: photos.count)
-            if !first.isEmpty { model.sendNow(s.key, text: first, images: photos) }
+            if let onFirstMessage {
+                // Preserve sendNow's immediate local bubble and background send. Only its new pending message is handed
+                // to the inbox's delivery observer; onStarted below still runs without waiting for the hub's answer.
+                let existing = Set(model.chat(s.key).pending.map(\.id))
+                var message: PendingMessage?
+                if !first.isEmpty, model.sendNow(s.key, text: first, images: photos) {
+                    message = model.chat(s.key).pending.last { !existing.contains($0.id) }
+                }
+                onFirstMessage(s, message)
+            } else if !first.isEmpty {
+                model.sendNow(s.key, text: first, images: photos)
+            }
             onStarted(s)
         } catch {
             if sendsUltracode, Ultracode.refused(error) {
@@ -1006,7 +1138,8 @@ struct NewChatView: View {
 }
 
 /// New Agent's launchers. One grayed out on this computer (`Launcher.block`, #1643) stays listed with why; choosing it
-/// shows how to fix it instead of picking it, and the help's Try Anyway picks it after all.
+/// shows how to fix it instead of picking it, and the help's Try Anyway picks it after all. A provider the hub leaves out
+/// here (`unavailable`, #8109) comes after them, off with why.
 struct LauncherPicker: View {
     var launchers: [Launcher]
     @Binding var selection: String
@@ -1016,8 +1149,11 @@ struct LauncherPicker: View {
     /// Why the launcher Default runs is grayed out on this computer; nil when it is not. Default stays pickable: it is
     /// Model Settings' choice, said under it.
     var defaultBlock: LauncherBlock? = nil
-    /// The help offers Add Provider: the computer is in the hub group the provider wizard saves to.
+    /// The help offers Add Provider: the computer is in the hub group the provider wizard saves to. So does How to Fix of
+    /// a provider left out here: Settings' provider pages read that group's hub.
     var addsProvider = true
+    /// The Persona-managed providers the hub leaves out on this computer, with why (#8109: their own-service rule).
+    var unavailable: [UnavailableLauncher] = []
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     /// The grayed-out launcher whose help is open.
@@ -1063,11 +1199,29 @@ struct LauncherPicker: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                                Text(l.name).font(Theme.Font.heading.monospaced()).foregroundStyle(.primary)
+                                Text(l.title).font(Theme.Font.heading.monospaced()).foregroundStyle(.primary)
                                 chips(l, look: .neutral)
                             }
                             Spacer()
                             if l.name == selection { ThemedIcon(Theme.Icon.done).foregroundStyle(Theme.accent).fontWeight(.semibold) }
+                        }
+                    }
+                }
+            }
+            // Not just missing (#8109): a provider left out here is said after the launchers, in the main chat sheet's row,
+            // and never picked. How to Fix opens its page in Settings › Model providers, whose Computers has the switch.
+            let skipped = UnavailableLauncher.shown(unavailable, after: launchers, query: query)
+            if !skipped.isEmpty {
+                Section(String(localized: "Unavailable here")) {
+                    ForEach(skipped) { u in
+                        if addsProvider {
+                            NavigationLink { ModelLauncherDetailView(name: u.name) } label: { UnavailableLauncherRow(item: u, fixable: true) }
+                                .accessibilityHint(Text("Shows how to fix it"))
+                                .accessibilityIdentifier("launcherPicker.unavailable.\(u.name)")
+                        } else {
+                            UnavailableLauncherRow(item: u)
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("launcherPicker.unavailable.\(u.name)")
                         }
                     }
                 }
@@ -1107,7 +1261,7 @@ struct LauncherPicker: View {
             HStack {
                 VStack(alignment: .leading, spacing: Theme.Space.xs) {
                     // Gray, not the row tint's lighter shade: it reads as unavailable, like a disabled row.
-                    Text(l.name).font(Theme.Font.heading.monospaced()).foregroundStyle(Color.secondary)
+                    Text(l.title).font(Theme.Font.heading.monospaced()).foregroundStyle(Color.secondary)
                     chips(l, look: .outline)
                     LauncherBlockLine(block: block)
                 }
@@ -1154,7 +1308,11 @@ struct DirectoryBrowser: View {
     @Environment(\.dismiss) private var dismiss
     var ref: MachineRef
     var start: String
+    /// New Folder… names a folder the computer makes when the session starts (a start in Claude's desktop app, #5480).
+    var newFolder = false
     var onPick: (String) -> Void
+    @State private var naming = false
+    @State private var newName = ""
     @State private var list: DirList?
     @State private var path = ""
     @State private var draft = ""
@@ -1191,6 +1349,13 @@ struct DirectoryBrowser: View {
                         Label("Use “\((list.path as NSString).lastPathComponent)”", systemImage: Theme.Icon.successFilled)
                             .font(Theme.Font.heading)
                             .lineLimit(1)
+                    }
+                    if newFolder {
+                        Button {
+                            newName = ""
+                            naming = true
+                        } label: { Label("New Folder…", systemImage: Theme.Icon.newFolder) }
+                        .accessibilityIdentifier("dirBrowser.newFolder")
                     }
                 } footer: { Text("Edit the path above and press Return to go there; ~ is your home folder") }
 
@@ -1234,6 +1399,21 @@ struct DirectoryBrowser: View {
         .navigationTitle((path as NSString).lastPathComponent.isEmpty ? String(localized: "Folder [Task Views 52daa7]") : (path as NSString).lastPathComponent)
         .navigationBarTitleDisplayMode(.inline)
         .task { await load(start) }
+        .alert("New Folder", isPresented: $naming) {
+            TextField("Folder Name", text: $newName)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Use") {
+                if let list, let made = DesktopStart.newFolder(newName, in: list.path) {
+                    onPick(made)
+                    dismiss()
+                }
+            }
+            .disabled(list.flatMap { DesktopStart.newFolder(newName, in: $0.path) } == nil)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Made in “\(((list?.path ?? "") as NSString).lastPathComponent)” when the session starts.")
+        }
     }
 
     private func go() {

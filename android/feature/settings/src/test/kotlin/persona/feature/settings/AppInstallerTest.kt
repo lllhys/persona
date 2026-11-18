@@ -139,6 +139,17 @@ class AppInstallerTest {
         assertEquals(0, downloads)
     }
 
+    @Test fun incompatibleMetadataIsRejectedBeforeDownload() {
+        for (incompatible in listOf(update.copy(packageName = "other.application"), update.copy(certificateSha256 = "c".repeat(64)))) {
+            val failure = assertThrows(AppUpdateFailure::class.java) {
+                runBlocking { AppInstaller.install(context, updates, incompatible) }
+            }
+            assertEquals(UpdateStage.Verification, failure.stage)
+        }
+        assertEquals(0, downloads)
+        assertNoSessionOrTemporaryApk()
+    }
+
     @Test fun pendingUserActionOpensSystemConfirmationAndDoesNotClaimSuccess() {
         val confirmation = Intent("fixture.system.INSTALL_CONFIRM")
         val callback = Intent(context, InstallResultActivity::class.java)
@@ -173,6 +184,15 @@ class AppInstallerTest {
             .putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE_ABORTED)
         Robolectric.buildActivity(InstallResultActivity::class.java, callback).create()
         assertEquals(context.getString(R.string.settings_install_cancelled),
+            context.getSharedPreferences("settings-update", Context.MODE_PRIVATE).getString("result", null))
+    }
+
+    @Test fun systemSignatureRejectionHasASpecificExplanation() {
+        val callback = Intent(context, InstallResultActivity::class.java)
+            .putExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+            .putExtra(PackageInstaller.EXTRA_STATUS_MESSAGE, "INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match")
+        Robolectric.buildActivity(InstallResultActivity::class.java, callback).create()
+        assertEquals(context.getString(R.string.settings_update_v7_system_signature),
             context.getSharedPreferences("settings-update", Context.MODE_PRIVATE).getString("result", null))
     }
 

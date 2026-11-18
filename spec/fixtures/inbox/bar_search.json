@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "operation": "inbox_bar_search",
+  "cases": [
+    {
+      "name": "typing_shows_all_and_clearing_returns",
+      "description": "开始搜索切到全部，清空回到原来的选项。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "start": {
+          "chosen": "fyi",
+          "saved": null,
+          "query": ""
+        },
+        "steps": [
+          {
+            "query": "合"
+          },
+          {
+            "query": "合同"
+          },
+          {
+            "query": ""
+          }
+        ]
+      },
+      "expected": {
+        "after": [
+          {
+            "chosen": "all",
+            "saved": "fyi"
+          },
+          {
+            "chosen": "all",
+            "saved": "fyi"
+          },
+          {
+            "chosen": "fyi",
+            "saved": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "picking_during_a_search_narrows_it",
+      "description": "搜索中点一个选项只看那一段；清空后回到搜索前的选项。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "start": {
+          "chosen": "action",
+          "saved": null,
+          "query": ""
+        },
+        "steps": [
+          {
+            "query": "合同"
+          },
+          {
+            "pick": "fyi"
+          },
+          {
+            "query": ""
+          }
+        ]
+      },
+      "expected": {
+        "after": [
+          {
+            "chosen": "all",
+            "saved": "action"
+          },
+          {
+            "chosen": "fyi",
+            "saved": "action"
+          },
+          {
+            "chosen": "action",
+            "saved": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "searching_from_all",
+      "description": "本来就在全部：清空后还在全部。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "start": {
+          "chosen": "all",
+          "saved": null,
+          "query": ""
+        },
+        "steps": [
+          {
+            "query": "x"
+          },
+          {
+            "query": ""
+          }
+        ]
+      },
+      "expected": {
+        "after": [
+          {
+            "chosen": "all",
+            "saved": "all"
+          },
+          {
+            "chosen": "all",
+            "saved": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "entering_opens_on_needs_you",
+      "description": "进入收件箱：没有搜索词停在需要你；带着留下的搜索词（安卓会存）停在全部，清空回需要你。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "start": {
+          "chosen": "fyi",
+          "saved": null,
+          "query": ""
+        },
+        "steps": [
+          {
+            "enter": ""
+          },
+          {
+            "enter": "合同"
+          },
+          {
+            "query": ""
+          }
+        ]
+      },
+      "expected": {
+        "after": [
+          {
+            "chosen": "action",
+            "saved": null
+          },
+          {
+            "chosen": "all",
+            "saved": "action"
+          },
+          {
+            "chosen": "action",
+            "saved": null
+          }
+        ]
+      }
+    }
+  ]
+}

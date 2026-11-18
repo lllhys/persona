@@ -2,7 +2,10 @@
   "show_diagram": "看图",
   "show_source": "看源码",
   "zoom": "放大",
-  "copy_code": "拷贝代码",
-  "copy": "拷贝",
-  "diagram": "图"
+  "copy_code": "复制代码",
+  "copy": "复制",
+  "diagram": "图",
+  "zoom_out": "缩小",
+  "zoom_in": "放大",
+  "fit": "适应视图"
 }

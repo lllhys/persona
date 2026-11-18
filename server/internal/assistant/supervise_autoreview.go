@@ -591,7 +591,8 @@ func (s *Service) autoReviewWorking(ctx context.Context, t Todo) {
 // cancelled; ended ones get their reviewer and copy taken away.
 func (s *Service) autoReviewTick(ctx context.Context, now time.Time) {
 	cfg := s.reviewConfig(ctx)
-	for _, t := range s.todosOf(ctx, "*") {
+	runs := s.todosWhere(ctx, "*", func(t *Todo) bool { return t.Supervision != nil && t.Supervision.AutoReview != nil })
+	for _, t := range runs {
 		v := t.Supervision
 		if v == nil || v.AutoReview == nil {
 			continue

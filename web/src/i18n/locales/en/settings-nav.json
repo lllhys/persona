@@ -5,7 +5,7 @@
   "tab_providers": "Model providers",
   "tab_agents": "Agents",
   "hint_persona": "About me, memory, scheduled tasks and session triage",
-  "hint_agents": "Claude Code, Codex, Antigravity, and omp",
+  "hint_agents": "Claude Code, Codex, Antigravity, omp, and Grok",
   "tab_model_config": "Model configuration",
   "tab_channels": "Channels",
   "tab_connectors": "Connectors",
@@ -13,6 +13,7 @@
   "tab_translate": "Translation",
   "tab_shortcuts": "Shortcuts",
   "tab_devices": "Devices",
+  "tab_hub": "This hub",
   "hint_general": "Appearance, navigation, and translation",
   "hint_notifications": "When to notify and play a sound",
   "hint_shortcuts": "Keyboard shortcuts",
@@ -36,5 +37,7 @@
   "assistant_footer": "Only {name}'s own settings are shown. To change another assistant's, switch to it first.",
   "hub_footer": "These two groups are the same whichever assistant is current.",
   "tab_sources": "Inbox Sources",
-  "hint_sources": "What brings new things into your Inbox"
+  "hint_sources": "What brings new things into your Inbox",
+  "tab_prompts": "Saved Prompts",
+  "hint_prompts": "Your own / prompts for every chat"
 }

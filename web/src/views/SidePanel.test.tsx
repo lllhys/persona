@@ -17,6 +17,9 @@ vi.mock("./session/FilesPanel", async () => {
 vi.mock("./session/GitPanel", () => {
   throw new TypeError("Failed to fetch dynamically imported module: /assets/GitPanel-abc.js");
 });
+vi.mock("./session/ChangesPanel", () => ({
+  ChangesPanel: ({ opened }: { opened: { at?: { path: string } } }) => <p data-testid="changes">{opened.at?.path}</p>,
+}));
 const bg = vi.hoisted(() => ({ mounts: 0 }));
 vi.mock("./chat/BackgroundPanel", async () => {
   const { useEffect } = await import("react");
@@ -94,6 +97,16 @@ describe("the Background tasks panel", () => {
     act(() => openPanel({ kind: "background", mid: "m1", sid: "s2" }));
     expect(host.querySelector('[data-testid="background"]')?.textContent).toBe("list");
     expect(bg.mounts).toBe(2);
+  });
+});
+
+describe("the Changes panel", () => {
+  it("loads on demand at the selected file", async () => {
+    act(() => openPanel({ kind: "changes", mid: "m1", sid: "s1", at: { path: "/work/a.ts", call: "c1" } } as Parameters<typeof openPanel>[0]));
+    act(() => root.render(<SidePanel />));
+    await until(() => Boolean(host.querySelector('[data-testid="changes"]')));
+    expect(host.querySelector("aside")?.getAttribute("aria-label")).toBe("变更");
+    expect(host.querySelector('[data-testid="changes"]')?.textContent).toBe("/work/a.ts");
   });
 });
 

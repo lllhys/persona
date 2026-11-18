@@ -97,7 +97,8 @@ fun DecisionCard(
     when (PersonaTheme.style) {
         AppStyle.Glass -> JCard(modifier, onClick = onOpen, status = Status.NeedsYou) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                JStatusDot(Status.NeedsYou, size = 8.dp)
+                // still: iOS's card leads with its kind's icon in Needs You's color (`InteractionPreviewCard`)
+                JStatusDot(Status.NeedsYou, size = 8.dp, breathes = false)
                 Spacer(Modifier.width(8.dp.dense))
                 Text(label, style = type.caption, color = palette.needsYou.text, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 expires?.let { Expiry(it) }
@@ -235,7 +236,7 @@ fun DecisionDock(
             if (!collapsed) kicker?.let { Text(it, style = type.caption, color = palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 when (style) {
-                    AppStyle.Glass -> JStatusDot(Status.NeedsYou, size = 8.dp)
+                    AppStyle.Glass -> JStatusDot(Status.NeedsYou, size = 8.dp, breathes = false) // still, as iOS's panel icon
                     AppStyle.Brief -> JIcon(kind.icon, null, size = 18.dp, tint = palette.ink2)
                     AppStyle.Board -> JIcon(PhIcons.Hand, null, size = 18.dp, tint = palette.needsYou.dot, selected = true)
                 }
@@ -290,7 +291,8 @@ fun DecisionDock(
  * section 4.8): stacked [Tokens.Space.m] apart as they come while they fit in [maxHeight] (about half the page); past it,
  * or while the [keyboard] is up, they scroll on their own under "N pending" ([count]; not over a lone card with the
  * keyboard up), their edges fading, and [content] is told so (`true`) to put the most urgent first. A new card among
- * [keys] while they scroll brings the stack back to its top, where the most urgent is.
+ * [keys] while they scroll brings the stack back to its top, where the most urgent is. A place that says its count some
+ * other way (Persona's task question, "N more" over the card) passes `counted = false`: no "N pending" there.
  */
 @Composable
 fun DecisionStack(
@@ -299,6 +301,7 @@ fun DecisionStack(
     modifier: Modifier = Modifier,
     keyboard: Boolean = false,
     keys: List<Any> = emptyList(),
+    counted: Boolean = true,
     content: @Composable ColumnScope.(scrolling: Boolean) -> Unit,
 ) {
     val palette = PersonaTheme.palette
@@ -314,7 +317,7 @@ fun DecisionStack(
     }
     // The count is inside [maxHeight] too: the stack never takes more than it was given.
     Column(modifier.fillMaxWidth().heightIn(max = maxHeight), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
-        if (scrolling && !(keyboard && count == 1)) Text(pluralStringResource(R.plurals.designsystem_decision_pending, count, count),
+        if (counted && scrolling && !(keyboard && count == 1)) Text(pluralStringResource(R.plurals.designsystem_decision_pending, count, count),
             Modifier.padding(horizontal = Tokens.Space.m + Tokens.Space.xs).semantics { heading() },
             style = PersonaTheme.type.caption, color = palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis)
         // Fitting, the cards are measured whole and nothing scrolls or clips; past the cap, what scrolls out fades at the edges.

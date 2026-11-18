@@ -1,6 +1,7 @@
 import SwiftUI
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The action bar above the assistant's composer (#3393): what its two trays, Needs You and In Progress, list and count
 /// (each thing in one of them at most, finished things in neither), and its entries drawn exactly as low as the dock's
@@ -77,6 +78,37 @@ struct AssistantActionBarTests {
         #expect(r.running.isEmpty)
     }
 
+    /// One home per request (docs/design/DESIGN_SYSTEM.md 4.8, #7532, the web's #7490): an Agent several to-dos list asks
+    /// under the to-do the hub ties its session to; the others are In Progress, so one approval is one row, counted once.
+    @Test func agentSeveralTodosListAsksUnderItsTiedTodo() {
+        let r = split([todo("cache", agent: "w"), todo("release", agent: "w"), todo("tests", agent: "w")],
+                      [session("w", "needs_you", todo: "release")], asks: [ask("ix", session: "w")])
+        #expect(ids(r.needsYou) == ["task:release"])
+        #expect(Set(ids(r.running)) == ["task:cache", "task:tests"])
+        #expect(r.running.allSatisfy { if case .task(_, let status, _) = $0 { status == .working } else { false } })
+        #expect(ActionTrayContent(r).count(.needsYou) == 1)
+    }
+
+    /// With no to-do tied, the first that lists the Agent in the web's slot order (oldest card first) is its home, though
+    /// the bar passes the to-dos newest first.
+    @Test func agentSeveralTodosListAsksUnderTheFirstWhenNoneIsTied() {
+        let r = split([todo("tests", agent: "w", at: 10), todo("cache", agent: "w", at: 40)], [session("w", "needs_you")],
+                      asks: [ask("ix", session: "w")])
+        #expect(ids(r.needsYou) == ["task:cache"])
+        #expect(ids(r.running) == ["task:tests"])
+    }
+
+    /// Another to-do that lists the Agent stays in Needs You for a decision of its own, without the Agent's card.
+    @Test func otherListerKeepsItsOwnDecision() {
+        let decide = todo("tests", agent: "w", ask: ["verdict": "Which framework?", "asked_at": iso(2), "outcome": "decide"])
+        let r = split([todo("release", agent: "w"), decide], [session("w", "needs_you", todo: "release")],
+                      asks: [ask("ix", session: "w")])
+        // the Agent asks under its home; the other row is the to-do's decision, not waiting on the Agent
+        #expect(r.needsYou == [.task(id: "release", status: .needsYou, agents: 1), .task(id: "tests", status: .working, agents: 1)])
+        #expect(r.running.isEmpty)
+        #expect(ActionTrayContent(r).count(.needsYou) == 2)
+    }
+
     /// A manual Agent (no task) asking is only in Needs You; one at work only in In Progress; elsewhere than the main
     /// conversation neither is a row.
     @Test func manualAgentsAreRowsOfTheMainConversation() {
@@ -109,6 +141,27 @@ struct AssistantActionBarTests {
         #expect(r.needsYou.isEmpty)
         #expect(r.running.isEmpty)
         #expect(r.shelved.isEmpty)
+    }
+
+    /// Handed-out tasks that finished in the last day and were not opened since are a group under In Progress, newest
+    /// first and not counted (#8237); one seen since, one closed days ago and a to-do made by hand are not in it.
+    @Test func justFinishedTasksAreAnUncountedGroupUnderInProgress() {
+        var older = todo("older", agent: "a", done: true)
+        older.doneAt = now - 3 * 60
+        let newer = todo("newer", agent: "b", done: true)
+        var seen = todo("seen", agent: "c", done: true)
+        seen.seenAt = now
+        var stale = todo("stale", agent: "d", done: true)
+        stale.doneAt = now - 48 * 3600
+        let byHand = todo("byHand", agent: "e", origin: "", done: true)
+        let r = split([older, newer, seen, stale, byHand], ["a", "b", "c", "d", "e"].map { session($0, "idle") })
+        #expect(ids(r.justFinished) == ["task:newer", "task:older"])
+        #expect(r.needsYou.isEmpty && r.running.isEmpty && r.shelved.isEmpty)
+        let content = ActionTrayContent(r)
+        #expect(content.justFinished.map(\.id) == ["task:newer", "task:older"])
+        #expect(content.count(.running) == 0)
+        // another conversation lists only the finished work it handed out
+        #expect(ids(split([newer], [session("b", "idle")], conversation: "side").justFinished).isEmpty)
     }
 
     private func plan(_ id: String, _ state: TaskPlan.State, tasks: Int, at: Double) -> TaskPlan {

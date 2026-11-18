@@ -122,6 +122,14 @@
       "path_tokens": [],
       "external_refs": []
     },
+    "android/feature/settings/src/test/kotlin/persona/feature/settings/ExtensionUiStateTest.kt": {
+      "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
     "android/feature/settings/src/test/kotlin/persona/feature/settings/ProtocolCompatibilityStorageTest.kt": {
       "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
       "tokens": [
@@ -147,23 +155,7 @@
       "path_tokens": [],
       "external_refs": []
     },
-    "apple/Mac/Resources/Info.plist": {
-      "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
-      "tokens": [
-        "jarvis"
-      ],
-      "path_tokens": [],
-      "external_refs": []
-    },
     "apple/Persona/Resources/Info.plist": {
-      "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
-      "tokens": [
-        "jarvis"
-      ],
-      "path_tokens": [],
-      "external_refs": []
-    },
-    "apple/PersonaLink/Info.plist": {
       "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
       "tokens": [
         "jarvis"
@@ -227,6 +219,14 @@
       "path_tokens": [],
       "external_refs": []
     },
+    "deploy/docker/.env.example": {
+      "reason": "Upgrade instructions identify the historical container image repository for existing installations.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
     "deploy/docker/compose.yaml": {
       "reason": "Installation, upgrade or privacy input adapter retaining an existing deployment identity.",
       "tokens": [
@@ -274,6 +274,55 @@
         "JARVIS_DATABASE_URL",
         "JARVIS_DB_PASSWORD_FILE",
         "JARVIS_HOME",
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "desktop/scripts/link-real-common.mjs": {
+      "reason": "Receipt redaction retains the exact legacy pairing URL scheme and environment prefix accepted by existing clients.",
+      "tokens": [
+        "JARVIS_",
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "desktop/src/link-contract.cts": {
+      "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "desktop/src/main.ts": {
+      "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "desktop/src/pairing.ts": {
+      "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "desktop/src/urls.ts": {
+      "reason": "Exact OS URL scheme retained for installed clients and existing pairing links.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "desktop/test/page-routes.test.ts": {
+      "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
+      "tokens": [
         "jarvis"
       ],
       "path_tokens": [],
@@ -421,6 +470,61 @@
       "path_tokens": [],
       "external_refs": []
     },
+    "harmony/entry/src/main/ets/core/DeviceLook.ts": {
+      "reason": "Reserved former built-in look package ids that a downloaded device look may not take, kept as the other clients' compatibility adapters keep them.",
+      "tokens": [
+        "jarvis",
+        "jarvis-blob",
+        "jarvis-circuit",
+        "jarvis-facet",
+        "jarvis-pixel"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "harmony/entry/src/main/ets/core/WireCompatibility.ts": {
+      "reason": "Harmony native transport and pairing compatibility with existing deployed hubs.",
+      "tokens": [
+        "X-Jarvis-Client",
+        "X-Jarvis-Op-Id",
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "harmony/entry/src/main/ets/models/Compatibility.ets": {
+      "reason": "Harmony context envelopes read and send the existing negotiated wire tag.",
+      "tokens": [
+        "jarvis-context"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "harmony/tests/assistant-card-integration.test.mjs": {
+      "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
+      "tokens": [
+        "jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "harmony/tests/device-look.test.mjs": {
+      "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
+      "tokens": [
+        "jarvis",
+        "jarvis-blob"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "harmony/tests/native-transport-fixture.py": {
+      "reason": "Native TLS fixture verifies that the deployed compatibility header equals the canonical client identity.",
+      "tokens": [
+        "X-Jarvis-Client"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
     "integrations/antigravity/lib/compat.js": {
       "reason": "Dedicated adapter for a versioned runtime, protocol or persisted identity.",
       "tokens": [
@@ -458,7 +562,6 @@
         ".jarvis",
         "JARVIS_",
         "jarvis",
-        "jarvis-agent-sdk-runtime",
         "jarvis-context",
         "jarvis-dsh-runtime",
         "jarvis-paseo-runtime",
@@ -491,6 +594,30 @@
         "jarvis-runtime.v1",
         "jarvis.json",
         "jarvisd"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "native/app-core/crates/persona-core/src/compat.rs": {
+      "reason": "Dedicated adapter for a versioned runtime, protocol or persisted identity.",
+      "tokens": [
+        "jarvis-context"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "native/app-core/crates/persona-core/tests/turn_projection.rs": {
+      "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
+      "tokens": [
+        "jarvis-context"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "scripts/app/android_baseline_profile.py": {
+      "reason": "The Android application id the store and installed apps keep; renaming it would ship a different app.",
+      "tokens": [
+        "com.lyinsun.jarvis"
       ],
       "path_tokens": [],
       "external_refs": []
@@ -549,11 +676,20 @@
       "external_refs": [],
       "symlink_target": "persona_config.py"
     },
+    "scripts/mock/mock_hub.py": {
+      "reason": "Mock fixture that mirrors the hub's historical state directory check for paged Agents.",
+      "tokens": [
+        ".jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
     "scripts/persona_identity.py": {
       "reason": "Installation, upgrade or privacy input adapter retaining an existing deployment identity.",
       "tokens": [
         ".jarvis",
         "JARVIS_",
+        "X-Jarvis-Op-Id",
         "com.jarvis.hub",
         "com.jarvis.link",
         "com.jarvis.node",
@@ -862,6 +998,14 @@
       "path_tokens": [],
       "external_refs": []
     },
+    "server/internal/assistant/testdata/session_reads_apps_list.json": {
+      "reason": "Baseline regression fixture or generated carrier asserting an exact versioned contract.",
+      "tokens": [
+        "started_by_jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
     "server/internal/compat/legacy.go": {
       "reason": "Dedicated adapter for a versioned runtime, protocol or persisted identity.",
       "tokens": [
@@ -881,7 +1025,6 @@
         "com.jarvis.node",
         "jarvis",
         "jarvis-",
-        "jarvis-agent-sdk-runtime",
         "jarvis-blob",
         "jarvis-check-",
         "jarvis-circuit",
@@ -918,7 +1061,6 @@
         "X-Jarvis-Op-Id",
         "com.jarvis.node",
         "jarvis",
-        "jarvis-agent-sdk-runtime",
         "jarvis-context",
         "jarvis-dsh-runtime",
         "jarvis-file",
@@ -992,6 +1134,24 @@
       "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
       "tokens": [
         "JARVIS_HOME"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "server/internal/node/powershell_start_test.go": {
+      "reason": "Goldens captured from main's start command, which still names the retained legacy MCP tools and unsets the legacy environment aliases.",
+      "tokens": [
+        "JARVIS_ASSISTANT",
+        "JARVIS_ASSISTANT_BIN",
+        "JARVIS_GUEST",
+        "JARVIS_SESSION_ID",
+        "JARVIS_SPACE",
+        "mcp__jarvis__report_to_supervisor",
+        "mcp__jarvis__task_plan",
+        "mcp__jarvis__task_review",
+        "mcp__jarvis__todo_bind_thread",
+        "mcp__jarvis__todo_decision_add",
+        "mcp__jarvis__todo_decisions"
       ],
       "path_tokens": [],
       "external_refs": []
@@ -1171,6 +1331,14 @@
       "path_tokens": [],
       "external_refs": []
     },
+    "web/src/lib/drafts-storage.test.ts": {
+      "reason": "Baseline regression fixture or exact compatibility assertion for a persisted contract.",
+      "tokens": [
+        "jarvis-new"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
     "web/src/lib/provider-link.test.ts": {
       "reason": "Regression assertion for the historical managed-provider source accepted by the exact compatibility adapter.",
       "tokens": [
@@ -1182,6 +1350,7 @@
     "web/src/lib/compatibility.ts": {
       "reason": "Dedicated adapter for a versioned runtime, protocol or persisted identity.",
       "tokens": [
+        ".jarvis",
         ".started_by_jarvis",
         "1jarvis",
         "1jarvis-",
@@ -1204,6 +1373,14 @@
         "jarvis.tokenId",
         "jarvis_settings",
         "started_by_jarvis"
+      ],
+      "path_tokens": [],
+      "external_refs": []
+    },
+    "web/src/views/SidebarPaging.test.tsx": {
+      "reason": "Regression fixture for the historical state directory in a session's working directory.",
+      "tokens": [
+        ".jarvis"
       ],
       "path_tokens": [],
       "external_refs": []

@@ -13,8 +13,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/nodeproto"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
+	"github.com/nwverse/persona/server/internal/update/updatetest"
 )
 
 // A machine that comes back on another node build is sent this hub's build (deploy.go updateOnConnect): scripts/deploy
@@ -28,6 +30,7 @@ type buildNode struct {
 	info    proto.NodeInfo
 	calls   []string
 	updates int
+	rows    []proto.Session
 }
 
 func (n *buildNode) dial(context.Context) (net.Conn, error) {
@@ -41,7 +44,7 @@ func (n *buildNode) dial(context.Context) (net.Conn, error) {
 		case "node.info":
 			return n.info, nil
 		case "sessions.list":
-			return map[string]any{"sessions": []proto.Session{}}, nil
+			return map[string]any{"sessions": n.rows}, nil
 		case "node.update.begin":
 			n.updates++
 			return map[string]any{"id": "update-one", "offset": 0}, nil
@@ -88,9 +91,7 @@ func connectMachine(t *testing.T, d *Devices, cfg MachineConfig, n *buildNode) *
 func hubNodeBinary(t *testing.T, goos, arch string) {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "personad-"+goos+"-"+arch), []byte("the hub's node"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	copyFile(t, updatetest.Program(t, "personad", goos, arch), filepath.Join(dir, "personad-"+goos+"-"+arch))
 	t.Setenv("PERSONA_NODE_BINARIES", dir)
 }
 
@@ -167,6 +168,35 @@ func TestLinkedMachineBackOnAnotherBuildGetsTheHubsNode(t *testing.T) {
 	}
 	if record.Target != "hub-build" {
 		t.Fatalf("record=%+v", record)
+	}
+}
+
+// A node this manager cannot drive still uses the update protocol to become compatible (#7774).
+func TestIncompatibleLinkedMachineGetsUpdateOnConnect(t *testing.T) {
+	hubNodeBinary(t, "linux", "amd64")
+	d := newTestDevices(t)
+	d.cfg.HubVersion = "hub-build"
+	d.cfg.AutoUpdateNodes = true
+	n := &buildNode{info: proto.NodeInfo{
+		Hostname: "box", OS: "linux", Arch: "amd64", Version: "old-build",
+		Protocol: nodeproto.Version + 2, ProtocolMin: nodeproto.Version + 1,
+		Capabilities: nodeproto.Announced, NodeUpdate: true,
+	}}
+	m := newMachine(d, MachineConfig{ID: "box", Name: "box", Kind: kindLink})
+	m.dialNode = n.dial
+	d.addEntry(m)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); m.run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+	eventually(t, 5*time.Second, "the incompatible node connected", m.reachable)
+	if got := m.snapshot().NodeIncompatible; got != incompatibleNodeNew {
+		t.Fatalf("the fixture must exercise the incompatible branch, got %q", got)
+	}
+	eventually(t, 5*time.Second, "the update sent over the link", func() bool { return n.updateCalls() == 1 })
+	eventually(t, 5*time.Second, "the hub's node transferred", func() bool { return n.seen("node.update.chunk") > 0 })
+	if got := n.updateCalls(); got != 1 {
+		t.Fatalf("one reconnect must begin one update, got %d", got)
 	}
 }
 

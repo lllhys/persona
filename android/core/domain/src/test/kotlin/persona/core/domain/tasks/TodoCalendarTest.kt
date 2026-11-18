@@ -183,4 +183,139 @@ class TodoCalendarTest {
         // below the part in sight it keeps going down
         assertEquals(1, edgeScroll(600f, 500f, 40f))
     }
+
+    // The day and the week (#4200), the cases of web/src/lib/todo-calendar.test.ts and iOS TodoCalendarTests they need.
+    private fun d(s: String) = LocalDate.parse(s)
+    private fun timed(id: String, at: String, day: String = "2026-11-12") =
+        CalendarEntry(id, id, d(day), LocalTime.parse(at), TodoState.NotStarted, done = false, overdue = false, high = false, reminding = false)
+
+    @Test fun eachModeShowsItsDaysFromTheWeeksFirstDay() {
+        // Thursday, November 12 2026
+        val anchor = d("2026-11-12")
+        assertEquals(listOf(anchor), calendarDays(CalendarMode.Day, anchor, DayOfWeek.MONDAY))
+        val monday = calendarDays(CalendarMode.Week, anchor, DayOfWeek.MONDAY)
+        assertEquals(d("2026-11-09"), monday.first())
+        assertEquals(d("2026-11-15"), monday.last())
+        assertEquals(7, monday.size)
+        // the same first day as the month
+        val sunday = calendarDays(CalendarMode.Week, anchor, DayOfWeek.SUNDAY)
+        assertEquals(d("2026-11-08"), sunday.first())
+        assertEquals(sunday.first(), monthDays(YearMonth.of(2026, 11), DayOfWeek.SUNDAY)[7])
+        assertEquals(monthDays(YearMonth.of(2026, 11), DayOfWeek.MONDAY), calendarDays(CalendarMode.Month, anchor, DayOfWeek.MONDAY))
+        // a week's first day is its own week's
+        assertEquals(monday, weekOf(d("2026-11-09"), DayOfWeek.MONDAY))
+        assertEquals(monday, weekOf(d("2026-11-15"), DayOfWeek.MONDAY))
+        // a week across the year
+        assertEquals(listOf(d("2026-12-28"), d("2027-01-03")), weekOf(d("2027-01-01"), DayOfWeek.MONDAY).let { listOf(it.first(), it.last()) })
+    }
+
+    @Test fun aPageIsADayAWeekOrAMonth() {
+        val anchor = d("2026-11-12")
+        assertEquals(d("2026-11-13"), stepAnchor(anchor, CalendarMode.Day, 1))
+        assertEquals(d("2026-11-11"), stepAnchor(anchor, CalendarMode.Day, -1))
+        assertEquals(d("2026-11-19"), stepAnchor(anchor, CalendarMode.Week, 1))
+        assertEquals(d("2026-11-05"), stepAnchor(anchor, CalendarMode.Week, -1))
+        assertEquals(d("2026-12-12"), stepAnchor(anchor, CalendarMode.Month, 1))
+        // a month keeps the day, the shorter month's last
+        assertEquals(d("2027-02-28"), stepAnchor(d("2027-01-31"), CalendarMode.Month, 1))
+        assertEquals(d("2026-11-30"), stepAnchor(d("2026-12-31"), CalendarMode.Month, -1))
+        // across the year
+        assertEquals(d("2027-01-01"), stepAnchor(d("2026-12-31"), CalendarMode.Day, 1))
+        assertEquals(d("2027-01-07"), stepAnchor(d("2026-12-31"), CalendarMode.Week, 1))
+    }
+
+    @Test fun overlappingBlocksSitSideBySide() {
+        // blocks 50 minutes long: 09:00 and 09:30 overlap, 09:50 starts as the first ends, 11:00 is on its own
+        val placed = calendarLanes(listOf(timed("c", "09:50"), timed("a", "09:00"), timed("b", "09:30"), timed("d", "11:00")), 50f)
+        assertEquals(listOf("a", "b", "c", "d"), placed.map { it.entry.todoId })
+        // 09:50 takes the first lane again, freed at 09:50; the cluster is two wide
+        assertEquals(listOf(0 to 2, 1 to 2, 0 to 2, 0 to 1), placed.map { it.lane to it.lanes })
+        assertEquals(listOf(listOf("a", "b", "c"), listOf("d")), calendarClusters(placed.map { it.entry }, 50f).map { g -> g.map { it.todoId } })
+        // three at one time: three lanes, open before done, then by title
+        val same = calendarLanes(listOf(timed("z", "14:00"), timed("y", "14:00"), timed("x", "14:00")), 50f)
+        assertEquals(listOf("x" to 0, "y" to 1, "z" to 2), same.map { it.entry.todoId to it.lane })
+        assertTrue(same.all { it.lanes == 3 })
+        assertTrue(calendarLanes(emptyList(), 50f).isEmpty())
+    }
+
+    @Test fun aTapOnTheAxisSnapsDownToTheHalfHour() {
+        assertEquals(LocalTime.of(9, 0), slotTime(9 * 60 + 29.9f))
+        assertEquals(LocalTime.of(9, 30), slotTime(9 * 60 + 30f))
+        assertEquals(LocalTime.of(0, 0), slotTime(-20f))
+        // within the day: the last half hour at the latest
+        assertEquals(LocalTime.of(23, 30), slotTime(24 * 60 + 10f))
+    }
+
+    // #4200, as the web's dropOnAxis / dropOnDay(…, allDay)
+    @Test fun aDropOnTheAxisSnapsTheTopEdgeToTheNearestQuarterHour() {
+        assertEquals(LocalTime.of(9, 15), dropTime(9 * 60 + 22f))
+        assertEquals(LocalTime.of(9, 30), dropTime(9 * 60 + 23f))
+        assertEquals(LocalTime.of(0, 0), dropTime(-40f))
+        assertEquals(LocalTime.of(23, 45), dropTime(24 * 60 + 30f))
+        assertEquals(LocalTime.of(23, 45), dropTime(23 * 60 + 58f))
+        // 14:15 on Nov 19 here
+        assertEquals(TodoDue.At(Instant.parse("2026-11-19T06:15:00Z")), dropOnAxis(d("2026-11-19"), 14 * 60 + 10f, zone))
+        // an all-day one dropped on the axis is due at that moment
+        val allDay = Todo("a", dueDate = "2026-11-12")
+        val target = AxisTarget.At(d("2026-11-12"), LocalTime.of(10, 0))
+        assertEquals(TodoDue.At(Instant.parse("2026-11-12T02:00:00Z")), allDay.moveTo(entry(allDay)!!.dropOn(target, zone)))
+    }
+
+    @Test fun aDropOnTheAllDayRowIsDueThatDayAllDay() {
+        // 18:00 on Nov 12 here, dropped on the 14th's All Day row
+        val at = Todo("a", dueAt = "2026-11-12T10:00:00Z")
+        assertEquals(TodoDue.Day(d("2026-11-14")), entry(at)!!.dropOn(AxisTarget.AllDay(d("2026-11-14")), zone))
+        assertEquals(TodoDue.Day(d("2026-11-14")), entry(at)!!.dropOnDay(d("2026-11-14"), zone, allDay = true))
+        // its own day's All Day row is a change too; an all-day one dropped on its own row is not
+        assertEquals(TodoDue.Day(d("2026-11-12")), at.moveTo(entry(at)!!.dropOn(AxisTarget.AllDay(d("2026-11-12")), zone)))
+        val day = Todo("b", dueDate = "2026-11-12")
+        assertNull(day.moveTo(entry(day)!!.dropOn(AxisTarget.AllDay(d("2026-11-12")), zone)))
+        // dropped back at its own quarter hour, nothing is sent; done ones move too
+        assertNull(at.moveTo(entry(at)!!.dropOn(AxisTarget.At(d("2026-11-12"), LocalTime.of(18, 0)), zone)))
+        // one off the quarter hour (18:07) let go where it snaps back keeps its time; a quarter on, it snaps
+        val off = Todo("d", dueAt = "2026-11-12T10:07:00Z")
+        assertNull(off.moveTo(entry(off)!!.dropOn(AxisTarget.At(d("2026-11-12"), LocalTime.of(18, 0)), zone)))
+        assertEquals(TodoDue.At(Instant.parse("2026-11-12T10:15:00Z")), off.moveTo(entry(off)!!.dropOn(AxisTarget.At(d("2026-11-12"), LocalTime.of(18, 15)), zone)))
+        assertEquals(TodoDue.At(Instant.parse("2026-11-13T10:00:00Z")), off.moveTo(entry(off)!!.dropOn(AxisTarget.At(d("2026-11-13"), LocalTime.of(18, 0)), zone)))
+        val done = Todo("c", dueAt = "2026-11-12T10:00:00Z", doneAt = "2026-11-04T10:00:00Z")
+        assertEquals(TodoDue.At(Instant.parse("2026-11-13T10:00:00Z")), done.moveTo(entry(done)!!.dropOn(AxisTarget.At(d("2026-11-13"), LocalTime.of(18, 0)), zone)))
+    }
+
+    @Test fun theTargetUnderACarriedBlock() {
+        val week = calendarDays(CalendarMode.Week, d("2026-11-12"), DayOfWeek.MONDAY)
+        // seven columns of 100, hours 60 high: the block's top at 9:20 lands at 9:15 on the third day
+        assertEquals(AxisTarget.At(d("2026-11-11"), LocalTime.of(9, 15)), axisDropTarget(250f, 700f, week, false, false, 9 * 60f + 20f, 60f))
+        // on the All Day row, the day under the finger
+        assertEquals(AxisTarget.AllDay(d("2026-11-15")), axisDropTarget(699f, 700f, week, false, true, 0f, 60f))
+        // right to left, the first day is at the right
+        assertEquals(AxisTarget.AllDay(d("2026-11-15")), axisDropTarget(0f, 700f, week, true, true, 0f, 60f))
+        // a block above the axis' top lands at midnight, below its end at 23:45
+        assertEquals(LocalTime.of(0, 0), (axisDropTarget(10f, 700f, week, false, false, -30f, 60f) as AxisTarget.At).time)
+        assertEquals(LocalTime.of(23, 45), (axisDropTarget(10f, 700f, week, false, false, 24 * 60f, 60f) as AxisTarget.At).time)
+        // one day: its whole width
+        assertEquals(AxisTarget.At(d("2026-11-12"), LocalTime.of(14, 0)), axisDropTarget(390f, 400f, listOf(d("2026-11-12")), false, false, 14 * 120f, 120f))
+        // off the columns
+        assertNull(axisDropTarget(-1f, 700f, week, false, false, 0f, 60f))
+        assertNull(axisDropTarget(700f, 700f, week, false, false, 0f, 60f))
+        assertNull(axisColumn(10f, 700f, 0))
+    }
+
+    @Test fun theAxisFirstShowsTheMorningsTodosAndNow() {
+        val week = calendarDays(CalendarMode.Week, d("2026-11-12"), DayOfWeek.MONDAY)
+        // nothing on it, today not shown: the morning
+        val next = calendarDays(CalendarMode.Week, d("2026-11-19"), DayOfWeek.MONDAY)
+        assertEquals(CalendarMorning, firstHour(next, emptyList(), now, zone))
+        // an hour before the first timed one
+        assertEquals(6, firstHour(next, listOf(timed("a", "10:00", "2026-11-17"), timed("b", "07:30", "2026-11-19")), now, zone))
+        assertEquals(0, firstHour(next, listOf(timed("a", "00:30", "2026-11-17")), now, zone))
+        // one off the days shown counts for nothing
+        assertEquals(CalendarMorning, firstHour(next, listOf(timed("a", "07:30", "2026-11-12")), now, zone))
+        // today shown (17:30 now): an hour and a half before now, or earlier for the morning's to-dos
+        val nov5 = calendarDays(CalendarMode.Week, d("2026-11-05"), DayOfWeek.MONDAY)
+        assertEquals(16, firstHour(nov5, emptyList(), now, zone))
+        assertEquals(8, firstHour(nov5, listOf(timed("a", "09:00", "2026-11-06")), now, zone))
+        // just after midnight, the start of the day
+        assertEquals(0, firstHour(listOf(d("2026-11-05")), emptyList(), Instant.parse("2026-11-04T16:30:00Z"), zone))
+        assertEquals(CalendarMorning, firstHour(week, emptyList(), now, zone))
+    }
 }

@@ -139,5 +139,20 @@ class SubmissionLimitTests(unittest.TestCase):
         tf.add_tester.assert_called_once()
 
 
+class MainArgumentTests(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(setattr, tf, "PLATFORM", tf.PLATFORM)
+
+    def test_an_unknown_command_or_option_exits_with_the_usage_and_calls_nothing(self):
+        for argv in (["nex-build"], ["--platfrom", "mac", "status"]):
+            with self.subTest(argv=argv), patch.object(sys, "argv", ["asc_testflight.py", *argv]), \
+                    patch.object(tf, "request") as request, patch.object(tf, "get_all") as get_all:
+                with self.assertRaises(SystemExit) as raised:
+                    tf.main()
+                self.assertIn("asc_testflight.py next-build", str(raised.exception.code))
+                request.assert_not_called()
+                get_all.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/transcript"
 )
 
 // Archiving closed sessions by themselves (docs/assistant/todos.md "Closed sessions archive themselves", #3618). A
@@ -18,7 +19,8 @@ import (
 // reads), or working, starting or with background work; one
 // with a card waiting or queued input; one the manager is to wake or continue (session_work); one linked to an open
 // to-do; an assistant conversation; a review's reviewer; a subagent's row; a session another tool owns (its archive
-// would also move it in that tool); with no to-do, one whose last words ask the user something.
+// would also move it in that tool); a desktop app's session, which that app's sidebar keeps whatever its age (only an
+// archive there or the user's here takes it off, #3304); with no to-do, one whose last words ask the user something.
 
 const (
 	// defaultArchiveClosedDays is archive_closed_days when unset; 0 turns the pass off.
@@ -119,6 +121,10 @@ func autoArchivable(c proto.Session, now time.Time, idle time.Duration, onOpenTo
 	case idle <= 0 || c.Archived || onOpenTodo || reviewer:
 		return false
 	case c.Assistant || c.IsSubagent || c.SourceKind != "":
+		return false
+	case c.AgentSurface == transcript.SurfaceDesktop:
+		// The node sets source_kind only while the app has the session open; the rows it lists offline as the app's
+		// sidebar does (node/sessions_offline.go) say just the surface.
 		return false
 	case !sessionClosed(c) || c.UpdatedAt.IsZero():
 		return false

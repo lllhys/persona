@@ -3,6 +3,12 @@ import CoreMedia
 import CoreVideo
 import Observation
 import SwiftUI
+#if canImport(PersonaInputKit)
+import PersonaInputKit
+#endif
+#if os(iOS) && canImport(PersonaScreenKit)
+import PersonaScreenKit
+#endif
 
 /// One Mac's VNC (#1343): the native client (RFBClient) over the hub's relay, signed in with the sign-in this device
 /// keeps (ScreenCredentials, #1322) or the one typed in, and its frames for every layer that shows them (the page's,
@@ -17,7 +23,9 @@ import SwiftUI
     }
 
     let ref: MachineRef
-    private(set) var phase: Phase = .connecting
+    private(set) var phase: Phase = .connecting {
+        didSet { if phase != oldValue { followVideo() } }
+    }
     /// The Mac's screen, in its pixels.
     private(set) var size: CGSize = .zero
     /// The server's screens on it (ExtendedDesktopSize, #80); empty from a server that sends none (macOS's, as far as is known).
@@ -28,6 +36,14 @@ import SwiftUI
     private(set) var cursor: RFBClient.Cursor?
     /// What the Mac last put on its clipboard (ServerCutText).
     private(set) var macClipboard: String?
+    /// This connection's pair (#3954): the video channel binds to it, and only once Screen Sharing accepted the sign-in on
+    /// it. A new one each connection; not observed, since only opening video reads it.
+    @ObservationIgnored private(set) var pair: String?
+    #if os(iOS) && canImport(PersonaScreenKit)
+    /// The video channel (#3954): it binds to this connection's pair once it is live, and holds RFB's updates while its
+    /// picture shows.
+    let video = ScreenVideoLink()
+    #endif
     /// Frames a second shown, and how long the last one took from the mock's Screen Sharing to here (its stamp).
     private(set) var fps: Double = 0
     private(set) var latency: Double?
@@ -52,6 +68,9 @@ import SwiftUI
 
     init(ref: MachineRef) {
         self.ref = ref
+        #if os(iOS) && canImport(PersonaScreenKit)
+        video.onShowing = { [weak self] on in self?.client?.holdUpdates(on) }
+        #endif
         input = RFBInputQueue(send: { [weak self] e in self?.client?.key(e.keysym, down: e.down) },
                               write: { [weak self] text in
                                   // No connection: its ⌘V could not go out, so the paste counts as failed.
@@ -65,7 +84,32 @@ import SwiftUI
             if AppModel.shared.api(ref.group) == nil { phase = .closed(String(localized: "Can't reach the hub")) }
             return
         }
-        run(RFBClient(transport: RFBWebSocket(api: api, machine: ref.id)) { [weak self] in await self?.credentials() })
+        let pair = RFBWebSocket.newPair()
+        self.pair = pair
+        #if os(iOS) && canImport(PersonaScreenKit)
+        if ScreenRoutes.enabled {
+            ScreenRoutes.listeners[pair] = { [weak self] change in self?.video.routeChanged(change) }
+            ScreenRoutes.meters[pair] = { [weak self] stats, why in self?.video.measured(stats, unavailable: why) }
+            ScreenRoutes.flows[pair] = { [weak self] status in self?.video.flowChanged(status) }
+        }
+        #endif
+        run(RFBClient(transport: Self.transport(api: api, ref: ref, pair: pair)) { [weak self] in await self?.credentials() })
+    }
+
+    /// The hub's relay of Screen Sharing for this connection (opening it connects). With direct routes on it asks for a
+    /// screen session (#6398): with a hub and a node that offer one, RFB is the session's channel; otherwise it is the
+    /// same raw stream.
+    private static func transport(api: APIClient, ref: MachineRef, pair: String) -> RFBTransport {
+        #if os(iOS) && canImport(PersonaScreenKit)
+        if ScreenRoutes.enabled {
+            let ws = RFBWebSocket(api: api, machine: ref.id, pair: pair, protocols: [ScreenLinkWire.subprotocol, "binary"])
+            let group = ref.group, machine = ref.id
+            return ScreenLinkRFBTransport(ScreenLinkRFBStream(socket: ScreenLinkRelaySocket(ws)) {
+                ScreenRoutes.opened($0, pair: pair, group: group, machine: machine)
+            })
+        }
+        #endif
+        return RFBWebSocket(api: api, machine: ref.id, pair: pair)
     }
 
     /// Follows this client and starts it: start's over the hub's relay, or a test's over a scripted transport.
@@ -93,6 +137,9 @@ import SwiftUI
             }
         }
         client = c
+        // A new connection: the Mac ended Phone Screen with the last one, so the small window shows all of it until the
+        // page cuts it again.
+        cutSmallWindow(nil)
         phase = .connecting
         pictured = false
         lastFrame = nil
@@ -114,6 +161,38 @@ import SwiftUI
     /// display or a zoomed-in part is shown: macOS's Screen Sharing leaves most smaller requests unanswered (#3067).
     func show(in layer: AVSampleBufferDisplayLayer, timed: Bool = false) { sink.add(layer, timed: timed) }
     func hide(from layer: AVSampleBufferDisplayLayer) { sink.remove(layer) }
+
+    /// The part of the picture the small window shows (the timed layers, VNCPiP, #9659), in framebuffer pixels, and the
+    /// framebuffer's size it was cut for: Phone Screen's portrait display alone, at its own pixels, so the small window
+    /// is portrait and sharp. Nil: all of it. The page sets it; it stays while the small window has the Mac, and a new
+    /// connection starts without it. Not observed: the small window reads it as it draws.
+    @ObservationIgnored private(set) var smallWindowCut: (rect: CGRect, framebuffer: CGSize)?
+
+    /// The small window shows `rect` of the picture as it is now (nil: all of it).
+    func cutSmallWindow(_ rect: CGRect?) {
+        let now = rect.map { (rect: $0, framebuffer: size) }
+        guard now?.rect != smallWindowCut?.rect || now?.framebuffer != smallWindowCut?.framebuffer else { return }
+        smallWindowCut = now
+        sink.cut(rect, of: size)
+    }
+
+    /// What the small window shows of the picture now: the cut while the picture is still the size it was cut for.
+    var smallWindowPart: CGRect? {
+        guard let c = smallWindowCut, c.framebuffer == size, c.rect.width >= 2, c.rect.height >= 2,
+              CGRect(origin: .zero, size: size).contains(c.rect.integral) else { return nil }
+        return c.rect.integral
+    }
+
+    /// Video follows the connection: a live one (signed in) is what it binds to; anything else ends it.
+    private func followVideo() {
+        #if os(iOS) && canImport(PersonaScreenKit)
+        if phase == .live, let pair {
+            video.rfb(.init(group: ref.group, machine: ref.id, pair: pair))
+        } else {
+            video.rfb(nil)
+        }
+        #endif
+    }
 
     // MARK: Signing in
 
@@ -165,6 +244,9 @@ import SwiftUI
             if pointer == .zero { pointer = CGPoint(x: width / 2, y: height / 2) }
             phase = .live
             input.signedIn() // once a connection: the Mac drops keys for a moment after it (#3075)
+            saidHello = false
+            askedForSmoothScrolling = false
+            if AppModel.shared.screenInput(ref)?.granted == true { sayHello() } // the helper starts before the first scroll
             if let t = typed {
                 if t.remember { ScreenCredentials.save(.init(account: t.0.account, password: t.0.password), for: ref) } else { ScreenCredentials.forget(ref) }
                 typed = nil
@@ -216,10 +298,59 @@ import SwiftUI
         move(to: p, buttons: 0)
     }
 
-    /// The wheel: up (positive) or down, a notch at a time.
+    // MARK: Pixel scrolling (#7775)
+
+    /// A hello went on this connection: the node knows this phone scrolls by pixels.
+    @ObservationIgnored private var saidHello = false
+    /// This connection's first two-finger scroll had the node ask macOS for Persona Input's permission: the page says,
+    /// under its bar, what the window now on the Mac's screen is for (until it is allowed or the connection ends).
+    private(set) var askedForSmoothScrolling = false
+
+    /// Whether two fingers scroll this Mac by pixels now: its node reads scroll records and Persona Input may post them.
+    var scrollsByPixels: Bool {
+        #if canImport(PersonaInputKit)
+        phase == .live && AppModel.shared.screenInput(ref)?.granted == true
+        #else
+        false
+        #endif
+    }
+
+    /// Two fingers went down. When Persona Input may not post yet and macOS was never asked, a hello asks the node to
+    /// ask, once: true when it did, so the page can say what the Mac's window is for.
+    func scrollBegan() -> Bool {
+        #if canImport(PersonaInputKit)
+        guard phase == .live, !saidHello, let input = AppModel.shared.screenInput(ref), !input.granted,
+              input.permission == "missing", !input.asked else { return false }
+        sayHello()
+        askedForSmoothScrolling = true
+        return true
+        #else
+        false
+        #endif
+    }
+
+    /// A pixel scroll step for the Mac's node, as PersonaInputKit's record (the iOS app; Vision never scrolls by pixels).
+    func scroll(_ step: VNCPixelScroll.Step) {
+        #if canImport(PersonaInputKit)
+        let record = ScrollRecord(kind: .scroll, phase: ScrollRecord.Phase(rawValue: step.phase.rawValue) ?? .none,
+                                  momentum: ScrollRecord.Momentum(rawValue: step.momentum.rawValue) ?? .none, dy: Float(step.dy))
+        client?.input(record.encoded())
+        #endif
+    }
+
+    private func sayHello() {
+        guard !saidHello else { return }
+        saidHello = true
+        #if canImport(PersonaInputKit)
+        client?.input(ScrollRecord.hello.encoded())
+        #endif
+    }
+
+    /// The wheel: up (positive) or down, a notch at a time, every one of them (#7775: it once dropped any past 20;
+    /// VNCWheel sends a few each display frame).
     func scroll(notches: Int, at p: CGPoint) {
         let b: UInt8 = notches > 0 ? 8 : 16
-        for _ in 0..<min(abs(notches), 20) {
+        for _ in 0..<abs(notches) {
             move(to: p, buttons: buttons | b)
             move(to: p, buttons: buttons & ~b)
         }

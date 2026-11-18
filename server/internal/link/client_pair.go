@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // parsePairLink reads what `personad hub pair` printed: persona://link?… (made for one machine) or persona://pair?…
@@ -18,18 +20,18 @@ import (
 func parsePairLink(raw string) (token string, c Config, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !pairScheme(u.Scheme) || (u.Host != "link" && u.Host != "pair") {
-		return "", c, errors.New("这不是 personad hub pair 给的配对链接（persona://link?… 或 persona://pair?…）")
+		return "", c, newTextError("link-errors.pair_link_invalid", nil)
 	}
 	q := u.Query()
 	token, c.Hub, c.FP, c.Machine = q.Get("token"), q.Get("hub"), q.Get("fp"), q.Get("machine")
 	if token == "" {
-		return "", c, errors.New("配对链接里没有 token")
+		return "", c, newTextError("link-errors.pair_token_missing", nil)
 	}
 	if c.FP != "" {
 		// The hub's own TLS port, pinned: url names the host, tls the port (the hub serves the API at its root).
 		port := q.Get("tls")
 		if port == "" {
-			return "", c, errors.New("配对链接有指纹却没有 TLS 端口：在 hub 上重新运行 personad hub pair --machine")
+			return "", c, newTextError("link-errors.pair_pin_without_tls", nil)
 		}
 		if base, err := url.Parse(q.Get("url")); err == nil && base.Hostname() != "" {
 			u := "https://" + net.JoinHostPort(base.Hostname(), port)
@@ -39,7 +41,7 @@ func parsePairLink(raw string) (token string, c Config, err error) {
 		// No pin: the hub has no TLS of its own and url is the HTTPS reverse proxy in front of it, path and all.
 		e, err := proxyEndpoint(q.Get("url"))
 		if err != nil {
-			return "", c, errors.New("这台 hub 没开 TLS（hub.json 的 public.tls_listen），public_url 也不是 https 的反向代理地址：电脑链路只走 HTTPS")
+			return "", c, newTextError("link-errors.pair_tls_required", nil)
 		}
 		c.Trust = TrustSystem
 		c.Endpoints = append(c.Endpoints, e)
@@ -51,7 +53,7 @@ func parsePairLink(raw string) (token string, c Config, err error) {
 		}
 	}
 	if len(c.Endpoints) == 0 {
-		return "", c, errors.New("配对链接里没有 hub 的地址")
+		return "", c, newTextError("link-errors.pair_no_addresses", nil)
 	}
 	return token, c, nil
 }
@@ -88,13 +90,13 @@ func PairWithSSH(ctx context.Context, raw, machine, name, path string, ssh *SSH,
 		return nil, err
 	}
 	if c.Machine != "" && machine != "" && machine != c.Machine {
-		return nil, fmt.Errorf("这条配对链接是给 %q 的，不是 %q", c.Machine, machine)
+		return nil, newTextError("link-errors.pair_machine_mismatch", nil, i18n.Args{"expected": strconv.Quote(c.Machine), "actual": strconv.Quote(machine)})
 	}
 	if c.Machine == "" {
 		c.Machine = machine
 	}
 	if c.Machine == "" {
-		return nil, errors.New("要填这台电脑在 hub 里的机器 id（hub.json 里 kind 为 link 的那台）")
+		return nil, newTextError("link-errors.pair_machine_required", nil)
 	}
 	var bin string
 	if len(sshBin) > 0 {
@@ -136,16 +138,20 @@ func PairWithSSH(ctx context.Context, raw, machine, name, path string, ssh *SSH,
 			_ = json.Unmarshal(b, &e)
 			why := e.Error
 			if d, ok := e.Detail.(string); ok && d != "" && d != why {
-				why = strings.TrimPrefix(why+"：", "：") + d
+				if why != "" {
+					why = defaultText("link-errors.hub_rejection_detail", i18n.Args{"error": why, "detail": d})
+				} else {
+					why = d
+				}
 			}
 			if why == "" {
 				why = resp.Status
 			}
-			return redeemed{}, fmt.Errorf("hub 拒绝了：%s", why)
+			return redeemed{}, newTextError("link-errors.hub_rejected", nil, i18n.Args{"error": why})
 		}
 		var out redeemed
 		if err := json.Unmarshal(b, &out); err != nil || out.Token == "" || out.Role != "link" {
-			return redeemed{}, errors.New("hub 没给出链路凭据：升级 hub")
+			return redeemed{}, newTextError("link-errors.hub_no_credential", nil)
 		}
 		return out, nil
 	}
@@ -204,7 +210,7 @@ func PairWithSSH(ctx context.Context, raw, machine, name, path string, ssh *SSH,
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("配对失败：%w", err)
+		return nil, newTextError("link-errors.pair_failed", err)
 	}
 	c.Token = got.Token
 	err = Update(path, func(old *Config) error {
@@ -233,7 +239,7 @@ func PairWithSSH(ctx context.Context, raw, machine, name, path string, ssh *SSH,
 // pairAnswered reports whether a direct pairing attempt already reached the hub (which refused the token or had the
 // wrong pinned key), so falling back to SSH should not hide a rejected link or wrong hub key.
 func pairAnswered(err error) bool {
-	return errors.Is(err, errPin) || strings.Contains(err.Error(), "hub 拒绝了：")
+	return errors.Is(err, errPin) || strings.Contains(err.Error(), "hub 拒绝了：") // i18n-ignore: detects the canonical hub-refusal prefix before presentation
 }
 
 // AddAddress adds a candidate typed on this computer (a domain name, say); RemoveAddress takes one out again.
@@ -241,7 +247,7 @@ func AddAddress(path, raw string) (Endpoint, error) {
 	var added Endpoint
 	err := Update(path, func(c *Config) error {
 		if c.Token == "" {
-			return errors.New("还没配对")
+			return newTextError("link-errors.not_paired", nil)
 		}
 		e, err := normalize(raw, c.Endpoints)
 		if err != nil {

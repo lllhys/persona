@@ -25,6 +25,7 @@ import (
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
+	"github.com/nwverse/persona/server/internal/managerconf"
 )
 
 // `personad extension …` on the hub's machine (docs/extensions/extensions.md "Command line"): what installs, upgrades and removes
@@ -691,7 +692,7 @@ type extensionClient struct {
 // words itself and what it asks the hub for always agree.
 func (c *extensionClient) l() i18n.Lang { return c.lang.Or(i18n.En) }
 
-// do calls the hub on this machine over loopback with the master token.
+// do calls the hub on this machine from loopback (managerconf.CLIHubURL, CLIDial) with the master token.
 func (c *extensionClient) do(ctx context.Context, method, path string, body, out any) error {
 	err := c.call(ctx, method, path, body, out)
 	if legacy, ok := strings.CutPrefix(path, "/api/v1/extensions"); ok && errors.Is(err, errNoRoute) {
@@ -720,7 +721,7 @@ func (c *extensionClient) call(ctx context.Context, method, path string, body, o
 		}
 		r = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://"+net.JoinHostPort("127.0.0.1", port)+path, r)
+	req, err := http.NewRequestWithContext(ctx, method, managerconf.CLIHubURL(c.cfg.Listen)+path, r)
 	if err != nil {
 		return err
 	}
@@ -729,7 +730,7 @@ func (c *extensionClient) call(ctx context.Context, method, path string, body, o
 	// The hub's text (errors, permission lines, statuses it words) comes in the terminal's language, not the user
 	// language an app last set (#5520).
 	req.Header.Set("Accept-Language", string(c.l()))
-	transport := &http.Transport{Proxy: nil}
+	transport := &http.Transport{Proxy: nil, DialContext: managerconf.CLIDial}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Timeout: 10 * time.Minute, Transport: transport} // a download may take a while
 	res, err := client.Do(req)

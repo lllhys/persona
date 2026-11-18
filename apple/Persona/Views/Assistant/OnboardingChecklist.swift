@@ -106,7 +106,7 @@ struct OnboardingChecklistView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) { footer }
             .toolbar {
                 if fromSettings {
-                    ToolbarItem(placement: .confirmationAction) { Button { dismiss() } label: { Text("Done [Extension System Presentation c0b3fb]").lineLimit(1) } }
+                    SheetClose { dismiss() }
                 }
             }
             #if os(iOS)

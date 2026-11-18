@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PanelProvider, PanelState } from "../../lib/model-panel";
 import type { LauncherQuotaAnswer } from "../../lib/quota";
+import { effortTitle } from "../../lib/session-actions";
 
 vi.hoisted(() => {
   const g = globalThis as Record<string, unknown>;
@@ -21,6 +22,7 @@ vi.mock("../../lib/router", async (orig) => ({ ...(await orig<typeof import("../
 
 const { ModelPanel } = await import("./ModelPanel");
 const { panelStoreKey } = await import("./store");
+const { railCaptions, railEdges, railFade } = await import("./Rail");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -126,6 +128,23 @@ describe("the model panel", () => {
     expect(document.body.querySelector('[role="listbox"]')).not.toBeNull();
     // the rail: Recent, Favorites, All (on), one cell per provider
     expect([...document.body.querySelectorAll("[data-rail-cell]")].map((c) => `${c.getAttribute("data-rail-cell")}${c.getAttribute("aria-pressed") === "true" ? "*" : ""}`)).toEqual(["recent", "favorites", "all*", "claude", "codex"]);
+    // every cell says what it is under its mark, so a phone (no hover) tells providers apart before opening one
+    expect([...document.body.querySelectorAll("[data-rail-caption]")].map((c) => c.textContent)).toEqual(["最近", "收藏", "全部", "Claude", "Codex"]);
+    expect(document.body.querySelector('[data-rail-cell="claude"]')?.getAttribute("aria-label")).toBe("Claude");
+  });
+
+  it("captions providers by the words that tell them apart", () => {
+    expect(railCaptions(["claude-aster", "claude-max", "claude-desktop", "codex"])).toEqual(["aster", "max", "desktop", "codex"]);
+    // a first word nobody else has stays; so does a name that is only that word
+    expect(railCaptions(["claude", "claude-max", "codex"])).toEqual(["claude", "max", "codex"]);
+    expect(railCaptions(["Claude Max", "Claude Pro", "本机网关 aster", "本机网关 beta"])).toEqual(["Max", "Pro", "aster", "beta"]);
+    // a trailing note in brackets goes while the names stay apart without it
+    expect(railCaptions(["hone-claw（Claude）", "Zhipu (GLM)"])).toEqual(["hone-claw", "Zhipu"]);
+    expect(railCaptions(["gw (Claude)", "gw (Codex)"])).toEqual(["gw (Claude)", "gw (Codex)"]);
+    // shortening that would make two captions the same keeps those names whole
+    expect(railCaptions(["claude-max", "claude-pro", "codex-max", "codex-pro"])).toEqual(["claude-max", "claude-pro", "codex-max", "codex-pro"]);
+    expect(railCaptions(["claude-max", "max", "claude-pro"])).toEqual(["claude-max", "max", "pro"]);
+    expect(railCaptions([])).toEqual([]);
   });
 
   it("draws a provider's weekly quota bar and reset tooltip, and no bar when it is unknown", async () => {
@@ -249,12 +268,40 @@ describe("the model panel", () => {
     key(gpt, "Enter");
     await flush();
     expect(onPick).not.toHaveBeenCalled();
-    act(() => gpt.querySelector<HTMLButtonElement>("[data-row-customize]")!.click());
+    expect(flyout()).not.toBeNull();
     const fast = flyout()!.querySelector<HTMLButtonElement>("[data-fast-toggle]")!;
     expect(fast.getAttribute("aria-pressed")).toBe("false");
     act(() => fast.click());
     await flush();
     expect(onApplyCurrent).toHaveBeenCalledWith({ fast: true });
+  });
+
+  it("the current effort-only row is not greyed out and a tap opens its working slider", async () => {
+    const state: PanelState = { current: { provider: "codex", model: "gpt-5.5", effort: "high" }, recommended: [] };
+    const { onApplyCurrent, onPick } = await open({ providers: [codex()], state, onApplyCurrent: async () => true });
+    const gpt = row("GPT");
+    expect(gpt.className).not.toContain("opacity-50");
+    act(() => gpt.click());
+    const slider = flyout()!.querySelector<HTMLElement>('[role="slider"]')!;
+    key(slider, "Home");
+    await flush();
+    expect(onApplyCurrent).toHaveBeenCalledWith({ effort: "low" });
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("keeps actual effort and a visible reason when the session cannot change it", async () => {
+    const reason = "This session has no shared control connection.";
+    await open({
+      providers: [codex({ models: [{ id: "gpt-5.5", name: "GPT 5.5", efforts: [], effortUnavailable: reason }] })],
+      state: { current: { provider: "codex", model: "gpt-5.5", effort: "max" }, recommended: [] },
+      onApplyCurrent: async () => true,
+    });
+    const gpt = row("GPT");
+    expect(gpt.querySelector("[data-row-setup]")!.textContent).toContain(effortTitle("max"));
+    expect(gpt.textContent).toContain(reason);
+    act(() => gpt.click());
+    expect(flyout()!.textContent).toContain(reason);
+    expect(flyout()!.querySelector('[role="slider"]')).toBeNull();
   });
 
   it("held by a dialog about the pick (#5054): stays open under its backdrop, leaving it the clicks, focus and Escape", async () => {
@@ -394,5 +441,113 @@ describe("the model panel", () => {
   it("keeps an Agent's records apart from a Persona chat's, under this hub's address", () => {
     expect(panelStoreKey("agent", "favorites")).toBe("persona.modelPanel..agent.favorites");
     expect(panelStoreKey("assistant", "recent", "/hub")).toBe("persona.modelPanel./hub.assistant.recent");
+  });
+});
+
+describe("a long list", () => {
+  const many = (n: number): PanelProvider => ({ id: "gw", name: "Gateway", engine: "claude", models: Array.from({ length: n }, (_, i) => ({ id: `gw-model-${i}`, name: `Gateway ${i}`, efforts: [] })) });
+
+  it("the All view cuts a long group to its first rows; Show all opens that provider's view", async () => {
+    await open({ providers: [claude(), many(20)] });
+    const more = document.body.querySelector<HTMLButtonElement>('[data-panel-more="gw"]')!;
+    expect(more.textContent).toBe("显示全部 20 个");
+    expect(rows().filter((r) => r.textContent?.includes("Gateway "))).toHaveLength(8);
+    act(() => more.click());
+    expect(button("Gateway").getAttribute("aria-pressed")).toBe("true");
+    expect(rows().filter((r) => r.textContent?.includes("Gateway "))).toHaveLength(20);
+    expect(document.body.querySelector("[data-panel-more]")).toBeNull();
+  });
+
+  it("the rail fades the edges it has more cells beyond", async () => {
+    expect(railEdges({ scrollTop: 0, clientHeight: 400, scrollHeight: 400 })).toEqual({ up: false, down: false });
+    expect(railEdges({ scrollTop: 0, clientHeight: 400, scrollHeight: 900 })).toEqual({ up: false, down: true });
+    expect(railEdges({ scrollTop: 200, clientHeight: 400, scrollHeight: 900 })).toEqual({ up: true, down: true });
+    expect(railEdges({ scrollTop: 500, clientHeight: 400, scrollHeight: 900 })).toEqual({ up: true, down: false });
+    expect(railFade(false, false)).toBeUndefined();
+    expect(railFade(false, true)).toBe("linear-gradient(180deg,#000,#000 calc(100% - 20px),transparent)");
+    expect(railFade(true, false)).toBe("linear-gradient(180deg,transparent,#000 20px,#000)");
+
+    await open({ providers: [claude(), codex(), many(3)] });
+    const rail = document.body.querySelector<HTMLElement>('[role="group"][aria-label="模型视图"]')!;
+    expect(rail.dataset.railFade).toBeUndefined();
+    Object.defineProperties(rail, { clientHeight: { value: 200, configurable: true }, scrollHeight: { value: 600, configurable: true }, scrollTop: { value: 150, configurable: true, writable: true } });
+    act(() => { rail.dispatchEvent(new Event("scroll")); });
+    expect(rail.dataset.railFade).toBe("up down");
+    expect(rail.style.maskImage).toContain("linear-gradient");
+  });
+
+  it("a name cut short shows the whole model ID as its second line; others show it only on a touch screen", async () => {
+    const sw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+    const cw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    // a name longer than 20 characters does not fit
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", { configurable: true, get(this: HTMLElement) { return (this.textContent?.length ?? 0) * 10; } });
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get() { return 200; } });
+    try {
+      const long = "vendor/very-long-model-name-2026-11-01-preview";
+      await open({ providers: [claude({ models: [{ id: long, name: long, efforts: [] }, { id: "sonnet", name: "Sonnet 5", efforts: [] }] }), codex()], state: { current: null, recommended: [] } });
+      const cut = row(long).querySelector<HTMLElement>("[data-row-id]")!;
+      expect(cut.dataset.rowId).toBe("always");
+      expect(cut.textContent).toBe(long);
+      expect(cut.firstElementChild!.className).toContain("line-clamp-2");
+      const short = row("Sonnet 5").querySelector<HTMLElement>("[data-row-id]")!;
+      expect(short.dataset.rowId).toBe("touch");
+      expect(short.className).toContain("hidden");
+      expect(short.textContent).toBe("sonnet");
+    } finally {
+      if (sw) Object.defineProperty(HTMLElement.prototype, "scrollWidth", sw);
+      if (cw) Object.defineProperty(HTMLElement.prototype, "clientWidth", cw);
+    }
+  });
+});
+
+describe("model families", () => {
+  const max = (): PanelProvider => ({
+    id: "claude-max",
+    name: "claude-max",
+    engine: "claude",
+    models: [
+      { id: "default", name: "Default (recommended)", resolved: "claude-opus-5-5", efforts: [] },
+      { id: "opus", name: "Opus 5.5", resolved: "claude-opus-5-5", efforts: [] },
+      { id: "fable", name: "Fable 5.2", resolved: "claude-fable-5-2", efforts: [] },
+      { id: "claude-fable-5", name: "Fable 5", efforts: [] },
+      { id: "claude-opus-4-8", name: "Opus 4.8", efforts: [] },
+      { id: "claude-opus-4-7", name: "Opus 4.7", efforts: [] },
+    ],
+  });
+  const names = () => rows().map((r) => r.querySelector(".truncate")?.textContent);
+  const fold = (family: string) => document.body.querySelector<HTMLButtonElement>(`[data-panel-fold$="claude:${family}"]`)!;
+
+  it("each family under its name, the newest marked Latest; Earlier versions unfolds and folds; a search finds the folded", async () => {
+    await open({ providers: [max(), codex()], state: { current: null, recommended: [] } });
+    expect([...document.body.querySelectorAll("[data-panel-family]")].map((f) => f.getAttribute("aria-label"))).toEqual(["Claude Fable", "Claude Opus"]);
+    expect(names()).toEqual(["Default (recommended)", "Fable 5.2", "Opus 5.5", "GPT 5.5"]);
+    expect(row("Opus 5.5").querySelector("[data-row-latest]")?.textContent).toBe("最新");
+    expect(row("Default (recommended)").querySelector("[data-row-latest]")).toBeNull();
+
+    const opus = fold("opus");
+    expect(opus.textContent).toBe("更早版本 · 2");
+    expect(opus.getAttribute("aria-label")).toBe("Claude Opus：显示 2 个更早版本");
+    expect(opus.getAttribute("aria-expanded")).toBe("false");
+    act(() => opus.click());
+    expect(names()).toEqual(["Default (recommended)", "Fable 5.2", "Opus 5.5", "Opus 4.8", "Opus 4.7", "GPT 5.5"]);
+    expect(fold("opus").getAttribute("aria-expanded")).toBe("true");
+    expect(fold("opus").textContent).toBe("收起更早版本");
+    act(() => fold("opus").click());
+    expect(names()).not.toContain("Opus 4.8");
+
+    type(search(), "opus 4.7");
+    expect(names()).toEqual(["Opus 4.7"]);
+    expect(document.body.querySelector("[data-panel-fold]")).toBeNull();
+  });
+
+  it("the older model that runs now stays in its family, and ↑↓ walk the rows shown", async () => {
+    await open({ providers: [max(), codex()], state: { current: { provider: "claude-max", model: "claude-opus-4-7" }, recommended: [], starting: true } });
+    expect(names()).toEqual(["Default (recommended)", "Fable 5.2", "Opus 5.5", "Opus 4.7", "GPT 5.5"]);
+    expect(fold("opus").textContent).toBe("更早版本 · 1");
+    const now = row("Opus 4.7");
+    expect(now.hasAttribute("data-current")).toBe(true);
+    act(() => now.focus());
+    await key(now, "ArrowUp");
+    expect(document.activeElement).toBe(row("Opus 5.5"));
   });
 });

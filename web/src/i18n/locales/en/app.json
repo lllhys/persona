@@ -14,6 +14,7 @@
   "title_settings": "Settings",
   "title_agents": "Personal agents",
   "title_extension": "Extensions",
+  "title_not_found": "Page not found",
   "title_home": "Overview",
   "sidebar": "Sidebar",
   "reconnecting": "Can't reach the hub. Retrying…",
@@ -30,5 +31,7 @@
   "title_agent_archives": "Archived agents",
   "title_subscriptions": "Subscriptions",
   "new_version": "A new version is available",
-  "new_version_reload": "Reload"
+  "new_version_reload": "Reload",
+  "title_request": "Request",
+  "title_compare_runs": "Compare runs"
 }

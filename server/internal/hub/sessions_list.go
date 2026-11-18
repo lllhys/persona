@@ -2,6 +2,7 @@ package hub
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
@@ -10,7 +11,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/sessionlist"
@@ -25,20 +29,65 @@ const (
 	// key and answers with every manager's sessions, so an app sends it only to a hub that says this.
 	featureSessionsManager = "sessions_manager"
 	// featureSessionsPageCounts: a paged GET /api/v1/sessions takes with_counts=1 and answers with the page plus the
-	// counts ?counts=1 would give for the same filters (pageWithCounts), one read where a refresh took two (#4858).
+	// counts ?counts=1 would give for the same filters (sessionlist.PageWithCounts), one read where a refresh took two (#4858).
 	featureSessionsPageCounts = "sessions_page_counts"
+	// featureAgentsPageCounts: the same for a paged GET /api/v1/agents/sessions, the personal Agents the extension
+	// manager serves (extmgr/agents.go, #6496).
+	featureAgentsPageCounts = "agents_page_counts"
+	// featureSessionsListChanges: an app that lists it in the WebSocket URL's ?features= gets, on a sessions_list hint
+	// that follows a change of the index, the revision before the change (`since`) and the ids changed after it
+	// (`changed`), so an open chat does not read its row again for another session's change (sessionListHint, #6685).
+	featureSessionsListChanges = "sessions_list_changes"
 	// featureSessionsHierarchy: a paged GET /api/v1/sessions takes roots=1 (the child sessions folded under a listed
 	// parent left out of the rows and counts, the parents counted by their folded state) and parent_session_id=<sid>
 	// with machine_id (the children folded under that session), docs/protocol/protocol.md "Session hierarchy" (#5120).
 	// An older hub reads neither key, so an app sends them only to a hub that says this.
 	featureSessionsHierarchy = "sessions_hierarchy"
+	// featureSessionsSideFold: the rows carry the side-session fold (folded_as "side", folded_side, the children's
+	// sides rollup; docs/protocol/protocol.md "Session hierarchy", #7944), and a client folds side sessions into their
+	// parent's chat. The fold is the managers' (assistant/fleet_fold.go): the hub lists the feature only while every
+	// manager that carries Agents names it (sessionsSideFoldFeatures).
+	featureSessionsSideFold = assistantwire.CapabilitySessionsSideFold
+	// featureSessionsCatalog: a paged GET /api/v1/sessions takes catalog=1 (the projects and spaces of the filtered
+	// list, a repository's directories on every computer as one project: sessions_catalog.go), and
+	// place=["<machine>","<project>"] and space=["<machine>","<group>"], both repeatable (the sessions at those
+	// directories, in those spaces), docs/protocol/protocol.md "Projects and spaces". An older hub reads none of the
+	// keys, so an app sends them only to a hub that says this.
+	featureSessionsCatalog = "sessions_catalog"
+	// featureSessionsAgentsOnly scopes pages, counts and deltas to the Agents sidebar view.
+	featureSessionsAgentsOnly = "sessions_agents_only"
+	// featureSessionsTodo: a paged GET /api/v1/sessions takes todo=<id> (the sessions on that open to-do) and
+	// todo=none (on none), and its counts have a todo map (by to-do id, "" for none), docs/protocol/protocol.md
+	// "Sessions by to-do" (#6662). An older hub ignores the key and lists every session, so an app sends it only to a
+	// hub that says this.
+	featureSessionsTodo = "sessions_todo"
+	// featureSessionsQuickFilters: a paged GET /api/v1/sessions takes waiting=0|1 (working rows that only wait in the
+	// background, or the others) and exclude_pane_source=<origin> (all but that origin's rows): the web sidebar's quick
+	// filters on the paged list, docs/protocol/protocol.md "Quick filters" (#6662). An older hub ignores both keys.
+	featureSessionsQuickFilters = "sessions_quick_filters"
+	// featureSessionsJustFinished: a paged GET /api/v1/sessions takes just_finished=0|1 (seen rows whose done turn
+	// nobody had looked at while it is new, or the others), and its counts have just_finished, docs/protocol/protocol.md
+	// "Just finished rows" (#9751). An older hub ignores the key and lists every seen row, so an app sends it only to a
+	// hub that says this.
+	featureSessionsJustFinished = "sessions_just_finished"
 )
 
-// pageWithCounts is a page with its view's current counts (with_counts=1): what a separate ?counts=1 read with the
-// same filters returns, ignoring since, cursor and limit.
-type pageWithCounts struct {
-	sessionlist.Page
-	Counts sessionlist.Counts `json:"counts"`
+// sessionsSideFoldFeatures is sessions_side_fold while every manager that carries Agents (the default one, each
+// connected one and each computer's owner) is connected and folds side sessions, as agent_session_archives is: a
+// hub-wide feature cannot promise the fold for part of the fleet, so mixed versions keep side sessions as rows.
+func (h *Hub) sessionsSideFoldFeatures() []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ids := h.archiveManagers(ctx)
+	if len(ids) == 0 {
+		return nil
+	}
+	for _, id := range ids {
+		if h.archiveManagerHas(id, assistantwire.CapabilitySessionsSideFold) != http.StatusOK {
+			return nil
+		}
+	}
+	return []string{featureSessionsSideFold}
 }
 
 // runtimeList is a transport cache of the manager's already-decorated rows. It
@@ -160,10 +209,16 @@ func indexedRow(mid, id string, row *proto.Session, stamp bool, manager, root st
 		group = row.WorkspaceID
 	}
 	pane := sessionorigin.Of(*row)
+	// the open to-do it is on: the manager sets row.Todo for an active link only (a done one is completed_todo)
+	todo := ""
+	if row.Todo != nil {
+		todo = row.Todo.ID
+	}
 	item := sessionlist.Item{
 		ID: id, Machine: mid, Project: project, Group: group, PaneSource: pane,
-		State: row.State, BackgroundWaiting: row.BackgroundWaiting, Source: row.SourceKind, Provider: row.Agent, UpdatedAt: row.UpdatedAt,
-		Fold: indexedFold(row, root, indexed.Fold),
+		State: row.State, BackgroundWaiting: row.BackgroundWaiting, JustFinished: row.Work != nil && row.Work.JustFinished,
+		Source: row.SourceKind, Provider: row.Agent, UpdatedAt: row.UpdatedAt,
+		Fold: indexedFold(mid, row, root, todo, indexed.Fold), Private: healthSession(row), Assistant: row.Assistant,
 	}
 	// What q finds a row by: the fields the apps' own searches read, the branch too (#4770).
 	text := [...]string{row.Title, row.Cwd, row.RepoRoot, row.Branch, row.SpaceName, row.SlotName, row.AgentName, row.LastText}
@@ -188,12 +243,16 @@ func indexedRow(mid, id string, row *proto.Session, stamp bool, manager, root st
 	return item
 }
 
-// indexedFold is row's sessionlist.Fold folded under root: nil when it folds under none and shows its own state and
-// background wait (a row without children), else was when that is the same fold, else a new one. Folds are shared
-// between copies of an item and never written in place.
-func indexedFold(row *proto.Session, root string, was *sessionlist.Fold) *sessionlist.Fold {
+// indexedFold is machine mid's row's optional sessionlist.Fold: its fold under root and open to-do, nil when it has
+// neither and shows its own state and background wait (a row without children or a to-do), else was when that is the
+// same metadata, else a new one. A side session folded under root is searched as root's row (SearchAs, #7944). Folds
+// are shared between copies of an item and never written in place.
+func indexedFold(mid string, row *proto.Session, root, todo string, was *sessionlist.Fold) *sessionlist.Fold {
 	kids := row.Children()
-	fold := sessionlist.Fold{Root: root, State: row.FoldedState(), BackgroundWaiting: row.BackgroundWaiting && kids.Working == 0 && kids.NeedsYou == 0}
+	fold := sessionlist.Fold{Root: root, State: row.FoldedState(), Todo: todo, BackgroundWaiting: row.BackgroundWaiting && kids.Working == 0 && kids.NeedsYou == 0}
+	if root != "" && row.FoldedAs() == proto.FoldedAsSide {
+		fold.SearchAs, fold.SearchSession = runtimeListID(mid, root), row.SessionID
+	}
 	switch {
 	case fold == sessionlist.Fold{State: row.State, BackgroundWaiting: row.BackgroundWaiting}:
 		return nil
@@ -266,11 +325,61 @@ func startErrorRow(s proto.Session) int {
 }
 
 func rowText(s string, max int) string {
-	r := []rune(s)
-	if len(r) <= max {
+	// A whole-list answer cuts every long row (http.go writeSessionLists): a rune copy of each whole text was most of
+	// what that answer allocated, so cut without one whenever the bytes cannot hold more than max runes.
+	if len(s) <= max || utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	return string(r[:max])
+	count := 0
+	for i := range s {
+		if count == max {
+			return s[:i]
+		}
+		count++
+	}
+	return s
+}
+
+// legacyListCut bounds a whole-list answer's row in place (http.go writeSessionLists): the legacy keys only, none of
+// the summary's additions (pane_source, the counts scalars), but bounded like one — the long texts cut and the task
+// arrays (subagents, background, workflows, queued, ports) left out, what the chat routes serve. s's pointer fields
+// stay untouched: only scalars and slices change, and writeSessionLists encodes through a scratch copy.
+func legacyListCut(s *proto.Session) {
+	s.Title = rowText(s.Title, 256)
+	s.LastText = rowText(s.LastText, 180)
+	s.Activity = rowText(s.Activity, 120)
+	s.StartError = rowText(s.StartError, startErrorRow(*s))
+	s.ReadOnlyReason = rowText(s.ReadOnlyReason, 180)
+	s.TurnError = rowText(s.TurnError, 180)
+	s.Suggestion = rowText(s.Suggestion, 180)
+	if s.Work != nil {
+		s.Work.Line = rowText(s.Work.Line, 180)
+		s.Work.Wait = rowText(s.Work.Wait, 180)
+		s.Work.Then = rowText(s.Work.Then, 180)
+		if s.Work.Closeout != nil {
+			s.Work.Closeout.Waiting = rowText(s.Work.Closeout.Waiting, 180)
+			s.Work.Closeout.Missing = rowText(s.Work.Closeout.Missing, 180)
+		}
+	}
+	if s.Todo != nil {
+		s.Todo.Title = rowText(s.Todo.Title, 256)
+	}
+	if s.Plan != nil {
+		s.Plan.Current = rowText(s.Plan.Current, 180)
+	}
+	if s.Goal != nil {
+		s.Goal.Objective = rowText(s.Goal.Objective, 180)
+		s.Goal.Reason = rowText(s.Goal.Reason, 180)
+	}
+	if s.Loop != nil {
+		s.Loop.Prompt = ""
+		s.Loop.Reason = rowText(s.Loop.Reason, 120)
+	}
+	s.Queued = nil
+	s.Background = nil
+	s.Subagents = nil
+	s.Workflows = nil
+	s.Ports = nil
 }
 
 // runtimeSummary deliberately excludes transcript/task arrays and chat-only
@@ -352,7 +461,7 @@ func runtimeSummary(s proto.Session) runtimeRowSummary {
 	if s.Work != nil {
 		out.Work = &proto.WorkState{Phase: s.Work.Phase, On: s.Work.On, Line: rowText(s.Work.Line, 180),
 			Wait: rowText(s.Work.Wait, 180), Then: rowText(s.Work.Then, 180), WakeAt: s.Work.WakeAt, ResetsAt: s.Work.ResetsAt,
-			Attempts: s.Work.Attempts, Max: s.Work.Max, Deferred: s.Work.Deferred, Agent: s.Work.Agent}
+			Attempts: s.Work.Attempts, Max: s.Work.Max, Deferred: s.Work.Deferred, JustFinished: s.Work.JustFinished, Agent: s.Work.Agent}
 		if c := s.Work.Closeout; c != nil { // the row's part of it: where it stands, not the account of what it did
 			out.Work.Closeout = &proto.Closeout{Status: c.Status, Merged: c.Merged, Deployed: c.Deployed,
 				Waiting: rowText(c.Waiting, 180), Missing: rowText(c.Missing, 180), Checked: c.Checked}
@@ -360,6 +469,9 @@ func runtimeSummary(s proto.Session) runtimeRowSummary {
 	}
 	if s.Todo != nil {
 		out.Todo = &proto.TodoRef{ID: s.Todo.ID, Title: rowText(s.Todo.Title, 256)}
+	}
+	if done := s.CompletedTodo(); done != nil {
+		out.SetCompletedTodo(&proto.TodoRef{ID: done.ID, Title: rowText(done.Title, 256)})
 	}
 	if s.Plan != nil {
 		cp := *s.Plan
@@ -463,6 +575,7 @@ func (h *Hub) pagedSessions(w http.ResponseWriter, r *http.Request, manager stri
 		return
 	}
 	opts.Manager = manager
+	opts.NoPrivate = extensionToken(r) // an extension's token never sees a health-space conversation (extension_private.go)
 	if values, lookup := r.URL.Query()["session_id"]; lookup {
 		if len(values) != 1 || values[0] == "" || opts.Machine == "" || opts.Since != "" || opts.Cursor != "" {
 			sessionListErr(w, errors.New("exact session lookup requires one nonempty session_id and machine_id, without since or cursor"))
@@ -491,10 +604,45 @@ func (h *Hub) pagedSessions(w http.ResponseWriter, r *http.Request, manager stri
 		}
 		limited = opts.Machine == ""
 	}
+	if opts.Search != "" {
+		// Search authorizes before matching and freezing totals/evidence. Never
+		// apply ownPage after pagination: foreign hits would already be counted.
+		if em := extensionManager(r); em != "" {
+			opts.Manager = em
+			opts.AllowedMachines = append([]string{}, own...)
+		}
+		if opts.Cursor == "" {
+			opts.SearchContext, err = h.runtimeSearchContext(r, opts.Search)
+			if err != nil {
+				writeErr(w, http.StatusServiceUnavailable, err)
+				return
+			}
+		}
+		page, err := index.Query(opts)
+		if err != nil {
+			sessionListErr(w, err)
+			return
+		}
+		// A successful empty search still identifies this contract to new clients.
+		writeJSON(w, struct {
+			sessionlist.Page
+			Hits map[string]sessionlist.SearchHit `json:"search_hits"`
+		}{page, page.SearchHits})
+		return
+	}
 	if limited && opts.PaneSource != "" {
 		// The legacy ownership projection recomputes totals outside the frozen view.
 		// Require one authorized machine for this stricter origin contract.
 		sessionListErr(w, errors.New("pane_source requires machine_id for a manager-scoped aggregate"))
+		return
+	}
+	if catalogAsked(r) {
+		catalog, err := h.sessionCatalogOf(r.Context(), index, opts, own, limited, !extensionToken(r))
+		if err != nil {
+			sessionListErr(w, err)
+			return
+		}
+		writeJSON(w, catalog)
 		return
 	}
 	if counts := r.URL.Query().Get("counts"); counts == "1" || counts == "true" {
@@ -536,7 +684,7 @@ func (h *Hub) pagedSessions(w http.ResponseWriter, r *http.Request, manager stri
 			sessionListErr(w, err)
 			return
 		}
-		writeJSON(w, pageWithCounts{Page: page, Counts: counts})
+		writeJSON(w, sessionlist.PageWithCounts{Page: page, Counts: counts})
 		return
 	}
 	writeJSON(w, page)
@@ -562,6 +710,9 @@ func (h *Hub) extensionMachines(r *http.Request) (own []string, limited bool) {
 // ownCounts are the counts of opts over the machines own only (each machine's, added up).
 func ownCounts(index *sessionlist.Index, opts sessionlist.Options, own []string) (sessionlist.Counts, error) {
 	out := sessionlist.Counts{Machine: map[string]int{}, Project: map[string]int{}, Group: map[string]int{}, State: map[string]int{}}
+	if opts.Roots {
+		out.ActiveAgentsByMachine = make(map[string]int)
+	}
 	for _, mid := range own {
 		o := opts
 		o.Machine, o.Cursor = mid, "" // current membership (a cursor's frozen view is of every machine)
@@ -571,7 +722,7 @@ func ownCounts(index *sessionlist.Index, opts sessionlist.Options, own []string)
 		}
 		out.Total += c.Total
 		out.Revision = c.Revision
-		for dst, src := range map[*map[string]int]map[string]int{&out.Machine: c.Machine, &out.Project: c.Project, &out.Group: c.Group, &out.State: c.State} {
+		for dst, src := range map[*map[string]int]map[string]int{&out.Machine: c.Machine, &out.ActiveAgentsByMachine: c.ActiveAgentsByMachine, &out.Project: c.Project, &out.Group: c.Group, &out.State: c.State} {
 			for k, n := range src {
 				(*dst)[k] += n
 			}
@@ -595,7 +746,7 @@ func ownPage(index *sessionlist.Index, opts sessionlist.Options, own []string, p
 		return json.Unmarshal([]byte(id), &k) != nil || !keep(k[0])
 	})
 	counts, err := ownCounts(index, sessionlist.Options{Since: opts.Since, State: opts.State, Project: opts.Project, Group: opts.Group,
-		Source: opts.Source, Provider: opts.Provider, Q: opts.Q, Manager: opts.Manager, Roots: opts.Roots}, own)
+		Source: opts.Source, Provider: opts.Provider, Q: opts.Q, Manager: opts.Manager, Roots: opts.Roots, NoPrivate: opts.NoPrivate, AgentsOnly: opts.AgentsOnly, Places: opts.Places, Spaces: opts.Spaces}, own)
 	if err != nil {
 		return sessionlist.Page{}, err
 	}
@@ -644,11 +795,62 @@ func (h *Hub) reindexSessions(m *Machine) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	var hint *listHint // worked out for the first app that lists, as broadcastSessions does: none may
 	for c := range h.clients {
 		if c.listMode {
-			c.sendJSON(map[string]any{"type": "sessions_list", "revision": revision})
+			if hint == nil {
+				x := h.sessionListHint(before, revision)
+				hint = &x
+			}
+			hint.send(c)
 		}
 	}
+}
+
+// sessionListChangedMax bounds a hint's `changed`: past it the hint goes without, and an app reads as if it did not
+// know which rows changed.
+const sessionListChangedMax = 64
+
+// listHint is one sessions_list hint, encoded once for every app it goes to: plain, and with `since` and `changed`
+// (nil when the index's journal cannot say which ids changed, or there are too many).
+type listHint struct{ plain, detailed []byte }
+
+// sessionListHint is the hint for the index's change from revision before to revision: `changed` holds the ids changed
+// after before up to revision, the ["<machine>","<session>"] tuples a page's `remove` holds. A change made by
+// another pass in between is in it too, which only makes an app read once more.
+func (h *Hub) sessionListHint(before, revision string) listHint {
+	// Written by hand, keys in json.Marshal's order for a map: no encoder state to set up for each hint (#2809's
+	// allocation ceilings, TestReindexOneRevAllocation).
+	plain := appendJSONID(append(make([]byte, 0, 64), `{"revision":`...), revision)
+	hint := listHint{plain: append(plain, `,"type":"sessions_list"}`...)}
+	ids, ok := h.listCache.index.Changed(before, revision, sessionListChangedMax)
+	if !ok {
+		return hint
+	}
+	detailed := []byte(`{"changed":[`)
+	for i, id := range ids {
+		if !json.Valid([]byte(id)) {
+			return hint
+		}
+		if i > 0 {
+			detailed = append(detailed, ',')
+		}
+		detailed = append(detailed, id...)
+	}
+	detailed = appendJSONID(append(detailed, `],"revision":`...), revision)
+	detailed = appendJSONID(append(detailed, `,"since":`...), before)
+	hint.detailed = append(detailed, `,"type":"sessions_list"}`...)
+	return hint
+}
+
+// send queues the hint for c: with since and changed when c asked for them in its URL and is not an extension's token
+// (which never sees a health conversation, and so must not see its id change either).
+func (hint listHint) send(c *client) {
+	if hint.detailed != nil && c.urlFeatures[featureSessionsListChanges] && c.role != roleExtension {
+		c.queue(hint.detailed)
+		return
+	}
+	c.queue(hint.plain)
 }
 
 func (h *Hub) broadcastSessionListNotice() {

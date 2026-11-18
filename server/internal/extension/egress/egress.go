@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // HubHost is the hub's own API as an extension behind the proxy reaches it (its loopback is not the hub's).
@@ -43,6 +45,16 @@ type Rule struct {
 	// Targets are the addresses its settings name now (permissions.network "config:<field>", #5906): each lets
 	// through that host and port only, as written (no subdomain), an https tunnel unless HTTP.
 	Targets []Target
+	// Owner are the hosts the owner allowed it in the admin UI (#5697): each that host only (no subdomain), on its
+	// port or on any port when it has none, https or http. Reached like Targets: every address the name resolves to is
+	// checked on each connection (private LAN addresses pass; loopback, link-local and metadata ones refuse the name),
+	// and only checked addresses are dialled.
+	Owner []Target
+}
+
+// owned says whether host:port is one of the hosts the owner allowed (Rule.Owner).
+func (r Rule) owned(host, port string) bool {
+	return slices.ContainsFunc(r.Owner, func(t Target) bool { return t.Host == host && (t.Port == "" || t.Port == port) })
 }
 
 // Target is one address an extension's settings name (extension.ConfiguredTarget).
@@ -92,7 +104,19 @@ type Counts struct {
 	Denied     int64     `json:"denied"`
 	LastDenied string    `json:"last_denied,omitempty"`
 	DeniedAt   time.Time `json:"denied_at,omitzero"`
+	// Recent are the last RecentDenied different hosts it was refused, the latest first (#5697): in memory only.
+	Recent []Denied `json:"recent_denied,omitempty"`
 }
+
+// Denied is one host an extension was refused: how often and when last.
+type Denied struct {
+	Host  string    `json:"target"`
+	Count int64     `json:"count"`
+	At    time.Time `json:"at"`
+}
+
+// RecentDenied is how many refused hosts Counts.Recent keeps.
+const RecentDenied = 5
 
 // Proxy is the hub's egress proxy: one loopback TCP listener (an extension says who it is with its credential) and a
 // unix socket per sandboxed extension (the socket says who it is).
@@ -116,6 +140,7 @@ type Proxy struct {
 	rules         map[string]Rule
 	creds         map[string]string // credential → extension
 	credOf        map[string]string // extension → its credential
+	checks        map[string]*check // a settings check's credential → the check (Check)
 	unix          map[string]net.Listener
 	relay         map[string]net.Listener // ext → its socket that leads to one fixed unix socket (RelayUnix)
 	counts        map[string]*Counts
@@ -130,7 +155,7 @@ type Proxy struct {
 
 // Start listens on loopback (an unused port).
 func (p *Proxy) Start() error {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := osproc.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
 	}
@@ -197,6 +222,25 @@ func (p *Proxy) SetTargets(ext string, targets []Target) {
 	}
 }
 
+// SetOwner replaces the hosts the owner allowed ext (Rule.Owner) while its program runs. A host taken away is refused
+// from now on: its open connections are closed, as SetTargets does; one only added leaves them be.
+func (p *Proxy) SetOwner(ext string, owner []Target) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	r, ok := p.rules[ext]
+	if !ok {
+		return
+	}
+	for _, t := range r.Owner {
+		if !slices.Contains(owner, t) {
+			p.cancelIOLocked(ext)
+			break
+		}
+	}
+	r.Owner = slices.Clone(owner)
+	p.rules[ext] = r
+}
+
 // Register sets ext's rule and gives it a new credential (each start of its program): the URL of the loopback
 // listener with it, for HTTP(S)_PROXY.
 func (p *Proxy) Register(ext string, r Rule) string {
@@ -209,10 +253,11 @@ func (p *Proxy) Register(ext string, r Rule) string {
 		p.rules, p.creds, p.credOf, p.counts = map[string]Rule{}, map[string]string{}, map[string]string{}, map[string]*Counts{}
 	}
 	p.cancelIOLocked(ext)
+	p.endChecksLocked(ext)
 	if old, ok := p.credOf[ext]; ok {
 		delete(p.creds, old)
 	}
-	p.rules[ext] = Rule{Hosts: slices.Clone(r.Hosts), Hub: r.Hub, Targets: slices.Clone(r.Targets)}
+	p.rules[ext] = Rule{Hosts: slices.Clone(r.Hosts), Hub: r.Hub, Targets: slices.Clone(r.Targets), Owner: slices.Clone(r.Owner)}
 	p.creds[cred], p.credOf[ext] = ext, cred
 	addr := ""
 	if p.ln != nil {
@@ -226,6 +271,7 @@ func (p *Proxy) Unregister(ext string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.cancelIOLocked(ext)
+	p.endChecksLocked(ext)
 	if cred, ok := p.credOf[ext]; ok {
 		delete(p.creds, cred)
 		delete(p.credOf, ext)
@@ -246,7 +292,9 @@ func (p *Proxy) Stats(ext string) Counts {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if c := p.counts[ext]; c != nil {
-		return *c
+		out := *c
+		out.Recent = slices.Clone(c.Recent)
+		return out
 	}
 	return Counts{}
 }
@@ -283,8 +331,41 @@ func (p *Proxy) logf(format string, args ...any) {
 	}
 }
 
-// who is the extension a request on the loopback listener is from (its Proxy-Authorization).
-func (p *Proxy) who(r *http.Request) string {
+// who is the extension a request on the loopback listener is from (its Proxy-Authorization), and the settings check
+// whose credential it came with (nil: the program's own).
+func (p *Proxy) who(r *http.Request) (string, *check) {
+	pass := credential(r)
+	if pass == "" {
+		return "", nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ext := p.creds[pass]; ext != "" {
+		return ext, nil
+	}
+	if c := p.liveCheckLocked(pass); c != nil {
+		return c.ext, c
+	}
+	return "", nil
+}
+
+// checkOf is the settings check of ext whose credential a request on ext's own socket came with (nil: none, or
+// another extension's).
+func (p *Proxy) checkOf(r *http.Request, ext string) *check {
+	pass := credential(r)
+	if pass == "" {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c := p.liveCheckLocked(pass); c != nil && c.ext == ext {
+		return c
+	}
+	return nil
+}
+
+// credential is the password of a request's Proxy-Authorization for User ("": none).
+func credential(r *http.Request) string {
 	auth := r.Header.Get("Proxy-Authorization")
 	scheme, b64, ok := strings.Cut(auth, " ")
 	if !ok || !strings.EqualFold(scheme, "Basic") {
@@ -298,9 +379,7 @@ func (p *Proxy) who(r *http.Request) string {
 	if user != User {
 		return ""
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.creds[pass]
+	return pass
 }
 
 func (p *Proxy) rule(ext string) (Rule, bool) {
@@ -323,8 +402,19 @@ func (p *Proxy) count(ext, host string, allowed bool) {
 	if allowed {
 		c.Allowed++
 	} else {
+		now := time.Now()
 		c.Denied++
-		c.LastDenied, c.DeniedAt = host, time.Now()
+		c.LastDenied, c.DeniedAt = host, now
+		d := Denied{Host: host, At: now}
+		if i := slices.IndexFunc(c.Recent, func(d Denied) bool { return d.Host == host }); i >= 0 {
+			d.Count = c.Recent[i].Count
+			c.Recent = slices.Delete(c.Recent, i, i+1)
+		}
+		d.Count++
+		c.Recent = slices.Insert(c.Recent, 0, d)
+		if len(c.Recent) > RecentDenied {
+			c.Recent = c.Recent[:RecentDenied]
+		}
 	}
 	p.mu.Unlock()
 	if p.OnDecision != nil {

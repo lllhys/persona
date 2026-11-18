@@ -12,6 +12,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -22,6 +24,9 @@ import persona.core.designsystem.LocalHomeDrawer
 import persona.core.designsystem.PersonaTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -45,7 +50,9 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.navigation3.runtime.NavKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -185,6 +192,60 @@ class ConversationHistoryTest {
         assertEquals(listOf(first.key), hub.archived)
     }
 
+    // A hub title's day and kind are quiet before its topic on Glass (iOS `ConversationTitle`, #4339 C12): in the list and in
+    // Archived; Brief and Board draw the title whole.
+    private val dated = Session(machineId = "hub", sessionId = "dated", title = "1101 | 修复 | 搜索框和顶栏重叠", status = "idle",
+        updatedAt = java.time.Instant.now().minusSeconds(7 * 60).toString(), lastText = "已经修好了。")
+
+    private fun spansOf(title: String): List<Pair<Int, Int>> =
+        rule.onNodeWithText(title, useUnmergedTree = true).fetchSemanticsNode().config
+            .getOrNull(SemanticsProperties.Text).orEmpty().first().spanStyles.map { it.start to it.end }
+
+    @Test fun aHubTitlesDayAndKindAreQuietInTheListOnGlass() {
+        show(HistoryHub(main, dated))
+        rule.onNodeWithText(dated.title, useUnmergedTree = true).assertExists()
+        assertEquals(listOf(0 to "1101 | 修复 | ".length), spansOf(dated.title))
+        rule.onAllNodesWithText("搜索框和顶栏重叠", useUnmergedTree = true).assertCountEquals(0) // one text, not two
+    }
+
+    /** The spans of a hub title's row and of another title's in Archived, in [style]. */
+    private fun archivedSpans(style: AppStyle): Pair<List<Pair<Int, Int>>, List<Pair<Int, Int>>> {
+        rule.setContent {
+            PersonaTheme(reduceMotion = true, style = style) {
+                ArchivedConversationsSheet(listOf(dated.copy(archived = true), old), onDismiss = {}, onOpen = {}, onUnarchive = {})
+            }
+        }
+        rule.waitForIdle()
+        return spansOf(dated.title) to spansOf(old.title)
+    }
+
+    @Test fun archivedRowsQuietTheDayAndKindOnGlass() {
+        val (hub, other) = archivedSpans(AppStyle.Glass)
+        assertEquals(listOf(0 to "1101 | 修复 | ".length), hub)
+        assertEquals("any other title is drawn as it is", emptyList<Pair<Int, Int>>(), other)
+    }
+
+    @Test fun archivedRowsDrawTheTitleWholeInBrief() = assertEquals(emptyList<Pair<Int, Int>>(), archivedSpans(AppStyle.Brief).first)
+
+    @Test fun archivedRowsDrawTheTitleWholeInBoard() = assertEquals(emptyList<Pair<Int, Int>>(), archivedSpans(AppStyle.Board).first)
+
+    // The history says when as iOS does (`Fmt.relative`): minutes ago, not the date and time (#4339 C12).
+    @Test fun theHistorySaysWhenAsIOSDoes() {
+        show(HistoryHub(main, dated))
+        // The row's time line says it, and then the menu's preview does too.
+        rule.onAllNodesWithText("7 分钟前").assertCountEquals(1)
+        rule.onNode(hasText(dated.title) and hasClickAction()).performTouchInput { longClick() }
+        rule.onAllNodesWithText("7 分钟前").assertCountEquals(2)
+        rule.onAllNodesWithText("11月", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun archivedRowsSayWhenAsIOSDoes() {
+        rule.setContent { PersonaTheme(reduceMotion = true) {
+            ArchivedConversationsSheet(listOf(dated.copy(archived = true)), onDismiss = {}, onOpen = {}, onUnarchive = {})
+        } }
+        rule.onNodeWithText("7 分钟前", useUnmergedTree = true).assertExists()
+    }
+
     @Test fun theLastOneBroughtBackLeavesTheEmptyPage() {
         val hub = HistoryHub(main, first, second).apply { archivedList = listOf(old) }
         show(hub)
@@ -195,6 +256,34 @@ class ConversationHistoryTest {
         rule.onNodeWithText("没有归档的对话").assertExists()
         rule.onNodeWithText("在对话列表里左滑一个对话就能归档，它会收在这里。").assertExists()
     }
+
+    @Test fun rightStackNavigationKeepsConversationHistoryIdentityAndTemporaryTitles() {
+        val hub = HistoryHub(main, first)
+        val routes = mutableStateListOf("root")
+        var history: ConversationHistory? = null
+        rule.setContent {
+            PersonaTheme(reduceMotion = true) {
+                val remembered = rememberConversationHistory(hub, hub)
+                SideEffect { history = remembered }
+                key(routes.last()) { Text(routes.last()) }
+            }
+        }
+        val original = requireNotNull(history)
+        rule.runOnIdle { runBlocking { original.rename(first.key, "Temporary title") } }
+        rule.waitForIdle()
+        assertEquals("Temporary title", original.titled(listOf(first)).single().title)
+        routes += "inbox"
+        rule.waitForIdle()
+        assertSame(original, history)
+        routes += "mail"
+        rule.waitForIdle()
+        assertSame(original, history)
+        routes.removeLast()
+        routes.removeLast()
+        rule.waitForIdle()
+        assertSame(original, history)
+        assertEquals("Temporary title", history!!.titled(listOf(first)).single().title)
+    }
 }
 
 /** The hub of these tests: Persona's list, its archived conversations, and what was archived, brought back and renamed. */
@@ -204,8 +293,10 @@ internal class HistoryHub(main: Session, vararg chats: Session) : AssistantRepos
     val archived = mutableListOf<SessionKey>()
     val unarchived = mutableListOf<SessionKey>()
     val renamed = mutableListOf<Pair<SessionKey, String>>()
+    val tagWrites = mutableListOf<Pair<SessionKey, List<String>>>()
     var archivedList: List<Session> = emptyList()
     var refuseRename = false
+    var refuseTags = false
     override suspend fun archiveConversation(session: SessionKey) {
         archived += session
         archivedList = listOf(assistant.value.conversations.first { it.key == session }.copy(archived = true)) + archivedList
@@ -217,6 +308,14 @@ internal class HistoryHub(main: Session, vararg chats: Session) : AssistantRepos
         assistant.value = assistant.value.copy(conversations = assistant.value.conversations + back.copy(archived = false))
     }
     override suspend fun archivedConversations(): List<Session> = archivedList
+    override suspend fun setConversationTags(session: SessionKey, tags: List<String>) {
+        tagWrites += session to tags
+        if (refuseTags) throw UnsupportedOperationException("Tags unavailable on this hub")
+        assistant.value = assistant.value.copy(conversations = assistant.value.conversations.map {
+            if (it.key == session) it.copy(tags = tags) else it
+        })
+        archivedList = archivedList.map { if (it.key == session) it.copy(tags = tags) else it }
+    }
     override suspend fun renameConversation(session: SessionKey, title: String) {
         check(!refuseRename) { "改名失败" }
         renamed += session to title
@@ -253,18 +352,18 @@ class ConversationHistoryShotsTest {
 
     private val minutesAgo = { m: Long -> java.time.Instant.now().minusSeconds(m * 60).toString() }
     private val main = Session(machineId = "hub", sessionId = "main", title = "主对话", status = "idle", updatedAt = minutesAgo(2))
-    private val trip = Session(machineId = "hub", sessionId = "trip", title = "周末去哪儿", status = "idle", updatedAt = minutesAgo(20),
+    private val trip = Session(machineId = "hub", sessionId = "trip", title = "1112 | 探索 | 周末去哪儿", status = "idle", updatedAt = minutesAgo(20),
         lastText = "**两个方案**：\n- 周六去海边，住一晚\n- 周日去山里徒步，当天回来\n\n天气预报周六晴，周日有小雨，我更推荐第一个。要我订酒店吗？")
     private val inbox = Session(machineId = "hub", sessionId = "inbox", title = "整理收件箱", status = "working", updatedAt = minutesAgo(5))
     private val archived = listOf(
         Session(machineId = "hub", sessionId = "old", title = "旧主对话 · 至 11月10日", archived = true, updatedAt = minutesAgo(60 * 48)),
-        Session(machineId = "hub", sessionId = "report", title = "上周的周报", archived = true, updatedAt = minutesAgo(60 * 24 * 7)),
-        Session(machineId = "hub", sessionId = "gift", title = "给妈妈的生日礼物", archived = true, updatedAt = minutesAgo(60 * 24 * 20)),
+        Session(machineId = "hub", sessionId = "report", title = "1105 | 定时 | 上周的周报", archived = true, updatedAt = minutesAgo(60 * 24 * 7)),
+        Session(machineId = "hub", sessionId = "gift", title = "1023 | 探索 | 给妈妈的生日礼物", archived = true, updatedAt = minutesAgo(60 * 24 * 20)),
     )
 
-    private fun drawer(dark: () -> Boolean, archivedCount: Int) {
+    private fun drawer(dark: () -> Boolean, archivedCount: Int, style: () -> AppStyle = { AppStyle.Glass }) {
         rule.setContent {
-            PersonaTheme(darkTheme = dark(), reduceMotion = true, style = AppStyle.Glass) {
+            PersonaTheme(darkTheme = dark(), reduceMotion = true, style = style()) {
                 CompositionLocalProvider(LocalHomeDrawer provides true) {
                     Box(Modifier.testTag("shot").width(320.dp).height(760.dp).background(PersonaTheme.palette.background)) {
                         AssistantDrawer("", {}, ConversationGroups(main, emptyList(), listOf(inbox, trip), recent = listOf(inbox, trip)),
@@ -286,6 +385,19 @@ class ConversationHistoryShotsTest {
             dark = d
             rule.waitForIdle()
             historyShot(rule.onNode(isDialog()).captureToImage().asAndroidBitmap(), "menu-glass-${if (d) "dark" else "light"}")
+        }
+    }
+
+    @Test fun aWorkingConversationSpinsInEveryStyle() {
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        drawer({ dark }, archivedCount = 0, style = { style })
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            rule.waitForIdle()
+            rule.onNodeWithContentDescription("加载中").assertExists()
+            historyShot(rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap(),
+                "drawer-own-working-spin-${s.name.lowercase()}-${if (d) "dark" else "light"}")
         }
     }
 

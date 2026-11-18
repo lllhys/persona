@@ -22,13 +22,13 @@ internal data class BackgroundFoldSetting(val on: Boolean = true, val main: Stri
 
 /**
  * A folded background round of the main conversation (#4314, docs/assistant/assistant.md "Background rounds"): one muted
- * line, `@<source> · Background round` (`· Running in the background` while it runs), the same line as the work summary;
- * a folded supervision round says "Supervision record".
+ * line, `@<source> · Reported from the background` (`· Working in the background…` while it runs), the same line as the work summary;
+ * a folded supervision round says "Handled in the background".
  * A tap opens it and its whole transcript follows it in place; another tap folds it again.
  */
 @Composable
 internal fun BackgroundRoundLine(round: BackgroundRound, onToggle: (String) -> Unit) {
-    // A quiet supervision round (Glass, #4339 C13): "Supervision record", "· running" while it runs (iOS `SupervisionRecordLine`).
+    // A quiet supervision round (Glass, #4339 C13): "Handled in the background", "· Handling in the background…" while it runs (iOS `SupervisionRecordLine`).
     val label = if (round.supervision) stringResource(if (round.live) R.string.chat_supervision_record_live else R.string.chat_supervision_record)
         else stringResource(if (round.live) R.string.chat_background_round_live else R.string.chat_background_round,
             stringResource(R.string.chat_source_label, sourceTitle(round.source)))

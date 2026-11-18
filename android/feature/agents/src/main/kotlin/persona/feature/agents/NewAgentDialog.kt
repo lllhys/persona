@@ -12,20 +12,25 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.ui.draw.alpha
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import android.content.res.Resources
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import persona.core.contracts.Machine
+import persona.core.contracts.PaseoAgent
+import persona.core.contracts.api.AgentLauncher
 import persona.core.designsystem.*
 import persona.core.designsystem.dense
 import persona.feature.chat.UltracodeQuotaLines
 import persona.feature.chat.rememberUltracodeQuota
 import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcons
+import persona.core.domain.models.AgentModelPanel
 import java.net.URI
 
 @Composable
@@ -33,6 +38,8 @@ internal fun NewAgentDialog(
     model: NewAgentViewModel, machines: List<Machine>, online: Boolean,
     /** Settings › Model providers, for a launcher the terminal can't run (#4530); null where none can be added. */
     onAddProvider: (() -> Unit)? = null,
+    /** A provider's page in Settings, the How to fix of one left out on this computer (#8109); null where there is none. */
+    onOpenProvider: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val state by model.state.collectAsStateWithLifecycle()
@@ -42,14 +49,20 @@ internal fun NewAgentDialog(
     var picking by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
     val prompt = rememberPromptFocus(state, list)
+    val pickers = rememberNewAgentPickers(model)
+    CloseAttachmentsOnLeave(model)
     val close = { if (!state.starting) { if (state.browsing) model.closeBrowser() else onDismiss() } }
     JSheet(onDismiss = { if (!state.starting) onDismiss() }, title = stringResource(R.string.agents_action_new_session)) {
         BackHandler(onBack = close)
-        Column(Modifier.fillMaxWidth().weight(1f).imePadding()) {
-            LazyColumn(Modifier.weight(1f), list, contentPadding = PaddingValues(bottom = 16.dp.dense), verticalArrangement = Arrangement.spacedBy(8.dp.dense)) {
-                newAgentItems(state, model, machines, query, { query = it }, close, onModels = { picking = true }, prompt, onBlocked = { helping = it })
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            Column(Modifier.fillMaxSize().imePadding()) {
+                LazyColumn(Modifier.weight(1f), list, contentPadding = PaddingValues(bottom = 16.dp.dense), verticalArrangement = Arrangement.spacedBy(8.dp.dense)) {
+                    newAgentItems(state, model, machines, query, { query = it }, close, onModels = { picking = true }, prompt, onBlocked = { helping = it }, pickers,
+                        onOpenProvider = onOpenProvider?.let { open -> { name: String -> onDismiss(); open(name) } })
+                }
+                NewAgentFooter(state, model, machines, online, Modifier.fillMaxWidth().padding(top = 8.dp.dense))
             }
-            NewAgentFooter(state, model, machines, online, Modifier.fillMaxWidth().padding(top = 8.dp.dense))
+            NewAgentToast(model, Modifier.align(Alignment.TopCenter))
         }
         if (picking) NewAgentModelSheet(state, model::pickModel, model::reloadModels, onDismiss = { picking = false })
         LauncherHelp(helping, state, model, onAddProvider?.let { add -> { helping = null; onDismiss(); add() } }) { helping = null }
@@ -82,6 +95,8 @@ internal fun NewAgentPage(
     initialModelQuery: String? = null,
     /** Settings › Model providers, for a launcher the terminal can't run (#4530). */
     onAddProvider: (() -> Unit)? = null,
+    /** A provider's page in Settings, the How to fix of one left out on this computer (#8109). */
+    onOpenProvider: ((String) -> Unit)? = null,
 ) {
     val state by model.state.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
@@ -89,12 +104,18 @@ internal fun NewAgentPage(
     var picking by remember(initialModelQuery) { mutableStateOf(initialModelQuery != null) }
     val list = rememberLazyListState()
     val prompt = rememberPromptFocus(state, list)
+    val pickers = rememberNewAgentPickers(model)
+    CloseAttachmentsOnLeave(model)
     val close = { if (!state.starting) { if (state.browsing) model.closeBrowser() else onBack() } }
     BackHandler(onBack = close)
-    JListPage(title = stringResource(R.string.agents_action_new_session), onBack = close, largeTitle = false, state = list, bottomBar = {
-        NewAgentFooter(state, model, machines, online, Modifier.fillMaxWidth().padding(horizontal = pagePadding, vertical = Tokens.Space.s))
-    }) {
-        newAgentItems(state, model, machines, query, { query = it }, close, onModels = { picking = true }, prompt, onBlocked = { helping = it })
+    Box(Modifier.fillMaxSize()) {
+        JListPage(title = stringResource(R.string.agents_action_new_session), onBack = close, largeTitle = false, state = list, bottomBar = {
+            NewAgentFooter(state, model, machines, online, Modifier.fillMaxWidth().padding(horizontal = pagePadding, vertical = Tokens.Space.s))
+        }) {
+            newAgentItems(state, model, machines, query, { query = it }, close, onModels = { picking = true }, prompt, onBlocked = { helping = it }, pickers,
+                onOpenProvider = onOpenProvider)
+        }
+        NewAgentToast(model, Modifier.align(Alignment.TopCenter).statusBarsPadding())
     }
     if (picking) NewAgentModelSheet(state, model::pickModel, model::reloadModels, onDismiss = { picking = false },
         initialQuery = initialModelQuery.orEmpty())
@@ -122,6 +143,10 @@ private fun rememberPromptFocus(state: NewAgentState, list: LazyListState): Focu
 private fun LazyListScope.newAgentItems(
     state: NewAgentState, model: NewAgentViewModel, machines: List<Machine>, query: String, onQuery: (String) -> Unit, close: () -> Unit,
     onModels: () -> Unit, prompt: FocusRequester, onBlocked: (persona.core.contracts.api.AgentLauncher) -> Unit,
+    /** The add menu's pickers (#2321); null where the form takes no attachments. */
+    pickers: NewAgentPickers? = null,
+    /** A provider's page in Settings (#8109); null where there is none to open. */
+    onOpenProvider: ((String) -> Unit)? = null,
 ) {
     val editable = !state.locked && !state.loading
     if (state.loading) item("loading") { JLinearProgress(null) }
@@ -177,21 +202,31 @@ private fun LazyListScope.newAgentItems(
     }
     if (space == null) {
         item("directory") {
-            JSectionHeader(stringResource(R.string.agents_directory))
+            val picked = state.workspace
+            // A catalog workspace picked (#7259) stands in the folder's place until "Choose by folder".
+            JSectionHeader(stringResource(R.string.agents_directory), action = picked?.let {
+                { JTextButton(stringResource(R.string.agents_workspace_choose_folder), model::chooseByFolder, enabled = editable) }
+            })
             JGroupItem(GroupPosition.Single) {
-                JRow(stringResource(R.string.agents_new_choose_directory), subtitle = state.selection.cwd.takeIf { it.isNotBlank() }, leadingIcon = PhIcons.FolderSimple,
+                val icon = PhIcons.FolderSimple
+                if (picked != null) {
+                    val row = NewAgentWorkspaces.row(picked)
+                    JRow(row.title, subtitle = workspaceLine(row) + "\n" + picked.cwd, subtitleLines = 3, leadingIcon = icon)
+                } else JRow(stringResource(R.string.agents_new_choose_directory), subtitle = state.selection.cwd.takeIf { it.isNotBlank() }, leadingIcon = icon,
                     enabled = editable && state.machineId.isNotBlank(), onClick = { model.browse() })
             }
         }
         itemsIndexed(state.recent, key = { _, recent -> "recent:${recent.path}" }) { index, recent ->
             JGroupItem(GroupPosition.of(index, state.recent.size)) {
                 JRow(recent.name.ifEmpty { recent.path.substringAfterLast('/') }, subtitle = recent.path,
-                    leading = { JRadio(state.selection.cwd == recent.path, null, enabled = editable) }, enabled = editable,
-                    onClick = { model.selection(state.selection.copy(cwd = recent.path)) }, chevron = false)
+                    leading = { JRadio(state.workspace == null && state.selection.cwd == recent.path, null, enabled = editable) }, enabled = editable,
+                    onClick = { model.useFolder(recent.path) }, chevron = false)
             }
         }
+        newAgentWorkspaceItems(state, editable, model::pickWorkspace)
     }
-    // A branch and a checkout of its own (#4532, iOS NewAgentWorktreeSection), for a folder in a Git repository.
+    // A branch and a checkout of its own (#4532, iOS NewAgentWorktreeSection), for a folder in a Git repository or a
+    // Paseo workspace picked in one (#8856).
     state.repo?.takeIf { state.worktreeOffered }?.let { repo -> item("worktree") {
         val suggested = AgentWorktree.branch(AgentWorktree.nameHint(state.prompt, state.selection.cwd))
         JSectionHeader(stringResource(R.string.agents_worktree_title))
@@ -219,7 +254,7 @@ private fun LazyListScope.newAgentItems(
     val selectedType = state.agentType.takeIf { state.following || state.selection.launcher.isNotEmpty() }
     itemsIndexed(types, key = { _, type -> "type:$type" }) { index, type ->
         JGroupItem(GroupPosition.of(index, types.size)) {
-            JRow(type.agentLabel(), leading = { JRadio(selectedType == type, null, enabled = editable) }, enabled = editable,
+            JRow(agentTypeTitle(type), leading = { JRadio(selectedType == type, null, enabled = editable) }, enabled = editable,
                 // The type the configuration already starts keeps following it; another type picks its first launcher.
                 onClick = { if (!(state.following && state.agentType == type))
                     model.selection(state.selection.copy(launcher = initialLauncher(null, state.launchers.filter { it.agentType == type }))) },
@@ -232,12 +267,15 @@ private fun LazyListScope.newAgentItems(
         if (!state.loading && state.launchers.isEmpty()) Text(stringResource(R.string.agents_new_no_launchers), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
     }
     val launchers = state.launchers.filter { launcher ->
-        launcher.agentType == (selectedType ?: "claude") &&
-            (query.isBlank() || launcher.name.contains(query, true) || launcher.model.orEmpty().contains(query, true))
+        launcher.agentType == (selectedType ?: "claude") && (query.isBlank() || launcher.name.contains(query, true) ||
+            launcher.title.contains(query, true) || launcher.model.orEmpty().contains(query, true))
     }
+    // The providers left out on this computer (#8109, the hub's `unavailable`): listed off after the launchers, with why.
+    val leftOut = leftOutLaunchers(state.unavailable, state.launchers, selectedType ?: "claude", query)
     // Models are configured by use (Settings › Model configuration): a new agent follows it unless a launcher is picked for this start.
     val follow = state.follow
-    val rows = launchers.size + if (follow != null) 1 else 0
+    val head = if (follow != null) 1 else 0
+    val rows = head + launchers.size + leftOut.size
     if (follow != null) item("launcher:follow") {
         JGroupItem(GroupPosition.of(0, rows)) {
             JRow(stringResource(R.string.agents_new_follow_config), subtitle = followSummary(agentResources(), state), subtitleLines = 3,
@@ -250,9 +288,10 @@ private fun LazyListScope.newAgentItems(
         // Blocked on this computer (#4530, iOS): listed grayed with why; choosing it opens its help instead of picking it.
         val block = launcher.block
         val reason = block?.let { stringResource(it.reason) }
-        JGroupItem(GroupPosition.of(index + rows - launchers.size, rows)) {
-            JRow(launcher.name, Modifier.alpha(if (block != null && state.selection.launcher != launcher.name) 0.5f else 1f),
-                subtitle = listOfNotNull(reason, launcher.agentType.agentLabel(), launcher.model, host).joinToString("\n"),
+        JGroupItem(GroupPosition.of(head + index, rows)) {
+            // By its own name where it has one (a runtime's provider, Paseo's "Grok", #8261), as the web's pickers name it.
+            JRow(launcher.title, Modifier.alpha(if (block != null && state.selection.launcher != launcher.name) 0.5f else 1f),
+                subtitle = listOfNotNull(reason, launcherAgentLine(launcher), launcher.model, host).joinToString("\n"),
                 subtitleLines = 4, leading = { JRadio(state.selection.launcher == launcher.name, null, enabled = editable) },
                 enabled = editable, onClick = {
                     if (block != null && state.selection.launcher != launcher.name) onBlocked(launcher)
@@ -260,8 +299,39 @@ private fun LazyListScope.newAgentItems(
                 }, chevron = false)
         }
     }
+    // A provider added in Settings goes to the primary group's hub: another group's computers only get the words.
+    val fix = onOpenProvider.takeIf { persona.core.contracts.GroupKeys.namespaceOf(state.machineId) == null }
+    itemsIndexed(leftOut, key = { _, u -> "left-out:${u.name}" }) { index, u ->
+        JGroupItem(GroupPosition.of(head + launchers.size + index, rows)) {
+            // Nothing of it to pick here: its radio is off and the hub's words say why, in full (they say what to change).
+            // How to fix, under them so they keep the row's width at every text size, opens its page in Settings, where
+            // "Computers" has the switch (the web's New Agent panel, #8122).
+            JRow(u.title, Modifier.testTag("newAgent.leftOut"),
+                subtitle = listOfNotNull(u.reason.trim().takeIf(String::isNotEmpty), AgentModelPanel.engineId(u.agent).takeUnless { it == PaseoAgent }?.agentLabel())
+                    .joinToString("\n"),
+                subtitleLines = Int.MAX_VALUE, leading = { JRadio(false, null, enabled = false) }, chevron = false)
+            fix?.let { open ->
+                JTextButton(stringResource(R.string.agents_launcher_help_how), { open(u.name) },
+                    Modifier.align(Alignment.End).padding(end = rowPadding), enabled = editable)
+            }
+        }
+    }
     newAgentModelItems(state, editable, onModels, model::reloadModels)
-    if (state.agentType == "claude") item("claude-options") {
+    // A launcher that lists its own permission modes (#8261, Paseo's Grok, OpenCode or Codex): its own approval, or Allow
+    // everything where it lists that too, and only the efforts its model lists; never Claude Code's five modes or the
+    // choice remembered for them. One with its own approval alone shows no mode, one whose model lists none no effort.
+    state.providerModes?.let { listed -> item("provider-options") {
+        val choices = listOf("" to R.string.agents_mode_follow) + permissionModes.filter { (id, _) -> id.isNotEmpty() && id != "default" && id in listed }
+        if (choices.size > 1) {
+            val bypass = state.providerMode == "bypassPermissions"
+            ChoiceMenu(stringResource(R.string.agents_new_permission_mode), state.providerMode.takeIf { it in listed }.orEmpty(), choices, editable, model::providerMode)
+            Text(stringResource(if (bypass) R.string.agents_new_bypass_warning else R.string.agents_new_provider_mode_hint),
+                color = if (bypass) PersonaTheme.palette.cautionText else PersonaTheme.palette.ink2, style = PersonaTheme.type.caption)
+        }
+        val efforts = state.providerEfforts
+        if (efforts.isNotEmpty()) ChoiceMenu(stringResource(R.string.agents_new_effort), state.providerEffort, effortChoices(efforts), editable, model::providerEffort)
+    } }
+    if (state.claudeModes) item("claude-options") {
         ChoiceMenu(stringResource(R.string.agents_new_permission_mode), state.selection.mode, permissionModes, editable) { model.selection(state.selection.copy(mode = it)) }
         if (state.selection.mode == "bypassPermissions") Text(stringResource(R.string.agents_new_bypass_warning), color = PersonaTheme.palette.cautionText, style = PersonaTheme.type.caption)
         // Only the levels the model that will run takes; none: it has no effort setting.
@@ -286,9 +356,15 @@ private fun LazyListScope.newAgentItems(
     }
     item("prompt") {
         JTextField(state.prompt, model::prompt, enabled = !state.locked,
-            label = stringResource(if (state.agentType == "codex") R.string.agents_new_first_message_codex else R.string.agents_new_first_message),
+            label = stringResource(when {
+                state.promptRequired -> R.string.agents_new_first_message_codex
+                state.agentType == "codex" -> R.string.agents_new_first_message_codex_optional
+                else -> R.string.agents_new_first_message
+            }),
             minLines = 3, maxLines = 8, modifier = Modifier.fillMaxWidth().focusRequester(prompt))
     }
+    // Photos and files for the first message (#2321, iOS NewAgentAttachmentRows), under it.
+    item("attachments") { NewAgentAttachmentRows(state, model, pickers) }
 }
 
 /** What following the configuration starts: the configured provider and model, and whether this machine has that launcher. */
@@ -309,6 +385,10 @@ private fun NewAgentFooter(state: NewAgentState, model: NewAgentViewModel, machi
         if (state.pending != null) PendingBadge(if (state.starting) PendingStatus.Verifying else PendingStatus.Unconfirmed)
         state.error?.let { Text(it.resolve(), color = PersonaTheme.palette.ink2, style = PersonaTheme.type.callout) }
         if (!online) Text(stringResource(R.string.agents_new_offline_footer), color = PersonaTheme.palette.ink2, style = PersonaTheme.type.callout)
+        // What the attachments hold Start back for (iOS `notReadyReason`): uploads still going, a failed one, a launcher that takes none.
+        if (state.pending == null && !state.browsing) state.attachmentsHold?.let {
+            Text(it.resolve(), Modifier.testTag("newAgent.attachHold"), color = PersonaTheme.palette.ink2, style = PersonaTheme.type.callout)
+        }
         if (state.browsing) {
             JButton(stringResource(R.string.agents_new_use_directory), { model.closeBrowser(use = true) }, enabled = state.browser != null && !state.loading, modifier = Modifier.fillMaxWidth())
         } else {
@@ -319,12 +399,24 @@ private fun NewAgentFooter(state: NewAgentState, model: NewAgentViewModel, machi
     }
 }
 
-/** A folder, a launcher or the configuration to follow, an online machine, and Codex's first message. */
-private fun startable(state: NewAgentState, machines: List<Machine>): Boolean =
+/** A folder, a launcher or the configuration to follow, an online machine, a first message when required, and attachments ready to go. */
+internal fun startable(state: NewAgentState, machines: List<Machine>): Boolean =
     state.selection.cwd.isNotBlank() && (state.selection.launcher.isNotBlank() || state.following) &&
-        machines.any { it.id == state.machineId && it.online } && (state.agentType != "codex" || state.prompt.isNotBlank())
+        machines.any { it.id == state.machineId && it.online } && (!state.promptRequired || state.prompt.isNotBlank()) &&
+        state.attachmentsHold == null
 
 internal fun String.agentLabel() = when (this) { "claude" -> "Claude Code"; "codex" -> "Codex"; "traex" -> "TRAEX"; else -> this }
+
+/**
+ * What the "Agent type" list calls a launcher's agent type ([agentLabel]): Paseo's providers other than Claude Code and
+ * Codex ([PaseoAgent], each listed under it by its own name) together as "Other agents", never the engine's id (#8143).
+ */
+@Composable
+internal fun agentTypeTitle(type: String): String =
+    if (type == PaseoAgent) stringResource(R.string.agents_new_type_other) else type.agentLabel()
+
+/** A launcher row's line naming what it runs; none for a Paseo provider ([PaseoAgent]), whose own name says it (#8143). */
+internal fun launcherAgentLine(launcher: AgentLauncher): String? = launcher.agentType.takeUnless { it == PaseoAgent }?.agentLabel()
 internal val permissionModes = listOf("" to R.string.agents_mode_follow, "default" to R.string.agents_mode_default,
     "acceptEdits" to R.string.agents_mode_accept_edits, "plan" to R.string.agents_mode_plan, "auto" to R.string.agents_mode_auto,
     "bypassPermissions" to R.string.agents_mode_bypass)

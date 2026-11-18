@@ -1,0 +1,15 @@
+{
+  "when_online": "Shown once it's connected",
+  "not_read": "Couldn't read",
+  "tools_node_outdated": "Update Persona on this computer to see",
+  "tools_hub_outdated": "Update the hub to see",
+  "tools_forbidden": "Needs a fully trusted device",
+  "target_offline": "Offline",
+  "target_pending": "Not confirmed or not connected yet",
+  "same_system": "Same system",
+  "free_memory": "{size} memory free",
+  "missing_tool": "No {tool}",
+  "reason_memory": "Memory {value}",
+  "reason_disk": "Disk {value}",
+  "reason_cpu": "CPU {value}"
+}

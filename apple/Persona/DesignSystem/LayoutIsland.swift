@@ -72,7 +72,7 @@ private struct IslandHost<Content: View & Equatable>: UIViewControllerRepresenta
 /// the type size and the look. The rest is the island's own hosting controller's (color scheme and the system's
 /// settings also come with its trait collection). A view in an island that reads another value set by the page needs it
 /// here.
-private struct IslandEnvironment: ViewModifier {
+struct IslandEnvironment: ViewModifier {
     let env: EnvironmentValues
 
     init(_ env: EnvironmentValues) { self.env = env }
@@ -85,6 +85,7 @@ private struct IslandEnvironment: ViewModifier {
             .environment(\.buiTheme, env.buiTheme)
             .environment(\.shellBaseTypeSize, env.shellBaseTypeSize)
             .environment(\.dynamicTypeSize, env.dynamicTypeSize)
+            .environment(\.readingTypeSize, env.readingTypeSize)
             .environment(\.colorScheme, env.colorScheme)
             .environment(\.locale, env.locale)
             .environment(\.layoutDirection, env.layoutDirection)

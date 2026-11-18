@@ -1,0 +1,8 @@
+会议：2026-11-10（周二）14:00–14:01，录了约 0 分钟，语言 ja-JP
+
+转写：
+[1] 14:00:00 大家好，我们先看 export 的 bug
+[2] 14:00:10 Ada said the export drops entries over 4 MB
+[3] 14:00:20 那这一版先保留上限
+[4] 14:00:30 Bo will add the regression test by Friday
+[5] 14:00:40 上限は件ごとか録音ごとか、まだ決まっていません

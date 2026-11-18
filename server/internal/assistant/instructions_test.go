@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +48,37 @@ func TestRefreshInstructions(t *testing.T) {
 	s.refreshInstructions(ctx)
 	if len(off.prepared) != 0 {
 		t.Fatalf("offline machine: %v", off.prepared)
+	}
+}
+
+// The assistant's own space asks for the extensions' instructions with the digest of the hub's own part, so their data
+// instructions can ride along when it changes; the health space asks without one and never gets them in its CLAUDE.md.
+func TestPluginInstructionsBaseDigest(t *testing.T) {
+	ctx := context.Background()
+	f := healthHub()
+	f.devices[0].Online = true
+	var asked []string
+	f.answerApp(AppPlugins, PluginsAssistant, func(params json.RawMessage) (any, error) {
+		var a struct {
+			Base string `json:"base_digest"`
+		}
+		_ = json.Unmarshal(params, &a)
+		asked = append(asked, a.Base)
+		return map[string]any{"instructions": "\n\n<!-- plugin notes (data) -->\nExtension words.\n", "skills": nil}, nil
+	})
+	s := newTestService(t, f)
+	setSettings(t, s, func(v *Settings) { v.MachineID = "server" })
+	s.refreshInstructions(ctx)
+	if len(asked) != 2 || len(asked[0]) != 32 || asked[1] != "" {
+		t.Fatalf("base digests asked with: %q", asked)
+	}
+	if len(f.prepared) != 2 {
+		t.Fatalf("%v", f.prepared)
+	}
+	main, _ := f.prepared[0]["claude_md"].(string)
+	health, _ := f.prepared[1]["claude_md"].(string)
+	if !strings.HasSuffix(main, "Extension words.\n") || strings.Contains(health, "Extension words.") {
+		t.Fatalf("main ends with the extension's part, health has none:\n%q\n%q", main[max(0, len(main)-80):], health)
 	}
 }
 

@@ -30,9 +30,13 @@ ADMIN_CIDRS="${PERSONA_ADMIN_CIDRS:-}"
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --admin-access) ADMIN_ACCESS="${2:-}"; shift ;;
+    --admin-access)
+      [ $# -ge 2 ] || { echo "--admin-access needs a value" >&2; exit 2; }
+      ADMIN_ACCESS="$2"; shift ;;
     --admin-access=*) ADMIN_ACCESS="${1#*=}" ;;
-    --admin-cidrs) ADMIN_CIDRS="${2:-}"; shift ;;
+    --admin-cidrs)
+      [ $# -ge 2 ] || { echo "--admin-cidrs needs a value" >&2; exit 2; }
+      ADMIN_CIDRS="$2"; shift ;;
     --admin-cidrs=*) ADMIN_CIDRS="${1#*=}" ;;
     *) ARGS+=("$1") ;;
   esac
@@ -68,7 +72,9 @@ cd server
 # Straight from the default branch, for when a change cannot wait for a release: the build number is the build time
 # (UTC), so an older release never replaces it and the next release does (docs/operations/hub-update.md "Direct deploys").
 BUILD="$(date -u +%Y%m%d%H%M)"
-VERSION="$(git describe --always --dirty 2>/dev/null || echo dev)-$BUILD"
+# The nearest vX.Y.Z tag names it, a lightweight one too (a GitHub release's tag is one; plain `git describe` counts
+# annotated tags only, so builds after v0.4.0 read v0.3.1-…, #7201); testflight/<build> and other tags never do.
+VERSION="$(git describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || echo dev)-$BUILD"
 TARGETS=("$@")
 [ ${#TARGETS[@]} -eq 0 ] && read -ra TARGETS <<< "$PERSONA_MACHINES"
 
@@ -135,6 +141,10 @@ COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
 # The update source built in: the config's publish.update_url, else publish.site_url's dl/ (scripts/persona_config.py
 # update_url); none without either. hub.json's update.url replaces it at run time (docs/operations/hub-update.md "Update source").
 UPDATE_URL="${PERSONA_UPDATE_URL:-${PERSONA_PUBLISH_URL:+$PERSONA_PUBLISH_URL/dl}}"
+# Without publish.update_url the hub carries the site's dl/, which may no longer take releases (#8108): say so once.
+if [ -z "$(python3 ../scripts/persona_config.py get publish.update_url 2>/dev/null)" ]; then
+  echo "note: publish.update_url is not set, so the hub's update source is ${UPDATE_URL:-none (it will not look for releases)}; publish.update_url in the config, or update.url in the hub's hub.json, sets another (docs/operations/hub-update.md \"Update source\")" >&2
+fi
 LDFLAGS="-s -w -X main.version=$VERSION -X main.channel=release -X main.build=$BUILD -X main.commit=$COMMIT${UPDATE_URL:+ -X main.updateURL=$UPDATE_URL}"
 # The runtime packages personad carries (the DSH plugin's code, docs/integrations/runtimes.md "Auto-update"), from integrations/.
 go generate ./internal/runtimepkg
@@ -149,6 +159,23 @@ for plat in "${PLATFORMS[@]}"; do
   GOOS=${plat%-*} GOARCH=${plat#*-} CGO_ENABLED=0 go build -tags "$TAGS" -trimpath -ldflags "$LDFLAGS" -o "bin/personad-$plat" ./cmd/personad
   GOOS=${plat%-*} GOARCH=${plat#*-} CGO_ENABLED=0 go build -tags "$TAGS" -trimpath -ldflags "$LDFLAGS" -o "bin/persona-node-$plat" ./cmd/persona-node
 done
+# adhoc_identifiers <dir>: the darwin builds in dir, signed ad hoc again under their program's identifier
+# (com.nwverse.personad, com.nwverse.persona-node, ...) in place of the a.out Go's linker always writes. Only the name
+# changes: an ad-hoc signature's designated requirement stays the build's cdhash, so keeping macOS privacy permissions
+# across updates takes a certificate on the node's Mac (docs/operations/mac-node-signing.md). Only on a Mac, which has
+# codesign; builds made elsewhere keep a.out.
+adhoc_identifiers() {
+  local f prog
+  [ "$(uname -s)" = Darwin ] && command -v codesign >/dev/null 2>&1 || return 0
+  for f in "$1"/*-darwin-amd64 "$1"/*-darwin-arm64; do
+    [ -f "$f" ] || continue
+    prog=${f##*/}
+    prog=${prog%-darwin-*}
+    codesign --force --sign - --identifier "com.nwverse.$prog" "$f" 2>/dev/null ||
+      echo "note: $f keeps the Go linker's ad-hoc identifier a.out (codesign failed)" >&2
+  done
+}
+adhoc_identifiers bin
 echo "built $VERSION"
 # The web client goes with the hub: built here with the binaries, uploaded after the hub restarts.
 if [[ " ${TARGETS[*]} " == *" $HUB "* ]]; then build_web; fi
@@ -239,17 +266,19 @@ install_bin() {
       eval "$previous"
       [ ! -f "$_PERSONA_HUB_BIN" ] || cp -p "$_PERSONA_HUB_BIN" "$root/bin/personad.prev" || return 1
     fi
-    { cp "$bin" "$root/bin/personad.new" && mv "$root/bin/personad.new" "$root/bin/personad"; } || return 1
-    if ! out=$(PERSONA_HOME="$root" "$root/bin/personad" version 2>&1); then
+    { cp "$bin" "$root/bin/personad.new"; } || return 1
+    if ! out=$(PERSONA_HOME="$root" "$root/bin/personad.new" version 2>&1); then
+      rm -f "$root/bin/personad.new"
       echo "$id: the $plat build does not run there: $out" >&2
       return 1
     fi
+    mv "$root/bin/personad.new" "$root/bin/personad" || return 1
     python3 ../scripts/persona_identity.py --alias-binaries "$root/bin" || return 1
     PERSONA_HOME="$root" restart_resident
   else
     keep=
     [ "$role" = hub ] && keep='{ [ ! -f "$_PERSONA_HUB_BIN" ] || cp -p "$_PERSONA_HUB_BIN" "$PERSONA_HOME/bin/personad.prev"; } && '
-    command=$keep'mkdir -p "$PERSONA_HOME/bin" && cat > "$PERSONA_HOME/bin/personad.new" && chmod 755 "$PERSONA_HOME/bin/personad.new" && mv "$PERSONA_HOME/bin/personad.new" "$PERSONA_HOME/bin/personad" && persona_alias_binaries "$PERSONA_HOME/bin" && "$PERSONA_HOME/bin/personad" version >/dev/null'
+    command=$keep'mkdir -p "$PERSONA_HOME/bin" && cat > "$PERSONA_HOME/bin/personad.new" && chmod 755 "$PERSONA_HOME/bin/personad.new" && if "$PERSONA_HOME/bin/personad.new" version >/dev/null; then mv "$PERSONA_HOME/bin/personad.new" "$PERSONA_HOME/bin/personad" && persona_alias_binaries "$PERSONA_HOME/bin"; else result=$?; rm -f "$PERSONA_HOME/bin/personad.new"; exit "$result"; fi'
     if [ -n "$via" ]; then
       local vh quoted
       vh=$(field "$via" ssh); vh=${vh:-$via}

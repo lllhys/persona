@@ -22,5 +22,8 @@
   "dismissed": "This decision was dismissed. The task stays open; no option was taken.",
   "undo_failed": "Couldn't restore this decision. {error}",
   "missing_options": "This older review has no answerable options. Open the task to clarify the decision.",
-  "confirm": "Confirm: {option}"
+  "confirm": "Confirm: {option}",
+  "dialog_open": "A dialog is blocking the Agent's terminal: “{dialog}”. Deal with it there, then answer again.",
+  "dialog_open_unnamed": "A dialog is blocking the Agent's terminal. Deal with it there, then answer again.",
+  "open_terminal": "Open terminal"
 }

@@ -11,7 +11,8 @@ final class AssistantWelcomeTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    @MainActor private func launch(newConversation: Bool, needsYou: Bool = false) {
+    /// `textSize`: a content size category to launch in (`UICTContentSizeCategory…`), else the simulator's.
+    @MainActor private func launch(newConversation: Bool, needsYou: Bool = false, textSize: String? = nil) {
         app = XCUIApplication()
         // `-showHomeState empty`: nothing needs the user, the case that was blank. Without it, the demo's agents waiting
         // and inbox items to answer.
@@ -19,6 +20,7 @@ final class AssistantWelcomeTests: XCTestCase {
                                "-dev.openChat", ""] + (needsYou ? [] : ["-showHomeState", "empty"])
             // Otherwise the demo's main conversation (the last run may have left a new one open).
             + (newConversation ? ["-newAssistant", "YES"] : ["-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001"])
+            + (textSize.map { ["-UIPreferredContentSizeCategoryName", $0] } ?? [])
         app.launchPinned()
     }
 
@@ -79,6 +81,30 @@ final class AssistantWelcomeTests: XCTestCase {
         shot("needs you while typing")
         XCTAssertEqual(rows(), shown, "typing changed how many rows of 需要你 show")
         XCTAssertEqual(more.exists ? more.label : nil, rest, "typing changed what 还有 N 件 says")
+    }
+
+    /// At the largest text size the greeting and what Persona can reach fill most of the page, and the welcome's first
+    /// things to ask are below it: Needs You keeps one row, and the greeting stays in view above it (#4073: the cards'
+    /// lazy grid never made the ones below the page, so their end was never measured, and three rows and "N more"
+    /// covered the welcome).
+    ///
+    /// Nothing asks for the page's elements until it has settled, and the rows are counted at the first look: building the
+    /// accessibility tree makes the lazy grid make every card, which measured the fold and hid the bug from a test that
+    /// waited for Needs You first (it passed without the fix).
+    @MainActor func testNeedsYouAtTheLargestTextSize() {
+        launch(newConversation: true, needsYou: true, textSize: "UICTContentSizeCategoryAccessibilityXXXL")
+        sleep(6)
+        let rows = app.buttons.matching(NSPredicate(format: "identifier IN %@", ["shell-needs-agent", "shell-needs-inbox"])).count
+        shot("needs you at the largest text size")
+        let needs = app.descendants(matching: .any)["shell-needs-you"].firstMatch
+        XCTAssertTrue(needs.waitForExistence(timeout: 15), "nothing needs the user over the composer")
+        let ask = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "今天的安排")).firstMatch
+        if !(ask.exists && ask.isHittable && ask.frame.maxY <= needs.frame.minY) {
+            XCTAssertEqual(rows, 1, "the first thing to ask is out of view, and 需要你 shows \(rows) rows")
+        }
+        let greeting = app.staticTexts.matching(NSPredicate(format: "label IN %@", ["早上好", "中午好", "下午好", "晚上好"])).firstMatch
+        XCTAssertTrue(greeting.exists && greeting.isHittable, "no greeting in view")
+        XCTAssertLessThanOrEqual(greeting.frame.maxY, needs.frame.minY, "需要你 covers the greeting")
     }
 
     /// From a conversation, the sidebar's New Chat opens the same welcome.

@@ -5,7 +5,7 @@
 // fields: the card stays the terminal's question with its numbered options. The hub is faked (apiOp).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   window.matchMedia ??= ((query: string) => ({ matches: false, media: query, onchange: null, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, dispatchEvent: () => false })) as typeof window.matchMedia;
 });
@@ -16,6 +16,11 @@ vi.mock("../../lib/ops", () => ({
     return {};
   }),
 }));
+// A slow real chunk makes the old fixed 100 ms body wait fail deterministically.
+vi.mock("./CommandScreenCard", async (importOriginal) => {
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  return await importOriginal<typeof import("./CommandScreenCard")>();
+});
 import { InteractionCard } from "./Interactions";
 import { getState } from "../../lib/store";
 import { t } from "../../i18n";
@@ -44,9 +49,10 @@ const card = (deadlineIn: number): Interaction => ({
 });
 
 /** The plain words' own chunk (lazyPage) is in and drawn. */
-const body = async () => {
-  for (let i = 0; i < 20 && !host.querySelector("[data-screen-command]"); i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-};
+const body = () => vi.waitFor(async () => {
+  await act(async () => {});
+  expect(host.querySelector("[data-screen-command]")).not.toBeNull();
+}, { timeout: 3000 });
 
 const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement;
 
@@ -65,8 +71,12 @@ afterEach(() => {
 });
 
 describe("a command's permission prompt", () => {
+  beforeAll(async () => {
+    await import("./CommandScreenCard"); // before any test installs fake timers
+  }, 60_000);
+
   it("says what is asked in plain words, with Claude Code's own words one tap away", async () => {
-    act(() => root.render(<InteractionCard ix={card(104)} />));
+    await act(async () => root.render(<InteractionCard ix={card(104)} />));
     await body();
     expect(host.textContent).toContain(t("chat-commandask.title", { agent: "Claude" }));
     expect(host.textContent).not.toContain("Do you want to proceed?");
@@ -83,7 +93,6 @@ describe("a command's permission prompt", () => {
   });
 
   it("counts down, then says what happens", async () => {
-    await act(async () => { await import("./CommandScreenCard"); }); // its chunk in before the clock is faked
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     act(() => root.render(<InteractionCard ix={card(104)} />));
     await flush();
@@ -119,5 +128,22 @@ describe("a command's permission prompt", () => {
     expect(host.textContent).toContain("rm -rf build");
     expect(host.textContent).toContain("Yes");
     expect(host.querySelector("[data-screen-countdown]")).toBeNull();
+  });
+
+  it("folds a long command read without its fields, so its choices sit right under it (#6638)", () => {
+    const old = card(104);
+    const command = Array.from({ length: 52 }, (_, i) => `echo step ${i + 1}`).join("\n");
+    old.dialog = { question: "Do you want to proceed?", rev: "r2", detail: `Check every step\n${command}`, options: old.dialog!.options };
+    act(() => root.render(<InteractionCard ix={old} />));
+    const fold = host.querySelector("[data-screen-detail]") as HTMLElement;
+    // the web's fold (ScrollFold): six lines tall, scrolling inside, the whole text still there to scroll to and select
+    expect(fold.className).toContain("max-h-[6lh]");
+    expect(fold.className).toContain("overflow-y-auto");
+    expect(fold.hasAttribute("data-fold-scroll")).toBe(true);
+    expect(fold.textContent).toContain("echo step 52");
+    // the choices come after the fold, not inside it
+    const yes = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes("Yes")) as HTMLButtonElement;
+    expect(fold.contains(yes)).toBe(false);
+    expect(fold.compareDocumentPosition(yes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

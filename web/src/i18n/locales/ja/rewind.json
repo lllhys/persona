@@ -3,7 +3,6 @@
   "conversation": "会話のみ",
   "code_and_conversation": "コードと会話",
   "confirm_code": "コードの巻き戻しを確定",
-  "block_claude_only": "Claudeのみ",
   "hub_unsupported": "このハブはまだ巻き戻しに対応していません。更新してください。",
   "needs_full_device": "巻き戻しにはフルアクセスのデバイスが必要です。",
   "done_conversation": "会話を巻き戻しました",
@@ -16,5 +15,6 @@
   "editing_hint": "Enter: その前まで会話を巻き戻してこれを送信 · Esc: キャンセル",
   "cancel_editing": "編集をキャンセル",
   "edit_ended": "前のメッセージが変わったため、編集ではなくなりました。送信すると新しいメッセージになります。",
-  "edit_wait": "今は会話を巻き戻せません（{reason}）。編集内容は入力欄に残っています。"
+  "edit_wait": "今は会話を巻き戻せません（{reason}）。編集内容は入力欄に残っています。",
+  "unsupported": "未対応"
 }

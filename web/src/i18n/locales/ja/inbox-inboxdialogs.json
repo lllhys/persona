@@ -22,6 +22,8 @@
   "target_main_sub": "Persona とのメインチャットに送る",
   "target_persona": "Persona（新しいチャット）",
   "target_persona_sub": "Persona と新しいチャットを始める",
+  "target_new_agent": "新規エージェント…",
+  "target_new_agent_sub": "コンピュータ、フォルダ、モデルを選びます",
   "last_time": "前回",
   "last_gone": "前回渡したエージェントは終了しているため、今回はメインの会話に渡します。"
 }

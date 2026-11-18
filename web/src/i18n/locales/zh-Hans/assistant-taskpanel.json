@@ -7,6 +7,7 @@
   "retry": "重试",
   "remove": "移除任务",
   "starting": "正在开 Agent，开好以后这里就是它的对话。",
+  "no_agent": "当前没有 Agent 在执行这项任务。",
   "open_in_new_window": "在新窗口打开",
   "switch_agent": "切换 Agent"
 }

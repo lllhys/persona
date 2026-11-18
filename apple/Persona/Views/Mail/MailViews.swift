@@ -1,6 +1,7 @@
 import AuthenticationServices
 import SwiftUI
 import WebKit
+import PersonaWire
 
 extension APIClient {
     struct AccountsResponse: Decodable { var accounts: [MailAccount] }
@@ -156,12 +157,12 @@ struct MailDetailView: View {
                 translationBar
                 if let m = message {
                     if let t = translated {
-                        Text(t.text).font(Theme.Font.body).lineHeight(.body).textSelection(.enabled)
+                        Text(t.text).font(Theme.Font.body).lineHeight(.body).textSelection(.enabled).readingContent()
                         if t.clipped == true {
                             Text("This email is long, so only the beginning was translated. See the original for the full text.").font(Theme.Font.caption).foregroundStyle(.secondary)
                         }
                     } else if let text = m.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text(text).font(Theme.Font.body).lineHeight(.body).textSelection(.enabled)
+                        Text(text).font(Theme.Font.body).lineHeight(.body).textSelection(.enabled).readingContent()
                     } else if let html = m.html, !html.isEmpty {
                         HTMLView(html: html, height: $webHeight).frame(height: webHeight)
                     }
@@ -297,6 +298,9 @@ struct HTMLView: UIViewRepresentable {
         let config = WKWebViewConfiguration()
         config.defaultWebpagePreferences.allowsContentJavaScript = false
         let v = WKWebView(frame: .zero, configuration: config)
+        #if os(iOS)
+        CallMediaGuard.shared.register(v) // a mail's media stays still while a system call is live
+        #endif
         v.scrollView.isScrollEnabled = false
         v.isOpaque = false
         v.backgroundColor = .clear
@@ -403,7 +407,7 @@ struct ComposeView: View {
             .navigationTitle("New Email")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                SheetClose { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { Task { await send() } } label: {
                         if sending { ProgressView() } else { Label("Send", systemImage: Theme.Icon.sendMail) }
@@ -452,7 +456,7 @@ struct MailAccountsView: View {
 
     var body: some View {
         if inSheet {
-            NavigationStack { page.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } } }
+            NavigationStack { page.toolbar { SheetClose { dismiss() } } }
         } else {
             page
         }
@@ -551,7 +555,7 @@ struct MailAccountsView: View {
     }
 }
 
-/// The Other IMAP footer for a QQ / NetEase address: where its authorization code is made, and a button to that web mail (#5123).
+/// The password footer for a QQ / NetEase / Gmail / iCloud address: where its authorization code or app password is made, and a button to that page (#5123, #9389).
 private struct CodeGuideSteps: View {
     let guide: CodeGuide
     @Environment(\.openURL) private var openURL
@@ -563,13 +567,28 @@ private struct CodeGuideSteps: View {
                 Text("Servers fill in automatically. The password is an authorization code, not your QQ password: on a computer, open QQ Mail on the web, go to Settings › Account & Security › Security Settings, turn on “POP3/IMAP/SMTP/Exchange/CardDAV service”, verify as prompted, then tap “Generate authorization code” and paste the 16-character code above.")
             case .netease:
                 Text("Servers fill in automatically. The password is an authorization code, not your login password: on a computer, open NetEase Mail on the web, go to Settings › POP3/SMTP/IMAP and turn on “IMAP/SMTP service”. After you verify with your phone as prompted, the code is shown: paste it above.")
+            case .gmail:
+                Text("The password is an app password, not your Google password: turn on 2-Step Verification for the Google account, then open App passwords, create one and paste the 16-character password above.")
+            case .icloud:
+                Text("The password is an app-specific password, not your Apple Account password: sign in to your Apple Account, open Sign-In and Security › App-Specific Passwords, create one and paste it above.")
             }
             Button { openURL(guide.webMail) } label: {
-                Label(guide.provider == .qq ? String(localized: "Open QQ Mail on the web") : String(localized: "Open NetEase Mail on the web"), systemImage: Theme.Icon.safari)
+                Label(guide.buttonTitle, systemImage: Theme.Icon.safari)
                     .lineLimit(1)
             }
             .font(Theme.Font.caption)
             .accessibilityIdentifier("mail.codeGuide.open")
+        }
+    }
+}
+
+private extension CodeGuide {
+    var buttonTitle: String {
+        switch provider {
+        case .qq: String(localized: "Open QQ Mail on the web")
+        case .netease: String(localized: "Open NetEase Mail on the web")
+        case .gmail: String(localized: "Open Google App passwords")
+        case .icloud: String(localized: "Open Apple Account")
         }
     }
 }
@@ -646,7 +665,7 @@ struct AddMailAccountView: View {
                         TextField(String(localized: "Gmail address"), text: $form.email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                         SecretField(String(localized: "App password"), filled: String(localized: "Filled in. Tap Connect."), text: $form.password, identifier: "mail.password")
                     } footer: {
-                        Text("Once google.client_id is in the assistant's manager.json and the hub restarts, “Sign In with Google” appears here (a one-time setup). Until then, add the account with an app password: turn on 2-Step Verification for the Google account, then create a 16-character password under Google Account › Security › App passwords and enter it here (not your Google password).")
+                        CodeGuideSteps(guide: .gmailAppPassword)
                     }
                 } else if form.kind == .gmail {
                     Section {
@@ -661,7 +680,7 @@ struct AddMailAccountView: View {
                         Text("Choose an account on Google and let Persona send and receive mail. No password needed. You can revoke access anytime under “Third-party apps & services” in your Google Account; if access expires, just sign in again.")
                     }
                 } else if form.kind == .outlook {
-                    OutlookSignInSection(error: $error) { dismiss() }
+                    OutlookSignInSection(api: settingsAPI ?? capturedAPI, error: $error) { dismiss() }
                 } else {
                     Section {
                         TextField(String(localized: "Email address"), text: $form.email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -707,7 +726,7 @@ struct AddMailAccountView: View {
             // Ask before offering "Sign in with Google" (#2442); an older hub or a failed read keeps the button.
             .task { form.gmailAppPassword = (try? await requestAPI()?.googleConfig())?.configured == false }
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                SheetClose { dismiss() }
                 if form.request != nil {
                     ToolbarItem(placement: .confirmationAction) {
                         Button { Task { await save() } } label: { if saving { ProgressView() } else { Text("Connect [V N C Page a55741]") } }

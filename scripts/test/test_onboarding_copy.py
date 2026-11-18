@@ -132,14 +132,20 @@ SCOPES = [
 ALLOW = {
     ("web/login", "master_placeholder"): "登录页「高级」里用 hub 的总钥匙登录（Login.tsx 的 advanced Disclosure），只有自己装 hub 的人用",
     ("web/settings-providerwizard", "auth_bearer_hint"): "选了「自定义」才出现的网关表单（connect 步），说的是网关认的环境变量名；内置厂商只粘 Key，不经过这一步",
-    ("apple/provider-wizard", "Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). The key is stored encrypted on the hub and never sent back to apps."):
-        "Only the custom compatible gateway form (connect step) names this environment variable; built-in providers only ask for a key (#4197).",
+}
+_ADVANCED_GATEWAY_REASON = "Only the custom compatible gateway form (connect step) names this environment variable; built-in providers only ask for a key (#4197)."
+for _key in (
+    "Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). The key is stored encrypted on the hub and never sent back to apps.",
+    "Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). The hub keeps only the reference and fetches the key from its provider when it's needed.",
+):
+    ALLOW[("apple/provider-wizard", _key)] = _ADVANCED_GATEWAY_REASON
+ALLOW.update({
     ("apple/provider-wizard", "Import from ~/.zshrc"): "The first step's Advanced section (#4197); older hubs retain their wizard.",
     ("apple/provider-wizard", 'Reads this computer\'s ~/.zshrc, finds lines like alias x=\\"K=V … claude\\", and turns them into providers by gateway and key. Keys only pass through the hub and are stored encrypted.'):
         "Import from ~/.zshrc in Advanced (#4197), for developers who already have aliases.",
     ("apple/provider-wizard", "Redeploy personad on this computer in Settings › Computers, then try again."): "An error from Import from ~/.zshrc in Advanced (#4197).",
     ("apple/provider-wizard", "This computer's ~/.zshrc has no aliases that call claude."): "Import from ~/.zshrc in Advanced (#4197).",
-}
+})
 
 # (scope, key) → who is fixing it (the issue or the design's work item). Each must still be wrong somewhere.
 PENDING = {

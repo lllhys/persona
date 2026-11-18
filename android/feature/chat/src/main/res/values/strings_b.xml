@@ -48,6 +48,8 @@
     <string name="chat_chrome_actions_title">Session actions</string>
     <string name="chat_chrome_todo">To-do · %1$s</string>
     <string name="chat_chrome_terminal">Terminal</string>
+    <string name="chat_chrome_resume_in_terminal">Resume in Terminal</string>
+    <string name="chat_chrome_resume_no_engine">No terminal engine on %1$s</string>
     <string name="chat_chrome_search">Search</string>
     <string name="chat_chrome_files">Files</string>
     <string name="chat_chrome_details">Session details</string>
@@ -188,6 +190,17 @@
     <string name="chat_screen_command_ids">Request %1$s, tool call %2$s</string>
     <string name="chat_screen_type_answer">Type an answer</string>
     <string name="chat_screen_unreadable">Can\'t read this dialog yet. Check and handle it on the computer.</string>
+    <string name="chat_command_ask_title">%1$s Wants to Run a Command</string>
+    <string name="chat_command_ask_risk_delete">Can\'t confirm this command won\'t delete files</string>
+    <string name="chat_command_ask_risk_other">Claude Code warns about this command</string>
+    <string name="chat_command_ask_countdown_deny">Denied automatically in %1$s</string>
+    <string name="chat_command_ask_countdown_allow">Allowed automatically in %1$s</string>
+    <string name="chat_command_ask_countdown_over_deny">Time\'s up: Claude Code denies it</string>
+    <string name="chat_command_ask_countdown_over_allow">Time\'s up: Claude Code allows it</string>
+    <string name="chat_command_ask_show_original">Show Original</string>
+    <string name="chat_command_ask_hide_original">Hide Original</string>
+    <string name="chat_command_ask_show_all">Show All</string>
+    <string name="chat_command_ask_collapse">Collapse</string>
     <string name="chat_request_unsupported">This request can\'t be handled on the phone yet. Check and handle it on the computer.</string>
     <string name="chat_request_terminal_help">Using the terminal</string>
     <string name="chat_request_dismiss">Leave to computer</string>
@@ -238,7 +251,6 @@
     <string name="chat_links_context_default">See the content above.</string>
     <string name="chat_menu_copied">Copied</string>
     <string name="chat_menu_no_share">No app can share this</string>
-    <string name="chat_menu_select_title">Select text</string>
     <string name="chat_menu_copy">Copy</string>
     <string name="chat_menu_select">Select</string>
     <string name="chat_menu_quote">Quote</string>
@@ -256,6 +268,7 @@
     <string name="chat_source_conversation">Conversation</string>
     <string name="chat_source_patrol">Routine check</string>
     <string name="chat_source_followup">Follow-up</string>
+    <string name="chat_source_scheduled_task">Sent by a scheduled task</string>
     <string name="chat_source_supervision">Supervision</string>
     <string name="chat_source_unknown">Source</string>
     <string name="chat_source_expand">Show more</string>
@@ -303,6 +316,9 @@
     <string name="chat_modes_model_sonnet_detail">Balanced</string>
     <string name="chat_modes_model_haiku_detail">Fastest</string>
     <string name="chat_modes_unknown_detail">This version of the app doesn\'t know this mode yet</string>
+    <string name="chat_modes_launcher_default">Follow launcher</string>
+    <string name="chat_modes_launcher_default_detail">Its own approval settings decide what it asks, and may already allow everything</string>
+    <string name="chat_modes_bypass_listed_detail">Approves everything without asking; can be switched back in the chat</string>
     <string name="chat_modes_effort_hint">Thinking: %1$s</string>
     <string name="chat_modes_hint_separator">", "</string>
     <string name="chat_modes_button_bypass">Mode: allow everything</string>
@@ -334,6 +350,10 @@
     </plurals>
     <string name="chat_queue_deleted">Removed from the queue</string>
     <string name="chat_queue_restored">Moved back to the input box. Edit it and send again.</string>
+    <plurals name="chat_queue_photos_lost">
+        <item quantity="one">Moved back to the input box. %1$d photo couldn\'t be put back.</item>
+        <item quantity="other">Moved back to the input box. %1$d photos couldn\'t be put back.</item>
+    </plurals>
     <string name="chat_queue_not_found">Couldn\'t find this one. The queue may have changed; check and try again</string>
     <string name="chat_queue_failed">Didn\'t change: %1$s</string>
     <string name="chat_queue_edit">Take back to edit</string>
@@ -343,10 +363,13 @@
     <string name="chat_queue_move_up">Move up</string>
     <string name="chat_queue_move_down">Move down</string>
     <string name="chat_queue_send_now">Send now</string>
-    <string name="chat_queue_send_now_title">Send the queued messages now?</string>
     <string name="chat_queue_send_now_message">Sends the queued messages to the agent now. A command it is running keeps running in the background; a reply it is writing starts again with your message.</string>
     <string name="chat_queue_send_now_message_persona">%1$s gets them right away instead of at its next step. What it is doing now stops, or goes on in the background when it can, and it starts again with your messages.</string>
     <string name="chat_queue_relayed_note">Arrives when this chat is free</string>
+    <plurals name="chat_queue_relayed_summary">
+        <item quantity="one">%1$d message from another conversation is waiting</item>
+        <item quantity="other">%1$d messages from other conversations are waiting</item>
+    </plurals>
     <string name="chat_queue_sent_now">Sent to the agent now</string>
     <string name="chat_composer_photos_only">Please look at the photos</string>
     <string name="chat_composer_photo_placeholder">[Photo]</string>
@@ -366,6 +389,7 @@
     <string name="chat_reader_empty">No content</string>
     <string name="chat_reader_open">View full text</string>
     <string name="chat_reader_raw_input">Raw input</string>
+    <string name="chat_tool_hide_raw_input">Hide raw input</string>
     <string name="chat_reader_full_output">Full output</string>
     <string name="chat_reader_raw_output">Raw output</string>
     <string name="chat_reader_copy_both">Copy all</string>
@@ -401,8 +425,10 @@
     <string name="chat_search_at_start">Reached the earliest record</string>
     <string name="chat_search_enter">Enter a keyword</string>
     <string name="chat_search_no_match">No matching records</string>
-    <string name="chat_search_scope">Searches text, thinking, tool names, tool input and output, and system events.</string>
-    <string name="chat_search_note">Searches loaded content only; collapsed work records and truncated full text aren\'t included.</string>
+    <string name="chat_search_scope">Searches messages, quoted context, thinking, tool names, tool input and output, and system events.</string>
+    <string name="chat_search_note">Only what\'s loaded is searched, folded steps included. Truncated full text isn\'t included.</string>
+    <string name="chat_search_folds_loading">Searching folded steps…</string>
+    <string name="chat_search_folds_partial">Some folded steps couldn\'t be searched.</string>
     <string name="chat_search_return">Back to where you were</string>
     <string name="chat_search_unlocatable">Can\'t find this record right now. You can go back to where you were</string>
     <string name="chat_search_origin_changed">The earlier record changed. Keep browsing the current records</string>
@@ -424,6 +450,7 @@
     <string name="chat_slash_report_text">Briefly report your progress so far and what\'s left</string>
     <string name="chat_slash_clear_title">Clear context /clear</string>
     <string name="chat_slash_clear_detail">Clear the context and start a new session</string>
+    <string name="chat_slash_clear_main_detail">Clear the chat and start over</string>
     <string name="chat_tasks_origin_gone">The earlier record is no longer in the list</string>
     <string name="chat_tasks_load_failed">Couldn\'t load the related records. Expand the work steps and try again</string>
     <string name="chat_tasks_record_gone">The related record is no longer in the list</string>
@@ -464,8 +491,8 @@
     <string name="chat_doc_rtf">RTF document</string>
     <string name="chat_doc_pdf">PDF document</string>
     <string name="chat_doc_other">Document</string>
-    <string name="chat_turn_fix_not_logged_in">Model not connected: Claude Code isn\'t signed in</string>
-    <string name="chat_turn_fix_not_logged_in_detail">Sign in once on that computer, or use an API key instead.</string>
+    <string name="chat_turn_fix_not_logged_in">Model not connected: Claude Code CLI isn\'t signed in</string>
+    <string name="chat_turn_fix_not_logged_in_detail">The Claude desktop app\'s sign-in doesn\'t count for it. Run claude auth login in a terminal on that computer, or use an API key instead.</string>
     <string name="chat_turn_fix_auth_failed">Model not connected: the key is wrong</string>
     <string name="chat_turn_fix_auth_failed_detail">The key is wrong or has expired; use one that works.</string>
     <string name="chat_turn_fix_model_route">Model not connected: this model can\'t be used</string>

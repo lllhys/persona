@@ -20,6 +20,7 @@
   "open_folder": "Open {name}",
   "permission_mode": "Permission mode",
   "permission_mode_hint": "You can change the mode in the conversation later; Full access can only be picked when starting.",
+  "provider_mode_hint": "This agent uses its own approval settings unless you pick Full access. You can switch in the conversation later.",
   "no_computer_title": "No computers yet",
   "no_computer_body": "An agent runs on one of your computers, so there is nothing to pick here yet. Add one first.",
   "worktree": "In a new worktree",
@@ -50,5 +51,9 @@
   "follow_row": "Follow Model settings",
   "carry_dropped": "{name} can’t run on {computer}, so its default is used.",
   "preset_picked": "Preset {name} · {what}",
-  "typed_now": "Typed for this start"
+  "typed_now": "Typed for this start",
+  "temporary_session": "Temporary session",
+  "runs": "Runs",
+  "runs_hint": "Start this task {count} times, each in a worktree of its own, and compare the results.",
+  "start_runs": "Start {count}"
 }

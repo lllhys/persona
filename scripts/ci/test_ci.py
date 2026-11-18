@@ -7,12 +7,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths
 import required
+import run
 
 
 class PathTests(unittest.TestCase):
@@ -32,10 +34,28 @@ class PathTests(unittest.TestCase):
         self.assertTrue(paths.select(["scripts/mock/inbox_events.json"])["web"])
         self.assertTrue(paths.select(["schema/extension/example.json"])["apple"])
 
+    def test_desktop_inputs_select_the_desktop_lane(self):
+        for filename in ["desktop/src/main.ts", "web/src/main.tsx", "scripts/mock/mock_hub.py",
+                         "scripts/mock/test_desktops_mock.py", "scripts/mock/stream_trace.py", "spec/desktop-bridge.d.ts",
+                         "server/cmd/password-wasm/main.go", "server/internal/passwordpake/pake.go", "server/go.mod", "server/go.sum"]:
+            self.assertTrue(paths.select([filename])["desktop"], filename)
+        self.assertFalse(paths.select(["server/internal/hub/hub.go"])["desktop"])
+
     def test_sdk_ts_sources_also_select_the_server_lane(self):
         # The trusted Deno adapter and the extension page tests bundle sdk/ts/src (#4221); the rest of sdk/ts is not.
         self.assertTrue(paths.select(["sdk/ts/src/wire.ts"])["server"])
         self.assertTrue(paths.select(["sdk/ts/src/wire.ts"])["runtimes"])
+        # The shared Rust core: its own lane, and Android, whose tests load it.
+        for filename in ["native/app-core/crates/persona-core/src/lib.rs", "spec/fixtures/continuity/append_and_gaps.json",
+                         "scripts/ci/core.sh"]:
+            self.assertTrue(paths.select([filename])["core"], filename)
+        self.assertTrue(paths.select(["native/app-core/Cargo.lock"])["android"])
+        # The generated ArkTS codec and its host tests run in the same lane as the core they encode for (#7450).
+        for filename in ["harmony/entry/src/main/ets/core/rustcore/Wire.ts", "harmony/entry/src/main/ets/core/PersonaCore.ts",
+                         "harmony/entry/src/main/cpp/types/libpersona_core/index.d.ts", "harmony/tests/rustcore-wire.test.mjs",
+                         "harmony/tests/core-host/replay.test.mjs"]:
+            self.assertTrue(paths.select([filename])["core"], filename)
+        self.assertFalse(paths.select(["web/src/App.tsx"])["core"])
         self.assertFalse(paths.select(["sdk/ts/README.md"])["server"])
 
     def test_source_authoring_sdk_and_gate_paths_select_runtime_ci(self):
@@ -88,6 +108,11 @@ class PathTests(unittest.TestCase):
     def test_shard_implementation_changes_select_their_lane(self):
         self.assertTrue(paths.select(["scripts/ci/server-shards.py"])["server"])
         self.assertTrue(paths.select(["scripts/ci/android-shards.py"])["android"])
+
+    def test_the_callkit_guards_select_the_apple_lane(self):
+        # The Apple lane runs both against real builds (#9290).
+        for filename in ("scripts/release/check_no_callkit.py", "scripts/test/test_apple_no_callkit.py"):
+            self.assertTrue(paths.select([filename])["apple"], filename)
 
     def test_deleted_and_renamed_old_paths_are_relevant(self):
         self.assertTrue(paths.select(["apple/Old.swift", "docs/archive/new.md"])["apple"])
@@ -210,7 +235,7 @@ class ManualWorkflowTests(unittest.TestCase):
         self.assertIn('CI_FULL: ${{ inputs.full }}', selection)
         self.assertIn('if [ "$CI_FULL" = true ]; then', selection)
         self.assertIn('python3 scripts/ci/paths.py --all', selection)
-        for name in ('server', 'web', 'android', 'apple', 'apple_macos', 'runtimes', 'scripts'):
+        for name in ('server', 'web', 'android', 'apple', 'core', 'runtimes', 'desktop', 'scripts'):
             block = re.split(r'\n  [a-z_]+:\n', ci.split('\n  ' + name + ':\n', 1)[1], maxsplit=1)[0]
             self.assertIn('needs: changes', block)
             self.assertIn('needs.changes.outputs.', block)
@@ -228,7 +253,7 @@ class ManualWorkflowTests(unittest.TestCase):
         self.assertEqual(set(release['on']), {'push', 'workflow_dispatch'})
         self.assertEqual(release['permissions'], {'contents': 'read'})
         self.assertNotIn('permissions', release['jobs']['smoke'])
-        self.assertEqual(release['jobs']['publish']['needs'], 'smoke')
+        self.assertEqual(release['jobs']['publish']['needs'], ['authorize', 'smoke'])
         self.assertEqual(release['jobs']['publish']['permissions'], {'contents': 'write', 'packages': 'write'})
         steps = release['jobs']['publish']['steps']
         create = steps[-1]
@@ -247,7 +272,7 @@ class ManualWorkflowTests(unittest.TestCase):
 
 class RequiredTests(unittest.TestCase):
     def needs(self):
-        outputs = {name: "false" for name in ("server", "web", "android", "apple", "runtimes", "scripts")}
+        outputs = {name: "false" for name in ("server", "web", "android", "apple", "core", "runtimes", "desktop", "scripts")}
         outputs["scripts"] = "true"
         needs = {name: {"result": "skipped"} for name in outputs}
         needs["scripts"] = {"result": "success"}
@@ -269,16 +294,14 @@ class RequiredTests(unittest.TestCase):
         del needs["changes"]["outputs"]["apple"]
         self.assertTrue(required.failures(needs))
 
-    def test_mac_result_does_not_change_required_ios_policy(self):
-        for mac_result in ('failure', 'cancelled', 'skipped', None, 'success'):
-            needs = self.needs()
-            needs['changes']['outputs']['apple'] = 'true'
-            needs['apple']['result'] = 'success'
-            needs['apple_macos'] = {'result': mac_result}
-            self.assertEqual(required.failures(needs), [])
-            for ios_result in ('failure', 'cancelled', 'skipped', None):
-                needs['apple']['result'] = ios_result
-                self.assertTrue(required.failures(needs))
+    def test_mac_removal_keeps_ios_required(self):
+        needs = self.needs()
+        needs['changes']['outputs']['apple'] = 'true'
+        needs['apple']['result'] = 'success'
+        self.assertEqual(required.failures(needs), [])
+        for ios_result in ('failure', 'cancelled', 'skipped', None):
+            needs['apple']['result'] = ios_result
+            self.assertTrue(required.failures(needs))
 
     def test_guard_failure_never_passes(self):
         needs = self.needs()
@@ -286,26 +309,56 @@ class RequiredTests(unittest.TestCase):
         self.assertTrue(required.failures(needs))
 
 
+class DesktopWorkflowTests(unittest.TestCase):
+    def test_desktop_lane_and_explicit_unsigned_default(self):
+        root = Path(__file__).resolve().parents[2]
+        ci = (root / '.github/workflows/ci.yml').read_text()
+        self.assertIn('uses: ./.github/workflows/desktop-test.yml', ci)
+        self.assertIn('desktop: ${{ steps.paths.outputs.desktop }}', ci)
+        self.assertIn('needs: [changes, server, web, android, apple, core, runtimes, desktop, scripts]', ci)
+        workflow = yaml.load((root / '.github/workflows/desktop-test.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(set(workflow['jobs']), {'linux', 'macos', 'windows', 'update'})
+        self.assertEqual(workflow['on']['workflow_call'], '')
+        self.assertEqual(workflow['on']['workflow_dispatch'], '')
+        text = (root / '.github/workflows/desktop-test.yml').read_text()
+        self.assertNotIn('inputs.signed', text)
+        self.assertNotIn('CSC_LINK', text)
+        unsigned = yaml.load((root / 'desktop/electron-builder.unsigned.yml').read_text(), Loader=yaml.BaseLoader)
+        self.assertEqual(unsigned['appId'], 'com.example.persona.desktop')
+        self.assertEqual(unsigned['mac']['identity'], 'null')
+        self.assertEqual(unsigned['mac']['notarize'], 'false')
+        self.assertEqual(unsigned['forceCodeSigning'], 'false')
+        self.assertEqual(unsigned['publish'], 'null')
+        production = (root / 'desktop/electron-builder.yml').read_text()
+        for fuse in ('runAsNode: false', 'enableCookieEncryption: true', 'enableNodeOptionsEnvironmentVariable: false',
+                     'enableNodeCliInspectArguments: false', 'enableEmbeddedAsarIntegrityValidation: true',
+                     'onlyLoadAppFromAsar: true', 'grantFileProtocolExtraPrivileges: false'):
+            self.assertIn(fuse, production)
+        self.assertIn('arch: [universal]', production)
+        self.assertIn('target: nsis', production)
+        for platform in ('server', 'web', 'android', 'apple', 'core', 'runtimes', 'desktop', 'scripts'):
+            self.assertIn(f'"{platform}"', (root / 'scripts/ci/required.py').read_text())
+
+
 class AppleWorkflowTests(unittest.TestCase):
-    def test_mac_and_ios_are_independent_but_only_ios_blocks(self):
+    def test_native_mac_is_removed_and_ios_stays_required(self):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / '.github/workflows/ci.yml').read_text()
-        ios = workflow.split('\n  apple:\n', 1)[1].split('\n  apple_macos:\n', 1)[0]
-        mac = workflow.split('\n  apple_macos:\n', 1)[1].split('\n  runtimes:\n', 1)[0]
-        for block, lane in ((ios, 'ios'), (mac, 'macos')):
-            self.assertIn('    needs: changes\n', block)
-            self.assertIn("    if: needs.changes.outputs.apple == 'true'", block)
-            self.assertIn('    uses: ./.github/workflows/apple-test.yml', block)
-            self.assertIn('      lane: ' + lane, block)
+        ios = workflow.split('\n  apple:\n', 1)[1].split('\n  core:\n', 1)[0]
+        self.assertIn('    needs: changes\n', ios)
+        self.assertIn("    if: needs.changes.outputs.apple == 'true'", ios)
+        self.assertIn('    uses: ./.github/workflows/apple-test.yml', ios)
+        self.assertIn('      lane: ios', ios)
+        self.assertNotIn('apple_macos', workflow)
         gate = workflow.split('\n  required:\n', 1)[1]
-        self.assertIn('needs: [changes, server, web, android, apple, runtimes, scripts]', gate)
+        self.assertIn('needs: [changes, server, web, android, apple, core, runtimes, desktop, scripts]', gate)
         self.assertNotIn('apple_macos', gate)
         self.assertNotIn('continue-on-error:', workflow)
 
     def test_reusable_lane_uses_quoted_environment_not_script_interpolation(self):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / '.github/workflows/apple-test.yml').read_text()
-        self.assertIn('options: [ios, macos]', workflow)
+        self.assertIn('options: [ios]', workflow)
         self.assertIn('APPLE_CI_LANE: ${{ inputs.lane }}', workflow)
         self.assertIn('run: scripts/ci/apple.sh "$APPLE_CI_LANE"', workflow)
         self.assertNotIn('continue-on-error:', workflow)
@@ -317,6 +370,47 @@ class AppleWorkflowTests(unittest.TestCase):
                                'iOS HTML card tests (separate batch)',
                                'iOS bounded HTML security tests (separate batch)'):
             self.assertIn(required_batch, script)
+
+
+class PostgresCleanupTests(unittest.TestCase):
+    def test_server_fixture_removes_its_volume_on_success_and_failure(self):
+        for run_status, ready_status in ((0, 0), (23, 0), (0, 19)):
+            with self.subTest(run_status=run_status, ready_status=ready_status), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                fixtures = root / "fixtures"
+                fixtures.mkdir()
+                shutil.copyfile(Path(__file__).with_name("server.sh"), root / "server.sh")
+                # Run the real entrypoint and EXIT trap without starting Docker or Go tests.
+                (root / "common.sh").write_text("""ci_run() {
+  local label="$1"
+  shift 2
+  case "$label" in
+    'Postgres 18 fixture') "$@" ;;
+    'Postgres readiness') return "$FIXTURE_READY_STATUS" ;;
+    *) return 0 ;;
+  esac
+}
+""")
+                docker = root / "docker"
+                docker.write_text("""#!/bin/sh
+printf '%s\\n' "$*" >> "$FIXTURE_DOCKER_CALLS"
+if [ "$1" = run ]; then exit "$FIXTURE_RUN_STATUS"; fi
+""")
+                docker.chmod(0o755)
+                log = root / "docker-calls"
+                environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"],
+                                   TMPDIR=str(fixtures), FIXTURE_DOCKER_CALLS=str(log),
+                                   FIXTURE_RUN_STATUS=str(run_status), FIXTURE_READY_STATUS=str(ready_status))
+                result = subprocess.run(["bash", str(root / "server.sh"), "managers"],
+                                        env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, run_status or ready_status, result.stderr)
+                calls = [line.split() for line in log.read_text().splitlines()]
+                self.assertEqual(len(calls), 2, calls)
+                self.assertEqual(calls[0][:2], ["run", "--detach"])
+                container = calls[0][calls[0].index("--name") + 1]
+                self.assertEqual(calls[1], ["rm", "-fv", container])
+                self.assertEqual(list(fixtures.iterdir()), [])
 
 
 class RunnerTests(unittest.TestCase):
@@ -333,6 +427,40 @@ class RunnerTests(unittest.TestCase):
         result = self.invoke("import time; time.sleep(3)", 0.1)
         self.assertEqual(result.returncode, 124)
         self.assertIn("TIMEOUT fixture", result.stdout)
+
+    def test_windows_termination_preserves_process_tree_cleanup_and_bounded_wait(self):
+        for taskkill_code in (0, 1):
+            with self.subTest(taskkill_code=taskkill_code):
+                process = mock.Mock(pid=321)
+                process.wait.return_value = 0
+                with mock.patch.object(run, "WINDOWS", True), mock.patch.object(run.subprocess, "run", return_value=mock.Mock(returncode=taskkill_code)) as taskkill:
+                    run.terminate(process)
+                self.assertEqual(process.wait.call_args, mock.call(timeout=5))
+                taskkill.assert_called_once_with(["taskkill", "/T", "/F", "/PID", "321"], capture_output=True, check=False)
+
+    def test_failed_windows_termination_still_prints_timeout_verdict(self):
+        process = mock.Mock(pid=321)
+        process.wait.side_effect = [run.subprocess.TimeoutExpired("fixture", 0.1), run.subprocess.TimeoutExpired("fixture", 5)]
+        process.kill.side_effect = OSError("already gone")
+        with mock.patch.object(run, "WINDOWS", True), \
+                mock.patch.object(run.subprocess, "Popen", return_value=process), \
+                mock.patch.object(run.subprocess, "run", return_value=mock.Mock(returncode=1)) as taskkill, \
+                mock.patch.object(run.signal, "signal"), \
+                mock.patch("builtins.print") as output:
+            result = run.run("fixture", 0.1, ["fixture"])
+        self.assertEqual(result, 124)
+        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=0.1), mock.call(timeout=5)])
+        process.kill.assert_called_once_with()
+        taskkill.assert_called_once_with(["taskkill", "/T", "/F", "/PID", "321"], capture_output=True, check=False)
+        self.assertEqual(output.call_args_list[-1], mock.call("::endgroup::\nTIMEOUT fixture (0.0s, exit 124)", flush=True))
+
+    def test_posix_termination_uses_process_group_and_grace(self):
+        process = mock.Mock(pid=321)
+        process.wait.return_value = 0
+        with mock.patch.object(run, "WINDOWS", False), mock.patch.object(run.os, "killpg") as killpg:
+            run.terminate(process)
+        killpg.assert_called_once_with(321, run.signal.SIGTERM)
+        self.assertEqual(process.wait.call_args, mock.call(timeout=5))
 
 
 if __name__ == "__main__":

@@ -95,12 +95,12 @@ func TestRevocationAndReconfigurationCancelOnlyOwnIO(t *testing.T) {
 	p := &Proxy{}
 	p.Register("a", Rule{})
 	p.Register("b", Rule{})
-	ctxA, doneA, ok := p.requestLifetime(context.Background(), "a")
+	ctxA, doneA, ok := p.requestLifetime(context.Background(), "a", nil)
 	if !ok {
 		t.Fatal("a missing")
 	}
 	defer doneA()
-	ctxB, doneB, _ := p.requestLifetime(context.Background(), "b")
+	ctxB, doneB, _ := p.requestLifetime(context.Background(), "b", nil)
 	defer doneB()
 	p.SetTargets("a", []Target{{Host: "api.example.com", Port: "443"}})
 	select {
@@ -111,7 +111,7 @@ func TestRevocationAndReconfigurationCancelOnlyOwnIO(t *testing.T) {
 	if ctxB.Err() != nil {
 		t.Fatal("B canceled by A reconfiguration")
 	}
-	ctxA, doneA, _ = p.requestLifetime(context.Background(), "a")
+	ctxA, doneA, _ = p.requestLifetime(context.Background(), "a", nil)
 	defer doneA()
 	p.Unregister("a")
 	select {

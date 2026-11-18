@@ -3,6 +3,7 @@
   "send_failed": "Couldn't send: {error}",
   "loading": "Loading {name}",
   "open_in": "Open in {name}",
+  "open_chat": "Open the chat",
   "reply_goes": "Reply: {how}.",
   "content": "Content",
   "content_failed": "Couldn't load the content: {error}",

@@ -44,6 +44,9 @@ export interface AgentLaunch {
   outgoing?: { text: string; images: { mime: string; data: string }[] };
   uploaded: Record<string, string>;
   error?: string;
+  /** The body of a shell_waiting refusal it failed with: the question the start's tab stopped on, answered from the
+   *  launch's page (lib/start-continue.ts). */
+  shellWaiting?: Record<string, unknown>;
   /** The start's op id (the hub does it once per id); `startPromptOpId` is for the Codex start with a first message. */
   startOpId: string;
   startPromptOpId: string;
@@ -57,10 +60,11 @@ export interface AgentLaunch {
   draft?: string;
 }
 
-export function launchAgent(input: Pick<AgentLaunch, "machineId" | "cwd" | "workspaceId" | "launcher" | "agentType" | "workSession" | "inlinePrompt" | "model" | "effort" | "permissionMode" | "host" | "ultracode" | "text" | "attachments" | "todoId">) {
+/** `open: false` starts it without opening its conversation (Compare runs starts several and opens their page, #8916). */
+export function launchAgent(input: Pick<AgentLaunch, "machineId" | "cwd" | "workspaceId" | "launcher" | "agentType" | "workSession" | "inlinePrompt" | "model" | "effort" | "permissionMode" | "host" | "ultracode" | "text" | "attachments" | "todoId">, options: { open?: boolean } = {}) {
   const launch: AgentLaunch = { ...input, id: `local-${uuid()}`, phase: "creating", uploaded: {}, ...launchOpIds() };
   putLaunch(launch);
-  navigate({ name: "session", mid: launch.machineId, sid: launch.id });
+  if (options.open !== false) navigate({ name: "session", mid: launch.machineId, sid: launch.id });
   // Let the local conversation paint before serialization, uploads and remote startup.
   setTimeout(() => void deliverLaunch(launch.id), 0);
   return launch.id;
@@ -197,6 +201,7 @@ export async function deliverLaunch(id: string, clearDraft?: string) {
       error: noUltracode ? t("ultracode.start_refused", { error: ultracodeErrorText(e) }) : t(creating ? "lib-new-agent.start_failed" : sending ? "lib-new-agent.first_message_failed" : "lib-new-agent.attachments_failed", { error: errorText(e) }),
       clearable: e instanceof ApiError && e.code === "input_draft" && typeof e.body.clearable === "string" ? e.body.clearable : undefined,
       draft: e instanceof ApiError && e.code === "input_draft" ? String(e.body.draft ?? "") : undefined,
+      shellWaiting: e instanceof ApiError && e.code === "shell_waiting" ? e.body : undefined,
     });
   } finally {
     clearTimeout(deadline);
@@ -213,12 +218,16 @@ export interface NewAgentPreset {
   prompt?: string;
   machineId?: string;
   cwd?: string;
-  /** A message forwarded to a new Agent (#3899): its card over the first message, which carries it in front; and the
-   *  pictures it had, attached. */
-  forward?: ContextRef;
+  /** Messages forwarded to a new Agent (#3899; several at once, #3838): their card over the first message, which carries
+   *  them in front; and the pictures they had, attached. */
+  forwards?: ContextRef[];
   images?: DraftImage[];
   /** An exact workspace destination takes precedence over the legacy machine/folder preset. */
   workspace?: WorkspaceTarget;
+  /** Hears the Agent started from this opening once its launch is ready, its first message sent (Inbox's "Hand to AI" ›
+   *  "New agent…", #5933: it files the item and remembers the Agent; lib/new-agent-started.ts). Never for a cancelled
+   *  sheet or a launch dropped before that. */
+  onStarted?: (session: Session) => void;
 }
 
 const openers = new Set<(preset: NewAgentPreset) => void>();

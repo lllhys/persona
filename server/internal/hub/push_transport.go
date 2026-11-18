@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,7 +26,7 @@ func (p *Pusher) sendDirect(d Device, r apns.Request) (apns.Result, error) {
 	p.sendMu.RLock()
 	defer p.sendMu.RUnlock()
 	if !p.currentPushTarget(d) {
-		return apns.Result{}, fmt.Errorf("push registration changed before dispatch")
+		return apns.Result{}, errRegistrationChanged
 	}
 	res, err := p.direct.Send(context.Background(), r)
 	tries := 1
@@ -62,6 +63,19 @@ func directRetryable(status int) bool {
 
 type relayResult struct{ gone bool }
 
+// errNotSent marks a push that never left the hub (sendFailure).
+var errNotSent = errors.New("push not sent")
+
+var errRegistrationChanged = fmt.Errorf("%w: push registration changed before dispatch", errNotSent)
+
+// relayRefusal is the relay's answer to a push it did not take: a status other than 200 and 410 (postRelayOnce).
+type relayRefusal struct {
+	status      int
+	msg, reason string
+}
+
+func (e *relayRefusal) Error() string { return fmt.Sprintf("%d %s %s", e.status, e.msg, e.reason) }
+
 // postRelay hands one push to the device's relay (relayproto.PushRequest, docs/operations/push-relay.md "API"). A grant the relay
 // no longer takes (its secret was replaced) is renewed once with the device's token, which the hub already has. A
 // failure that may pass is tried again (postRelayRetrying): one dropped connection used to lose the push (#2150).
@@ -69,7 +83,7 @@ func (p *Pusher) postRelay(d Device, req relayproto.PushRequest) (res relayResul
 	p.sendMu.RLock()
 	defer p.sendMu.RUnlock()
 	if !p.currentPushTarget(d) {
-		return res, fmt.Errorf("push registration changed before dispatch")
+		return res, errRegistrationChanged
 	}
 	defer func() {
 		if !res.gone {
@@ -122,7 +136,7 @@ func (p *Pusher) postRelayOnce(d Device, req relayproto.PushRequest) (relayResul
 	body, _ := json.Marshal(req)
 	hr, err := http.NewRequest("POST", d.RelayURL+"/v1/push", bytes.NewReader(body))
 	if err != nil {
-		return relayResult{}, -1, err // not a status: a request that cannot be made is not tried again
+		return relayResult{}, -1, fmt.Errorf("%w: %v", errNotSent, err) // not a status: a request that cannot be made is not tried again
 	}
 	hr.Header.Set("Authorization", "Bearer "+d.RelayGrant)
 	hr.Header.Set("Content-Type", "application/json")
@@ -150,7 +164,7 @@ func (p *Pusher) postRelayOnce(d Device, req relayproto.PushRequest) (relayResul
 		p.logf("relay %s: %s token gone (%s)", d.Name, req.Type, out.Reason)
 		return relayResult{gone: true}, resp.StatusCode, nil
 	default:
-		return relayResult{}, resp.StatusCode, fmt.Errorf("%d %s %s", resp.StatusCode, out.Error, out.Reason)
+		return relayResult{}, resp.StatusCode, &relayRefusal{status: resp.StatusCode, msg: out.Error, reason: out.Reason}
 	}
 }
 

@@ -1,3 +1,4 @@
 {
-  "outdated": "{name}の personad が古いため、ファイルの名前変更・移動・削除ができません。再デプロイしてください"
+  "outdated": "{name}の personad が古いため、ファイルの名前変更・移動・削除ができません。再デプロイしてください",
+  "outdated_feature": "{name} の personad が古いため、この操作はできません。再デプロイしてください"
 }

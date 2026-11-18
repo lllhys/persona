@@ -19,6 +19,8 @@ import {
   planTodos,
   workBlocks,
   workDuration,
+  toolDurationMs,
+  toolDurationLabel,
   TICKING_DURATION,
   type AgentStatus,
   type ToolStep,
@@ -138,6 +140,19 @@ describe("a finished exchange", () => {
   });
 });
 
+describe("Codex commentary as assistant text (#5853)", () => {
+  it("answers a mid-turn question in the text slot, then stays readable as folded narration", () => {
+    const items = [user("u1", 0, "What is the current status?"), ...tool("check", "Bash", 1000), say("status", "The focused tests pass; the full run is next.", 2000), ...tool("verify", "Bash", 3000)];
+    const running = blocks(items, true);
+    expect(topSteps(running)).toEqual(["status"]);
+    expect(folded(running, "status")).toBe(false);
+
+    const done = blocks([...items, say("final", "All checks passed.", 4000)]);
+    expect(topSteps(done)).toEqual(["final"]);
+    expect(groups(done)[0].children.map(shape)).toEqual([["check"], "status", ["verify"]]);
+  });
+});
+
 describe("while the agent works", () => {
   it("the tail run is live; its clock starts at your message", () => {
     const b = blocks([user("u1", 0), think("th1", 5951)], true);
@@ -156,9 +171,8 @@ describe("while the agent works", () => {
     expect(groups(newer)).toHaveLength(1);
     expect(groups(newer)[0].id).toBe(groups(first)[0].id);
     expect(folded(newer, "a1")).toBe(true);
-    // the latest text is in the slot, not in the summary: the work on both sides of it is one run, the live one
-    expect(groups(newer)[0].children.map(shape)).toEqual([["t1"], "a1", ["t2", "t3"]]);
-    expect(groups(groups(newer)[0].children).map((g) => g.live)).toEqual([false, true]);
+    expect(groups(newer)[0].children.map(shape)).toEqual([["t1"], "a1", ["t2"], ["t3"]]);
+    expect(groups(groups(newer)[0].children).map((g) => g.live)).toEqual([false, false, true]);
   });
 
   it("the first running tool can be opened without a preview threshold", () => {
@@ -172,8 +186,8 @@ describe("while the agent works", () => {
     const fold = mk("assistant", "fold", 500, { id: "fold:note", fold: { items: 13, tools: 6, thoughts: 1, through_seq: 99, latest_thinking: thought } });
     const b = blocks([user("u1", 0), fold, say("a1", "Latest text.", 2000), think("new", 3000)], true);
     expect(topSteps(b)).toEqual(["a1"]);
-    expect(groups(b)[0].children.map(idOf)).toEqual(["fold:note", "new"]);
-    expect(groups(b)[0].children[0]).toMatchObject({ step: { item: fold } });
+    expect(groups(b)[0].children.map(shape)).toEqual([["fold:note"], ["new"]]);
+    expect(groups(groups(b)[0].children)[0].children[0]).toMatchObject({ step: { item: fold } });
   });
 
   it("streaming supersedes the persisted text without losing it from inspection", () => {
@@ -213,16 +227,33 @@ describe("the timeline inside a summary", () => {
 
   it("live: the last run is the live one with its own clock from the narration before it; earlier runs are done", () => {
     const b = blocks(turn(), true);
-    // the latest words are in the slot: no narration is left in the summary, so it holds the steps directly
     expect(topSteps(b)).toEqual(["n1"]);
-    expect(groups(b)[0].children.map(shape)).toEqual(["th1", "t1", "t2", "th2", "t3"]);
+    expect(groups(b)[0].children.map(shape)).toEqual([["th1", "t1"], ["t2", "th2", "t3"]]);
     const more = blocks([...turn(), say("n2", "Tests pass; one more check.", 9500), ...tool("t4", "Bash", 10_000)], true);
     expect(topSteps(more)).toEqual(["n2"]);
     expect(groups(more)[0].live).toBe(true);
-    expect(groups(more)[0].children.map(shape)).toEqual([["th1", "t1"], "n1", ["t2", "th2", "t3", "t4"]]);
-    expect(inner(more).map((g) => g.live)).toEqual([false, true]);
-    expect(inner(more)[1].startedAt).toBe(T0 + 3000);
-    expect(groupTitle(inner(more)[1])).toBe("正在工作…");
+    expect(groups(more)[0].children.map(shape)).toEqual([["th1", "t1"], "n1", ["t2", "th2", "t3"], ["t4"]]);
+    expect(inner(more).map((g) => g.live)).toEqual([false, false, true]);
+    expect(inner(more)[2].startedAt).toBe(T0 + 9500);
+    expect(groupTitle(inner(more)[2])).toBe("正在工作…");
+  });
+
+  it("keeps the same chronological boundaries live and after reload, even before a newer reply arrives (#7606)", () => {
+    const prefix = [...turn(), say("n2", "Tests pass.", 9500), ...tool("t4", "Bash", 10_000, 11_000)];
+    for (const live of [true, false]) {
+      const b = blocks(prefix, live);
+      expect(topSteps(b)).toEqual(["n2"]);
+      expect(groups(b)[0].children.map(shape)).toEqual([
+        ["th1", "t1"], "n1", ["t2", "th2", "t3"], ["t4"],
+      ]);
+      expect(inner(b).map((g) => [g.startedAt, g.durationMs, g.live])).toEqual([
+        [T0, 3000, false], [T0 + 3000, 6500, false], [T0 + 9500, 1500, live],
+      ]);
+      expect(groups(b)[0].durationMs).toBe(11_000);
+    }
+    const completed = blocks([...prefix, say("final", "Done.", 12_000)]);
+    expect(groups(completed)[0].children.map(shape)).toEqual([["th1", "t1"], "n1", ["t2", "th2", "t3"], "n2", ["t4"]]);
+    expect(folded(completed, "n2")).toBe(true);
   });
 
   it("live, with the latest words after the last run: that run is over, the outer line still works", () => {
@@ -283,13 +314,12 @@ describe("the timeline inside a summary", () => {
     const before = turn();
     const more = [say("n2", "More.", 9500), ...tool("t4", "Bash", 10_000)];
     const final = say("final", "Done.", 11_000);
-    // no narration in the summary yet (n1 is in the slot): one level
     const first = draw(before, true);
     const running = draw([...before, ...more], true);
     const done = draw([...before, ...more, final], false);
     for (const b of [first, running, done]) expect(groups(b)[0].id).toBe(`work-turn-${identity}`);
-    expect(inner(first)).toEqual([]);
-    expect(inner(running).map((g) => g.id)).toEqual(inner(done).slice(0, 2).map((g) => g.id));
+    expect(inner(first).map((g) => g.id)).toEqual(inner(running).slice(0, 2).map((g) => g.id));
+    expect(inner(running).map((g) => g.id)).toEqual(inner(done).map((g) => g.id));
     // an inner group is known by its first step, as a group always was
     expect(inner(done)[0].id).toBe(groups(blocks(before.slice(0, 4)))[0].id);
     expect(new Set(inner(done).map((g) => g.id)).size).toBe(inner(done).length);
@@ -591,5 +621,36 @@ describe("workLineStyle (#1614)", () => {
     expect(workLineStyle(undefined, true)).toBe("assistant");
     expect(workLineStyle(false, false)).toBe("agents");
     expect(workLineStyle(undefined, undefined)).toBe("agents");
+  });
+});
+
+describe("a tool call's own elapsed time (#8163)", () => {
+  const stepOf = (startAt?: number, endAt?: number): ToolStep => {
+    const use = mk("assistant", "tool_use", startAt, { id: "c1", tool_name: "Bash", tool_use_id: "tu-c1", tool_input: { command: "npm test" } });
+    const result = endAt !== undefined ? mk("user", "tool_result", endAt, { id: "c1-r", tool_use_id: "tu-c1", text: "ok" }) : undefined;
+    return { kind: "tool", id: use.id, use, ...(result ? { result } : {}), images: [] };
+  };
+
+  it("measures the span purely from the call and result timestamps", () => {
+    expect(toolDurationMs(stepOf(1000, 5000))).toBe(4000);
+    expect(toolDurationLabel(stepOf(1000, 5000))).toBe("4s");
+    expect(toolDurationLabel(stepOf(0, 252_000))).toBe("4m 12s");
+    // the same formatter as the group total, including its rounding to whole seconds
+    expect(toolDurationLabel(stepOf(0, 65_400))).toBe("1m 5s");
+  });
+
+  it("omits a sub-second span and a call without a reliable end", () => {
+    expect(toolDurationMs(stepOf(1000, 1400))).toBe(400);
+    expect(toolDurationLabel(stepOf(1000, 1400))).toBeNull();
+    expect(toolDurationMs(stepOf(1000))).toBeNull();
+    expect(toolDurationLabel(stepOf(1000))).toBeNull();
+  });
+
+  it("treats an inverted or unparseable pair as no duration, never as a guessed span", () => {
+    expect(toolDurationMs(stepOf(5000, 1000))).toBeNull();
+    expect(toolDurationLabel(stepOf(5000, 1000))).toBeNull();
+    const noStart = stepOf(undefined, 5000);
+    expect(toolDurationMs(noStart)).toBeNull();
+    expect(toolDurationLabel(noStart)).toBeNull();
   });
 });

@@ -33,6 +33,9 @@ COPY server/cmd/password-wasm/ /src/server/cmd/password-wasm/
 # the build checks the tests too. The whole folder (about 2 MB, this stage only), so a test reading a new case folder
 # needs no line here; four image builds broke on a missing line before (#5197).
 COPY spec/fixtures/ /src/spec/fixtures/
+# The desktop bridge's types (src/lib/desktop-types.d.ts re-exports them): without it they were any, and tsc -b failed once a
+# test read a field of one (TS7006, #9626).
+COPY spec/desktop-bridge.d.ts /src/spec/desktop-bridge.d.ts
 # The extension schema, which the web app builds in: src/lib/extension-ui-stream.ts imports its *.schema.json (?raw),
 # the admin page's assistant card preview and the showcase glob its examples (import.meta.glob, which comes out empty
 # without them), and tests import example JSON (TS2307 in tsc -b without it).
@@ -60,9 +63,11 @@ COPY server/ ./
 COPY --from=web /src/web/dist/ internal/hub/webdist/
 # Its hashed assets kept gzipped, as the hub sends them (docs/web/web.md "Precompressed assets").
 RUN go run ./internal/webasset/precompress internal/hub/webdist
-# The runtime packages personad carries and keeps its runtimes on (docs/integrations/runtimes.md "Auto-update"): the DSH plugin's and
-# the pi extension's, the Paseo bridge's and the Agent SDK bridge's code.
-COPY integrations/agent-sdk/ /src/integrations/agent-sdk/
+# The runtime packages personad carries and keeps its runtimes on (docs/integrations/runtimes.md "Auto-update"): the DSH plugin's,
+# the pi extension's, the Antigravity companion's and the Paseo bridge's code, and the Persona plugin for Claude Code
+# (runtimepkg's Assets, #9626). scripts/test/test_docker_context.py checks every directory runtimepkg reads is here and in .dockerignore.
+COPY integrations/antigravity/ /src/integrations/antigravity/
+COPY integrations/claude-code-plugin/ /src/integrations/claude-code-plugin/
 COPY integrations/dsh/ /src/integrations/dsh/
 COPY integrations/paseo/ /src/integrations/paseo/
 COPY integrations/pi/ /src/integrations/pi/

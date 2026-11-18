@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// New Agent's recent setups (#2134): every case of spec/fixtures/recents/recent_setups.json (the rules the web and
 /// Android run too), the store, and what a card says and fills in.
@@ -51,6 +52,29 @@ import Testing
     }
 
     // MARK: The shared fixtures
+
+    /// The generated `RecentSetup` (schema/wire/recents.schema.json) writes back exactly the fixture's JSON: every
+    /// field, empty strings included, and no other.
+    @Test func generatedSetupWritesTheFixtureBytesBack() throws {
+        let root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: Self.fixtureURL)) as? [String: Any])
+        let cases = try #require(root["cases"] as? [[String: Any]])
+        var samples: [[String: Any]] = []
+        for c in cases {
+            let input = c["input"] as? [String: Any] ?? [:]
+            let expected = c["expected"] as? [String: Any] ?? [:]
+            samples += (input["before"] as? [[String: Any]] ?? []) + (input["entries"] as? [[String: Any]] ?? [])
+            samples += (input["setup"] as? [String: Any]).map { [$0] } ?? []
+            samples += expected["after"] as? [[String: Any]] ?? []
+        }
+        #expect(!samples.isEmpty)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        for sample in samples {
+            let data = try JSONSerialization.data(withJSONObject: sample, options: [.sortedKeys, .withoutEscapingSlashes])
+            let setup = try JSONDecoder().decode(RecentSetup.self, from: data)
+            #expect(try encoder.encode(setup) == data)
+        }
+    }
 
     @Test func limitsAreTheFixtures() throws {
         let f = try Self.fixture()
@@ -190,6 +214,7 @@ import Testing
         #expect(RecentSetupCard.folder("/Users/me/code/persona", home: "/Users/me") == "persona")
         #expect(RecentSetupCard.folder("/Users/me/code/persona/", home: nil) == "persona")
         #expect(RecentSetupCard.folder("/Users/me", home: "/Users/me") == "~")
+        #expect(RecentSetupCard.folder("", home: "/Users/me") == String(localized: "Temporary Session")) // a start in the desktop app with no folder
         #expect(RecentSetupCard.folder("~", home: nil) == "~")
         #expect(RecentSetupCard.folder("/", home: "/Users/me") == "/")
     }

@@ -1,9 +1,11 @@
 // Settings › Connectors › Lark bot (docs/extensions/bots.md, the app's FeishuBotView): talk to Persona from Feishu. A row on the
-// connectors page with the bot's state; its page (a dialog) has the status and the on / off switch, the app's
-// credentials, pairing with a code sent to the bot, what the bot may do, the agents driven there, and how to make one.
+// connectors page with the bot's state; its page (a dialog) has, with no app yet, creating one by scanning (the channel's
+// bind step, #5818); the status and the on / off switch, pairing with a code sent to the bot, what the bot may do and the
+// agents driven there; and, folded under Advanced, the app's credentials and how to make one by hand.
 // Each change goes to the hub at once and the page shows what the hub answered; a failed one leaves it as it was.
-import { ChannelLink } from "./Channels";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { BindSteps, ChannelLink } from "./Channels";
+import { Disclosure } from "./ProviderFields";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { errorText } from "../../lib/api";
 import { connectorState, connectorSummary, signsInHere, connectorTone, isEnabled, larkcliOptions, listConnectors, setConnector, type ConnectorTone, type HubConnector } from "../../lib/connectors";
 import { t } from "../../i18n";
@@ -18,6 +20,8 @@ import { BrandMark } from "../../ui/BrandMark";
 import { Icon, type IconName } from "../../ui/icons";
 import { Group, Pill, Row, Switch } from "./SettingsParts";
 import { SignInSteps } from "./HubConnector";
+
+const SOURCE_REPORT_DELAYS = [0, 1, 2, 5, 10, 15, 30, 60];
 
 const controlClass = "h-8 rounded-control bg-field px-2.5 text-[12.5px] text-ink shadow-inset-field outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)]";
 const dotClass = { green: "bg-green", red: "bg-red", orange: "bg-orange" } as const;
@@ -149,11 +153,18 @@ function FeishuBotDialog({ bot, larkcli, onClose, onOpen }: { bot: ReturnType<ty
   const [form, setForm] = useState<BotCredentials>(() => (status ? credentialsOf(status) : { appID: "", appSecret: "", domain: "feishu" }));
   const [saving, setSaving] = useState(false);
   const [confirmUnpair, setConfirmUnpair] = useState(false);
+  // The credentials form and the manual steps: for an app of your own, folded until asked for.
+  const [advanced, setAdvanced] = useState(false);
+  // The app was just created here by scanning: reading Lark as you is the next step, started without another press.
+  const [created, setCreated] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const changed = credentialsChanged(status, form);
   const pairing = livePairing(status, now);
   const features = status?.features ?? DEFAULT_FEATURES;
   const nudgeAfter = status?.nudge_after ?? DEFAULT_NUDGE_AFTER;
+  const reportDelay = status?.source_report_delay_minutes;
+  const fullReply = status?.source_report_full_reply;
+  const fullReplyDetail = useId();
   // Read at answer time, not when the request (or the pairing poll) started: typing meanwhile must count.
   const changedRef = useRef(changed);
   changedRef.current = changed;
@@ -250,50 +261,31 @@ function FeishuBotDialog({ bot, larkcli, onClose, onOpen }: { bot: ReturnType<ty
 
   const tone = botTone(status);
   const agents = status?.agents ?? [];
+  // No app yet: creating one by scanning comes first (manager.json's credentials are not this page's to replace).
+  const noApp = !!status && !status.has_secret && !status.from_config;
 
   return (
     <Dialog open onClose={onClose} title={dialogLarkcli ? t("settings-feishubot.lark_name") : t("settings-feishubot.title")} width={560}>
-      <Group
-        title={dialogLarkcli ? t("settings-feishubot.credentials") : undefined}
-        footer={
-          <>
-            {status?.from_config ? t("settings-feishubot.credentials_from_config") : t("settings-feishubot.credentials_secret_note")}
-            {dialogLarkcli && <><br />{t("settings-feishubot.credentials_shared_note")}</>}
-          </>
-        }
-      >
-        <Row label="App ID">
-          <input value={form.appID} onChange={(e) => edit({ ...form, appID: e.target.value })} placeholder={t("settings-feishubot.required")} aria-label="App ID" autoComplete="off" spellCheck={false} className={cx(controlClass, "w-[240px] font-mono")} />
-        </Row>
-        <Row label="App Secret">
-          <input
-            type="password"
-            value={form.appSecret}
-            onChange={(e) => edit({ ...form, appSecret: e.target.value })}
-            placeholder={status?.has_secret ? t("settings-feishubot.secret_saved") : t("settings-feishubot.required")}
-            aria-label="App Secret"
-            autoComplete="new-password"
-            className={cx(controlClass, "w-[240px]")}
-          />
-        </Row>
-        <Row label={t("settings-feishubot.platform")}>
-          <select value={form.domain} onChange={(e) => edit({ ...form, domain: e.target.value })} aria-label={t("settings-feishubot.platform")} className={cx(controlClass, "w-[240px]")}>
-            <option value="feishu">{t("settings-feishubot.platform_feishu")}</option>
-            <option value="lark">Lark</option>
-            {form.domain !== "feishu" && form.domain !== "lark" && <option value={form.domain}>{form.domain}</option>}
-          </select>
-        </Row>
-        <div className="flex justify-end px-4 py-2.5">
-          <Button tone="accent" busy={saving && changed} disabled={!changed || !form.appID.trim() || saving} onClick={() => void run(t("settings-feishubot.save_failed"), () => updateBot(credentialsUpdate(form)), t("settings-feishubot.credentials_saved"), true)}>
-            {t("settings-feishubot.verify_save")}
-          </Button>
-        </div>
-      </Group>
+      {noApp && (
+        <BindSteps
+          c={{ id: "feishu", name: t("settings-feishubot.lark_name"), bind: "fields" }}
+          title={t("settings-feishubot.create_title")}
+          footer={t(dialogLarkcli ? "settings-feishubot.create_footer_shared" : "settings-feishubot.create_footer")}
+          startLabel={t("settings-feishubot.create_start")}
+          onDone={async () => {
+            await reloadAll();
+            setCreated(true);
+          }}
+        />
+      )}
 
       {dialogLarkcli && (
         <LarkReadSection
           connector={dialogLarkcli}
           status={status}
+          // lark-cli follows the bot's app, and there is none yet, nor one of lark-cli's own: create it above first.
+          waitsForApp={noApp && status?.larkcli?.mode === "default" && !status.larkcli.app_id}
+          autoStart={created && dialogLarkcli.status !== "ok"}
           reload={reloadAll}
           onOpen={() => {
             onClose();
@@ -413,6 +405,38 @@ function FeishuBotDialog({ bot, larkcli, onClose, onOpen }: { bot: ReturnType<ty
                 ))}
               </select>
             </div>
+            {fullReply !== undefined && (
+              <div className="flex items-start gap-3 px-4 py-2.5">
+                <Icon name="chat" size={15} className="mt-0.5 shrink-0 text-accent" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-ink">{t("settings-feishubot.source_report_full_title")}</div>
+                  <div id={fullReplyDetail} className="mt-0.5 text-xs leading-snug text-ink-3">{t("settings-feishubot.source_report_full_detail")}</div>
+                </div>
+                <Switch on={fullReply} disabled={saving} describedBy={fullReplyDetail} label={t("settings-feishubot.source_report_full_title")} onChange={(on) => void run(t("settings-feishubot.save_failed"), () => updateBot({ source_report_full_reply: on }))} />
+              </div>
+            )}
+            {reportDelay !== undefined && (
+              <div className="flex items-start gap-3 px-4 py-2.5">
+                <Icon name="clock" size={15} className="mt-0.5 shrink-0 text-accent" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-ink">{t("settings-feishubot.source_report_delay_title")}</div>
+                  <div className="mt-0.5 text-xs leading-snug text-ink-3">{t("settings-feishubot.source_report_delay_detail")}</div>
+                </div>
+                <select
+                  value={reportDelay}
+                  disabled={saving}
+                  aria-label={t("settings-feishubot.source_report_delay_title")}
+                  onChange={(e) => void run(t("settings-feishubot.save_failed"), () => updateBot({ source_report_delay_minutes: Number(e.target.value) }))}
+                  className={cx(controlClass, "min-h-11 shrink-0")}
+                >
+                  {[...new Set([...SOURCE_REPORT_DELAYS, reportDelay])].sort((a, b) => a - b).map((minutes) => (
+                    <option key={minutes} value={minutes}>
+                      {minutes === 0 ? t("settings-feishubot.source_report_delay_now") : t("settings-feishubot.source_report_delay_minutes", { minutes })}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </Group>
         </>
       )}
@@ -427,21 +451,68 @@ function FeishuBotDialog({ bot, larkcli, onClose, onOpen }: { bot: ReturnType<ty
         </Group>
       )}
 
-      <Group title={t("settings-feishubot.howto")} footer={t("settings-feishubot.howto_footer")}>
-        {STEPS.map((s, i) => (
-          <div key={i} className="flex items-baseline gap-3 px-4 py-2">
-            <span className="w-3 shrink-0 text-[11.5px] font-semibold text-accent tabular-nums">{i + 1}</span>
-            <span className="text-[11.5px] leading-relaxed text-ink-3">{s}</span>
+      <Disclosure
+        title={t(noApp ? "settings-feishubot.advanced_have_app" : "settings-feishubot.advanced_other_app")}
+        open={advanced}
+        onToggle={() => setAdvanced((v) => !v)}
+      >
+        <Group
+          title={dialogLarkcli ? t("settings-feishubot.credentials") : undefined}
+          footer={
+            <>
+              {status?.from_config ? t("settings-feishubot.credentials_from_config") : t("settings-feishubot.credentials_secret_note")}
+              {dialogLarkcli && <><br />{t("settings-feishubot.credentials_shared_note")}</>}
+            </>
+          }
+        >
+          <Row label="App ID">
+            <input value={form.appID} onChange={(e) => edit({ ...form, appID: e.target.value })} placeholder={t("settings-feishubot.required")} aria-label="App ID" autoComplete="off" spellCheck={false} className={cx(controlClass, "w-[240px] font-mono")} />
+          </Row>
+          <Row label="App Secret">
+            <input
+              type="password"
+              value={form.appSecret}
+              onChange={(e) => edit({ ...form, appSecret: e.target.value })}
+              placeholder={status?.has_secret ? t("settings-feishubot.secret_saved") : t("settings-feishubot.required")}
+              aria-label="App Secret"
+              autoComplete="new-password"
+              className={cx(controlClass, "w-[240px]")}
+            />
+          </Row>
+          <Row label={t("settings-feishubot.platform")}>
+            <select value={form.domain} onChange={(e) => edit({ ...form, domain: e.target.value })} aria-label={t("settings-feishubot.platform")} className={cx(controlClass, "w-[240px]")}>
+              <option value="feishu">{t("settings-feishubot.platform_feishu")}</option>
+              <option value="lark">Lark</option>
+              {form.domain !== "feishu" && form.domain !== "lark" && <option value={form.domain}>{form.domain}</option>}
+            </select>
+          </Row>
+          <div className="flex justify-end px-4 py-2.5">
+            <Button tone="accent" busy={saving && changed} disabled={!changed || !form.appID.trim() || saving} onClick={() => void run(t("settings-feishubot.save_failed"), () => updateBot(credentialsUpdate(form)), t("settings-feishubot.credentials_saved"), true)}>
+              {t("settings-feishubot.verify_save")}
+            </Button>
           </div>
-        ))}
-      </Group>
-
-
+        </Group>
+        <Group title={t("settings-feishubot.howto")} footer={t("settings-feishubot.howto_footer")}>
+          {STEPS.map((s, i) => (
+            <div key={i} className="flex items-baseline gap-3 px-4 py-2">
+              <span className="w-3 shrink-0 text-[11.5px] font-semibold text-accent tabular-nums">{i + 1}</span>
+              <span className="text-[11.5px] leading-relaxed text-ink-3">{s}</span>
+            </div>
+          ))}
+        </Group>
+      </Disclosure>
     </Dialog>
   );
 }
 
-function LarkReadSection({ connector, status, reload, onOpen }: { connector: HubConnector; status: FeishuBotStatus | null; reload: () => Promise<void>; onOpen: () => void }) {
+function LarkReadSection({ connector, status, waitsForApp, autoStart, reload, onOpen }: {
+  connector: HubConnector;
+  status: FeishuBotStatus | null;
+  waitsForApp?: boolean;
+  autoStart?: boolean;
+  reload: () => Promise<void>;
+  onOpen: () => void;
+}) {
   const [rechecking, setRechecking] = useState(false);
   const [switching, setSwitching] = useState(false);
   const on = isEnabled(connector);
@@ -549,9 +620,11 @@ function LarkReadSection({ connector, status, reload, onOpen }: { connector: Hub
           </div>
         </div>
       )}
-      {signsInHere(connector) && (
+      {waitsForApp ? (
+        <p className="border-t border-line px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-3">{t("settings-feishubot.read_needs_app")}</p>
+      ) : signsInHere(connector) && (
         // Signed in: signing in again is a quiet secondary action; otherwise it is what this section is for.
-        <SignInSteps c={connector} reload={reload} startLabel={t(connector.status === "ok" ? "settings-feishubot.read_reauthorize" : "settings-feishubot.read_authorize")} startTone={connector.status === "ok" ? "quiet" : "accent"} bare />
+        <SignInSteps c={connector} reload={reload} autoStart={autoStart} startLabel={t(connector.status === "ok" ? "settings-feishubot.read_reauthorize" : "settings-feishubot.read_authorize")} startTone={connector.status === "ok" ? "quiet" : "accent"} bare />
       )}
       {profile && editingProfile && profile.mode !== "config" && (
         <Row label={t("settings-feishubot.larkcli_profile_title")}>

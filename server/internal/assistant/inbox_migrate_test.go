@@ -87,7 +87,8 @@ func TestMigratedInbox(t *testing.T) {
 }
 
 // A plugin connector's thing with its own fallback (extra.rule_tier, capability fallback) and no tier is still sorted
-// by the model; when the model cannot, it comes in with that fallback ("By rule") instead of being held back.
+// by the model; when the model fails, it comes in with that fallback ("By rule") instead of being held back. The
+// fallback is provisional: RuleOf records the version to ask the model about again after it answers (#8298).
 func TestExtensionThingFallbackTier(t *testing.T) {
 	_, client := newTriageModel(t, "fail", `{"tier":"action","summary":"示例","reason":"示例"}`)
 	th := genericThing("example-org/example-repo#8", "a", "示例：一条评论")
@@ -95,7 +96,7 @@ func TestExtensionThingFallbackTier(t *testing.T) {
 	h, st := admitHub(t, client, &inboxConnector{things: []connector.InboxThing{th}})
 	collectAndAdmit(h)
 	it := itemOf(h, "example", th.Thread)
-	if it == nil || it.Tier != TierFYI || it.Reason != "按规则" || it.TriagedAt != it.Last || !st.saved(it.ID) {
+	if it == nil || it.Tier != TierFYI || it.Reason != "按规则" || it.TriagedAt == it.Last || it.RuleOf != it.Last || !st.saved(it.ID) {
 		t.Fatalf("item %+v", it)
 	}
 	if _, status := inboxTriageOf(t, h); status.Waiting != 0 {

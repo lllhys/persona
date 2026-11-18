@@ -40,10 +40,10 @@ describe("the way back", () => {
     const dismiss = vi.fn();
     act(() => root.render(<HandoffBack from={{ path: "/persona" }} onDismiss={dismiss} />));
     const [go, close] = [...host.querySelectorAll("button")];
-    expect(go!.textContent).toBe(t("chat-chatview.handoff_from", { title: "Persona" }));
+    expect(go!.textContent).toBe(t("chat-backstrip.handoff_from", { title: "Persona" }));
     act(() => go!.click());
     expect(back).toHaveBeenCalledOnce();
-    expect(close!.getAttribute("aria-label")).toBe(t("chat-chatview.handoff_dismiss"));
+    expect(close!.getAttribute("aria-label")).toBe(t("chat-backstrip.handoff_dismiss"));
     act(() => close!.click());
     expect(dismiss).toHaveBeenCalledOnce();
   });

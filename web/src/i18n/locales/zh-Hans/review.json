@@ -42,6 +42,7 @@
   "review_branch": "评审分支",
   "review_uncommitted": "评审未提交",
   "not_git": "这个文件夹不是 Git 仓库",
+  "no_folder": "这个文件夹已经不在了",
   "outdated": "更新这台电脑后才能评审改动",
   "outdated_detail": "它的 personad 版本早于评审功能。更新后再打开。",
   "no_default_branch": "没有可以对比的默认分支",

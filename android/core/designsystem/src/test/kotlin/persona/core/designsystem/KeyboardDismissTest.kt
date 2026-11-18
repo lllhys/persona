@@ -120,6 +120,22 @@ class KeyboardDismissTest {
         }
     }
 
+    @Test fun blankTapReportsAnIntentionalFocusClear() {
+        var clears = 0
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true) {
+                var text by remember { mutableStateOf("") }
+                Column(Modifier.fillMaxSize().dismissKeyboardOnBlankTap { clears++ }) {
+                    BasicTextField(text, { text = it }, Modifier.fillMaxWidth())
+                    Box(Modifier.fillMaxWidth().weight(1f).testTag("clear-signal-blank"))
+                }
+            }
+        }
+        rule.onNodeWithTag("clear-signal-blank").performTouchInput { click(center) }
+        rule.waitForIdle()
+        assertEquals(1, clears)
+    }
+
     @Test fun tapOnTheFieldKeepsFocus() {
         setPage()
         rule.onNodeWithTag("field").performTouchInput { click() }

@@ -111,7 +111,7 @@ class InboxManagersShotsTest {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
                 CompositionLocalProvider(LocalManagerRoster provides shown) {
                     Box(Modifier.testTag("shot").width(400.dp).height(1400.dp).background(PersonaTheme.palette.background)) {
-                        InboxScreen(OneInbox(InboxSnapshot(records = records)), navigator)
+                        OnAll { InboxScreen(OneInbox(InboxSnapshot(records = records)), navigator) }
                     }
                 }
             }
@@ -162,7 +162,7 @@ class InboxManagersShotsTest {
                 CompositionLocalProvider(LocalManagerRoster provides shown) {
                     Box(Modifier.testTag("shot").width(400.dp).height(900.dp).background(PersonaTheme.palette.background)) {
                         // 家里's items are not in the list: the hub could not ask it.
-                        InboxScreen(OneInbox(InboxSnapshot(records = records.filter { it.manager != "m-8b04d2" && it.manager != "m-3fa21c" })), navigator)
+                        OnAll { InboxScreen(OneInbox(InboxSnapshot(records = records.filter { it.manager != "m-8b04d2" && it.manager != "m-3fa21c" })), navigator) }
                     }
                 }
             }
@@ -197,7 +197,7 @@ class InboxManagersShotsTest {
             PersonaTheme(darkTheme = false, reduceMotion = true) {
                 CompositionLocalProvider(LocalManagerRoster provides roster) {
                     Box(Modifier.testTag("shot").width(400.dp).height(900.dp).background(PersonaTheme.palette.background)) {
-                        InboxScreen(OneInbox(InboxSnapshot(records = records)), navigator)
+                        OnAll { InboxScreen(OneInbox(InboxSnapshot(records = records)), navigator) }
                     }
                 }
             }
@@ -218,7 +218,7 @@ class InboxManagersShotsTest {
             PersonaTheme(darkTheme = false, reduceMotion = true) {
                 CompositionLocalProvider(LocalManagerRoster provides roster) {
                     Box(Modifier.testTag("shot").width(400.dp).height(900.dp).background(PersonaTheme.palette.background)) {
-                        InboxScreen(OneInbox(InboxSnapshot()), navigator)
+                        OnAll { InboxScreen(OneInbox(InboxSnapshot()), navigator) }
                     }
                 }
             }

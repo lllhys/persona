@@ -9,6 +9,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,7 +59,15 @@ class AgentsPageContextTest {
             override fun project(source: Flow<List<Session>>) = source.map { built += Thread.currentThread().name; it }
             override suspend fun rename(session: Session, title: String?, tabName: String?) = true
         }
-        model = AgentsViewModel(repository, object : InteractionCenter {
+        model = modelOn(repository, renamer)
+
+        val page = withTimeout(10_000) { model.page.first { it.sessions.isNotEmpty() } }
+        assertEquals(listOf("one"), page.sessions.map { it.sessionId })
+        assertTrue(built.toString(), built.isNotEmpty() && built.all { it.startsWith("test-list") })
+    }
+
+    private fun modelOn(repository: SessionsRepository, renamer: SessionRenamer? = null) =
+        AgentsViewModel(repository, object : InteractionCenter {
             override val pending = MutableStateFlow<List<Interaction>>(emptyList())
             override suspend fun refresh() = Unit
             override suspend fun resolve(id: String, resolution: Resolution) = Unit
@@ -82,8 +91,33 @@ class AgentsPageContextTest {
             override suspend fun markSeen(session: SessionKey, version: String) = Unit
         }), renamer = renamer, listContext = list)
 
-        val page = withTimeout(10_000) { model.page.first { it.sessions.isNotEmpty() } }
-        assertEquals(listOf("one"), page.sessions.map { it.sessionId })
-        assertTrue(built.toString(), built.isNotEmpty() && built.all { it.startsWith("test-list") })
+    /**
+     * The page is built off the hub's own status and trails it by up to the throttle: a load that arrives right after a
+     * build used to be joined to that earlier build's empty list and called loaded, so the screen's saved reading row
+     * was missing from a list that said it was in.
+     */
+    @Test fun aPageIsLoadedOnlyWithTheListThatLoadedItNotTheBuildBeforeIt() = runBlocking {
+        val rows = MutableStateFlow(emptyList<Session>())
+        val status = MutableStateFlow(SessionListStatus())
+        model = modelOn(object : SessionsRepository {
+            override val sessions = rows
+            override val machines = MutableStateFlow(listOf(Machine("box", online = true)))
+            override val listStatus = status
+            override suspend fun refresh() = Unit
+        })
+        val loadedPages = java.util.Collections.synchronizedList(mutableListOf<AgentsPageState>())
+        val collecting = kotlinx.coroutines.CoroutineScope(Dispatchers.Default).launch { model.page.collect { if (it.loaded) loadedPages += it } }
+        try {
+            // The first build (nothing in yet) is on screen; the load follows inside the throttle's window, rows first as the repository does.
+            withTimeout(10_000) { model.page.first { it.machines.isNotEmpty() } }
+            rows.value = listOf(Session("box", "one", state = "working"))
+            status.value = SessionListStatus(loaded = true, total = 1)
+            withTimeout(10_000) { while (loadedPages.isEmpty()) kotlinx.coroutines.delay(10) }
+            kotlinx.coroutines.delay(600)
+            assertTrue("every page that says loaded has the loaded rows: " + loadedPages.map { it.sessions.size },
+                loadedPages.toList().all { it.sessions.map { s -> s.sessionId } == listOf("one") })
+        } finally {
+            collecting.cancel()
+        }
     }
 }

@@ -458,6 +458,7 @@ type usageKey struct {
 	minute   int64
 	model    string
 	launcher string
+	agent    string
 }
 
 type machineUsage struct {
@@ -497,7 +498,7 @@ func (u *usageBook) apply(machine string, params json.RawMessage, now time.Time)
 		u.machines[machine] = m
 	}
 	for _, b := range p.Buckets {
-		m.buckets[usageKey{b.Minute, b.Model, b.Launcher}] = b
+		m.buckets[usageKey{b.Minute, b.Model, b.Launcher, b.Agent}] = b
 	}
 	m.load, m.cpus, m.at, m.launchers = p.Load, p.CPUs, now, p.Launchers
 	cutoff := now.Add(-26*time.Hour).Unix() / 60 * 60
@@ -531,7 +532,7 @@ func (u *usageBook) summary(now time.Time, loc *time.Location) UsageSummary {
 	today := time.Date(y, mo, d, 0, 0, 0, 0, loc).Unix()
 	from := now.Unix()/60*60 - tpmSpan*60
 	elapsed := float64(now.Unix()-from) / 60
-	out := UsageSummary{Machines: []MachineUsage{}}
+	out := UsageSummary{Machines: []MachineUsage{}, Hourly: make([]int64, 24)}
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	for id, m := range u.machines {
@@ -550,6 +551,10 @@ func (u *usageBook) summary(now time.Time, loc *time.Location) UsageSummary {
 			tokens := b.Input + b.CacheWrite + b.CacheRead + b.Output
 			mu.Tokens += tokens
 			out.Tokens += tokens
+			// the hour on the clock in the user's zone, so a day with a clock change still has its hours
+			if h := time.Unix(k.minute, 0).In(loc).Hour(); h >= 0 && h < len(out.Hourly) {
+				out.Hourly[h] += tokens
+			}
 			out.Output += b.Output
 			out.Requests += b.Requests
 			out.Input += b.Input

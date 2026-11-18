@@ -19,14 +19,22 @@ import (
 // conversation as the user and opens it, as Ask Persona does. Only the pages drawn under PagesID may answer it.
 const AskURL = "persona://ask"
 
+// GraphURL is the open_url of the list's Source Relationships row (#5741): the app pushes its own relationship view.
+// Only the pages drawn under PagesID may answer it, and only for an app that says it has the view (Env.Graph).
+const GraphURL = "persona://sources-graph"
+
 // assistant is the assistant's name as the app shows it, at most 40 characters on one line; "" without one.
 func (p *pages) assistant() string {
 	return clipRunes(oneLine(p.env.Assistant), 40)
 }
 
-// askRow is the press on a page about a source (connector c, source s) or a subscription (id), named after the
-// assistant as the app's "Ask {name}…" is ("the assistant" when the app gives no name). key is its subtitle's.
-func (p *pages) askRow(key string) wire.Component {
+// askRows is the press on a page about a source (connector c, source s) or a subscription (id), named after the
+// assistant as the app's "Ask {name}…" is ("the assistant" when the app gives no name). key is its subtitle's. None for
+// an app that can't open it (Env.Ask, #5661).
+func (p *pages) askRows(key string) []wire.Component {
+	if !p.env.Ask {
+		return nil
+	}
 	name := p.assistant()
 	title := p.t("ask.title", i18n.Args{"name": name})
 	if name == "" {
@@ -35,7 +43,7 @@ func (p *pages) askRow(key string) wire.Component {
 	r := row("x.ask", title)
 	r.Subtitle, r.Icon, r.IconColor = p.t(key, i18n.Args{"name": name}), p.icon("person"), "purple"
 	r.Action = &wire.Action{ID: "ask"}
-	return r
+	return []wire.Component{r}
 }
 
 // ask answers the press with the message for Persona.
@@ -44,8 +52,13 @@ func (p *pages) ask() (wire.ActionResult, error) {
 	if err != nil {
 		return p.errorResult(err)
 	}
-	q := strings.ReplaceAll(url.QueryEscape(text), "+", "%20") // a space as %20: the apps read the query as a URL's
-	return wire.ActionResult{OpenURL: AskURL + "?text=" + q}, nil
+	return wire.ActionResult{OpenURL: askOpenURL(text)}, nil
+}
+
+// askOpenURL is the open_url that hands text to the assistant, a space written as %20: the apps read the query as a
+// URL's.
+func askOpenURL(text string) string {
+	return AskURL + "?text=" + strings.ReplaceAll(url.QueryEscape(text), "+", "%20")
 }
 
 // askText is a sentence of what the user wants after a <persona-context> block about the source. The block is what the

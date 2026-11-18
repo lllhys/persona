@@ -3,6 +3,8 @@ package persona.core.hub
 import persona.core.contracts.HubScope
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.MessageEcho
+import persona.core.contracts.Session
+import persona.core.contracts.SessionKey
 import persona.core.contracts.api.ItemsQuery
 import persona.core.contracts.api.MessageEvidence
 import persona.core.contracts.api.ConnectionState
@@ -26,13 +28,15 @@ class HttpMessageTransport(
     private val hubScope: HubScope,
     private val connection: OkHttpHubConnection,
     scope: CoroutineScope,
+    /** A waiting Codex pane's first message returns the thread it started, before the next list push. */
+    private val onSessionStarted: suspend (SessionKey, Session) -> Unit = { _, _ -> },
     private val onPairingExpired: () -> Unit = {},
 ) : MessageTransport {
     /** Credentials always come from the live connection, including in compatibility tests. */
     internal constructor(
         hubScope: HubScope, connection: OkHttpHubConnection, @Suppress("UNUSED_PARAMETER") token: String,
         scope: CoroutineScope, onPairingExpired: () -> Unit = {},
-    ) : this(hubScope, connection, scope, onPairingExpired)
+    ) : this(hubScope, connection, scope, onPairingExpired = onPairingExpired)
 
     private class ReadyRoute(val route: HubRoute?)
     private val caughtUp = MutableStateFlow<ReadyRoute?>(null)
@@ -63,7 +67,7 @@ class HttpMessageTransport(
                 val status = saved?.get("status")?.jsonPrimitive?.intOrNull
                 val body = saved?.get("body")?.jsonPrimitive?.contentOrNull
                 if (status != null && body != null) {
-                    val result = decodeResult(status, String(Base64.getDecoder().decode(body), Charsets.UTF_8))
+                    val result = decodeResult(request.session, status, String(Base64.getDecoder().decode(body), Charsets.UTF_8))
                     if (result != MessageTransportResult.Accepted) return MessageEvidence.Receipt(result)
                     // A successful receipt still needs the transcript to replace the local bubble: an item tagged with
                     // this id, or (older hubs; Claude Code keeps its own id for the message) one with its words.
@@ -84,16 +88,29 @@ class HttpMessageTransport(
         return MessageEvidence.Shown.takeIf { shown }
     }
 
-    private fun decodeResult(status: Int, body: String): MessageTransportResult {
+    private suspend fun decodeResult(target: SessionKey, status: Int, body: String): MessageTransportResult {
         val reply = runCatching { JsonCodec.parseToJsonElement(body).jsonObject }.getOrNull()
         if (reply?.get("state")?.jsonPrimitive?.contentOrNull in setOf("pending", "unknown"))
             return MessageTransportResult.NoReceipt
-        if (status in 200..299) return MessageTransportResult.Accepted
+        if (status in 200..299) {
+            onAccepted(target, reply)
+            return MessageTransportResult.Accepted
+        }
         return MessageTransportResult.HubError(
             reply?.get("code")?.jsonPrimitive?.contentOrNull,
             reply?.get("delivered")?.jsonPrimitive?.contentOrNull,
             reply?.get("error")?.jsonPrimitive?.contentOrNull,
             reply?.get("retryable")?.jsonPrimitive?.booleanOrNull ?: false)
+    }
+
+    override suspend fun onAccepted(session: SessionKey, reply: JsonObject?) {
+        val started = (reply?.get("session") as? JsonObject)?.let {
+            runCatching { JsonCodec.decodeFromJsonElement<Session>(it) }.getOrNull()
+        }?.takeIf { it.sessionId.isNotBlank() && it.sessionId != session.sessionId } ?: return
+        // Node replies have no machine id; the request owns it (also when the hub is one of several).
+        try { onSessionStarted(session, started.copy(machineId = session.machineId)) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { /* A presentation failure cannot change confirmed delivery. */ }
     }
 
     override suspend fun send(request: MessageRequest): MessageTransportResult {
@@ -118,7 +135,7 @@ class HttpMessageTransport(
         return try {
             // Non-2xx replies throw HubFailure (handled below); a 2xx body may still be a pending receipt.
             connection.request(requireNotNull(base.hubPath(url)), "POST", body, request.headers, expectedRoute = route).use { response ->
-                decodeResult(response.code, response.body?.string().orEmpty())
+                decodeResult(request.session, response.code, response.body?.string().orEmpty())
             }
         } catch (cancelled: CancellationException) {
             throw cancelled

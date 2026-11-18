@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PathStat } from "../../lib/path-presence";
-import { DocumentCards, ReplyFiles } from "./FileCards";
+import { DocumentCards, FileCards, ReplyFiles } from "./FileCards";
 
 const stats: Record<string, PathStat> = {
   "/w/报告.docx": { kind: "file", size: 2048 },
@@ -34,5 +34,31 @@ describe("documents an answer names (iOS DocumentCards)", () => {
     expect(html).not.toContain("gone.pdf");
     // the plain card comes first, then the row of documents
     expect(html.indexOf("run.csv")).toBeLessThan(html.indexOf("报告.docx"));
+  });
+});
+
+describe("files sent with your message (#8361, iOS AttachedFileCards)", () => {
+  beforeEach(() => vi.stubGlobal("localStorage", { getItem: () => "tok" }));
+  const files = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: "file", path: `/u/${i + 1}.pdf`, name: `${i + 1}.pdf`, size: 10 }));
+
+  it("shows four or fewer whole", () => {
+    const html = renderToStaticMarkup(<FileCards files={files(4)} mid="m1" />);
+    expect(html.match(/4\.pdf/g)).toBeTruthy();
+    expect(html).not.toContain('data-testid="file-cards-more"');
+  });
+
+  it("folds more than four to three and a row for the rest", () => {
+    const html = renderToStaticMarkup(<FileCards files={files(8)} mid="m1" />);
+    expect(html).toContain("3.pdf");
+    expect(html).not.toContain("4.pdf");
+    expect(html).toContain('data-testid="file-cards-more"');
+    expect(html).toContain("还有 5 个文件");
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("does not fold an answer's files", () => {
+    const html = renderToStaticMarkup(<FileCards files={files(8)} mid="m1" align="start" />);
+    expect(html).toContain("8.pdf");
+    expect(html).not.toContain('data-testid="file-cards-more"');
   });
 });

@@ -2,6 +2,7 @@ package persona.android.data
 
 import persona.android.AppText
 import persona.android.R
+import android.app.Application
 import android.util.Base64
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -13,8 +14,10 @@ import persona.core.contracts.JsonCodec
 import persona.core.contracts.SessionKey
 import persona.core.data.ScopedHubData
 import persona.core.hub.HubChatTransport
+import persona.feature.chat.ChatImageLoaders
 import persona.feature.chat.ChatLocalStorage
 import persona.feature.chat.ChatStorageSnapshot
+import persona.feature.chat.scopedChatImageLoader
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -23,11 +26,29 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class ScopedChatStorage(private val runtime: ConnectionRuntime, scope: CoroutineScope) : ChatLocalStorage {
+class ScopedChatStorage(application: Application, private val runtime: ConnectionRuntime, scope: CoroutineScope) : ChatLocalStorage {
+    private val context = application.applicationContext
+    private val imageLoaders = ChatImageLoaders()
+
+    init {
+        scope.launch {
+            runtime.groups.collect { groups ->
+                imageLoaders.retain(groups.mapNotNull { group ->
+                    group.data?.let { data -> data.scope.path to data }
+                }.toMap())
+            }
+        }
+    }
+
     /** Reading positions live with the first group (its data outlives a change of the selected group). */
     override val localStorage = runtime.groups.map { groups -> groups.firstOrNull()?.data }.distinctUntilChanged().mapLatest { data ->
         data?.let { ChatStorageSnapshot(it.scope.path, ScopedChatAnchors.open(it)) }
     }.stateIn(scope, SharingStarted.Eagerly, null)
+
+    override fun imageLoader(session: SessionKey): coil3.ImageLoader? {
+        val data = runtime.groupOf(session.machineId)?.data ?: return null
+        return imageLoaders.get(data.scope.path, data) { scopedChatImageLoader(context, this, data.scope.path) }
+    }
 
     /** Images are cached with the group the session belongs to. */
     override suspend fun imageFile(session: SessionKey, item: Item, width: Int, height: Int): File {

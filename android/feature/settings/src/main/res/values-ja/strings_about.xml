@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_about_commit">コミット</string>
+    <string name="settings_about_commit_unknown">不明</string>
+    <string name="settings_about_commit_copy">ビルドのコミットをコピー</string>
+    <string name="settings_about_commit_copied">ビルドのコミットをコピーしました</string>
+</resources>

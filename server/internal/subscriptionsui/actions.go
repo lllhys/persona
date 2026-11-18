@@ -40,12 +40,16 @@ func (p *pages) act(action string, values map[string]string) (wire.ActionResult,
 		return p.patch(subscriptions.Patch{TriageRules: &rules}, true, p.t("toast.saved"))
 	case "builtin_dest":
 		return p.builtinDestination(values)
+	case "builtin_via":
+		return p.builtinSwitchVia(values)
 	case "unmute":
 		return p.unmute(values["mute"])
 	case "recommend":
 		return p.recommend(values)
 	case "ask":
 		return p.ask()
+	case "graph":
+		return wire.ActionResult{OpenURL: GraphURL}, nil
 	case "triage_preview":
 		return p.triagePreview()
 	case "run_now":

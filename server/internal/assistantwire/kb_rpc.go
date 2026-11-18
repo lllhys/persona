@@ -119,6 +119,9 @@ type KBUpdateParams struct {
 
 type KBUpdateResult struct {
 	ID string `json:"id"`
-	// Before: the previous value of each field the update wrote (null when unset; summary is the old text), for undo.
+	// Before: the previous value of each field the update wrote (null when unset; summary is the old text, profile the
+	// extension's own profile before), for undo.
 	Before map[string]json.RawMessage `json:"before,omitempty"`
+	// Ignored: fields the update carried that its kind does not use, not applied, each with why.
+	Ignored []kbwire.IgnoredField `json:"ignored,omitempty"`
 }

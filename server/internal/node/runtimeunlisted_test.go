@@ -73,17 +73,18 @@ func TestRuntimeNamesItsUnlistedTranscripts(t *testing.T) {
 	push([]string{}...) // an empty list: it names none
 	waitFor(t, "left out again", func() bool { _, ok := listed(t, n)[archived]; return !ok })
 
-	// The runtime gone for a moment (its bridge restarting): what it named stands, and it says the same when it is
-	// back, so the session does not leave the list and come back.
+	// The runtime gone (its bridge restarting, or Paseo stopped): what it named stands, and it says the same when it is
+	// back, so the session does not leave the list and come back. The session it listed stays too, not running
+	// (runtimeaway.go).
 	push(archived)
 	waitFor(t, "listed again", func() bool { return listed(t, n)[archived].Status == proto.StatusOffline })
 	host.conn.Close()
-	waitFor(t, "the runtime left", func() bool { _, there := listed(t, n)[running]; return !there })
+	waitFor(t, "the runtime left", func() bool { return listed(t, n)[running].Status == proto.StatusOffline })
 	freshOffline()
 	if listed(t, n)[archived].Status != proto.StatusOffline {
 		t.Fatal("the archived session went with the runtime at once")
 	}
-	// Gone for good: its word no longer stands.
+	// Away for longer than the list of sessions not running goes back: its word no longer stands.
 	n.runtimes.mu.Lock()
 	u := n.runtimes.unlisted["paseo"]
 	if u.gone.IsZero() || !u.set[archived] {
@@ -92,13 +93,16 @@ func TestRuntimeNamesItsUnlistedTranscripts(t *testing.T) {
 	}
 	u.gone = time.Now().Add(-unlistedKeep - time.Second)
 	n.runtimes.unlisted["paseo"] = u
+	a := n.runtimes.away["paseo"]
+	a.gone = u.gone
+	n.runtimes.away["paseo"] = a
 	n.runtimes.mu.Unlock()
 	if got := n.runtimes.unlistedTranscripts(); got != nil {
 		t.Fatalf("still named after it stayed away: %v", got)
 	}
 	freshOffline()
-	if _, ok := listed(t, n)[archived]; ok {
-		t.Fatal("a session of a runtime that stayed away is still listed")
+	if got := listed(t, n); got[archived].SessionID != "" || got[running].SessionID != "" {
+		t.Fatalf("sessions of a runtime that stayed away are still listed: %q %q", got[archived].Status, got[running].Status)
 	}
 }
 
@@ -150,15 +154,22 @@ func TestRuntimeArchivedSessionKeepsItsID(t *testing.T) {
 		t.Fatalf("listed %q and %q", got["paseo-a1"].Status, got[transcript].Status)
 	}
 
-	// The runtime away (its bridge restarting) after a list that names none: its row goes with it, and the transcript
-	// is not listed under its own id meanwhile.
+	// The runtime away (Paseo stopped) after a list that names none: its row stays under its own id, not running and
+	// read from the transcript (runtimeaway.go), and the transcript is not listed under its own id meanwhile.
 	push()
 	waitFor(t, "named no more", func() bool { return n.runtimes.unlistedTranscripts() == nil })
 	host.conn.Close()
-	waitFor(t, "the runtime left", func() bool { _, there := listed(t, n)["paseo-a1"]; return !there })
+	waitFor(t, "the runtime left", func() bool { return runtimeGone(n, "paseo") })
 	freshOffline()
-	if _, ok := listed(t, n)[transcript]; ok {
+	got = listed(t, n)
+	if s := got["paseo-a1"]; s.Status != proto.StatusOffline || s.SourceKind != proto.SourceRuntime || s.LastText != "done" {
+		t.Fatalf("listed while away as %+v", s)
+	}
+	if _, ok := got[transcript]; ok {
 		t.Fatal("the conversation is listed under its transcript's id while the runtime is away")
+	}
+	if raw, err := nodeCall(t, n, "session.items", map[string]any{"session_id": "paseo-a1", "limit": 20}); err != nil || !strings.Contains(string(raw), `"summarize the diff"`) {
+		t.Fatalf("its content while away: %s %v", raw, err)
 	}
 }
 

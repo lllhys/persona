@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// A model ID typed by hand (#1644): the same cases as the hub's `TestValidModelID` (server/internal/proto/modelid_test.go)
 /// and the web's model-id.test.ts, so the three say the same thing about every ID.

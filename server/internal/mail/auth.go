@@ -83,6 +83,9 @@ func smtpLoginErr(a *MailAccount, err error) error {
 // rejection is written in (the default; the rest of the message is not localized yet); "" for a provider without
 // them.
 func guideFor(a *MailAccount) string {
+	if a.Provider == ProviderGmail && presetFor(a.Email) == nil { // a Google Workspace address has its own domain
+		return i18n.T(i18n.Default, "mail-preset.guide_gmail", i18n.Args{"site": gmailAppPasswordSite}) + "\n"
+	}
 	if g := PasswordGuide(i18n.Default, a.Email); g != "" {
 		return g + "\n"
 	}

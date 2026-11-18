@@ -1,5 +1,7 @@
 {
   "load_failed": "没能取回这段过程",
   "retry": "重试",
-  "loading_steps_other": "正在取 {count} 条"
+  "loading_steps_other": "正在取 {count} 条",
+  "run_clock": "从上一条消息或工作开始算起，到下一条消息、工作结束或当前时刻。",
+  "exchange_clock": "从本轮对话开始算起，到最后一次活动；运行中则算到当前时刻。"
 }

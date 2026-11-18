@@ -42,6 +42,7 @@
   "review_branch": "ブランチをレビュー",
   "review_uncommitted": "未コミットをレビュー",
   "not_git": "このフォルダは Git リポジトリではありません",
+  "no_folder": "このフォルダはもうありません",
   "outdated": "変更をレビューするにはこのコンピュータをアップデートしてください",
   "outdated_detail": "この personad はレビュー機能より前のものです。アップデートしてから開き直してください。",
   "no_default_branch": "比較するデフォルトブランチがありません",

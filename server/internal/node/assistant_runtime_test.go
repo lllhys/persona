@@ -359,6 +359,53 @@ func TestAssistantToolsOnlyForTheAssistantsConversations(t *testing.T) {
 	}
 }
 
+func TestRuntimeAgentToolsRequireOwnedSessions(t *testing.T) {
+	n, hub := runtimeNode(t)
+	calls := assistantHub(hub)
+	host := dialRuntime(t, n, assistantRuntimeHello())
+	other := dialRuntime(t, n, map[string]any{"runtime": "other", "caps": map[string]any{"send": true}})
+	const sid = "session-leader"
+	if err := host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{
+		{"session_id": sid, "cwd": "/w/app", "status": "idle"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "listed", func() bool { _, ok := listed(t, n)[sid]; return ok })
+	ctx := context.Background()
+	for _, runtime := range []*fakeRuntime{host, other} {
+		var result struct{ Tools []proto.Tool }
+		if err := runtime.peer.Call(ctx, "mcp.tools", map[string]any{"leader_only": true, "session_id": sid}, &result); err != nil {
+			t.Fatal(err)
+		}
+		if (len(result.Tools) > 0) != (runtime == host) {
+			t.Fatalf("unexpected discovery result: %+v", result)
+		}
+		for _, name := range []string{"task_plan", "report_to_supervisor"} {
+			var res proto.ToolResult
+			if err := runtime.peer.Call(ctx, "mcp.call", map[string]any{"name": name, "session_id": sid}, &res); err != nil {
+				t.Fatal(err)
+			}
+			if res.IsError != (runtime == other) {
+				t.Fatalf("%s: unexpected call result: %+v", name, res)
+			}
+		}
+	}
+	calls.mu.Lock()
+	defer calls.mu.Unlock()
+	if len(calls.tools) != 1 || len(calls.calls) != 2 {
+		t.Fatalf("unexpected manager requests: tools %s, calls %s", calls.tools, calls.calls)
+	}
+	for _, raw := range append(append([]json.RawMessage(nil), calls.tools...), calls.calls...) {
+		var req struct {
+			SessionID string `json:"session_id"`
+			Assistant bool   `json:"assistant"`
+		}
+		if err := json.Unmarshal(raw, &req); err != nil || req.SessionID != sid || req.Assistant {
+			t.Fatalf("unexpected caller: %s (%v)", raw, err)
+		}
+	}
+}
+
 func TestGatedToolGoesThroughTheGate(t *testing.T) {
 	n, hub := runtimeNode(t)
 	assistantHub(hub)

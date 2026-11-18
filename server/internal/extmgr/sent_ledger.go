@@ -512,6 +512,9 @@ func nodeLetThrough(t proto.LarkLetThrough) (map[string]any, error) {
 			if by := cutRunes(strings.TrimSpace(cleanText(t.AnsweredBy)), sentValueMost); by != "" {
 				through["answered_by"] = by
 			}
+			if original := cutRunes(cleanText(t.EditedFrom), connector.SentTextMost); original != "" {
+				through["edited_from"] = original
+			}
 		}
 	default:
 		return nil, fmt.Errorf("let_through: unsupported kind %q", t.Kind)

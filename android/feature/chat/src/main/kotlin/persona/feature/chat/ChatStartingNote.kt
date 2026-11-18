@@ -39,7 +39,8 @@ internal fun chatAgentName(session: Session?): String = session?.agentLabel?.tak
 
 /** An Agent chat's empty composer names its agent (iOS `Composer` placeholder): "Message Claude", "Message Codex". */
 internal fun agentPlaceholder(res: Resources, session: Session?): String =
-    res.getString(R.string.chat_placeholder_agent, chatAgentName(session))
+    if (session?.awaitingFirstMessage == true) res.getString(R.string.chat_codex_first_message)
+    else res.getString(R.string.chat_placeholder_agent, chatAgentName(session))
 
 /** A message on its way to the agent: sending, or sent and not in the transcript yet (iOS `ChatAwaitingTurn.onItsWay`). */
 private val DeliveryState.onItsWay get() = this == DeliveryState.Sending || this == DeliveryState.Sent

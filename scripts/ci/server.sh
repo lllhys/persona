@@ -7,9 +7,9 @@ case "$lane" in all|node|managers|other|build) ;; *) printf 'Unknown server lane
 
 if [ "$lane" = all ] || [ "$lane" = build ]; then
   ci_run 'Go formatting' 120 python3 scripts/ci/gofmt.py server sdk/go
-  ci_run 'Server vet' 600 bash -c 'cd server && go vet ./...'
+  ci_run 'Server vet' 600 bash -c 'cd server && GOFLAGS=-ldflags= go vet ./...'
   ci_run 'Server build' 600 bash -c 'cd server && go build ./...'
-  ci_run 'Windows node build and vet' 600 bash -c 'cd server && GOOS=windows GOARCH=amd64 go build ./... && GOOS=windows GOARCH=amd64 go vet ./...'
+  ci_run 'Windows node build and vet' 600 bash -c 'cd server && GOOS=windows GOARCH=amd64 go build ./... && GOOS=windows GOARCH=amd64 GOFLAGS=-ldflags= go vet ./...'
   # The release's tags (server/build-tags.txt, server/internal/buildtags): the programs build with them on Linux and
   # macOS, and the tunnel works with the tailscale.com subset they leave.
   ci_run 'Server programs with build-tags.txt' 600 bash -c 'cd server && t="$(cat build-tags.txt)" && go build -tags "$t" ./cmd/... && GOOS=darwin GOARCH=arm64 go build -tags "$t" ./cmd/...'
@@ -22,7 +22,7 @@ if [ "$lane" = build ]; then exit 0; fi
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/persona-ci-db.XXXXXX")"
 container="persona-ci-db-$(basename "$fixture" | tr '[:upper:]' '[:lower:]')"
 cleanup() {
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  docker rm -fv "$container" >/dev/null 2>&1 || true
   rm -f "${fixture:?}/database.json"
   rmdir "$fixture" 2>/dev/null || true
 }

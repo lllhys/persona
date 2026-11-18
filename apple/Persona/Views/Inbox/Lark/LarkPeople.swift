@@ -38,7 +38,7 @@ struct LarkProfileView: View {
         } else {
             NavigationStack(path: $path) {
                 card
-                    .pageToolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.tint(LarkColor.blue) } }
+                    .pageToolbar { SheetClose { dismiss() } }
                     .feishuRoutes()
             }
             .environment(\.feishuOpen) { path.append($0) }

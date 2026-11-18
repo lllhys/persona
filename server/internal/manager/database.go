@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/nwverse/persona/server/internal/assistant"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/pgdocker"
 )
 
@@ -22,18 +23,20 @@ import (
 func dbContainer(id string) string { return pgdocker.ManagerContainer(id) }
 func dbVolume(id string) string    { return pgdocker.ManagerVolume(id) }
 
-// errNoDocker is what join, install and run say without Docker and without --database-url.
-var errNoDocker = errors.New("这个管理者没有数据库：装上 Docker（它给管理者建一个自己的 Postgres 容器），或者加 --database-url 'postgres://USER:PASSWORD@HOST:5432/DBNAME'（安装码没有用掉）")
+// noDockerError is what join, install and run say without Docker and without --database-url.
+func noDockerError(l i18n.Lang) error {
+	return errors.New(i18n.T(l.Or(i18n.En), "manager-cli.database_missing"))
+}
 
 // dockerProblem is a configuration error (exit 2) saying why Docker can't make the database; nil when it can.
 func (e *env) dockerProblem(ctx context.Context) error {
 	switch err := pgdocker.CheckDocker(ctx, e.docker, e.look); {
 	case errors.Is(err, pgdocker.ErrNoDocker):
-		return ConfigError{errNoDocker}
+		return ConfigError{noDockerError(e.l())}
 	case errors.Is(err, pgdocker.ErrDockerDenied):
-		return ConfigError{fmt.Errorf("有 Docker，但当前用户没有权限用它（管理者的 Postgres 要用）：运行 sudo usermod -aG docker %s，退出登录再登录后重来；或者加 --database-url", e.user)}
+		return ConfigError{errors.New(i18n.T(e.l(), "manager-cli.database_docker_denied", i18n.Args{"user": e.user}))}
 	case err != nil:
-		return errors.New("有 Docker，但它没在运行：运行 sudo systemctl start docker（Mac 上打开 Docker Desktop 或 OrbStack），再重来")
+		return errors.New(i18n.T(e.l(), "manager-cli.database_docker_down"))
 	}
 	return nil
 }
@@ -65,11 +68,10 @@ func (e *env) ownDatabase(ctx context.Context, dir string, c *assistant.ManagerC
 	dbURL, made, err := pgdocker.ProvisionManagerDB(ctx, c.ID, pgdocker.ManagerDBOptions{Password: password, Run: e.docker,
 		LookPath: e.look, FreePort: e.freePort, Ping: e.ping, Wait: e.dbWait})
 	if err != nil {
-		return made, fmt.Errorf("它的数据库没准备好：%w（docker logs %s 看原因）", err, dbContainer(c.ID))
+		return made, withTerminalCause(i18n.T(e.l(), "manager-cli.database_not_ready", i18n.Args{"error": err, "container": dbContainer(c.ID)}), err)
 	}
 	if made && lost {
-		fmt.Fprintf(e.stdout, "manager: [%s] 它的数据库容器 %s 和数据卷 %s 都不在了：建了一个新的空库，以前的对话、设置、收件箱都不在里面\n",
-			c.ID, dbContainer(c.ID), dbVolume(c.ID))
+		fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.database_lost", i18n.Args{"id": c.ID, "container": dbContainer(c.ID), "volume": dbVolume(c.ID)}))
 	}
 	if dbURL != c.DatabaseURL || c.DatabaseContainer != dbContainer(c.ID) {
 		c.DatabaseURL, c.DatabaseContainer = dbURL, dbContainer(c.ID)
@@ -87,16 +89,16 @@ func (e *env) volumeExists(ctx context.Context, id string) bool {
 }
 
 // databaseLine says where the manager's database is, for install and status.
-func databaseLine(c *assistant.ManagerConfig, made bool) string {
+func databaseLine(l i18n.Lang, c *assistant.ManagerConfig, made bool) string {
 	switch {
 	case c.DatabaseContainer != "" && made:
-		return fmt.Sprintf("建好了它自己的 Postgres（Docker 容器 %s，数据卷 %s）", c.DatabaseContainer, dbVolume(c.ID))
+		return i18n.T(l.Or(i18n.En), "manager-cli.database_made", i18n.Args{"container": c.DatabaseContainer, "volume": dbVolume(c.ID)})
 	case c.DatabaseContainer != "":
-		return fmt.Sprintf("它自己的 Postgres（Docker 容器 %s，数据卷 %s）", c.DatabaseContainer, dbVolume(c.ID))
+		return i18n.T(l.Or(i18n.En), "manager-cli.database_existing", i18n.Args{"container": c.DatabaseContainer, "volume": dbVolume(c.ID)})
 	case c.DatabaseURL != "":
-		return "--database-url 给的（" + redacted(c.DatabaseURL) + "）"
+		return i18n.T(l.Or(i18n.En), "manager-cli.database_given", i18n.Args{"database": redacted(c.DatabaseURL)})
 	}
-	return "还没有（install 时建）"
+	return i18n.T(l.Or(i18n.En), "manager-cli.database_none")
 }
 
 // redacted is a database URL without its password.

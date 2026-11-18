@@ -152,6 +152,9 @@ export function Flyout({ rowEl, panelEl, row, setup, mode, starred, disabled, fo
           )}
         </div>
       )}
+      {(model.effortUnavailable || model.effortNote) && (
+        <p className="pt-2 text-label leading-[1.4] text-ink-3">{model.effortUnavailable || model.effortNote}</p>
+      )}
       {extra && <div className="pt-2">{extra}</div>}
       <div role="group" aria-label={t("ui-modelpanel.engine")} className="pt-2">
         {engines && engines.length > 1 ? (
@@ -164,7 +167,7 @@ export function Flyout({ rowEl, panelEl, row, setup, mode, starred, disabled, fo
                 data-engine-choice={c.engine}
                 aria-pressed={c.own}
                 disabled={disabled || c.own || c.blocked !== undefined}
-                title={c.own ? agentName(c.engine) : c.blocked || t("ui-modelpanel.engine_via", { provider: c.provider.name })}
+                title={c.own ? agentName(c.engine, c.provider.engineLabel) : c.blocked || t("ui-modelpanel.engine_via", { provider: c.provider.name })}
                 onClick={() => onEngine?.(c)}
                 className={cx(
                   "flex h-[26px] max-w-full min-w-0 items-center gap-1.5 rounded-control px-2 text-[12px] leading-4 transition-colors duration-150",
@@ -173,8 +176,8 @@ export function Flyout({ rowEl, panelEl, row, setup, mode, starred, disabled, fo
                   !c.own && "disabled:cursor-not-allowed",
                 )}
               >
-                <AgentMark agent={c.engine} size={12} decorative className="shrink-0 text-ink-2" />
-                <span className="min-w-0 truncate">{agentName(c.engine)}</span>
+                <AgentMark agent={c.engine} label={c.provider.engineLabel} size={12} decorative className="shrink-0 text-ink-2" />
+                <span className="min-w-0 truncate">{agentName(c.engine, c.provider.engineLabel)}</span>
                 {c.own && <Icon name="check" size={12} stroke={2.5} className="shrink-0 text-ink" />}
               </button>
             ))}
@@ -183,9 +186,9 @@ export function Flyout({ rowEl, panelEl, row, setup, mode, starred, disabled, fo
           <div className="flex min-h-7 items-center gap-1 rounded-control bg-hover-2 pr-1">
             <span className="flex min-h-7 min-w-0 flex-1 items-center gap-1.5 px-1 text-ink">
               <span aria-hidden className="inline-flex size-4 shrink-0 items-center justify-center">
-                <AgentMark agent={provider.engine} size={12} decorative className="text-ink-2" />
+                <AgentMark agent={provider.engine} label={provider.engineLabel} size={12} decorative className="text-ink-2" />
               </span>
-              <span className="min-w-0 truncate text-[12px] leading-4">{agentName(provider.engine)}</span>
+              <span className="min-w-0 truncate text-[12px] leading-4">{agentName(provider.engine, provider.engineLabel)}</span>
             </span>
             <Icon name="check" size={12} stroke={2.5} className="shrink-0 text-ink" />
           </div>

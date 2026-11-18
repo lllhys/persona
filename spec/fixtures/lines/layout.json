@@ -6,7 +6,8 @@
       "name": "single_interaction_in_footer",
       "description": "一个待处理交互放在正文外、输入框上方。",
       "source": [
-        "ios/Persona/Views/Chat/ChatView.swift: mainFooter / chatScroll",
+        "apple/Persona/Views/Chat/ChatView.swift: mainFooter / pendingCards / chatScroll",
+        "apple/Persona/Views/Chat/PendingCards.swift: PendingCards",
         "docs/archive/redesign/ux.md: 3.2 / 3.4 / 3.5"
       ],
       "derived": true,
@@ -33,7 +34,8 @@
       "name": "multiple_interactions_in_footer",
       "description": "多个待处理交互按输入顺序放在输入框上方。",
       "source": [
-        "ios/Persona/Views/Chat/ChatView.swift: mainFooter / chatScroll",
+        "apple/Persona/Views/Chat/ChatView.swift: mainFooter / pendingCards / chatScroll",
+        "apple/Persona/Views/Chat/PendingCards.swift: PendingCards",
         "docs/archive/redesign/ux.md: 3.2 / 3.4 / 3.5"
       ],
       "derived": true,

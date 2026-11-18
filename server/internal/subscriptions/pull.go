@@ -64,12 +64,25 @@ func checkRecipe(r Recipe) *Problem {
 	if err != nil {
 		return &Problem{CodeBadRecipe, "The recipe is not valid: " + firstLine(err.Error())}
 	}
+	if p := checkPagination(r); p != nil {
+		return p
+	}
+	if r.Mode == wire.ConnectorSubscriptionModeThings { // the rows come ready-made (#6296)
+		switch {
+		case r.GroupBy != wire.ConnectorSubscriptionGroupThread:
+			return &Problem{CodeBadRecipe, "A things recipe's rows are the connector's threads: group_by is thread."}
+		case r.Fields != nil && *r.Fields != (connector.SubscriptionFields{}):
+			return &Problem{CodeBadRecipe, "A things recipe maps no fields: its rows come ready-made."}
+		case cursorPagination(r) || pagePagination(r):
+			return &Problem{CodeBadRecipe, "A things recipe reads one answer: it has no pagination."}
+		}
+	}
 	for _, p := range recipePaths(r) {
 		if _, err := parsePath(p); err != nil {
 			return &Problem{CodeBadRecipe, err.Error()}
 		}
 	}
-	if _, err := fillArgs(r.Args, vars(time.Now(), time.UTC)); err != nil {
+	if _, err := fillPullArgs(r, time.Now(), time.UTC, nil); err != nil {
 		return &Problem{CodeBadArgs, err.Error()}
 	}
 	return nil
@@ -77,6 +90,11 @@ func checkRecipe(r Recipe) *Problem {
 
 func recipePaths(r Recipe) []string {
 	ps := []string{cmpOr(r.ItemsPath, "$")}
+	for _, p := range []string{r.NextCursorPath, r.NextPagePath} {
+		if p != "" {
+			ps = append(ps, p)
+		}
+	}
 	if f := r.Fields; f != nil {
 		for _, p := range []string{f.ID, f.Thread, f.Title, f.Sender, f.Time, f.Body, f.Link, f.DueDate} {
 			if p != "" {
@@ -94,28 +112,46 @@ func firstLine(s string) string {
 
 // pulled is what one call of a recipe gave: its items mapped (items mode) or the one snapshot.
 type pulled struct {
-	args      map[string]any
-	itemsPath string // where the items were read
-	shape     *Shape
-	first     any // the first item, for the field pickers
-	items     []mapped
-	snapshot  *Item
-	snapHash  string
-	weak      bool // an item had no id: dedup by content hash
-	timeBad   bool
-	noTitle   bool // items came, none had a title
-	problem   *Problem
-	retry     time.Duration // rate_limited: how long the connector asked to wait
-	connError bool          // the connector itself could not be reached
+	args         map[string]any
+	itemsPath    string // where the items were read
+	shape        *Shape
+	first        any // the first item, for the field pickers
+	items        []mapped
+	snapshot     *Item
+	snapHash     string
+	weak         bool // an item had no id: dedup by content hash
+	timeBad      bool
+	noTitle      bool // items came, none had a title
+	problem      *Problem
+	continuation *Continuation // the next page to request, nil at the terminal page
+	retry        time.Duration // rate_limited: how long the connector asked to wait
+	connError    bool          // the connector itself could not be reached
 }
 
-// pull calls the recipe's tool once for what came after since and reads what it answers.
-func pull(ctx context.Context, c connector.Connector, source string, r Recipe, since time.Time, loc *time.Location, label string) pulled {
+// pull calls the recipe's tool once for one page of the original window and reads what it answers. current is the
+// durable position committed by the preceding page, nil for a new window. A non-nil continuation in the result is
+// committed only with this page's items; nil means this was the terminal page.
+func pull(ctx context.Context, c connector.Connector, source string, r Recipe, since, until time.Time, loc *time.Location,
+	label string, current *Continuation, inputSchema json.RawMessage) pulled {
 	var p pulled
-	args, err := fillArgs(r.Args, vars(since, loc))
+	if problem := checkPagination(r); problem != nil {
+		p.problem = problem
+		return p
+	}
+	if problem := checkContinuation(r, current); problem != nil {
+		p.problem = problem
+		return p
+	}
+	args, err := fillPullArgs(r, since, loc, current)
 	if err != nil {
 		p.problem = &Problem{CodeBadArgs, err.Error()}
 		return p
+	}
+	if len(inputSchema) > 0 {
+		if err := checkArgs(inputSchema, args); err != nil {
+			p.problem = &Problem{CodeBadArgs, "The arguments do not fit the tool: " + firstLine(err.Error())}
+			return p
+		}
 	}
 	p.args = args
 	raw, _ := json.Marshal(args)
@@ -162,6 +198,20 @@ func pull(ctx context.Context, c connector.Connector, source string, r Recipe, s
 		p.problem = &Problem{CodeNoList, fmt.Sprintf("%s is not a list in the result.", p.itemsPath)}
 		return p
 	}
+	if r.Mode == wire.ConnectorSubscriptionModeThings {
+		for i, v := range arr {
+			if i == 0 {
+				p.first = v
+			}
+			m, ok := thingItem(v, r.Kind)
+			if !ok {
+				p.problem = &Problem{CodeBadThing, fmt.Sprintf("Item %d of the answer is not an Inbox row: it needs a thread and a last.", i+1)}
+				return p
+			}
+			p.items = append(p.items, m)
+		}
+		return p // the connector's current rows: one answer, no pages
+	}
 	titled := false
 	for i, v := range arr {
 		if i == 0 {
@@ -178,7 +228,32 @@ func pull(ctx context.Context, c connector.Connector, source string, r Recipe, s
 		titled = titled || m.hasTitle
 	}
 	p.noTitle = len(arr) > 0 && !titled
+	p.continuation, p.problem = nextContinuation(r, res, args, current, since, until, len(arr))
 	return p
+}
+
+// thingItem is one row of a things recipe's answer (#6296) as a held item: the row as this build reads the connectors'
+// rows (ConnectorInboxThing), its kind the recipe's when it has none; keyed by a hash of all of it, so a row whose
+// state changed (read, replied, a new move) is kept again. False when it has no thread or last.
+func thingItem(v any, kind string) (mapped, bool) {
+	raw, _ := json.Marshal(v)
+	var t connector.InboxThing
+	if json.Unmarshal(raw, &t) != nil || strings.TrimSpace(t.Thread) == "" || strings.TrimSpace(t.Last) == "" {
+		return mapped{}, false
+	}
+	t.Kind = cmpOr(t.Kind, kind)
+	row, err := json.Marshal(t)
+	if err != nil {
+		return mapped{}, false
+	}
+	h := hashOf(string(row))
+	it := Item{UID: "t:" + h[:24], Kind: t.Kind, Thread: clip(t.Thread, titleMax), Title: clip(oneLine(t.Title), titleMax),
+		Sender: clip(oneLine(t.Sender), titleMax), Body: clip(t.Preview, bodyMax), Link: t.URL, Thing: row}
+	if !t.At.IsZero() {
+		at := t.At
+		it.Time = &at
+	}
+	return mapped{item: it, idFound: true, hash: h, hasTitle: it.Title != ""}, true
 }
 
 // callProblem reads a failed call: rate_limited with its wait, a connector that cannot be reached now, a refusal, or

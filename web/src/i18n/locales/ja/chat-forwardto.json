@@ -18,5 +18,17 @@
   "route_to_persona": "Persona へ",
   "route_to_agent": "{agent} へ",
   "route_from_to_agent_on": "{from} から転送 · {machine} の {agent} へ",
-  "route_to_agent_on": "{machine} の {agent} へ"
+  "route_to_agent_on": "{machine} の {agent} へ",
+  "select_messages": "複数選択…",
+  "selection": "選択したメッセージ",
+  "selected": "{count}件を選択",
+  "remove_group": "転送をすべて解除",
+  "at_most": "一度に転送できるのは{count}件までです",
+  "group_heading_chat": "転送された{count}件のメッセージ · {chat}",
+  "line": "{who}：{text}",
+  "more": "ほか{count}件",
+  "include_questions": "質問を含める",
+  "export_image": "画像を書き出す",
+  "copied_author": "{author}：",
+  "goes_with_answer": "回答と一緒に含めます"
 }

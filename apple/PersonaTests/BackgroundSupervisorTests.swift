@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The hub's built-in background supervisor on the Apple apps (#5083, docs/assistant/unified-entry.md "Background
 /// supervisor"): its conversation is listed with the scheduled tasks' ones and is told apart by the assistant settings'
@@ -191,6 +192,47 @@ struct BackgroundSupervisorTests {
         #expect(ModelConfigurationModel.followsMainChat(use) && ModelConfigurationModel.followsCategory(use))
         #expect(!ModelConfigurationModel.followsAgents(use) && !ModelConfigurationModel.followsMainChat(page.categories[0]))
         #expect(page.inheritanceStatus(use) == String(localized: "Follow Main Chat"))
+    }
+
+    /// A hub since #5806 lists the use in its catalog: it is read there, not asked for by its id again, and its row
+    /// stays where the catalog puts it (after the categories, as the appended row was).
+    @Test func aHubThatListsTheUseIsNotAskedForItAgain() async {
+        let hub = FakeHub()
+        let listed = Self.supervise().replacingOccurrences(of: #""name":"后台督办""#, with: #""name":"后台督办","description":"Follows up the tasks no leader supervises.""#)
+        hub.on("GET", "/api/v1/model-config", json: #"{"purposes":[\#(Self.mainChat),\#(listed)],"providers":\#(Self.providers)}"#)
+        hub.on("GET", Self.path, json: #"{"purpose":\#(Self.supervise()),"providers":\#(Self.providers)}"#)
+        let page = page(hub)
+        await page.load()
+        #expect(page.error == nil && page.purposes.map(\.id) == ["assistant", "assistant.supervise"])
+        #expect(page.independentPurposes.map(\.id) == ["assistant.supervise"] && page.categories.map(\.id) == ["assistant"])
+        #expect(hub.sent("GET", Self.path).isEmpty && hub.sent("GET", "/api/v1/model-config").count == 1)
+        #expect(page.inheritanceStatus(page.independentPurposes[0]) == String(localized: "Follow Main Chat"))
+        #expect(page.independentPurposes[0].purposeNote == "Follows up the tasks no leader supervises.")
+    }
+
+    /// A hub before #5806 leaves it out of the catalog: it is asked for by its id, once per load, as before.
+    @Test func aHubThatLeavesTheUseOutIsAskedForItByItsId() async throws {
+        let hub = FakeHub()
+        hub.on("GET", "/api/v1/model-config", json: #"{"purposes":[\#(Self.mainChat)],"providers":\#(Self.providers)}"#)
+        hub.on("GET", Self.path, json: #"{"purpose":\#(Self.supervise()),"providers":\#(Self.providers)}"#)
+        let page = page(hub)
+        await page.load()
+        #expect(hub.sent("GET", Self.path).count == 1 && page.purposes.map(\.id) == ["assistant", "assistant.supervise"])
+        let main = try JSON.decoder.decode(ModelPurpose.self, from: Data(Self.mainChat.utf8))
+        let use = try JSON.decoder.decode(ModelPurpose.self, from: Data(Self.supervise().utf8))
+        #expect(ModelConfigurationModel.asksApart([main]) && !ModelConfigurationModel.asksApart([main, use]) && ModelConfigurationModel.asksApart([]))
+    }
+
+    /// What a use is for (#5086): the hub's sentence, drawn under its name; none from a hub before it, or for a use
+    /// that has none.
+    @Test func aUseSaysWhatItIsFor() throws {
+        func use(_ extra: String) throws -> ModelPurpose {
+            try JSON.decoder.decode(ModelPurpose.self, from: Data((#"{"id":"kb","name":"Knowledge","group":"Defaults","kind":"api","override":{},"effective":{},"revision":0"# + extra + "}").utf8))
+        }
+        #expect(try use(#","description":"Translation, drafts and summaries.""#).purposeNote == "Translation, drafts and summaries.")
+        #expect(try use("").purposeNote == nil && use(#","description":"  ""#).purposeNote == nil && use(#","description":null"#).purposeNote == nil)
+        let main = try JSON.decoder.decode(ModelPurpose.self, from: Data(Self.mainChat.utf8))
+        #expect(main.description == nil && main.purposeNote == nil, "a hub from before sends none")
     }
 
     @Test func anOlderHubListsNoSuchUse() async {

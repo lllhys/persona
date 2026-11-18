@@ -5,7 +5,7 @@
   "compacting": "正在压缩上下文…",
   "compact": "压缩上下文",
   "new_main_ellipsis": "新建主对话…",
-  "copy_info": "拷贝信息",
+  "copy_info": "复制信息",
   "compact_start_failed": "没开始压缩：{error}",
   "compacted": "已压缩上下文",
   "compact_failed": "压缩失败：{error}",

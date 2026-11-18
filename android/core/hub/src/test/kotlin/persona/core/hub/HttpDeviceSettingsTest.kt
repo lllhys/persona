@@ -55,6 +55,29 @@ class HttpDeviceSettingsTest {
         }
     }
 
+    // 设置 › 通知 › 低打扰模式 (#8157): the hub's switch is read and written at its own route; an older hub has none.
+    @Test fun lowDistractionIsTheHubsSwitch() = runBlocking {
+        MockWebServer().use { server ->
+            val api = HttpDeviceSettings(server.url("/").toString(), "example-token", "phone", OkHttpClient())
+            server.enqueue(MockResponse().setBody("""{"enabled":false}"""))
+            assertEquals(false, api.lowDistraction())
+            assertEquals("/api/v1/push/ln-mode", (server.takeRequest().path).zhAny())
+            server.enqueue(MockResponse().setBody("""{"enabled":true}"""))
+            assertEquals(true, api.saveLowDistraction(true))
+            val put = server.takeRequest()
+            assertEquals("PUT", (put.method).zhAny())
+            assertEquals("/api/v1/push/ln-mode", (put.path).zhAny())
+            val body = JsonCodec.parseToJsonElement(put.body.readUtf8()).jsonObject
+            assertEquals(setOf("enabled"), body.keys)
+            assertTrue(body.getValue("enabled").jsonPrimitive.boolean)
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not found"}"""))
+            assertNull(api.lowDistraction())
+            server.takeRequest()
+            server.enqueue(MockResponse().setResponseCode(503).setBody("""{"error":"push settings are not available"}"""))
+            try { api.lowDistraction(); fail("A hub that does not answer is not an older hub") } catch (_: HubFailure) { }
+        }
+    }
+
     @Test fun translatePrefsAreReadAndWrittenWithEveryField() = runBlocking {
         MockWebServer().use { server ->
             val api = HttpDeviceSettings(server.url("/").toString(), "example-token", "phone", OkHttpClient())

@@ -29,7 +29,7 @@ use crate::record::Stored;
 use crate::run::{Outcome, Phone};
 use crate::sim::{SimDevice, System};
 
-const USAGE: &str = "usage: persona-iphone-bridge version | call | serve --udid <udid> --record <path> [--host <address>] [--port <port>] [--timeout-ms <ms>] | usb-list --json | pair --udid <udid> --out <path> | match --record <path> --identifier <id> --auth-tag <tag>";
+const USAGE: &str = "usage: persona-iphone-bridge version | call | serve --udid <udid> --record <path> [--host <address>] [--port <port>] [--timeout-ms <ms>] | usb-list --json | pair --udid <udid> --out <path> | match --record <path> --identifier <id> --auth-tag <tag> | reveal-developer-mode --udid <udid>";
 
 fn version_line() -> String {
     format!(
@@ -259,6 +259,20 @@ async fn dispatch(args: &[String]) -> Outcome {
             };
             one_shot(result.await).await
         }
+        "reveal-developer-mode" => {
+            let result = async {
+                let flags = Flags::parse(rest, &["udid"], &[])?;
+                let udid = flags.req("udid")?;
+                if sim::is_simulator(&System, udid).await {
+                    return Err(BridgeError::new(
+                        Code::Unsupported,
+                        "a simulator has no Developer Mode to show",
+                    ));
+                }
+                pair::reveal_developer_mode(udid).await
+            };
+            one_shot(result.await).await
+        }
         "match" => {
             let result = async {
                 let flags = Flags::parse(rest, &["record", "identifier", "auth-tag"], &[])?;
@@ -440,5 +454,9 @@ mod tests {
         assert!(o.stderr_error.unwrap().contains("--out is required"));
         let o = dispatch(&strings(&["match", "--record", "/r", "--identifier", "i"])).await;
         assert!(o.stderr_error.unwrap().contains("--auth-tag is required"));
+        let o = dispatch(&strings(&["reveal-developer-mode"])).await;
+        assert!(o.stderr_error.unwrap().contains("--udid is required"));
+        let o = dispatch(&strings(&["reveal-developer-mode", "--udid", "U", "--out", "x"])).await;
+        assert_eq!(o.code, 1);
     }
 }

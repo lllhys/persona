@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonaWire
 
 // Settings › Managers (docs/assistant/managers.md, the web's ManagersSettings, Android's ManagersScreen): the hub's managers, each
 // a whole assistant: where each runs, online or when it last synced, the default; renaming, making one the default,
@@ -32,18 +33,26 @@ nonisolated struct HubManager: Codable, Hashable, Identifiable, Sendable {
     /// (`AppModel.inboxNeedsYou`, `ManagerRoster.countless`): a roster that changed with it would draw every page that
     /// reads one again.
     var inboxNeedsYou: Int?
+    /// The user's choice to keep the built-in assistant out of the switcher while it isn't used (`hide`, #9055), as
+    /// Settings › Assistants shows it. Only the built-in one carries it; an older hub never does.
+    var hide: Bool = false
+    /// That choice in effect now (`hidden`): the hub sets it while `hide` is on and the built-in assistant is not the
+    /// default and has no computer. The switcher leaves it out (`AssistantSwitcherText.rows`); it still counts as
+    /// installed everywhere else (`ManagerRoster.installed`).
+    var hidden: Bool = false
 
     enum CodingKeys: String, CodingKey {
-        case id, name, online, builtin, host, os, arch, deploy, version, since, installing
+        case id, name, online, builtin, host, os, arch, deploy, version, since, installing, hide, hidden
         case isDefault = "default", lastSeen = "last_seen", inboxNeedsYou = "inbox_needs_you"
     }
 
     init(id: String, name: String, online: Bool, isDefault: Bool = false, builtin: Bool = false, host: String? = nil, os: String? = nil,
          arch: String? = nil, deploy: String? = nil, version: String? = nil, since: Date? = nil, lastSeen: Date? = nil, installing: Date? = nil,
-         inboxNeedsYou: Int? = nil) {
+         inboxNeedsYou: Int? = nil, hide: Bool = false, hidden: Bool = false) {
         (self.id, self.name, self.online, self.isDefault, self.builtin) = (id, name, online, isDefault, builtin)
         (self.host, self.os, self.arch, self.deploy, self.version) = (host, os, arch, deploy, version)
         (self.since, self.lastSeen, self.installing, self.inboxNeedsYou) = (since, lastSeen, installing, inboxNeedsYou)
+        (self.hide, self.hidden) = (hide, hidden)
     }
 
     init(from decoder: Decoder) throws {
@@ -62,6 +71,9 @@ nonisolated struct HubManager: Codable, Hashable, Identifiable, Sendable {
         lastSeen = try c.decodeIfPresent(Date.self, forKey: .lastSeen)
         installing = try c.decodeIfPresent(Date.self, forKey: .installing)
         inboxNeedsYou = try c.decodeIfPresent(Int.self, forKey: .inboxNeedsYou)
+        // Both are left out while false.
+        hide = try c.decodeIfPresent(Bool.self, forKey: .hide) ?? false
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
     }
 }
 
@@ -106,6 +118,10 @@ extension APIClient {
     }
     func makeDefaultManager(_ id: String) async throws {
         _ = try await request("PATCH", "/api/v1/managers/\(Self.pathPart(id))", body: ["default": true])
+    }
+    /// The built-in assistant out of the switcher while it isn't used (`hide` true), or back in it (#9055).
+    func hideManager(_ id: String, _ hide: Bool) async throws {
+        _ = try await request("PATCH", "/api/v1/managers/\(Self.pathPart(id))", body: ["hide": hide])
     }
     func deleteManager(_ id: String) async throws {
         _ = try await request("DELETE", "/api/v1/managers/\(Self.pathPart(id))")
@@ -180,6 +196,18 @@ enum ManagersText {
         return nil
     }
 
+    /// Whether the built-in assistant's Show in Switcher (#9055) can't be turned off now: the default is always listed.
+    /// Turning it back on always can.
+    static func switcherLocked(_ m: HubManager) -> Bool { m.isDefault && !m.hide }
+
+    /// Under that switch: why it can't be turned off, that the choice waits while the assistant is in use, or what it does.
+    static func switcherNote(_ m: HubManager) -> String {
+        if switcherLocked(m) { return String(localized: "The default assistant is always listed. To hide this one, make another one the default first.") }
+        if m.hide, m.isDefault { return String(localized: "It's listed for now because it's the default. It's hidden again once another one is.") }
+        if m.hide, !m.hidden { return String(localized: "It's listed for now because it has a computer. It's hidden again once it has none.") }
+        return String(localized: "When off, it isn't listed where you switch assistants while it isn't used. It's listed again by itself once it becomes the default or has a computer.")
+    }
+
     /// Whether a hub from before the roster answered (404 without a code of its own).
     static func unsupported(_ error: Error) -> Bool {
         guard let e = error as? APIError else { return false }
@@ -194,6 +222,7 @@ enum ManagersText {
             case "builtin_manager": return String(localized: "The hub runs this assistant itself. It can't be deleted or installed elsewhere")
             case "no_manager": return String(localized: "This assistant is no longer there")
             case "installing": return String(localized: "It isn't installed yet. Rename it or make it the default once it is")
+            case "builtin_in_use": return String(localized: "It's in use, as the default or with a computer, so it can't be hidden now")
             default: break
             }
             if e.status == 400 { return String(localized: "Names are 1 to 40 characters") }
@@ -252,18 +281,21 @@ enum ManagersText {
 
     func tick() { readAt = deps.now() }
 
-    func load() async {
-        guard let api = deps.api() else { return }
+    /// False when the hub's list could not be read now.
+    @discardableResult func load() async -> Bool {
+        guard let api = deps.api() else { return false }
+        defer { readAt = deps.now() }
         do {
             let list = try await api.managers()
             managers = list.managers
             error = nil
             unsupported = false
+            return true
         } catch {
             if ManagersText.unsupported(error) { unsupported = true }
             else if managers == nil { self.error = error.shown ?? String(localized: "Can't reach the hub") }
+            return false
         }
-        readAt = deps.now()
     }
 
     /// A new manager: its install code goes on screen. False when the hub said no (`failure` says why).
@@ -334,8 +366,33 @@ enum ManagersText {
         await change { try await $0.deleteManager(m.id) }
     }
 
-    /// One change, then the list again (the push would bring it too; this one does not wait for it).
-    private func change(_ work: (APIClient) async throws -> Void) async -> Bool {
+    /// The built-in assistant back in the switcher (`shown`), or out of it while it isn't used (#9055): shown at once,
+    /// put back if the hub says no. The hub refuses to hide it while it is in use (409 `builtin_in_use`). An older hub
+    /// answers yes and keeps nothing: the list read after it still has the choice as it was, and the page says the hub
+    /// needs updating.
+    @discardableResult func showInSwitcher(_ m: HubManager, _ shown: Bool) async -> Bool {
+        guard !busy else { return false }
+        setHide(m.id, !shown)
+        var read = false
+        guard await change({ try await $0.hideManager(m.id, !shown) }, then: { read = $0 }) else {
+            setHide(m.id, m.hide)
+            return false
+        }
+        if read, !shown, manager(m.id)?.hide == false {
+            failure = String(localized: "This hub's version can't hide it yet. Update the hub and try again")
+            return false
+        }
+        return true
+    }
+
+    private func setHide(_ id: String, _ hide: Bool) {
+        guard let i = managers?.firstIndex(where: { $0.id == id }), managers?[i].hide != hide else { return }
+        managers?[i].hide = hide
+    }
+
+    /// One change, then the list again (the push would bring it too; this one does not wait for it); `then` hears
+    /// whether that list could be read.
+    private func change(_ work: (APIClient) async throws -> Void, then: (Bool) -> Void = { _ in }) async -> Bool {
         guard let api = deps.api() else { return false }
         busy = true
         failure = nil
@@ -346,7 +403,7 @@ enum ManagersText {
             failure = ManagersText.failure(error)
             return false
         }
-        await load()
+        then(await load())
         return true
     }
 }

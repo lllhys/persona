@@ -9,7 +9,8 @@ import type { TurnImage } from "../../lib/turn-images";
 import { copyText } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { edgeMask, useEdgeFade } from "./edge-fade";
-import { ImageViewer, type ViewerAction, type ViewerImage } from "./ImageViewer";
+import type { ViewerAction, ViewerImage } from "./ImageViewer";
+import { ImageViewer } from "./LazyImageViewer";
 import { imageSrc } from "./Steps";
 import { t } from "../../i18n";
 

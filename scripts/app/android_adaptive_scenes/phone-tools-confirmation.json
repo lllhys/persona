@@ -1,0 +1,156 @@
+{
+  "id": "phone-tools-confirmation",
+  "description": "Open Phone data and capture its settings; confirmation, notification, lock-screen and reconnect behavior remains in unit tests and manual checks.",
+  "requires": {
+    "fields": []
+  },
+  "steps": [
+    {
+      "step": "launch"
+    },
+    {
+      "step": "open",
+      "page": "phone",
+      "probePage": "Phone data"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {
+          "equals": "phone"
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "phone-data",
+      "state": "settings"
+    }
+  ],
+  "automatedCoverage": "Only the real Phone data destination. No confirmation, concurrent read, notification or outbox state is asserted by this runner scene.",
+  "manualScenes": [
+    {
+      "id": "foreground-single-confirmation",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "state": {
+        "pendingConfirmations": [
+          {
+            "token": "demo-1",
+            "summary": "New event \"Team sync\" 2026-11-15 14:00 to 15:00"
+          }
+        ]
+      },
+      "expect": "One confirmation card visible with Allow and Deny; Allow is greyed on the lock screen on API 31+. Button labels stay on a single line at maximum font size."
+    },
+    {
+      "id": "foreground-two-writes-fifo",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "state": {
+        "pendingConfirmations": [
+          {
+            "token": "demo-1",
+            "summary": "New event \"Team sync\" 2026-11-15 14:00 to 15:00"
+          },
+          {
+            "token": "demo-2",
+            "summary": "New event \"Focus time\" 2026-11-15 16:00 to 17:00"
+          }
+        ]
+      },
+      "expect": "Only the first card is on screen; the second is queued. Resolving the first promotes the second; a stale tap on the first token does not answer the second."
+    },
+    {
+      "id": "reads-while-write-waits",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "state": {
+        "pendingConfirmations": [
+          {
+            "token": "demo-1",
+            "summary": "New event \"Team sync\""
+          }
+        ],
+        "concurrentReads": [
+          "phone_device_info",
+          "phone_calendar_events"
+        ]
+      },
+      "expect": "Reads complete and render their results in the chat while the confirmation card is still on screen; the call-id of each execute is logged once per call."
+    },
+    {
+      "id": "background-notification",
+      "route": "background",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "state": {
+        "pendingConfirmations": [
+          {
+            "token": "demo-1",
+            "summary": "New event \"Team sync\""
+          }
+        ]
+      },
+      "expect": "A high-priority notification on channel phone_tools_confirmation with Allow and Deny actions and a delete intent. No setTimeoutAfter: the card waits until the user answers or the runtime closes."
+    },
+    {
+      "id": "reconnect-flushes-result",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "state": {
+        "phase": "result-held",
+        "heldResults": [
+          {
+            "callId": "w1",
+            "summary": "Event created"
+          }
+        ]
+      },
+      "expect": "After the connection recovers the held result is re-sent by call_id; the tool is not re-executed and the confirmation card does not reappear."
+    },
+    {
+      "id": "uncertain-after-disconnect",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "state": {
+        "phase": "uncertain",
+        "lastWrite": {
+          "callId": "w1",
+          "summary": "Team sync"
+        }
+      },
+      "expect": "The chat shows the uncertain wording (the write may have landed; do not retry automatically). The confirmation card is gone; a repeated call_id replays the cached uncertain result."
+    }
+  ],
+  "manualChecks": [
+    "Lock the device: Allow must require an unlock on API 31+; Deny works from the lock screen.",
+    "Swipe the notification away: only that card ends as Dismissed, the next queued one is unaffected.",
+    "Rotate the device while a card is on screen: the same card stays, the queue does not advance.",
+    "Kill the process while a write waits: after restart nothing is replayed automatically; a fresh call_id is required to retry.",
+    "Background reachability and timing on Chinese ROMs: not measured; do not quote numbers."
+  ]
+}

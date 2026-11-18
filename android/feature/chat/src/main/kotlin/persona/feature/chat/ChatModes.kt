@@ -13,15 +13,21 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.runtime.*
 import persona.core.contracts.Session
+import persona.core.contracts.api.AgentCreationService
+import persona.core.contracts.api.AgentModel
 import persona.core.contracts.api.ChatAction
 import persona.core.contracts.api.modelName
 import persona.core.designsystem.*
 import persona.core.designsystem.icons.PhIcon
 import persona.core.designsystem.icons.PhIcons
+import persona.core.domain.models.AgentModelPanel
+import persona.core.domain.models.ModelList
 import persona.core.domain.sort.canChangeEffortOnly
 import persona.core.domain.sort.canChangeModes
+import persona.core.domain.sort.canSwitchListedModes
 import persona.core.domain.sort.canTypeClaudeCommands
 import persona.core.domain.sort.hasSource
+import persona.core.domain.sort.listedModes
 
 /** Claude Code's permission modes, effort levels and /model aliases as the app shows them (iOS SessionModes, node/modes.go). */
 internal object SessionModes {
@@ -77,12 +83,35 @@ internal object SessionModes {
     private val bypassRunning = Option(BYPASS, R.string.chat_modes_bypass, R.string.chat_modes_bypass_detail_running)
 
     /**
+     * A mode of those a session lists (#8261, [listedModes]: Paseo's Grok, OpenCode or Codex): its own approval is "Follow
+     * launcher", which may already allow everything, never Ask First; Allow Everything says it can be switched back; any
+     * other as Claude Code names it, an unknown one by its id.
+     */
+    fun listedOption(id: String): Option = when (id) {
+        "default" -> Option(id, R.string.chat_modes_launcher_default, R.string.chat_modes_launcher_default_detail)
+        BYPASS -> Option(id, R.string.chat_modes_bypass, R.string.chat_modes_bypass_listed_detail)
+        else -> permissionModes.firstOrNull { it.id == id } ?: Option(id, 0, R.string.chat_modes_unknown_detail, raw = id)
+    }
+
+    /** The listed mode [session] runs in: the one it reports when listed, else its own (no mode reported is its own). */
+    fun listedNow(session: Session, listed: List<String>): String = session.permissionMode?.takeIf { it in listed } ?: "default"
+
+    /** The mode a session runs in as its menu checks it: a listed session's always one of its own ([listedNow]). */
+    fun current(session: Session): String? = session.listedModes?.let { listedNow(session, it) } ?: session.permissionMode
+
+    /** The current mode's name: a listed session's in its own words ([listedOption]). */
+    fun currentLabel(session: Session, resources: Resources): String? =
+        if (session.listedModes != null) current(session)?.let { listedOption(it).title(resources) } else modeLabel(session.permissionMode, resources)
+
+    /**
      * What a running session can switch to (iOS `switchableModes` / `listed`): every mode for an assistant conversation
      * (the node restarts its Claude in Allow Everything) and for an agent whose process can take it ([Session.bypassAvailable]),
      * the rest without Allow Everything; plus the current mode when it is none of these (Allow Everything, or a newer
-     * Claude Code's mode, shown by its raw name), so it still shows as picked.
+     * Claude Code's mode, shown by its raw name), so it still shows as picked. A session that lists its own modes
+     * (#8261) has those alone ([listedOption]).
      */
     fun switchable(session: Session): List<Option> {
+        session.listedModes?.let { listed -> return listed.map(::listedOption) }
         val list = if (session.assistant || session.bypassAvailable) permissionModes.map { if (it.id == BYPASS) bypassRunning else it }
             else permissionModes.filter { it.id != BYPASS }
         val current = session.permissionMode
@@ -99,13 +128,27 @@ internal object SessionModes {
     /** What switching to a mode asks first (#3719): going into Allow Everything, and leaving it when the agent can't come back to it from here. */
     enum class Confirmation { AllowEverything, LeaveAllowEverything }
 
-    /** An assistant conversation switches without asking, as on iOS and the web. */
+    /**
+     * An assistant conversation switches without asking, as on iOS and the web. The modes a session lists (#8261) are a
+     * switch both ways: only going into Allow Everything asks.
+     */
     fun confirmation(session: Session, to: String): Confirmation? = when {
-        session.assistant || to == session.permissionMode -> null
+        session.assistant || to == current(session) -> null
         to == BYPASS -> Confirmation.AllowEverything
+        session.listedModes != null -> null
         session.permissionMode == BYPASS && !session.bypassAvailable -> Confirmation.LeaveAllowEverything
         else -> null
     }
+
+    /** A listed session on its own approval (#8261): no Ask First, since its own settings may allow everything. */
+    private fun ownApproval(session: Session): Boolean = session.listedModes != null && current(session) == "default"
+
+    /**
+     * The header's tone and symbol for [session]'s mode: a listed session's own approval as a mode not known, in no tone
+     * under the plain permissions shield, never the raised hand.
+     */
+    fun headerTone(session: Session): ModeTone = headerTone(current(session).takeUnless { ownApproval(session) })
+    fun headerIcon(session: Session): PhIcon = headerIcon(current(session).takeUnless { ownApproval(session) })
 
     /**
      * The header's tone for a mode (iOS `headerLook`): a mode not reported yet, or one this app does not know, is
@@ -132,15 +175,32 @@ internal object SessionModes {
 
     /**
      * The header shows an agent's mode when there is one to see or to change (iOS `showsInHeader`): Claude Code's, before
-     * its first prompt too. Not an assistant conversation, nor an agent whose mode can be neither read nor changed (Codex).
+     * its first prompt too, and the modes an agent lists (#8261), on its own approval too. Not an assistant conversation,
+     * nor an agent whose mode can be neither read nor changed (Codex).
      */
-    fun showsInHeader(session: Session): Boolean = !session.assistant && (session.permissionMode != null || session.canChangeModes)
+    fun showsInHeader(session: Session): Boolean =
+        !session.assistant && (session.permissionMode != null || session.canChangeModes || session.listedModes != null)
 
     /**
      * Glass's composer shows the mode beside the model pill (Q11, #5055): an agent's as the header did, and a Persona
      * chat's while it can change it (the web's permission picker, "a Persona conversation whatever its state").
      */
     fun showsInComposer(session: Session): Boolean = session.canChangeModes || showsInHeader(session)
+
+    /**
+     * Brief and Board's "Mode" sheet lists the launcher's own models (#8143): a model the node switches itself through
+     * `POST …/modes` (capabilities.model: Paseo's providers, a runtime's, #6294), where Claude's /model can't be typed
+     * into a pane. Glass picks it in the pill's panel instead.
+     */
+    fun listsModels(session: Session): Boolean = !session.canTypeClaudeCommands && AgentModelPanel.canSwitchModel(session)
+
+    /** Its permission modes are Claude Code's to change (the node's capabilities.modes where it says): the sheet lists them. */
+    fun takesModes(session: Session): Boolean = session.capabilities?.modes ?: session.isClaude
+
+    /** The efforts [model] takes, as the sheet lists them: Claude Code's and Codex's by their names, any other by its id. */
+    fun modelEffortOptions(model: AgentModel?): List<Option> = model?.efforts.orEmpty().map { id ->
+        effortLevels.firstOrNull { it.id == id } ?: codexEffortLevels.firstOrNull { it.id == id } ?: Option(id, 0, 0, raw = id)
+    }
 
     /** The alias a session's model reads as ("claude-opus-…" → opus); a gateway model or none is the default. */
     fun claudeModelId(model: String?): String {
@@ -259,9 +319,10 @@ internal fun chatModeHint(session: Session?, includeModes: Boolean = true): Stri
 /**
  * The composer's "Mode" button (iOS SessionModeBar): permission mode and effort change on the running session; for
  * Claude in a terminal pane the model too, which goes out as `/model <alias>` ([onPickModel], the same path as the
- * quick messages). Claude's sessions get it (callers check [canChangeModes]), and a Codex thread on its app-server
- * with its effort alone, among its own levels ([canChangeEffortOnly]); all-allow, which a running session cannot pick,
- * stays listed and marked while it is on.
+ * quick messages). Claude's sessions get it (callers check [canChangeModes]), a Codex thread on its app-server
+ * with its effort alone, among its own levels ([canChangeEffortOnly]), and an agent whose model the node switches
+ * itself (a Paseo provider's, [SessionModes.listsModels], #8143) with its launcher's models, read through [creation],
+ * and the efforts of the one it runs. All-allow, which a running session cannot pick, stays listed and marked while it is on.
  */
 @Composable
 internal fun ChatModeBar(
@@ -273,6 +334,8 @@ internal fun ChatModeBar(
      */
     openRequested: Boolean = false,
     onOpenHandled: () -> Unit = {},
+    /** The computer's launchers and their models (the hub's `launchers/{name}/models`); null: no model list is offered. */
+    creation: (() -> AgentCreationService?)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     LaunchedEffect(openRequested) { if (openRequested) { open = true; onOpenHandled() } }
@@ -280,7 +343,22 @@ internal fun ChatModeBar(
     LaunchedEffect(open) { onOverlay(open) }
     DisposableEffect(Unit) { onDispose { onOverlay(false) } }
     val effortOnly = session?.canChangeEffortOnly == true
-    val editable = session != null && state.available && online && (session.canChangeModes || effortOnly)
+    val listsModels = session != null && creation != null && SessionModes.listsModels(session)
+    // The two modes a provider lists (#8261): a switch of their own, beside its efforts and models.
+    val listedModes = session?.canSwitchListedModes == true
+    val editable = session != null && state.available && online && (session.canChangeModes || effortOnly || listsModels || listedModes)
+    // The launcher's own models, read again each time the sheet opens, as Glass's pill reads them for its panel.
+    val scope = rememberCoroutineScope()
+    val lists = remember(session?.key) { ModelLists(scope) { operationFeedback(it).text.resolve(resources) } }
+    val machine = session?.machineId.orEmpty()
+    val launcher = session?.let(AgentModelPanel::launcher).orEmpty()
+    LaunchedEffect(open, listsModels, machine, launcher) {
+        if (!open || !listsModels || machine.isEmpty()) return@LaunchedEffect
+        val service = creation?.invoke() ?: return@LaunchedEffect
+        lists.read(machine, launcher, again = true) { service.launcherModels(machine, launcher) }
+    }
+    val models = lists.list(machine, launcher)
+    val running = AgentModelPanel.currentModelRow(models.list?.models.orEmpty(), session?.model)
     val bypass = session?.permissionMode == SessionModes.BYPASS
     val ultracodeOffered = Ultracode.offered(session, LocalHubFeatures.current)
     var ultracodeAsk by remember(session?.key) { mutableStateOf<Ultracode.Ask?>(null) }
@@ -298,13 +376,17 @@ internal fun ChatModeBar(
     }
     if (open) JSheet(onDismiss = { open = false }, title = stringResource(R.string.chat_modes_title), scrollable = true) {
         Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
-            if (!editable) Text(stringResource(if (session?.canChangeModes == false && !effortOnly) R.string.chat_modes_locked else R.string.chat_modes_offline),
+            if (!editable) Text(stringResource(if (session?.canChangeModes == false && !effortOnly && !listsModels && !listedModes) R.string.chat_modes_locked else R.string.chat_modes_offline),
                 style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
             if (session != null) {
-                if (!effortOnly) {
+                // Claude Code's permission modes, for an agent that takes them: not a Paseo provider whose model is all
+                // there is to change (#8143). A provider that lists its own (#8261) has those alone: its own approval and
+                // Allow Everything, a switch both ways ([SessionModes.switchable]).
+                if ((!effortOnly && SessionModes.takesModes(session)) || session.listedModes != null) {
                     JSectionHeader(stringResource(R.string.chat_modes_section_permissions))
+                    val mode = SessionModes.current(session)
                     SessionModes.switchable(session).forEach { option ->
-                        val current = option.id == session.permissionMode
+                        val current = option.id == mode
                         DecisionOption(option.title(resources), {
                             open = false
                             if (!current) SessionModes.confirmation(session, option.id)?.let { asked = it to option.id }
@@ -315,9 +397,21 @@ internal fun ChatModeBar(
                         DecisionOption(option.title(resources), {}, detail = option.detail(resources), selected = false, enabled = false)
                     }
                 }
-                JSectionHeader(stringResource(R.string.chat_modes_section_effort))
-                SessionModes.effortOptions(session).forEach { option ->
-                    JRow(option.title(resources), subtitle = option.detail(resources), trailing = { JRadio(option.id == session.effort, null) }, enabled = editable,
+                // Claude Code's efforts (a Codex thread's own levels); for an agent whose models are listed below, those the
+                // model it runs takes (none: it has no effort setting), saying only which one that model recommends, as
+                // Glass's panel does, never Claude Code's descriptions.
+                val ownEfforts = effortOnly || SessionModes.takesModes(session)
+                val listedEfforts = listsModels && !ownEfforts
+                val efforts = when {
+                    ownEfforts -> SessionModes.effortOptions(session)
+                    listedEfforts -> SessionModes.modelEffortOptions(running)
+                    else -> emptyList()
+                }
+                val recommended = stringResource(persona.core.designsystem.R.string.designsystem_modelpanel_recommended)
+                if (efforts.isNotEmpty()) JSectionHeader(stringResource(R.string.chat_modes_section_effort))
+                efforts.forEach { option ->
+                    val detail = if (listedEfforts) recommended.takeIf { option.id == running?.defaultEffort } else option.detail(resources)
+                    JRow(option.title(resources), subtitle = detail, trailing = { JRadio(option.id == session.effort, null) }, enabled = editable,
                         onClick = { open = false; if (option.id != session.effort) state.run(session, ChatAction.Modes(effort = option.id)) },
                         // Codex's "ultra" does what ultracode does (several subagents, a lot of quota): the same mark (#582, iOS `Ultracode.Mark.codexUltra`)
                         titleAccessory = if (effortOnly && option.id == Ultracode.CODEX_ULTRA) {
@@ -348,9 +442,41 @@ internal fun ChatModeBar(
                     Text(stringResource(R.string.chat_modes_model_note),
                         style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3)
                 }
+                // A model the node switches itself (#8143): the launcher's own list; a pick applies at once, as on Glass's
+                // panel (Claude Code takes it at once, Codex at its next turn), never while the agent works or waits on you.
+                if (listsModels) ModeSheetModels(session, models, running, editable) { model ->
+                    open = false
+                    if (model != null) state.run(session, ChatAction.Modes(model = model))
+                }
             }
         }
     }
+}
+
+/**
+ * The "Mode" sheet's models for an agent whose model the node switches itself ([SessionModes.listsModels]): the
+ * launcher's list as read ([models]), the one it runs ([running]) checked; while the list is read a row says so, and a
+ * list that couldn't be read says that. [onPick] gets the model tapped, null for the one it runs (nothing to change).
+ */
+@Composable
+private fun ModeSheetModels(session: Session, models: ModelList, running: AgentModel?, editable: Boolean, onPick: (String?) -> Unit) {
+    val listed = models.list?.models.orEmpty()
+    val busy = AgentModelPanel.busy(session) != null
+    JSectionHeader(stringResource(R.string.chat_modes_section_model))
+    when {
+        listed.isNotEmpty() -> listed.forEach { model ->
+            val current = model == running
+            JRow(model.label, subtitle = model.description?.takeIf(String::isNotBlank), trailing = { JRadio(current, null) },
+                enabled = editable && !busy, onClick = { onPick(model.id.takeUnless { current }) })
+        }
+        models.error != null -> Text(stringResource(R.string.chat_modelpill_failed), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+        !models.read -> JRow(stringResource(R.string.chat_modelpill_loading), chevron = false, trailing = { JSpinner() })
+        // No list from this hub: the model it runs, which can't be changed here.
+        else -> session.model?.takeIf(String::isNotEmpty)?.let { id ->
+            JRow(AgentModelPanel.modelLabel(id), trailing = { JRadio(true, null) }, enabled = false)
+        }
+    }
+    if (busy && listed.isNotEmpty()) Text(stringResource(R.string.chat_modelpanel_busy), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3)
 }
 
 /** The question before a mode change that needs one ([SessionModes.confirmation]), on the header and in the composer's sheet alike. */
@@ -371,6 +497,7 @@ internal fun ModeConfirmDialog(kind: SessionModes.Confirmation, mode: String, on
  * The permission mode at the end of an Agent's header (#3957, iOS `HeaderModeButton` from #3719): the mode's symbol in its
  * tone, no words (they are its description and its menu). Its menu lists the modes the agent can switch to, the current
  * one checked, Allow Everything greyed with its reason where the agent cannot take it; a change that needs it asks first.
+ * An agent that lists its own modes (#8261) has those two rows, its own approval under the plain shield.
  * [onOverlay] says while the menu or a question is up.
  */
 @Composable
@@ -381,15 +508,16 @@ internal fun HeaderModeButton(session: Session, state: ChatChromeState, online: 
     var changing by remember(session.key) { mutableStateOf(false) }
     LaunchedEffect(open, asked) { onOverlay(open || asked != null) }
     DisposableEffect(Unit) { onDispose { onOverlay(false) } }
-    val mode = session.permissionMode
-    val words = stringResource(R.string.chat_modes_header, SessionModes.modeLabel(mode, resources) ?: stringResource(R.string.chat_modes_unknown))
-    val editable = state.available && online && session.canChangeModes
+    val mode = SessionModes.current(session)
+    val words = stringResource(R.string.chat_modes_header, SessionModes.currentLabel(session, resources) ?: stringResource(R.string.chat_modes_unknown))
+    val switchable = session.canChangeModes || session.canSwitchListedModes
+    val editable = state.available && online && switchable
     fun change(to: String) {
         changing = true
         state.run(session, ChatAction.Modes(permissionMode = to)) { changing = false }
     }
     Box {
-        JModeButton(SessionModes.headerIcon(mode), SessionModes.headerTone(mode), words, { open = true }, Modifier.testTag("chat-mode"), changing = changing)
+        JModeButton(SessionModes.headerIcon(session), SessionModes.headerTone(session), words, { open = true }, Modifier.testTag("chat-mode"), changing = changing)
         val options = SessionModes.switchable(session)
         val actions = options.mapIndexed { i, option ->
             JAction(option.title(resources), checked = option.id == mode, enabled = editable, subtitle = option.detail(resources).ifEmpty { null },
@@ -401,7 +529,7 @@ internal fun HeaderModeButton(session: Session, state: ChatChromeState, online: 
         })
         // Why nothing can be picked: not running (or a runtime that can't), or the hub out of reach.
         JMenu(open, { open = false }, actions, content = if (editable) null else ({
-            Text(stringResource(if (!session.canChangeModes) R.string.chat_modes_locked else R.string.chat_modes_offline),
+            Text(stringResource(if (!switchable) R.string.chat_modes_locked else R.string.chat_modes_offline),
                 style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3,
                 modifier = Modifier.padding(horizontal = MenuTokens.itemPadding, vertical = MenuTokens.sectionPadding))
         }))

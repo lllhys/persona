@@ -75,7 +75,9 @@ func (s *Service) recoverTaskStarts(ctx context.Context, before time.Time) error
 			continue
 		}
 		for i, pt := range p.Tasks {
-			if pt.TodoID == "" || pt.Error != "" || pt.Start != nil {
+			// A queued task is deliberately waiting for the admission queue loop: leave it for that loop, do not fail
+			// it as an interrupted start (#6909).
+			if pt.TodoID == "" || pt.Error != "" || pt.Start != nil || pt.Queue != nil {
 				continue
 			}
 			failed, err := s.failTodoIf(ctx, pt.TodoID, reason, func(t Todo) bool {
@@ -98,7 +100,7 @@ func (s *Service) recoverTaskStarts(ctx context.Context, before time.Time) error
 				failures = append(failures, err)
 			}
 			if todo, ok := s.todoNow(pt.TodoID); ok {
-				s.taskNotice(ctx, todo, pt.Machine, "failed", "", reason, nil)
+				s.taskStartFailed(ctx, todo, pt.Machine, pt.Start, reason)
 				s.taskReport(todo, reportFailed, pt.Machine, [2]string{}, reason, nil)
 			}
 		}

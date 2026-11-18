@@ -10,5 +10,11 @@
   "engine_dialog_body": "新 Agent 引擎会通过交接摘要续接，思考内容等不能保证完美继承；切回时仍可继续原引擎会话。切换还会让 prompt 缓存中断一次，可能造成 Token 消耗的增加。",
   "engine_dialog_skip": "下次不再提醒",
   "engine_dialog_switch": "切换 Agent",
-  "engine_dialog_keep": "保留当前 Agent"
+  "engine_dialog_keep": "保留当前 Agent",
+  "effort_next_turn": "思考档位从下一轮生效，不会打断正在进行的这一轮。",
+  "effort_offline": "会话已离线，重新打开后才能修改思考档位。",
+  "effort_parent": "这个会话的思考档位由父 Agent 控制。",
+  "effort_read_only": "这个会话是只读的，请在运行它的应用中修改思考档位。",
+  "effort_model_fixed": "这个模型不提供可调的思考档位。",
+  "effort_terminal": "这个 Codex 会话没有共享控制连接，请在它的终端中修改思考档位。"
 }

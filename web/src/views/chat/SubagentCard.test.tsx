@@ -92,8 +92,15 @@ describe("SubagentCard: the two lines", () => {
   });
 
   it("subagentMeta: the pieces in cindy's order, each only when known", () => {
-    expect(subagentMeta({ ...meta, tokens: 999 }, "6 秒", true)).toEqual({ harness: "Claude Code", model: "Haiku 4.5", tokens: "999 tokens", uses: "12 次工具调用", took: "6 秒" });
-    expect(subagentMeta(undefined, "", false)).toEqual({ model: "" });
+    expect(subagentMeta({ ...meta, tokens: 999 }, "6 秒", "Claude Code")).toEqual({ harness: "Claude Code", model: "Haiku 4.5", tokens: "999 tokens", uses: "12 次工具调用", took: "6 秒" });
+    expect(subagentMeta(undefined, "", undefined)).toEqual({ model: "" });
+  });
+
+  it("names what runs the chat's subagents by the chat's own agent, Claude Code when the chat says none (#8142)", () => {
+    expect(html(call(input), "running", { harness: "Grok" })).toContain(">Grok<");
+    expect(html(call(input), "running", { harness: "Grok" })).not.toContain(">Claude Code<");
+    expect(html(call(input), "running")).toContain(">Claude Code<");
+    expect(html(call(input), "running", { harness: "Grok", lineStyle: "assistant" })).not.toContain(">Grok<");
   });
 
 });

@@ -1,5 +1,7 @@
 {
   "label": "Commands",
+  "label_with_skills": "Commands and skills",
   "no_match": "No matching commands",
+  "no_match_skills": "No matching commands or skills",
   "types": "Types: “{text}”"
 }

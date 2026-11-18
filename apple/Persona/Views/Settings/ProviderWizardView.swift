@@ -96,9 +96,10 @@ struct ProviderWizard: View {
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { toolbar }
-                // Cancel on the first step (a Mac asks first once something is typed); Back after it.
+                // ✕ on the first step (a Mac asks first once something is typed); Back after it. Finished, the bar's own ✕
+                // (a wizard that starts on the import ends on its first step).
                 .sheetCancel(unsaved: !wizard.name.isEmpty || !wizard.apiKey.isEmpty || !wizard.presetKey.isEmpty,
-                             when: step == start) { dismiss() }
+                             when: step == start && !finished) { dismiss() }
                 .animation(Theme.Motion.standard, value: step)
                 // Again once the hub's features are in (a sheet opened while connecting starts without them).
                 .task(id: wizard.presetsFlow) {
@@ -144,47 +145,68 @@ struct ProviderWizard: View {
     // MARK: Bar
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
-        if step != start && step != .done {
-            ToolbarItem(placement: .cancellationAction) {
+        leadingItem
+        saveItem
+        wordItem
+    }
+
+    /// Finished: only the way out, ✕ at the leading corner (#9653). Between steps: Back there.
+    @ToolbarContentBuilder private var leadingItem: some ToolbarContent {
+        if finished {
+            SheetClose(id: "wizard.done") { dismiss() }
+        } else if showsBack {
+            ToolbarItem(placement: .topBarLeading) {
                 Button("Back [Provider Wizard View da336f]") { back() }.lineLimit(1).accessibilityIdentifier("wizard.back")
             }
         }
-        ToolbarItem(placement: .confirmationAction) {
-            switch step {
-            case .pick: EmptyView()
-            case .connect:
-                Button("Next [Inbox Line acfc4e]") { Task { await toModels() } }.lineLimit(1)
-                    .disabled(!wizard.connectionReady || wizard.discovering)
-                    .accessibilityIdentifier("wizard.next")
-            case .models:
-                Button { Task { await save() } } label: {
-                    if wizard.saving { ProgressView() } else { Text("Save").lineLimit(1) }
-                }
-                .disabled(!wizard.canSave)
-                .accessibilityIdentifier("wizard.save")
-            case .key:
-                Button { Task { await savePreset() } } label: {
-                    if wizard.saving { ProgressView() } else { Text("Save").lineLimit(1) }
-                }
-                .disabled(!wizard.canSavePreset)
-                .accessibilityIdentifier("wizard.save")
-            case .done:
-                Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1).accessibilityIdentifier("wizard.done")
-            case .claude:
-                if wizard.claudeTry?.ok == true {
-                    Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1).accessibilityIdentifier("wizard.done")
-                }
-            case .getModel: EmptyView()
-            case .importZshrc:
-                switch imports.phase {
-                case .preview, .importing:
-                    Button("Import") { Task { await runImport() } }.lineLimit(1)
-                        .disabled(!imports.canImport).accessibilityIdentifier("import.confirm")
-                case .done:
-                    Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1).accessibilityIdentifier("import.done")
-                default: EmptyView()
-                }
-            }
+    }
+
+    /// Save as the ✓ (#9653).
+    @ToolbarContentBuilder private var saveItem: some ToolbarContent {
+        if savesHere {
+            SheetConfirm(id: "wizard.save", disabled: !canSaveHere, busy: wizard.saving) { Task { await saveHere() } }
+        }
+    }
+
+    /// Next and Import stay words: they say more than ✓.
+    @ToolbarContentBuilder private var wordItem: some ToolbarContent {
+        if step == .connect || importsReady {
+            ToolbarItem(placement: .confirmationAction) { wordButton }
+        }
+    }
+
+    @ViewBuilder private var wordButton: some View {
+        if step == .connect {
+            Button("Next [Inbox Line acfc4e]") { Task { await toModels() } }.lineLimit(1)
+                .disabled(!wizard.connectionReady || wizard.discovering)
+                .accessibilityIdentifier("wizard.next")
+        } else {
+            Button("Import") { Task { await runImport() } }.lineLimit(1)
+                .disabled(!imports.canImport).accessibilityIdentifier("import.confirm")
+        }
+    }
+
+    private var savesHere: Bool { step == .models || step == .key }
+    private var canSaveHere: Bool { step == .models ? wizard.canSave : wizard.canSavePreset }
+
+    private func saveHere() async {
+        if step == .models { await save() } else { await savePreset() }
+    }
+
+    private var showsBack: Bool { step != start && step != .done }
+
+    /// The import's list is up: Import takes what is ticked.
+    private var importsReady: Bool {
+        step == .importZshrc && (imports.phase == .preview || imports.phase == .importing)
+    }
+
+    /// Nothing left to do but leave: saved, a working Claude sign-in, or an import done.
+    private var finished: Bool {
+        switch step {
+        case .done: true
+        case .claude: wizard.claudeTry?.ok == true
+        case .importZshrc: imports.phase == .done
+        default: false
         }
     }
 
@@ -345,7 +367,9 @@ struct ProviderWizard: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                SecretField(String(localized: "Paste the API key"), filled: String(localized: "Filled in"), text: $wizard.presetKey, identifier: "wizard.preset.key")
+                ProviderKeyField(title: String(localized: "Paste the API key"), filled: String(localized: "Filled in"), text: $wizard.presetKey,
+                                 byReference: $wizard.presetKeyByReference, references: wizard.keyReferences, identifier: "wizard.preset.key",
+                                 explainedBelow: true)
                     .onChange(of: wizard.presetKey) { wizard.keyChanged() }
                 if let url = p.signup {
                     Button { link = LinkTarget(url: url) } label: {
@@ -354,12 +378,20 @@ struct ProviderWizard: View {
                     .accessibilityIdentifier("wizard.preset.signup")
                 }
             } header: { stepHeader(2, String(localized: "Paste the key")) } footer: {
-                Text([p.keyHint, String(localized: "The key is stored encrypted on the hub and never sent back to clients.")].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: "\n"))
+                Text([p.keyHint, wizard.presetKeyByReference ? String(localized: "The hub keeps only the reference and fetches the key from its provider when it's needed.")
+                      : String(localized: "The key is stored encrypted on the hub and never sent back to clients.")].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: "\n"))
             }
-            Section {
-                keyTestRow(p)
-            } header: { Text("Test") } footer: {
-                if p.testable { Text("Once pasted, it's tested once: a very short request that may cost a little.") }
+            if wizard.presetKeyByReference {
+                Section {
+                    Text("Checked when you save it: the reference must resolve. The connection test runs after that.")
+                        .font(Theme.Font.secondary).foregroundStyle(.secondary)
+                } header: { Text("Test") }
+            } else {
+                Section {
+                    keyTestRow(p)
+                } header: { Text("Test") } footer: {
+                    if p.testable { Text("Once pasted, it's tested once: a very short request that may cost a little.") }
+                }
             }
             if p.runsClaude {
                 Section {
@@ -604,11 +636,16 @@ struct ProviderWizard: View {
                 }
                 .lineLimit(1)
             }
-            SecretField(wizard.hasStoredKey ? String(localized: "API Key (leave empty to keep)") : "API Key", filled: String(localized: "Filled in"), text: $wizard.apiKey,
-                        identifier: "wizard.key")
+            ProviderKeyField(title: wizard.hasStoredKey ? String(localized: "API Key (leave empty to keep)") : "API Key", filled: String(localized: "Filled in"),
+                             text: $wizard.apiKey, byReference: $wizard.apiKeyByReference, references: wizard.keyReferences,
+                             stored: wizard.existing?.keyReference, identifier: "wizard.key", explainedBelow: true)
         } header: { Text("Gateway") } footer: {
-            Text(wizard.kind == .anthropic ? String(localized: "The key is stored encrypted on the hub, handed to the computer only at launch, and never sent back to apps.")
-                 : String(localized: "Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). The key is stored encrypted on the hub and never sent back to apps."))
+            switch (wizard.kind == .anthropic, wizard.apiKeyByReference) {
+            case (true, false): Text(String(localized: "The key is stored encrypted on the hub, handed to the computer only at launch, and never sent back to apps."))
+            case (true, true): Text(String(localized: "The hub keeps only the reference and fetches the key from its provider when it's needed. The key is handed to the computer only at launch and never sent back to apps."))
+            case (false, false): Text(String(localized: "Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). The key is stored encrypted on the hub and never sent back to apps."))
+            case (false, true): Text(String(localized: "Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN). The hub keeps only the reference and fetches the key from its provider when it's needed."))
+            }
         }
         if wizard.isAPI {
             Section {
@@ -641,13 +678,17 @@ struct ProviderWizard: View {
                     }
                 }
             }
-            .disabled(!wizard.connectionReady || wizard.discovering)
+            .disabled(!wizard.connectionReady || wizard.discovering || wizard.referencePending)
             .accessibilityIdentifier("wizard.discover")
             if let e = wizard.discoverError {
                 Text(e).font(Theme.Font.label).foregroundStyle(Theme.danger).lineLimit(4)
             }
         } header: { Text("Check") } footer: {
-            Text("Testing the connection sends a real, very small request (\(wizard.testModel.isEmpty ? String(localized: "get the model list first") : wizard.testModel)), which may cost a little.")
+            if wizard.referencePending {
+                Text("Checked when you save it: the reference must resolve. The connection test runs after that.")
+            } else {
+                Text("Testing the connection sends a real, very small request (\(wizard.testModel.isEmpty ? String(localized: "get the model list first") : wizard.testModel)), which may cost a little.")
+            }
         }
     }
 

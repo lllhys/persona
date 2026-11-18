@@ -341,6 +341,9 @@ function TaskRow({ task, now, chats, onOpen, onMenu, onToggle }: { task: Task; n
           {ruleText(task)}
           {/* "Push when done" on the rule's line, not as a pill: two pills squeezed the title away on a phone */}
           {task.push === "asked" && ` · ${t("assistant-routines.push_asked")}`}
+          {/* and the Inbox setting beside it, so the list shows which tasks land in the Inbox */}
+          {task.inbox === "worthy" && ` · ${t("assistant-routines.inbox_worthy")}`}
+          {task.inbox === "every" && ` · ${t("assistant-routines.inbox_every")}`}
         </div>
         {until ? <div className="mt-0.5 truncate text-[11.5px] text-ink-3 tabular-nums">{until}</div> : null}
         {next && <div className="mt-0.5 truncate text-[11.5px] text-ink-3 tabular-nums">{next}</div>}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { botStateText, botSummary, botTone, credentialsChanged, credentialsOf, credentialsUpdate, DEFAULT_FEATURES, domainChoice, featureEdit, livePairing, nudgeChoices, nudgeLabel, pairingLeft, withFeature, type FeishuBotStatus } from "./feishu-bot";
-import { channelTitle, dockerSteps, DOCKER_COMMAND, latestWarning, recordTitle, recordTone, updateFinished, updateStateTitle, updateView, updateWorking, type HubUpdateStatus } from "./hub-update";
+import { updateFinished, updateStateTitle, updateWorking, type HubUpdateStatus } from "./hub-update";
+import { channelTitle, dockerSteps, DOCKER_COMMAND, latestWarning, recordTitle, recordTone, sourceBehindWarning, updateView } from "./hub-update-settings";
 
 const bot = (o: Partial<FeishuBotStatus> = {}): FeishuBotStatus => ({
   enabled: true, app_id: "cli_x", domain: "https://open.feishu.cn", has_secret: true, from_config: false,
@@ -120,6 +121,18 @@ describe("hub update", () => {
     expect(latestWarning(hub({ latest, auto: true }))).toBe("自动更新不会装这一版：旧代码。确认没问题可以手动更新。");
     expect(latestWarning(hub({ latest: { ...latest, bad: true } }))).toContain("已经回滚过");
     expect(latestWarning(hub({ latest: { ...latest, newer: false }, auto: true }))).toBeNull();
+  });
+
+  it("says when the update source looks stopped", () => {
+    const latest = { version: "v0.1.17-177-g563f7fde5b-202611071005", build: 202611071005, newer: false, bad: false };
+    const site = { latest, update_url: "https://personaside.example/dl", update_url_from: "build" };
+    expect(sourceBehindWarning(hub({ ...site, source_behind: true }))).toBe(
+      "更新源 https://personaside.example/dl（编译时写入）最新只有 v0.1.17-177-g563f7fde5b-202611071005，比这个 hub 还旧，看起来已经不再发布了。在 hub.json 的 update.url 里换一个更新源。",
+    );
+    expect(sourceBehindWarning(hub({ ...site, update_url_from: "hub.json", source_behind: true }))).toContain("（hub.json 的 update.url）");
+    expect(sourceBehindWarning(hub(site))).toBeNull(); // a current source: "Up to date" as before
+    expect(sourceBehindWarning(hub({ source_behind: true }))).toBeNull(); // nothing to name
+    expect(updateView(hub({ ...site, source_behind: true }))).toEqual({ kind: "current" });
   });
 
   it("tells a Docker hub what to run", () => {

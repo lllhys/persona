@@ -246,9 +246,12 @@ func toolTitle(src *subscriptions.CatalogSource, name string) string {
 func (p *pages) plain(s subscriptions.Subscription, src *subscriptions.CatalogSource) string {
 	args := i18n.Args{"source": s.Label, "tool": toolTitle(src, s.Recipe.Tool), "noun": p.noun(s.Recipe.Kind), "every": p.schedule(s)}
 	var out string
-	if s.Recipe.Mode == wire.ConnectorSubscriptionModeSnapshot {
+	switch s.Recipe.Mode {
+	case wire.ConnectorSubscriptionModeSnapshot:
 		out = p.t("plain.snapshot", args)
-	} else {
+	case wire.ConnectorSubscriptionModeThings: // the rows come ready-made (#6296)
+		out = p.t("plain.things", args)
+	default:
 		out = p.t("plain.items", args)
 	}
 	if s.WeakDedup {
@@ -260,7 +263,7 @@ func (p *pages) plain(s subscriptions.Subscription, src *subscriptions.CatalogSo
 // originShort is who made the recipe, in a word or two for its row.
 func (p *pages) originShort(origin string) string {
 	switch origin {
-	case subscriptions.OriginExtension, subscriptions.OriginModel:
+	case subscriptions.OriginExtension, subscriptions.OriginModel, subscriptions.OriginPersona:
 		return p.t("origin_short." + origin)
 	}
 	return p.t("origin_short.user")
@@ -271,6 +274,8 @@ func (p *pages) origin(s subscriptions.Subscription) string {
 	switch s.RecipeOrigin {
 	case subscriptions.OriginExtension:
 		return p.t("origin.extension")
+	case subscriptions.OriginPersona:
+		return p.t("origin.persona")
 	case subscriptions.OriginModel:
 		return p.t("origin.model", i18n.Args{"date": date})
 	}

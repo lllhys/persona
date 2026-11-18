@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// Cards the Lark gateway summarises itself (`metadata.variant`): forwarded chats, group / contact cards, meetings,
 /// calendar events, votes, tasks, red packets (port of `SummaryCardView`).
@@ -106,7 +107,7 @@ struct LarkForwardedView: View {
             }
             .navigationTitle(title.isEmpty ? String(localized: "Chat History [Lark Summary Cards b790c0]") : title)
             .navigationBarTitleDisplayMode(.inline)
-            .pageToolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } }
+            .pageToolbar { SheetClose { dismiss() } }
         }
     }
 

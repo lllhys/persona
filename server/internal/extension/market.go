@@ -125,6 +125,8 @@ type Market struct {
 	GitHubAPI string
 	GitHubRaw string
 	GitHubWeb string
+	// UpstreamProxy also configures a git market's HTTPS clone. Client carries the same proxy for HTTP market reads.
+	UpstreamProxy *url.URL
 	// Dir is where git markets' clones are kept (the hub's data directory).
 	Dir string
 	// Cache is where downloaded packages are kept by their sha256 ("": none), docs/protocol/protocol.md "Extension install, upgrade and uninstall progress".

@@ -2,5 +2,7 @@
   "load_failed": "Couldn't load these steps",
   "retry": "Retry",
   "loading_steps_one": "Loading {count} step",
-  "loading_steps_other": "Loading {count} steps"
+  "loading_steps_other": "Loading {count} steps",
+  "run_clock": "Time from the preceding message or start of work to the next message, end of work, or now.",
+  "exchange_clock": "Time from the start of the exchange to its latest activity, or now while it is running."
 }

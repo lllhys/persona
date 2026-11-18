@@ -7,6 +7,16 @@
 -dontobfuscate
 -keepattributes SourceFile,LineNumberTable
 
+# firstBaselineAligned falls back only for the captured missing-lookahead stack. Optimizing can inline these two methods
+# and erase its class/method signature even with -dontobfuscate. Keep only the members, not either Compose class; the
+# release shrink check reads both descriptors from the dex so a future R8 change cannot silently remove the fallback.
+-keepclassmembers class androidx.compose.ui.node.LookaheadDelegate {
+    androidx.compose.ui.node.AlignmentLinesOwner getAlignmentLinesOwner();
+}
+-keepclassmembers class androidx.compose.ui.node.InnerNodeCoordinator$LookaheadDelegateImpl {
+    int calculateAlignmentLine(androidx.compose.ui.layout.AlignmentLine);
+}
+
 # Error reports and breadcrumbs print simple class names (ErrorReports.describe: javaClass.simpleName), which come
 # from these attributes; without them a nested exception or route would report as Outer$Inner.
 -keepattributes InnerClasses,EnclosingMethod
@@ -25,6 +35,7 @@
 # annotation removed") before signing.
 -keepnames class persona.core.data.RealInboxRepository
 -keepnames class persona.core.designsystem.MarkdownRenderer
+-keepnames class persona.core.hub.HttpChatComposerService
 -keepnames class persona.feature.agents.AgentsViewModel
 -keepnames class persona.feature.files.Notebooks
 -keepnames class persona.feature.inbox.LarkInboxRepository

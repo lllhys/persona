@@ -12,27 +12,27 @@ import org.junit.Test
 import java.io.File
 import java.security.MessageDigest
 
-/** Current iPhone standard tokens, with Android's native font metrics and glass renderer. */
+/** Shared iPhone chrome tokens, Android reading sizes, native font metrics and the glass renderer. */
 class GlassTokenContractTest {
     @Test fun standardTypeUsesTheSystemFontWithoutContentLineSpacing() {
         val t = Types.Glass
-        // Each role is an iPhone text level (spec/tokens checks the levels against Theme.Font); strong text is semibold.
+        // Chrome roles use spec/tokens' shared levels; long-form roles use Android's typeGlass tokens (#5780).
         val roles = listOf(
             Triple(t.largeTitle, Tokens.Type.Display.size, Tokens.Type.Display.weight),
             Triple(t.title, Tokens.Type.Title.size, Tokens.Type.Title.weight),
             Triple(t.headline, Tokens.Type.Heading.size, Tokens.Type.Heading.weight),
-            Triple(t.body, Tokens.Type.Body.size, Tokens.Type.Body.weight),
-            Triple(t.bodyStrong, Tokens.Type.Body.size, FontWeight.SemiBold),
-            Triple(t.callout, Tokens.Type.Secondary.size, Tokens.Type.Secondary.weight),
+            Triple(t.body, Tokens.TypeGlass.Body.size, Tokens.Type.Body.weight),
+            Triple(t.bodyStrong, Tokens.TypeGlass.Body.size, FontWeight.SemiBold),
+            Triple(t.callout, Tokens.TypeGlass.Secondary.size, Tokens.Type.Secondary.weight),
             Triple(t.caption, Tokens.Type.Caption.size, Tokens.Type.Caption.weight),
             Triple(t.micro, Tokens.Type.Label.size, Tokens.Type.Label.weight),
             Triple(t.label, Tokens.Type.Heading.size, Tokens.Type.Heading.weight),
-            Triple(t.labelSmall, Tokens.Type.Secondary.size, FontWeight.Medium),
+            Triple(t.labelSmall, Tokens.TypeGlass.Secondary.size, FontWeight.Medium),
             Triple(t.number, Tokens.Type.Display.size, Tokens.Type.Display.weight),
-            Triple(t.voice, Tokens.Type.Body.size, Tokens.Type.Body.weight),
+            Triple(t.voice, Tokens.TypeGlass.Body.size, Tokens.Type.Body.weight),
         )
-        // The sizes and weights it drew before the levels came from the tokens.
-        assertEquals(listOf(28.sp, 22.sp, 17.sp, 17.sp, 17.sp, 15.sp, 13.sp, 12.sp, 17.sp, 15.sp, 28.sp, 17.sp), roles.map { it.first.fontSize })
+        // Chrome keeps the shared iPhone levels; long-form reading uses Android's 16sp / 14sp tokens (#5780).
+        assertEquals(listOf(28.sp, 22.sp, 17.sp, 16.sp, 16.sp, 14.sp, 13.sp, 12.sp, 17.sp, 14.sp, 28.sp, 16.sp), roles.map { it.first.fontSize })
         assertEquals(listOf(FontWeight.Bold, FontWeight.SemiBold, FontWeight.SemiBold, FontWeight.Normal, FontWeight.SemiBold, FontWeight.Normal,
             FontWeight.Normal, FontWeight.Normal, FontWeight.SemiBold, FontWeight.Medium, FontWeight.Bold, FontWeight.Normal), roles.map { it.first.fontWeight })
         for ((style, size, weight) in roles) {

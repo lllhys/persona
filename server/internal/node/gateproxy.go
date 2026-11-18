@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/lazyre"
+	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -97,9 +98,11 @@ type gateKey struct {
 
 // gateGrant is a call larkCheck let through, to go once.
 type gateGrant struct {
-	command, method, path string
-	body                  any // the JSON body confirmed; nil: any (not JSON, cut short, an upload, $… in it)
-	until                 time.Time
+	command, method, path, query string
+	body                         any  // the JSON body confirmed, when bodyBound (nil there is JSON null)
+	bodyBound                    bool // false: any body (not JSON, cut short, an upload, $… in it)
+	bodyUseNumber                bool // an edited grant compares JSON numbers without float64 rounding
+	until                        time.Time
 	// session is the conversation larkCheck decided for, and through how it let the call through: what the ledger says
 	// of the write once it has gone out.
 	session string
@@ -141,9 +144,9 @@ func (p *gateProxy) openIn(command, session string, health bool) (base string, r
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ln == nil {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := osproc.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			if ln, err = net.Listen("tcp", "[::1]:0"); err != nil {
+			if ln, err = osproc.Listen("tcp", "[::1]:0"); err != nil {
 				return "", nil, err
 			}
 		}
@@ -212,13 +215,13 @@ func (p *gateProxy) close() {
 
 // grant lets c, which larkCheck let through for session and the way through says, go once through command's gate.
 func (p *gateProxy) grant(command, session string, c larkCall, through proto.LarkLetThrough) {
-	g := gateGrant{command: command, method: strings.ToUpper(c.Method), path: c.Path, until: time.Now().Add(gateGrantFor),
+	g := gateGrant{command: command, method: strings.ToUpper(c.Method), path: c.Path, query: gateQueryKey(c.Query), until: time.Now().Add(gateGrantFor),
 		session: session, through: through}
 	// $ in it: the shell fills it in when the command runs, so the body sent is not the one on the card.
 	if !strings.Contains(c.Body, "$") {
 		var v any
 		if json.Unmarshal([]byte(c.Body), &v) == nil {
-			g.body = v
+			g.body, g.bodyBound = v, true
 		}
 	}
 	p.mu.Lock()
@@ -230,18 +233,32 @@ func (p *gateProxy) grant(command, session string, c larkCall, through proto.Lar
 	}
 }
 
-// take uses up a grant for a request at the address k stands for: its command's gate, the method and path, and the body
-// confirmed if one was. A grant of one conversation is not for another's request: when both are known and differ, it
-// stays for its own. A health conversation's address takes only a grant of its own conversation: not one made for no
-// conversation, nor any when it has none. It returns the grant.
-func (p *gateProxy) take(k gateKey, method, path string, body []byte, isJSON bool) (gateGrant, bool) {
+// gateQueryKey binds a grant to the confirmed query's semantics. Distinct keys may be reordered, and equivalent
+// escaping may differ; values of a repeated key keep their order, which an API may treat as significant. If either
+// query is malformed, only the same raw bytes match: ParseQuery can return a partial map together with an error.
+func gateQueryKey(raw string) string {
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return "raw\x00" + raw
+	}
+	return "parsed\x00" + q.Encode()
+}
+
+// take uses up a grant for a request at the address k stands for: its command's gate, the method, path and query, and
+// the body confirmed if one was. A grant of one conversation is not for another's request: when both are known and
+// differ, it stays for its own. A health conversation's address takes only a grant of its own conversation: not one made
+// for no conversation, nor any when it has none. It returns the grant.
+func (p *gateProxy) take(k gateKey, method, path, query string, body []byte, isJSON bool) (gateGrant, bool) {
 	var sent any
 	parsed := isJSON && json.Unmarshal(body, &sent) == nil
+	var sentNumbers any
+	numbersParsed, numbersTried := false, false
+	query = gateQueryKey(query)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.pruneLocked()
 	for i, g := range p.grants {
-		if g.command != k.command || g.method != method || g.path != path {
+		if g.command != k.command || g.method != method || g.path != path || g.query != query {
 			continue
 		}
 		if k.health && (k.session == "" || g.session != k.session) {
@@ -250,7 +267,21 @@ func (p *gateProxy) take(k gateKey, method, path string, body []byte, isJSON boo
 		if g.session != "" && k.session != "" && g.session != k.session {
 			continue
 		}
-		if g.body != nil && (!parsed || !reflect.DeepEqual(g.body, sent)) {
+		candidate, candidateParsed := sent, parsed
+		if g.bodyUseNumber {
+			if !numbersTried {
+				numbersTried = true
+				dec := json.NewDecoder(bytes.NewReader(body))
+				dec.UseNumber()
+				numbersParsed = isJSON && dec.Decode(&sentNumbers) == nil
+				if numbersParsed {
+					var extra any
+					numbersParsed = dec.Decode(&extra) == io.EOF
+				}
+			}
+			candidate, candidateParsed = sentNumbers, numbersParsed
+		}
+		if g.bodyBound && (!candidateParsed || !reflect.DeepEqual(g.body, candidate)) {
 			continue
 		}
 		p.grants = slices.Delete(p.grants, i, i+1)
@@ -327,7 +358,7 @@ func (p *gateProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// A call larkCheck confirmed and a rule allows too (a health conversation confirms what a rule allows) was
 		// let through by the card: it uses up its grant, as a confirmed call does. In a health conversation a write
 		// goes only so: a rule's allow is not the phone's yes.
-		if gr, ok := p.take(gk, c.Method, c.Path, body, isJSON); ok {
+		if gr, ok := p.take(gk, c.Method, c.Path, c.Query, body, isJSON); ok {
 			session, through = firstNonEmpty(gr.session, session), gr.through
 		} else if gk.health && !larkRead(c) {
 			gateNeedsPhone(w, command, c)
@@ -339,7 +370,7 @@ func (p *gateProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gateRefuse(w, http.StatusForbidden, "这个操作按配置不允许（"+c.Method+" "+c.Path+"）。")
 		return
 	default:
-		gr, ok := p.take(gk, c.Method, c.Path, body, isJSON)
+		gr, ok := p.take(gk, c.Method, c.Path, c.Query, body, isJSON)
 		if !ok {
 			gateNeedsPhone(w, command, c)
 			return

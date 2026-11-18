@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func injectedCases() []injectedCase {
 			RenderLostTasks([]string{"npm test", "监控 CI"}),
 			&proto.Injected{Kind: "system", State: "lost_tasks", Line: "node 重启过，2 个后台任务停了"}),
 		c("snapshot_before", "前面带着实时快照块的也认。", notice,
-			RenderTurnContext(TurnContext{Sections: []string{"- 现在：……"}})+"\n"+RenderTaskNotice(TaskNotice{Title: "跑测试", State: "done"}),
+			RenderTurnContext(TurnContext{Sections: []TurnSection{{Text: "- 现在：……"}}})+"\n"+RenderTaskNotice(TaskNotice{Title: "跑测试", State: "done"}),
 			&proto.Injected{Kind: "task_notice", State: "done", Title: "跑测试", Line: "任务「跑测试」做完了"}),
 		c("snapshot_before_persona", "旧名字 <persona-context> 的快照块也认（历史消息、旧 node，#3182）。", notice,
 			"<persona-context>\n实时快照：……\n</persona-context>\n"+RenderTaskNotice(TaskNotice{Title: "跑测试", State: "done"}),
@@ -181,5 +182,40 @@ func TestParseInjectedInboxHandoff(t *testing.T) {
 	}
 	if ParseInjected("📥 收件箱事件「报价」有了下文\n我自己写的") != nil {
 		t.Fatal("a user's text taken for an inbox note")
+	}
+}
+
+func TestParseInjectedAskLater(t *testing.T) {
+	q := "今晚几点提醒你？"
+	long := strings.Repeat("长", 80)
+	for _, c := range []struct {
+		name         string
+		later        AskLater
+		state, title string
+		line         string
+	}{
+		{"answered", AskLater{Questions: []string{q}, Answers: []AskTodoChoice{{Question: q, Choice: "到家时"}}},
+			"ask_answered", "到家时", "你回答了：到家时"},
+		{"some answered, one over two lines", AskLater{Questions: []string{"A？", "B → C？", "D？"}, Missing: true,
+			Answers: []AskTodoChoice{{Question: "A？", Choice: "好"}, {Question: "B → C？", Choice: "第一行\n      第二行"}}},
+			"ask_answered", "好 · 第一行 第二行", "你回答了：好 · 第一行 第二行"},
+		{"a long answer", AskLater{Questions: []string{q}, Answers: []AskTodoChoice{{Question: q, Choice: long}}},
+			"ask_answered", strings.Repeat("长", 59) + "…", "你回答了：" + strings.Repeat("长", 59) + "…"},
+		{"expired", AskLater{Questions: []string{q}, Expired: "已经记成待办了。"}, "ask_expired", "", "问题到时间了，卡片上没有回答"},
+		{"expired after the user wrote", AskLater{Questions: []string{q}, Spoke: true}, "ask_expired", "", "问题到时间了，卡片上没有回答"},
+		{"closed", AskLater{Questions: []string{q}}, "ask_closed", "", "问题卡片关掉了，没有回答"},
+	} {
+		c.later.When = "11-13 12:48"
+		got := ParseInjected(RenderAskLater(c.later))
+		if got == nil || got.Kind != proto.InjectedSystem || got.State != c.state || got.Title != c.title || got.Line != c.line {
+			t.Errorf("%s: ParseInjected = %+v", c.name, got)
+		}
+	}
+	// Behind the turn's context, as the node sends it.
+	if got := ParseInjected(RenderTurnContext(TurnContext{Sections: []TurnSection{{Text: "- 现在：……"}}}) + "\n" + RenderAskLater(AskLater{When: "11-13 12:48", Questions: []string{q}})); got == nil || got.State != "ask_closed" {
+		t.Errorf("behind a context: %+v", got)
+	}
+	if ParseInjected("🔔 你 11-13 12:48 用 ask_user 问过用户（wait: false，当时没有等回答）：\n- 我自己写的") != nil {
+		t.Fatal("a user's text taken for an ask_later message")
 	}
 }

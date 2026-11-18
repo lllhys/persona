@@ -732,24 +732,35 @@ func TestOwnerDecidedIsKeptWithTheDecision(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return ruleOwnerDecisions(events)
+		filtered := make([]db.WorkEvent, 0, len(events))
+		for _, event := range events {
+			if event.Detail["todo"] == todo.ID {
+				filtered = append(filtered, event)
+			}
+		}
+		return ruleOwnerDecisions(filtered)
 	}
 	a := acceptAsk{Conclusion: true, Outcome: outcomeDecide, Reason: "The PR is green. What next?", Recommend: "Merge", WhyOwner: whyPriority}
-	if err := s.takeRecommendation(ctx, todo.ID, a); err != nil {
+	if _, err := s.takeRecommendation(ctx, todo.ID, a); err != nil {
 		t.Fatal(err)
 	}
 	list, err := database.ListTodoDecisions(ctx, todo.ID, true)
 	if err != nil || len(list) != 1 || list[0].Source != db.DecisionManual {
 		t.Fatalf("decisions: %+v %v", list, err)
 	}
-	if got := decided(); len(got) != 1 || got[list[0].ID] != whyPriority {
-		t.Fatalf("owner_decided = %v, want %s for %s", got, whyPriority, list[0].ID)
+	decisionID := list[0].ID
+	if got := decided(); len(got) != 1 || got[decisionID] != whyPriority {
+		t.Fatalf("owner_decided = %v, want %s for %s", got, whyPriority, decisionID)
 	}
 	a.ByDefault, a.Deadline = true, time.Now()
-	if err := s.takeRecommendation(ctx, todo.ID, a); err != nil {
+	if _, err := s.takeRecommendation(ctx, todo.ID, a); err != nil {
 		t.Fatal(err)
 	}
-	if got := decided(); len(got) != 1 {
+	list, err = database.ListTodoDecisions(ctx, todo.ID, true)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("decisions after the default: %+v %v", list, err)
+	}
+	if got := decided(); len(got) != 1 || got[decisionID] != whyPriority {
 		t.Fatalf("the hub's own call at the deadline left owner_decided: %v", got)
 	}
 }

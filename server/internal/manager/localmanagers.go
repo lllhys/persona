@@ -1,7 +1,7 @@
 package manager
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistant"
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // managersRoot is where the managers of this machine are by default (~/.persona/managers).
@@ -33,13 +34,13 @@ func localManagers() []string {
 }
 
 // onlyManager is the one manager of this machine, for a command without --dir.
-func onlyManager() (string, error) {
+func onlyManager(l i18n.Lang) (string, error) {
 	list := localManagers()
 	switch len(list) {
 	case 1:
 		return list[0], nil
 	case 0:
-		return "", fmt.Errorf("%s 下没有管理者：先 personad manager join，或者用 --dir 指定目录", managersRoot())
+		return "", errors.New(i18n.T(l.Or(i18n.En), "manager-cli.only_manager_none", i18n.Args{"directory": managersRoot()}))
 	}
-	return "", fmt.Errorf("这台有 %d 个管理者（%s）：用 --dir 指定是哪个", len(list), strings.Join(list, "、"))
+	return "", errors.New(i18n.T(l.Or(i18n.En), "manager-cli.only_manager_many", i18n.Args{"count": len(list), "directories": strings.Join(list, i18n.T(l.Or(i18n.En), "manager-cli.list_separator"))}))
 }

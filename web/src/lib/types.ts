@@ -1,4 +1,5 @@
 import type { UsageCard } from "./tokens";
+import type { RuleSuggestion } from "./rule-suggestion";
 // The hub's wire types (docs/protocol/protocol.md). Only the fields the web client reads.
 
 export type AgentState = "needs_you" | "working" | "unread" | "idle" | "offline" | "unknown";
@@ -57,6 +58,8 @@ export interface Machine {
   };
   /** ego lite (the hub's extension ego, docs/plans/plan-ego-browser.md): only while the extension is on and it is a Mac. */
   browser?: import("./browser").MachineBrowser;
+  /** iPhone control (the hub's extension iphone, docs/extensions/iphone.md): only while the extension is on and the bridge runs on its system (macOS, Linux). */
+  iphone?: import("./iphone").MachineIPhone;
   /** feature machine_trust (docs/protocol/protocol.md "Computer trust"): "pending" while the user has not said it is theirs; omitted = confirmed. */
   trust?: "pending";
   /** What `error` is about, for words of our own: node_service_down / link_offline / never_connected / node_outdated. */
@@ -133,6 +136,7 @@ export interface EngineLeg {
 }
 
 export interface SessionCapabilities {
+  takeover?: { running: boolean; can_resume: boolean; reason?: string };
   read?: boolean;
   send?: boolean;
   interrupt?: boolean;
@@ -143,8 +147,20 @@ export interface SessionCapabilities {
   model?: boolean;
   /** Closing the agent independently of terminal access. Older nodes retain terminal-only closing. */
   close?: boolean;
+  /** Renaming it without a terminal (a runtime's session, #6294). Absent: the app's own rule (lib/format.ts sessionCanRename). */
+  rename?: boolean;
   /** The permission mode and effort chips can change it (session.modes, #1843): the node's word, absent from older nodes. */
   modes?: boolean;
+  /** The permission modes session.modes takes for an agent that is not Claude Code (#8261): its own approval
+   *  (`default`) and, where it has one, Full access. With two or more the composer switches between them (lib/session-actions.ts
+   *  `listedModes`); absent from older nodes, and where `modes` is true. */
+  permission_modes?: string[];
+  /** Returning to before a user message, with optional native file restoration. */
+  rewind?: boolean;
+  rewind_code?: boolean;
+  /** A Claude outside Persona's terminals with Persona's plugin: your own messages go in as your input while it rests
+   *  (docs/integrations/claude-integration.md "Owner input through the Persona plugin"). Absent from older nodes. */
+  plugin_input?: boolean;
 }
 
 /** A session's work state (docs/assistant/agent-work.md): working, blocked on a named precondition, or done. */
@@ -169,6 +185,10 @@ export interface WorkState {
    *  (the closeout says merged and it is not) carries it with an empty `phase`. */
   closeout?: Closeout;
   interaction_id?: string;
+  /** The hub's triage found the turn done before anybody looked at it, less than three hours ago: listed as Just
+   *  finished (lib/agent-groups.ts justFinished, docs/protocol/agent-states.md "Just finished", #9751). Older hubs
+   *  never send it. */
+  just_finished?: boolean;
 }
 
 /** An agent's closeout (docs/assistant/agent-work.md "Closeout"): its own claim of where the work stands. `merged` and
@@ -215,6 +235,8 @@ export interface Port {
 }
 
 export interface Session {
+  /** Explicit references to a deleted Assistant conversation return a scrubbed tombstone. */
+  deleted?: boolean;
   /** The engine host it lives in (herdr, herdr-core, orca, paseo…), and the other hosts it is live in at once (#2576). */
   host?: string;
   also_open_in?: string[];
@@ -274,6 +296,10 @@ export interface Session {
   effort?: string;
   /** This Claude Code may switch to Allow All while it runs: it was started with a flag that allows it (#1379). */
   bypass_available?: boolean;
+  /** Full access was picked while this Claude Code cannot reach it with shift+tab: the node restarts the session in it
+   *  once its turn is over, resuming the same conversation (#6476, node/mode_restart.go); `permission_mode` is the mode
+   *  it still runs in until then. */
+  bypass_pending?: boolean;
   /** What the model saw in the latest reply and the model's window, in tokens (#2430); omitted while the node cannot tell. */
   context_tokens?: number;
   context_window?: number;
@@ -348,6 +374,9 @@ export interface Session {
   /** In a Persona chat, the last this many of `queued` came from other conversations: the assistant delivers them when
    *  the turn ends, and the strip's actions leave them alone (#4342). */
   queued_relayed?: number;
+  /** In a Persona chat, the owner's messages that could not go in and that the assistant keeps and sends again by
+   *  itself, oldest first (#10194, lib/undelivered.ts). Drawn as the owner's bubbles marked not delivered. */
+  undelivered?: UndeliveredMessage[];
   subagents?: Subagent[];
   loop?: LoopInfo;
   /** The goal it works toward until it holds (Claude Code's /goal, a Codex thread goal; docs/integrations/agent-goal.md). */
@@ -371,9 +400,19 @@ export interface Session {
    *  created), set by the hub's manager (docs/protocol/protocol.md "Session hierarchy", #5120): the web never lists or
    *  counts it on its own, and draws it as a card in that session's chat. */
   folded_under?: string;
+  /** The session on the same machine this one is drawn under while staying a session of its own (#5935): a Claude
+   *  desktop app's side chat, /btw question or spawned session names the one it was started from. Unlike `folded_under`
+   *  it folds nothing away: the row keeps its state and counts and only moves under its parent, a level in
+   *  (lib/side-sessions.ts). Set by the node while both are listed; older hubs leave it out. */
+  parent_agent_id?: string;
   /** How it folds under `folded_under`: `"worker"` for an Agent of a host tab whose lead (its first pane) is
-   *  `folded_under` (#5180, a Claude Code agent team's teammate): it is in the lead's Team panel, not a card in its chat. */
-  folded_as?: "worker";
+   *  `folded_under` (#5180, a Claude Code agent team's teammate): it is in the lead's Team panel, not a card in its chat.
+   *  `"side"` for a side session (#7944, `parent_agent_id`, with `sessions_side_fold`): it is in its topmost parent's
+   *  Side sessions panel (lib/side-fold.ts). */
+  folded_as?: "worker" | "side";
+  /** The side session a folded row belongs to when it folds through one and is not itself the side (#7944: a side's own
+   *  Codex children or workers): its card and child card are in that side's chat, not `folded_under`'s. */
+  folded_side?: string;
   /** On a session other sessions fold under: how many, and how many of them work or need the user (by their own state). */
   children?: SessionChildren;
   /** When the session began, where the node knows it (child sessions at least). */
@@ -399,6 +438,9 @@ export interface Session {
   /** An assistant conversation moved out of the list (docs/assistant/assistant.md "Managing its own conversations"), or
    *  an archived agent (docs/protocol/protocol.md "Agent session archives": only the Archived list has those). */
   archived?: boolean;
+  /** The user-defined labels of an assistant conversation (docs/assistant/assistant.md "Conversation tags"), newest
+   *  write first's provenance aside; omitted when it carries none. An older hub never sends it. */
+  tags?: string[];
   /** The HTTP ports its processes listen on (docs/operations/ports.md): closing it would stop those servers, and they are
    *  the dev servers a preview offers (docs/web/preview.md). */
   ports?: Port[];
@@ -410,6 +452,8 @@ export interface Session {
   /** The channels messages came into it from, newest first (docs/extensions/channels.md "Source markers"). */
   channels?: string[];
   todo?: { id: string; title: string };
+  /** Display-only completed association; never an active task or a reason to suppress notifications. */
+  completed_todo?: { id: string; title: string };
   /** Works (or worked) for a quiet task (#1731): not in the global badge; the main conversation tells about it. */
   quiet?: boolean;
   /** Why it waits for the user, in its host's words (a botmux attention's reason); only while it needs you (docs/integrations/engines.md "botmux"). */
@@ -590,6 +634,12 @@ export interface FoldChange {
   exact: boolean;
 }
 
+/** A web page a folded run used (docs/protocol/protocol.md "Folded work", #9132): one it opened or a search result. */
+export interface FoldSource {
+  url: string;
+  title?: string;
+}
+
 /** What model requests used (proto.TokenUsage): tokens by kind, `in` without the cache; `cache_write_1h` is the part of
  *  `cache_write` written for an hour; `fast`: Claude Code's fast speed. Entries with the same `id` (and model) are one
  *  report, counted once. */
@@ -615,11 +665,13 @@ export interface Item {
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   is_error?: boolean;
+  /** The runtime's own outcome, when the node recorded one (docs/protocol/protocol.md "Tool outcomes"). */
+  outcome?: { status?: string; exit_code?: number };
   full_size?: number;
   queued?: boolean;
   wake?: boolean;
   task?: TaskNote;
-  fold?: { items: number; tools: number; thoughts: number; until?: string; through_seq: number; through_id?: string; images?: FoldImage[]; tasks?: FoldTaskSnapshot[]; latest_thinking?: Item; supervision_user?: boolean; changes?: FoldChange[] | null; usage?: TokenUsage[] };
+  fold?: { items: number; tools: number; thoughts: number; until?: string; through_seq: number; through_id?: string; images?: FoldImage[]; tasks?: FoldTaskSnapshot[]; latest_thinking?: Item; supervision_user?: boolean; changes?: FoldChange[] | null; usage?: TokenUsage[]; sources?: FoldSource[] };
   image?: { mime: string; data?: string; lazy?: boolean; size?: number; width?: number; height?: number };
   /** Sent by another Claude session (cross-session messaging), not typed by you: its name. */
   from?: string;
@@ -655,6 +707,16 @@ export interface ModelRefusal {
   scope?: string;
   explanation?: string;
   text?: string;
+  // The node's own bounded recovery projects these onto the session's fallback shape (#7824). A runtime-written
+  // record never sets them, so an older client that does not know them keeps its old behavior.
+  /** When the configured model is available again (RFC3339); absent when the upstream gave no time. */
+  recovery_reset?: string;
+  /** Every model the recovery chain could try failed; fallback_model is empty in that case. */
+  recovery_exhausted?: boolean;
+  /** The configured model answered a probe; the next request runs on it again. */
+  recovery_returning?: boolean;
+  /** Every model tried, in order, joined by the arrow sequence the node writes. */
+  recovery_tried?: string;
 }
 
 /** A pending "back to the configured model" (server proto.ModelRestore): "next_start" — the idle headless process was
@@ -703,7 +765,7 @@ export interface Question {
   header?: string;
   multi_select?: boolean;
   /** Missing or null for a question asked in free text (Codex request_user_input; a Go nil slice, #1573). */
-  options?: { label: string; description?: string }[] | null;
+  options?: { label: string; description?: string; action?: "defer" | (string & {}) }[] | null;
 }
 
 export interface DialogOption {
@@ -758,6 +820,12 @@ export interface SessionChildren {
   needs_you?: number;
   /** How many of them are its tab's workers (`folded_as: "worker"`, #5180): a lead with workers has a Team panel. */
   workers?: number;
+  /** Of them, its side sessions (`folded_as: "side"`, #7944), and how many of those work, need the user or are unread,
+   *  by their own state; absent when 0. Counted in the keys above too. */
+  sides?: number;
+  sides_working?: number;
+  sides_needs_you?: number;
+  sides_unread?: number;
 }
 
 export interface Interaction {
@@ -774,6 +842,8 @@ export interface Interaction {
   questions?: Question[];
   plan?: string;
   tool_input?: Record<string, unknown>;
+  /** The outgoing text the server lets the user edit before Allow, only for a Claude Code Lark send/reply card. */
+  editable_text?: string;
   summary?: string;
   screen?: string;
   secret?: boolean;
@@ -804,9 +874,14 @@ export interface Interaction {
   agent_type?: string;
   /** The session the card's session folds under (Session.folded_under, #5120): the card's home is that session's page. */
   folded_under?: string;
-  /** Session.folded_as of the card's session (#5180): `"worker"` when a lead's worker asks. */
-  folded_as?: "worker";
+  /** Session.folded_as of the card's session (#5180): `"worker"` when a lead's worker asks, `"side"` when a side
+   *  session does (#7944). */
+  folded_as?: "worker" | "side";
+  /** Session.folded_side of the card's session (#7944): the side session whose chat the card is answered in. */
+  folded_side?: string;
   elicitation?: Elicitation;
+  /** Whether this assistant-owned operation can take a non-final owner question. */
+  can_clarify?: boolean;
   /** What a permission card needs filled in before it is approved (a password): such a card is never approved in one tap. */
   fields?: { key: string; label: string; secret?: boolean }[];
   /** The assistant is deciding whether it may answer this question for the user (docs/assistant/assistant.md "Assistant
@@ -814,6 +889,9 @@ export interface Interaction {
   delegating?: boolean;
   /** What the assistant filled in when it left the question to the user. */
   delegate?: Delegate;
+  /** A rule the hub suggests on a question a supervisor passed up, once the owner gave the same answer three times
+   *  (#4929, lib/rule-suggestion.ts); the card comes again without it once it was answered. Absent otherwise. */
+  suggestion?: RuleSuggestion;
 }
 
 /** The assistant's context on a question it left to the user (Interaction.delegate). */
@@ -831,8 +909,8 @@ export interface Delegate {
 
 export interface Launcher {
   name: string;
-  /** A Persona-managed provider's name for people, any language (#5029); absent for an rc alias or from an older hub.
-   *  Show it through lib/provider-names.ts. */
+  /** A Persona-managed provider's name for people, any language (#5029), or a runtime's name for a provider it runs
+   *  (Paseo's label, "Grok", #8261); absent for an rc alias or from an older hub. Show it through lib/provider-names.ts. */
   display_name?: string;
   model?: string;
   /** What it starts when not Claude Code ("codex"); agent_type: what the hub's machine config says it runs. */
@@ -841,9 +919,22 @@ export interface Launcher {
   /** A Codex launcher the computer starts with no first message too; absent from an older computer, whose Codex
    *  starts need one. */
   prompt_optional?: boolean;
+  /** The permission modes a start on a runtime's provider of another agent takes (#8261, Paseo's): its own approval
+   *  (`default`, sent as no mode) and, where it has one, Full access. Such a launcher's start also takes only the efforts
+   *  its model lists (lib/launcher-models.ts `effortRule`). Absent: Claude Code's five, or none. */
+  permission_modes?: string[];
+  /** A Codex launcher the computer starts in a shell pane the user picked (Run agent here), keeping that pane when the
+   *  start fails (#5504); absent from an older computer, where Run agent here offers Claude Code only. */
+  run_here?: boolean;
+  /** Where it starts the session when not in a terminal: "claude_desktop" (the launcher `claude-desktop`, Claude's desktop
+   *  app, #5480) or "codex_app" (`codex-app`, the Codex App, #5726); lib/desktop-start.ts. Absent for every other one. */
+  source?: string;
   /** How its last check or start went on the computer the list is for (GET /machines/{mid}/launchers,
    *  docs/server/launcher-health.md); absent: never checked, a failure too old to count, or an older hub. */
   health?: LauncherHealth;
+  /** A Persona-managed provider pi on this computer can use too (docs/integrations/pi.md "Persona's model providers");
+   *  absent for every other launcher and from an older hub. */
+  pi?: boolean;
 }
 
 /** A launcher's health record on one computer (#1643). */
@@ -871,6 +962,9 @@ export interface AssistantInfo {
   leaders?: string[];
   /** "Fold background rounds" in effect (#4314, docs/assistant/assistant.md "Background rounds"); absent from an older hub, which means on. */
   main_background_folded?: boolean;
+  /** "Show scheduled task chats" in the sidebar's Recent (#8324, lib/recent-task-chats.ts): one value on the hub for all
+   *  of the user's devices, off by default; absent from an older hub (no switch, and Recent leaves them out). */
+  recent_task_chats?: boolean;
   /** The background supervisor's conversation (#4927, lib/background-supervisor.ts): its session id once the hub made
    *  it; absent before that and from an older hub. Read-only. */
   background_supervisor?: string;
@@ -882,6 +976,9 @@ export interface MetricPoint {
   cpu?: number;
   load?: number;
   mem?: number;
+  /** Network history, bytes per second. */
+  rx?: number;
+  tx?: number;
   gap?: boolean;
 }
 
@@ -918,4 +1015,19 @@ export interface LiveEvent {
   machine_id: string;
   session_id: string;
   live?: SessionLive | null;
+}
+
+/** One of Session.undelivered: an owner's message kept after it could not go in (proto.UndeliveredMessage). */
+export interface UndeliveredMessage {
+  /** Its client_msg_id. */
+  id: string;
+  text: string;
+  /** How many pictures it carries. */
+  images?: number;
+  at: string;
+  /** waiting: sent again by itself; failed: it gave up (Retry / Delete). */
+  state: "waiting" | "failed";
+  attempts?: number;
+  next_at?: string;
+  error?: string;
 }

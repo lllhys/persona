@@ -9,8 +9,6 @@
   "section_installed_footer": "ここでボットに送ったメッセージはPersonaに届き、回答やエージェントの質問は元の場所に返されます。紐付けた本人のメッセージだけを受け付けます。",
   "section_market": "インストール可能",
   "section_market_footer": "マーケットにあるチャネルを追加する拡張機能です。インストール後、ここで紐付けます。",
-  "summary": "{count}件接続済み",
-  "summary_with_errors": "{on}件接続済み · {bad}件エラー",
   "target_new": "新しいチャット（次のメッセージから開始）",
   "target_conversation": "チャット",
   "target_agent_titled": "エージェント · {title}",

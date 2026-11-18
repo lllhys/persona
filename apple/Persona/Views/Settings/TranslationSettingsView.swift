@@ -1,5 +1,19 @@
 import SwiftUI
 
+/// The line under Translation's model while another assistant than the default is current: whose model it is.
+enum TranslationModelNote {
+    /// The default assistant's name while another one is current; nil with the default current, one assistant or a hub
+    /// without a roster (nothing to tell apart).
+    static func defaultName(_ model: AppModel) -> String? {
+        guard model.assistantManagerID != nil, let roster = model.managerRoster, roster.isMulti else { return nil }
+        return roster.installed.first { $0.id == roster.defaultID }?.name
+    }
+
+    static func text(_ defaultName: String) -> String {
+        String(localized: "Translation uses the model of the default assistant “\(defaultName)”, not the current assistant's.")
+    }
+}
+
 /// Settings › Translation (docs/apple/ios.md「Translation」): on / off, the target language, and what gets translated: mail (on), and the
 /// Feishu chats picked here (none: Feishu has too many messages to translate them all).
 struct TranslationSettingsView: View {
@@ -13,13 +27,21 @@ struct TranslationSettingsView: View {
     private var chats: [TranslationPrefs.Chat] { TranslationPrefs.chats(chatsRaw) }
     private var larkChats: Bool { model.larkFeatures.chats }
 
+    /// The default assistant's name while another one is current: the hub translates with the default's model.
+    private var defaultAssistantName: String? { TranslationModelNote.defaultName(model) }
+
     var body: some View {
         SettingsForm {
             Section {
                 SettingsSwitchRow(title: String(localized: "Auto-Translate"), symbol: Theme.Icon.translate, isOn: $enabled)
-                ModelConfigurationLink(title: String(localized: "Translation Model"), purposeID: "translate")
+                // This device's switch, the default assistant's model (the hub translates with it whichever assistant is
+                // current): its editor is the default's, never the current assistant's Models.
+                ModelConfigurationLink(title: String(localized: "Translation Model"), purposeID: "translate", owner: .defaultAssistant)
             } footer: {
-                Text("Content not in the target language is translated automatically, and you can switch back to the original anytime. Translation uses the translation model in Model Configuration.")
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    Text("Content not in the target language is translated automatically, and you can switch back to the original anytime. Translation uses the translation model in Model Configuration.")
+                    if let name = defaultAssistantName { Text(TranslationModelNote.text(name)) }
+                }
             }
             if enabled {
                 Section {
@@ -134,11 +156,9 @@ struct TranslationChatPicker: View {
             .sheetCancel(unsaved: opened.map { $0 != Set(selected.map(\.id)) } ?? false) { dismiss() }
             .onAppear { if opened == nil { opened = Set(selected.map(\.id)) } }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done [Extension System Presentation c0b3fb]") {
-                        save(selected)
-                        dismiss()
-                    }
+                SheetConfirm(id: "translation-chats-save") {
+                    save(selected)
+                    dismiss()
                 }
             }
             .task { await load() }

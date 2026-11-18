@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_paste_note_at">%1$s（%2$s）</string>
+    <string name="settings_paste_note_line">第 %1$d 行</string>
+    <string name="settings_paste_note_unrecognized">没有识别出可导入的供应商配置</string>
+    <string name="settings_paste_note_invalid_json">JSON 无法解析</string>
+    <string name="settings_paste_note_unused">这部分内容未被使用</string>
+    <string name="settings_paste_note_not_claude">这条命令不会运行 Claude Code</string>
+    <string name="settings_paste_note_no_gateway">没有找到网关地址</string>
+    <string name="settings_paste_note_url_shell">地址需要 shell 展开，未保存</string>
+    <string name="settings_paste_note_url_user">地址包含用户名或密码，未导入</string>
+    <string name="settings_paste_note_url_query">地址包含查询参数或片段，未导入</string>
+    <string name="settings_paste_note_key_shell">密钥需要 shell 展开，未带入；请在保存前输入</string>
+    <string name="settings_paste_note_no_key">没有可用密钥，请在保存前输入</string>
+    <string name="settings_paste_note_key_helper">密钥由辅助命令生成，请在保存前输入</string>
+    <string name="settings_paste_note_args_left_out">可能含敏感值的命令参数未带入</string>
+    <string name="settings_paste_note_header_unreadable">有请求头无法识别，未带入</string>
+    <string name="settings_paste_note_curl_option">这个 curl 选项未使用</string>
+    <string name="settings_paste_note_curl_path">这个 curl 路径按完整网关地址使用</string>
+    <string name="settings_paste_note_cindy_kind">这个 cindy 供应商类型不能导入</string>
+    <string name="settings_paste_note_cindy_auth">这种登录方式不支持，请在保存前检查密钥</string>
+    <string name="settings_paste_note_cindy_auth_none">配置不含密钥，请在保存前输入</string>
+    <string name="settings_paste_note_cindy_endpoint">这个 cindy 端点未使用</string>
+    <string name="settings_paste_note_cindy_request_path">cindy 自定义请求路径未使用，Persona 将使用标准路径</string>
+    <string name="settings_paste_note_too_many">只使用前 50 个供应商草稿，其余未使用</string>
+    <string name="settings_paste_note_link_invalid">供应商导入链接无效</string>
+    <string name="settings_paste_note_link_version">不支持这个供应商导入链接版本</string>
+    <string name="settings_paste_note_link_too_long">供应商导入链接过长</string>
+    <string name="settings_paste_note_link_field">供应商导入链接包含无效字段</string>
+    <string name="settings_paste_reason_credential">凭据</string>
+    <string name="settings_paste_reason_shell">shell 展开</string>
+    <string name="settings_paste_reason_computer">电脑</string>
+    <string name="settings_paste_reason_limit">数量限制</string>
+    <string name="settings_paste_reason_protocol">协议</string>
+    <string name="settings_paste_reason_unsupported">不支持</string>
+    <string name="settings_paste_reason_unsafe">不安全</string>
+    <string name="settings_paste_reason_other">未使用</string>
+    <string name="settings_paste_env_bring">带入环境变量：%1$s</string>
+    <string name="settings_paste_env_skip">未带入环境变量（%1$s）：%2$s</string>
+    <string name="settings_paste_headers_bring">带入请求头：%1$s</string>
+    <string name="settings_paste_headers_skip">未带入请求头（%1$s）：%2$s</string>
+    <string name="settings_paste_other_ways">从已有的配置开始</string>
+    <string name="settings_paste_title">粘贴配置</string>
+    <string name="settings_paste_entry_detail">使用 shell alias、exports、settings.json、curl 或 cindy 供应商</string>
+    <string name="settings_paste_found">在你的电脑上找到</string>
+    <string name="settings_paste_label">配置内容</string>
+    <string name="settings_paste_hint">检查并点击保存之前，不会保存任何内容。</string>
+    <string name="settings_paste_placeholder">export ANTHROPIC_BASE_URL=https://…\nexport ANTHROPIC_AUTH_TOKEN=…</string>
+    <string name="settings_paste_continue">继续</string>
+    <string name="settings_paste_reading">正在读取配置…</string>
+    <string name="settings_paste_read_failed">读不到粘贴的配置：%1$s</string>
+    <string name="settings_paste_format_shell">Shell alias 与环境变量</string>
+    <string name="settings_paste_format_settings">Claude Code settings.json</string>
+    <string name="settings_paste_format_curl">一条 curl 请求</string>
+    <string name="settings_paste_format_cindy">一个 cindy 供应商</string>
+    <string name="settings_paste_format_link">一个供应商导入链接</string>
+    <string name="settings_paste_nothing">这段内容里没有找到供应商。</string>
+    <plurals name="settings_paste_several">
+        <item quantity="other">找到 %1$d 个供应商，请选择一个。</item>
+    </plurals>
+    <plurals name="settings_paste_models_count">
+        <item quantity="other">%1$d 个模型</item>
+    </plurals>
+    <string name="settings_paste_action_label">这个地址已有供应商，请选择操作。</string>
+    <string name="settings_paste_merge">把模型添加到 %1$s</string>
+    <string name="settings_paste_merge_hint">密钥相同，只添加它还没有的模型。</string>
+    <string name="settings_paste_key">只替换 %1$s 的密钥</string>
+    <string name="settings_paste_key_hint">密钥不同，地址、模型和其他设置保持不变。</string>
+    <string name="settings_paste_new">新增一个供应商</string>
+    <string name="settings_paste_new_hint">检查预填的表单，再由你保存。</string>
+    <string name="settings_paste_alias_import_intro">只读取并导入这台电脑上的 alias %1$s。</string>
+</resources>

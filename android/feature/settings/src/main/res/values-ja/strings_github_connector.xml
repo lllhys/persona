@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings › Connectors › GitHub: where the sign-in comes from, and which GitHub events reach the Inbox. Same words as iOS. -->
+<resources>
+    <string name="settings_gh_sign_in_from">サインイン方法</string>
+    <string name="settings_gh_sign_in_from_footer">コンピューターを選ぶと、そのghのサインインを使います。デバイスコードはどのコンピューターにも依存しません。切り替えると前の方法からサインアウトします。</string>
+    <string name="settings_gh_checking">各コンピューターのghサインインを確認中…</string>
+    <string name="settings_gh_device_code">デバイスコードでサインイン</string>
+    <string name="settings_gh_device_code_subtitle">コンピューター不要：GitHubでコードを入力して認可</string>
+    <string name="settings_gh_device_footer">デバイスコードでの認可は暗号化してハブに保存されます。コンピューターのghに切り替えると破棄されます。</string>
+    <string name="settings_gh_signed_in_as">ghサインイン済み・%1$s</string>
+    <string name="settings_gh_signed_in">ghサインイン済み</string>
+    <string name="settings_gh_signed_in_missing">%1$s・%2$sの権限が不足</string>
+    <string name="settings_gh_not_signed_in">ghにサインインしていません</string>
+    <string name="settings_gh_no_gh">ghがインストールされていません</string>
+    <string name="settings_gh_too_old">personadが古いため、ghのサインインを読み取れません</string>
+    <string name="settings_gh_offline">オフライン</string>
+    <string name="settings_gh_read_error">ghのサインインを読み取れません：%1$s</string>
+    <string name="settings_gh_read_failed">ghのサインインを読み取れません</string>
+    <string name="settings_gh_missing_header">権限が不足しています</string>
+    <string name="settings_gh_missing_device">デバイスコードのサインインに%1$sの権限がありません。別のサインイン方法に切り替えてから、もう一度デバイスコードでサインインしてください。</string>
+    <string name="settings_gh_missing_machine">%1$sのghに%2$sの権限がありません。そのコンピューターでgh auth refresh -s %3$sを実行するか、デバイスコードでサインインしてください。</string>
+    <string name="settings_gh_this_computer">このコンピューター</string>
+    <string name="settings_gh_mode_off">オフ</string>
+    <string name="settings_gh_mode_default_branch">デフォルトブランチのみ</string>
+    <string name="settings_gh_mode_mine">自分のPRも含める</string>
+    <string name="settings_gh_mode_all">すべて</string>
+    <string name="settings_gh_ci_failures">CIの失敗</string>
+    <string name="settings_gh_mute_hint">ミュートするリポジトリ：owner/name</string>
+    <string name="settings_gh_add">追加</string>
+    <string name="settings_gh_inbox">受信トレイ</string>
+    <string name="settings_gh_ci_off">CIの失敗は受信トレイに入りません。</string>
+    <string name="settings_gh_ci_default_branch">デフォルトブランチのCIの失敗だけが受信トレイに入り、「要対応」になります。</string>
+    <string name="settings_gh_ci_all">すべてのブランチのCIの失敗が「要対応」になります。</string>
+    <string name="settings_gh_ci_mine">デフォルトブランチと自分が開いているPRのCIの失敗は「要対応」、その他のブランチは「参考」になります。</string>
+    <string name="settings_gh_inbox_failures">同じブランチの失敗は1件にまとめられ、再実行も同じ件として扱います。その後成功するか、ブランチが削除されるか、PRがマージされると自動的に対応済みになります。自動ブランチ（%1$s）は通知しません。</string>
+    <string name="settings_gh_inbox_mentions">人からの@メンション、レビュー依頼、変更要求は「要対応」、ボットからのものは「参考」になります。ミュートしたリポジトリは何も受信トレイに入らず、既存のものも対応済みになります。</string>
+    <string name="settings_gh_couldnt_save">保存できませんでした：%1$s</string>
+    <string name="settings_gh_list_separator">、</string>
+    <string name="settings_gh_unmute">ミュート解除</string>
+</resources>

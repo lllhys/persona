@@ -3,6 +3,7 @@ package assistant
 import (
 	_ "embed"
 	"encoding/json"
+	"slices"
 	"strings"
 	"sync"
 
@@ -208,7 +209,8 @@ func closestGeneration(key string, gens []catalogGeneration) (catalogGeneration,
 	return gens[best], true
 }
 
-// enrichModel fills capabilities the gateway did not say from the catalog; what it said about them wins. Price is
+// enrichModel fills capabilities the gateway did not say from the catalog; what it said about them wins (thinking
+// levels, or that there are none: NoEffort). Price is
 // different: only an exact catalog entry supplies the reference price, so an external value never survives enrichment.
 // A name is filled only from an exact entry (a listed id, or the same generation written with the other separator).
 // InheritedFrom is set only when a missing capability was copied from an earlier generation. An unlisted "[1m]" id is
@@ -231,17 +233,22 @@ func enrichModel(m proto.ProviderModel) proto.ProviderModel {
 			m.ContextWindow = window
 			filled = true
 		}
-		if len(m.Efforts) == 0 && len(c.Efforts) > 0 {
+		// a model the gateway said takes no thinking level takes none from the catalog either
+		if !m.NoEffort && len(m.Efforts) == 0 && len(c.Efforts) > 0 {
 			m.Efforts = append([]string(nil), c.Efforts...)
 			filled = true
 		}
-		if m.DefaultEffort == "" && c.DefaultEffort != "" {
+		if !m.NoEffort && m.DefaultEffort == "" && c.DefaultEffort != "" && (len(m.Efforts) == 0 || slices.Contains(m.Efforts, c.DefaultEffort)) {
 			m.DefaultEffort = c.DefaultEffort
 			filled = true
 		}
 		if filled && c.InheritedFrom != "" {
 			m.InheritedFrom = c.InheritedFrom
 		}
+	}
+	// the gateway's levels and the catalog's default, or the other way round, may not meet: a default is always a level
+	if m.DefaultEffort != "" && len(m.Efforts) > 0 && !slices.Contains(m.Efforts, m.DefaultEffort) {
+		m.DefaultEffort = ""
 	}
 	if m.ContextWindow == 0 && idHas1M(m.ID) {
 		m.ContextWindow = 1000000

@@ -65,7 +65,7 @@ describe("the assistant's launchers", () => {
   });
 });
 
-describe("拷贝信息", () => {
+describe("复制信息", () => {
   it("says which conversation, where and how to go on with it", () => {
     const t = assistantInfoText({ title: "周报", isMain: true, sessionId: "s1", machine: "服务器", machineId: "srv", cwd: "~/.persona/assistant", launcher: "claude", model: "model-x" });
     expect(t.split("\n")).toEqual([

@@ -148,7 +148,8 @@ func TestCompletedTodoOnlyStopsStillLinkedAgents(t *testing.T) {
 }
 
 // Manual input still reaches a completed task's agent. Only a task the hub judged
-// done or its supervisor accepted reopens, allowing subsequent triage.
+// done reopens on that turn alone, allowing subsequent triage: one its supervisor accepted
+// waits for its conversation to send more, even when its plan started the agent (#6726, #7539).
 func TestCompletedTodoManualTurnPreservesReopeningRules(t *testing.T) {
 	ctx := context.Background()
 	for _, doneBy := range []string{"", db.DoneByAuto, db.DoneByReview, db.DoneByCancelled} {
@@ -159,7 +160,8 @@ func TestCompletedTodoManualTurnPreservesReopeningRules(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, f := workService(t)
 			done := time.Now().Add(-time.Minute)
-			putTodo(s, Todo{ID: "todo_done", Title: "Run tests", Origin: "conversation", DoneAt: &done, DoneBy: doneBy,
+			// Its plan started the agent: that no longer reopens an accepted one on a turn nobody sent for it (#7539).
+			putTodo(s, Todo{ID: "todo_done", Title: "Run tests", Origin: "conversation", PlanID: "plan_1", DoneAt: &done, DoneBy: doneBy,
 				Agents: []TodoAgent{{MachineID: "box", SessionID: "s1"}}})
 			f.setSessions("box", stopped("s1", "Finished."))
 			if err := s.sendToSession(ctx, "box", "s1", "Check one more case."); err != nil {
@@ -167,7 +169,7 @@ func TestCompletedTodoManualTurnPreservesReopeningRules(t *testing.T) {
 			}
 			s.taskWorking(ctx, "box", "s1")
 			s.workStarted(ctx, "box", "s1", time.Now())
-			wantReopen := doneBy == db.DoneByAuto || doneBy == db.DoneByReview
+			wantReopen := doneBy == db.DoneByAuto
 			if reopened := todoNow(s, "todo_done").DoneAt == nil; reopened != wantReopen {
 				t.Fatalf("reopened = %v for done_by %q", reopened, doneBy)
 			}

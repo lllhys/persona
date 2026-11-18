@@ -39,6 +39,10 @@ nonisolated struct ManagerRoster: Equatable, Sendable {
     /// More than one installed manager: the pages group by manager.
     var isMulti: Bool { installed.count > 1 }
 
+    /// Whether manager `id` can be the current assistant: installed, and not one the hub keeps out of the switcher
+    /// (`HubManager.hidden`, #9055).
+    func canPick(_ id: String) -> Bool { installed.contains { $0.id == id && !$0.hidden } }
+
     /// Whose an item stamped `manager` is: that manager while the roster has it installed, else the default.
     func owner(_ manager: String?) -> String {
         guard let manager, !manager.isEmpty, installed.contains(where: { $0.id == manager }) else { return defaultID }

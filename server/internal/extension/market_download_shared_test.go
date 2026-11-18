@@ -260,3 +260,50 @@ func TestSharedDownloadDropsStaleDirectories(t *testing.T) {
 		t.Fatal("the live one went")
 	}
 }
+
+// Each caller's declared size must be checked even when the digest matches another in-flight request.
+func TestSharedDownloadValidatesEachDeclaredSize(t *testing.T) {
+	for _, invalidFirst := range []bool{false, true} {
+		name := "valid-first"
+		if invalidFirst {
+			name = "invalid-first"
+		}
+		t.Run(name, func(t *testing.T) {
+			data := bytes.Repeat([]byte("package "), 8<<10)
+			h := newHalfThenWait(t, data)
+			m := h.market(t, t.TempDir())
+			valid := &MarketPackage{URL: h.srv.URL + "/pkg.tar.gz", SHA256: ociSum(data), Size: int64(len(data))}
+			invalid := &MarketPackage{URL: valid.URL, SHA256: valid.SHA256, Size: int64(len(data) + 1)}
+			first, second := valid, invalid
+			if invalidFirst {
+				first, second = invalid, valid
+			}
+			firstDir, secondDir := t.TempDir(), t.TempDir()
+			ctxFirst, seenFirst := downloadSeen(t.Context())
+			ctxSecond, seenSecond := downloadSeen(t.Context())
+			firstDone, secondDone := make(chan error, 1), make(chan error, 1)
+			go func() { _, _, err := m.Download(ctxFirst, first, firstDir); firstDone <- err }()
+			waitUntil(t, "first download", func() bool { return seenFirst().Bytes > 0 })
+			go func() { _, _, err := m.Download(ctxSecond, second, secondDir); secondDone <- err }()
+			waitUntil(t, "second download", func() bool { return seenSecond().Bytes > 0 })
+			close(h.release)
+			firstErr, secondErr := <-firstDone, <-secondDone
+			if invalidFirst {
+				firstErr, secondErr = secondErr, firstErr
+			}
+			if firstErr != nil {
+				t.Fatalf("valid package failed: %v", firstErr)
+			}
+			if secondErr == nil || secondErr.Error() != i18n.Err("extension-market_security.checksum").Error() {
+				t.Fatalf("mismatched size: got %v, want checksum/size error", secondErr)
+			}
+			validDir := firstDir
+			if invalidFirst {
+				validDir = secondDir
+			}
+			if b, err := os.ReadFile(filepath.Join(validDir, "download")); err != nil || !bytes.Equal(b, data) {
+				t.Fatalf("valid package: got %d bytes, error %v", len(b), err)
+			}
+		})
+	}
+}

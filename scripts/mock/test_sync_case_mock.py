@@ -154,11 +154,14 @@ class Device:
 
 def transcript_view(truth):
     """Each turn's user message and its answer (the agent's last words in it), as the hub's state has them (the Go
-    self-check's truthMessages, without the device's own failed and pending sends)."""
+    self-check's truthMessages, without the device's own failed and pending sends). A notice that woke the idle agent
+    starts a turn as a message does: the turn before it keeps its answer (#9140)."""
     out, answer = [], -1
     for it in truth.lines:
         if it.get("role") == "user" and it.get("kind") == "text" and not it.get("injected") and not it.get("from"):
             out.append({"from": "user", "text": it["text"], "state": "shown"})
+            answer = -1
+        elif it.get("wake"):
             answer = -1
         elif it.get("role") == "assistant" and it.get("kind") == "text":
             if answer >= 0:

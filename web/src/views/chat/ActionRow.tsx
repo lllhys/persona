@@ -1,10 +1,8 @@
 // One tool call in a work group (cindy's AgentActionRow): [status][verb][what it worked on][+N -N][›]. A command and
-// the like open in place (what went in, what came out, in full); an edit opens its diff over the page; a read opens
+// the like open in place (what went in, what came out, in full); an edit opens the changes side panel; a read opens
 // the file in the side panel.
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useMemo } from "react";
 import { useExpanded } from "./expanded";
-import { createPortal } from "react-dom";
-import { useCloseOnBack } from "../../lib/back-close";
 import { diffLines, type Op } from "../../lib/compare";
 import { fileName, toolFile } from "../../lib/files";
 import { openPanel } from "../../lib/panel";
@@ -12,17 +10,16 @@ import { getSession } from "../../lib/store";
 import { taskBadge } from "../../lib/tasks";
 import { ownEntry, personaToolVerb, SUBJECT_KEYS, toolChip, toolDisplayName, toolLabel } from "../../lib/turns";
 import type { Item } from "../../lib/types";
-import type { ToolStep } from "../../lib/work-groups";
-import { cx, Dialog, EASE, IconButton, Spinner } from "../../ui/atoms";
+import { toolDurationLabel, type ToolStep } from "../../lib/work-groups";
+import { cx, Spinner } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { NARROW, useMedia } from "../../ui/media-query";
 import { patchDiffs } from "../../lib/tool-detail";
-import { editLines } from "../../lib/turn-changes";
+import { changePath, editLines } from "../../lib/turn-changes";
 import { useChatContext } from "./chat-context";
 import { useFullText } from "./FullText";
 import { hasStepDetail, showsResult, StepDetail } from "./StepDetail";
 import { useReveal } from "./search-reveal";
-import { edgeMask, useEdgeFade } from "./edge-fade";
 import { Thumb } from "./Steps";
 import { t } from "../../i18n";
 
@@ -220,15 +217,21 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
   const stats = diffs ? diffStats(diffs) : null;
   // kept by the chat, not the row (expanded.ts): a row drawn again (a group regrouped, a line rebuilt) stays as the reader left it
   const [open, setOpen] = useExpanded(`${scope}act:${use.id}`);
-  const [diffOpen, setDiffOpen] = useExpanded(`${scope}diff:${use.id}`);
   const inPlace = trace || !FILE_TOOLS.has(name);
   const call = use.tool_use_id;
   const bg = call && (tasks.started.has(call) || tasks.notes.has(call)) ? taskBadge(tasks.notes.get(call) ?? []) : null;
   const error = Boolean(result?.is_error);
+  // the call's own elapsed time (#8163): a quiet suffix on wide rows, the row's hover title on compact layouts
+  const narrow = useMedia(NARROW);
+  const duration = toolDurationLabel(step);
 
   const activate = () => {
     if (trace) return setOpen((o) => !o);
-    if (diffs) return setDiffOpen(true);
+    if (diffs) {
+      const path = p.file ?? "";
+      const cwd = getSession(mid, sid)?.cwd;
+      return openPanel({ kind: "changes", mid, sid, at: { path: path ? changePath(path, cwd) : "", call } });
+    }
     if (inPlace) return setOpen((o) => !o);
     const f = toolFile(name, use.tool_input);
     if (f) openPanel({ kind: "file", mid, path: f.path, cwd: getSession(mid, sid)?.cwd, line: f.line });
@@ -241,6 +244,8 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
     return () => setOpen(false);
   });
   const label = [p.verb, p.param?.text].filter(Boolean).join(" ");
+  // on a compact layout the duration stays in the hover title, not in the crowded row
+  const rowTitle = [p.param?.title, narrow && duration].filter(Boolean).join(" · ") || undefined;
   // A supervision trace is historical: show the original parameters/result, never today's file in the side panel.
   const detail = open && !trace && hasStepDetail(use);
   const input = open && !detail ? trace ? JSON.stringify(use.tool_input ?? {}, null, 2) : inlineInput(use) : "";
@@ -248,14 +253,14 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
   const output = result && (trace || showsResult(name, result)) ? full.text : "";
   return (
     <div className="flex min-w-0 flex-col" data-action-row={name} data-tool-use={call} data-items={ids.join(" ")}>
-      <button type="button" onClick={activate} aria-expanded={inPlace ? open : undefined} aria-label={label || name} title={p.param?.title} className={ROW}>
+      <button type="button" onClick={activate} aria-expanded={inPlace ? open : undefined} aria-label={label || name} title={rowTitle} className={ROW}>
         <span role="img" aria-label={running ? t("chat-actionrow.status_running") : error ? t("chat-actionrow.status_error") : t("chat-actionrow.status_done")} className={cx(STATUS_SLOT, error && "text-red")}>
           {running ? <Spinner size={13} /> : <Icon name={error ? "x" : "check"} size={13} />}
         </span>
         {p.verb && <span className="shrink-0 text-[length:var(--chat-secondary)] whitespace-nowrap text-tool-ink">{p.verb}</span>}
         {p.param &&
           (p.file ? (
-            <span className="inline-flex max-w-full min-w-0 items-center gap-[3px] rounded-[4px] border border-line bg-field px-[5px] py-[0.5px] font-mono text-[13px] leading-[1.385] whitespace-nowrap text-ink-2 transition-colors group-hover:bg-hover-2" data-file-chip>
+            <span className="inline-flex max-w-full min-w-0 items-center gap-[3px] rounded-[4px] border border-line bg-field px-[5px] py-[0.5px] font-mono text-meta leading-[1.385] whitespace-nowrap text-ink-2 transition-colors group-hover:bg-hover-2" data-file-chip>
               <Icon name="read" size={12} className="shrink-0 text-ink-3" />
               <span className="truncate">{p.param.text}</span>
             </span>
@@ -264,18 +269,23 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
           ))}
         <span className="flex-1" />
         {stats && (stats.add > 0 || stats.del > 0) && (
-          <span className="flex shrink-0 gap-1 font-mono text-[13px] font-medium tabular-nums">
+          <span className="flex shrink-0 gap-1 font-mono text-meta font-medium tabular-nums">
             <span className="text-diff-add-fg">+{stats.add}</span>
             <span className="text-diff-del-fg">-{stats.del}</span>
           </span>
         )}
-        {bg && <span className={cx("shrink-0 rounded-[4px] px-1 text-[11px] font-medium whitespace-nowrap", bg.failed ? "bg-red-tint text-red" : "bg-field text-ink-2")}>{bg.text}</span>}
+        {duration && (
+          <span data-tool-duration className="max-lg:hidden shrink-0 font-mono text-label text-tool-ink tabular-nums">
+            {duration}
+          </span>
+        )}
+        {bg && <span className={cx("shrink-0 rounded-[4px] px-1 text-submeta font-medium whitespace-nowrap", bg.failed ? "bg-red-tint text-red" : "bg-field text-ink-2")}>{bg.text}</span>}
         <span aria-hidden className={CHEVRON_SLOT}>
           <Icon name={inPlace && open ? "chevron" : "chevronRight"} size={13} stroke={2.2} />
         </span>
       </button>
       {p.raw && !open && (
-        <div title={p.raw} className="min-w-0 truncate px-2 pb-[3px] pl-[30px] font-mono text-[12px] leading-[1.5] text-tool-ink">
+        <div title={p.raw} className="min-w-0 truncate px-2 pb-[3px] pl-[30px] font-mono text-label leading-[1.5] text-tool-ink">
           {p.raw}
         </div>
       )}
@@ -287,7 +297,7 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
         </div>
       )}
       {open && (
-        <div className="mx-2 mt-1 mb-1 cursor-text rounded-[6px] border border-line bg-neutral-bubble px-[10px] py-2 font-mono text-[12px] leading-[17px] text-ink select-text" data-inline-detail>
+        <div className="mx-2 mt-1 mb-1 cursor-text rounded-[6px] border border-line bg-neutral-bubble px-[10px] py-2 font-mono text-label leading-[17px] text-ink select-text" data-inline-detail>
           {detail && (
             <div className="font-sans">
               <StepDetail use={use} result={result} />
@@ -304,7 +314,6 @@ export const ActionRow = memo(function ActionRow({ step, running, mid, sid, trac
           {!input && !detail && !output && <span className="text-tool-ink">{t("chat-actionrow.no_content")}</span>}
         </div>
       )}
-      {diffs && diffOpen && <DiffDialog onClose={() => setDiffOpen(false)} path={p.file ?? ""} diffs={diffs} mid={mid} sid={sid} />}
     </div>
   );
 });
@@ -326,18 +335,9 @@ export function foldDiffs(diffs: Op[][], max = DIFF_FOLD_LINES): { shown: Op[][]
   return { shown, hidden: total - max };
 }
 
-function DiffStats({ diffs }: { diffs: Op[][] }) {
-  const s = diffStats(diffs);
-  return (
-    <span className="shrink-0 font-mono text-[12px] font-medium tabular-nums">
-      <span className="text-diff-add-fg">+{s.add}</span> <span className="text-diff-del-fg">-{s.del}</span>
-    </span>
-  );
-}
-
 export function DiffBlocks({ diffs }: { diffs: Op[][] }) {
   return diffs.map((d, n) => (
-    <div key={n} className="min-w-fit overflow-hidden rounded-[8px] py-1 font-mono text-[12px] leading-[1.6] shadow-hairline">
+    <div key={n} className="min-w-fit overflow-hidden rounded-[8px] py-1 font-mono text-label leading-[1.6] shadow-hairline">
       {d.map((l, i) => (
         <div key={i} className={cx("flex min-w-fit pr-3", l.kind === "add" && "bg-diff-add-bg", l.kind === "del" && "bg-diff-del-bg")} data-diff-line={l.kind}>
           <span className={cx("w-6 shrink-0 text-center select-none", l.kind === "add" ? "text-diff-add-fg" : l.kind === "del" ? "text-diff-del-fg" : "text-ink-3")}>{l.kind === "add" ? "+" : l.kind === "del" ? "−" : " "}</span>
@@ -346,93 +346,4 @@ export function DiffBlocks({ diffs }: { diffs: Op[][] }) {
       ))}
     </div>
   ));
-}
-
-/** An edit's changes over the page: whole lines on red and green, the file one click away. On a narrow screen they
- *  take the whole screen instead (DiffScreen). */
-function DiffDialog({ onClose, path, diffs, mid, sid }: { onClose: () => void; path: string; diffs: Op[][]; mid: string; sid: string }) {
-  const narrow = useMedia(NARROW);
-  const openFile = () => {
-    onClose();
-    openPanel({ kind: "file", mid, path, cwd: getSession(mid, sid)?.cwd });
-  };
-  if (narrow) return <DiffScreen onClose={onClose} path={path} diffs={diffs} onOpenFile={path ? openFile : undefined} />;
-  return (
-    <Dialog
-      open
-      onClose={onClose}
-      width={860}
-      title={
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate">{path ? fileName(path) : t("chat-actionrow.changes")}</span>
-          <DiffStats diffs={diffs} />
-        </span>
-      }
-      footer={
-        path ? (
-          <button type="button" onClick={openFile} className="flex h-8 items-center gap-1.5 rounded-control px-3 text-[12.5px] font-medium whitespace-nowrap text-ink-2 shadow-btn transition-colors hover:bg-hover">
-            <Icon name="read" size={13} />
-            {t("chat-actionrow.open_file")}
-          </button>
-        ) : undefined
-      }
-    >
-      {path && <div className="mb-2 truncate font-mono text-[11.5px] text-ink-3" title={path}>{path}</div>}
-      <div className="flex max-h-[60vh] flex-col gap-2 overflow-auto" data-diff>
-        <DiffBlocks diffs={diffs} />
-      </div>
-    </Dialog>
-  );
-}
-
-/** The diff on a phone: the whole visible screen (above the keyboard), Back or ✕ to close; long lines scroll sideways
- *  under a fade at the right edge while there is more, and a long diff shows its first 40 lines until "Expand". */
-function DiffScreen({ onClose, path, diffs, onOpenFile }: { onClose: () => void; path: string; diffs: Op[][]; onOpenFile?: () => void }) {
-  useCloseOnBack(true, onClose);
-  const [all, setAll] = useState(false);
-  const { shown, hidden } = useMemo(() => (all ? { shown: diffs, hidden: 0 } : foldDiffs(diffs)), [all, diffs]);
-  const body = useRef<HTMLDivElement>(null);
-  const { edges, measure } = useEdgeFade(body, [shown]);
-  // the chat's own Esc (interrupt) leaves it alone while a dialog is open
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    addEventListener("keydown", key);
-    return () => removeEventListener("keydown", key);
-  }, [onClose]);
-  const mask = edgeMask(edges);
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={path ? t("chat-actionrow.changes_in", { name: fileName(path) }) : t("chat-actionrow.changes")}
-      className="fixed inset-x-0 z-40 flex flex-col bg-surface pt-[env(safe-area-inset-top)]"
-      style={{ top: "var(--kb-top)", height: "var(--kb-h)", animation: `slide-up 220ms ${EASE} both` }}
-      data-diff-screen
-    >
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-2">
-        <IconButton icon="x" label={t("chat-actionrow.close")} onClick={onClose} size={36} className="touch-hit" />
-        <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink" title={path || undefined}>
-          {path ? fileName(path) : t("chat-actionrow.changes")}
-        </span>
-        <DiffStats diffs={diffs} />
-        {onOpenFile && (
-          <button type="button" onClick={onOpenFile} className="flex h-9 shrink-0 items-center gap-1.5 rounded-control px-3 text-[13px] font-medium whitespace-nowrap text-ink-2 shadow-btn transition-colors hover:bg-hover">
-            <Icon name="read" size={13} />
-            {t("chat-actionrow.open_file")}
-          </button>
-        )}
-      </div>
-      {path && <div className="shrink-0 truncate px-4 pt-2 font-mono text-[11.5px] text-ink-3">{path}</div>}
-      <div ref={body} onScroll={measure} className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto overscroll-contain px-3 pt-2 pb-[max(12px,env(safe-area-inset-bottom))]" style={{ maskImage: mask, WebkitMaskImage: mask }} data-diff>
-        <DiffBlocks diffs={shown} />
-        {hidden > 0 && (
-          <button type="button" onClick={() => setAll(true)} className="sticky left-0 flex h-10 w-fit shrink-0 items-center gap-1.5 rounded-control px-3 text-[13px] font-medium whitespace-nowrap text-accent-ink" data-diff-more>
-            <Icon name="chevron" size={13} stroke={2.2} />
-            {t("chat-actionrow.show_rest", { count: hidden })}
-          </button>
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
 }

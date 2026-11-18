@@ -34,22 +34,22 @@
           }
         ],
         "code": "not_logged_in",
-        "detail": "Sign in on 小林的 MacBook, use an API key, or choose another app or setup to run the main chat on that computer in Settings › Model.",
+        "detail": "The main chat runs the Claude Code CLI, and the Claude desktop app's sign-in doesn't count for it. Run claude auth login in a terminal on 小林的 MacBook, use an API key, or choose another app or setup to run the main chat on that computer in Settings › Model.",
         "id": "model",
         "launcher": "claude",
         "machine": "mbp",
         "state": "problem",
-        "title": "Claude Code isn't signed in"
+        "title": "Claude Code CLI isn't signed in"
       },
       {
         "action": {
           "id": "test_assistant"
         },
         "code": "not_logged_in",
-        "detail": "Sign in once on 小林的 MacBook, or use an API key instead.",
+        "detail": "The main chat runs the Claude Code CLI, and the Claude desktop app's sign-in doesn't count for it. Run claude auth login in a terminal on 小林的 MacBook, or use an API key instead.",
         "id": "first_message",
         "state": "problem",
-        "title": "Claude Code isn't signed in"
+        "title": "Claude Code CLI isn't signed in"
       }
     ],
     "suggestions": [
@@ -101,22 +101,22 @@
           }
         ],
         "code": "not_logged_in",
-        "detail": "小林的 MacBookでログインするか、APIキーを使うか、設定 › モデルでこのパソコンのメインチャットを実行する別のアプリや設定を選んでください。",
+        "detail": "メインチャットは Claude Code CLI で動き、Claude デスクトップアプリのログインはこれに含まれません。小林的 MacBook のターミナルで claude auth login を実行するか、API キーを使うか、設定 › モデルでこのパソコンのメインチャットを実行する別のアプリや設定を選んでください。",
         "id": "model",
         "launcher": "claude",
         "machine": "mbp",
         "state": "problem",
-        "title": "Claude Code にログインしていません"
+        "title": "Claude Code CLI にログインしていません"
       },
       {
         "action": {
           "id": "test_assistant"
         },
         "code": "not_logged_in",
-        "detail": "小林的 MacBook で一度ログインするか、API キーを使ってください。",
+        "detail": "メインチャットは Claude Code CLI で動き、Claude デスクトップアプリのログインはこれに含まれません。小林的 MacBook のターミナルで claude auth login を実行するか、API キーを使ってください。",
         "id": "first_message",
         "state": "problem",
-        "title": "Claude Code にログインしていません"
+        "title": "Claude Code CLI にログインしていません"
       }
     ],
     "suggestions": [
@@ -168,22 +168,22 @@
           }
         ],
         "code": "not_logged_in",
-        "detail": "在 小林的 MacBook 上登录，改用 API Key，或在设置 › 模型中选择此电脑上运行主对话的其他应用或配置。",
+        "detail": "主对话用的是 Claude Code 命令行，Claude 桌面版登录了也不算。在 小林的 MacBook 的终端里运行 claude auth login，改用 API Key，或在设置 › 模型中选择此电脑上运行主对话的其他应用或配置。",
         "id": "model",
         "launcher": "claude",
         "machine": "mbp",
         "state": "problem",
-        "title": "Claude Code 还没登录"
+        "title": "Claude Code 命令行还没登录"
       },
       {
         "action": {
           "id": "test_assistant"
         },
         "code": "not_logged_in",
-        "detail": "在 小林的 MacBook 上登录一次，或者改用 API Key。",
+        "detail": "主对话用的是 Claude Code 命令行，Claude 桌面版登录了也不算。在 小林的 MacBook 的终端里运行 claude auth login，或者改用 API Key。",
         "id": "first_message",
         "state": "problem",
-        "title": "Claude Code 还没登录"
+        "title": "Claude Code 命令行还没登录"
       }
     ],
     "suggestions": [

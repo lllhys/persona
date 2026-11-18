@@ -28,7 +28,14 @@ import (
 //     leader's Agent, task_leader.go) puts its Agents under that leader Agent inside the leader's task; when the
 //     leader's task is not listed it is a task of the conversation above the leader (supervisorAboveTask).
 //   - Its state, first match wins: needs_you (the SOP's Waiting on you), review (waits for acceptance, nothing of it
-//     running), stuck (taskStuck, the leader reports' rule), working.
+//     running), planned (no agent has ever worked on it and it is not a concern: a piece of a direction a leader
+//     recorded with todo_create, a Lark topic's to-do, a to-do the user made; #5846), stuck (taskStuck, the leader
+//     reports' rule), working. A direction lists them needs_you, review, stuck, working, planned.
+//   - Running: whether anything under a direction is at work right now, an Agent of one of its listed tasks or one
+//     under it whose session is working (the state its row shows), whatever the task's state. Not the working count:
+//     a working task may have every Agent stopped, and one that needs the user may still have another Agent at work.
+//     It is the one rule for a direction row's activity mark on every client (#6626); the leader conversation's own
+//     turn is its own row's state, which the clients have.
 //
 // The apps are told {"type":"directions"} whenever the tree's content changes (directionTreeSync), and read the tree
 // again then.
@@ -39,9 +46,10 @@ const (
 	treeReview   = "review"
 	treeStuck    = "stuck"
 	treeWorking  = "working"
+	treePlanned  = "planned"
 )
 
-var treeStates = []string{treeNeedsYou, treeReview, treeStuck, treeWorking}
+var treeStates = []string{treeNeedsYou, treeReview, treeStuck, treeWorking, treePlanned}
 
 // sourceSpawned: a to-do Agent linked because another Agent of the to-do spawned it (todo_sessions.go); its via is
 // "<machine>/<session>" of that Agent.
@@ -61,6 +69,7 @@ type treeDirection struct {
 	Name      string     `json:"name"`
 	Secretary bool       `json:"secretary,omitempty"`
 	Counts    treeCounts `json:"counts"`
+	Running   bool       `json:"running"` // sent false too, so a client tells a hub without it (it reads counts.working then)
 	Tasks     []treeTask `json:"tasks"`
 }
 
@@ -70,6 +79,7 @@ type treeCounts struct {
 	NeedsYou int `json:"needs_you"`
 	Stuck    int `json:"stuck"`
 	Review   int `json:"review"`
+	Planned  int `json:"planned"`
 }
 
 func (c *treeCounts) add(state string) {
@@ -80,6 +90,8 @@ func (c *treeCounts) add(state string) {
 		c.Review++
 	case treeStuck:
 		c.Stuck++
+	case treePlanned:
+		c.Planned++
 	default:
 		c.Working++
 	}
@@ -113,6 +125,8 @@ type directionTreeBook struct {
 	digest [sha256.Size]byte
 	after  func(d time.Duration, f func()) // tests: a fake clock
 	run    sync.Mutex                      // one build and compare at a time
+	timer  *time.Timer                     // a real-clock comparison not yet run (tests can stop it during teardown)
+	runs   sync.WaitGroup                  // scheduled real-clock comparisons; fixtures wait before closing their store
 }
 
 // directionTreeRoutes: GET /api/v1/assistant/directions/tree is the tree as it is now.
@@ -132,19 +146,26 @@ func (s *Service) directionTreeRoutes() {
 func (s *Service) directionTreeSoon() {
 	b := &s.dtree
 	b.mu.Lock()
-	if b.armed {
+	if b.armed || s.runCtx().Err() != nil {
 		b.mu.Unlock()
 		return
 	}
 	b.armed = true
 	after := b.after
-	b.mu.Unlock()
-	f := func() { s.directionTreeSync(context.Background()) }
 	if after != nil {
-		after(directionTreeSettle, f)
+		b.mu.Unlock()
+		after(directionTreeSettle, func() { s.directionTreeSync(context.Background()) })
 		return
 	}
-	time.AfterFunc(directionTreeSettle, f)
+	b.runs.Add(1)
+	b.timer = time.AfterFunc(directionTreeSettle, func() {
+		defer b.runs.Done()
+		b.mu.Lock()
+		b.timer = nil
+		b.mu.Unlock()
+		s.directionTreeSync(context.Background())
+	})
+	b.mu.Unlock()
 }
 
 // directionTreeSessions: the sessions of machine d changed; the tree is built again when an open task's Agent is there.
@@ -432,6 +453,8 @@ func (tb *treeBuild) state(t listedTodo) string {
 		return treeNeedsYou
 	case tr.Section != triageWorking && (t.Supervision.state(t.Todo) == reviewPending || triageOpenAsk(t.Ask) != nil):
 		return treeReview
+	case notStarted(t.Todo):
+		return treePlanned
 	case taskStuck(t.Todo, tr, tb.reached[t.ID], tb.now):
 		return treeStuck
 	}
@@ -457,8 +480,9 @@ func (tb *treeBuild) tree(names map[string]string) directionTree {
 		}
 		state := tb.state(t)
 		g.Counts.add(state)
-		g.Tasks = append(g.Tasks, treeTask{ID: t.ID, Title: t.Title, State: state, Agents: tb.agents(t.ID, map[[2]string]bool{}),
-			last: tb.placed[id].Last})
+		agents := tb.agents(t.ID, map[[2]string]bool{})
+		g.Running = g.Running || treeRunning(agents)
+		g.Tasks = append(g.Tasks, treeTask{ID: t.ID, Title: t.Title, State: state, Agents: agents, last: tb.placed[id].Last})
 	}
 	for _, g := range append(slicesOf(groups, tb.leads), sec) {
 		slices.SortStableFunc(g.Tasks, func(a, b treeTask) int {
@@ -468,6 +492,11 @@ func (tb *treeBuild) tree(names map[string]string) directionTree {
 		out.Directions = append(out.Directions, *g)
 	}
 	return out
+}
+
+// treeRunning: one of these Agents, or one under them, is at work (its session working as its row shows it).
+func treeRunning(agents []treeAgent) bool {
+	return slices.ContainsFunc(agents, func(a treeAgent) bool { return a.State == proto.StateWorking || treeRunning(a.Children) })
 }
 
 func slicesOf(m map[string]*treeDirection, ids []string) []*treeDirection {

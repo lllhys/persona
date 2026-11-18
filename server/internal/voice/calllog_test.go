@@ -132,7 +132,8 @@ func TestCallLogOneHandover(t *testing.T) {
 		{"call 1: delegation dlg1: made in session 1"},
 		{"call 1: function call delegate_task (call c1, delegation dlg1, session 1)"},
 		{"call 1: delegation dlg1: a task for agent m/a1", "characters"},
-		{"call 1: delegation dlg1: the user-speech gate let it through (typed line)"},
+		{"call 1: delegation dlg1: the user-speech gate let it through (typed line)", "; from the handover: agent words none, caption ",
+			" before (counted), typed line ", " before (counted), own voice none"},
 		{"call 1: run " + m.ID + ": for delegation dlg1, in session 1"},
 		{"call 1: run " + m.ID + ": sending"},
 		{"call 1: run " + m.ID + ": sent to m/a1: ok in"},
@@ -181,7 +182,8 @@ func TestCallLogRefusedHandover(t *testing.T) {
 	}
 	id, _ := refused["id"].(string)
 	logs.wait("call 1: delegation dlg1: a task for agent m/a1")
-	logs.wait("call 1: delegation dlg1: the user-speech gate refused it (unprompted) after")
+	logs.wait("call 1: delegation dlg1: the user-speech gate refused it (unprompted) after",
+		"; from the handover: agent words none, caption none, typed line none, own voice none")
 	logs.wait("call 1: run " + id + ": refused (unprompted)")
 	_ = a.c.Close(websocket.StatusNormalClosure, "bye")
 	if end := logs.wait("call 1: conversation closed"); !strings.Contains(end, "runs 1 (refused 1)") {
@@ -236,5 +238,35 @@ func TestCallLogTellsCallsApart(t *testing.T) {
 	}
 	if p1 != 1 || p2 != 2 {
 		t.Errorf("starts %v", starts)
+	}
+}
+
+// The start line says a system call's surface (#9290, start.surface "call"), and only that value: an in-app call says
+// none, and a surface it does not know is not written (the log is shared).
+func TestCallLogSurface(t *testing.T) {
+	for _, tt := range []struct {
+		name    string // not the value: the test's log lines begin with its name
+		surface any
+		want    bool
+	}{{"call", "call", true}, {"in-app", nil, false}, {"unknown", "zebra-surface-61", false}, {"another case", "Call", false}} {
+		t.Run(tt.name, func(t *testing.T) {
+			hub := agentHub(t)
+			up := boundUpstream(t, false)
+			pl := testPlugin(t, liveProvider(up), hub.server(t))
+			logs := captureLog(t, pl)
+			more := map[string]any{}
+			if tt.surface != nil {
+				more["surface"] = tt.surface
+			}
+			a := dialApp(t, pl, boundStart("a1", more))
+			a.until(ofType("ready"))
+			line := logs.wait("call 1: start: protocol 2", "target m/a1")
+			if got := strings.HasSuffix(line, ", surface call"); got != tt.want {
+				t.Errorf("start line: %s", line)
+			}
+			if strings.Contains(logs.String(), "zebra-surface") {
+				t.Errorf("the log has the raw surface:\n%s", logs.String())
+			}
+		})
 	}
 }

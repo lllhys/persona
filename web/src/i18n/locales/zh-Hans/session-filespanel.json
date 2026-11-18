@@ -4,7 +4,7 @@
   "git_changes_other": "Git，{count} 处改动",
   "more": "更多",
   "show_hidden": "显示隐藏文件",
-  "copy_path": "拷贝路径",
+  "copy_path": "复制路径",
   "reload": "刷新",
   "only_hidden": "只有隐藏文件",
   "empty_folder": "空文件夹",

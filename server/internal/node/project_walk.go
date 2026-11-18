@@ -8,23 +8,25 @@ import (
 	"strings"
 )
 
-// projectTranscripts lists what globProjects("*", "*.jsonl") and then globProjects("*", "*", "subagents", "*.jsonl")
-// list, in the same order: every projects directory's transcripts, then every one's subagent transcripts. The usage
-// meter asked for both every 10 seconds; the two globs read each projects directory twice, and the second one stat'ed
-// every transcript to learn it is not a directory. One walk reads each directory once and takes that from the
-// directory entry (walkProjects).
+// projectTranscripts lists what globProjects("*", "*.jsonl"), globProjects("*", "*", "subagents", "*.jsonl") and
+// globProjects("*", "*", "subagents", "workflows", "*", "agent-*.jsonl") list, in the same order: every projects
+// directory's transcripts, then every one's subagent transcripts, then the transcripts of its workflow runs' agents
+// (workflows.go; the usage meter missed them until #9255). The usage meter asks for them every 10 seconds; globs read each
+// projects directory once per pattern, and stat every transcript to learn it is not a directory. One walk reads each
+// directory once and takes that from the directory entry (walkProjects).
 func (n *Node) projectTranscripts() []string {
-	var mains, subs []string
+	var mains, subs, flows []string
 	for _, p := range n.projectDirs() {
 		if n.sessionScope != nil && !sessionScopeWithin(n.sessionScope.claude, p) {
 			continue
 		}
-		var m, s []string
+		var m, s, f []string
 		if hasGlobMeta(p) { // the globs would read p as a pattern: let them
 			m, _ = filepath.Glob(filepath.Join(p, "*", "*.jsonl"))
 			s, _ = filepath.Glob(filepath.Join(p, "*", "*", "subagents", "*.jsonl"))
+			f, _ = filepath.Glob(filepath.Join(p, "*", "*", "subagents", "workflows", "*", "agent-*.jsonl"))
 		} else {
-			m, s = walkProjects(filepath.Clean(p))
+			m, s, f = walkProjects(filepath.Clean(p))
 		}
 		for _, path := range m {
 			if n.scopedTranscript(path) {
@@ -36,16 +38,22 @@ func (n *Node) projectTranscripts() []string {
 				subs = append(subs, path)
 			}
 		}
+		for _, path := range f {
+			if n.scopedTranscript(path) {
+				flows = append(flows, path)
+			}
+		}
 	}
-	return append(mains, subs...)
+	return append(append(mains, subs...), flows...)
 }
 
-// walkProjects returns what filepath.Glob returns for root/*/*.jsonl (mains) and root/*/*/subagents/*.jsonl (subs),
-// root holding no glob metacharacters: the same names in the same order (sorted per directory, as Glob reads them),
-// any kind of file matching the last part. Glob stats each candidate directory; here a directory entry that is a
-// regular file is passed over without one, a directory is read at once, and only anything else (a symlink, or a kind
-// the system does not report) is stat'ed first, so a link reaches what Glob reaches through it.
-func walkProjects(root string) (mains, subs []string) {
+// walkProjects returns what filepath.Glob returns for root/*/*.jsonl (mains), root/*/*/subagents/*.jsonl (subs) and
+// root/*/*/subagents/workflows/*/agent-*.jsonl (flows: a workflow run's agents), root holding no glob metacharacters:
+// the same names in the same order (sorted per directory, as Glob reads them), any kind of file matching the last
+// part. Glob stats each candidate directory; here a directory entry that is a regular file is passed over without one,
+// a directory is read at once, and only anything else (a symlink, or a kind the system does not report) is stat'ed
+// first, so a link reaches what Glob reaches through it.
+func walkProjects(root string) (mains, subs, flows []string) {
 	projects, _ := os.ReadDir(root)
 	for _, project := range projects {
 		dir := filepath.Join(root, project.Name())
@@ -63,11 +71,23 @@ func walkProjects(root string) (mains, subs []string) {
 					if strings.HasSuffix(a.Name(), ".jsonl") {
 						subs = append(subs, filepath.Join(agents, a.Name()))
 					}
+					if a.Name() != "workflows" {
+						continue
+					}
+					runs := filepath.Join(agents, a.Name())
+					for _, run := range readDirFollowing(runs, a.Type()) {
+						dir := filepath.Join(runs, run.Name())
+						for _, f := range readDirFollowing(dir, run.Type()) {
+							if strings.HasPrefix(f.Name(), "agent-") && strings.HasSuffix(f.Name(), ".jsonl") {
+								flows = append(flows, filepath.Join(dir, f.Name()))
+							}
+						}
+					}
 				}
 			}
 		}
 	}
-	return mains, subs
+	return mains, subs, flows
 }
 
 // readDirFollowing reads path, a directory entry of type typ, if it is a directory or leads to one; Glob reads the same

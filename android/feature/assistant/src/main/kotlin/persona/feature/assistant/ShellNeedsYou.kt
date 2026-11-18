@@ -1,5 +1,12 @@
 package persona.feature.assistant
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -161,6 +168,23 @@ internal fun ShellNeedsYou(
 }
 
 /**
+ * Needs you while the composer's @ list is [open] (iOS `MentionMenuOpen` and `ShellHome`'s
+ * `withAnimation(Theme.Motion.standard)`): above the keyboard the lines, the list and the composer did not fit together, so
+ * the lines fade and fold away as the list comes in, and come back as it goes. The motion is iOS's state spring
+ * (`Tokens.Motion.State` through [PersonaTheme.motion]); with animations off they are there or not at once.
+ */
+@Composable
+internal fun NeedsStepAside(open: Boolean, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val still = PersonaTheme.reduceMotion
+    val motion = PersonaTheme.motion
+    AnimatedVisibility(!open, modifier,
+        enter = if (still) EnterTransition.None else fadeIn(motion.enter()) + expandVertically(motion.enter(), Alignment.Bottom),
+        exit = if (still) ExitTransition.None else fadeOut(motion.enter()) + shrinkVertically(motion.enter(), Alignment.Bottom)) {
+        content()
+    }
+}
+
+/**
  * Under Needs you (and the readiness card over it), the page's own backdrop, so what scrolls under them does not read
  * through; over [fade] above them it fades in, so the things to ask fade out there rather than being cut at an edge
  * (iOS `ShellHome`'s gradient over its bottom stack). Fills its parent and draws [fade] above it.
@@ -169,7 +193,7 @@ internal fun ShellNeedsYou(
 internal fun NeedsBackdrop(fade: Dp, modifier: Modifier = Modifier) {
     // Only its alpha counts: the backdrop is kept where the mask is opaque.
     val mask = PersonaTheme.palette.ink.copy(alpha = 1f)
-    Box(modifier.layout { measurable, constraints ->
+    Box(modifier.testTag("needs-backdrop").layout { measurable, constraints ->
         val above = fade.roundToPx()
         val placeable = measurable.measure(Constraints.fixed(constraints.maxWidth, constraints.maxHeight + above))
         layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(0, -above) }

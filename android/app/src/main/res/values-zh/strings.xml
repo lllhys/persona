@@ -4,6 +4,7 @@
     <string name="app_tab_agents">Agents</string>
     <string name="app_machines">电脑</string>
     <string name="app_sidebar">侧边栏</string>
+    <string name="app_show_list">显示列表</string>
     <string name="app_tab_settings">设置</string>
     <string name="app_demo_badge">体验</string>
     <string name="app_try_demo">没有 hub？先体验一下</string>

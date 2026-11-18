@@ -2,6 +2,7 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+import PersonaWire
 
 // MARK: - Colors
 
@@ -259,6 +260,14 @@ struct LarkFlowLayout: Layout {
 }
 
 nonisolated enum LarkFormat {
+    // Card bodies call the parser for every node on every redraw; the fixed expressions are compiled once.
+    private static let cardMarkup = try! NSRegularExpression(
+        pattern: #"<br\s*/?>|<a\s([^<>]*)>([^<]*)</a\s*>|<font\s([^<>]*)>([^<]*)</font\s*>"#, options: .caseInsensitive)
+    private static let hrefAttribute = try! NSRegularExpression(
+        pattern: #"(?:^|\s)href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#, options: .caseInsensitive)
+    private static let colorAttribute = try! NSRegularExpression(
+        pattern: #"(?:^|\s)color\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#, options: .caseInsensitive)
+
     static func fileSize(_ raw: String?) -> String {
         guard let raw, let n = Int64(raw) else { return raw ?? "" }
         return n.storageText
@@ -299,29 +308,27 @@ nonisolated enum LarkFormat {
 
     /// Splits card markdown text into runs: `<br>`, `<a href>`, `<font color>` (the markup Feishu leaves in place).
     static func cardMarkdown(_ text: String, style: LarkRunStyle) -> [LarkInline] {
-        let pattern = #"<br\s*/?>|<a\s([^<>]*)>([^<]*)</a\s*>|<font\s([^<>]*)>([^<]*)</font\s*>"#
-        guard text.contains("<"), let re = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+        guard text.contains("<") else {
             return [.text(entities(text), style)]
         }
         let ns = text as NSString
         var out: [LarkInline] = []
         var last = 0
-        func attr(_ attrs: String, _ name: String) -> String? {
-            guard let r = try? NSRegularExpression(pattern: "(?:^|\\s)\(name)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s\"'>]+))", options: .caseInsensitive),
-                  let m = r.firstMatch(in: attrs, range: NSRange(location: 0, length: (attrs as NSString).length)) else { return nil }
+        func attr(_ attrs: String, _ re: NSRegularExpression) -> String? {
+            guard let m = re.firstMatch(in: attrs, range: NSRange(location: 0, length: (attrs as NSString).length)) else { return nil }
             for i in 1...3 where m.range(at: i).location != NSNotFound { return (attrs as NSString).substring(with: m.range(at: i)) }
             return nil
         }
-        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+        for m in Self.cardMarkup.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             if m.range.location > last { out.append(.text(entities(ns.substring(with: NSRange(location: last, length: m.range.location - last))), style)) }
             if m.range(at: 1).location != NSNotFound {
                 var s = style
-                let href = attr(ns.substring(with: m.range(at: 1)), "href") ?? ""
+                let href = attr(ns.substring(with: m.range(at: 1)), Self.hrefAttribute) ?? ""
                 if href.hasPrefix("http://") || href.hasPrefix("https://") { s.link = URL(string: href) }
                 out.append(.text(entities(ns.substring(with: m.range(at: 2))), s))
             } else if m.range(at: 3).location != NSNotFound {
                 var s = style
-                let color = attr(ns.substring(with: m.range(at: 3)), "color") ?? ""
+                let color = attr(ns.substring(with: m.range(at: 3)), Self.colorAttribute) ?? ""
                 s.color = LarkColor.text(color) ?? LarkColor.hex(color).map { Color(uiColor: $0) } ?? s.color
                 out.append(.text(entities(ns.substring(with: m.range(at: 4))), s))
             } else {

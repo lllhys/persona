@@ -1,0 +1,5 @@
+{
+  "meeting_room": "This is a meeting's conversation: talk to it by voice from the meeting page.",
+  "not_meeting_room": "This meeting's Persona conversation isn't ready for a voice call.",
+  "unreachable": "Can't reach Persona to check the meeting's conversation."
+}

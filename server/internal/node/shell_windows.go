@@ -4,13 +4,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 )
+
+// msysCmdLine sets the command line of a cmd that runs Git Bash the way MSYS splits it. Go quotes for the MSVC runtime,
+// whose \" outside quotes MSYS reads as a literal \ that opens a quote: codexArgs' TOML values merged into one
+// argument and the main chat's Codex started without the persona MCP server (#6418). Each argument is quoted whole,
+// with \ and " escaped. Any other program keeps Go's quoting.
+func msysCmdLine(cmd *exec.Cmd) {
+	if bash := gitBash(); bash == "" || !strings.EqualFold(filepath.Clean(cmd.Path), filepath.Clean(bash)) {
+		return
+	}
+	parts := make([]string, len(cmd.Args))
+	for i, a := range cmd.Args {
+		if i == 0 {
+			parts[i] = syscall.EscapeArg(a)
+			continue
+		}
+		parts[i] = `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(a) + `"`
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CmdLine = strings.Join(parts, " ")
+}
 
 // loginShellProgram is Git for Windows' bash, what Claude Code itself runs commands with on Windows
 // (CLAUDE_CODE_GIT_BASH_PATH when set): the launcher scripts are POSIX shell. Never a bare "bash": on the PATH a
 // service gets, System32's bash.exe comes first, and it runs WSL, another machine as far as this node goes. "" when
 // there is no Git Bash: the command then fails to start rather than run somewhere else.
 func loginShellProgram() string { return gitBash() }
+
+func codexStartShellProgram() string { return loginShellProgram() }
 
 func gitBash() string {
 	exists := func(p string) bool {

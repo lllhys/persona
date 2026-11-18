@@ -179,6 +179,7 @@ func TestDirectCompletionEndsDecisionWithoutSending(t *testing.T) {
 						t.Fatal("the completed task is still on the pending board")
 					}
 				}
+				todosTold(t, e.s)
 				if e.todoOf("box", "s1") != "" || !strings.Contains(e.f.eventTypes(), "todos") {
 					t.Fatal("completion did not clear session decoration and notify clients")
 				}
@@ -205,14 +206,14 @@ func TestDirectCompletionEndsDecisionWithoutSending(t *testing.T) {
 				if todoNow(e.s, todo.ID).DoneAt == nil {
 					t.Fatal("agent activity reopened the user-completed task")
 				}
-				e.s.closeDoneTaskAgents(ctx, taskCloseRefused{})
+				e.s.closeDoneTaskAgents(ctx, taskCloseRefused{}, doneSeen{})
 				if len(e.f.retires()) != 0 {
 					t.Fatal("completion bypassed the idle grace period")
 				}
 				old := taskCloseIdle
 				taskCloseIdle = 0
 				t.Cleanup(func() { taskCloseIdle = old })
-				e.s.closeDoneTaskAgents(ctx, taskCloseRefused{})
+				e.s.closeDoneTaskAgents(ctx, taskCloseRefused{}, doneSeen{})
 				if got := e.f.retires(); len(got) != map[bool]int{true: 0, false: 1}[tc.closed] {
 					t.Fatalf("idle cleanup: %v", got)
 				}
@@ -237,6 +238,7 @@ func TestTodoAskChangesTellTheApps(t *testing.T) {
 	s, f, todo, _, _ := conclusionService(t, false)
 	waitsForReview(t, s, f, todo.ID, "查了，做不了")
 	todosEvents := func() int {
+		todosTold(t, s)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		n := 0

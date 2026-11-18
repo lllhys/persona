@@ -256,6 +256,7 @@ func TestAskInterruptedAtTheTerminal(t *testing.T) {
 }
 
 func TestNotifyBestEffort(t *testing.T) {
+	setScriptTerminal(t, "zh-Hans")
 	f := &fake{reply: `{"sent":true}`}
 	if r := notify(f, "Build done", "all green", "--silent", "--error"); r.code != 0 || r.out != "" || r.errOut != "" {
 		t.Fatalf("%+v", r)
@@ -309,18 +310,19 @@ func TestNotifyUnsentReasons(t *testing.T) {
 		{i18n.ZhHans, "filtered", "没发出去：通知设置或在线的桌面客户端使所有可用设备都跳过了这条通知"},
 		{i18n.Ja, "filtered", "送信できませんでした：通知設定または接続中のデスクトップアプリにより、利用可能なすべてのデバイスでこの通知が抑制されました"},
 		// Existing and future reasons keep their machine-readable value in the diagnostic.
-		{"", "muted", "没发出去：hub 没有发送：muted"},
+		{i18n.ZhHans, "muted", "没发出去：hub 没有发送：muted"},
 		{i18n.En, "future_reason", "Not sent: The hub did not send it: future_reason"},
 	} {
 		for _, strict := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/%s/strict=%t", tc.lang, tc.reason, strict), func(t *testing.T) {
+				setScriptTerminal(t, string(tc.lang))
 				f := &fake{reply: fmt.Sprintf(`{"sent":false,"reason":%q}`, tc.reason)}
 				args, wantCode := []string{"Build done"}, ExitOK
 				if strict {
 					args, wantCode = append(args, "--strict"), ExitDenied
 				}
 				var out, errOut bytes.Buffer
-				code := f.runner(false).Notify(i18n.With(context.Background(), tc.lang), args, &out, &errOut)
+				code := f.runner(false).Notify(context.Background(), args, &out, &errOut)
 				if code != wantCode || out.Len() != 0 || errOut.String() != "personad notify: "+tc.wantText+"\n" {
 					t.Fatalf("exit %d, out %q, err %q; want exit %d, empty stdout and diagnostic %q", code, out.String(), errOut.String(), wantCode, tc.wantText)
 				}

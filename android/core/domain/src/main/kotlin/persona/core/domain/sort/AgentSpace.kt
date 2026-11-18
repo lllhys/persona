@@ -8,8 +8,12 @@ data class AgentSpace(val id: String, val name: String, val members: List<AgentS
     val priority: Int get() = members.minOf { it.state.priority }
     val updatedAt get() = members.mapNotNull { it.updatedAt }.maxOrNull()
     val quiet: Boolean get() = quiet(AgentPreferences())
-    /** Nothing in it goes on: every agent is seen and none waits to be woken or for the user's reply ([AgentSession.stays]). */
-    fun quiet(mutes: AgentPreferences): Boolean = members.none { it.stays(mutes) }
+    /**
+     * Nothing in it goes on: every agent is seen, none waits for the user's reply, and no held row belongs here
+     * (iOS `AgentListOrder.isQuiet`). Idle-row visibility is separately [AgentSession.stays].
+     * Ordinary pinned sessions already keep their row visible; they do not by themselves promote a quiet space.
+     */
+    fun quiet(mutes: AgentPreferences): Boolean = members.none { !it.isQuiet || it.isWaiting || it.awaitsReply(mutes) || it.heldInList }
 }
 
 fun agentSpaces(sessions: List<AgentSession>): List<AgentSpace> = sessions

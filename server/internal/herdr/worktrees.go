@@ -14,14 +14,26 @@ import (
 // `[worktrees] directory` of the config file herdr reads (configPath), else ~/.herdr/worktrees. A relative value is
 // taken from home. home is the user's home directory.
 func WorktreesDir(home string) string {
-	dir := ""
-	if b, err := os.ReadFile(configPath(home)); err == nil {
-		dir = worktreesDirIn(string(b))
-	}
+	dir := configValue(home, "worktrees", "directory")
 	if dir == "" {
 		dir = "~/.herdr/worktrees"
 	}
 	return expandHome(home, dir)
+}
+
+// TerminalDefaultShell is `[terminal] default_shell` in the config file herdr reads (configPath). An unreadable file,
+// a missing key or a value its small TOML reader cannot parse is no answer: the caller uses herdr's default shell.
+func TerminalDefaultShell(home string) string {
+	return configValue(home, "terminal", "default_shell")
+}
+
+// configValue reads one basic or literal string from one table of herdr's config file.
+func configValue(home, table, key string) string {
+	b, err := os.ReadFile(configPath(home))
+	if err != nil {
+		return ""
+	}
+	return configStringIn(string(b), table, key)
 }
 
 // configPath is the config file herdr reads (its config_path): $HERDR_CONFIG_PATH, else config.toml in its config
@@ -52,9 +64,14 @@ func expandHome(home, p string) string {
 	return filepath.Clean(p)
 }
 
-// worktreesDirIn reads `directory` out of the `[worktrees]` table of a config file ("" when it is not set). Only
-// what this one setting needs of TOML: a basic or literal string on a line of its own in that table.
+// worktreesDirIn reads `directory` out of the `[worktrees]` table of a config file ("" when it is not set).
 func worktreesDirIn(config string) string {
+	return configStringIn(config, "worktrees", "directory")
+}
+
+// configStringIn reads key out of table ("" when it is not set). Only what these settings need of TOML: a basic or
+// literal string on a line of its own in that table. Table headers, keys and values outside that table are ignored.
+func configStringIn(config, table, key string) string {
 	inTable := false
 	for _, line := range strings.Split(config, "\n") {
 		line = strings.TrimSpace(line)
@@ -63,14 +80,14 @@ func worktreesDirIn(config string) string {
 			continue
 		case strings.HasPrefix(line, "["):
 			head, _, _ := strings.Cut(line, "#")
-			inTable = strings.TrimSpace(head) == "[worktrees]"
+			inTable = strings.TrimSpace(head) == "["+table+"]"
 			continue
 		}
 		if !inTable {
 			continue
 		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "directory" {
+		name, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(name) != key {
 			continue
 		}
 		val = strings.TrimSpace(val)

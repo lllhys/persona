@@ -22,6 +22,9 @@ import (
 	"unicode"
 
 	"github.com/coder/websocket"
+
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // The passive listener (docs/operations/link.md "Passive mode"): TLS with the connector's own identity, four endpoints and nothing
@@ -112,19 +115,19 @@ func runPassive(ctx context.Context, o Options, rep *reporter) {
 		id, err := loadIdentity(TLSDir(o.Path), time.Now())
 		if err != nil {
 			rep.set(func(s *Status) {
-				*s = Status{State: "waiting", Listen: listen, Error: "连接器的 TLS 身份：" + err.Error()}
+				*s = Status{State: "waiting", Listen: listen, Error: defaultText("link-errors.tls_identity", i18n.Args{"error": err})}
 			})
 			o.wait(ctx, b.next(), was)
 			continue
 		}
-		ln, err := net.Listen("tcp", listen)
+		ln, err := osproc.Listen("tcp", listen)
 		if err != nil {
 			wait := b.next()
 			retry := time.Now().Add(wait)
 			o.Logf("passive: listen %s: %v; next attempt in %s", listen, err, wait.Round(time.Second))
 			rep.set(func(s *Status) {
 				*s = Status{State: "waiting", Listen: listen, Machine: p.Machine, HubName: p.HubName, MachineName: p.MachineName, Retry: &retry,
-					Error: listen + "：" + describeListen(err)}
+					Error: defaultText("link-errors.listen_failed", i18n.Args{"listen": listen, "error": describeListen(err)})}
 			})
 			o.wait(ctx, wait, was)
 			continue
@@ -139,11 +142,11 @@ func runPassive(ctx context.Context, o Options, rep *reporter) {
 func describeListen(err error) string {
 	switch {
 	case errors.Is(err, os.ErrPermission):
-		return "没有权限（1024 以下的端口要 root）"
+		return defaultText("link-errors.listen_permission")
 	case errors.Is(err, syscall.EADDRINUSE), strings.Contains(err.Error(), "address already in use"), strings.Contains(err.Error(), "Only one usage"):
-		return "端口被占用了"
+		return defaultText("link-errors.listen_in_use")
 	case errors.Is(err, syscall.EADDRNOTAVAIL), strings.Contains(err.Error(), "assign requested address"):
-		return "本机没有这个地址"
+		return defaultText("link-errors.listen_address_missing")
 	}
 	return err.Error()
 }
@@ -359,7 +362,7 @@ func (s *passive) admit(w http.ResponseWriter, r *http.Request) (key string, ok 
 	key = sourceKey(remoteIP(r))
 	if wait := s.lim.retry(key, time.Now()); wait > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(max(1, int((wait+time.Second-1)/time.Second))))
-		writeError(w, http.StatusTooManyRequests, "rate_limited", "认证失败太多次，稍后再试")
+		writeError(w, http.StatusTooManyRequests, "rate_limited", defaultText("link-peer.rate_limited"))
 		return key, false
 	}
 	return key, true
@@ -403,7 +406,7 @@ func maskSource(ip netip.Addr) string {
 }
 
 // wrongCredential answers a request without the paired hub's credential.
-const wrongCredential = "凭据不对：这台电脑只认配对它的那台 hub"
+var wrongCredential = defaultText("link-peer.wrong_credential")
 
 // authorized admits r when it carries the paired hub's credential, and answers it otherwise (429 blocked, 401 refused).
 func (s *passive) authorized(w http.ResponseWriter, r *http.Request) (Passive, bool) {
@@ -447,19 +450,19 @@ func (s *passive) pair(w http.ResponseWriter, r *http.Request) {
 	}
 	var req pairRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, pairBodyMax)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "要一个 JSON：{code, token, machine, hub_id, hub_name}")
+		writeError(w, http.StatusBadRequest, "bad_request", defaultText("link-peer.pair_json_required"))
 		return
 	}
 	machine, hubID, hubName := clipText(req.Machine, 128), clipText(req.HubID, 128), clipName(req.HubName)
 	switch {
 	case strings.TrimSpace(req.Code) == "":
-		writeError(w, http.StatusBadRequest, "bad_request", "没有 code")
+		writeError(w, http.StatusBadRequest, "bad_request", defaultText("link-peer.code_required"))
 		return
 	case !goodToken(req.Token):
-		writeError(w, http.StatusBadRequest, "bad_request", "token 要 32 到 512 个可打印的 ASCII 字符，不含空白")
+		writeError(w, http.StatusBadRequest, "bad_request", defaultText("link-peer.token_invalid"))
 		return
 	case machine == "":
-		writeError(w, http.StatusBadRequest, "bad_request", "没有 machine（hub 给这台电脑的机器 id）")
+		writeError(w, http.StatusBadRequest, "bad_request", defaultText("link-peer.machine_required"))
 		return
 	}
 	now := time.Now()
@@ -477,11 +480,11 @@ func (s *passive) pair(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, errBadCode):
-		s.refuse(w, r, key, "bad_code", "配对码不对、过期了或者已经用过：在这台电脑上重新 persona-link pair --listen")
+		s.refuse(w, r, key, "bad_code", defaultText("link-peer.bad_code"))
 		return
 	case err != nil:
 		s.o.Logf("passive: pairing: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal", "存不下配对结果")
+		writeError(w, http.StatusInternalServerError, "internal", defaultText("link-peer.pair_save_failed"))
 		return
 	}
 	s.o.Logf("passive: paired with hub %q (%s) as %q, from %s", hubName, hubID, machine, maskSource(remoteIP(r)))
@@ -645,7 +648,7 @@ func (s *passive) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isUpgrade(r) {
-		writeError(w, http.StatusBadRequest, "bad_request", "要 WebSocket 升级")
+		writeError(w, http.StatusBadRequest, "bad_request", defaultText("link-peer.websocket_required"))
 		return
 	}
 	s.seen(r)

@@ -1,6 +1,8 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// A routine's facts card, the `brief` feed item (docs/protocol/protocol.md "Tasks and the chat feed", #2320): read from the shapes
 /// every hub since the item has written (and a newer one), with the buttons' requests and what each answer turns them into.
@@ -94,6 +96,75 @@ struct BriefCardTests {
         #expect(lenient.waiting.isEmpty && lenient.accept.isEmpty && lenient.title.isEmpty)
         // Only a brief is one.
         #expect(list[0].brief == nil && list[5].brief == nil)
+    }
+
+    // MARK: Recommended setup (#5804)
+
+    /// The first briefing of a week carries the computed lines; each is drawn as it came, once, and a line without its
+    /// id or its words is left out without the rest of the card.
+    @Test func theSetupLinesRead() throws {
+        let b = try #require(try brief(#"""
+        {"title":"Morning","hours":12,"waiting":[],"accept":[],
+         "setup":[{"id":"triage_wake","setting":"agents.triage.wake","count":4,"text":"Waking on schedule would have saved 4 nudges.","link":"https://hub.example.com/settings?tab=persona"},
+                  {"id":"leaders","setting":"assistant.leaders","count":31,"minutes":44,"text":"A leader conversation would have taken 31 rounds."},
+                  {"id":"supervisor_tier","setting":"assistant.supervise","count":"many","text":"The background supervisor's reviews held."},
+                  {"id":"something_newer","count":2,"text":"A newer mechanism."},
+                  {"id":"triage_wake","count":9,"text":"Listed twice."},
+                  {"id":"task_trust","count":3,"text":"   "},
+                  {"id":"delegate","count":3},
+                  {"count":3,"text":"No id."},
+                  "not a line"]}
+        """#))
+        #expect(b.setup.map(\.id) == ["triage_wake", "leaders", "supervisor_tier", "something_newer"])
+        #expect(b.setup[0].count == 4 && b.setup[0].text == "Waking on schedule would have saved 4 nudges." && b.setup[2].count == 0)
+        // Open Settings only where the app has the mechanism's page.
+        #expect(b.setup.map(\.page) == [.triage, nil, .superviseModel, nil])
+        #expect(b.waiting.isEmpty && b.accept.isEmpty && b.progressTotal == 0, "the rest of the card is as without it")
+    }
+
+    @Test func aHubFromBeforeHasNoSetup() throws {
+        let old = try #require(try brief(#"{"title":"Morning","hours":12,"waiting":[],"accept":[]}"#))
+        let odd = try #require(try brief(#"{"title":"Morning","hours":12,"setup":"soon"}"#))
+        #expect(old.setup.isEmpty && odd.setup.isEmpty)
+    }
+
+    @Test func eachMechanismOpensItsOwnPage() {
+        func page(_ id: String) -> BriefBody.Setup.Page? { BriefBody.Setup(id: id, text: "x").page }
+        #expect(["triage_decide", "triage_auto_continue", "triage_wake"].map(page) == [.triage, .triage, .triage])
+        #expect(page("supervisor_tier") == .superviseModel)
+        #expect(page("standing_authorizations") == .standingAuthorizations)
+        // Not turned on at a page of this app: a remembered kind of task (a plan card's own checkbox; Auto-Start Tasks
+        // only lists and removes them), leader conversations (Pin in a chat's menu), the spot-check share (asked of
+        // Persona) and the two the assistant's configuration file holds.
+        let none = ["task_trust", "leaders", "review_sample", "delegate", "independent_review", ""]
+        #expect(none.allSatisfy { page($0) == nil })
+        // Settings opens on the mechanism's page.
+        var triage = NavigationPath()
+        triage.append(SettingsPage.triage)
+        var model = NavigationPath()
+        model.append(SettingsPage.modelConfiguration)
+        model.append(ModelPurposeRoute(id: "assistant.supervise"))
+        // Standing authorizations are in the assistant's profile: Back goes there.
+        var standing = NavigationPath()
+        standing.append(SettingsPage.assistant)
+        standing.append(SettingsPage.standingAuthorizations)
+        #expect(BriefSetupPages.path(.triage) == triage && BriefSetupPages.path(.superviseModel) == model)
+        #expect(BriefSetupPages.path(.standingAuthorizations) == standing)
+    }
+
+    /// A briefing with the block is still one line of its conversation, where its time puts it.
+    @Test func aBriefingWithSetupIsOneFeedLine() throws {
+        let list = try items(#"""
+        {"items":[{"id":"feed_b","conversation":"c1","at":"2026-11-09T01:00:00Z","kind":"brief","ref":"morning",
+                   "body":{"title":"Morning","hours":12,"setup":[{"id":"task_trust","count":3,"text":"Start directly would have saved 3 taps."}]}}]}
+        """#)
+        let lines = ChatLines.mergeFeed([], list)
+        #expect(lines.count == 1)
+        guard case .feed(let drawn)? = lines.first?.content else {
+            Issue.record("the briefing is not a feed line")
+            return
+        }
+        #expect(drawn.brief?.setup.map(\.id) == ["task_trust"] && drawn.brief?.setup.first?.page == nil)
     }
 
     @Test func aRowOpensTheChatItCameFrom() {

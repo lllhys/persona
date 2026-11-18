@@ -141,7 +141,8 @@ class ChatComputerPillTest {
         pill.assertHasClickAction()
         assertTrue("the work line is folded", rule.onAllNodesWithText("open -a Calculator", substring = true).fetchSemanticsNodes().isEmpty())
         pill.performClick()
-        rule.waitForIdle()
+        // Expanding the line projects its contents on Dispatchers.Default, outside Compose's idle tracking.
+        rule.waitUntil(20_000) { rule.onAllNodesWithText("open -a Calculator", substring = true).fetchSemanticsNodes().isNotEmpty() }
         assertTrue("the tap opened it", rule.onAllNodesWithText("open -a Calculator", substring = true).fetchSemanticsNodes().isNotEmpty())
     }
 

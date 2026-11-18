@@ -80,6 +80,36 @@ func TestReleaseManifestNeedsDirAndOut(t *testing.T) {
 	}
 }
 
+func TestReleaseManifestBetaChannel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the binary is a shell script")
+	}
+	commit, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Skip("not in a git checkout:", err)
+	}
+	dir := t.TempDir()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	fmt.Fprintf(zw, "#!/bin/sh\necho 0.7.0-beta.1\necho 'channel release, build 202611170910'\n")
+	zw.Close()
+	if err := os.WriteFile(filepath.Join(dir, "personad-"+runtime.GOOS+"-"+runtime.GOARCH+".gz"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "latest.json")
+	if err := runRelease([]string{"manifest", "--dir", dir, "--version", "0.7.0-beta.1", "--build", "202611170910",
+		"--commit", strings.TrimSpace(string(commit)), "--channel", "beta", "--out", out}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil || !strings.Contains(string(body), `"channel": "beta"`) {
+		t.Fatalf("beta manifest: %s, %v", body, err)
+	}
+	if err := runRelease([]string{"verify", "--dir", dir, "--manifest", out}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // release manifest refuses downloads of another build than the one it is told, and writes nothing: v0.2.1's
 // latest.json said build 202611110749 over binaries of 202611110745, and every hub refused it after downloading
 // (#4522). release verify checks a written latest.json the same way, as publish.sh does before uploading.

@@ -14,6 +14,11 @@ import (
 const (
 	// EventFleetSessions is a machine's session list as the apps get it (FleetSessions): after every change.
 	EventFleetSessions = "fleet.sessions"
+	// EventFleetArchived is a machine's archived rows (FleetArchived), to a hub whose hello says Hello.ArchivedApart:
+	// the rows of the machine's list that are archived (proto.Session.Archived, not the assistant's), which the apps
+	// never see. EventFleetSessions then leaves them out. Told when they change, and once per machine after each
+	// handshake; the hub reads them wherever it read the manager's list, except what the apps get (#6836).
+	EventFleetArchived = "fleet.archived"
 	// EventFleetInteraction is a pending interaction that is new or shown again (FleetInteraction).
 	EventFleetInteraction = "fleet.interaction"
 	// EventFleetResolved is an interaction that is over (FleetResolved).
@@ -41,7 +46,7 @@ const (
 	// AppPhone is the phone's own MCP tools: listing them and running one on a connected phone (waking it first).
 	AppPhone   = "phone"
 	PhoneTools = "phone.tools" // {} → {tools}
-	PhoneCall  = "phone.call"  // {name, args} → proto.ToolResult
+	PhoneCall  = "phone.call"  // {name, args, call_id?, machine_id?} → proto.ToolResult
 )
 
 // InteractionsOwnerAction has the manager's channels take the owner action they handed over with a channel's press or
@@ -54,6 +59,33 @@ const InteractionsOwnerAction = "interactions.owner_action"
 // {interaction} → proto.Resolution, when it is answered, expires or the call ends.
 const MethodFleetAsk = "fleet.ask"
 
+// MethodFleetAskPrepared is the hub's retained settings operation:
+// {interaction, replacement} → approval.Outcome. The executable handle stays in
+// the hub; only its random interaction ID crosses the bus.
+const MethodFleetAskPrepared = "fleet.ask_prepared"
+
+// MethodFleetApprovalApply consumes that hub handle once after a fresh owner
+// Allow. Resolution.Values travels only on this trusted manager/hub call.
+const MethodFleetApprovalApply = "fleet.approval_apply"
+
+// MethodFleetApprovalDiscard releases a handle without applying it.
+const MethodFleetApprovalDiscard = "fleet.approval_discard"
+
+type FleetApprovalApply struct {
+	InteractionID string           `json:"interaction_id"`
+	Resolution    proto.Resolution `json:"resolution"`
+}
+
+type FleetApprovalApplyResult struct {
+	Text  string `json:"text"`
+	Stale bool   `json:"stale,omitempty"`
+}
+
+type FleetApprovalDiscard struct {
+	InteractionID string `json:"interaction_id"`
+	Status        string `json:"status"`
+}
+
 // ElicitationHeader marks an app's request the hub relays to the manager as coming from an app that takes MCP
 // elicitations ("1"): the interaction history keeps them out otherwise.
 const ElicitationHeader = "X-Persona-Elicitation"
@@ -63,6 +95,12 @@ type FleetSessions struct {
 	MachineID string          `json:"machine_id"`
 	Sessions  []proto.Session `json:"sessions"`
 	Muted     []string        `json:"muted,omitempty"`
+}
+
+// FleetArchived is EventFleetArchived's params: all of the machine's archived rows, replacing the ones told before.
+type FleetArchived struct {
+	MachineID string          `json:"machine_id"`
+	Sessions  []proto.Session `json:"sessions"`
 }
 
 // FleetInteraction is EventFleetInteraction's params.
@@ -208,6 +246,9 @@ type UsageSummary struct {
 	CacheWrite int64          `json:"cache_write"`
 	CacheRead  int64          `json:"cache_read"`
 	Machines   []MachineUsage `json:"machines"`
+	// Hourly: today's tokens (as Tokens, cache included) for each hour from midnight in the user's zone, 24 of them
+	// (the hours to come 0): the iPhone's Usage widget draws them as a chart (#5664, #5721).
+	Hourly []int64 `json:"hourly,omitempty"`
 }
 
 // MachineUsage is one machine's share and load; Load is the 1-minute load average over its cores, 0 when unknown.

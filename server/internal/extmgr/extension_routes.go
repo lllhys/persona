@@ -109,7 +109,7 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 		d.NodeMachines = m.Node.Machines
 		d.Form = nodeConfirmForm(l, form, m, d.Name)
 	}
-	for _, u := range ps.uiPlaces("", "") {
+	for _, u := range ps.localizeUI(l, ps.uiPlaces("", "")) {
 		if u.Extension == p.Record.ID && extension.FullPage(u.Placement) {
 			d.UI = append(d.UI, u)
 		}
@@ -135,6 +135,7 @@ func (ps *extensions) detail(ctx context.Context, p *extension.Extension) Extens
 			d.Secrets = append(d.Secrets, view)
 		}
 		d.SecretUsers = ps.secretUsers(ctx, p, l)
+		ps.h.volcDetail(ctx, p, &d) // its meetings switch is the assistant's choice (volc_extension.go)
 	}
 	if p.Full != nil && len(p.Full.SecretProviders()) > 0 { // a read-only provider's rules apply all the same
 		d.HandoffRules = ps.h.handoffRulesOf(ctx, p.Record.ID)
@@ -216,6 +217,7 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 		}
 	}
 	h.authRoutes(api, full)
+	h.assistantDataRoutes(api, full)
 	// Installing, upgrading and removing run or delete code on this machine: the master token over loopback only.
 	owner := func(f http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +287,18 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 			return
 		}
 		in.Config = kept
+		if isVolc(p) { // its meetings switch sets the assistant's choice and is not saved with it (volc_extension.go)
+			rest, changed, err := h.volcConfigWrite(r.Context(), p, in.Config)
+			if err != nil {
+				writeExtensionResponseError(w, r, http.StatusServiceUnavailable, "assistant_offline", err)
+				return
+			}
+			if !changed {
+				writeExtensionJSON(w, r, detailOut(r, ps().detail(r.Context(), ps().reg.Get(p.Record.ID))))
+				return
+			}
+			in.Config = rest
+		}
 		// Secrets bound to the old configuration go first (the voice extension's key, moved to another host:
 		// voice_extension.go); said in the answer, an error's too.
 		cleared, err := ps().reg.SetConfigClearing(r.Context(), p.Record.ID, in.Config, actor(r))
@@ -513,7 +527,8 @@ func (h *Manager) extensionRoutes(api *http.ServeMux) {
 			hp = ps().get(id)
 		}
 		rest := strings.TrimPrefix(r.URL.Path, "/api/v1/extensions/"+id)
-		if hp == nil || hp.proxy == nil || hp.proc == nil || strings.HasPrefix(rest, "/-/") {
+		// /transcription/ is the manager's only (transcription.go): a meeting's audio never comes from an app.
+		if hp == nil || hp.proxy == nil || hp.proc == nil || strings.HasPrefix(rest, "/-/") || transcriptionPath(rest) {
 			writeExtensionResponseError(w, r, http.StatusNotFound, "not_found", errNoExtension)
 			return
 		}

@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "contribution": "about-me",
+      "kind": "instructions",
+      "path": "assistant/instructions.md",
+      "limit": 6144,
+      "bytes": 1820,
+      "state": "pending",
+      "reason": "rate_limited",
+      "hash": "5f1c2a9b0d3e4f61",
+      "adopted_hash": "a0b1c2d3e4f50617",
+      "adopted_at": "2026-11-12T08:00:00Z",
+      "next_adopt_at": "2026-11-13T08:00:00Z"
+    },
+    {
+      "contribution": "manuals",
+      "kind": "skills",
+      "path": "assistant/skills",
+      "limit": 262144,
+      "bytes": 40213,
+      "state": "adopted",
+      "hash": "9c8b7a6f5e4d3c2b",
+      "skills": ["machines", "weekly-review"]
+    }
+  ]
+}

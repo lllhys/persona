@@ -1,0 +1,55 @@
+appId: ${env.PERSONA_DESKTOP_APP_ID}
+productName: Persona
+directories:
+  output: release
+  buildResources: build
+artifactName: Persona-${version}-${os}-${arch}.${ext}
+npmRebuild: false
+asar: true
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+# persona:// links (docs/protocol/deep-links.md, #9931): macOS hands a scheme only to an app whose Info.plist lists it
+# (CFBundleURLTypes), so the packaged app receives the links only with this entry; Windows registers it at run time
+# (src/main.ts, setAsDefaultProtocolClient).
+protocols:
+  - name: Persona
+    schemes: [persona]
+files:
+  - dist/**
+  - package.json
+  - package-lock.json
+mac:
+  # build/icon.png and build/icon.ico come from scripts/assets/make_icon.py desktop (docs/desktop/desktop.md "Icons")
+  icon: build/icon.png
+  category: public.app-category.productivity
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  hardenedRuntime: true
+  notarize: true
+  target:
+    - target: dmg
+      arch: [universal]
+    - target: zip
+      arch: [universal]
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github
+  owner: nwverse
+  repo: persona
+  private: false
+  releaseType: release
+  vPrefixedTagName: true

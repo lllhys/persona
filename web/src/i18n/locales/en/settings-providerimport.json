@@ -6,6 +6,7 @@
   "computer": "Computer",
   "computer_hint": "Reads the aliases that run claude in this computer's ~/.zshrc, ~/.bashrc and ~/.bash_aliases, grouped by URL and key. The hub reads the keys from the computer; they never pass through the browser.",
   "offline_suffix": " (offline)",
+  "failed_from": "Import from {computer} failed: {error}",
   "empty": "No claude aliases to import in this computer's ~/.zshrc, ~/.bashrc or ~/.bash_aliases.",
   "list_label": "Providers to import",
   "merge_note": "Merging only adds new models to the existing provider. Other settings stay the same.",

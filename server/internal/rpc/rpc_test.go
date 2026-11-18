@@ -200,8 +200,8 @@ func TestCallAfterPeerClosedReturnsErrClosed(t *testing.T) {
 func TestCallDroppedWhileOutIsErrDropped(t *testing.T) {
 	closed := New("h", io.Discard)
 	closed.Close(io.EOF)
-	if err := closed.Call(context.Background(), "x", nil, nil); errors.Is(err, ErrDropped) {
-		t.Fatalf("not sent, yet dropped: %v", err)
+	if err := closed.Call(context.Background(), "x", nil, nil); errors.Is(err, ErrDropped) || !errors.Is(err, ErrNotSent) || !errors.Is(err, ErrClosed) {
+		t.Fatalf("not sent, yet dropped or not marked not sent: %v", err)
 	}
 	out := New("h", io.Discard)
 	go func() {
@@ -211,8 +211,8 @@ func TestCallDroppedWhileOutIsErrDropped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := out.Call(ctx, "x", nil, nil)
-	if !errors.Is(err, ErrDropped) || !errors.Is(err, ErrClosed) || err.Error() != ErrClosed.Error() {
-		t.Fatalf("want ErrDropped (as ErrClosed), got %v", err)
+	if !errors.Is(err, ErrDropped) || !errors.Is(err, ErrClosed) || err.Error() != ErrClosed.Error() || errors.Is(err, ErrNotSent) {
+		t.Fatalf("want ErrDropped (as ErrClosed), not marked not sent, got %v", err)
 	}
 }
 
@@ -232,14 +232,208 @@ func TestServeReturnsOnEOF(t *testing.T) {
 	}
 }
 
+// servePipe serves p from a pipe. Each write is one raw read of Serve's, and returns only once Serve has taken it in:
+// an empty write follows it, which goes through only when Serve reads again, after the lines it had.
+func servePipe(t *testing.T, p *Peer) (write func(read string)) {
+	t.Helper()
+	r, w := io.Pipe()
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- p.Serve(context.Background(), r) }()
+	t.Cleanup(func() {
+		_ = w.Close()
+		_ = r.Close()
+		p.Close(io.EOF)
+		select {
+		case <-serveDone:
+		case <-time.After(time.Second):
+			t.Error("Serve did not stop")
+		}
+	})
+	return func(read string) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() {
+			_, err := io.WriteString(w, read)
+			if err == nil {
+				_, err = w.Write(nil)
+			}
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("write did not reach Serve")
+		}
+	}
+}
+
+// A frame still arriving counts as activity only once it outgrows pingFrameMiddleBytes: below that, transport framing
+// could just be splitting a small line across reads, which must not keep a dead link alive (#8771).
+func TestPingActivityTracksAnUnfinishedFrame(t *testing.T) {
+	const start = `{"event":"file.chunk","params":"`
+	p := New("h", io.Discard)
+	if got := p.PingActivity(); !got.IsZero() {
+		t.Fatalf("PingActivity before Serve = %v, want zero", got)
+	}
+	write := servePipe(t, p)
+	write(start)
+	if got := p.PingActivity(); !got.IsZero() {
+		t.Fatalf("the read that began a frame counted as activity: %v", got)
+	}
+	write(`still being written`)
+	if got := p.PingActivity(); !got.IsZero() {
+		t.Fatalf("the middle of a small frame counted as activity: %v", got)
+	}
+	write(strings.Repeat("x", pingFrameMiddleBytes+100))
+	if got := p.PingActivity(); got.IsZero() {
+		t.Fatal("PingActivity stayed zero although a large frame is still arriving")
+	}
+}
+
+// Even an error response whose caller has already gone away is not new evidence of a working node. A late reply
+// before it remains activity; another late deadline does not move that timestamp forward.
+func TestPingActivityIgnoresLateDeadlineResponses(t *testing.T) {
+	p := New("h", io.Discard)
+	write := servePipe(t, p)
+	write(`{"id":"h1","error":{"message":"context deadline exceeded"}}` + "\n")
+	if got := p.PingActivity(); !got.IsZero() {
+		t.Fatalf("late deadline created activity %v", got)
+	}
+	write(`{"id":"h2","result":{}}` + "\n")
+	active := p.PingActivity()
+	if active.IsZero() {
+		t.Fatal("a late reply did not count as activity")
+	}
+	write(`{"id":"h3","error":{"message":"context deadline exceeded"}}` + "\n")
+	if got := p.PingActivity(); !got.Equal(active) {
+		t.Fatalf("another late deadline moved activity from %v to %v", active, got)
+	}
+}
+
+// Only input that can explain a late pong is ping activity (#8771): a reply, also one nobody waits for any more, and
+// a read from the middle of a frame. Requests and events the other side starts itself are not, nor is a read that
+// begins or finishes a line: a busy node's small lines are cut at arbitrary read boundaries. A line that cannot be
+// decoded still counts.
+func TestPingActivityCountsRepliesAndFramesStillArriving(t *testing.T) {
+	const (
+		request = `{"id":"n1","method":"state.load","params":{}}` + "\n"
+		event   = `{"event":"session.screen","params":{"session_id":"s1","status":"working"}}` + "\n"
+	)
+	for _, tc := range []struct {
+		name   string
+		reads  []string // one raw read each
+		active bool
+	}{
+		{name: "late reply", reads: []string{`{"id":"h1","result":{}}` + "\n"}, active: true},
+		{name: "late null result", reads: []string{`{"id":"h1","result":null}` + "\n"}, active: true},
+		{name: "late error reply", reads: []string{`{"id":"h1","error":{"message":"busy"}}` + "\n"}, active: true},
+		{name: "reply behind node traffic", reads: []string{request + event + `{"id":"h1","result":{}}` + "\n"}, active: true},
+		{name: "reply cut in two", reads: []string{`{"id":"h1","res`, `ult":{}}` + "\n"}, active: true},
+		{name: "late deadline reply", reads: []string{`{"id":"h1","error":{"message":"context deadline exceeded"}}` + "\n"}, active: false},
+		{name: "request", reads: []string{request}, active: false},
+		{name: "event", reads: []string{event}, active: false},
+		{name: "requests and events in one read", reads: []string{request + event + request + event}, active: false},
+		{name: "small event cut in two", reads: []string{`{"event":"session.screen","par`, `ams":{}}` + "\n"}, active: false},
+		{name: "small lines cut across reads", reads: []string{event + `{"id":"n2","met`, `hod":"state.load"}` + "\n" + `{"ev`, `ent":"x"}` + "\n"}, active: false},
+		{name: "first read of a frame", reads: []string{`{"event":"file.chunk","params":"`}, active: false},
+		{name: "small frame mid-arrival", reads: []string{`{"event":"file.chunk","params":"`, `still arriving`}, active: false},
+		{name: "small frame mid-arrival begun behind a line", reads: []string{event + `{"event":"file.chunk","params":"`, `still arriving`}, active: false},
+		{name: "large frame mid-arrival", reads: []string{`{"event":"file.chunk","params":"`, strings.Repeat("x", pingFrameMiddleBytes+100)}, active: true},
+		{name: "large frame mid-arrival begun behind a line", reads: []string{event + `{"event":"file.chunk","params":"`, strings.Repeat("x", pingFrameMiddleBytes+100)}, active: true},
+		{name: "large event that arrived whole", reads: []string{`{"event":"sessions.changed","params":{"list":"` + strings.Repeat("x", 4096) + `"}}` + "\n"}, active: false},
+		{name: "large event whose pieces all arrived", reads: []string{`{"event":"sessions.changed","params":"`, `more of the list`, `the rest"}` + "\n"}, active: false},
+		{name: "large reply whose pieces all arrived", reads: []string{`{"id":"h1","result":"`, `more of the answer`, `the rest"}` + "\n"}, active: true},
+		{name: "whole event leaves the last reply", reads: []string{`{"id":"h1","result":{}}` + "\n", `{"event":"x"}` + "\n"}, active: true},
+		{name: "line that cannot be decoded", reads: []string{"not json\n"}, active: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := New("h", io.Discard)
+			write := servePipe(t, p)
+			for _, read := range tc.reads {
+				write(read)
+			}
+			if got := p.PingActivity(); got.IsZero() == tc.active {
+				t.Fatalf("PingActivity = %v, active = %v", got, tc.active)
+			}
+		})
+	}
+}
+
+// A deadline reply wakes its caller only after the rest of its raw read is classified: a reply behind it counts, a
+// request or event does not, whole or begun (#8771), nor does another deadline.
+func TestPingActivityClassifiesReadAheadBeforeReply(t *testing.T) {
+	const deadline = `{"id":"h1","error":{"message":"context deadline exceeded"}}`
+	for _, tc := range []struct {
+		name   string
+		tail   string
+		active bool
+	}{
+		{name: "complete reply", tail: `{"id":"h2","result":{"sessions":[]}}` + "\n", active: true},
+		{name: "complete error reply", tail: `{"id":"h2","error":{"message":"busy"}}` + "\n", active: true},
+		{name: "partial result", tail: `{"id":"h2","result":{"sessions":[{"id":"s1","title":"still arriving`, active: true},
+		{name: "complete line that cannot be decoded", tail: "not json\n", active: true},
+		{name: "complete event", tail: `{"event":"file.chunk","params":{"data":"x"}}` + "\n", active: false},
+		{name: "complete request", tail: `{"id":"n1","method":"state.load","params":{"result":"x"}}` + "\n", active: false},
+		{name: "partial event", tail: `{"event":"file.chunk","params":"still arriving`, active: false},
+		{name: "partial request", tail: `{"id":"n1","method":"state.load","params":{"result":"still arriving`, active: false},
+		{name: "request piece inside params with a nested result", tail: `{"result":"still arriving`, active: false},
+		{name: "event piece inside params with a nested result", tail: `"screen":{"result":1},"x":"still`, active: false},
+		{name: "complete second deadline", tail: `{"id":"h2","error":{"message":"context deadline exceeded"}}` + "\n", active: false},
+		{name: "partial second deadline", tail: `{"id":"h2","error":{"message":"context dead`, active: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, w := io.Pipe()
+			p := New("h", io.Discard)
+			reply := make(chan message, 1)
+			p.pending["h1"], p.methods["h1"] = reply, "ping"
+			serveDone := make(chan error, 1)
+			go func() { serveDone <- p.Serve(context.Background(), r) }()
+			t.Cleanup(func() {
+				_ = w.Close()
+				_ = r.Close()
+				p.Close(io.EOF)
+				select {
+				case <-serveDone:
+				case <-time.After(time.Second):
+					t.Error("Serve did not stop")
+				}
+			})
+			writeDone := make(chan error, 1)
+			go func() {
+				_, err := io.WriteString(w, deadline+"\n"+tc.tail)
+				writeDone <- err
+			}()
+			select {
+			case <-reply:
+			case <-time.After(time.Second):
+				t.Fatal("deadline reply was not delivered")
+			}
+			if got := p.PingActivity(); got.IsZero() == tc.active {
+				t.Fatalf("PingActivity = %v, active = %v", got, tc.active)
+			}
+			select {
+			case err := <-writeDone:
+				if err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("combined write did not finish")
+			}
+		})
+	}
+}
+
 func TestCallContextCancelled(t *testing.T) {
 	// The far side never answers, so the caller has to fall back to its context.
 	p := New("h", io.Discard)
 	p.OnRequest = nil
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	if err := p.Call(ctx, "x", nil, nil); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("want the context error, got %v", err)
+	if err := p.Call(ctx, "x", nil, nil); !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrNotSent) {
+		t.Fatalf("want the context error of a request that went out (not ErrNotSent), got %v", err)
 	}
 }
 
@@ -329,8 +523,9 @@ func TestCanceledCallDoesNotSend(t *testing.T) {
 			}
 			defer cancel()
 			wantErr := ctx.Err()
-			if err := p.Call(ctx, "session.start", map[string]string{"prompt": "hello"}, nil); !errors.Is(err, wantErr) {
-				t.Fatalf("call = %v, want %v", err, wantErr)
+			if err := p.Call(ctx, "session.start", map[string]string{"prompt": "hello"}, nil); !errors.Is(err, wantErr) ||
+				!errors.Is(err, ErrNotSent) || err.Error() != wantErr.Error() {
+				t.Fatalf("call = %v, want %v marked not sent", err, wantErr)
 			}
 			if wire.Len() != 0 {
 				t.Fatalf("canceled request reached wire: %s", wire.String())
@@ -352,8 +547,8 @@ func TestCallCanceledDuringMarshalDoesNotSend(t *testing.T) {
 		cancel()
 		return []byte(`{}`), nil
 	})
-	if err := p.Call(ctx, "session.start", params, nil); !errors.Is(err, context.Canceled) {
-		t.Fatalf("call = %v, want canceled", err)
+	if err := p.Call(ctx, "session.start", params, nil); !errors.Is(err, context.Canceled) || !errors.Is(err, ErrNotSent) {
+		t.Fatalf("call = %v, want canceled, not sent", err)
 	}
 	if wire.Len() != 0 {
 		t.Fatalf("canceled request reached wire: %s", wire.String())
@@ -421,8 +616,8 @@ func TestCallCanceledBeforeWriterAvailableDoesNotSend(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("call = %v, want canceled", err)
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrNotSent) {
+			t.Fatalf("call = %v, want canceled, not sent", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("canceled call did not return while the writer was busy")
@@ -446,8 +641,8 @@ func TestCallDeadlineWhileWriterBlocked(t *testing.T) {
 	go func() { done <- p.Call(ctx, "session.start", nil, nil) }()
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("call = %v, want deadline exceeded", err)
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrNotSent) {
+			t.Fatalf("call = %v, want deadline exceeded, not sent", err)
 		}
 		if took := time.Since(start); took > time.Second {
 			t.Fatalf("call took %v, want about its 200ms deadline", took)
@@ -478,8 +673,8 @@ func TestCloseWakesWritersWaitingBehindStuckWrite(t *testing.T) {
 	for name, ch := range map[string]chan error{"call": callDone, "notify": notifyDone} {
 		select {
 		case err := <-ch:
-			if !errors.Is(err, ErrClosed) {
-				t.Fatalf("%s = %v, want ErrClosed", name, err)
+			if !errors.Is(err, ErrClosed) || !errors.Is(err, ErrNotSent) || errors.Is(err, ErrDropped) {
+				t.Fatalf("%s = %v, want ErrClosed, not sent", name, err)
 			}
 		case <-time.After(time.Second):
 			t.Fatalf("%s still blocked behind a stuck write after Close", name)

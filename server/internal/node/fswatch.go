@@ -45,7 +45,8 @@ type fsWatchDir struct {
 type fsWatchParams struct {
 	Dirs []fsWatchDir `json:"dirs"`
 	// Git lists the working directories whose `git status` to watch.
-	Git []string `json:"git"`
+	Git        []string `json:"git"`
+	Generation uint64   `json:"generation,omitempty"`
 }
 
 // fsChanged is the fs.changed event: the folders (as named in fs.watch) and Git directories that changed.
@@ -72,12 +73,14 @@ type fsWatcher struct {
 	running bool
 
 	every, gitEvery time.Duration
+	generation      uint64
+	beforeSet       func() // test gate between baseline work and the final generation-checked assignment
 }
 
 // start binds the watcher to a connection: ctx ending ends any run, emit sends the events.
 func (w *fsWatcher) start(ctx context.Context, emit func(fsChanged)) {
 	w.mu.Lock()
-	w.ctx, w.emit = ctx, emit
+	w.ctx, w.emit, w.generation = ctx, emit, 0
 	if w.every == 0 {
 		w.every, w.gitEvery = fsWatchEvery, gitWatchEvery
 	}
@@ -87,6 +90,12 @@ func (w *fsWatcher) start(ctx context.Context, emit func(fsChanged)) {
 // set replaces the watched set. Folders that stay keep their signature (no event for them); new ones are looked at
 // now, so only changes after this call are reported. An empty set ends the run.
 func (w *fsWatcher) set(n *Node, p fsWatchParams) {
+	w.mu.Lock()
+	if p.Generation > 0 && p.Generation < w.generation {
+		w.mu.Unlock()
+		return // a stale hub generation must not replace a newer watch set
+	}
+	w.mu.Unlock()
 	dirs := p.Dirs
 	if len(dirs) > maxFsWatchDirs {
 		dirs = dirs[:maxFsWatchDirs]
@@ -117,8 +126,17 @@ func (w *fsWatcher) set(n *Node, p fsWatchParams) {
 		}
 	}
 
+	if w.beforeSet != nil {
+		w.beforeSet()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if p.Generation > 0 && p.Generation < w.generation {
+		return // an ambiguous/error return cannot prove this older handler finished last
+	}
+	if p.Generation > 0 {
+		w.generation = p.Generation
+	}
 	w.dirs, w.git = nd, ng
 	if len(nd) == 0 && len(ng) == 0 {
 		w.endLocked()
@@ -151,7 +169,7 @@ func (w *fsWatcher) endLocked() {
 // close drops the set and ends the run (the hub connection is over).
 func (w *fsWatcher) close() {
 	w.mu.Lock()
-	w.dirs, w.git = nil, nil
+	w.dirs, w.git, w.generation = nil, nil, 0
 	w.endLocked()
 	w.mu.Unlock()
 }

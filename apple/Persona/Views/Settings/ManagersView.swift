@@ -100,6 +100,8 @@ private struct ManagerRow: View {
                     Text(manager.name).lineLimit(1)
                 } chips: {
                     if manager.isDefault { Chip(text: String(localized: "Default [Prompt Composer 844b8c]"), look: .tint(Theme.accent)) }
+                    // Out of the switcher now (#9055); its page has the switch.
+                    if manager.hidden { Chip(text: String(localized: "Hidden"), look: .neutral) }
                 }
                 HStack(spacing: Theme.Space.sm) {
                     managerDot(status.tone)
@@ -141,6 +143,7 @@ struct ManagerDetailView: View {
                 Section { Text("This hub's version doesn't support several assistants yet. Update the hub and come back.").foregroundStyle(.secondary) }
             } else if let m {
                 facts(m)
+                if m.builtin { switcherSection(m) }
                 // This device's pushes from it (#1863); one still installing sends none yet.
                 if m.installing == nil { ManagerPushSection(push: push) }
                 actions(m)
@@ -214,6 +217,18 @@ struct ManagerDetailView: View {
                 if !m.online, let at = m.lastSeen { info(String(localized: "Last Synced"), at.formatted(.relative(presentation: .named, unitsStyle: .wide))) }
             }
             .bareListRow()
+        }
+    }
+
+    /// The built-in assistant in the sidebar's switcher or not while it isn't used (#9055). The switch is the user's
+    /// choice; the footer says when the hub lists it all the same.
+    private func switcherSection(_ m: HubManager) -> some View {
+        Section {
+            SettingsSwitchRow(title: String(localized: "Show in Switcher"), symbol: Theme.Icon.view, accessibilityID: "manager.showInSwitcher",
+                              isOn: Binding(get: { !m.hide }, set: { on in Task { await page.showInSwitcher(m, on) } }))
+                .disabled(page.busy || ManagersText.switcherLocked(m))
+        } footer: {
+            Text(ManagersText.switcherNote(m))
         }
     }
 
@@ -363,7 +378,7 @@ private struct ManagerCodeSheet: View {
             .navigationTitle(page.shown.map { String(localized: "Install “\($0.name)”") } ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1) }
+                SheetClose { dismiss() }
             }
         }
         .presentationDetents([.large])

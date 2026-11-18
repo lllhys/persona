@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// Settings › hub › Local Proxy (docs/operations/network.md "Connecting to hub through a local SOCKS5 proxy"): one paired
 /// hub's SOCKS5 proxy, with what it is doing now.

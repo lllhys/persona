@@ -90,9 +90,16 @@ else
   docker volume create "$VOLUME" >/dev/null
   # postgres 18 keeps PGDATA under /var/lib/postgresql/<major>/docker, so mount the parent. The command after the image
   # is pgdocker.ServerArgs (server/internal/pgdocker): fewer and lz4-compressed full page images in the WAL.
-  docker run -d --name "$NAME" --restart unless-stopped -p 127.0.0.1:$PORT:5432 \
+  # Nothing of the hub's existed when this branch began: when docker run fails (image not pulled, port taken), take back
+  # the volume (and a container it got as far as making), else the next run reads that volume as a hub's database.
+  if ! docker run -d --name "$NAME" --restart unless-stopped -p 127.0.0.1:$PORT:5432 \
     -v "$VOLUME":/var/lib/postgresql -e POSTGRES_USER=persona -e POSTGRES_PASSWORD="$PW" -e POSTGRES_DB=persona \
-    postgres:18-alpine postgres -c wal_compression=lz4 -c checkpoint_timeout=15min >/dev/null
+    postgres:18-alpine postgres -c wal_compression=lz4 -c checkpoint_timeout=15min >/dev/null; then
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+    echo "docker run failed: $NAME was not started; its volume was removed, so running this again starts clean" >&2
+    exit 1
+  fi
   [ -f "$CFG" ] || echo '{}' > "$CFG"
   umask 077
   python3 - "$CFG" "postgres://persona:$PW@127.0.0.1:$PORT/persona?sslmode=disable" <<'PY'

@@ -2,7 +2,7 @@
 // pads what its glyph leaves over with letter-spacing: a system Chinese font is 1em wide, two cells of a monospaced font
 // are about 1.2em, so every character had a gap after it. As iOS (which enlarges such a glyph to fill its cells), the
 // Chinese fallback here is a local system font under its own name, scaled with `size-adjust` so its characters are
-// exactly two cells of the terminal's font; the terminal's font stack lists it before the generic `monospace`.
+// exactly two cells of the terminal's font. Its range-limited face goes first so named fallback fonts cannot shadow it.
 // Where no such font is found the terminal keeps its font stack as it was (a browser without `size-adjust` loads the
 // face unscaled: the gaps stay, nothing else changes).
 

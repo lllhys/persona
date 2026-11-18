@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,7 +34,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
+import persona.core.domain.tasks.AssistantLines
+import java.time.LocalDate
 import kotlin.math.PI
 import kotlin.math.max
 import kotlin.math.sin
@@ -52,6 +57,16 @@ private const val SkeletonPulseMillis = 900
  * width so a wider screen keeps their shape. The first stands where your message would, at the trailing edge.
  */
 private val SkeletonRows = listOf(0.59f, 0.81f, 0.49f, 0.7f, 0.38f)
+
+/**
+ * The day over the first thing of each day in Persona's conversation (iOS `DayLine`): "Today · Mon, Nov 3", "Yesterday · …", or
+ * the date (with its year when it is not this year). A caption in the quiet ink, centered; a heading for screen readers.
+ */
+@Composable
+fun DayLine(date: LocalDate, modifier: Modifier = Modifier) {
+    Text(AssistantLines.dayLabel(date).text(), modifier.fillMaxWidth().padding(vertical = Tokens.Space.xs).semantics { heading() },
+        style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3, textAlign = TextAlign.Center)
+}
 
 /**
  * A line saying what the agent is about to do before anything of it shows (iOS `TypingIndicator`): "Claude is getting

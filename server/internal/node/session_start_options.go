@@ -30,10 +30,14 @@ func (n *Node) workSessionOptions(ctx context.Context, name, configuredAgent, ho
 	if !shellcmd.NameRe.MatchString(name) {
 		return opts, workStartRefused("work_launcher_unavailable", "Choose an available launcher on this computer.")
 	}
-	if runtime, model := n.startRuntime(name); runtime != nil {
+	ctx = withStartHost(ctx, host)
+	// A runtime's launcher as a start in that host runs it: where the host's engine runs only its own launchers, its
+	// provider of the name, whatever launcher of the shell's or of Persona's has it too (#8140).
+	if runtime, model := n.startRuntimeIn(ctx, name); runtime != nil {
 		opts.runtime, opts.runtimeModel = runtime, model
 		opts.AgentType = configuredAgent
-		if l, ok := runtime.launcherNamed(name); ok && opts.AgentType == "" {
+		l, own := runtime.launcherNamed(name)
+		if own && opts.AgentType == "" {
 			opts.AgentType = l.Agent
 		}
 		if m, ok := n.managedLauncher(name); ok && opts.AgentType == "" {
@@ -42,19 +46,19 @@ func (n *Node) workSessionOptions(ctx context.Context, name, configuredAgent, ho
 		if opts.AgentType == "" {
 			opts.AgentType = launcherAgentType(name)
 		}
-		opts.PromptRequired = opts.AgentType == "codex"
+		// A Codex the runtime creates with no first message (Paseo's) does not need one.
+		opts.PromptRequired = opts.AgentType == "codex" && !(own && l.PromptOptional)
 		opts.InlinePrompt = true
 		return opts, nil
 	}
-	ctx = withStartHost(ctx, host)
 	kind := n.startKind(ctx)
 	opts.host = kind
 	if err := n.checkStartHost(kind); err != nil {
 		return opts, workStartRefused("work_launcher_unavailable", "The session host cannot start this launcher.")
 	}
 	if _, isRuntime := engineRuntimes[kind]; isRuntime {
-		// startOnEngineRuntime would fall back to its own default provider when
-		// it cannot find this name. Do not offer that as the selected harness.
+		// A launcher the engine does not have would run on another of its providers (one of the same kind, said on the
+		// answer, or its default): not the selected harness.
 		return opts, workStartRefused("work_launcher_unavailable", "Choose a launcher offered by the active runtime.")
 	}
 	if _, err := n.launcherFor(kind); err != nil {
@@ -66,7 +70,12 @@ func (n *Node) workSessionOptions(ctx context.Context, name, configuredAgent, ho
 	}
 	list, err := n.launchers(ctx)
 	found := slices.IndexFunc(list, func(l proto.Launcher) bool { return l.Name == name })
-	if !configured && !isManaged && (err != nil || found < 0) {
+	// Plain claude is offered wherever the shell runs it, listed or not: the list leaves it out when the shell has
+	// another Claude launcher (mergeLaunchers), yet the pickers add it back (assistant machineLaunchers, #5908), an
+	// Agent start runs it, and the other launcher methods know it (knownLauncher). The command check below says whether
+	// this shell has it (#7425).
+	plainClaude := name == "claude"
+	if !configured && !isManaged && !plainClaude && (err != nil || found < 0) {
 		return opts, workStartRefused("work_launcher_unavailable", "This computer does not offer that launcher.")
 	}
 

@@ -2,7 +2,8 @@
 // docs/assistant/inbox.md "Triage status"): their items stay, but may be behind, so the list should not look complete.
 // Neutral, not the triage banner's orange: nothing waits and nothing is wrong with the list itself. Not dismissable: it
 // goes with the next good read (the list's next pull). The same lines and place as Android's InboxUnreadNotice.
-import { triageUnread, type InboxTriage } from "../../lib/inbox";
+import { type InboxTriage } from "../../lib/inbox";
+import { triageUnread } from "../../lib/inbox-page";
 import { Icon } from "../../ui/icons";
 
 export function UnreadNotice({ triage }: { triage: InboxTriage | null | undefined }) {

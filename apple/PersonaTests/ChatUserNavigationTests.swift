@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor struct ChatUserNavigationTests {
     private func index(_ count: Int, history: String = "history-a") -> ChatUserInputIndex {

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setToken } from "./api";
-import { feedCacheScope, readFeedCache, writeFeedCache } from "./feed-cache";
-import { getState, refresh, refreshAssistant, reset } from "./store";
+import { feedCacheScope, readFeedCache, readMemoryPage, writeMemoryPage, writeFeedCache } from "./feed-cache";
+import { getState, markConversationDeleted, refresh, refreshAssistant, reset } from "./store";
 import { resetManagerChoice } from "./manager-choice";
 
 const cached = { machineID: "hub", sessionID: "old", items: [{ id: "one", seq: 1, role: "user", kind: "text", text: "Last visit" }], hasMore: false } as const;
@@ -65,4 +65,19 @@ it("clears persisted content on account changes and logout, including a return t
   setToken("test-credential-a");
   expect(writeFeedCache(oldScope, { ...cached, items: [...cached.items] })).toBe(false);
   expect(readFeedCache()).toBeNull();
+});
+
+it("purges deleted persistent and memory transcripts and refuses late cache writes", () => {
+  const scope = feedCacheScope();
+  const page = { ...cached, items: [...cached.items] };
+  writeMemoryPage(scope, page);
+  writeMemoryPage(scope, { ...page, sessionID: "kept" });
+  expect(readMemoryPage(scope, "hub", "old")).not.toBeNull();
+  markConversationDeleted("hub", "old");
+  expect(readFeedCache()).toBeNull();
+  expect(readMemoryPage(scope, "hub", "old")).toBeNull();
+  expect(readMemoryPage(scope, "hub", "kept")).not.toBeNull();
+  writeMemoryPage(scope, page);
+  expect(writeFeedCache(scope, page)).toBe(false);
+  expect(readMemoryPage(scope, "hub", "old")).toBeNull();
 });

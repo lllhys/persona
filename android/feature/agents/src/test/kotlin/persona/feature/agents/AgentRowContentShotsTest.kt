@@ -49,6 +49,8 @@ class AgentRowContentShotsTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
 
     private val sessions = listOf(
+        """"machine_id":"mac","session_id":"waiting","title":"Start later","state":"idle","status":"idle","agent":"codex",
+           "awaiting_first_message":true,"cwd":"/code/app","pane_id":"waiting-pane","space_name":"app","slot_name":"codex"""",
         """"machine_id":"mac","session_id":"needs","title":"Approve the migration","state":"needs_you","cwd":"/code/app","pane_id":"w1:p1",
            "space_id":"s1","space_name":"app","slot_id":"t1","slot_index":1,"model":"claude-opus-4-6","last_text":"Run the database migration on staging?"""",
         """"machine_id":"mac","session_id":"working","title":"Fix the login bug","state":"working","cwd":"/code/app","pane_id":"w1:p2",
@@ -148,6 +150,10 @@ class AgentRowContentShotsTest {
         }
         rule.runOnIdle { model.grouping(AgentGrouping.Repo) }
         rule.waitForIdle()
+        val idleGroup = model.page.value.list.groups.first { group -> group.idleFold?.rows?.any { it.session.sessionId == "waiting" } == true }
+        rule.runOnIdle { model.showIdle(idleGroup) }
+        rule.waitForIdle()
+        rule.onNode(hasText("Waiting for its first message", substring = true)).assertExists()
         save("by-repository")
         rule.runOnIdle { model.grouping(AgentGrouping.State) }
         rule.waitForIdle()

@@ -38,11 +38,5 @@
   "status_running": "In progress",
   "status_error": "Error",
   "status_done": "Done",
-  "no_content": "No content",
-  "changes": "Changes",
-  "changes_in": "Changes to {name}",
-  "open_file": "Open file",
-  "close": "Close",
-  "show_rest_one": "Show {count} more line",
-  "show_rest_other": "Show {count} more lines"
+  "no_content": "No content"
 }

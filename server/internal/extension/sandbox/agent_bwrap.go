@@ -29,7 +29,7 @@ func probeLinuxAgent() Support {
 	s := Support{OS: "linux"}
 	path, err := exec.LookPath("bwrap")
 	if err != nil {
-		s.Why = i18n.T(i18n.Default, "extension-status.sandbox_no_bwrap")
+		s.setReason("extension-status.sandbox_no_bwrap", nil)
 		return s
 	}
 	trueBin := "true"
@@ -40,7 +40,7 @@ func probeLinuxAgent() Support {
 	defer cancel()
 	args := []string{"--die-with-parent", "--unshare-user", "--bind", "/", "/", "--dev-bind", "/dev", "/dev", "--chdir", "/", "--", trueBin}
 	if out, err := exec.CommandContext(ctx, path, args...).CombinedOutput(); err != nil {
-		s.Why = i18n.T(i18n.Default, "extension-status.sandbox_bwrap_start", i18n.Args{"err": firstLine(out, err)})
+		s.setReason("extension-status.sandbox_bwrap_start", i18n.Args{"err": firstLine(out, err)})
 		return s
 	}
 	s.Bwrap = path
@@ -57,7 +57,7 @@ type linuxAgentDir struct {
 const linuxAgentMaxArgs = 9000
 
 func linuxAgentArgsError(count int) error {
-	return errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_too_many_args", i18n.Args{"count": count, "limit": linuxAgentMaxArgs}))
+	return NewStatusReason("extension-sandbox.agent_too_many_args", i18n.Args{"count": count, "limit": linuxAgentMaxArgs})
 }
 
 func linuxAgentCheckArgs(count int) error {
@@ -178,17 +178,17 @@ func linuxAgentDirs(plan AgentPlan) ([]linuxAgentDir, string, error) {
 		}
 	}
 	if len(dirs) == 0 {
-		return nil, "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_no_data_dir", nil))
+		return nil, "", NewStatusReason("extension-sandbox.agent_no_data_dir", nil)
 	}
 	for _, d := range dirs {
 		if home != "" && (d.real == home || within(home, d.real)) {
-			return nil, "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_home", i18n.Args{"dir": d.real}))
+			return nil, "", NewStatusReason("extension-sandbox.agent_home", i18n.Args{"dir": d.real})
 		}
 		if cwd != "" && (cwd == d.real || within(cwd, d.real)) {
 			rel, _ := filepath.Rel(d.real, cwd)
 			first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
 			if !slices.Contains(agentWorkspaces, first) {
-				return nil, "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_cwd_inside", i18n.Args{"cwd": cwd}))
+				return nil, "", NewStatusReason("extension-sandbox.agent_cwd_inside", i18n.Args{"cwd": cwd})
 			}
 		}
 	}

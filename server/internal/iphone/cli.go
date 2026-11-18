@@ -134,7 +134,7 @@ func command(ctx context.Context, m *Manager, args []string, stdout, stderr io.W
 		}
 		pctx, cancel := context.WithTimeout(ctx, pairTimeout)
 		defer cancel()
-		rec, err := m.Pair(pctx, udid, func(step string) { fmt.Fprintln(stdout, step+"…") })
+		rec, err := m.Pair(pctx, udid, func(step, _ string) { fmt.Fprintln(stdout, step+"…") })
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				return fail(errors.New("the phone didn't confirm in time: unlock it, tap Trust and enter its passcode, then try again"))

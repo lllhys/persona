@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_side_sessions">子セッション</string>
+    <string name="chat_side_sessions_count">子セッション（%1$d）</string>
+    <string name="chat_side_sessions_needs_you">子セッションが対応を待っています</string>
+    <string name="chat_side_sessions_empty">子セッションはありません</string>
+    <string name="chat_side_session_untitled">子セッション</string>
+</resources>

@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -171,8 +172,9 @@ func TestTerminalWatchStreamsAShellByPaneAddress(t *testing.T) {
 	}
 }
 
-// "New terminal": a tab in the workspace, in the workspace's own directory, not focused, named shell; the phone names no
-// directory. The new pane is then in the layout, so its terminal opens at once.
+// "New terminal": a tab in the workspace, in the workspace's own directory, not focused, named shell. The new pane is
+// then in the layout, so its terminal opens at once. With cwd (the file page's Open Terminal Here, #5832) the tab starts
+// in that folder when the read guard lets the page see it; the folder is the tab's directory, never typed into it.
 func TestNewShellOpensATabInTheWorkspace(t *testing.T) {
 	streamingHerdr()
 	n, f, home := herdrNode(t)
@@ -185,7 +187,7 @@ func TestNewShellOpensATabInTheWorkspace(t *testing.T) {
 	f.reply("tab.create", map[string]any{"tab": map[string]any{"tab_id": "w1:t3"}, "root_pane": map[string]any{"pane_id": "w1:p3"}})
 	f.reply("session.snapshot", snapshot(nil, nil, nil, []any{map[string]any{"pane_id": "w1:p3", "tab_id": "w1:t3", "workspace_id": "w1"}}))
 
-	res, err := request(t, n, "panes.new", map[string]any{"workspace_id": "w1", "cwd": "/etc"})
+	res, err := request(t, n, "panes.new", map[string]any{"workspace_id": "w1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +201,41 @@ func TestNewShellOpensATabInTheWorkspace(t *testing.T) {
 		t.Errorf("the new pane is not addressable: %v", err)
 	}
 
+	// Open Terminal Here: the folder asked for, in the workspace named or, with none, the host's first.
+	sub := mkdir(t, filepath.Join(cwd, "sub"))
+	realSub, _ := filepath.EvalSymlinks(sub)
+	for _, params := range []map[string]any{{"workspace_id": "w1", "cwd": "~/proj/sub"}, {"cwd": sub}} {
+		f.reset()
+		f.reply("session.snapshot", paneSnapshot(cwd))
+		if err := n.refreshHosts(context.Background()); err != nil { // the layout with its workspaces again
+			t.Fatal(err)
+		}
+		f.reset()
+		f.reply("tab.create", map[string]any{"tab": map[string]any{"tab_id": "w1:t4"}, "root_pane": map[string]any{"pane_id": "w1:p4"}})
+		f.reply("session.snapshot", paneSnapshot(cwd))
+		if _, err := request(t, n, "panes.new", params); err != nil {
+			t.Fatalf("%v: %v", params, err)
+		}
+		got := f.trace("tab.create")
+		if len(got) != 1 || !strings.Contains(got[0], realSub) || !strings.Contains(got[0], `"workspace_id":"w1"`) {
+			t.Fatalf("%v: tab.create = %v, want %s in w1", params, got, realSub)
+		}
+	}
+	// Not a folder the page may see, nor a file.
+	mkdir(t, filepath.Join(home, ".ssh"))
+	if err := os.WriteFile(filepath.Join(cwd, "a.txt"), []byte("a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.reset()
+	for _, bad := range []string{"~/.ssh", "~/proj/a.txt", "~/proj/nope"} {
+		if _, err := request(t, n, "panes.new", map[string]any{"workspace_id": "w1", "cwd": bad}); err == nil {
+			t.Errorf("opened a terminal in %s", bad)
+		}
+	}
+	if got := f.trace("tab.create"); len(got) != 0 {
+		t.Errorf("tab.create for a refused folder: %v", got)
+	}
+
 	f.reset()
 	if _, err := request(t, n, "panes.new", map[string]any{"workspace_id": "w404"}); err == nil {
 		t.Error("opened a tab in a workspace the host does not have")
@@ -209,6 +246,76 @@ func TestNewShellOpensATabInTheWorkspace(t *testing.T) {
 	if got := f.trace("tab.create"); len(got) != 0 {
 		t.Errorf("tab.create for a refused request: %v", got)
 	}
+}
+
+// "New Terminal" on a computer whose engine runs with no workspace yet (cwd "~", no workspace_id): the shell opens as the
+// first tab of a new workspace in the home folder, named shell, the way an Agent start opens one.
+func TestNewShellOpensAWorkspaceWhenThereIsNone(t *testing.T) {
+	streamingHerdr()
+	n, f, home := herdrNode(t)
+	f.reply("session.snapshot", snapshot(nil, nil, nil, nil))
+	if _, err := n.listPanes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.reset()
+	f.reply("workspace.create", map[string]any{"workspace": map[string]any{"workspace_id": "w1"},
+		"tab": map[string]any{"tab_id": "w1:t1"}, "root_pane": map[string]any{"pane_id": "w1:p1"}})
+	f.reply("session.snapshot", snapshot([]any{map[string]any{"workspace_id": "w1", "label": "home", "number": 1}}, nil, nil,
+		[]any{map[string]any{"pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1"}}))
+
+	res, err := request(t, n, "panes.new", map[string]any{"kind": host.Herdr, "cwd": "~"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res["pane"] != "w1:p1" || res["terminal"] != "pane:w1:p1" || res["tab_id"] != "w1:t1" {
+		t.Errorf("result = %v", res)
+	}
+	realHome, _ := filepath.EvalSymlinks(home)
+	assertTrace(t, f.trace("workspace.create", "tab.create", "tab.rename"), []string{
+		call("workspace.create", map[string]any{"cwd": realHome, "label": filepath.Base(realHome), "focus": false}),
+		call("tab.rename", map[string]any{"tab_id": "w1:t1", "label": "shell"}),
+	})
+	if _, err := n.terminalPane(context.Background(), "pane:w1:p1"); err != nil {
+		t.Errorf("the new pane is not addressable: %v", err)
+	}
+}
+
+// Open Terminal Here from a runtime's session (a Paseo session names its runtime's workspace, which has no terminal):
+// the shell opens in the terminal engine's workspace that holds the folder, not in the first one; with none holding it,
+// in a new workspace there.
+func TestNewShellForARuntimeWorkspaceOpensWhereTheFolderIs(t *testing.T) {
+	streamingHerdr()
+	n, f, home := herdrNode(t)
+	other := mkdir(t, filepath.Join(home, "other"))
+	cwd := mkdir(t, filepath.Join(home, "proj"))
+	paseoWorkspaceOn(n, "wks_1", cwd)
+	herdrSpaces(f, other, cwd)
+	if _, err := n.listPanes(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.reset()
+	herdrSpaces(f, other, cwd)
+	f.reply("tab.create", map[string]any{"tab": map[string]any{"tab_id": "w2:t3"}, "root_pane": map[string]any{"pane_id": "w2:p3"}})
+	if _, err := request(t, n, "panes.new", map[string]any{"workspace_id": "wks_1", "cwd": cwd}); err != nil {
+		t.Fatal(err)
+	}
+	realCwd, _ := filepath.EvalSymlinks(cwd) // the node asks herdr for the resolved folder
+	assertTrace(t, f.trace("workspace.create", "tab.create"), []string{
+		call("tab.create", map[string]any{"workspace_id": "w2", "cwd": realCwd, "label": "shell", "focus": false}),
+	})
+
+	f.reset()
+	f.reply("workspace.list", map[string]any{"workspaces": []any{map[string]any{"workspace_id": "w1", "label": "other", "cwd": other}}})
+	f.reply("workspace.create", map[string]any{"workspace": map[string]any{"workspace_id": "w3"},
+		"tab": map[string]any{"tab_id": "w3:t1"}, "root_pane": map[string]any{"pane_id": "w3:p1"}})
+	f.reply("session.snapshot", snapshot(nil, nil, nil, nil))
+	if _, err := request(t, n, "panes.new", map[string]any{"workspace_id": "wks_1", "cwd": cwd}); err != nil {
+		t.Fatal(err)
+	}
+	assertTrace(t, f.trace("workspace.create", "tab.create", "tab.rename"), []string{
+		call("workspace.create", map[string]any{"cwd": realCwd, "label": "proj", "focus": false}),
+		call("tab.rename", map[string]any{"tab_id": "w3:t1", "label": "shell"}),
+	})
 }
 
 func TestPanesResponseJSON(t *testing.T) {

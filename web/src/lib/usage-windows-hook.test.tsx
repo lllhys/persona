@@ -54,6 +54,15 @@ const backToFront = () => act(() => document.dispatchEvent(new Event("visibility
 const settle = async (f: () => void) => act(async () => f());
 
 describe("useUsageWindows", () => {
+  it("shares the request and response across consumers", async () => {
+    act(() => root!.render(<><Bars /><Bars /></>));
+    expect(calls).toHaveLength(1);
+    await settle(() => calls[0].resolve({ accounts: [account("A")] }));
+    expect(Array.from(host.querySelectorAll("p"), (p) => p.textContent)).toEqual(["A", "A"]);
+    backToFront();
+    expect(calls).toHaveLength(2);
+  });
+
   it("keeps the newer reply when the older one lands after it", async () => {
     expect(calls).toHaveLength(1); // the mount's request, still out
     backToFront();

@@ -8,9 +8,6 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// clipSlack is what a clipped input may carry over maxInputLen: JSON escapes in the kept text.
-const clipSlack = 2048
-
 // pushFilesInput is an MCP push_files call that writes two 500 KB files, both inside files[].
 func pushFilesInput() string {
 	file := strings.Repeat("func main() { fmt.Println(\"hello\") }\n", 500_000/38)
@@ -39,8 +36,8 @@ func toolUses(t *testing.T, meta *Meta, lines ...string) []proto.Item {
 // clippedInput checks a clipped tool input's size and decodes it.
 func clippedInput(t *testing.T, it proto.Item) map[string]any {
 	t.Helper()
-	if len(it.ToolInput) > maxInputLen+clipSlack {
-		t.Errorf("%s input is %d bytes, want about %d", it.ToolName, len(it.ToolInput), maxInputLen)
+	if len(it.ToolInput) > maxInputLen {
+		t.Errorf("%s input is %d bytes, want at most %d", it.ToolName, len(it.ToolInput), maxInputLen)
 	}
 	var in map[string]any
 	if err := json.Unmarshal(it.ToolInput, &in); err != nil {
@@ -113,8 +110,8 @@ func TestManyMediumStringsShareTheBudget(t *testing.T) {
 	}
 	in, _ := json.Marshal(map[string]any{"page_id": "p1", "children": blocks})
 	out := clipJSON(in)
-	if len(in) < 100_000 || len(out) > maxInputLen+clipSlack {
-		t.Fatalf("input %d bytes, clipped %d, want about %d", len(in), len(out), maxInputLen)
+	if len(in) < 100_000 || len(out) > maxInputLen {
+		t.Fatalf("input %d bytes, clipped %d, want at most %d", len(in), len(out), maxInputLen)
 	}
 	var got struct {
 		PageID   string              `json:"page_id"`
@@ -135,7 +132,8 @@ func TestManyMediumStringsShareTheBudget(t *testing.T) {
 	}
 }
 
-// A string only a little over the share stays whole: cut, with its note, it would be longer than it was.
+// A string only a little over the share stays whole: cut, with its note, it would be longer than it was. The third pass
+// may drop whole tail items when those unchanged strings still keep the input over budget.
 func TestStringsJustOverTheShareStayWhole(t *testing.T) {
 	items := make([]map[string]string, 200)
 	for i := range items {
@@ -146,11 +144,18 @@ func TestStringsJustOverTheShareStayWhole(t *testing.T) {
 	if len(out) > len(in) {
 		t.Errorf("clipping made the input longer: %d bytes from %d", len(out), len(in))
 	}
-	var got struct {
-		Items []map[string]string `json:"items"`
+	if len(out) > maxInputLen {
+		t.Errorf("clipped input is %d bytes, want at most %d", len(out), maxInputLen)
 	}
-	if err := json.Unmarshal(out, &got); err != nil || len(got.Items) != len(items) {
-		t.Fatalf("lost its shape: %v", err)
+	var got struct {
+		Items  []map[string]string `json:"items"`
+		Marker struct {
+			Note string `json:"note"`
+		} `json:"zz_persona_clipped"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil || len(in) != 59_611 || len(out) != 24_563 || len(got.Items) != 82 ||
+		got.Marker.Note != "Omitted 118 array items and 0 object fields.\n…（已截断，共 59611 字节）" {
+		t.Fatalf("unexpected exact clip: %v, input %d, output %d, %d items, marker %q", err, len(in), len(out), len(got.Items), got.Marker.Note)
 	}
 	for i, it := range got.Items {
 		if it["text"] != items[i]["text"] {
@@ -170,40 +175,69 @@ func TestEscapedStringsJustOverTheShareAreCut(t *testing.T) {
 	in, _ := json.Marshal(map[string]any{"items": items})
 	out := clipJSON(in)
 	var got struct {
-		Items []map[string]string `json:"items"`
+		Items  []map[string]string `json:"items"`
+		Marker struct {
+			Note string `json:"note"`
+		} `json:"zz_persona_clipped"`
 	}
-	if err := json.Unmarshal(out, &got); err != nil || len(got.Items) != len(items) {
-		t.Fatalf("lost its shape: %v", err)
+	if err := json.Unmarshal(out, &got); err != nil || len(in) != 76_811 || len(out) != 24_575 || len(got.Items) != 64 ||
+		got.Marker.Note != "Omitted 136 array items and 0 object fields.\n…（已截断，共 76811 字节）" {
+		t.Fatalf("unexpected exact clip: %v, input %d, output %d, %d items, marker %q", err, len(in), len(out), len(got.Items), got.Marker.Note)
 	}
 	for i, it := range got.Items {
 		if !strings.HasPrefix(it["text"], quoted[:minInputShare]) || !strings.Contains(it["text"], "已截断") {
 			t.Fatalf("items[%d] = %d bytes, want the first %d bytes and a note", i, len(it["text"]), minInputShare)
 		}
 	}
+	if len(out) > maxInputLen {
+		t.Errorf("clipped input is %d bytes, want at most %d", len(out), maxInputLen)
+	}
 	if len(out) >= len(in) {
 		t.Errorf("clipped input is %d bytes, not shorter than the %d it came from", len(out), len(in))
 	}
 }
 
-// A clipped input of HTML keeps < > & as they are, as Claude wrote them: json.Marshal wrote each as six bytes, so every
-// page and push carried 160,011 bytes for 200 snippets of 61,011, their tails cut where a note cost less than the
-// escapes (#2907). Strings just over the share now stay whole, and a long one is cut to the budget in raw bytes.
+// A clipped input of HTML keeps < > & as they are, as Claude wrote them: json.Marshal wrote each as six bytes (#2907).
+// Strings just over the share stay whole, with whole tail items dropped when their total is over budget; a long string is
+// still cut to its share in raw bytes.
 func TestClippedHTMLIsNotEscaped(t *testing.T) {
+	text := strings.Repeat("<b>&amp;</b> ", 22) + "<p></p>"
 	rows := make([]string, 200)
 	for i := range rows {
-		rows[i] = `{"text":"` + strings.Repeat("<b>&amp;</b> ", 22) + `<p></p>"}`
+		rows[i] = `{"text":"` + text + `"}`
 	}
 	snippets := `{"items":[` + strings.Join(rows, ",") + `]}` // 61,011 bytes
-	if out := clipJSON(json.RawMessage(snippets)); string(out) != snippets {
-		t.Errorf("strings just over the share were cut or escaped: %d bytes from %d: %.80s", len(out), len(snippets), out)
+	out := clipJSON(json.RawMessage(snippets))
+	if len(out) > maxInputLen {
+		t.Fatalf("short HTML strings left %d bytes, want at most %d", len(out), maxInputLen)
+	}
+	for _, sequence := range []string{"u003c", "u003e", "u0026"} {
+		if strings.Contains(string(out), string(rune(92))+sequence) {
+			t.Fatalf("HTML was escaped as %s: %.80s", sequence, out)
+		}
+	}
+	var got struct {
+		Items  []map[string]string `json:"items"`
+		Marker struct {
+			Note string `json:"note"`
+		} `json:"zz_persona_clipped"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil || len(snippets) != 61_011 || len(out) != 24_527 || len(got.Items) != 80 ||
+		got.Marker.Note != "Omitted 120 array items and 0 object fields.\n…（已截断，共 61011 字节）" {
+		t.Fatalf("unexpected exact HTML clip: %v, input %d, output %d, %d items, marker %q", err, len(snippets), len(out), len(got.Items), got.Marker.Note)
+	}
+	for i, item := range got.Items {
+		if item["text"] != text {
+			t.Fatalf("items[%d] changed its text: %q", i, item["text"])
+		}
 	}
 	long := `{"html":"` + strings.Repeat("<li>a &amp; b</li>", 6000) + `"}`
-	out := clipJSON(json.RawMessage(long))
-	var got struct{ HTML string }
-	if err := json.Unmarshal(out, &got); err != nil || len(out) > maxInputLen {
+	out = clipJSON(json.RawMessage(long))
+	var longGot struct{ HTML string }
+	if err := json.Unmarshal(out, &longGot); err != nil || len(out) > maxInputLen {
 		t.Fatalf("a long HTML string was clipped to %d bytes (%v), want valid JSON of at most %d", len(out), err, maxInputLen)
 	}
-	if !strings.HasPrefix(string(out), `{"html":"<li>a &amp; b</li>`) || !strings.Contains(got.HTML, "已截断") {
+	if !strings.HasPrefix(string(out), `{"html":"<li>a &amp; b</li>`) || !strings.Contains(longGot.HTML, "已截断") {
 		t.Errorf("want the HTML as it was, cut with a note: %.80s", out)
 	}
 }

@@ -79,6 +79,7 @@ func (h *Manager) feishuCall(ctx context.Context, method string, params json.Raw
 		ReplyTo    string               `json:"reply_to"`
 		Card       string               `json:"card"`
 		Fallback   string               `json:"fallback"`
+		FullAnswer bool                 `json:"full_answer"`
 		UUID       string               `json:"uuid"`
 		NoDetour   bool                 `json:"no_detour"` // feishu.post / feishu.text: a reply to a parent that is gone fails, it is not sent into the chat
 		Text       string               `json:"text"`
@@ -108,7 +109,9 @@ func (h *Manager) feishuCall(ctx context.Context, method string, params json.Raw
 	case assistantwire.FeishuStatusGet:
 		api, set := h.botAPI()
 		nudge := set.nudgeAfter()
-		st := assistantwire.FeishuStatus{Ready: api != nil, Enabled: set.Enabled, Features: assistantwire.FeishuFeatures(set.Features), NudgeAfter: &nudge}
+		reportDelay := set.sourceReportDelayMinutes()
+		st := assistantwire.FeishuStatus{Ready: api != nil, Enabled: set.Enabled, Features: assistantwire.FeishuFeatures(set.Features),
+			NudgeAfter: &nudge, SourceReportDelayMinutes: &reportDelay, SourceReportFullReply: set.SourceReportFullReply}
 		if set.Owner != nil {
 			st.Owner, st.PairedAt = set.Owner.OpenID, set.Owner.At
 			st.Chats = botSendChats(set)
@@ -146,17 +149,17 @@ func (h *Manager) feishuCall(ctx context.Context, method string, params json.Raw
 		}
 		return map[string]any{"message_id": id}, err
 	case assistantwire.FeishuText:
-		noDetour := a.NoDetour
+		if a.FullAnswer && (!set.SourceReportFullReply || a.ReplyTo == "") {
+			return nil, errBotSourceReply
+		}
+		noDetour := a.NoDetour || a.FullAnswer
 		// A reply under the owner's "/ai" in a group that is not opted in (#6146) is the one send open to such a group.
-		chatID, found, err := aiSourceReply(set, a.ChatID, a.ReplyTo, a.Text, h.bots.clock().UTC())
+		chatID, found, err := aiSourceReply(set, a.ChatID, a.ReplyTo, a.Text, h.bots.clock().UTC(), a.FullAnswer)
 		if err != nil {
 			return nil, err
 		}
 		parent := chatID
 		if found {
-			if !h.useAISourceReply(a.ReplyTo) {
-				return nil, errBotSourceReply
-			}
 			noDetour = true // its original gone: the reply is lost, not sent into a chat the bot may not write in
 		} else {
 			if chatID, err = botSendChat(set, a.ChatID); err != nil {
@@ -173,7 +176,17 @@ func (h *Manager) feishuCall(ctx context.Context, method string, params json.Raw
 		if k := callerKey(a.UUID, feishuMaxUUID); k != "" {
 			replyUUID = k
 		}
-		id, _, err := h.replyOrSendOpt(ctx, api, chatID, a.ReplyTo, feishubot.TypeText, feishubot.TextContent(a.Text), replyUUID, a.InThread, noDetour)
+		msgType, content := feishubot.TypeText, feishubot.TextContent(a.Text)
+		if a.FullAnswer {
+			msgType, content, err = api.AnswerContent(ctx, a.Text)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if found && !h.useAISourceReply(a.ReplyTo, a.FullAnswer) {
+			return nil, errBotSourceReply
+		}
+		id, _, err := h.replyOrSendOpt(ctx, api, chatID, a.ReplyTo, msgType, content, replyUUID, a.InThread, noDetour)
 		if err == nil && !found {
 			h.rememberMessageChat(id, firstNonEmpty(parent, chatID))
 		}

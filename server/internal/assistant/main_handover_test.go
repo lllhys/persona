@@ -219,6 +219,7 @@ func TestMainTaskHandoverKeepsBackgroundSupervision(t *testing.T) {
 	}
 	if res, err := runJSON(t, s, "bg1", "task_review", map[string]any{
 		"todo_id": todo.ID, "verdict": "accepted", "note": "Verified after the main conversation changed",
+		"checks": completeReviewChecks(todoNow(s, todo.ID)),
 	}); err != nil || !strings.Contains(res, "accepted and closed") {
 		t.Fatalf("background acceptance: %s %v", res, err)
 	}

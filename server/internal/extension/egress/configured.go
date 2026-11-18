@@ -62,13 +62,17 @@ func (p *Proxy) resolveAll(ctx context.Context, host string) ([]net.IP, error) {
 	return ips, err
 }
 
-// forSettings says whether an address from an extension's settings may be dialled at port: not loopback, link-local,
-// unspecified, multicast or a metadata service, and not this machine's own address at the hub's or this proxy's port.
+// Unreachable says whether ip is one no extension is let reach by an address its settings name or its owner allowed:
+// loopback, link-local, unspecified, multicast or a metadata service. Private LAN addresses are reachable.
+func Unreachable(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() ||
+		slices.ContainsFunc(metadataIPs, func(m string) bool { return net.ParseIP(m).Equal(ip) })
+}
+
+// forSettings says whether an address from an extension's settings (or one its owner allowed) may be dialled at port:
+// not Unreachable, and not this machine's own address at the hub's or this proxy's port.
 func (p *Proxy) forSettings(ip net.IP, port string) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-		return false
-	}
-	if slices.ContainsFunc(metadataIPs, func(m string) bool { return net.ParseIP(m).Equal(ip) }) {
+	if Unreachable(ip) {
 		return false
 	}
 	_, hubPort, _ := net.SplitHostPort(p.HubAddr)

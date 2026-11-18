@@ -2,10 +2,11 @@
 """App icon: "Paper", the hand-drawn helper waving on warm paper (#709, picked by the user in 2026-11). The art was
 generated and chosen, not drawn here: the iPhone set's icon.png (light) and icon-dark.png (dark) are it, 1024, RGB,
 no alpha. This derives the rest from them: the tinted look, the watch icon (the light one; the system masks it round),
-the Mac sizes and a temporary icon preview:
+the Mac sizes, the desktop app's icons (write_desktop) and a temporary icon preview:
   python3 scripts/assets/make_icon.py
-  python3 scripts/assets/make_icon.py mac     # only the Mac sizes
-  python3 scripts/assets/make_icon.py vision  # only Apple Vision Pro's icon
+  python3 scripts/assets/make_icon.py mac      # only the Mac sizes
+  python3 scripts/assets/make_icon.py vision   # only Apple Vision Pro's icon
+  python3 scripts/assets/make_icon.py desktop  # only the desktop app's icons
 
 The Mac icon is the same picture on macOS's icon grid: the system does not mask a Mac icon, so it carries its own
 rounded square (824 of 1024, centered) and shadow, at every size the Mac App Store asks for (16 to 512, 1x and 2x).
@@ -21,7 +22,7 @@ import os
 import sys
 import tempfile
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 S = 1024
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -132,6 +133,64 @@ def write_vision(picture):
         write_set(os.path.join(folder, "Content.imageset"), images, {"images": [image], "info": info})
 
 
+def tray_marks(picture):
+    """The helper alone, for the desktop app's tray, from the drawing's layer (vision_layers): its outline, eyes, cheek
+    and white body, without the floor shadow under it (mid-tone, neither white nor ink), on a square around it. Gives
+    (crop box, colour drawing, menu bar mark): the colour one is the drawing with its body filled in; the menu bar
+    one is a template (black, the system colours it): the ink strokes thickened to read at 16-18 points, the waving
+    lines thinner so they stay apart."""
+    import numpy as np
+    _, front = vision_layers(picture)
+    a = np.asarray(front).astype(np.float64)
+    alpha = a[..., 3] / 255
+    lum = a[..., :3].mean(-1)
+    cheek = (a[..., 0] > 200) & (a[..., 1] < 150)
+    ink = (alpha > 0.5) & ((lum > 225) | (lum < 120) | cheek)
+    ys, xs = np.nonzero(ink)
+    side = max(ys.max() - ys.min(), xs.max() - xs.min()) + 20
+    cy, cx = (ys.min() + ys.max()) // 2, (xs.min() + xs.max()) // 2
+    box = (cx - side // 2, cy - side // 2, cx + side // 2, cy + side // 2)
+    grey = lambda m: Image.fromarray((m * 255).astype(np.uint8), "L")
+    filled = grey(ink).filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
+    ImageDraw.floodfill(filled, (0, 0), 128)  # the outside; everything else is the helper
+    body = np.asarray(filled) != 128
+    dark = (lum < 120) & (alpha > 0.5)
+    colour = front.copy()
+    colour.putalpha(ImageChops.lighter(grey(body).filter(ImageFilter.GaussianBlur(1.5)), grey(dark & ~body)))
+    strokes = ImageChops.lighter(grey(dark & body).filter(ImageFilter.MaxFilter(25)),
+                                 grey(dark & ~body).filter(ImageFilter.MaxFilter(13)))
+    mark = Image.new("RGBA", picture.size, (0, 0, 0, 0))
+    mark.putalpha(strokes.filter(ImageFilter.GaussianBlur(3)))
+    return colour.crop(box), mark.crop(box)
+
+
+def write_desktop(picture):
+    """The desktop app's icons (desktop/, docs/desktop/desktop.md "Icons"): the app icon electron-builder packs (macOS:
+    the Mac icon above, from which it makes the .icns; Windows: the art in a rounded square, all the sizes an .ico
+    holds), and the tray's: macOS's menu bar template at 1x and 2x (Electron picks @2x and takes a name ending in
+    Template as a template image), Windows' colour helper in an .ico of the notification area's sizes (16 at 100 % to
+    32 at 200 %), and a colour PNG for development runs elsewhere."""
+    build = os.path.join(ROOT, "desktop/build")
+    assets = os.path.join(ROOT, "desktop/src/assets")
+    os.makedirs(build, exist_ok=True)
+    os.makedirs(assets, exist_ok=True)
+    mac_icon(picture).save(os.path.join(build, "icon.png"))
+    big = 4
+    mask = Image.new("L", (S * big, S * big), 0)
+    inset = 32 * big
+    ImageDraw.Draw(mask).rounded_rectangle([inset, inset, S * big - inset - 1, S * big - inset - 1], radius=180 * big, fill=255)
+    win = Image.new("RGBA", (S * big, S * big), (0, 0, 0, 0))
+    win.paste(picture.convert("RGBA").resize((S * big, S * big), Image.LANCZOS), (0, 0), mask)
+    win = win.resize((256, 256), Image.LANCZOS)
+    win.save(os.path.join(build, "icon.ico"), sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
+    colour, mark = tray_marks(picture)
+    mark.resize((18, 18), Image.LANCZOS).save(os.path.join(assets, "trayTemplate.png"))
+    mark.resize((36, 36), Image.LANCZOS).save(os.path.join(assets, "trayTemplate@2x.png"))
+    tray = colour.resize((256, 256), Image.LANCZOS)
+    tray.save(os.path.join(assets, "tray.ico"), sizes=[(s, s) for s in (16, 20, 24, 32, 40, 48)])
+    colour.resize((32, 32), Image.LANCZOS).save(os.path.join(assets, "tray.png"))
+
+
 def main():
     light = Image.open(os.path.join(IOS, "icon.png")).convert("RGB")
     dark = Image.open(os.path.join(IOS, "icon-dark.png")).convert("RGB")
@@ -148,6 +207,7 @@ def main():
     })
     write_mac(light)
     write_vision(light)
+    write_desktop(light)
     write_set(WATCH, {"icon.png": light}, {
         "images": [{"filename": "icon.png", "idiom": "universal", "platform": "watchos", "size": "1024x1024"}],
         "info": {"author": "xcode", "version": 1},
@@ -168,5 +228,8 @@ if __name__ == "__main__":
     elif sys.argv[1:] == ["vision"]:
         write_vision(Image.open(os.path.join(IOS, "icon.png")))
         print("vision icon written")
+    elif sys.argv[1:] == ["desktop"]:
+        write_desktop(Image.open(os.path.join(IOS, "icon.png")).convert("RGB"))
+        print("desktop icons written")
     else:
         main()

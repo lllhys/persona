@@ -89,6 +89,8 @@ func TestCallErrorDelivery(t *testing.T) {
 		{"plain", errors.New("node failed"), 502, "internal", "", nil},
 		{"remote timeout", &rpc.Error{Message: context.DeadlineExceeded.Error()}, 502, "timeout", "", nil},
 		{"coded timeout", &rpc.Error{Code: "timeout", Message: "node deadline"}, 502, "timeout", "", nil},
+		// a session's history its machine has no transcript for: the client's, not the hub's (#9551)
+		{"no transcript", fmt.Errorf("session.items: %w", &rpc.Error{Code: "not_found", Message: "transcript for session 11111111-2222-3333-4444-555555555555 not found"}), 404, "not_found", "", false},
 		{"invalid optional fields", &rpc.Error{Message: "failed", Data: json.RawMessage(`{"delivered":{},"retryable":"yes"}`)}, 502, "internal", "", nil},
 		{"remote unknown", &rpc.Error{Message: "partly typed", Data: json.RawMessage(`{"delivered":"unknown"}`)}, 502, "internal", "unknown", nil},
 		{"remote yes", &rpc.Error{Message: "acknowledgement failed", Data: json.RawMessage(`{"delivered":"yes","retryable":false}`)}, 502, "internal", "yes", false},

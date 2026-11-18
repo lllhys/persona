@@ -1,0 +1,9 @@
+{
+  "request": "{source}（コンピュータ ID：{source_id}）のこの作業を {target}（コンピュータ ID：{target_id}）に引き継いで続けてください：",
+  "line_todo": "- ToDo「{todo}」（ToDo ID：{todo_id}）、Agent「{title}」（セッション ID：{sid}）",
+  "line_agent": "- Agent「{title}」（セッション ID：{sid}、ToDo なし）",
+  "how": "進め方：それぞれ {target} で新しいタスクを始め、プランの continues で元の ToDo を引き継ぎ、進み具合を短く添えてください。新しい Agent が {target} で動き始めてから、{source} の元の Agent を止めてください。終わったらここで教えてください。",
+  "open_chat": "チャットを開く",
+  "sent": "Persona に送りました",
+  "not_sent": "送れませんでした。チャットを開いて理由を確認してください"
+}

@@ -72,12 +72,13 @@ const (
 	// a reply in the parent's thread; the hub refuses any chat but the owner's private chat and the group chats the
 	// owner opted in, and with neither field the call is what it always was.
 	FeishuPost = "feishu.post"
-	// FeishuText: {reply_to?, text, chat_id?, in_thread?, uuid?, no_detour?} → {message_id}: plain text as a reply,
+	// FeishuText: {reply_to?, text, chat_id?, in_thread?, uuid?, no_detour?, full_answer?} → {message_id}: plain text as a reply,
 	// else into the owner's chat; chat_id, in_thread, uuid (cut to 50 characters here) and no_detour are FeishuPost's.
 	// One more place is open to it (#6146): a reply to a message the hub took as the owner's "@bot /ai …" in a group that
 	// is not opted in (FeishuFromElsewhere), which lands under that message and nowhere else in the group (at most
 	// 2000 characters, never a detour into the chat); a send into that group, or a reply to any other message in it,
-	// is refused as ever.
+	// is refused as ever. With full_answer, the owner must enable full replies, a parent is required, and the
+	// answer is sent as literal rich text, or as a text attachment when too large for inline delivery.
 	FeishuText = "feishu.text"
 	// FeishuUpdateCard: {message_id, card} → {}.
 	FeishuUpdateCard = "feishu.update_card"
@@ -134,6 +135,10 @@ const (
 	// for); without one, or with another channel's, the hub refuses. ok false (status as InteractionsGet's) when it is no
 	// longer pending, an error when the answer does not fit it.
 	InteractionsResolve = "interactions.resolve"
+	// InteractionsClarify: {interaction_id, text, client_msg_id, action, channel, chat_id, message_id} → {ok, status}:
+	// an owner's non-final question on a prepared approval. It consumes the same fresh, card/channel-bound owner action
+	// as InteractionsResolve but never supplies or creates a Resolution; the original card remains pending.
+	InteractionsClarify = "interactions.clarify"
 
 	// CodeCannotSend: a channel has nowhere to send to yet (channel.CodeCannotSend); CodeNeedsTriageModel: a plugin
 	// can't be switched on before the inbox's triage model is set (409 to the app).
@@ -258,10 +263,17 @@ type FeishuStatus struct {
 	// NudgeAfter is the bot's setting nudge_after (#6084): minutes a card waits unanswered before the one nudge under it,
 	// 0 off. nil (a status from before the setting) is NudgeAfterDefault.
 	NudgeAfter *int `json:"nudge_after,omitempty"`
+	// SourceReportDelayMinutes is the preview window before replying to a source group. Zero skips the preview.
+	SourceReportDelayMinutes *int `json:"source_report_delay_minutes,omitempty"`
+	// SourceReportFullReply is the owner's opt-in to posting the task's final answer in its source group.
+	SourceReportFullReply bool `json:"source_report_full_reply,omitempty"`
 }
 
 // NudgeAfterDefault is nudge_after when never set: minutes a card of the Lark bot waits before it is nudged.
 const NudgeAfterDefault = 60
+
+// SourceReportDelayDefault is the preview window, in minutes, when it has never been set.
+const SourceReportDelayDefault = 10
 
 // InteractionAnnounced is interaction.announced's params.
 type InteractionAnnounced struct {

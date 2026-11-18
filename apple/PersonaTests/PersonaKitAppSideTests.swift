@@ -20,7 +20,7 @@ struct PersonaKitAppSideTests {
         #expect(RenderedFence.kind(nil) == nil)
     }
 
-    /// Paths follow the same ends: a CJK character or full-width punctuation right after a path is not part of it.
+    /// Paths end at the same punctuation as links (full-width too), and before a CJK word right after an extension.
     @Test func pathsEndLikeLinks() {
         #expect(FilePaths.find(in: "改了 ios/Persona/Foo.swift里的函数") == ["ios/Persona/Foo.swift"])
         #expect(FilePaths.find(in: "日志在 /var/log/app.log，看一下") == ["/var/log/app.log"])
@@ -28,7 +28,7 @@ struct PersonaKitAppSideTests {
     }
 
     /// In backticks a path is whole, Chinese names and spaces too (the files an agent made, #1543): not cut at the
-    /// first non-ASCII character into its folder. Outside them paths end as before; order is the text's.
+    /// first space into its folder. Outside them paths end at a space or punctuation; order is the text's.
     @Test func aPathInBackticksIsWhole() {
         #expect(FilePaths.find(in: "对比文档 `/Users/me/code/blog/docs/季度报告.docx`，表格 `~/out/Q4 差异.xlsx`")
                 == ["/Users/me/code/blog/docs/季度报告.docx", "~/out/Q4 差异.xlsx"])

@@ -1,0 +1,14 @@
+{
+  "call": "加急来电：{title}",
+  "answered": "已接",
+  "answered_for": "已接 · {duration}",
+  "missed": "未接",
+  "missed_twice": "未接（打了 2 次）",
+  "declined": "已拒接",
+  "cancelled": "已在别处处理",
+  "ringing": "正在响",
+  "you_asked": "你让它打的",
+  "why": "为什么打给你",
+  "outcome": "结果",
+  "transcript": "通话文字"
+}

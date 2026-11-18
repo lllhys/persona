@@ -8,12 +8,14 @@ vi.hoisted(() => {
   Element.prototype.scrollIntoView ??= function () {};
 });
 vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
+import { toast } from "../../ui/atoms";
 import { resetExtensionRoot, setCsrf, setTransport } from "../api";
 import { Extensions } from "./Extensions";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement, root: Root;
 let puts: { path: string; body: unknown }[];
+let sent: { method: string; path: string; body?: unknown }[];
 let sandbox: Record<string, unknown>;
 const flush = async () => { for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); }); };
 const ext = () => ({ id: "rsshub", name: "RSSHub", source: "installed", status: "running", enabled: true, permissions: [], sandbox });
@@ -29,9 +31,26 @@ beforeEach(() => {
   resetExtensionRoot();
   setCsrf("tok");
   puts = [];
-  sandbox = { enabled: true, default: true, chosen: false, active: true, egress: { allowed: 12, denied: 3, last_denied: "rss.example.org:443" } };
+  sent = [];
+  vi.mocked(toast).mockClear();
+  const at = new Date(Date.now() - 180_000).toISOString();
+  sandbox = { enabled: true, default: true, chosen: false, active: true, owner_allowed: [{ host: "feeds.example.net", port: "8443", at }],
+    egress: { allowed: 12, denied: 3, last_denied: "rss.example.org", recent_denied: [{ target: "rss.example.org", count: 2, at }, { target: "img.example.net", count: 1, at }] } };
   setTransport(async (path, init) => {
     const reply = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+    if (init?.method === "POST" && path.includes("/egress/allow")) {
+      const body = JSON.parse(String(init.body));
+      sent.push({ method: "POST", path, body });
+      if (String(body.host).includes("*")) return new Response(JSON.stringify({ error: "只能放行具体的地址，不能用 *。", code: "invalid_host" }), { status: 400 });
+      sandbox = { ...sandbox, owner_allowed: [...(sandbox.owner_allowed as object[]), { host: body.host, at }] };
+      return reply(ext());
+    }
+    if (init?.method === "DELETE" && path.includes("/egress/allow")) {
+      sent.push({ method: "DELETE", path });
+      const host = new URL(path, "http://x").searchParams.get("host");
+      sandbox = { ...sandbox, owner_allowed: (sandbox.owner_allowed as { host: string; port?: string }[]).filter((a) => (a.port ? `${a.host}:${a.port}` : a.host) !== host) };
+      return reply(ext());
+    }
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       puts.push({ path, body });
@@ -86,5 +105,44 @@ describe("网络与隔离 (#5696)", () => {
   it("is closed without the link, and absent for an extension the hub does not run from a package", async () => {
     await render("");
     expect(host.querySelector('[data-extension-network="rsshub"]')).toBeNull();
+  });
+
+  it("allows a blocked address at once, with Undo, and revokes one (#5697)", async () => {
+    await render();
+    const block = () => host.querySelector('[data-extension-network="rsshub"]')!;
+    expect(block().querySelector("[data-hosts-blocked]")!.textContent).toContain("rss.example.org");
+    expect(block().querySelector("[data-hosts-allowed]")!.textContent).toContain("feeds.example.net:8443");
+    expect(block().querySelector("[data-hosts-allowed]")!.textContent).toContain("只这个端口");
+    const allowButton = [...block().querySelectorAll("[data-hosts-blocked] button")][0] as HTMLButtonElement;
+    await act(async () => allowButton.click());
+    await flush();
+    expect(dialog()).toBeNull();
+    expect(sent[0]).toEqual({ method: "POST", path: "/api/v1/admin/extensions/rsshub/egress/allow", body: { host: "rss.example.org" } });
+    expect(block().querySelector("[data-hosts-blocked]")!.textContent).not.toContain("rss.example.org");
+    expect(block().querySelector("[data-hosts-allowed]")!.textContent).toContain("任何端口");
+    const [, , action] = vi.mocked(toast).mock.calls.at(-1)!;
+    expect(action?.label).toBe("撤销");
+    await act(async () => action!.run());
+    await flush();
+    expect(sent[1]).toEqual({ method: "DELETE", path: "/api/v1/admin/extensions/rsshub/egress/allow?host=rss.example.org" });
+
+    const revoke = [...block().querySelectorAll("[data-hosts-allowed] button")].find((b) => b.textContent?.trim() === "撤销") as HTMLButtonElement;
+    await act(async () => revoke.click());
+    await flush();
+    expect(sent[2]).toEqual({ method: "DELETE", path: "/api/v1/admin/extensions/rsshub/egress/allow?host=feeds.example.net%3A8443" });
+  });
+
+  it("says what is wrong with a typed address under the field", async () => {
+    await render();
+    const field = host.querySelector<HTMLInputElement>('input[aria-label="给 RSSHub 放行的地址"]')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setValue.call(field, "*.example.org");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => field.form!.requestSubmit());
+    await flush();
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(field.form!.textContent).toContain("只能放行具体的地址，不能用 *。");
   });
 });

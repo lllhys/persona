@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// A way through to a paired hub when its own addresses do not answer: its SSH tunnel
 /// (docs/operations/network.md「Connecting to hub through SSH」), its local SOCKS5 proxy ("Connecting to hub through a local SOCKS5
@@ -187,7 +188,8 @@ extension AppModel {
             outsideRuns[group, default: 1] -= 1
             if outsideRuns[group] == 0 {
                 outsideRuns[group] = nil
-                if link(group)?.live.suspended != false {
+                // Not those a call to Persona still goes through (#9290): closing them would cut its voice.
+                if link(group)?.live.suspended != false, !callKeepsTunnels(group) {
                     for h in registry.members(group) { closeTunnels(h.id, forget: false) }
                 }
             }
@@ -210,10 +212,38 @@ extension AppModel {
     }
 
     /// The app went to the background: every tunnel closes (iOS would cut them anyway), but those of a group whose
-    /// button is still on its way (`outside`), which closes them itself when it is done.
+    /// button is still on its way (`outside`), which closes them itself when it is done, and those of a call to Persona's
+    /// group (#9290): the call goes on in the background, and its voice's socket may go through one.
     func closeTunnelsForBackground() {
-        guard !outsideRuns.isEmpty else { return closeAllTunnels() }
-        for h in registry.hubs where outsideRuns[h.group] == nil { closeTunnels(h.id, forget: false) }
+        var keep = Set(outsideRuns.keys)
+        if let group = callTunnelGroup { keep.insert(group) }
+        guard !keep.isEmpty else { return closeAllTunnels() }
+        for h in registry.hubs where !keep.contains(h.group) { closeTunnels(h.id, forget: false) }
+    }
+
+    /// The group a system call is on (#9290), or the phone's voice chat on iOS (#9887 one button: it goes on in the
+    /// background too): its voice's socket may go through one of the group's tunnels, so none of them closes for the
+    /// background while it is on.
+    var callTunnelGroup: String? {
+        #if DEBUG
+        let calls = voiceCallsForTests ?? .shared
+        #else
+        let calls = VoiceCalls.shared
+        #endif
+        guard let call = calls.current, !call.phase.isEnded,
+              call.surface == .call || (call.surface == .phone && VoiceCalls.keepsChatAway && call.meeting == nil) else { return nil }
+        return call.key.group
+    }
+
+    /// Whether a call to Persona keeps `group`'s tunnels open: every background cleanup asks (`closeTunnelsForBackground`,
+    /// a button outside the app done, the call's own end).
+    func callKeepsTunnels(_ group: String) -> Bool { callTunnelGroup == group }
+
+    /// A call to Persona on `group` ended (#9290). In the background its tunnels close now, as they would have when the
+    /// app went there, unless a button outside the app still uses them (it closes them itself) or another call does.
+    func callEnded(group: String) {
+        guard link(group)?.live.suspended == true, outsideRuns[group] == nil, !callKeepsTunnels(group) else { return }
+        for h in registry.members(group) { closeTunnels(h.id, forget: false) }
     }
 
     /// Every tunnel of every hub closes (the app went to the background, or there is no hub left).

@@ -49,6 +49,7 @@ class HealthEntryScreenTest {
         val starts = mutableListOf<SessionKey>()
         val targets = mutableListOf<SessionKey>()
         val toMain = mutableListOf<String>()
+        val embeddedHealth = mutableMapOf<SessionKey, Boolean>()
         override suspend fun refresh() = Unit
         override suspend fun startConversation(): SessionKey = SessionKey("mac", "new-${starts.size + 1}").also { starts += it }
         override suspend fun spaceConversations(space: String): List<Session> { listed += space; return health }
@@ -66,7 +67,10 @@ class HealthEntryScreenTest {
             PersonaTheme(reduceMotion = true) {
                 CompositionLocalProvider(LocalAssistantSidebarHost provides sidebar) {
                     AssistantScreen(navigator, hub, hub, hub::startConversation, composerService = null, mainConversationSender = hub,
-                        chatContent = { Text("chat:${it.sessionId}") })
+                        assistantChatContent = { key, options ->
+                            hub.embeddedHealth[key] = options.healthChat
+                            Text("chat:${key.sessionId}")
+                        })
                 }
             }
         }
@@ -94,6 +98,8 @@ class HealthEntryScreenTest {
         health(sidebar)
         waitFor("chat:newest")
         assertEquals(listOf(AssistantSpace.HEALTH), hub.listed)
+        assertEquals(false, hub.embeddedHealth[main])
+        assertEquals(true, hub.embeddedHealth[SessionKey("mac", "newest")])
 
         // New on a health chat: the health space's page, with its history; nothing is started yet.
         rule.onNodeWithContentDescription("New health chat").performClick()
@@ -105,6 +111,7 @@ class HealthEntryScreenTest {
 
         send("How did I sleep?")
         waitFor("chat:h-1")
+        assertEquals(true, hub.embeddedHealth[SessionKey("mac", "h-1")])
         assertEquals(listOf(AssistantSpace.HEALTH), hub.spaceStarts)
         assertEquals(listOf(SessionKey("mac", "h-1")), hub.targets)
         assertEquals("never the main chat or a plain new one", emptyList<String>(), hub.toMain)
@@ -120,6 +127,7 @@ class HealthEntryScreenTest {
         assertEquals(emptyList<String>(), hub.spaceStarts)
         send("Log my weight")
         waitFor("chat:h-1")
+        assertEquals(true, hub.embeddedHealth[SessionKey("mac", "h-1")])
         assertEquals(listOf(AssistantSpace.HEALTH), hub.spaceStarts)
         assertEquals(emptyList<String>(), hub.toMain)
     }

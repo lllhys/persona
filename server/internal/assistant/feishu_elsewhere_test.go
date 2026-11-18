@@ -24,6 +24,8 @@ import (
 // is done or accepted tells that group once. All ids are placeholders.
 
 const (
+	sourceReportDelay = 10 * time.Minute
+
 	askSrc  = "oc_src"  // the group the request is made in (not opted in)
 	askHome = "oc_home" // the home topic group
 )
@@ -31,13 +33,15 @@ const (
 // askEnv is a paired bot with a home topic group; the fake hub gives the messages the bot sends there an id and a topic.
 type askEnv struct {
 	*threadEnv
-	database *db.DB
-	home     string                    // the status's home_chat ("" for none)
-	thread   string                    // the topic the home group gives a new message ("" for none)
-	readable map[string]map[string]any // messages the bot can read back, by id
-	roots    int
-	dmRoots  int // new messages the bot sent into the owner's private chat
-	clock    *fakeClock
+	database    *db.DB
+	home        string                    // the status's home_chat ("" for none)
+	thread      string                    // the topic the home group gives a new message ("" for none)
+	readable    map[string]map[string]any // messages the bot can read back, by id
+	roots       int
+	reportDelay *int // nil emulates a Hub from before this setting
+	fullReply   bool
+	dmRoots     int // new messages the bot sent into the owner's private chat
+	clock       *fakeClock
 }
 
 func newAskEnv(t *testing.T, database *db.DB) *askEnv {
@@ -71,7 +75,7 @@ func newAskEnv(t *testing.T, database *db.DB) *askEnv {
 			chats = append(chats, e.home)
 		}
 		return FeishuStatus{Ready: true, Enabled: true, Owner: "ou_owner", PairedAt: time.Unix(100, 0), Features: e.features, PublicURL: e.publicURL,
-			Chats: chats, HomeChat: e.home}, nil
+			Chats: chats, HomeChat: e.home, SourceReportDelayMinutes: e.reportDelay, SourceReportFullReply: e.fullReply}, nil
 	})
 	e.f.answerApp(AppFeishu, FeishuText, func(p json.RawMessage) (any, error) {
 		var m map[string]any
@@ -192,7 +196,7 @@ func TestElsewhereOpensATopicAndATodo(t *testing.T) {
 		if want := (TodoThread{Channel: channel.Feishu, ChatID: askHome, ThreadID: "omt_home", Title: todo.Title}); todo.Thread == nil || *todo.Thread != want {
 			t.Fatalf("thread %+v, want %+v", todo.Thread, want)
 		}
-		if want := (TodoSource{Channel: channel.Feishu, ChatID: askSrc, MessageID: "om_ask1"}); todo.Source == nil || *todo.Source != want {
+		if want := (TodoSource{Channel: channel.Feishu, ChatID: askSrc, MessageID: "om_ask1", Handoff: "om_root1"}); todo.Source == nil || *todo.Source != want {
 			t.Fatalf("source %+v, want %+v", todo.Source, want)
 		}
 		if todo.Supervision == nil || todo.Supervision.Supervisor != "mask" {
@@ -224,7 +228,7 @@ func TestElsewhereOpensATopicAndATodo(t *testing.T) {
 		}
 		// The topic is told the to-do is open (a reply under the first message, in the topic), and the main conversation
 		// gets the words; the run answers into the topic.
-		want := e.said("thread_open_done", i18n.Args{"title": todo.Title}) + "\nhttps://hub.example.com/todos?id=" + todo.ID
+		want := e.said("thread_open_done", i18n.Args{"title": todo.Title}) + "\nhttps://hub.example.com/todos/" + todo.ID
 		var told bool
 		for _, n := range roots[1:] {
 			if n["text"] == want && n["reply_to"] == "om_root1" && n["in_thread"] == true {
@@ -454,7 +458,7 @@ func TestElsewhereWithNoHomeGroupIsTakenInThePrivateChat(t *testing.T) {
 		}
 		// Told it is open, as a plain reply under the first message; the main conversation gets the words, and is told
 		// there is no topic; the run answers under the first message in the private chat.
-		want := e.said("thread_open_done", i18n.Args{"title": todo.Title}) + "\nhttps://hub.example.com/todos?id=" + todo.ID
+		want := e.said("thread_open_done", i18n.Args{"title": todo.Title}) + "\nhttps://hub.example.com/todos/" + todo.ID
 		if dm[1]["text"] != want || dm[1]["reply_to"] != "om_dm1" || dm[1]["in_thread"] != nil {
 			t.Fatalf("the second message %v, want %q under om_dm1", dm[1], want)
 		}
@@ -709,6 +713,52 @@ func TestSourceReportWhenDone(t *testing.T) {
 	})
 }
 
+func TestSourceReportWithConfiguredDelay(t *testing.T) {
+	for _, minutes := range []int{0, 1} {
+		t.Run(fmt.Sprintf("%d_minutes", minutes), func(t *testing.T) {
+			forStores(t, func(t *testing.T, e *askEnv, database *db.DB) {
+				e.reportDelay = &minutes
+				e.ask(ownerAsk("om_configured", "/ai Check the release notes"))
+				id := onlyTodo(e.s).ID
+				e.outcome(id, "The release notes are ready.\nhttps://example.com/notes")
+				e.closeDone(id)
+
+				want := e.said("source_report_done")
+				if database != nil {
+					want = "The release notes are ready."
+				}
+				if minutes == 0 {
+					if got := e.notices(); len(got) != 0 {
+						t.Fatalf("immediate reply had a preview: %v", got)
+					}
+					e.clock.advance(0)
+				} else {
+					preview := e.said("source_report_notice", i18n.Args{"minutes": minutes, "text": want})
+					if got := textsTo(e.f, askHome); !slices.ContainsFunc(got, func(p map[string]any) bool { return p["text"] == preview }) {
+						t.Fatalf("no preview with the configured delay: %v", got)
+					}
+					// Changing the setting after preview does not shorten the announced time.
+					zero := 0
+					e.reportDelay = &zero
+					e.clock.advance(time.Duration(minutes)*time.Minute - time.Second)
+					if got := reportsTo(e.f, askSrc, "om_configured"); len(got) != 0 {
+						t.Fatalf("reported before the preview expired: %v", got)
+					}
+					e.clock.advance(time.Second)
+				}
+				got := reportsTo(e.f, askSrc, "om_configured")
+				if len(got) != 1 || got[0]["text"] != want {
+					t.Fatalf("reports at %d minutes: %v, want one saying %q", minutes, got, want)
+				}
+				e.clock.advance(sourceReportWait)
+				if got := reportsTo(e.f, askSrc, "om_configured"); len(got) != 1 {
+					t.Fatalf("reported again after the outcome timer: %v", got)
+				}
+			})
+		})
+	}
+}
+
 // A start that failed has no outcome to wait for: the notice comes after a moment, and what is told is only that it could
 // not be done, never why.
 func TestSourceReportWhenTheStartFailed(t *testing.T) {
@@ -857,7 +907,16 @@ func TestSourceReportWhenAccepted(t *testing.T) {
 		e.outcome(id, "已修好")
 		// Done by a path that does not read an outcome, so the wait is what the accepted todo's report depends on.
 		done := time.Now().UTC()
-		if _, ok := e.s.applyTodoRow(ctx, id, db.TodoRow{ID: id, Title: "修登录崩溃", DoneAt: &done, UpdatedAt: done}, nil); !ok {
+		row := db.TodoRow{ID: id, Title: "修登录崩溃", DoneAt: &done, UpdatedAt: done}
+		if database != nil {
+			ready := true
+			saved, err := database.UpdateTodo(ctx, id, nil, nil, &ready, done)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row = *saved
+		}
+		if _, ok := e.s.applyTodoRow(ctx, id, row, nil); !ok {
 			t.Fatal("not applied")
 		}
 		s := e.s
@@ -1093,10 +1152,10 @@ func TestSourceReportIsClaimedOnce(t *testing.T) {
 	e.ask(ownerAsk("om_c1", "/ai 修登录崩溃"))
 	id := onlyTodo(e.s).ID
 	// Another assistant on the store planned and told it first: that is in the database, not in this one's memory.
-	if ok, err := database.PlanTodoSourceReport(context.Background(), id, "别处说过了", time.Now()); err != nil || !ok {
+	if ok, err := database.PlanTodoSourceReport(context.Background(), id, "别处说过了", time.Now(), false, onlyTodo(e.s).DoneAt); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	if _, _, ok, err := database.ClaimTodoSourceReport(context.Background(), id, time.Now().Add(time.Hour), sourceReportTries); err != nil || !ok {
+	if _, _, _, ok, err := database.ClaimTodoSourceReport(context.Background(), id, time.Now().Add(time.Hour), sourceReportTries); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	e.closeDone(id)
@@ -1555,7 +1614,7 @@ func TestSourceReportClaimFollowsThePlanInTheStore(t *testing.T) {
 		t.Fatal(changed, err)
 	}
 	later := e.clock.Now().Add(time.Hour)
-	if ok, err := database.PlanTodoSourceReport(ctx, id, "别处重排的结论", later); err != nil || !ok {
+	if ok, err := database.PlanTodoSourceReport(ctx, id, "别处重排的结论", later, false, onlyTodo(e.s).DoneAt); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
 	e.clock.advance(sourceReportDelay + time.Second) // this one's own time: its timer finds the store's later

@@ -1,0 +1,17 @@
+{
+  "title": "iPhone操作",
+  "allow": "このコンピューターを通してアシスタントにiPhoneを操作させる",
+  "allow_detail": "このコンピューター経由でiPhoneの画面の確認、タップ、入力、スクリーンショット",
+  "turn_on_failed": "オンにできませんでした：{error}",
+  "turn_off_failed": "オフにできませんでした：{error}",
+  "install": "iPhoneヘルパーをインストール",
+  "retry": "もう一度試す",
+  "check_again": "再確認",
+  "pair": "ペアリング",
+  "prepare": "準備",
+  "details": "詳細",
+  "more": "{name}のその他の操作",
+  "forget": "このiPhoneの登録を解除",
+  "forget_confirm": "登録を解除",
+  "forget_detail": "このコンピューターはこのiPhoneとのペアリングを削除します。もう一度ペアリングするにはケーブルが必要です。"
+}

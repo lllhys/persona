@@ -1,3 +1,4 @@
+import PersonaWire
 import SwiftUI
 
 /// A recent setup as New Agent's card shows it, and what tapping it puts in the form (#2134).
@@ -25,8 +26,10 @@ nonisolated struct RecentSetupCard: Equatable {
                     mode: claude ? setup.mode : nil, effort: claude ? setup.effort : nil)
     }
 
-    /// Line 1: the folder's last path component, "~" for the home folder.
+    /// Line 1: the folder's last path component, "~" for the home folder; none: a temporary session (a start in Claude's
+    /// desktop app with no folder, #5480).
     static func folder(_ cwd: String, home: String?) -> String {
+        if cwd.isEmpty { return String(localized: "Temporary Session") }
         let trimmed = cwd.count > 1 && cwd.hasSuffix("/") ? String(cwd.dropLast()) : cwd
         if trimmed == "~" || (home.map { !$0.isEmpty && trimmed == $0 } ?? false) { return "~" }
         let last = (trimmed as NSString).lastPathComponent

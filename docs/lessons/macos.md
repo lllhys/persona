@@ -43,21 +43,21 @@ Pitfalls, unusual behavior, and the decisions made at the time (formerly in `CLA
   #1080 used `contentShape(.contextMenuPreview, …)` in `TaskViews.swift`; that member is `@available(macOS, unavailable)`. iOS built, unit tests and screenshots worked, but Mac on master no longer compiled.
   Use `menuPreviewShape(_:)` for long-press preview shapes (sets the shape on iOS, does nothing on Mac).
 
-- The Mac app (`PersonaMac`, `docs/apple/mac.md`) shares pages with iOS. Add same-name Mac versions of iOS-only SwiftUI modifiers / enum members in `apple/Mac/Compat/` (system symbols marked unavailable yield to same-name declarations in the module).
-  Write same-name AppKit types for UIKit views under `apple/Mac/`; add only `#if os(iOS)` to iOS files. Like the app, the Mac target defaults to MainActor isolation: Compat pure-data types and `NSImage` helpers used by decoding threads must be `nonisolated`.
+- The Mac app (`PersonaMac`, `docs/archive/apple/mac.md`) shared pages with iOS. It added same-name Mac versions of iOS-only SwiftUI modifiers / enum members in its native-Mac compatibility layer (system symbols marked unavailable yielded to same-name declarations in the module).
+  It wrote same-name AppKit types for UIKit views under that layer; only `#if os(iOS)` was added to iOS files. Like the app, the Mac target defaulted to MainActor isolation: Compat pure-data types and `NSImage` helpers used by decoding threads had to be `nonisolated`.
 - Do not put a page's split navigation (`SplitNavigation`, the iOS Persona page's `NavigationSplitView`) inside another `NavigationSplitView`'s detail column. The inner detail column lays out as if the outer sidebar is still ahead of it,
   shifting the entire chat right by one sidebar width and clipping the composer (2026-10-31). The Mac shell's six-item sidebar is a column in an HStack.
-- When a Mac is locked, `screencapture` captures only the lock screen. Use `scripts/app/mac_shot.sh` for screenshots (the app renders its own PNG with `cacheDisplay`; `docs/apple/mac.md`, “Build, run, screenshot”).
+- When a Mac is locked, `screencapture` captures only the lock screen. The retired native app rendered its own PNG with `cacheDisplay`; `docs/archive/apple/mac.md`, “Build, run, screenshot”.
   It cannot render frosted glass / Liquid Glass; SwiftUI `List` rows must be redrawn separately. In dark mode, List-row text uses light-scheme colors; whether this is a screenshot issue is still unconfirmed.
   Use `-macAppearance` for light/dark mode; `-AppleInterfaceStyle Dark` does not work as a launch argument.
 - Running `Persona.app/Contents/MacOS/Persona` directly accepts launch arguments (`-demo.on YES -tab dev`…); unsigned Debug builds are not sandboxed and may write `/tmp`. With `open`, use `open -n Persona.app --args -demo.on YES …` to pass arguments (without `--args` they are lost, tested 2026-11-02).
 - On a locked Mac, `xcodebuild test -scheme PersonaMac` reports “The test runner hung before establishing connection” (2026-11-01). Test host Persona.app reads the keychain at startup (`Keychain.serverConfig` → `SecItemCopyMatching`); reading entries written by another unsigned build hangs indefinitely in securityd. Mac DEBUG builds under XCTest (with `XCTestConfigurationFilePath`) skip keychain reads, like screenshot mode (`Shared/Keychain.swift`).
 - On a development machine, `swift build`'s default build system reported “Could not determine path to developer directory.” Building the Swift package with `xcodebuild -scheme … -destination 'generic/platform=macOS'`
   works (`scripts/app/mac-link.sh`). Menu-bar app screenshots do not require screen recording: launch with `--snapshot <directory>`, put its own views in an offscreen window, and use `cacheDisplay` to render PNGs.
-- Mac's push entitlement is `com.apple.developer.aps-environment`, not iOS's `aps-environment`. Enabling push on the App ID suffices (iPhone and Mac use the same UNIVERSAL App ID). The archive has `development`, changed to `production` on App Store export. Locally built unsigned versions have no entitlements in their signatures, so they receive only local notifications, not remote pushes (2026-11-02, `docs/apple/mac.md`, “Remote push (Mac)”).
+- Mac's push entitlement is `com.apple.developer.aps-environment`, not iOS's `aps-environment`. Enabling push on the App ID suffices (iPhone and Mac use the same UNIVERSAL App ID). The archive has `development`, changed to `production` on App Store export. Locally built unsigned versions have no entitlements in their signatures, so they receive only local notifications, not remote pushes (2026-11-02, `docs/archive/apple/mac.md`, “Remote push (Mac)”).
 - To share keychain entries with extensions, macOS `SecItem` queries need `kSecUseDataProtectionKeychain: true`. Without it, they use the old file keychain, where `kSecAttrAccessGroup` has no effect: entries belong only to the creating app and extensions cannot read them (iOS always uses the data-protection keychain, so the same code works on the phone). This affected Mac's push private key (`PushCrypto`, #432); the app-only `Keychain.swift` still uses the file keychain and was unchanged.
 - Shared pages using scroll views such as `pin.list` get `UIScrollView` on iOS and `NSScrollView` on Mac (`ChatPin+Mac.swift`). Mac lacks `isTracking`, `isDragging`, and `isDecelerating`; isolate these with `#if os(iOS)` or add equivalents in `Mac/Compat/`.
-  On 2026-11-02, #243 added `pin.list?.isTracking` in `ChatView` and tested only iOS, breaking `PersonaMac` compilation on master (found by the terminal lane). After changing shared pages in `apple/Persona/Views`, also build `PersonaMac` before merging (`docs/apple/mac.md`, “Build, run, screenshot”).
+  On 2026-11-02, #243 added `pin.list?.isTracking` in `ChatView` and tested only iOS, breaking `PersonaMac` compilation on master (found by the terminal lane). After changing shared pages in `apple/Persona/Views`, also build `PersonaMac` before merging (`docs/archive/apple/mac.md`, “Build, run, screenshot”).
 - Without `app.bundle_id` in build configuration (`~/.config/persona/config.json`), `PERSONA_BUNDLE_ID` in `Config.xcconfig` is empty, but xcodebuild still says BUILD SUCCEEDED.
   Info.plist then lacks `CFBundleIdentifier`, and the Mac app crashes on startup at `UNUserNotificationCenter.current()` in `applicationDidFinishLaunching` (SIGABRT, 2026-11-02).
   For a local-only Mac build that will not ship, override with `PERSONA_BUNDLE_ID=<any reverse-domain identifier>` on xcodebuild, without changing configuration.
@@ -115,7 +115,7 @@ Pitfalls, unusual behavior, and the decisions made at the time (formerly in `CLA
 - Keeping visited pages hidden in a `ZStack` does not prevent rebuilding on sidebar-section switches: hidden views still register `.toolbar` items and `.searchable` with the window toolbar,
   and two pages with one search field each crash immediately (`NSToolbar … already contains an item with the identifier com.apple.SwiftUI.search`, 2026-11-02).
   System `TabView` on macOS 26 isolates toolbars per tab (StackOverflow 76032647 discusses macOS 13) and retains page state, but SwiftUI cannot hide its center-toolbar
-  segmented picker. Retaining pages did not make switching faster anyway: time was spent in AppKit layout after the new page entered the window and in replacing all toolbar items, not creating views (`docs/apple/mac.md`, performance, #390).
+  segmented picker. Retaining pages did not make switching faster anyway: time was spent in AppKit layout after the new page entered the window and in replacing all toolbar items, not creating views (`docs/archive/apple/mac.md`, performance, #390).
   `sample` where time goes before deciding to retain pages. See “Keeping section pages resident in the window” below for the later approach (one hosting view per page, toolbar replacement after this frame commits).
 - Do not align `List` group headers with hardcoded `listRowInsets`: group-header inset is 20 on iOS, but the much narrower built-in row inset on Mac. iOS numbers push Mac rows too far inward.
   Collapsed spaces show only a title as a regular row; hardcoded 20 makes it 20pt narrower on each side than an expanded space header, truncating the name to “weat…” (#405, 2026-11-02). Pass `nil` on Mac for the row's built-in inset.
@@ -282,6 +282,11 @@ Each page has its own `NSHostingView`, with `isHidden` set while inactive. Pitfa
   New pages need this too, or every push computes an extra page. To identify pages still updating, temporarily add `Self._printChanges()` to body;
   only a normal exit (`osascript … quit`) flushes stdout; `kill` loses it all.
 - Detaching a hidden hosting view from the window (`removeFromSuperview`) makes things worse: about 30 ms more per push.
+- A sheet presented by a page that goes behind another one no longer closes (2026-11-13, #5921). Hand to AI opened where
+  the item went (Persona or Agents, so the Inbox page was hidden) and then called `dismiss()`: the sheet stayed over the
+  other section, and Cancel did nothing until the app quit. Close the sheet first and move the window only once it is
+  gone (the sheet's `onDisappear`, or `.sheet(onDismiss:)`); never change `selectedTab`, `openChat` or the assistant's
+  conversation while a page's sheet is up.
 - “After the first frame” is not one `DispatchQueue.main.async`: it can run before that round's Core Animation commit, putting toolbar rearrangement back in the first frame.
   Schedule another `async` from a run-loop `beforeWaiting` observer ordered after Core Animation commit.
 - Without `sizeThatFits` on `NSViewRepresentable`, SwiftUI measures the embedded view with Auto Layout (`systemLayoutSizeFitting`) every time it renders the shell.
@@ -367,3 +372,47 @@ the same cause. Recheck scrolling, folding and layout separately with synthetic 
   request arrives while it is still writing a big update; asked for early only after a single rectangle of at most
   64 KB, typed text still came back later (p50 374 ms against 215 for stop-and-wait over a 25 ms, 30 Mbit/s link,
   slower in all 5 interleaved pairs, median +81 ms). The app asks for the next update once one is in (`RFBFrameTests.nextUpdateIsAskedOnceAnUpdateIsIn`).
+
+## The Dock draws a badge only for an app that asked for notifications (2026-11-12, #5824)
+
+- `NSApp.dockTile.badgeLabel` was set ("6", read back with `lsappinfo info -only StatusLabel -app <bundle id>`), yet
+  the Dock drew nothing: the build ran in Demo Mode, which never asks for notification permission. Once the same build
+  was paired (so `PushRegistrar` asked, with `.badge`), the Dock drew the number. Its switch is System Settings ›
+  Notifications › Badge application icon (not tried here).
+- To photograph the Dock, pair the build (the mock hub is enough) so it asks; check the label with `lsappinfo` before
+  blaming the code. Run such builds under a bundle id of their own (`PERSONA_BUNDLE_ID=…` on the `xcodebuild` line):
+  the installed app's container and preferences stay untouched.
+
+## VideoToolbox's low-latency encoder takes no speed setting, and slows when its process is clamped (2026-11-16, #8713)
+
+- `kVTVideoEncoderSpecification_EnableLowLatencyRateControl` selects another encoder,
+  `com.apple.videotoolbox.videoencoder.{hevc,h264}.rtvc` (read back with `kVTCompressionPropertyKey_EncoderID`). It
+  refuses `MaxFrameDelayCount`, `PrioritizeEncodingSpeedOverQuality`, `MaximumRealTimeFrameRate`,
+  `SpatialAdaptiveQPLevel` and `MaxH264SliceBytes` with -12900 (`kVTPropertyNotSupportedErr`), and the status of
+  `VTSessionSetProperty` is the only sign: Persona Screen set `MaxFrameDelayCount` 0 from its first release to no effect. Check the
+  status, or `VTCopySupportedPropertyDictionaryForEncoder` with the same specification, before believing a setting.
+- On an M1-class media engine it takes 7–8 ms for a 1080p frame whatever the frame rate, bitrate or any other knob, and
+  a smaller picture is no faster at 60 fps (it paces itself). It logs its own time in the process's unified log
+  (`VCPRateControlSession … enc_time=… ms`), which is how to read a real session afterwards.
+- The plain encoder with `RealTime` on paces itself to the frame interval (17–20 ms at 60 fps). With `RealTime` off and
+  speed over quality, HEVC takes 5.5–6 ms but needs about three times the bits for the same picture.
+- Under a QoS clamp (`taskpolicy -c utility` or `-b`) the output callback comes 10–30 ms late while the engine's own
+  time barely moves: a windowless helper that encodes holds a latency-critical activity (`ProcessInfo.beginActivity`).
+- `ReferenceBufferCount` 1 makes the low-latency H.264 encoder drop every frame.
+
+## Live-screen x264: ffmpeg, not the x264 tool, and a child process has its parent's privacy grants (2026-11-16, #8859)
+
+- The `x264` command-line tool writes its output with stdio and never flushes. On a pipe each frame's tail waits in
+  its buffer until later frames push it out: 18–57 ms per frame, stalls of 2 s. `ffmpeg -flush_packets 1` writes each
+  packet at once (ffmpeg 8.1 and 9 do so on a pipe even without it).
+- Raw H.264 (Annex B) gives a frame's end only with the next frame's start code, one frame late. FLV tags carry their
+  length, and their AVC payload already has 4-byte NAL lengths.
+- Homebrew's ffmpeg 9.0.2 crashes (signal 11) on `-colorspace bt709` as an output option together with `ultrafast`,
+  `zerolatency`, sliced threads and CRF with a VBV cap, from raw NV12. Each option alone works. Give the colour
+  description through `-x264-params colorprim=bt709:transfer=bt709:colormatrix=bt709:range=tv`; check the SPS's VUI.
+- A process a Mac app starts is attributed to that app for TCC (its responsible process), so it can use the app's
+  grants. `responsibility_spawnattrs_setdisclaim(&attr, 1)` before `posix_spawn` (private, in libSystem; look it up
+  with `dlsym`) makes the child its own. Verified on macOS 26.6.2 (25G83): from a terminal with Accessibility,
+  `AXIsProcessTrusted()` read granted in a plain child and missing in a disclaimed one.
+- A cold Homebrew ffmpeg puts out its first frame after 34–37 ms (it loads many libraries; a minimal build takes
+  9–16 ms). A process started earlier and left waiting takes 6–7 ms.

@@ -26,12 +26,15 @@ type larkRisk func(words []string) string
 
 var (
 	// lark-cli's own commands that only print: help, method schemas, the skills it carries, who is logged in.
-	// Stable read commands also work when the manager has not configured CLI risk discovery.
-	larkCLIKnownReads = map[string]bool{"docs/+fetch": true}
-	larkCLIRead       = map[string]bool{"schema": true, "skills": true, "whoami": true, "doctor": true, "help": true, "completion": true}
-	larkCLIAuthRead   = map[string]bool{"status": true, "check": true, "scopes": true, "list": true}
-	larkCLIEventRead  = map[string]bool{"list": true, "schema": true, "status": true}
-	larkRiskRe        = lazyre.New(`(?m)^\s*Risk:\s*([a-z-]+)`)
+	// Stable read commands also work when the manager has not configured CLI risk discovery, or the lookup gets no
+	// answer (a wrapper on the login shell's PATH that cannot find the real lark-cli from the node's, #8389). Only an
+	// unknown risk falls back here: what lark-cli reports wins. Each is "Risk: read" in lark-cli 1.0.54.
+	larkCLIKnownReads = map[string]bool{"docs/+fetch": true, "im/+chat-messages-list": true, "im/+messages-search": true,
+		"im/+messages-mget": true, "im/+threads-messages-list": true, "im/+chat-search": true}
+	larkCLIRead      = map[string]bool{"schema": true, "skills": true, "whoami": true, "doctor": true, "help": true, "completion": true}
+	larkCLIAuthRead  = map[string]bool{"status": true, "check": true, "scopes": true, "list": true}
+	larkCLIEventRead = map[string]bool{"list": true, "schema": true, "status": true}
+	larkRiskRe       = lazyre.New(`(?m)^\s*Risk:\s*([a-z-]+)`)
 	// larkCLIRe: a lark-cli call anywhere in a command the gate cannot parse.
 	larkCLIRe = lazyre.New("(^|[\\s;&|(\"'`])(\\S*/)?lark-cli(\\s|[\"']|$)")
 	// larkCLINamed: lark-cli as a word of its own anywhere in a command, a variable's value (`L=lark-cli; $L …`)
@@ -41,22 +44,52 @@ var (
 
 func isLarkCLI(name string) bool { return name == "lark-cli" || filepath.Base(name) == "lark-cli" }
 
+// larkProfileEnvName is the variable lark-cli takes its profile from when no --profile is given (lark-cli 1.0.98): the
+// node sets it to lark.cli.profile in the assistant's environment (assistantLarkEnvNamed, #9123).
+const larkProfileEnvName = "LARKSUITE_CLI_PROFILE"
+
+// larkProfileEnv: a command names lark-cli's profile variable (to set it, unset it or pass it on), which like
+// --profile is the manager's to choose.
+var larkProfileEnv = lazyre.New(`(^|[^A-Za-z0-9_])LARKSUITE_CLI_PROFILE([^A-Za-z0-9_]|$)`)
+
+// larkProfileRead: reading the variable, which cannot change it, so a diagnostic passes: `$LARKSUITE_CLI_PROFILE`,
+// `${LARKSUITE_CLI_PROFILE}` and `printenv LARKSUITE_CLI_PROFILE`. An expansion with an operator
+// (`${LARKSUITE_CLI_PROFILE:=x}`) or any other mention still counts as naming it.
+var larkProfileRead = lazyre.New(`\$LARKSUITE_CLI_PROFILE|\$\{LARKSUITE_CLI_PROFILE\}|(^|[\s;&|(])printenv\s+LARKSUITE_CLI_PROFILE`)
+
 // parseLarkCLI reads `lark-cli <words…> [flags]`: the words name the command (`im +messages-send`, `api POST
 // /open-apis/…`), the flags are its input. ok is false when the gate cannot tell what the command is.
 func parseLarkCLI(args []string, risk larkRisk) (c larkCall, deny string, ok bool) {
 	c = larkCall{Gate: -1, CLI: true, Method: "CLI", Args: args}
 	var words, flags []string
-	for i, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flags = args[i:]
-			break
-		}
-		words = append(words, a)
-	}
-	for _, f := range flags {
+	for _, f := range args {
 		if f == "--profile" || strings.HasPrefix(f, "--profile=") {
 			return c, "lark-cli 的配置档由管理者定（manager.json 的 lark.cli.profile），不要自己传 --profile。", false
 		}
+	}
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		name, _, inline := strings.Cut(args[i], "=")
+		if !strings.Contains(" --as --format -q --jq -o --output ", " "+name+" ") {
+			break
+		}
+		flags = append(flags, args[i])
+		i++
+		if !inline {
+			if i == len(args) {
+				return c, "", false
+			}
+			flags = append(flags, args[i])
+			i++
+		}
+	}
+	for ; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, args[i:]...)
+			break
+		}
+		words = append(words, a)
 	}
 	if strings.Contains(strings.Join(words, " "), "$") {
 		return c, "", false // a variable names the command: its risk is unknown
@@ -234,11 +267,10 @@ func flagValue(flags []string, name string) string {
 	return value
 }
 
-// larkCLIRisk asks lark-cli for the risk level of each command it is given, once per command; nil without lark-cli
-// in the hub's config.
+// larkCLIRisk asks lark-cli for the risk level of each command it is given, once per command.
 func (n *Node) larkCLIRisk(cfg proto.AssistantLark) larkRisk {
 	if cfg.CLI == nil {
-		return nil
+		cfg.CLI = &proto.LarkCLI{}
 	}
 	return func(words []string) string {
 		key := cfg.CLI.Profile + "\x00" + strings.Join(words, " ")

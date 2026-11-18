@@ -85,5 +85,18 @@
   "sandbox_off_body": "オフにすると、ハブのユーザーが読み書きできるすべてのファイルを読み書きでき、どのアドレスにも接続できます。",
   "sandbox_off_confirm": "サンドボックスをオフ",
   "sandbox_turned_on": "{name}のサンドボックスをオンにしました",
-  "sandbox_turned_off": "{name}のサンドボックスをオフにしました"
+  "sandbox_turned_off": "{name}のサンドボックスをオフにしました",
+  "sandbox_off_one_host": "1つのアドレスに接続するだけなら、下でそのアドレスを許可すれば十分です。",
+  "hosts_blocked": "ブロックされたアドレス",
+  "hosts_allowed": "許可したアドレス",
+  "host_blocked_times_other": "{count}回・最後は{when}",
+  "host_allow": "許可",
+  "host_revoke": "取り消す",
+  "host_undo": "元に戻す",
+  "host_any_port": "すべてのポート",
+  "host_this_port": "このポートのみ",
+  "host_placeholder": "アドレス（例：rss.example.orgまたはrss.example.org:8443）",
+  "host_field_label": "{name}に許可するアドレス",
+  "host_allowed": "{host}を許可しました",
+  "host_revoked": "{host}の許可を取り消しました"
 }

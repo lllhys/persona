@@ -18,6 +18,17 @@ describe("seen outbox", () => {
     expect(newMark(row({ state: "working", status: "working" }), T0)).toBeUndefined();
   });
 
+  it("waits for Just finished agents too, and shows them seen meanwhile (#9751)", () => {
+    const finished = row({ state: "idle", work: { phase: "done", line: "Merged", just_finished: true } });
+    const mark = newMark(finished, T0)!;
+    expect(mark).toBeDefined();
+    const shown = heldSeen(finished, mark, T0 + 1000);
+    expect(shown.state).toBe("idle");
+    expect(shown.work).toEqual({ phase: "done", line: "Merged", just_finished: false });
+    expect(markOver({ ...finished, seen_at: "2026-01-01T00:00:03Z", work: { phase: "done", line: "Merged" } }, mark, T0 + 3000)).toBe(true);
+    expect(newMark(row({ state: "idle", work: { phase: "done", line: "Merged" } }), T0)).toBeUndefined();
+  });
+
   it("holds an unread row seen until the hub records it", () => {
     const mark = newMark(row(), T0)!;
     // the hub's next list still says unread (the seen was lost or not taken yet): shown seen

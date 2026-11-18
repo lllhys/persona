@@ -1,4 +1,5 @@
 import XCTest
+import PersonaWire
 
 /// A reply's code blocks, inline code and quotes as Telegram draws them (#2984): a code block's Copy takes the whole
 /// block (and scrolls sideways when a line runs past it), a tap on inline code takes the span, and a long quote folds and opens. What was copied is read back by

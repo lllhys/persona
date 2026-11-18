@@ -34,11 +34,11 @@ struct VoiceBar: View {
         let session = model.session(key)
         let cards = pendingCards
         let line = VoiceBarLine.make(phase: call.phase, link: call.link, runs: call.runs, session: session, cards: cards,
-                                     muted: call.muted, asking: call.askingID, notice: call.notice, label: label,
+                                     muted: call.muted, held: call.held, asking: call.askingID, notice: call.notice, label: label,
                                      dismissed: call.dismissed, resendable: Set(call.runs.map(\.id).filter { call.canResend($0) }))
         let working = [.working, .paused, .waiting].contains(line.kind)
         let status = VoiceBarStatus.make(phase: call.phase, link: call.link, muted: call.muted, working: working,
-                                         tool: call.tools.last?.label)
+                                         tool: call.tools.last?.label, held: call.held)
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             controls(status)
             second(line, cards: cards)
@@ -55,7 +55,8 @@ struct VoiceBar: View {
         .shellScaled()
         .modifier(VoiceFeedback(call: call, kind: line.kind, text: line.text, cards: cards.map(\.id)))
         .sheet(isPresented: $showCaptions) { VoiceTranscriptSheet(call: call, persona: model.assistantShownName(in: key)) }
-        .modelConfigurationSheet(isPresented: $showModel, purposeID: "plugin." + call.extensionID)
+        // The default assistant's: calls talk to its voice extension.
+        .modelConfigurationSheet(isPresented: $showModel, purposeID: "plugin." + call.extensionID, owner: .defaultAssistant)
         // The voice's model may have changed in the sheet: the call picks it up on a new connection.
         .onChange(of: showModel) { _, open in
             guard !open, let api = model.api(key.group) else { return }
@@ -105,6 +106,7 @@ struct VoiceBar: View {
                 orb(status)
                 statusText(status).fixedSize()
                 Spacer(minLength: 0)
+                expandButton
                 endButton
             }
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
@@ -112,6 +114,7 @@ struct VoiceBar: View {
                     muteButton
                     orb(status)
                     Spacer(minLength: 0)
+                    expandButton
                     endButton
                 }
                 statusText(status)
@@ -140,6 +143,10 @@ struct VoiceBar: View {
     private var muteButton: some View {
         Button {
             Haptics.tap()
+            #if os(iOS)
+            // A system call's mute is the system's (its call UI and AirPods say the same): through its manager.
+            if call.surface == .call { return PersonaCalls.shared.setMuted(!call.muted) }
+            #endif
             call.muted.toggle()
         } label: {
             ThemedIcon(call.muted ? Theme.Icon.voiceUnmute : Theme.Icon.voiceMute)
@@ -155,10 +162,35 @@ struct VoiceBar: View {
         .accessibilityIdentifier("voice-mute")
     }
 
-    /// Stop: the phone's red, round like the composer's send.
+    /// A system call to Persona (#9290): back to its full screen (the call screen), the call unchanged.
+    @ViewBuilder private var expandButton: some View {
+        #if os(iOS)
+        if call.surface == .call {
+            Button {
+                Haptics.tap()
+                PersonaCalls.shared.present()
+            } label: {
+                ThemedIcon(Theme.Icon.callExpand)
+                    .font(Theme.Font.bodyStrong)
+                    .foregroundStyle(ComposerInk.icon(theme))
+                    .scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
+                    .contentShape(.circle)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show Call [Voice Bar]")
+            .accessibilityIdentifier("voice-expand")
+        }
+        #endif
+    }
+
+    /// Stop: the phone's red, round like the composer's send. A system call hangs up through its manager, so the
+    /// system's call ends with it.
     private var endButton: some View {
         Button {
             Haptics.tap()
+            #if os(iOS)
+            if call.surface == .call { return PersonaCalls.shared.hangUp() }
+            #endif
             VoiceCalls.shared.end(.user, from: call.surface)
         } label: {
             ThemedIcon(Theme.Icon.voiceEnd)
@@ -171,7 +203,8 @@ struct VoiceBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Stop [Car Play Voice Screen c7b24e]")
-        .accessibilityHint("Ends the voice chat; what was handed over still gets done")
+        .accessibilityHint(call.surface == .call ? Text("Hangs up the call; what was handed over still gets done")
+                               : Text("Ends the voice chat; what was handed over still gets done"))
         .accessibilityIdentifier("voice-end")
     }
 
@@ -185,18 +218,29 @@ struct VoiceBar: View {
                 words(line).lineLimit(1).fixedSize()
                 Spacer(minLength: Theme.Space.s)
                 ForEach(line.actions) { action in button(action, cards: cards) }
-                more(line, overflow: [], cards: cards)
+                moreSlot(overflow: [])
             }
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
                     words(line).lineLimit(4)
                     Spacer(minLength: 0)
-                    if line.actions.isEmpty { more(line, overflow: [], cards: cards) }
+                    if line.actions.isEmpty { moreSlot(overflow: []) }
                 }
                 if !line.actions.isEmpty { actionRow(line, cards: cards) }
             }
         }
         .animation(Theme.Motion.state, value: line.kind)
+        // The one ⋯ menu, drawn here whichever layout the line took (see `moreSlot`).
+        .overlayPreferenceValue(MoreSlotKey.self) { slot in
+            GeometryReader { proxy in
+                if let slot {
+                    let rect = proxy[slot.bounds]
+                    more(overflow: slot.overflow, cards: cards)
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                }
+            }
+        }
     }
 
     private func actionRow(_ line: VoiceBarLine, cards: [Interaction]) -> some View {
@@ -204,18 +248,18 @@ struct VoiceBar: View {
             HStack(spacing: Theme.Space.s) {
                 ForEach(line.actions) { action in button(action, cards: cards) }
                 Spacer(minLength: 0)
-                more(line, overflow: [], cards: cards)
+                moreSlot(overflow: [])
             }
             if line.actions.count > 1 {
                 HStack(spacing: Theme.Space.s) {
                     button(line.actions[0], cards: cards)
                     Spacer(minLength: 0)
-                    more(line, overflow: Array(line.actions.dropFirst()), cards: cards)
+                    moreSlot(overflow: Array(line.actions.dropFirst()))
                 }
             }
             HStack(spacing: Theme.Space.s) {
                 Spacer(minLength: 0)
-                more(line, overflow: line.actions, cards: cards)
+                moreSlot(overflow: line.actions)
             }
         }
     }
@@ -242,6 +286,7 @@ struct VoiceBar: View {
         case .notSent: (Theme.Icon.errorFilled, Theme.caution)
         case .offline: (Theme.Icon.offline, Theme.caution)
         case .muted: (Theme.Icon.voiceMute, Color.secondary)
+        case .held: (Theme.Icon.pause, Theme.caution)
         case .ready, .handing, .working, .waiting, .paused: nil
         }
     }
@@ -258,8 +303,17 @@ struct VoiceBar: View {
         .accessibilityIdentifier("voice-line-" + action.name)
     }
 
+    /// Where ⋯ goes in the layout `ViewThatFits` picked, and the line's buttons it takes there. Only room is made here:
+    /// the menu itself is drawn once, over the line (`second`). A menu inside the branches was a new view each time the
+    /// line changed its layout (words over buttons, a button more or less), which closed it while it was open (#2619).
+    private func moreSlot(overflow: [VoiceBarLine.Action]) -> some View {
+        Color.clear
+            .scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.wellXS)
+            .anchorPreference(key: MoreSlotKey.self, value: .bounds) { MoreSlot(bounds: $0, overflow: overflow) }
+    }
+
     /// ⋯: the line's buttons that did not fit, then what the call offers besides.
-    private func more(_ line: VoiceBarLine, overflow: [VoiceBarLine.Action], cards: [Interaction]) -> some View {
+    private func more(overflow: [VoiceBarLine.Action], cards: [Interaction]) -> some View {
         Menu {
             if !overflow.isEmpty {
                 Section {
@@ -350,6 +404,7 @@ struct VoiceBar: View {
         case .stopAgent: String(localized: "Stop \(label)")
         case .resend: String(localized: "Resend")
         case .clearAndSend: String(localized: "Clear and Send")
+        case .sendAnyway: String(localized: "Send Anyway")
         case .returnPlan: String(localized: "Send Back as Feedback")
         case .dismiss: String(localized: "Never Mind")
         }
@@ -359,6 +414,7 @@ struct VoiceBar: View {
         switch action {
         case .stopAgent: Theme.Icon.interrupt
         case .resend, .clearAndSend: Theme.Icon.retry
+        case .sendAnyway: Theme.Icon.send
         case .returnPlan: Theme.Icon.reply
         case .dismiss: Theme.Icon.close
         }
@@ -373,6 +429,9 @@ struct VoiceBar: View {
             call.resend(run)
         case .clearAndSend(let run):
             call.resend(run, clearingDraft: true)
+        case .sendAnyway(let run):
+            // The user's own confirmation: the hub sends it past the user-speech gate (docs/assistant/voice.md 3.2 resend).
+            call.resend(run)
         case .returnPlan(let card, _, let run):
             // The app's own answer to the card (decision 5: the user tapped it), with the refused words as the feedback.
             call.dismiss(run: run)
@@ -382,6 +441,16 @@ struct VoiceBar: View {
             call.dismiss(run: run)
         }
     }
+}
+
+/// Where the second line's ⋯ sits and what it holds there (`VoiceBar.moreSlot`).
+private struct MoreSlot {
+    let bounds: Anchor<CGRect>
+    let overflow: [VoiceBarLine.Action]
+}
+
+private struct MoreSlotKey: PreferenceKey {
+    static func reduce(value: inout MoreSlot?, nextValue: () -> MoreSlot?) { value = nextValue() ?? value }
 }
 
 /// The line's words, and how long it has been so (「Claude 在跑测试 · 2 分钟」) as one paragraph, so they wrap together at

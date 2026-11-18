@@ -12,10 +12,12 @@ import (
 // transcript. Past recording_days a recording with minutes keeps meta.json (trimmed_at set), minutes.json and minutes.md
 // until minutes_days, and the photos the minutes cite (their entries in photos.json and photos.md, their files in
 // attachments/; recording_photos.go); everything else in its directory goes: segments.json and transcript.md (the
-// transcript), summary.md (made from it), the live log, the other photos, and a pending undo journal (restored first,
-// so meta.json is the accepted one). A trimmed recording is still listed, found by its minutes and read; it takes no
-// upload (RecordingExpired), makes no minutes again (ErrTranscriptExpired), and its action items can still become
-// to-dos. Attending it is over: its attendance is turned off with the live log gone, so nothing resumes feeding or
+// transcript), summary.md (made from it), the live log, the hub's transcript (hub_segments.json), a hub-mode meeting's
+// audio (attachments/audio/, which trimPhotosLocked removes with every entry of attachments/ that is not a kept
+// photo), the other photos, and a pending undo journal (restored first, so meta.json is the accepted one); meeting.json
+// keeps the transcription's mode and state (trimTranscription). A trimmed recording is still listed, found by its
+// minutes and read; it takes no upload (RecordingExpired), makes no minutes again (ErrTranscriptExpired), and its
+// action items can still become to-dos. Attending it is over: its attendance is turned off with the live log gone, so nothing resumes feeding or
 // answering for it. Past a finite minutes_days it goes like any other recording; 0 keeps minutes forever by default
 // (#3862).
 
@@ -42,6 +44,7 @@ func (s *Store) trimRecording(r *Recording, now time.Time) (changed, photos bool
 	if s.readOnly {
 		return false, false, ErrReadOnly
 	}
+	defer s.audioFileClosed(r.ID) // once recFilesMu is let go (audioRec.mu comes before it)
 	zone := s.Zone()
 	s.recFilesMu.Lock()
 	defer s.recFilesMu.Unlock()
@@ -54,7 +57,9 @@ func (s *Store) trimRecording(r *Recording, now time.Time) (changed, photos bool
 		}
 		changed = true
 	}
-	// The photos the minutes cite stay; before the sweep, which leaves attachments/ to this.
+	// The photos the minutes cite stay; before the sweep, which leaves attachments/ to this. The audio goes with
+	// them: writes from now on are refused.
+	s.audioDroppedLocked(r.ID, ErrTranscriptExpired)
 	kept, photos, err := s.trimPhotosLocked(r, zone)
 	changed = changed || kept
 	if err != nil {

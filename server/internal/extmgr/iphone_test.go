@@ -13,14 +13,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/devices"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
+	"github.com/nwverse/persona/server/internal/update"
 )
 
 type phoneCallSeen struct {
 	Method string
 	Call   proto.IPhoneCall
+	Raw    json.RawMessage // the params of a job's call (iphone.install)
 }
 
 // iphoneMac is a Mac whose node reaches the paired iPhones devices, answering iphone.status and iphone.call as the
@@ -34,6 +37,8 @@ func iphoneMac(t *testing.T, h *Manager, id string, devices []proto.IPhoneDevice
 	hubSide, nodeSide := rpc.New("h", h2nW), rpc.New("n", n2hW)
 	var mu sync.Mutex
 	var seen []phoneCallSeen
+	// The node's iphoneStatus includes the current job, so a status answered after a pair cannot erase it.
+	var job *proto.ComputerJob
 	nodeSide.OnRequest = func(_ context.Context, method string, params json.RawMessage) (any, error) {
 		if method != "plugin.node.call" {
 			t.Errorf("%s by its name: the iphone program is asked over plugin.node.call", method)
@@ -50,11 +55,11 @@ func iphoneMac(t *testing.T, h *Manager, id string, devices []proto.IPhoneDevice
 		switch method {
 		case "iphone.status":
 			seen = append(seen, phoneCallSeen{Method: method})
-			return proto.IPhone{Devices: devices, Checked: time.Now(), Enabled: true}, nil // Enabled is never the node's
+			return proto.IPhone{Devices: devices, Checked: time.Now(), Enabled: true, Job: job}, nil // Enabled is never the node's
 		case "iphone.call":
 			var p proto.IPhoneCall
 			_ = json.Unmarshal(params, &p)
-			seen = append(seen, phoneCallSeen{method, p})
+			seen = append(seen, phoneCallSeen{Method: method, Call: p})
 			if answer != nil {
 				r, err := answer(p)
 				if err != nil {
@@ -66,9 +71,17 @@ func iphoneMac(t *testing.T, h *Manager, id string, devices []proto.IPhoneDevice
 				return proto.IPhoneResult{Output: json.RawMessage(`{"elements":"[1] button \"Settings\""}`), Image: &proto.Image{Mime: "image/jpeg", Data: "AAAA"}}, nil
 			}
 			return proto.IPhoneResult{Output: json.RawMessage(`{"done":true}`)}, nil
-		case "iphone.pair", "iphone.forget", "iphone.cancel":
-			seen = append(seen, phoneCallSeen{Method: method})
-			return proto.IPhone{Devices: devices, Checked: time.Now(), Job: &proto.ComputerJob{Kind: "pair", State: "running"}}, nil
+		case "iphone.pair", "iphone.forget", "iphone.cancel", "iphone.install", "iphone.prepare":
+			seen = append(seen, phoneCallSeen{Method: method, Raw: params})
+			kind := "pair"
+			switch method {
+			case "iphone.install":
+				kind = "install"
+			case "iphone.prepare":
+				kind = "prepare"
+			}
+			job = &proto.ComputerJob{Kind: kind, State: "running"}
+			return proto.IPhone{Devices: devices, Checked: time.Now(), Job: job}, nil
 		}
 		return nil, &rpc.Error{Message: "unknown method " + method}
 	}
@@ -508,7 +521,7 @@ func TestIPhoneJobs(t *testing.T) {
 	h, _ := extensionTestHub(t)
 	ctx := context.Background()
 	mux := h.routes()
-	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, nil)
+	m, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, nil)
 	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -525,6 +538,9 @@ func TestIPhoneJobs(t *testing.T) {
 	code, out := call(t, mux, "POST", "/api/v1/machines/mac/iphone/pair", h.cfg.Token, `{"device": "dev-a1"}`)
 	if job, _ := out["job"].(map[string]any); code != 200 || job["kind"] != "pair" || out["enabled"] != true {
 		t.Fatalf("%d %v", code, out)
+	}
+	if p := h.refreshIPhone(ctx, m); p == nil || p.Job == nil || p.Job.Kind != "pair" {
+		t.Fatalf("a status answered after pairing keeps its job: %+v", p)
 	}
 	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/forget", h.cfg.Token, `{}`); code != 400 {
 		t.Fatalf("forget names a device: %d", code)
@@ -543,6 +559,103 @@ func TestIPhoneJobs(t *testing.T) {
 	}
 	if strings.Join(methods, " ") != "iphone.cancel iphone.pair iphone.forget" {
 		t.Fatal(methods)
+	}
+}
+
+// helperDevices is the manager's devices with a release site behind them (devices.Devices.HelperDownload).
+type helperDevices struct {
+	Devices
+	urls  []string
+	err   error
+	asked []string
+}
+
+func (d *helperDevices) HelperDownload(_ context.Context, goos, arch, name string) ([]string, update.File, error) {
+	d.asked = append(d.asked, goos+"/"+arch+" "+name)
+	return d.urls, update.File{Name: "persona-iphone-bridge-darwin-arm64.gz", Size: 7, SHA256: "s", BinarySHA256: "b"}, d.err
+}
+
+// Install (#8199): the node gets the release's build of the bridge for its platform, with what it must be; no build,
+// or no release site, says so without asking the node; it needs the computer on, as pairing does.
+func TestIPhoneInstall(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	m, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, nil)
+	m.info.Arch = "arm64"
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	src := &helperDevices{urls: []string{"https://example.com/dl/v1/persona-iphone-bridge-darwin-arm64.gz"}}
+	h.opts.Devices = src
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/install", h.cfg.Token, ""); code != 404 {
+		t.Fatalf("installing needs the computer on: %d", code)
+	}
+	call(t, mux, "PUT", "/api/v1/machines/mac/iphone", h.cfg.Token, `{"enabled": true}`)
+	code, out := call(t, mux, "POST", "/api/v1/machines/mac/iphone/install", h.cfg.Token, "")
+	if job, _ := out["job"].(map[string]any); code != 200 || job["kind"] != "install" {
+		t.Fatalf("%d %v", code, out)
+	}
+	if strings.Join(src.asked, ",") != "darwin/arm64 persona-iphone-bridge" {
+		t.Fatalf("asked %v", src.asked)
+	}
+	var got map[string]any
+	for _, c := range seen() {
+		if c.Method == "iphone.install" {
+			_ = json.Unmarshal(c.Raw, &got)
+		}
+	}
+	if urls, _ := got["urls"].([]any); len(urls) != 1 || urls[0] != src.urls[0] || got["size"] != float64(7) || got["sha256"] != "s" || got["binary_sha256"] != "b" {
+		t.Fatalf("the node got %v", got)
+	}
+	installs := func() int {
+		n := 0
+		for _, c := range seen() {
+			if c.Method == "iphone.install" {
+				n++
+			}
+		}
+		return n
+	}
+	for _, tc := range []struct {
+		err  error
+		code int
+	}{{devices.ErrNoHelper, 404}, {devices.ErrNoHelperSource, 404}, {errors.New("site away"), 502}} {
+		src.err = tc.err
+		if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/install", h.cfg.Token, ""); code != tc.code || installs() != 1 {
+			t.Fatalf("%v: %d (node asked %d times)", tc.err, code, installs())
+		}
+	}
+}
+
+// Prepare (#8199) names its iPhone and needs the computer on, as pairing does; the node gets the device.
+func TestIPhonePrepare(t *testing.T) {
+	h, _ := extensionTestHub(t)
+	ctx := context.Background()
+	mux := h.routes()
+	_, seen := iphoneMac(t, h, "mac", []proto.IPhoneDevice{testIPhone}, nil)
+	if err := h.extensions.reg.SetEnabled(ctx, iphoneExtensionID, true, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/prepare", h.cfg.Token, `{"device": "dev-a1"}`); code != 404 {
+		t.Fatalf("preparing needs the computer on: %d", code)
+	}
+	call(t, mux, "PUT", "/api/v1/machines/mac/iphone", h.cfg.Token, `{"enabled": true}`)
+	if code, _ := call(t, mux, "POST", "/api/v1/machines/mac/iphone/prepare", h.cfg.Token, ""); code != 400 {
+		t.Fatalf("prepare names a device: %d", code)
+	}
+	code, out := call(t, mux, "POST", "/api/v1/machines/mac/iphone/prepare", h.cfg.Token, `{"device": "dev-a1"}`)
+	if job, _ := out["job"].(map[string]any); code != 200 || job["kind"] != "prepare" {
+		t.Fatalf("%d %v", code, out)
+	}
+	var got map[string]any
+	for _, c := range seen() {
+		if c.Method == "iphone.prepare" {
+			_ = json.Unmarshal(c.Raw, &got)
+		}
+	}
+	if got["device"] != "dev-a1" {
+		t.Fatalf("the node got %v", got)
 	}
 }
 

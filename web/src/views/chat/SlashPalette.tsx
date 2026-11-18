@@ -3,7 +3,7 @@
 // focused command's description in a 280 px card beside the panel (to its right, to its left when the window has no
 // room there, inside the panel under the rows when it has room on neither side, as on a phone). Rows come ranked
 // (lib/composer-commands.ts rankCommands); the composer keeps the keys and the focus. Its own chunk: drawn only once
-// "/" is typed (Composer.tsx).
+// "/" is typed (Composer.tsx). Command-only markup mirrors SlashSkillView.tsx; SlashPalette.test.tsx compares both views.
 import { useEffect, useId, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { ComposerCommand as Command } from "../../lib/extension-prompts";
 import { cx, EASE } from "../../ui/atoms";

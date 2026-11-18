@@ -6,11 +6,13 @@ import (
 	"errors"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/host"
+	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -18,7 +20,7 @@ import (
 // Claude sessions that run where Persona has no terminal pane: a background session Claude's own daemon runs (/fork,
 // /background: kind "bg"), a session open in Claude's desktop app (entrypoint claude-desktop…), claude in a terminal
 // that herdr, Orca, Tern or botmux do not run (entrypoint cli). Each writes sessions/<pid>.json in its config directory with
-// the session it has open, its status (busy / idle / waiting) and, since Claude Code 2.1.29x, its peer inbox
+// the session it has open, its status (busy / idle / shell / waiting) and, since Claude Code 2.1.29x, its peer inbox
 // (claudepeer.go). They listed as offline while they worked, and a message from the phone was refused (a second
 // claude --resume would write the same transcript, openelsewhere.go). The node lists every live one as running, with
 // its status from the file and its transcript as for any session; a message goes through its inbox when the node can
@@ -55,8 +57,12 @@ const claudeBgReadOnly = proto.ReadOnlyClaudeBg
 const claudeAgentsList = "这个标签停在 Claude Code 的 agents 列表上：打开终端，用方向键选中一个会话、回车进去后再发消息"
 
 // claudeBgStatus maps a claude's sessions/<pid>.json status to the node's: waiting is a question or dialog of its
-// own, answered on the computer. Anything else is unknown.
-var claudeBgStatus = map[string]string{"busy": proto.StatusWorking, "idle": proto.StatusIdle, "waiting": proto.StatusBlocked}
+// own, answered on the computer. shell (Claude Code 2.1.31x and later) is a turn that ended while a background command
+// or Monitor still runs, which older builds wrote as idle; the commands come from the transcript (#6363). Anything else
+// is unknown.
+var claudeBgStatus = map[string]string{
+	"busy": proto.StatusWorking, "idle": proto.StatusIdle, "shell": proto.StatusIdle, "waiting": proto.StatusBlocked,
+}
 
 // parkedClaudeSessions are the sessions only parked claudes have open, each with the background job it went to.
 func parkedClaudeSessions(procs []claudeProc) map[string]parkedJob {
@@ -106,7 +112,7 @@ func (n *Node) agentsListRefusal(id string) error {
 	if !listed {
 		return nil
 	}
-	return refusal(openElsewhere, claudeAgentsList+"。这次没有发送。", nil)
+	return refusal(openElsewhere, claudeAgentsList+"。这次没有发送。", map[string]any{"where": whereAgentsList})
 }
 
 // outsideSource is the source a live claude outside Persona's panes lists under, "" for one the node leaves alone: a
@@ -130,9 +136,10 @@ func (n *Node) outsideSource(c claudeProc) string {
 
 // claudeSessions lists the live claudes outside Persona's panes that are not in seen and have a transcript: the
 // background ones, the desktop app's, the ones in other terminals.
-func (n *Node) claudeSessions(procs []claudeProc, seen map[string]bool) []proto.Session {
+func (n *Node) claudeSessions(procs []claudeProc, seen map[string]bool, livePanes map[string]bool) []proto.Session {
 	var out []proto.Session
 	listed := map[string]bool{}
+	var desktop *claudeDesktopIndex // read once, when a desktop session rests
 	for _, c := range procs {
 		id := c.SessionID
 		if seen[id] || listed[id] {
@@ -156,11 +163,24 @@ func (n *Node) claudeSessions(procs []claudeProc, seen map[string]bool) []proto.
 		if !ok {
 			status = proto.StatusUnknown
 		}
+		if status == proto.StatusIdle && source == proto.SourceClaudeDesktop {
+			// Its last turn ended while nobody looked: Unread until it is seen (claudedesktop_unread.go).
+			if desktop == nil {
+				d := readClaudeDesktopIndex(n.home)
+				desktop = &d
+			}
+			if n.desktopTurnUnread(id, *desktop) {
+				status = proto.StatusDone
+			}
+		}
 		s := proto.Session{
 			SessionID: id, Cwd: c.Cwd, Status: status, Agent: "claude", Title: m.title, SourceKind: source,
 			Model: m.model, LastText: snippet(m.lastText), UpdatedAt: lastUsed(m, st), Rev: st.Size(), AgentSurface: m.surface,
 		}
 		s.Capabilities, s.ReadOnlyReason = outsideCapabilities(c)
+		if s.Capabilities != nil && s.Capabilities.Send && n.ccPluginInput(id, c.pid) {
+			s.Capabilities.PluginInput = true // the owner's messages go in as their input while it rests (ccplugin.go)
+		}
 		// A claude in a tmux pane says where it runs ("tmux":"orc:@11.%11") and no hooks of Persona's run there: the
 		// pane's screen is what its approval shows on, so it gets that screen and the keys into it (#2562).
 		if pane := outsidePane(c); pane != "" {
@@ -169,16 +189,25 @@ func (n *Node) claudeSessions(procs []claudeProc, seen map[string]bool) []proto.
 				s.Capabilities = &proto.SessionCapabilities{Read: true}
 			}
 			s.Capabilities.Terminal = true
+			livePanes[pane] = true // its dialog read is kept while the claude lives (forgetDialogs)
 			// Its own status file says waiting when a dialog has the keyboard, but a build that does not: a resting
 			// claude's screen is read, as for a pane (dialogstatus.go).
 			if status == proto.StatusIdle || status == proto.StatusDone || status == proto.StatusUnknown {
 				if head := n.dialogOn(id, pane); head != "" {
 					s.Status, s.AttentionReason = proto.StatusBlocked, head
 				}
+			} else if status == proto.StatusBlocked {
+				// The phone answers the dialog on the pane's screen: the row names it once it is read (#5965).
+				s.AttentionReason = n.dialogOn(id, pane)
 			}
 		}
-		if status == proto.StatusBlocked {
-			s.AttentionReason = proto.AttentionClaudeComputer
+		if status == proto.StatusBlocked && s.AttentionReason == "" {
+			s.AttentionReason = proto.AttentionClaudeComputer // no dialog read from a pane (yet)
+			if s.Capabilities != nil && s.Capabilities.Send && s.PaneID == "" && asking(c, m) {
+				s.AttentionReason = proto.AttentionClaudeAnswer // a message answers it (sendOutside)
+				// Its question is a card the apps answer (claudeoutside_ask.go): the answer goes as that message.
+				s.Capabilities.Approve = true
+			}
 		}
 		if s.Cwd == "" {
 			s.Cwd = m.cwd
@@ -218,7 +247,9 @@ func outsideCapabilities(c claudeProc) (*proto.SessionCapabilities, string) {
 	p, has := peerOf(c)
 	switch {
 	case has && peerReachable(p):
-		return &proto.SessionCapabilities{Read: true, Send: true, Modes: proto.CanModes(false)}, ""
+		// A turn it runs, or a question it waits on, stops at a message of priority now (interruptOutside).
+		stoppable := c.Status == "busy" || c.Status == "waiting"
+		return &proto.SessionCapabilities{Read: true, Send: true, Interrupt: stoppable, Modes: proto.CanModes(false)}, ""
 	case c.Kind == "bg":
 		return &proto.SessionCapabilities{Read: true, Modes: proto.CanModes(false)}, claudeBgReadOnly
 	case !has:
@@ -268,6 +299,12 @@ func (n *Node) outsideClaude(id string) (claudeProc, bool) {
 // not take in time — held for the person at the computer, dropped as a duplicate — is reported as not confirmed
 // (delivered unknown), so the app neither shows it as sent nor resends it by itself.
 func (n *Node) sendOutside(ctx context.Context, id, text string, images []proto.Image) (handled bool, err error) {
+	return n.sendOutsidePriority(ctx, id, text, images, "")
+}
+
+// sendOutsidePriority is sendOutside with a priority the caller has already established from the transcript's full
+// items. An empty priority uses the quick-metadata question check below.
+func (n *Node) sendOutsidePriority(ctx context.Context, id, text string, images []proto.Image, forced string) (handled bool, err error) {
 	c, ok := n.outsideClaude(id)
 	if !ok {
 		return false, nil
@@ -288,26 +325,173 @@ func (n *Node) sendOutside(ctx context.Context, id, text string, images []proto.
 		}
 		text = attachImages(text, paths)
 	}
+	// A session waiting on a question it asked takes the message as its answer: at priority now it ends that wait (the
+	// question's call ends unanswered) and runs the message; queued, it would wait behind the question until someone
+	// answered it on the computer. One waiting on a permission prompt or another dialog gets it queued as before: at
+	// now it would decline the prompt, which is the computer's to approve.
 	var offset int64
-	if st, err := os.Stat(n.transcriptPath(id)); err == nil {
-		offset = st.Size()
+	priority := forced
+	if priority == "" {
+		priority = peerNext
 	}
-	err = peerSend(ctx, p, id, text)
+	if path := n.transcriptPath(id); path != "" {
+		if st, err := os.Stat(path); err == nil {
+			offset = st.Size()
+			if forced == "" && asking(c, n.metaNow(path, st)) {
+				priority = peerNow
+			}
+		}
+	}
+	// The owner's own message to a session at rest goes in as their input through Persona's plugin when the session has
+	// it (ccplugin.go); otherwise, and when the plugin does not take it, through the inbox, which the answer says.
+	if owner := ownerDeliveryOf(ctx); owner != nil && forced == "" && priority == peerNext {
+		if ok, why := n.ccPluginSend(ctx, c, id, text); ok {
+			log.Printf("send %s: claude %d (%s) took it as the user's input through Persona's plugin", id, c.pid, c.Entrypoint)
+			owner.as, owner.reason = deliveredUserInput, ""
+			return true, nil
+		} else {
+			owner.as, owner.reason = deliveredRelayed, why
+		}
+	}
+	p.fromMode = n.peerAttest(ctx, c, id)
+	err = peerSendAt(ctx, p, id, text, priority)
 	var pe *errPeer
 	if asPeer(err, &pe) {
 		log.Printf("send %s: claude %d's inbox refused: %v", id, c.pid, err)
 		return true, refusal(pe.code, pe.msg, map[string]any{"pid": c.pid})
 	}
 	if peerTaken(ctx, func() string { return n.transcriptPath(id) }, offset, text, peerConfirmWait) {
-		log.Printf("send %s: claude %d (%s) took it through its inbox", id, c.pid, c.Entrypoint)
+		log.Printf("send %s: claude %d (%s) took it through its inbox (%s)", id, c.pid, c.Entrypoint, priority)
+		// Taken into its queue while a permission prompt or another dialog holds it: Claude reads the message only once
+		// that is answered at the computer, which the answer says (waits_on_computer). The status is read once, after
+		// the take: a prompt that opened just after a busy session queued the message marks it too, and rightly, since
+		// it still waits on the computer. A message at priority now waits on nothing: it ended the question it answers
+		// (the status file may say waiting a moment longer).
+		if now, ok := n.outsideClaude(id); ok && priority == peerNext && claudeBgStatus[now.Status] == proto.StatusBlocked {
+			if w, ok := ctx.Value(computerWaitKey{}).(*bool); ok {
+				*w = true
+			}
+		}
 		return true, nil
 	}
 	if err != nil {
 		log.Printf("send %s: claude %d's inbox: %v", id, c.pid, err)
 		return true, uncertain(err)
 	}
+	if peerHeldSeen(n.transcriptPath(id), offset) {
+		log.Printf("send %s: written to claude %d's inbox, not taken within %s: it holds it for approval at the computer", id, c.pid, peerConfirmWait)
+		return true, heldOnComputer()
+	}
 	log.Printf("send %s: written to claude %d's inbox, not taken within %s (held or dropped there)", id, c.pid, peerConfirmWait)
 	return true, unconfirmed()
+}
+
+// peerAttest is the from-mode the node states in a message to session id, which claude c has open (claudepeer.go). It
+// is the class of whoever's words the message carries, bound to evidence taken when the message is sent, and stated
+// only where that evidence is reliable (#9607):
+//   - the owner's own message (ownerInputExact), card answer or Stop (the Devices manager's owner-control RPC): it goes in as the session's own user's words, the one authorization the node acts on. The
+//     person who owns the session is the one its permission prompts and held messages wait on, and what they type at its
+//     terminal goes in whatever its mode. bypass when the session's own transcript says bypassPermissions now
+//     (peerSessionClass); nothing otherwise (a session that prompts takes a message that states none; plan may be
+//     either class). A stale record can only make the session hold the message, never take more than its owner could.
+//   - anything else (supervision, another Agent's message, non-owner answers and stops): nothing. The node cannot bind such
+//     words to the permission mode they were written in, so a bypass session holds them for approval at the computer.
+func (n *Node) peerAttest(ctx context.Context, c claudeProc, id string) string {
+	if ownerDeliveryOf(ctx) != nil && peerSessionClass(n, c, id) == peerModeBypass {
+		return peerModeBypass
+	}
+	return ""
+}
+
+// peerSessionClass is the from-mode class session id runs in, from the transcript in claude c's own config directory
+// (not another profile's copy of the session): bypass when its latest mode is bypassPermissions, prompting for a mode
+// that prompts, "" when it cannot be told (plan, which Claude Code counts as bypass when bypass is available to the
+// session; no transcript or no mode yet). A mode changed since the transcript last said is not seen: such a message
+// is held there, which the send reports as such.
+func peerSessionClass(n *Node, c claudeProc, id string) string {
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(c.dir), "projects", "*", id+".jsonl"))
+	var path string
+	var newest os.FileInfo
+	for _, m := range matches {
+		if st, err := os.Stat(m); err == nil && (newest == nil || st.ModTime().After(newest.ModTime())) {
+			path, newest = m, st
+		}
+	}
+	if newest == nil {
+		return ""
+	}
+	switch n.metaNow(path, newest).mode {
+	case "bypassPermissions":
+		return peerModeBypass
+	case "default", "acceptEdits", "auto", "dontAsk":
+		return peerModePrompting
+	}
+	return ""
+}
+
+// computerWaitKey is where sendOutside leaves, for session.send's answer, that the session took the message while
+// waiting on a dialog only the computer can answer (withComputerWait).
+type computerWaitKey struct{}
+
+// withComputerWait gives sendOutside somewhere to say the message waits behind a dialog on the computer.
+func withComputerWait(ctx context.Context) (context.Context, *bool) {
+	w := new(bool)
+	return context.WithValue(ctx, computerWaitKey{}, w), w
+}
+
+// askTool is Claude Code's question tool.
+const askTool = "AskUserQuestion"
+
+// asking: claude c waits on a question it asked (its status file says waiting, and its transcript's latest call, m,
+// is the question), not on a permission prompt, a plan to approve or another dialog only the computer answers.
+func asking(c claudeProc, m quickMeta) bool {
+	return c.Status == "waiting" && m.tool == askTool
+}
+
+// interruptOutside stops the turn a claude outside Persona's panes runs, through its inbox: a message at priority now
+// cuts the turn (or ends a question or permission prompt it waits on) and asks it to stop (prompts.PeerStop). handled false for any other
+// session, and one a tmux pane runs (its Esc goes to the pane). A session at rest has nothing to stop: done, nothing sent.
+func (n *Node) interruptOutside(ctx context.Context, id string) (handled bool, err error) {
+	c, ok := n.outsideClaude(id)
+	if !ok || outsidePane(c) != "" {
+		return false, nil
+	}
+	p, has := peerOf(c)
+	if !has {
+		return true, refusal(peerUnsupported, peerNoInboxMsg, nil)
+	}
+	if c.Status != "busy" && c.Status != "waiting" {
+		return true, nil // at rest already (a Stop from a list a moment old): nothing to stop, nothing sent
+	}
+	var offset int64
+	if st, err := os.Stat(n.transcriptPath(id)); err == nil {
+		offset = st.Size()
+	}
+	stop := prompts.PeerStop()
+	p.fromMode = n.peerAttest(ctx, c, id)
+	err = peerSendAt(ctx, p, id, stop, peerNow)
+	var pe *errPeer
+	if asPeer(err, &pe) {
+		return true, refusal(pe.code, pe.msg, map[string]any{"pid": c.pid})
+	}
+	if peerTaken(ctx, func() string { return n.transcriptPath(id) }, offset, stop, peerConfirmWait) {
+		log.Printf("interrupt %s: claude %d took the stop through its inbox", id, c.pid)
+		return true, nil
+	}
+	if err != nil {
+		return true, uncertain(err)
+	}
+	if peerHeldSeen(n.transcriptPath(id), offset) {
+		return true, heldOnComputer()
+	}
+	return true, unconfirmed()
+}
+
+// heldOnComputer is the outcome of a message the session did not take and wrote that it holds for approval at the
+// computer (peerHeldSeen). Still delivered unknown: it goes in once approved there, and nothing resends it.
+func heldOnComputer() error {
+	b, _ := json.Marshal(map[string]any{"delivered": deliveredUnknown})
+	return &rpc.Error{Code: peerHeld, Message: peerHeldMsg, Data: b}
 }
 
 // unconfirmed is the outcome of a message the inbox read but the session has not taken: delivery unknown.

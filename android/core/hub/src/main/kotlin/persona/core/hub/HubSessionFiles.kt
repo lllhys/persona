@@ -2,8 +2,11 @@ package persona.core.hub
 
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import persona.core.contracts.api.SessionGitPull
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.api.*
@@ -32,18 +35,23 @@ class HubSessionFiles internal constructor(
     private val post: suspend (String, String) -> Response = { _, _ -> throw UnsupportedOperationException("post") },
     /** The hub's features from its last hello. */
     private val features: () -> Set<String> = { emptySet() },
+    /** A POST for files/rename, trash and restore: the hub gives the machine 2 minutes (a big folder on a slow disk). */
+    private val editPost: suspend (String, String) -> Response = post,
 ) : SessionFiles {
     constructor(connection: OkHttpHubConnection, decoding: CoroutineDispatcher = Dispatchers.Default) :
         this({ path -> connection.request(path, "GET", null) }, decoding, { path -> connection.request(path, "GET", null, buffered = false) },
             { path, seconds -> connection.request(path, "GET", null, readTimeoutSeconds = seconds) },
             { path, body -> connection.request(path, "POST", body.toRequestBody(JSON), readTimeoutSeconds = 100) },
-            { connection.serverFeatures.value })
+            { connection.serverFeatures.value },
+            { path, body -> connection.request(path, "POST", body.toRequestBody(JSON), readTimeoutSeconds = EDIT_TIMEOUT_SECONDS) })
 
     companion object {
         /** Past the hub's 2 minutes for file/convert (the node gives LibreOffice 90 s), as agent creation waits 130 s. */
         const val CONVERT_TIMEOUT_SECONDS = 130L
         /** Past the hub's 30 s for file/thumb (25 s at the node). */
         const val THUMB_TIMEOUT_SECONDS = 35L
+        /** Past the hub's 2 minutes for a file change, as iOS waits 130 s for a trash or a restore. */
+        const val EDIT_TIMEOUT_SECONDS = 130L
     }
 
     override suspend fun directory(machineId: String, cwd: String, path: String) =
@@ -75,6 +83,32 @@ class HubSessionFiles internal constructor(
             if (!response.isSuccessful) throw HubFailure.from(response)
             withContext(decoding) {
                 try { JsonCodec.decodeFromString<SessionGitPull>(requireNotNull(response.body).string()) }
+                catch (error: SerializationException) { throw HubFailure(HubError.Protocol, retryable = false, cause = error) }
+            }
+        }
+    }
+
+    override fun editsFiles(machineId: String) = features().let { it.isEmpty() || "file_edit" in it }
+
+    override suspend fun rename(machineId: String, cwd: String, path: String, name: String) =
+        edit<SessionFilePath>(machineId, "rename", buildJsonObject { put("path", path); put("cwd", cwd); put("name", name) }).path
+
+    override suspend fun trash(machineId: String, cwd: String, paths: List<String>) =
+        edit<SessionTrashedFiles>(machineId, "trash", buildJsonObject { putJsonArray("paths") { paths.forEach { add(it) } }; put("cwd", cwd) }).trashed
+
+    override suspend fun restore(machineId: String, trashIds: List<String>) =
+        edit<SessionRestoredFiles>(machineId, "restore", buildJsonObject { putJsonArray("trash_ids") { trashIds.forEach { add(it) } } })
+            .restored.map { it.path }
+
+    /** `POST …/files/{rename,trash,restore}` with [body]; the hub passes on the node's answer, or its refusal, as it is. */
+    private suspend inline fun <reified T> edit(machineId: String, operation: String, body: JsonObject): T {
+        require(machineId.isNotBlank())
+        val path = HttpUrl.Builder().scheme("https").host("example.com")
+            .addPathSegments("api/v1/machines").addPathSegment(machineId).addPathSegments("files/$operation").build().encodedPath
+        return editPost(path, body.toString()).use { response ->
+            if (!response.isSuccessful) throw HubFailure.from(response)
+            withContext(decoding) {
+                try { JsonCodec.decodeFromString<T>(requireNotNull(response.body).string()) }
                 catch (error: SerializationException) { throw HubFailure(HubError.Protocol, retryable = false, cause = error) }
             }
         }

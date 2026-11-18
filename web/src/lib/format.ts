@@ -1,5 +1,6 @@
 import type { AgentState, Interaction, Session, SessionCapabilities } from "./types";
 import { formatDate, formatRelative, t } from "../i18n";
+import { sessionAgentName } from "./agent-kind";
 import { usageLimitLabel } from "./usage-limit";
 import { workLine } from "./work";
 import { closeoutLine, closeoutSuffix, shownCloseout } from "./closeout";
@@ -8,19 +9,29 @@ import { closeoutLine, closeoutSuffix, shownCloseout } from "./closeout";
 // to them, as every other source is: a stopped Agent's row says read and terminal only (#4754). A native row without
 // them (every row from an older node) keeps its existing behavior: it may do everything.
 export function sessionCan(s: Session | undefined, operation: keyof SessionCapabilities): boolean {
-  if (!s) return false;
+  if (!s || s.deleted) return false;
   if (operation === "attach") return Boolean(s.source_kind && s.capabilities?.attach === true && !s.attached);
   if (operation === "close") return s.capabilities?.close ?? sessionCan(s, "terminal");
   if (!s.source_kind && !s.capabilities) return true;
   return s.capabilities?.[operation] === true;
 }
 
+/** Rename (#6294): the node's `capabilities.rename` where it says (a runtime's session, which has no terminal), else as
+ *  before: a row that can send and is the user's own Agent or a Persona conversation (no other source). */
+export function sessionCanRename(s: Session | undefined): boolean {
+  if (!s) return false;
+  const said = s.capabilities?.rename;
+  if (typeof said === "boolean") return said;
+  return sessionCan(s, "send") && (Boolean(s.assistant) || !s.source_kind);
+}
+
 /** A stopped Agent (#4754, docs/integrations/engines.md "Agents run in a terminal"): an Agent of a terminal engine that is
  *  not running. Its row keeps its conversation and its terminal and takes no messages; the one way back is Resume on its
  *  terminal page. Only a node that knows it says so (capabilities read and terminal, no send): an older node's offline
- *  row has no capabilities and keeps today's behavior. */
+ *  row has no capabilities and keeps today's behavior. A Codex thread nothing has open is marked the same way (node
+ *  codex_registry.go, #5521), though its row keeps its Codex history source. */
 export function isStoppedAgent(s: Session | undefined): boolean {
-  if (!s || s.source_kind || s.assistant) return false;
+  if (!s || s.assistant || (s.source_kind && s.source_kind !== "codex_history")) return false;
   if (s.status !== "offline" && s.status !== "interrupted") return false;
   const c = s.capabilities;
   return Boolean(c && c.read === true && c.terminal === true && !c.send);
@@ -32,6 +43,18 @@ export function interactionCanAnswer(ix: Pick<Interaction, "session_id">, sessio
   return ix.session_id === "" || sessionCan(session, "approve");
 }
 
+/** Why this page can't answer a card (#7497), as iOS (#6868) and Android (`approvalBlockedReason`) say it: null when it
+ *  can; "attach" when linking the session live would let it (a Codex thread Persona hasn't joined yet); else "computer",
+ *  an unknown session included. */
+export function answerBlock(ix: Pick<Interaction, "session_id">, session: Session | undefined): "attach" | "computer" | null {
+  if (interactionCanAnswer(ix, session)) return null;
+  return sessionCan(session, "attach") ? "attach" : "computer";
+}
+
+// The node writes some reasons with their own "View only: " in Chinese, which the subtitle adds already (#7803;
+// Android's READ_ONLY_PREFIX).
+const NODE_READ_ONLY_PREFIX = "仅查看："; // i18n-ignore: the node's prefix it strips
+
 export function sourceSubtitle(s?: Session): string {
   if (!s?.source_kind) return "";
   const label = s.source_kind === "codex_app_server" ? t("lib-format.source_codex_live") : s.source_kind === "codex_history" ? t("lib-format.source_codex_history") : s.source_kind === "identity_conflict" ? t("lib-format.source_identity_conflict")
@@ -39,13 +62,22 @@ export function sourceSubtitle(s?: Session): string {
     // Claude outside Persona's terminals (docs/integrations/claude-integration.md "Claude outside Persona's terminals")
     : s.source_kind === "claude_desktop" ? t("lib-format.source_claude_desktop")
     : s.source_kind === "claude_cli" ? t("lib-format.source_claude_terminal")
-    : s.source_kind === "runtime" ? s.agent_label || s.agent || "runtime" // an agent runtime's session (docs/integrations/runtimes.md): its own name
+    // an agent runtime's session (docs/integrations/runtimes.md): its own name, else its agent's ("Claude Code", a Paseo
+    // provider's), never a raw id (#8142)
+    : s.source_kind === "runtime" ? s.agent_label || sessionAgentName(s)
     : s.source_kind;
   const detail = s.source_kind !== "identity_conflict" && s.agent_name ? ` · ${s.agent_name}` : "";
-  return sessionCan(s, "send") ? label + detail : t("lib-format.read_only", { source: label + detail, reason: s.read_only_reason || t("lib-format.read_only_default_reason") });
+  if (sessionCan(s, "send")) return label + detail;
+  const given = s.read_only_reason ?? "";
+  const reason = (given.startsWith(NODE_READ_ONLY_PREFIX) ? given.slice(NODE_READ_ONLY_PREFIX.length) : given).trim();
+  return t("lib-format.read_only", { source: label + detail, reason: reason || t("lib-format.read_only_default_reason") });
 }
 
+/** The command that resumes the session in a terminal; none ("") for a runtime's session, which its runtime keeps: a
+ *  Paseo provider such as Grok has no such command, an id of the runtime's making (`paseo-…`) is no Claude session's,
+ *  and a Claude Code conversation Paseo runs would get a second writer (#8142). */
 export function resumeCommand(s: Session): string {
+  if (s.source_kind === "runtime") return "";
   const codex = s.agent === "codex" || s.source_kind === "codex_app_server" || s.source_kind === "codex_history";
   const command = codex ? "codex resume" : s.agent === "traex" ? "traex resume" : "claude --resume";
   const resume = `${command} ${s.source_thread_id || s.session_id}`;
@@ -79,12 +111,19 @@ export function sessionDeletable(s: Session): boolean {
   return !s.assistant && DELETABLE_STATUSES.has(s.status) && !s.starting;
 }
 
-// docs/protocol/agent-states.md: needs you → unread → awaiting reply (seen, awaiting the user's reply, #5096) → working → idle → unknown → offline
-const RANK: Record<AgentState, number> = { needs_you: 0, unread: 1, working: 3, idle: 4, unknown: 5, offline: 6 };
+// docs/protocol/agent-states.md: needs you → unread → awaiting reply (seen, awaiting the user's reply, #5096) → working →
+// just finished (done before anybody looked, #9751) → idle → unknown → offline
+const RANK: Record<AgentState, number> = { needs_you: 0, unread: 1, working: 3, idle: 5, unknown: 6, offline: 7 };
 
-// A seen agent awaiting the user's reply ranks between unread and working. The comparator has no mutes: a muted one
-// awaiting a reply ranks so here too (the sidebar's By Status sections and folds go by lib/agent-groups.ts awaitsReply).
-const rankOf = (s: Session) => (stateOf(s) === "idle" && s.awaits_reply ? 2 : RANK[stateOf(s)]);
+// A seen agent awaiting the user's reply ranks between unread and working, a just finished one between working and the
+// seen ones. The comparator has no mutes: a muted one ranks so here too (the sidebar's By Status sections and folds go
+// by lib/agent-groups.ts awaitsReply and justFinished).
+function rankOf(s: Session): number {
+  const st = stateOf(s);
+  if (st === "idle" && s.awaits_reply) return 2;
+  if (st === "idle" && s.work?.just_finished) return 4;
+  return RANK[st];
+}
 
 export function stateOf(s: Session): AgentState {
   if (s.state) return s.state;
@@ -175,9 +214,13 @@ export function sessionTitle(s: Pick<Session, "title" | "cwd">): string {
   return s.title?.trim() || baseName(s.cwd) || t("lib-format.untitled_session");
 }
 
+// A path from a Windows computer: a drive letter or a UNC share. Only there is a backslash a separator; in any other
+// path it is a character of a name.
+const WINDOWS_PATH = /^[A-Za-z]:[\\/]|^\\\\/;
+
 export function baseName(p?: string): string {
   if (!p) return "";
-  const parts = p.replace(/\/+$/, "").split("/");
+  const parts = (WINDOWS_PATH.test(p) ? p.replace(/\\/g, "/") : p).replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || p;
 }
 
@@ -201,10 +244,14 @@ export function ago(iso?: string, now = Date.now(), style: Intl.RelativeTimeForm
   const opts: Intl.RelativeTimeFormatOptions = { numeric: "auto", style };
   // "Just now" rather than Intl's "now" for under a minute
   if (s < 45) return t("lib-format.just_now");
-  if (s < 3600) return formatRelative(-Math.round(s / 60), "minute", opts);
-  if (s < 86400) return formatRelative(-Math.round(s / 3600), "hour", opts);
+  // Rounded, a unit steps up once it reaches the next one: 59.5 minutes is "1 hour ago", not "60 minutes ago".
+  const minutes = Math.round(s / 60);
+  if (minutes < 60) return formatRelative(-minutes, "minute", opts);
+  const hours = Math.round(s / 3600);
+  if (hours < 24) return formatRelative(-hours, "hour", opts);
   // Days by the local calendar, not by 24 h spans: yesterday morning seen late tonight is yesterday, not the day before yesterday (#4281).
-  const days = calendarDays(ts, now);
+  // At least 1: 23.5 hours ago within one calendar day still reads as "yesterday", not "today".
+  const days = Math.max(1, calendarDays(ts, now));
   if (days < 7) return formatRelative(-days, "day", opts);
   return formatDate(ts, { month: "numeric", day: "numeric" });
 }
@@ -247,15 +294,17 @@ export function clock(iso?: string): string {
   return t("lib-format.date_time", { date: formatDate(d, { month: "short", day: "numeric" }), time: hm });
 }
 
+/** "512 B", "1.5 KB", "250 MB". The unit and the decimal follow the figure as it is shown, after rounding, as the
+ *  machine pages' bytesBin does: 1023.5 KB is "1.0 MB", not "1024 KB"; 99.95 KB is "100 KB", not "100.0 KB" (#9969). */
 export function bytes(n?: number): string {
   if (n === undefined || !Number.isFinite(n)) return "—";
   const u = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
-  while (n >= 1024 && i < u.length - 1) {
+  while (n >= 1023.5 && i < u.length - 1) {
     n /= 1024;
     i++;
   }
-  return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${u[i]}`;
+  return `${n >= 99.95 || i === 0 ? Math.round(n) : n.toFixed(1)} ${u[i]}`;
 }
 
 /**

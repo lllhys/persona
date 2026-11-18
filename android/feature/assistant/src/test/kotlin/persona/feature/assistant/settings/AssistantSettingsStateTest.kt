@@ -38,6 +38,7 @@ class AssistantSettingsStateTest {
         val saved = mutableListOf<Pair<String, String>>()
         val deleted = mutableListOf<String>()
         var fail = false
+        var updateAnswer: ((AssistantConfigUpdate) -> AssistantConfig)? = null
         var skillsAnswer: () -> AssistantSkills = { AssistantSkills("server", "服务器", listOf(AgentSkill("lark-gateway", "飞书", "builtin"))) }
 
         override suspend fun config(): AssistantConfig { check(!fail) { "hub unreachable" }; return config }
@@ -55,10 +56,12 @@ class AssistantSettingsStateTest {
                 main = if (update.main == AssistantConfigUpdate.CLEAR_MAIN) null else update.main ?: config.main,
                 mainTasksQuiet = update.mainTasksQuiet ?: config.mainTasksQuiet,
                 mainBackgroundFolded = update.mainBackgroundFolded ?: config.mainBackgroundFolded,
+                nextSuggestions = update.nextSuggestions ?: config.nextSuggestions,
                 mainSupervisesOwnTasks = update.mainSupervisesOwnTasks ?: config.mainSupervisesOwnTasks,
+                closeEndedTerminals = update.closeEndedTerminals ?: config.closeEndedTerminals,
                 defaultPermissionMode = update.defaultPermissionMode ?: config.defaultPermissionMode,
             )
-            return config
+            return updateAnswer?.invoke(update) ?: config
         }
         override suspend fun memory(): List<MemoryFile> { check(!fail) { "assistant machine is offline" }; return memory }
         override suspend fun saveMemory(name: String, content: String) {
@@ -146,6 +149,36 @@ class AssistantSettingsStateTest {
         assertTrue(state.state.value.notice?.error == true)
     }
 
+    @Test fun nextSuggestionsSwitchWritesOnlyItselfAndFollowsTheHubAnswer() = runTest {
+        val api = FakeApi()
+        val state = AssistantSettingsState(api, Zone())
+        state.load()
+        state.setNextSuggestions(true)
+        assertTrue("an older hub has no switch to change", api.updates.isEmpty())
+        assertNull(state.state.value.config?.nextSuggestions)
+
+        api.config = api.config.copy(nextSuggestions = false)
+        state.load()
+        state.setNextSuggestions(false)
+        assertTrue("already off: nothing is sent", api.updates.isEmpty())
+        api.updateAnswer = { api.config.copy(nextSuggestions = false) }
+        state.setNextSuggestions(true)
+        assertEquals(AssistantConfigUpdate(nextSuggestions = true), api.updates.single())
+        assertEquals("the hub's answer wins over the requested value", false, state.state.value.config?.nextSuggestions)
+        assertFalse(state.state.value.busy)
+
+        api.updateAnswer = { api.config.copy(nextSuggestions = null) }
+        state.setNextSuggestions(true)
+        assertEquals(2, api.updates.size)
+        assertEquals("an older response shape keeps the requested value", true, state.state.value.config?.nextSuggestions)
+
+        api.fail = true
+        state.setNextSuggestions(false)
+        assertEquals(true, state.state.value.config?.nextSuggestions)
+        assertTrue(state.state.value.notice?.error == true)
+        assertFalse(state.state.value.busy)
+    }
+
     /** #5084: "The main chat supervises its own tasks", the background supervisor's off switch. */
     @Test fun superviseOwnTasksSwitchSavesAndComesBackOnFailure() = runTest {
         val api = FakeApi()
@@ -167,6 +200,27 @@ class AssistantSettingsStateTest {
         api.fail = true
         state.setMainSupervisesOwnTasks(false)
         assertEquals(true, state.state.value.config?.mainSupervisesOwnTasks)
+        assertTrue(state.state.value.notice?.error == true)
+    }
+
+    /** #10355: "Close an Agent's terminal when it ends", off by default; only from a hub that has it. */
+    @Test fun closeEndedTerminalsSwitchSavesAndComesBackOnFailure() = runTest {
+        val api = FakeApi()
+        val state = AssistantSettingsState(api, Zone())
+        state.load()
+        state.setCloseEndedTerminals(true)
+        assertTrue("a hub without it: nothing to switch", api.updates.isEmpty())
+        api.config = api.config.copy(closeEndedTerminals = false)
+        state.load()
+        state.setCloseEndedTerminals(false)
+        assertTrue("already off: nothing is sent", api.updates.isEmpty())
+        state.setCloseEndedTerminals(true)
+        assertEquals(true, api.updates.single().closeEndedTerminals)
+        assertEquals(null, api.updates.single().mainSupervisesOwnTasks)
+        assertEquals(true, state.state.value.config?.closeEndedTerminals)
+        api.fail = true
+        state.setCloseEndedTerminals(false)
+        assertEquals(true, state.state.value.config?.closeEndedTerminals)
         assertTrue(state.state.value.notice?.error == true)
     }
 

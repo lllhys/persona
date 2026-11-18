@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor
 struct MessageDraftActionsTests {
@@ -18,6 +19,18 @@ struct MessageDraftActionsTests {
         var object: [String: Any] = ["item": try JSONSerialization.jsonObject(with: JSON.encoder.encode(item))]
         if receipt { object["dismissal_id"] = "receipt_1" }
         return try JSONSerialization.data(withJSONObject: object)
+    }
+
+    /// Later goes by the card's own id, which Needs You and the chat's feed both ask (#6002): its Inbox item differs.
+    @Test func laterPutsOffTheCardByItsOwnID() {
+        let store = TasksStore(toast: { _ in })
+        let draft = card()
+        #expect(!store.isLater(draft))
+        store.later(draft.id)
+        #expect(store.isLater(draft))
+        #expect(!store.isLater(card("feed_2")), "another card on the same Inbox item stays")
+        store.unlater(draft.id)
+        #expect(!store.isLater(draft))
     }
 
     @Test func dismissUsesOriginalDraftAndReceiptUndoClearsTheWholeBody() async throws {
@@ -76,8 +89,8 @@ struct MessageDraftActionsTests {
         #expect(TasksStore.messageState(card("feed_2"), inbox: item, sentHere: false, refused: false) == .open)
         let store = TasksStore(toast: { _ in })
         store.later(dismissed.id)
-        #expect(store.laterMessages.contains(dismissed.id))
-        #expect(!store.laterMessages.contains("feed_2"))
+        #expect(store.isLater(dismissed))
+        #expect(!store.isLater(card("feed_2")))
     }
 
     @Test func refreshedSnapshotRestoresPersistedDismissalAndUndo() async throws {

@@ -109,3 +109,4 @@ enum DemoKBSample {
     }
 }
 #endif
+import PersonaWire

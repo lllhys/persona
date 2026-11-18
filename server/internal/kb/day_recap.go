@@ -5,12 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math"
 	"os"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // The daily recap (docs/assistant/day-recap.md "What the hub stores and returns"): a day recording's recap.json
@@ -80,7 +81,10 @@ type DayRecap struct {
 	Actions     []MinutesAction `json:"actions,omitempty"`
 	Gaps        []CoverageGap   `json:"gaps,omitempty"`    // the coverage's gaps inside Covers
 	Partial     bool            `json:"partial,omitempty"` // the day was too long: some of it was not read
-	Markdown    string          `json:"markdown"`
+	// Language is what it is written in, its Markdown's headings too (language.go): an i18n code (zh-Hans, en, ja);
+	// a recap written before it was kept has none, and is Chinese.
+	Language string `json:"language,omitempty"`
+	Markdown string `json:"markdown"`
 }
 
 // RecapSpan is a stretch of the day, seconds since started_at.
@@ -506,30 +510,42 @@ func (e *Engine) SetDayRecapTodos(rawID string, version int, confirmed []Minutes
 	return rc, nil
 }
 
-// Gap reasons as recap.md says them (i18n-ignore: knowledge-base data, like the minutes' headings).
-var gapReasonZH = map[string]string{GapPaused: "暂停", GapInterrupted: "被打断", GapStopped: "停止", GapPending: "还没传完",
-	GapLost: "丢失", GapErased: "已擦除"}
+// gapReasonKeys are the gap reasons as recap.md says them (kb-day-recap.json); another reason is said as it is.
+var gapReasonKeys = map[string]string{GapPaused: "kb-day-recap.gap_paused", GapInterrupted: "kb-day-recap.gap_interrupted",
+	GapStopped: "kb-day-recap.gap_stopped", GapPending: "kb-day-recap.gap_pending", GapLost: "kb-day-recap.gap_lost",
+	GapErased: "kb-day-recap.gap_erased"}
+
+// gapReason is reason as recap.md in l says it.
+func gapReason(l i18n.Lang, reason string) string {
+	if key, ok := gapReasonKeys[reason]; ok {
+		return i18n.T(l, key)
+	}
+	return cmp.Or(reason, i18n.T(l, "kb-day-recap.gap_unknown"))
+}
 
 // renderDayRecap is recap.md: the recap with clock times in zone, the meetings and what was said outside them apart,
-// then the suggested to-dos; sections without anything are left out (i18n-ignore: knowledge-base data).
+// then the suggested to-dos; sections without anything are left out. Its headings and fixed words are in the
+// recap's language (kb-day-recap.json).
 func renderDayRecap(rc *DayRecap, start time.Time, zone *time.Location) string {
+	l := storedLang(rc.Language)
 	clock := func(sec float64) string { return start.Add(seconds(sec)).In(zone).Format("15:04") }
+	aside := func(text string) string { return i18n.T(l, "kb-day-recap.aside", i18n.Args{"text": text}) }
 	var b strings.Builder
-	fmt.Fprintf(&b, "# %s 全天回顾\n\n", rc.Day)
+	b.WriteString("# " + i18n.T(l, "kb-day-recap.title", i18n.Args{"day": rc.Day}) + "\n\n")
 	if rc.Summary != "" {
 		b.WriteString(rc.Summary + "\n\n")
 	}
-	fmt.Fprintf(&b, "- 时段：%s–%s", clock(rc.Covers.From), clock(rc.Covers.To))
+	b.WriteString("- " + i18n.T(l, "kb-day-recap.covers", i18n.Args{"from": clock(rc.Covers.From), "to": clock(rc.Covers.To)}))
 	if !rc.Final {
-		b.WriteString("（截至目前）")
+		b.WriteString(i18n.T(l, "kb-day-recap.so_far"))
 	}
 	b.WriteByte('\n')
 	if len(rc.Gaps) > 0 {
 		var gaps []string
 		for _, g := range rc.Gaps {
-			gaps = append(gaps, clock(g.From)+"–"+clock(g.To)+"（"+cmp.Or(gapReasonZH[g.Reason], g.Reason, "原因不明")+"）")
+			gaps = append(gaps, i18n.T(l, "kb-day-recap.gap", i18n.Args{"from": clock(g.From), "to": clock(g.To), "reason": gapReason(l, g.Reason)}))
 		}
-		b.WriteString("- 没有录到：" + strings.Join(gaps, "、") + "\n")
+		b.WriteString("- " + i18n.T(l, "kb-day-recap.not_recorded", i18n.Args{"gaps": strings.Join(gaps, i18n.T(l, "kb-day-recap.list_sep"))}) + "\n")
 	}
 	section := func(title, kind string) {
 		first := true
@@ -543,36 +559,36 @@ func renderDayRecap(rc *DayRecap, start time.Time, zone *time.Location) string {
 			}
 			b.WriteString("- " + clock(en.From) + "–" + clock(en.To) + " " + en.Title)
 			if m := en.Meeting; m != nil && m.Name != "" && m.Name != en.Title {
-				b.WriteString("（" + m.Name + "）")
+				b.WriteString(aside(m.Name))
 			}
 			b.WriteByte('\n')
 			for _, p := range en.Points {
 				b.WriteString("  - [" + clock(p.At) + "] " + p.Text)
 				if p.Who != "" {
-					b.WriteString("（" + p.Who + "）")
+					b.WriteString(aside(p.Who))
 				}
 				b.WriteByte('\n')
 			}
 		}
 	}
-	section("会议", RecapMeeting)
-	section("会议以外", RecapOutside)
+	section(i18n.T(l, "kb-day-recap.meetings"), RecapMeeting)
+	section(i18n.T(l, "kb-day-recap.outside"), RecapOutside)
 	if len(rc.Actions) > 0 {
-		b.WriteString("\n## 建议待办\n\n")
+		b.WriteString("\n## " + i18n.T(l, "kb-day-recap.actions") + "\n\n")
 		for _, a := range rc.Actions {
 			b.WriteString("- [" + clock(a.At) + "] ")
 			if a.Who != "" {
-				b.WriteString(a.Who + "：")
+				b.WriteString(i18n.T(l, "kb-day-recap.owner", i18n.Args{"who": a.Who}))
 			}
 			b.WriteString(a.What)
 			if by := cmp.Or(a.By, a.DueDate); by != "" {
-				b.WriteString("（" + by + "）")
+				b.WriteString(aside(by))
 			}
 			b.WriteByte('\n')
 		}
 	}
 	if rc.Partial {
-		b.WriteString("\n> 这一天太长，中间有些时段没有整理进回顾。\n")
+		b.WriteString("\n> " + i18n.T(l, "kb-day-recap.partial") + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

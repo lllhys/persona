@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import UIKit
 @testable import Persona
+import PersonaWire
 
 /// SF Symbols go through `Theme.Icon` (Shared/Design/Icons.swift): one meaning, one symbol (docs/apple/icons.md). These read
 /// the sources next to this file (apple/Persona, apple/PersonaWatch, apple/Shared) and look at what is passed as

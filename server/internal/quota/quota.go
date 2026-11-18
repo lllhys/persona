@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/modelhttp"
 )
 
 // Report is one key's quota as the app shows it.
@@ -34,11 +36,21 @@ type Report struct {
 }
 
 type Usage struct {
-	Label    string   `json:"label"` // today / this week / this month (in Chinese)
+	Label string `json:"label"` // today / this week / this month (in Chinese)
+	// Period is what Label covers, for clients that add the numbers up: PeriodDay, PeriodWeek or PeriodMonth, in the
+	// user's time zone (quota.query's tz). "" when the extension does not say: then no client takes it for any period.
+	Period   string   `json:"period,omitempty"`
 	Requests int64    `json:"requests"`
 	Tokens   int64    `json:"tokens"`
 	CostUSD  *float64 `json:"cost_usd,omitempty"`
 }
+
+// The periods a Usage may name.
+const (
+	PeriodDay   = "day"
+	PeriodWeek  = "week"
+	PeriodMonth = "month"
+)
 
 // Pool is an account or provider the key's requests go to.
 type Pool struct {
@@ -151,6 +163,12 @@ func Do(ctx context.Context, client *http.Client, base, key string, r Request) (
 	if err != nil {
 		return Response{}, err
 	}
+	if strings.Contains(target.Path, KeyPlaceholder) {
+		// The path carries the key as one escaped segment: a key with "/" or "?" must not add segments or a query.
+		placeholder := (&url.URL{Path: KeyPlaceholder}).EscapedPath()
+		target.RawPath = strings.ReplaceAll(target.EscapedPath(), placeholder, url.PathEscape(key))
+		target.Path = strings.ReplaceAll(target.Path, KeyPlaceholder, key)
+	}
 	q := target.Query()
 	for k, vs := range q {
 		for i := range vs {
@@ -173,6 +191,7 @@ func Do(ctx context.Context, client *http.Client, base, key string, r Request) (
 		}
 		req.Header.Set(k, put(v))
 	}
+	modelhttp.SetDefaultUserAgent(req.Header)
 	if client == nil {
 		client = &http.Client{Timeout: 25 * time.Second}
 	}

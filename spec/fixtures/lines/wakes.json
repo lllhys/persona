@@ -4,11 +4,11 @@
   "cases": [
     {
       "name": "short_reply_after_wake_is_the_answer",
-      "description": "A long reply before a wake does not keep the answer: the shorter reply after the wake is the answer, and the earlier reply and the wake fold into the work line.",
+      "description": "A wake opens a turn of its own (#9140): the long reply before it stays the first turn's answer, and the short reply after it is the woken turn's answer, under its notice and its own work line.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatStoreTests.swift: backgroundWakeEndsOnTheNewestWords"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: aBackgroundWakeOpensItsOwnExchange"
       ],
       "input": {
         "items": [
@@ -77,17 +77,16 @@
             "end": null,
             "elapsed_seconds": null,
             "duration_text": "",
-            "tools": 2,
+            "tools": 1,
             "thoughts": 0,
             "known_failed_tools": 0,
-            "unresolved_tools": 2,
+            "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 3",
-              "回复 1"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 3"
+              "工具 1"
             ],
             "steps": [
               {
@@ -100,18 +99,43 @@
                 "running": true,
                 "failed": false,
                 "image_count": 0
-              },
-              {
-                "type": "narration",
-                "id": "t-3#0",
-                "item_id": "3#0",
-                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
-              },
-              {
-                "id": "4#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
+              }
+            ]
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-4#0",
+            "is_input": false,
+            "type": "work",
+            "live": false,
+            "open": false,
+            "start": null,
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 1,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "steps": [
               {
                 "type": "tool",
                 "id": "5#0",
@@ -139,8 +163,28 @@
               "1#0"
             ],
             "process_ids": [
+              "tools-2#0"
+            ],
+            "answer_id": "3#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
               "tools-2#0",
-              "3#0",
+              "3#0"
+            ],
+            "tool_count": 1,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "4#0",
+            "user_ids": [],
+            "process_ids": [
               "4#0",
               "tools-5#0"
             ],
@@ -156,30 +200,27 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "tools-2#0",
-              "3#0",
               "4#0",
               "tools-5#0",
               "6#0"
             ],
-            "tool_count": 2,
+            "tool_count": 1,
             "thought_count": 0,
-            "interim_count": 1,
+            "interim_count": 0,
             "start": null,
             "end": null
           }
         ]
       },
-      "from_test": "backgroundWakeEndsOnTheNewestWords"
+      "from_test": "aBackgroundWakeOpensItsOwnExchange"
     },
     {
       "name": "long_answer_after_wake",
-      "description": "The reply after the wake is the answer; the earlier reply and the wake fold into the work line.",
+      "description": "The same split whichever reply is longer: the words before the wake stay their turn's answer, and the long reply after it is the woken turn's.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatStoreTests.swift: backgroundWakeEndsOnTheNewestWords"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: aBackgroundWakeOpensItsOwnExchange"
       ],
       "input": {
         "items": [
@@ -248,17 +289,16 @@
             "end": null,
             "elapsed_seconds": null,
             "duration_text": "",
-            "tools": 2,
+            "tools": 1,
             "thoughts": 0,
             "known_failed_tools": 0,
-            "unresolved_tools": 2,
+            "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 3",
-              "回复 1"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 3"
+              "工具 1"
             ],
             "steps": [
               {
@@ -271,18 +311,43 @@
                 "running": true,
                 "failed": false,
                 "image_count": 0
-              },
-              {
-                "type": "narration",
-                "id": "t-3#0",
-                "item_id": "3#0",
-                "text": "等待检查"
-              },
-              {
-                "id": "4#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
+              }
+            ]
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "等待检查"
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-4#0",
+            "is_input": false,
+            "type": "work",
+            "live": false,
+            "open": false,
+            "start": null,
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 1,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "steps": [
               {
                 "type": "tool",
                 "id": "5#0",
@@ -310,8 +375,28 @@
               "1#0"
             ],
             "process_ids": [
+              "tools-2#0"
+            ],
+            "answer_id": "3#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
               "tools-2#0",
-              "3#0",
+              "3#0"
+            ],
+            "tool_count": 1,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "4#0",
+            "user_ids": [],
+            "process_ids": [
               "4#0",
               "tools-5#0"
             ],
@@ -327,30 +412,27 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "tools-2#0",
-              "3#0",
               "4#0",
               "tools-5#0",
               "6#0"
             ],
-            "tool_count": 2,
+            "tool_count": 1,
             "thought_count": 0,
-            "interim_count": 1,
+            "interim_count": 0,
             "start": null,
             "end": null
           }
         ]
       },
-      "from_test": "backgroundWakeEndsOnTheNewestWords"
+      "from_test": "aBackgroundWakeOpensItsOwnExchange"
     },
     {
       "name": "notification_without_wake",
       "description": "未唤醒的后台通知只算普通工作过程。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatStoreTests.swift: backgroundWakeEndsOnTheNewestWords"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: aBackgroundWakeOpensItsOwnExchange"
       ],
       "input": {
         "items": [
@@ -463,15 +545,15 @@
           }
         ]
       },
-      "from_test": "backgroundWakeEndsOnTheNewestWords"
+      "from_test": "aBackgroundWakeOpensItsOwnExchange"
     },
     {
       "name": "wake_after_recap_reopens_turn",
-      "description": "A wake after a recap stays in its exchange and its reply is the answer; the recap stays where it was.",
+      "description": "A wake after a recap does not reach back over it (the name is from the rule before #9140): the turn keeps its answer, the recap stays where it was, and the woken turn follows the recap.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatStoreTests.swift: wakeAfterARecapStaysInItsExchange"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: aWakeAfterARecapOpensItsExchangeAfterTheRecap"
       ],
       "input": {
         "items": [
@@ -530,7 +612,25 @@
             "text": "go"
           },
           {
-            "id": "w-1#0",
+            "id": "2#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "recap",
+            "text": "recap"
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-4#0",
             "is_input": false,
             "type": "work",
             "live": false,
@@ -545,24 +645,12 @@
             "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 2",
-              "回复 1"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 2"
+              "工具 1"
             ],
             "steps": [
-              {
-                "type": "narration",
-                "id": "t-2#0",
-                "item_id": "2#0",
-                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
-              },
-              {
-                "id": "4#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
               {
                 "type": "tool",
                 "id": "5#0",
@@ -581,12 +669,6 @@
             "is_input": false,
             "type": "reply",
             "text": "后台完成"
-          },
-          {
-            "id": "3#0",
-            "is_input": false,
-            "type": "recap",
-            "text": "recap"
           }
         ],
         "turns": [
@@ -595,8 +677,26 @@
             "user_ids": [
               "1#0"
             ],
+            "process_ids": [],
+            "answer_id": "2#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
+              "2#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "4#0",
+            "user_ids": [],
             "process_ids": [
-              "2#0",
               "4#0",
               "tools-5#0"
             ],
@@ -612,28 +712,26 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "2#0",
               "4#0",
               "tools-5#0",
               "6#0"
             ],
             "tool_count": 1,
             "thought_count": 0,
-            "interim_count": 1,
+            "interim_count": 0,
             "start": null,
             "end": null
           }
         ]
       },
-      "from_test": "wakeAfterARecapStaysInItsExchange"
+      "from_test": "aWakeAfterARecapOpensItsExchangeAfterTheRecap"
     },
     {
       "name": "multiple_wakes_pick_latest_answer",
-      "description": "Several wakes: the latest run's reply is the answer, the earlier replies and wakes fold into the work line, nothing is left behind the chip.",
+      "description": "Several wakes (the name is from the rule before #9140): each opens a turn of its own, so every run's last reply is an answer and the chat ends on the newest one.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -715,7 +813,43 @@
             "text": "请检查示例项目"
           },
           {
-            "id": "w-1#0",
+            "id": "2#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "开始等待"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
+          },
+          {
+            "id": "5#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "6#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "结束"
+          },
+          {
+            "id": "7#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-7#0",
             "is_input": false,
             "type": "work",
             "live": false,
@@ -730,46 +864,12 @@
             "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 4",
-              "回复 3"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 4"
+              "工具 1"
             ],
             "steps": [
-              {
-                "type": "narration",
-                "id": "t-2#0",
-                "item_id": "2#0",
-                "text": "开始等待"
-              },
-              {
-                "id": "3#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
-              {
-                "type": "narration",
-                "id": "t-4#0",
-                "item_id": "4#0",
-                "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
-              },
-              {
-                "id": "5#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
-              {
-                "type": "narration",
-                "id": "t-6#0",
-                "item_id": "6#0",
-                "text": "结束"
-              },
-              {
-                "id": "7#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
               {
                 "type": "tool",
                 "id": "8#0",
@@ -796,46 +896,100 @@
             "user_ids": [
               "1#0"
             ],
+            "process_ids": [],
+            "answer_id": "2#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
+              "2#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "3#0",
+            "user_ids": [],
             "process_ids": [
-              "2#0",
+              "3#0"
+            ],
+            "answer_id": "4#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "3#0"
+            ],
+            "after_wake_ids": [
               "3#0",
-              "4#0",
+              "4#0"
+            ],
+            "tail_ids": [],
+            "ordered_ids": [
+              "3#0",
+              "4#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "5#0",
+            "user_ids": [],
+            "process_ids": [
+              "5#0"
+            ],
+            "answer_id": "6#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "5#0"
+            ],
+            "after_wake_ids": [
               "5#0",
-              "6#0",
+              "6#0"
+            ],
+            "tail_ids": [],
+            "ordered_ids": [
+              "5#0",
+              "6#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "7#0",
+            "user_ids": [],
+            "process_ids": [
               "7#0",
               "tools-8#0"
             ],
             "answer_id": "9#0",
             "trailing_ids": [],
             "wake_ids": [
-              "3#0",
-              "5#0",
               "7#0"
             ],
             "after_wake_ids": [
-              "3#0",
-              "4#0",
-              "5#0",
-              "6#0",
               "7#0",
               "tools-8#0",
               "9#0"
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "2#0",
-              "3#0",
-              "4#0",
-              "5#0",
-              "6#0",
               "7#0",
               "tools-8#0",
               "9#0"
             ],
             "tool_count": 1,
             "thought_count": 0,
-            "interim_count": 3,
+            "interim_count": 0,
             "start": null,
             "end": null
           }
@@ -845,10 +999,10 @@
     },
     {
       "name": "only_last_reply_in_each_wake_is_candidate",
-      "description": "Only the last reply of the latest run is the answer; the replies before it are narration in the work line.",
+      "description": "Only the last reply of a run is its answer: the first turn's earlier reply is narration in its work line, and the woken turn has an answer of its own.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -914,31 +1068,29 @@
             "unresolved_tools": 0,
             "contains_fold": false,
             "summary_full": [
-              "工具 1",
-              "回复 2"
+              "回复 1"
             ],
-            "summary_short": [
-              "工具 1"
-            ],
+            "summary_short": [],
             "steps": [
               {
                 "type": "narration",
                 "id": "t-2#0",
                 "item_id": "2#0",
                 "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
-              },
-              {
-                "type": "narration",
-                "id": "t-3#0",
-                "item_id": "3#0",
-                "text": "等待"
-              },
-              {
-                "id": "4#0",
-                "type": "notice",
-                "text": "后台任务完成"
               }
             ]
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "等待"
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
           },
           {
             "id": "5#0",
@@ -954,8 +1106,28 @@
               "1#0"
             ],
             "process_ids": [
+              "2#0"
+            ],
+            "answer_id": "3#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
               "2#0",
-              "3#0",
+              "3#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 1,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "4#0",
+            "user_ids": [],
+            "process_ids": [
               "4#0"
             ],
             "answer_id": "5#0",
@@ -969,15 +1141,12 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "2#0",
-              "3#0",
               "4#0",
               "5#0"
             ],
             "tool_count": 0,
             "thought_count": 0,
-            "interim_count": 2,
+            "interim_count": 0,
             "start": null,
             "end": null
           }
@@ -987,10 +1156,10 @@
     },
     {
       "name": "wake_without_any_reply",
-      "description": "没有回复的唤醒轮保留工作过程和抽屉入口。",
+      "description": "A woken turn with no reply keeps its work under its notice; the turn before it keeps its own work line.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -1045,16 +1214,15 @@
             "elapsed_seconds": null,
             "duration_text": "",
             "tools": 1,
-            "thoughts": 1,
+            "thoughts": 0,
             "known_failed_tools": 0,
             "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 2",
-              "思考 1"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 2"
+              "工具 1"
             ],
             "steps": [
               {
@@ -1067,12 +1235,35 @@
                 "running": true,
                 "failed": false,
                 "image_count": 0
-              },
-              {
-                "id": "3#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
+              }
+            ]
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-3#0",
+            "is_input": false,
+            "type": "work",
+            "live": false,
+            "open": false,
+            "start": null,
+            "end": null,
+            "elapsed_seconds": null,
+            "duration_text": "",
+            "tools": 0,
+            "thoughts": 1,
+            "known_failed_tools": 0,
+            "unresolved_tools": 0,
+            "contains_fold": false,
+            "summary_full": [
+              "思考 1"
+            ],
+            "summary_short": [],
+            "steps": [
               {
                 "id": "4#0",
                 "type": "thinking",
@@ -1088,7 +1279,27 @@
               "1#0"
             ],
             "process_ids": [
-              "tools-2#0",
+              "tools-2#0"
+            ],
+            "answer_id": null,
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0"
+            ],
+            "tool_count": 1,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "3#0",
+            "user_ids": [],
+            "process_ids": [
               "3#0",
               "4#0"
             ],
@@ -1103,12 +1314,10 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "tools-2#0",
               "3#0",
               "4#0"
             ],
-            "tool_count": 1,
+            "tool_count": 0,
             "thought_count": 1,
             "interim_count": 0,
             "start": null,
@@ -1120,10 +1329,10 @@
     },
     {
       "name": "orphan_wake_opens_with_notice",
-      "description": "窗口从唤醒通知开始时，把通知放在工作行前。",
+      "description": "A window that starts at a wake draws the notice, then the work it woke, known by the wake's id.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -1160,74 +1369,80 @@
           {
             "id": "3#0",
             "is_input": false,
-            "text": "后台任务完成",
-            "type": "notice"
+            "type": "notice",
+            "text": "后台任务完成"
           },
           {
-            "contains_fold": false,
-            "duration_text": "2 秒",
-            "elapsed_seconds": 2,
-            "end": "2026-01-01T00:00:05Z",
-            "id": "w-tools-4#0",
+            "id": "w-3#0",
             "is_input": false,
-            "known_failed_tools": 0,
+            "type": "work",
             "live": false,
             "open": false,
             "start": "2026-01-01T00:00:03Z",
-            "steps": [
-              {
-                "call_id": "call_a",
-                "failed": false,
-                "id": "4#0",
-                "image_count": 0,
-                "name": "Bash",
-                "result_id": null,
-                "result_text": null,
-                "running": true,
-                "type": "tool"
-              }
-            ],
+            "end": "2026-01-01T00:00:05Z",
+            "elapsed_seconds": 2,
+            "duration_text": "2 秒",
+            "tools": 1,
+            "thoughts": 0,
+            "known_failed_tools": 0,
+            "unresolved_tools": 1,
+            "contains_fold": false,
             "summary_full": [
               "工具 1"
             ],
             "summary_short": [
               "工具 1"
             ],
-            "thoughts": 0,
-            "tools": 1,
-            "type": "work",
-            "unresolved_tools": 1
+            "steps": [
+              {
+                "type": "tool",
+                "id": "4#0",
+                "call_id": "call_a",
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "failed": false,
+                "image_count": 0
+              }
+            ]
           },
           {
             "id": "5#0",
             "is_input": false,
-            "text": "检查完成",
-            "type": "reply"
+            "type": "reply",
+            "text": "检查完成"
           }
         ],
         "turns": [
           {
-            "after_wake_ids": [],
-            "answer_id": "5#0",
-            "end": "2026-01-01T00:00:05Z",
             "id": "3#0",
-            "interim_count": 0,
+            "user_ids": [],
+            "process_ids": [
+              "3#0",
+              "tools-4#0"
+            ],
+            "answer_id": "5#0",
+            "trailing_ids": [],
+            "wake_ids": [
+              "3#0"
+            ],
+            "after_wake_ids": [
+              "3#0",
+              "tools-4#0",
+              "5#0"
+            ],
+            "tail_ids": [],
             "ordered_ids": [
               "3#0",
               "tools-4#0",
               "5#0"
             ],
-            "process_ids": [
-              "3#0",
-              "tools-4#0"
-            ],
-            "start": "2026-01-01T00:00:03Z",
-            "tail_ids": [],
-            "thought_count": 0,
             "tool_count": 1,
-            "trailing_ids": [],
-            "user_ids": [],
-            "wake_ids": []
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": "2026-01-01T00:00:03Z",
+            "end": "2026-01-01T00:00:05Z"
           }
         ]
       },
@@ -1235,10 +1450,10 @@
     },
     {
       "name": "live_tail_runs_behind_chip",
-      "description": "主回复已确定后，后续运行状态由唤醒入口承接。",
+      "description": "At work after a wake with no new words yet (the name is from the wake chip, gone since #2996): the answer before the wake stays, and the woken turn's work line is the live one.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -1273,7 +1488,7 @@
             "tool_name": "Bash"
           }
         ],
-        "live_turn_id": "1#0"
+        "live_turn_id": "3#0"
       },
       "expected": {
         "lines": [
@@ -1284,7 +1499,19 @@
             "text": "请检查示例项目"
           },
           {
-            "id": "w-1#0",
+            "id": "2#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-3#0",
             "is_input": false,
             "type": "work",
             "live": true,
@@ -1299,17 +1526,12 @@
             "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 2"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 2"
+              "工具 1"
             ],
             "steps": [
-              {
-                "id": "3#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
               {
                 "type": "tool",
                 "id": "4#0",
@@ -1322,12 +1544,6 @@
                 "image_count": 0
               }
             ]
-          },
-          {
-            "id": "2#0",
-            "is_input": false,
-            "type": "reply",
-            "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
           }
         ],
         "turns": [
@@ -1336,11 +1552,30 @@
             "user_ids": [
               "1#0"
             ],
+            "process_ids": [],
+            "answer_id": "2#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
+              "2#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "3#0",
+            "user_ids": [],
             "process_ids": [
               "3#0",
               "tools-4#0"
             ],
-            "answer_id": "2#0",
+            "answer_id": null,
             "trailing_ids": [],
             "wake_ids": [
               "3#0"
@@ -1349,13 +1584,8 @@
               "3#0",
               "tools-4#0"
             ],
-            "tail_ids": [
-              "3#0",
-              "tools-4#0"
-            ],
+            "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "2#0",
               "3#0",
               "tools-4#0"
             ],
@@ -1371,10 +1601,10 @@
     },
     {
       "name": "live_answer_after_wake",
-      "description": "进行中且最长回复在唤醒后时，最后工作段保持进行中。",
+      "description": "At work after a wake with new words in: the woken turn's work line is live with its latest reply under it, and the reply before the wake stays its turn's answer.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -1416,7 +1646,7 @@
             "text": "检查已完成：示例配置、文档和测试均已核对，可以继续下一项。"
           }
         ],
-        "live_turn_id": "1#0"
+        "live_turn_id": "3#0"
       },
       "expected": {
         "lines": [
@@ -1427,7 +1657,19 @@
             "text": "请检查示例项目"
           },
           {
-            "id": "w-1#0",
+            "id": "2#0",
+            "is_input": false,
+            "type": "reply",
+            "text": "等待"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
+          },
+          {
+            "id": "w-3#0",
             "is_input": false,
             "type": "work",
             "live": true,
@@ -1442,24 +1684,12 @@
             "unresolved_tools": 1,
             "contains_fold": false,
             "summary_full": [
-              "工具 2",
-              "回复 1"
+              "工具 1"
             ],
             "summary_short": [
-              "工具 2"
+              "工具 1"
             ],
             "steps": [
-              {
-                "type": "narration",
-                "id": "t-2#0",
-                "item_id": "2#0",
-                "text": "等待"
-              },
-              {
-                "id": "3#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              },
               {
                 "type": "tool",
                 "id": "4#0",
@@ -1486,8 +1716,26 @@
             "user_ids": [
               "1#0"
             ],
+            "process_ids": [],
+            "answer_id": "2#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
+              "1#0",
+              "2#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "3#0",
+            "user_ids": [],
             "process_ids": [
-              "2#0",
               "3#0",
               "tools-4#0"
             ],
@@ -1503,15 +1751,13 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "2#0",
               "3#0",
               "tools-4#0",
               "5#0"
             ],
             "tool_count": 1,
             "thought_count": 0,
-            "interim_count": 1,
+            "interim_count": 0,
             "start": null,
             "end": null
           }
@@ -1521,11 +1767,11 @@
     },
     {
       "name": "photos_after_wake_stay_with_message",
-      "description": "Pictures absorbed after a wake stay with their message, never in the tail or the drawer; the latest reply is the answer.",
+      "description": "Pictures sent with a message typed while the woken agent worked stay with that message, in the woken turn that took it in; the turn before the wake keeps its answer.",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatStoreTests.swift: picturesSentAfterAWakeStayWithTheirMessage"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: picturesSentAfterAWakeStayWithTheirMessage"
       ],
       "input": {
         "items": [
@@ -1595,40 +1841,16 @@
             "text": "开始"
           },
           {
-            "id": "w-1#0",
+            "id": "2#0",
             "is_input": false,
-            "type": "work",
-            "live": false,
-            "open": false,
-            "start": null,
-            "end": null,
-            "elapsed_seconds": null,
-            "duration_text": "",
-            "tools": 0,
-            "thoughts": 0,
-            "known_failed_tools": 0,
-            "unresolved_tools": 0,
-            "contains_fold": false,
-            "summary_full": [
-              "工具 1",
-              "回复 1"
-            ],
-            "summary_short": [
-              "工具 1"
-            ],
-            "steps": [
-              {
-                "type": "narration",
-                "id": "t-2#0",
-                "item_id": "2#0",
-                "text": "好的，在跑"
-              },
-              {
-                "id": "3#0",
-                "type": "notice",
-                "text": "后台任务完成"
-              }
-            ]
+            "type": "reply",
+            "text": "好的，在跑"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "type": "notice",
+            "text": "后台任务完成"
           },
           {
             "id": "4#0",
@@ -1661,11 +1883,30 @@
           {
             "id": "1#0",
             "user_ids": [
+              "1#0"
+            ],
+            "process_ids": [],
+            "answer_id": "2#0",
+            "trailing_ids": [],
+            "wake_ids": [],
+            "after_wake_ids": [],
+            "tail_ids": [],
+            "ordered_ids": [
               "1#0",
+              "2#0"
+            ],
+            "tool_count": 0,
+            "thought_count": 0,
+            "interim_count": 0,
+            "start": null,
+            "end": null
+          },
+          {
+            "id": "3#0",
+            "user_ids": [
               "message#0"
             ],
             "process_ids": [
-              "2#0",
               "3#0",
               "4#0",
               "message#1"
@@ -1682,8 +1923,6 @@
             ],
             "tail_ids": [],
             "ordered_ids": [
-              "1#0",
-              "2#0",
               "3#0",
               "4#0",
               "message#0",
@@ -1692,7 +1931,7 @@
             ],
             "tool_count": 0,
             "thought_count": 0,
-            "interim_count": 2,
+            "interim_count": 1,
             "start": null,
             "end": null
           }

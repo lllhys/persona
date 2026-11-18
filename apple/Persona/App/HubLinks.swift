@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonaWire
 
 /// One group of paired hubs as the app runs it (docs/protocol/multi-hub.md): its socket, the hello of the hub it is on, and the
 /// per-hub things that came with it. The default group's link is the only one until a second group is paired.
@@ -22,6 +23,8 @@ final class HubLink: Identifiable {
     var desktops: [DesktopDevice] = []
     /// Pinned and muted spaces / agents: each hub keeps its own.
     @ObservationIgnored let pins: PinsStore
+    /// The last good workspace snapshot for this group's @ menus; replaced, never accumulated, and dropped with the link.
+    @ObservationIgnored let workspaceMentions = MentionWorkspaceCache()
     /// Where requests go when the socket has not picked a hub yet: the group's first hub.
     @ObservationIgnored var fallback: ServerConfig
     #if DEBUG
@@ -48,6 +51,7 @@ final class HubLink: Identifiable {
         c.personaNaming = live.personaContracts
         c.sessionLookup = features.contains("sessions_lookup")
         c.sessionList = features.contains("sessions_list")
+        c.sessionsHierarchy = features.contains(ChildSessions.feature)
         #if DEBUG
         c.transport = transportForTests
         #endif
@@ -62,6 +66,10 @@ final class HubLink: Identifiable {
     }
     var isDemo: Bool { config.isDemo }
 
+    /// The hub folds side sessions into their parent's chat (`SideFold.feature`, #7944): by its hello, or before this
+    /// launch's hello by what the last one said, so a restored list does not show its sides for a moment.
+    var foldsSides: Bool { hello.features.isEmpty ? SideFold.remembered(group) : features.contains(SideFold.feature) }
+
     /// The hub's messaging sources (#2138, docs/extensions/extension-messaging.md): the Feishu screens go through the first.
     private(set) var messagingSources: [ExtensionMessagingSource] = []
 
@@ -71,6 +79,7 @@ final class HubLink: Identifiable {
         guard features.contains("messaging") else {
             messagingSources = []
             if MessagingSources.set(nil, for: hub) { await sourceChanged() }
+            live.followsMessaging = false
             return
         }
         guard let raw = try? await api.request("GET", "/api/v1/messaging"),
@@ -84,6 +93,8 @@ final class HubLink: Identifiable {
         }
         messagingSources = list.sources
         if MessagingSources.set(list.sources.first?.id, for: hub) { await sourceChanged() }
+        // The legacy `lark` event is dropped while a source is used (`AppModel.handle`): the hub need not send it (#9591).
+        live.followsMessaging = api.messagingSource != nil
     }
 
     /// The Feishu screens moved between the old API and a source (a first launch reads before the hello came): their
@@ -104,6 +115,7 @@ final class HubLink: Identifiable {
         if changed || messagingSources.isEmpty { Task { await refreshMessagingSources() } }
         let ext = f.contains("extensions")
         if !f.isEmpty, ext != Self.remembersExtensions(group) { UserDefaults.standard.set(ext, forKey: "hubExtensionsAPI." + group) }
+        if !f.isEmpty { SideFold.remember(f.contains(SideFold.feature), group: group) }
     }
 }
 

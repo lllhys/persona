@@ -67,6 +67,18 @@ class AgentArchivesStateTest {
         assertEquals(1, api.reads)
     }
 
+    /** #8143: any agent archives, as the manager and the web take them all: a Paseo provider's (Grok's) too, idle only. */
+    @Test fun aPaseoProvidersAgentArchivesToo() {
+        val grok = Session("computer", "paseo-1", title = "Sort the albums", agent = "paseo", agentLabelHint = "Grok", launcher = "grok",
+            sourceKind = "runtime", spaceKind = "paseo", status = "idle", state = "idle", cwd = "/projects/albums")
+        assertTrue(grok.canArchiveAgent)
+        assertTrue(grok.copy(agent = "dsh", agentLabelHint = "DSH").canArchiveAgent)
+        assertTrue(grok.copy(status = "offline", state = "offline").canArchiveAgent)
+        assertFalse(grok.copy(status = "working", state = "working").canArchiveAgent)
+        assertFalse(grok.copy(pendingInteractions = 1).canArchiveAgent)
+        assertFalse(grok.copy(assistant = true).canArchiveAgent)
+    }
+
     @Test fun unsupportedHubNeverWritesAndActiveWorkHasNoArchiveAction() = runTest {
         val api = ArchiveFake().apply { supported = false }
         val state = AgentArchivesState(api, this) { _, _ -> fail("No change expected") }
@@ -83,12 +95,13 @@ class AgentArchivesStateTest {
     }
 }
 
-internal class ArchiveFake : AgentArchives {
+/** The hub's archive over a Claude and a Codex session, and [extra] ones a test adds (a Paseo provider's, #8143). */
+internal class ArchiveFake(extra: List<Session> = emptyList()) : AgentArchives {
     override var supported = true
     val source = listOf(
         Session("computer", "claude-session", title = "Claude history", agent = "claude", status = "offline", state = "offline", cwd = "/projects/app"),
         Session("computer", "codex-session", title = "Codex history", agent = "codex", sourceKind = "codex_history", status = "offline", state = "offline", cwd = "/projects/api"),
-    )
+    ) + extra
     var rows = emptyList<Session>()
     var failRead = false
     var failWrite = false

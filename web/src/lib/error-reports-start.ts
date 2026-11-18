@@ -3,6 +3,7 @@
 import { api, ApiError } from "./api";
 import { ERROR_REPORTS_FEATURE, reportFreeze, setFreezeDropListener, startErrorReports, type SendResult } from "./error-reports";
 import { startFreezeWatch } from "./freeze-watch";
+import { devModeSince, watchSockets } from "./dev-probe";
 import type { ErrorReport } from "./extension-wire";
 import { uuid } from "./format";
 import { getState, subscribe } from "./store";
@@ -34,3 +35,10 @@ const watchFreezes = startFreezeWatch({
   report: reportFreeze,
 });
 setFreezeDropListener(() => watchFreezes.rearm());
+
+// Developing Persona (docs/operations/developing-persona.md): with the switch on, the socket is wrapped before the app
+// opens it, and the recorder's chunk loads. This module is not part of the first screen's budget.
+if (devModeSince()) {
+  watchSockets();
+  void import("./dev-mode").then((m) => m.startDevMode());
+}

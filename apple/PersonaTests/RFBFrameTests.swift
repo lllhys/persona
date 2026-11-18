@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import CoreVideo
 import Foundation
@@ -125,6 +126,61 @@ struct RFBFrameTests {
         }
         #expect(wrong == 0, "every pixel as the framebuffer has it")
         client.close()
+    }
+
+    /// The small window's part (Phone Screen's portrait display): the timed layers get buffers of the part's own size,
+    /// pixel for pixel the framebuffer's there, while the page's layers keep the whole picture; a new cut is copied out
+    /// at once, without waiting for the Mac to draw; a cut made for a framebuffer of another size shows all of it.
+    @MainActor @Test func sinkCutsTheSmallWindowsPart() async throws {
+        let w = 64, h = 48
+        var script = Self.greeting(w, h)
+        script.append(Self.raw(0, 0, w, h, [10, 20, 30, 0]))
+        // Changes in the part (right of x 40) and out of it.
+        for (i, (x, y)) in [(44, 4), (4, 4), (50, 40), (10, 30), (56, 20), (40, 0)].enumerated() {
+            script.append(Self.raw(x, y, 4, 4, [UInt8(50 + i * 20), 0, UInt8(200 - i * 20), 0]))
+        }
+        let t = PacedTransport(script, every: .milliseconds(40))
+        let client = RFBClient(transport: t) { nil }
+        let sink = RFBFrameSink()
+        let small = AVSampleBufferDisplayLayer()
+        sink.add(small, timed: true)
+        sink.cut(CGRect(x: 40, y: 0, width: 24, height: 48), of: CGSize(width: w, height: h))
+        sink.attach(client) { _, _ in }
+        client.start()
+        for _ in 0..<300 where !t.done { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(150)) // the last copy
+        let whole = try #require(sink.latestBuffer)
+        #expect(CVPixelBufferGetWidth(whole) == w && CVPixelBufferGetHeight(whole) == h, "the page's layers: all of it")
+        #expect(wrongPixels(try #require(sink.latestCutBuffer), client, at: CGRect(x: 40, y: 0, width: 24, height: 48)) == 0,
+                "the part, at the framebuffer's pixels")
+
+        // Another part: copied out at once from the framebuffer as it is (the Mac has stopped drawing).
+        sink.cut(CGRect(x: 0, y: 8, width: 32, height: 40), of: CGSize(width: w, height: h))
+        for _ in 0..<50 where sink.latestCutBuffer == nil { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(wrongPixels(try #require(sink.latestCutBuffer), client, at: CGRect(x: 0, y: 8, width: 32, height: 40)) == 0)
+
+        // Cut for a framebuffer of another size (the Mac's displays changed since): no part, all of it.
+        sink.cut(CGRect(x: 40, y: 0, width: 24, height: 48), of: CGSize(width: 128, height: 96))
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(sink.latestCutBuffer == nil)
+        client.close()
+    }
+
+    /// Pixels of `pb` that are not the framebuffer's at `part` (its size checked too: a wrong size counts every pixel).
+    private func wrongPixels(_ pb: CVPixelBuffer, _ client: RFBClient, at part: CGRect) -> Int {
+        let pw = Int(part.width), ph = Int(part.height), ox = Int(part.minX), oy = Int(part.minY)
+        guard CVPixelBufferGetWidth(pb) == pw, CVPixelBufferGetHeight(pb) == ph else { return pw * ph }
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pb) else { return pw * ph }
+        let row = CVPixelBufferGetBytesPerRow(pb)
+        var wrong = 0
+        client.withFramebuffer { fb in
+            for y in 0..<ph {
+                for x in 0..<pw where memcmp(base + y * row + x * 4, fb.pixels + (y + oy) * fb.bytesPerRow + (x + ox) * 4, 4) != 0 { wrong += 1 }
+            }
+        }
+        return wrong
     }
 
     /// The next update is asked for once this one is in, even a small one (#3067: asked for as an update started,

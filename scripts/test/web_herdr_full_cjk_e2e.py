@@ -104,7 +104,12 @@ def ok(msg):
 
 ROWS_JS = """() => {
   const rows = [...document.querySelectorAll('[data-surface="shown"] .xterm-rows > div')];
-  return { rows: rows.map((row) => {
+  const style = getComputedStyle(rows[0].parentElement);
+  const context = document.createElement('canvas').getContext('2d');
+  context.font = `${style.fontSize} ${style.fontFamily}`;
+  const metrics = { wide: context.measureText('W').width, narrow: context.measureText('i').width,
+    cjk: context.measureText('中').width, adjusted: [...document.fonts].some(f => f.family === 'PersonaTermCJK' && f.status === 'loaded') };
+  return { metrics, rows: rows.map((row) => {
     const xs = [], walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
     for (let n; (n = walker.nextNode()); )
       for (let i = 0; i < n.data.length; i++)
@@ -146,6 +151,11 @@ def main():
             )
             time.sleep(0.5)
             data = page.evaluate(ROWS_JS)
+            metrics = data["metrics"]
+            assert abs(metrics["wide"] - metrics["narrow"]) < 0.01, f"{scheme}: proportional terminal font: {metrics}"
+            if metrics["adjusted"]:
+                assert abs(metrics["cjk"] - 2 * metrics["wide"]) < 0.05, f"{scheme}: adjusted CJK face is shadowed: {metrics}"
+            ok(f"{scheme}: Latin glyphs share one cell and the adjusted CJK face fills two")
             rows = data["rows"]
             # one cell: the distance between the first two borders over their columns
             ref_xs = next(r["xs"] for r in rows if r["text"].count("Plain ASCII row again") and len(r["xs"]) == len(BORDERS))

@@ -22,4 +22,8 @@ const (
 	ReadOnlyClaudeInbox = "这个 Claude 的消息通道 Persona 用不了（版本不认识或缺少钥匙）：手机上只能看，回复请在电脑上"
 	// AttentionClaudeComputer: it waits on a question or a permission prompt, which only the computer can answer.
 	AttentionClaudeComputer = "它在等电脑上的一个问题或权限请求：手机上答不了，请到电脑上处理"
+	// AttentionClaudeAnswer: it waits on a question it asked, and a message through its inbox answers it: the question's
+	// card (node/claudeoutside_ask.go) sends the picks as that message. The hub words it in the app's language; this text
+	// is what the node and the hub match on, so it stays as it is.
+	AttentionClaudeAnswer = "它在问你一个问题：直接回复就是回答"
 )

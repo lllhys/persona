@@ -16,6 +16,8 @@ class RichTextTokensTest {
         assertEquals(12.dp, RichTextTokens.codeCopyIcon)
         assertEquals(20.dp, RichTextTokens.listMarkerMinWidth)
         assertEquals(3.dp, RichTextTokens.quoteBar)
+        assertEquals(160.dp, RichTextTokens.tableColumnMinimum)
+        assertEquals(220.dp, RichTextTokens.tableColumnMaximum)
     }
 
     @Test fun codeColoursKeepTheDefaultLookAndFollowEveryOtherStyleAndMode() {

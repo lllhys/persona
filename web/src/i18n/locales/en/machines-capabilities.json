@@ -1,0 +1,20 @@
+{
+  "title": "What each computer can do",
+  "col_computer": "Computer",
+  "col_system": "System",
+  "col_resources": "Cores and memory",
+  "col_engines": "Engines",
+  "col_runtimes": "Agent runtimes",
+  "col_tools": "Tools",
+  "col_reach": "Connection",
+  "online": "Online",
+  "offline": "Offline",
+  "pending": "Waiting to be confirmed",
+  "not_connected": "Not connected yet",
+  "cores_one": "{count} core",
+  "cores_other": "{count} cores",
+  "disk_free": "{size} disk free",
+  "list_separator": ", ",
+  "none": "None",
+  "loading": "Loading…"
+}

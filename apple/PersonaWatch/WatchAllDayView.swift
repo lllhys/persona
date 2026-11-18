@@ -209,7 +209,7 @@ struct WatchAllDayCard: View {
         let state = allDay.state
         return VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
             Label(state.word(startable: startable) ?? String(localized: "All-Day Recording"), systemImage: state.symbol)
-                .font(Theme.Font.secondaryMedium).foregroundStyle(state.tone).lineLimit(2)
+                .labelStyle(.watchRow).font(Theme.Font.secondaryMedium).foregroundStyle(state.tone).lineLimit(2)
             if state == .recording, let since = allDay.since {
                 Text(timerInterval: since...Date.distantFuture, countsDown: false)
                     .font(Theme.Font.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -222,8 +222,8 @@ struct WatchAllDayCard: View {
     }
 }
 
-/// The Record page while all-day recording runs: its state, a meeting mark (the page's Meeting Recording can't start a
-/// second recording), and the way to its page.
+/// The recording page while all-day recording runs: its state, a meeting mark (the page's Record can't start a second
+/// recording), and the way to its page.
 struct WatchAllDaySummary: View {
     @State private var allDay = WatchAllDay.shared
 

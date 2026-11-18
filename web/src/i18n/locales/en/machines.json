@@ -8,8 +8,6 @@
   "offline": "Offline",
   "reconnect": "Reconnect",
   "memory": "Memory",
-  "disk": "Disk",
-  "disk_free": "{size} free",
   "waiting_node": "Waiting for this computer to reconnect",
   "unreachable": "Can't reach this computer",
   "agents_one": "{count} agent",
@@ -36,5 +34,12 @@
   "rejected": "Removed \"{name}\"",
   "answer_failed": "Didn't work: {error}",
   "never_connected": "Never connected",
-  "not_connected_yet": "Not connected yet"
+  "not_connected_yet": "Not connected yet",
+  "network": "Network",
+  "load_value": "Load {value}",
+  "memory_last_hour": "Memory over the last hour",
+  "network_last_hour": "Network over the last hour: download (orange), upload (purple)",
+  "view_label": "View",
+  "view_cards": "Cards",
+  "view_capabilities": "Capabilities"
 }

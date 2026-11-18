@@ -4,6 +4,8 @@ import XCTest
 /// copy items), Chat History on the left opening the sidebar, a swipe to the right anywhere on the page doing the same,
 /// New Chat on the right, picking a conversation in the sidebar, and the bar staying put while a long chat scrolls.
 /// Against scripts/mock/mock_hub.py (PERSONA_MOCK_HUB): its main conversation is「今天要处理的事」, the long one is ASK4.
+/// The iPhone shell's bar (the face is the switch's Assistant, `shell-assistant`, since #1696): the iPad's bar beside its
+/// sidebar column is SidebarLayoutTests' and IPadSidebarTests'.
 final class AssistantTopBarTests: XCTestCase {
     private var hub: String!
     private let main = "server/b2e4d6f8-0000-4000-8000-000000000001"
@@ -11,6 +13,9 @@ final class AssistantTopBarTests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        guard UIDevice.current.userInterfaceIdiom == .phone else {
+            throw XCTSkip("the iPhone shell's top bar: the iPad has its sidebar column and no shell switch")
+        }
         guard let hub = ProcessInfo.processInfo.environment["PERSONA_MOCK_HUB"] else {
             throw XCTSkip("needs scripts/mock/mock_hub.py (PERSONA_MOCK_HUB)")
         }
@@ -41,6 +46,18 @@ final class AssistantTopBarTests: XCTestCase {
     }
 
     @MainActor private func sidebar(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["assistant-sidebar"] }
+
+    /// Back to the main conversation from a page the menu opened: a place's root has ☰ and no Back (#7799), so through
+    /// the conversation's row in its drawer.
+    @MainActor private func backToMain(_ app: XCUIApplication, from page: String) {
+        let menu = app.buttons["shell-place-sidebar"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), "no ☰ on \(page):\n\(app.debugDescription)")
+        menu.tap()
+        let row = app.buttons["sidebar-main"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "\(page)'s ☰ opened no drawer:\n\(app.debugDescription)")
+        row.tap()
+        waitGone(sidebar(app), "the drawer stays open after picking the main conversation from \(page)")
+    }
 
     /// One of the sidebar's day headings.
     @MainActor private func waitGone(_ e: XCUIElement, _ why: String) {
@@ -122,11 +139,11 @@ final class AssistantTopBarTests: XCTestCase {
         app.buttons["详细信息"].tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "你的私人助手")).firstMatch.waitForExistence(timeout: 5),
                       "详细信息 did not open the profile:\n\(app.debugDescription)")
-        app.navigationBars.buttons.firstMatch.tap()
+        backToMain(app, from: "详细信息")
         avatar(app).tap()
         app.buttons["知识库"].tap()
         XCTAssertTrue(app.navigationBars["知识库"].waitForExistence(timeout: 5), "知识库 did not open:\n\(app.debugDescription)")
-        app.navigationBars.buttons.firstMatch.tap()
+        backToMain(app, from: "知识库")
         XCTAssertTrue(avatar(app).waitForExistence(timeout: 5), "not back on the chat")
     }
 
@@ -153,10 +170,11 @@ final class AssistantTopBarTests: XCTestCase {
             XCTAssertTrue(app.staticTexts[row].firstMatch.exists, "no \(row) in the sidebar:\n\(app.debugDescription)")
         }
         XCTAssertTrue(app.drawerNewChatButton.exists, "the drawer has no New Chat action")
-        // The main conversation is the first row, named Persona, once: not under Pin or Recent (#2004, every layout).
+        // The main conversation is the first row, once: not under Pin or Recent (#2004, every layout). It is named after the
+        // current assistant (#6489), the mock hub's default manager 「助手」.
         let mainRow = app.buttons["sidebar-main"].firstMatch
-        XCTAssertTrue(mainRow.exists && mainRow.label.hasPrefix("Persona"), "no Persona row:\n\(app.debugDescription)")
-        XCTAssertLessThan(mainRow.frame.minY, app.buttons["sidebar-inbox"].firstMatch.frame.minY, "Persona is not the first row")
+        XCTAssertTrue(mainRow.exists && mainRow.label.hasPrefix("助手"), "no main conversation row named 助手:\n\(app.debugDescription)")
+        XCTAssertLessThan(mainRow.frame.minY, app.buttons["sidebar-inbox"].firstMatch.frame.minY, "the main conversation is not the first row")
         XCTAssertEqual(app.buttons.matching(identifier: "sidebar-main").count, 1, "the main conversation shows more than once")
         XCTAssertTrue(app.drawerSettingsButton.exists, "no Settings at the drawer's foot")
         XCTAssertTrue(app.buttons["搜索对话"].exists, "no search button")

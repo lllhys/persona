@@ -1,0 +1,8 @@
+{
+  "send_to": "以你的身份在飞书上给「{chat}」发消息",
+  "reply_to": "以你的身份在飞书上回复「{chat}」里 {sender} 的消息",
+  "reply_in_chat": "以你的身份在飞书上回复「{chat}」里的消息",
+  "topic_suffix": "（话题回复）",
+  "original": "原消息：{text}",
+  "outgoing": "正文：\n{text}"
+}

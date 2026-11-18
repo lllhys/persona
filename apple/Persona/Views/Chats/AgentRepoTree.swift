@@ -104,6 +104,8 @@ nonisolated struct RepoTree {
         var treeSessions: [Session] { sessions + children.flatMap(\.treeSessions) }
         var catalog = false
         var workspace: HostWorkspace? = nil
+        /// Derived once with the tree, so sorting ancestors does not traverse their descendants again.
+        var latestPinnedAt: Date? = nil
 
         /// Repository grouping names the root; nested cards repeat a repository only at a parent/child boundary.
         func repositoryBadge(parent: HostWorkspace?, inheritedName: String) -> String? {
@@ -132,8 +134,9 @@ nonisolated struct RepoTree {
         var machine: MachineRef
         var name: String
         var path: String
-        /// The main checkout first, then by name.
+        /// Native pins first; the other worktrees keep their host/main-checkout order.
         var worktrees: [Worktree]
+        var latestPinnedAt: Date? = nil
         var sessions: [Session] { worktrees.flatMap(\.treeSessions) }
         /// Only its main checkout, nothing nested under it and no branch the node named: its agents sit right under it,
         /// with no working-tree level. A named branch keeps its level (#1805: machine → project → branch → agents).
@@ -202,7 +205,20 @@ nonisolated struct RepoTree {
                       includeEmpty: Bool = true, search: String = "") -> [Host] {
         var nodes: [String: Node] = [:]
         var loose: [Session] = []
+        let paseoWorkspaces = Dictionary(workspaces.filter { $0.source == "paseo" }.map { ($0.key, $0) },
+                                        uniquingKeysWith: { first, _ in first })
         for s in sessions {
+            // Paseo's space is a project, not a workspace. Only its explicit workspace identity binds a session;
+            // tasks sharing a folder stay independent, and old nodes without a catalog retain path-based grouping.
+            if s.spaceKind == "paseo", let id = s.workspaceID,
+               let w = paseoWorkspaces[s.machineRef.path + "/paseo:" + id] {
+                if nodes[w.key] == nil {
+                    nodes[w.key] = Node(machine: w.machineRef, path: w.cwd, name: w.title,
+                                        index: w.index ?? Int.max, parent: w.parentKey, sessions: [])
+                }
+                nodes[w.key]!.sessions.append(s)
+                continue
+            }
             guard s.spaceKind == "orca", let key = spaceKey(s) else { loose.append(s); continue }
             if nodes[key] != nil { nodes[key]!.sessions.append(s); continue }
             nodes[key] = Node(machine: s.machineRef, path: s.cwd, name: s.spaceName ?? "",
@@ -213,7 +229,7 @@ nonisolated struct RepoTree {
         }
         // Discovery supplies containers, including existing workspaces with no running Agent. Its source-local identity
         // keeps two workspaces in the same directory distinct and permits cross-project Orca lineage.
-        for w in workspaces where w.source == "orca" {
+        for w in workspaces where w.source == "orca" || w.source == "paseo" {
             let old = nodes[w.key]
             nodes[w.key] = Node(machine: w.machineRef, path: w.cwd, name: w.title,
                                 index: w.index ?? old?.index ?? Int.max,
@@ -240,12 +256,16 @@ nonisolated struct RepoTree {
         }
         func tree(_ key: String) -> Worktree? {
             let n = nodes[key]!
-            let below = (children[key] ?? []).sorted(by: beforeNode).compactMap(tree)
+            let nested = (children[key] ?? []).sorted(by: beforeNode).compactMap(tree)
+            let below = nested.filter { $0.latestPinnedAt != nil }.sorted {
+                pinPrecedes($0.latestPinnedAt, $1.latestPinnedAt, $0.id, $1.id) == true
+            } + nested.filter { $0.latestPinnedAt == nil }
             let matches = includeEmpty && !search.isEmpty && (n.name + " " + n.path).localizedStandardContains(search)
             guard includeEmpty && search.isEmpty || matches || !n.sessions.isEmpty || !below.isEmpty else { return nil }
             let name = n.name.isEmpty ? n.path.split(separator: "/").last.map(String.init) ?? unnamed : n.name
             return Worktree(id: "tree/space/" + key, name: name, path: n.path, main: n.workspace?.isMain ?? false,
-                            sessions: n.sessions, children: below, catalog: n.catalog, workspace: n.workspace)
+                            sessions: n.sessions, children: below, catalog: n.catalog, workspace: n.workspace,
+                            latestPinnedAt: ([n.workspace?.pinnedAt] + below.map(\.latestPinnedAt)).compactMap { $0 }.max())
         }
         var repos: [String: Repo] = [:]
         for key in nodes.keys.filter({ parentOf[$0] == nil }).sorted(by: beforeNode) {
@@ -257,7 +277,7 @@ nonisolated struct RepoTree {
             let addressProject = metadata?.sourceID.components(separatedBy: "::")
             let projectID = metadata?.projectID.flatMap { $0.isEmpty ? nil : $0 }
                 ?? ((addressProject?.count ?? 0) > 1 ? addressProject?.first.flatMap { $0.isEmpty ? nil : $0 } : nil)
-            let repoKey = n.machine.path + "/" + (projectID.map { "project/orca:" + $0 }
+            let repoKey = n.machine.path + "/" + (projectID.map { "project/" + (metadata?.source ?? "orca") + ":" + $0 }
                 ?? (n.catalog ? "workspace/" + key : place.repo))
             var repo = repos[repoKey] ?? Repo(id: "repo/" + repoKey, machine: n.machine,
                                             name: metadata?.projectName.flatMap { $0.isEmpty ? nil : $0 }
@@ -331,17 +351,33 @@ nonisolated struct RepoTree {
             // does a tree with an Orca agent in it (every tree Orca places has one), which Orca names.
             for i in repo.worktrees.indices {
                 let w = repo.worktrees[i]
-                guard !w.main, !w.sessions.contains(where: { $0.spaceKind == "orca" }), let name = hostPlaceName(w.sessions) else { continue }
+                guard !w.catalog, !w.main, !w.sessions.contains(where: { $0.spaceKind == "orca" }), let name = hostPlaceName(w.sessions) else { continue }
                 repo.worktrees[i].name = name
             }
             repo.worktrees.sort { a, b in
+                if let pinned = pinPrecedes(a.latestPinnedAt, b.latestPinnedAt, a.id, b.id) { return pinned }
                 if a.catalog && b.catalog, let ai = a.workspace?.index, let bi = b.workspace?.index, ai != bi { return ai < bi }
-                return a.main != b.main ? a.main : before(a.name, a.path, b.name, b.path)
+                if a.main != b.main { return a.main }
+                if a.name == b.name && a.path == b.path { return a.id < b.id }
+                return before(a.name, a.path, b.name, b.path)
             }
+            repo.latestPinnedAt = repo.worktrees.compactMap(\.latestPinnedAt).max()
             hosts[repo.machine, default: []].append(repo)
         }
         return hostOrder(Set(hosts.keys), machines: machines).map { ref in
-            Host(ref: ref, repos: hosts[ref, default: []].sorted { before($0.name, $0.id, $1.name, $1.id) })
+            Host(ref: ref, repos: hosts[ref, default: []].sorted {
+                pinPrecedes($0.latestPinnedAt, $1.latestPinnedAt, $0.id, $1.id) ?? before($0.name, $0.id, $1.name, $1.id)
+            })
+        }
+    }
+
+    /// Native pins lead, newest first, with exact identity breaking ties. Unpinned rows keep their existing order.
+    private static func pinPrecedes(_ a: Date?, _ b: Date?, _ aID: String, _ bID: String) -> Bool? {
+        switch (a, b) {
+        case (nil, nil): nil
+        case (.some, nil): true
+        case (nil, .some): false
+        case let (.some(a), .some(b)): a == b ? aID < bID : a > b
         }
     }
 

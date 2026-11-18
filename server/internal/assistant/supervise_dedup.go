@@ -16,14 +16,27 @@ const superviseDedupKey = "assistant.supervision_dedup"
 const superviseDedupWindow = 30 * time.Minute
 
 type superviseFingerprint struct {
-	Hash string    `json:"hash"`
-	At   time.Time `json:"at"`
+	Hash      string    `json:"hash"`
+	At        time.Time `json:"at"`
+	Permanent bool      `json:"permanent,omitempty"`
+	// Todo makes an all_stopped fingerprint last until its key changes or the task closes.
+	// Other non-permanent kinds retain the short semantic-deduplication window.
+	Todo string `json:"todo,omitempty"`
 }
 
 func digestFingerprint(e prompts.SuperviseEntry, g superviseSignal) (string, string) {
+	if g.Kind == sigPRConflict || g.Kind == sigDraftPR {
+		// Keep every task/PR/head independently, including a head that returns after another one.
+		key, _ := json.Marshal([]string{g.Todo, g.Kind, g.Key})
+		sum := sha256.Sum256(key)
+		return string(key), hex.EncodeToString(sum[:])
+	}
 	// State timestamps and elapsed minutes deliberately do not participate: a new
 	// turn or a periodic sweep is not new information when the last summary is unchanged.
 	parts := []string{g.Todo, g.Machine, e.Machine, g.Session, e.AgentID, g.Kind, g.Report}
+	if g.Kind == sigAllStopped {
+		parts = []string{g.Todo, g.Kind} // one latest group key per task and destination, not per member
+	}
 	if g.To != "" { // a card's rung (ask_route.go): each conversation hears of it; the others' keys stay as they were
 		parts = append(parts, g.To)
 	}
@@ -33,21 +46,53 @@ func digestFingerprint(e prompts.SuperviseEntry, g superviseSignal) (string, str
 		text = g.Detail
 	}
 	fields := []any{strings.Join(strings.Fields(text), " "), strings.Join(strings.Fields(e.Ask), " "), e.Said, e.Evidence, e.Step, e.Steps}
+	if g.Kind == sigDecide {
+		fields = append(fields, strings.Join(strings.Fields(e.Recommend), " "))
+	}
 	if len(e.Asks) > 0 { // the cards it lists are what is new about it
 		fields = append(fields, e.Asks)
 	}
-	// Each park's time, and each new Inbox message, is news of its own, whatever its agent said last.
-	if g.Kind == sigParkedDue || g.Kind == sigInbox {
+	if keyIsNews(g.Kind) {
 		fields = append(fields, g.Key)
+	}
+	if g.Kind == sigAllStopped {
+		fields = []any{g.Key} // reworded triage on the same stopped turn is not a new period of inactivity
 	}
 	payload, _ := json.Marshal(fields)
 	sum := sha256.Sum256(payload)
 	return string(key), hex.EncodeToString(sum[:])
 }
 
+// keyIsNews: a signal of kind whose key names one event that is not in its agent's words, so a new key is news
+// whatever the agent said last: each park's time, each decision that ended a park, each new Inbox message, each
+// answer the owner gives a decision's round, each recheck or undecidable review of a decision, each start attempt's
+// failure or start (#6027). The other kinds' keys move with every turn or sweep, which is not news while the agent's
+// words stay the same.
+func keyIsNews(kind string) bool {
+	switch kind {
+	case sigParkedDue, sigParkDecided, sigInbox, sigOwnerCannot, sigRecheck, sigUndecidable, sigFailed, sigStarted, sigAllStopped, sigDecisionReply:
+		return true
+	}
+	return false
+}
+
+type supervisionDelivery int
+
+const (
+	digestDelivery supervisionDelivery = iota
+	leaderDelivery
+	leaderResumeDelivery
+)
+
 // reserveSupervision checkpoints deduplication before dispatch. A failed dispatch
 // and queue admission releases the reservation. dedupMu is held by sendDigest.
 func (s *Service) reserveSupervision(ctx context.Context, entries []prompts.SuperviseEntry, signals []superviseSignal, now time.Time) ([]prompts.SuperviseEntry, []superviseSignal, func(), error) {
+	return s.reserveSupervisionDelivery(ctx, entries, signals, now, digestDelivery)
+}
+
+// Offline resumes take minutes. Keep their reservations in memory until the send
+// is confirmed so recovery never mistakes an in-flight resume for delivery.
+func (s *Service) reserveSupervisionDelivery(ctx context.Context, entries []prompts.SuperviseEntry, signals []superviseSignal, now time.Time, delivery supervisionDelivery) ([]prompts.SuperviseEntry, []superviseSignal, func(), error) {
 	b := &s.supervise
 	history := b.dedup
 	if st := s.store(); st != nil {
@@ -61,19 +106,43 @@ func (s *Service) reserveSupervision(ctx context.Context, entries []prompts.Supe
 	previous := maps.Clone(history)
 	next := maps.Clone(history)
 	for key, seen := range next {
-		if now.Sub(seen.At) >= superviseDedupWindow {
+		if !seen.Permanent && seen.Todo == "" && now.Sub(seen.At) >= superviseDedupWindow {
 			delete(next, key)
 		}
 	}
 	var out []prompts.SuperviseEntry
 	var kept []superviseSignal
+	var pending [][2]string
+	resuming := delivery == leaderResumeDelivery
 	for i, entry := range entries {
 		key, hash := digestFingerprint(entry, signals[i])
-		if seen, ok := next[key]; ok && seen.Hash == hash && now.Sub(seen.At) < superviseDedupWindow {
+		if seen, ok := next[key]; ok && seen.Hash == hash && (seen.Permanent || seen.Todo != "" || now.Sub(seen.At) < superviseDedupWindow) {
 			continue
 		}
-		next[key] = superviseFingerprint{Hash: hash, At: now.UTC()}
+		id := [2]string{key, hash}
+		if _, ok := b.resuming[id]; ok && delivery != digestDelivery {
+			continue
+		}
+		if resuming {
+			if b.resuming == nil {
+				b.resuming = make(map[[2]string]struct{})
+			}
+			b.resuming[id] = struct{}{}
+			pending = append(pending, id)
+		}
+		fingerprint := superviseFingerprint{Hash: hash, At: now.UTC(), Permanent: signals[i].Kind == sigPRConflict || signals[i].Kind == sigDraftPR}
+		if signals[i].Kind == sigAllStopped {
+			fingerprint.Todo = signals[i].Todo
+		}
+		next[key] = fingerprint
 		out, kept = append(out, entry), append(kept, signals[i])
+	}
+	if resuming {
+		return out, kept, func() {
+			for _, id := range pending {
+				delete(b.resuming, id)
+			}
+		}, nil
 	}
 	if len(out) == 0 {
 		return nil, nil, func() {}, nil
@@ -110,6 +179,11 @@ func (s *Service) forgetSupervision(ctx context.Context, signals []superviseSign
 	}
 	next := maps.Clone(history)
 	for _, g := range signals {
+		if g.Kind == sigAllStopped {
+			key, _ := digestFingerprint(prompts.SuperviseEntry{}, g)
+			delete(next, key) // a lost queue releases its key even while the participants cannot be read
+			continue
+		}
 		if e, ok := s.digestEntry(ctx, g, web); ok {
 			key, _ := digestFingerprint(e, g)
 			delete(next, key)
@@ -121,6 +195,46 @@ func (s *Service) forgetSupervision(ctx context.Context, signals []superviseSign
 	if st != nil {
 		if err := st.PutSetting(ctx, superviseDedupKey, next); err != nil {
 			s.logf("supervise: could not release deduplication entries: %v", err)
+			return
+		}
+	}
+	b.dedup = next
+}
+
+// Inactivity fingerprints are bounded by open tasks, not elapsed time. Load once
+// after restart; reservations keep the same cache current under dedupMu.
+func (s *Service) pruneAllStoppedDedup(ctx context.Context) {
+	b := &s.supervise
+	b.dedupMu.Lock()
+	defer b.dedupMu.Unlock()
+	if b.dedup == nil {
+		history := map[string]superviseFingerprint{}
+		if st := s.store(); st != nil {
+			if _, err := st.Setting(ctx, superviseDedupKey, &history); err != nil {
+				s.logf("supervise: cannot load inactivity fingerprints: %v", err)
+				return
+			}
+		}
+		b.dedup = history
+	}
+	var remove []string
+	s.todos.mu.RLock()
+	for key, seen := range b.dedup {
+		if task := s.todos.todos[seen.Todo]; seen.Todo != "" && s.todos.loaded && (task == nil || task.DoneAt != nil) {
+			remove = append(remove, key)
+		}
+	}
+	s.todos.mu.RUnlock()
+	if len(remove) == 0 {
+		return
+	}
+	next := maps.Clone(b.dedup)
+	for _, key := range remove {
+		delete(next, key)
+	}
+	if st := s.store(); st != nil {
+		if err := st.PutSetting(ctx, superviseDedupKey, next); err != nil {
+			s.logf("supervise: cannot prune inactivity fingerprints: %v", err)
 			return
 		}
 	}

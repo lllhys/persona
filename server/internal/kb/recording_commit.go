@@ -220,7 +220,9 @@ func (s *Store) commitRecording(r *Recording, segs []RecordingSegment) (err erro
 	if err != nil {
 		return err
 	}
-	transcript := []byte(s.renderTranscript(r, segs))
+	// transcript.md is the transcript of record: in hub mode the hub's sentences too (hub_segments.json is not
+	// journalled: recMu, which the caller holds, keeps it as it is meanwhile).
+	transcript := []byte(s.renderTranscript(r, s.recordLocked(r, segs)))
 	undo, err := json.Marshal(recordingUndo{Version: 1, ID: r.ID, Files: before})
 	if err != nil {
 		return err

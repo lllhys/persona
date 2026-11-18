@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import persona.core.contracts.api.AgentLauncher
 import persona.core.contracts.api.LauncherHealth
+import persona.core.contracts.api.UnavailableLauncher
 
 /** Blocked launchers in New Agent (#4530), as iOS `LauncherHealthTests`: what is grayed, why, and where the form starts. */
 class LauncherAvailabilityTest {
@@ -35,6 +36,33 @@ class LauncherAvailabilityTest {
         assertEquals(R.string.agents_launcher_help_title_terminal, terminal.title)
         assertNull(launcher("a", "blocked", "auth", "  ").block!!.detail)
         assertEquals(R.string.agents_launcher_help_title_computer, launcher("a", "blocked", "auth").block!!.title)
+    }
+
+    /**
+     * The providers New Agent lists off on this computer (#8109): under the type each runs, after its launchers; never one
+     * the computer lists already; under whichever type is shown when the computer has no launcher of its type; found by
+     * the launcher search.
+     */
+    @Test fun providersLeftOutHereGoUnderTheTypeTheyRun() {
+        fun left(name: String, agent: String? = null, title: String? = null) =
+            UnavailableLauncher(name, title, "launcher", agent, code = "launcher_own_service", reason = "why $name")
+        val launchers = listOf(AgentLauncher("claude"), AgentLauncher("codex", agentType = "codex"))
+        val deepseek = left("deepseek", "claude", "DeepSeek")
+        val plain = left("glm") // no agent named: Claude Code
+        val codexGw = left("cx-gw", "codex")
+        val listed = left("claude", "claude")
+        val all = listOf(deepseek, plain, codexGw, listed)
+        assertEquals(listOf(deepseek, plain), leftOutLaunchers(all, launchers, "claude"))
+        assertEquals(listOf(codexGw), leftOutLaunchers(all, launchers, "codex"))
+        // a computer with no Codex launcher: its Codex provider is said under the type shown, not left missing
+        assertEquals(listOf(deepseek, plain, codexGw), leftOutLaunchers(all, listOf(AgentLauncher("claude")), "claude"))
+        // nothing listed: nothing to leave out as listed already
+        assertEquals(all, leftOutLaunchers(all, emptyList(), "claude"))
+        // the search: by name or by the name it shows
+        assertEquals(listOf(deepseek), leftOutLaunchers(all, launchers, "claude", "seek"))
+        assertEquals(listOf(deepseek), leftOutLaunchers(all, launchers, "claude", "DEEPSEEK"))
+        assertTrue(leftOutLaunchers(all, launchers, "claude", "nothing").isEmpty())
+        assertTrue(leftOutLaunchers(emptyList(), launchers, "claude").isEmpty())
     }
 
     @Test fun theFormStartsOnOneThatIsNotBlocked() {

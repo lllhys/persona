@@ -119,6 +119,17 @@ describe("turnChanges: what an exchange's own edits changed", () => {
     expect(c.files.map((f) => [f.shown, f.exact])).toEqual([["big.json", false], ["a.ts", true]]);
     expect(c.exact).toBe(false);
   });
+
+  it("reads the structural clip marker without changing the retained MultiEdit projection", () => {
+    const input = {
+      file_path: `${CWD}/a.ts`,
+      edits: [{ old_string: "1", new_string: "2" }],
+      zz_persona_clipped: { note: "Omitted 8 array items and 0 object fields.\n…（已截断，共 40210 字节）" }, // i18n-ignore: the hub's note
+    };
+    const c = turnChanges(steps([ask(), ...call("MultiEdit", input), done()]), CWD)!;
+    expect(c.files.map((f) => [f.shown, f.add, f.del, f.exact])).toEqual([["a.ts", 1, 1, false]]);
+    expect(c.exact).toBe(false);
+  });
 });
 
 // The cases the hub reads too (server/internal/transcript/fold_changes.go): the same calls counted on the page and the

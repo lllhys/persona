@@ -1,0 +1,10 @@
+Persona · supervision: 1 of the worker tasks you handed out with task_plan need you. This message is not from the user.
+
+1. "Example task" (example): all participants, including the task leader and its workers, have been inactive for 30 minutes, with no pending answer or scheduled wake. No recent background activity was observed; missing activity times are bounded by the background task's start or its launching Agent's stop. Check each participant's stated wait below, resolve missing handoffs or decisions, and deliver the next action through your available task tools. Waiting on another stopped participant is not progress; verify before restarting work (box/leader: agent: waiting for the worker
+box/worker: agent: waiting for the leader)
+   Done when: not written down: judge by what the task asked for
+
+What to do (you own these tasks; do not just pass them on):
+- Check the evidence against each "done when" yourself, then call task_review: accepted when it is met; rework with what is missing (the worker gets it as a message; after two rounds a rework goes up as a decision); needs_user only when it needs a decision that is not yours (reason and recommend: it goes to whoever handed you your task, and no card goes to the user); cancelled when it should not be done.
+- You can review your own workers only. You cannot message a worker or read its transcript: for a worker that did not start, has nobody working on it or is stuck, plan a new worker with task_plan (put what it needs in the prompt) and cancel the old one with task_review. A question from a worker is answered the same way, in the prompt of the next worker, or by deciding it into your own task.
+- Progress reports need nothing from you.

@@ -27,8 +27,8 @@ func (n *Node) codexAssistantArgs(key, home string, windows ...int) ([]string, b
 	return codexArgsForHome(n.bin, key, home, !personaMCPOnly, windows...), personaMCPOnly
 }
 
-// codexArgsForHome: windows[0] is a compact limit to pass (a managed launcher's declared one, #3066); none or 0 passes
-// none, and Codex compacts by its config or its model's default.
+// codexArgsForHome: windows[0] is a compact limit to pass (a managed launcher's declared one, #3066, capped for the
+// main conversation, #7314); none or 0 passes none, and Codex compacts by its config or its model's default.
 func codexArgsForHome(bin, key, home string, legacyMCP bool, windows ...int) []string {
 	q := func(s string) string { b, _ := json.Marshal(s); return string(b) } // a JSON string is a TOML basic string
 	mcpEnv := "{PERSONA_ASSISTANT=" + q("1") + ",PERSONA_SESSION_ID=" + q(key)
@@ -50,6 +50,10 @@ func codexArgsForHome(bin, key, home string, legacyMCP bool, windows ...int) []s
 		// The assistant's memory is the one the app's "Memory" page shows, shared with Claude (codexMemoryPrompt); Codex's
 		// own (~/.codex/memories) is one store for every Codex on the machine, so it stays off here.
 		"-c", "features.memories=false",
+		// The ChatGPT apps of a ChatGPT sign-in (codex_apps: every connector of that account) are declared in full in
+		// every request, inside code mode's exec tool: measured at ~140k tokens of a ~195k request on one install, for
+		// tools the assistant never calls (it has Persona's own). Off here; the machine's own Codex keeps them (#10275).
+		"-c", "features.apps=false",
 	}
 	if len(windows) > 0 && windows[0] > 0 {
 		args = append(args, "-c", fmt.Sprintf("model_auto_compact_token_limit=%d", windows[0]))
@@ -63,9 +67,13 @@ func codexArgsForHome(bin, key, home string, legacyMCP bool, windows ...int) []s
 // codexShell runs the launcher with `codex` turned into `codex <its flags> app-server <ours>`: the launcher's
 // function sets what it sets (env, -c model_provider, -m …) exactly as when it starts the TUI.
 // Use alias-safe definitions and calls: zsh expands aliases while parsing the script.
-func codexShell(launcher string) string {
+func codexShell(launcher string) string { return codexShellWith(launcher, "app-server") }
+
+// codexShellWith is codexShell for another subcommand of the launcher's codex (`debug models`,
+// assistant_fallback_window.go).
+func codexShellWith(launcher, sub string) string {
 	return `__persona_args=("$@")
-function __persona_codex { builtin command codex "$@" app-server "${__persona_args[@]}"; }
+function __persona_codex { builtin command codex "$@" ` + sub + ` "${__persona_args[@]}"; }
 if [[ -n "${ZSH_VERSION-}" ]] && (( $+functions[codex] )); then
   # Keep a user-defined codex() launcher intact while routing its final command through the app-server wrapper.
   # Copy it through the functions table: functions -c needs zsh 5.8, and a subscript never expands aliases.
@@ -89,7 +97,7 @@ func (n *Node) codexAssistantCommand(shell, launcher string, args []string) *exe
 
 func (n *Node) spawnCodexWithMode(id, cwd, launcher string, resume, spare bool, mode string, options ...modelExecution) (*assistantProc, error) {
 	execution := executionOption(options)
-	if err := execution.check(); err != nil {
+	if err := execution.check("codex"); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(cwd, 0o700); err != nil {
@@ -115,6 +123,7 @@ func (n *Node) spawnCodexWithMode(id, cwd, launcher string, resume, spare bool, 
 	}()
 	cmd.Env = identity.Environment(cmd.Env, gateEnv...)
 	cmd.SysProcAttr = osproc.SessionGroupAttr()
+	msysCmdLine(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -134,7 +143,7 @@ func (n *Node) spawnCodexWithMode(id, cwd, launcher string, resume, spare bool, 
 	started = true
 	p := &assistantProc{id: id, agent: "codex", launcher: launcher, cwd: cwd, cmd: cmd, stdin: stdin, exited: make(chan struct{}),
 		born: time.Now(), lastActive: time.Now(), model: execution, fingerprint: n.executionFingerprint(launcher, execution),
-		instructions: instructions, personaMCPOnly: personaMCPOnly}
+		instructions: instructions, personaMCPOnly: personaMCPOnly, origin: execution.Origin}
 	c := &codexConn{n: n, p: p, key: key, memDir: memDir, pending: map[int64]chan codexReply{}, asks: map[string]context.CancelFunc{}, files: map[string][]string{},
 		nameGates: nameGates}
 	p.cx = c

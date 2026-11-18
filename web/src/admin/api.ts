@@ -213,6 +213,9 @@ export const rollbackExtension = async (id: string) => adminApi<AdminExtension>(
 export const setExtensionEnabled = async (id: string, enabled: boolean) => adminApi<AdminExtension>(`${await extRoot()}/${enc(id)}/enabled`, "PUT", { enabled });
 /** On, off, or null back to the default for its source (docs/extensions/extensions.md "Sandbox"); the answer is the extension. */
 export const setExtensionSandbox = async (id: string, enabled: boolean | null) => adminApi<AdminExtension>(`${await extRoot()}/${enc(id)}/sandbox`, "PUT", { enabled });
+/** Let a sandboxed extension reach one more host (#5697): host, host:port or an http(s) URL; the answer is the extension. */
+export const allowExtensionHost = async (id: string, host: string) => adminApi<AdminExtension>(`${await extRoot()}/${enc(id)}/egress/allow`, "POST", { host });
+export const revokeExtensionHost = async (id: string, host: string) => adminApi<AdminExtension>(`${await extRoot()}/${enc(id)}/egress/allow?host=${enc(host)}`, "DELETE");
 
 export const uninstallExtension = async (id: string, keepData: boolean) =>
   adminApi<ExtensionRemovalResult>(`${await extRoot()}/${enc(id)}`, "DELETE", { keep_data: keepData });

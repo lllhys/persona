@@ -49,6 +49,8 @@ type extensionSandboxes struct {
 	mu       sync.Mutex
 	save     sync.Mutex // one write of the settings at a time, of the newest (saveSandboxes)
 	settings sandboxSettings
+	// allow are the hosts the owner allowed, by extension storage key (extension_egress_allow.go).
+	allow    map[string][]AllowedHost
 	proxy    *egress.Proxy
 	proxyErr error
 	once     sync.Once
@@ -70,6 +72,8 @@ type SandboxView struct {
 	// Trusted: it came from a trusted market.
 	Trusted bool          `json:"trusted,omitempty"`
 	Egress  egress.Counts `json:"egress"`
+	// OwnerAllowed are the hosts the owner allowed it in the admin UI (#5697).
+	OwnerAllowed []AllowedHost `json:"owner_allowed,omitempty"`
 }
 
 type sandboxState struct {
@@ -83,6 +87,7 @@ func (ps *extensions) loadSandboxes(ctx context.Context) {
 	if ps.h == nil || ps.h.store == nil {
 		return
 	}
+	ps.loadEgressAllow(ctx)
 	sb := &ps.sandboxes
 	sb.mu.Lock()
 	defer sb.mu.Unlock()
@@ -131,6 +136,7 @@ func (ps *extensions) sandboxOf(ctx context.Context, p *extension.Extension) san
 		if px := ps.sandboxes.proxyIfStarted(); px != nil {
 			st.Egress = px.Stats(p.Record.ID)
 		}
+		st.OwnerAllowed = ps.ownerHosts(p.Record.StorageKey())
 		return st
 	}
 	if !sandboxApplies(p) {
@@ -163,6 +169,7 @@ func (ps *extensions) sandboxOf(ctx context.Context, p *extension.Extension) san
 	if px := ps.sandboxes.proxyIfStarted(); px != nil {
 		st.Egress = px.Stats(p.Record.ID)
 	}
+	st.OwnerAllowed = ps.ownerHosts(p.Record.StorageKey())
 	return st
 }
 
@@ -283,6 +290,7 @@ func (ps *extensions) forgetSandbox(ctx context.Context, id string) {
 			ps.logf("extensions: sandbox settings: %v", err)
 		}
 	}
+	ps.forgetOwnerHosts(ctx, id)
 }
 
 // saveSandboxes writes the owner's choices as they are now. The copy is taken after the previous write, under the
@@ -354,7 +362,8 @@ func (ps *extensions) confine(ctx context.Context, p *extension.Extension, hp *h
 	g := p.Record.Granted
 	// The addresses its settings name are read at each start (and again when the settings change: settingsTargets).
 	ruleNow := func() egress.Rule {
-		return egress.Rule{Hosts: slices.Clone(g.Network), Hub: g.FullHub() || len(g.Hub) > 0, Targets: ps.settingsTargets(id)}
+		return egress.Rule{Hosts: slices.Clone(g.Network), Hub: g.FullHub() || len(g.Hub) > 0, Targets: ps.settingsTargets(id),
+			Owner: ps.ownerTargets(p.Record.StorageKey())}
 	}
 	if !st.Active {
 		start := s.StartEnv

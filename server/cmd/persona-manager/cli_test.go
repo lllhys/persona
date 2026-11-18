@@ -54,3 +54,43 @@ func TestPersonaManagerCommandLine(t *testing.T) {
 		}
 	}
 }
+
+func TestPersonaManagerUsageSpeaksTheTerminalLanguage(t *testing.T) {
+	home := t.TempDir()
+	for _, tc := range []struct {
+		name, setting, want string
+	}{
+		{name: "en", setting: "en", want: "persona-manager manager join <hub address> <install code>"},
+		{name: "zh-Hans", setting: "zh-Hans", want: "persona-manager manager join <hub 地址> <安装码>"},
+		{name: "ja", setting: "ja", want: "persona-manager manager join <ハブアドレス> <インストールコード>"},
+		{name: "unknown", setting: "ko", want: "persona-manager manager join <hub address> <install code>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, args := range [][]string{{"manager", "help"}, {"manager", "bogus"}} {
+				cmd := exec.Command(os.Args[0], "-test.run=^TestPersonaManagerCommandLine$")
+				for _, kv := range os.Environ() {
+					if !strings.HasPrefix(kv, "PERSONA_LANG=") && !strings.HasPrefix(kv, "LC_ALL=") &&
+						!strings.HasPrefix(kv, "LC_MESSAGES=") && !strings.HasPrefix(kv, "LANG=") {
+						cmd.Env = append(cmd.Env, kv)
+					}
+				}
+				cmd.Env = append(cmd.Env, "PERSONA_MANAGER_TEST_ARGS="+strings.Join(args, "\x1f"), "HOME="+home,
+					"PERSONA_HOME="+filepath.Join(home, ".persona"), "PERSONA_LANG="+tc.setting)
+				out, err := cmd.CombinedOutput()
+				code := 0
+				if ee, ok := err.(*exec.ExitError); ok {
+					code = ee.ExitCode()
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				wantCode := 0
+				if args[1] == "bogus" {
+					wantCode = 2
+				}
+				if code != wantCode || !strings.Contains(string(out), tc.want) {
+					t.Fatalf("%q: exit %d, want %d and %q in %q", args, code, wantCode, tc.want, out)
+				}
+			}
+		})
+	}
+}

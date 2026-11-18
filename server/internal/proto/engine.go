@@ -18,6 +18,11 @@ const (
 	EngineCindy = "cindy"
 )
 
+// RuntimeEngine: engine is one that is a runtime, not a terminal (Paseo, Cindy): its own providers start every session
+// that opens in it. Whether it runs only those (a launcher it lacks gets one of the same kind, or a refusal) its node
+// says per start host (launchers.list's host_runtime, #8140).
+func RuntimeEngine(engine string) bool { return engine == EnginePaseo || engine == EngineCindy }
+
 // EngineNames are the engines a machine may use, with the names the app shows.
 var EngineNames = map[string]string{
 	EngineHerdr:     "herdr",
@@ -30,7 +35,9 @@ var EngineNames = map[string]string{
 }
 
 // Engine is one engine as found on a machine: Available when its socket is reachable (herdr: or its binary is there).
-// Note says why one that is there cannot be used (Orca too old or too new), in Chinese for the app.
+// Note says why one that is there cannot be used (Orca too old or too new, Paseo's bridge not connected) or asks to
+// update it (Paseo), in Chinese; the hub words the node-engine catalog's notes in each reader's language
+// (i18n.EngineText), the others reach the app as they are.
 type Engine struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`

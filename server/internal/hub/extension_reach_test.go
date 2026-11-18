@@ -167,9 +167,71 @@ func TestAnExtensionsTokenActsOnlyAsItsManager(t *testing.T) {
 	_ = h
 }
 
+func TestTodoRepositoryRoutesStayOnTheirManager(t *testing.T) {
+	h, url, a, b := reachHub(t)
+	h.noteTodoOwner("todo-a", assistantwire.AssistantID)
+	h.noteTodoOwner("todo-b", "m-0b0b0b")
+	for _, route := range []struct{ method, suffix, body string }{
+		{"GET", "/repositories", ""},
+		{"PUT", "/repositories", `{}`},
+		{"PUT", "/repositories/repo-b/links", `{}`},
+	} {
+		beforeA, beforeB := len(reached(a)), len(reached(b))
+		if code, out := extDo(t, url, route.method, "/api/v1/todos/todo-a"+route.suffix, route.body, nil); code != http.StatusForbidden || !strings.Contains(out, codeOtherManager) {
+			t.Errorf("%s %s: another manager's Todo: %d %s", route.method, route.suffix, code, clip(out, 200))
+		}
+		if got := len(reached(a)); got != beforeA {
+			t.Errorf("%s %s: A was reached: %v", route.method, route.suffix, reached(a)[beforeA:])
+		}
+		if got := len(reached(b)); got != beforeB {
+			t.Errorf("%s %s: a foreign Todo reached B: %v", route.method, route.suffix, reached(b)[beforeB:])
+		}
+
+		ownPath := "/api/v1/todos/todo-b" + route.suffix
+		if code, out := extDo(t, url, route.method, ownPath, route.body, nil); code != http.StatusOK {
+			t.Errorf("%s %s: own Todo: %d %s", route.method, route.suffix, code, clip(out, 200))
+		}
+		if got := len(reached(a)); got != beforeA {
+			t.Errorf("%s %s: own Todo reached A: %v", route.method, route.suffix, reached(a)[beforeA:])
+		}
+		calls := reached(b)[beforeB:]
+		if len(calls) != 1 || !strings.HasPrefix(calls[0], assistantwire.MethodHTTP+" ") || !strings.Contains(calls[0], ownPath) {
+			t.Errorf("%s %s: own Todo did not reach only B: %v", route.method, route.suffix, calls)
+		}
+	}
+}
+
+// The To-dos view's reads (todo_view.go): one to-do goes to its own manager (byTodo), another manager's is refused; the
+// places are asked of the extension's own manager alone (mergedAsk), and naming another is refused.
+func TestTodoViewRoutesStayOnTheirManager(t *testing.T) {
+	h, url, a, b := reachHub(t)
+	h.noteTodoOwner("todo-a", assistantwire.AssistantID)
+	h.noteTodoOwner("todo-b", "m-0b0b0b")
+	beforeA, beforeB := len(reached(a)), len(reached(b))
+	if code, out := extDo(t, url, "GET", "/api/v1/todos/todo-a", "", nil); code != http.StatusForbidden || !strings.Contains(out, codeOtherManager) {
+		t.Errorf("another manager's to-do: %d %s", code, clip(out, 200))
+	}
+	if code, out := extDo(t, url, "GET", "/api/v1/todos/places", "", map[string]string{ManagerHeader: assistantwire.AssistantID}); code != http.StatusForbidden ||
+		!strings.Contains(out, codeOtherManager) {
+		t.Errorf("another manager's places: %d %s", code, clip(out, 200))
+	}
+	for _, path := range []string{"/api/v1/todos/todo-b", "/api/v1/todos/places"} {
+		if code, out := extDo(t, url, "GET", path, "", nil); code != http.StatusOK {
+			t.Errorf("%s: %d %s", path, code, clip(out, 200))
+		}
+	}
+	if got := reached(a)[beforeA:]; len(got) != 0 {
+		t.Errorf("A was reached: %v", got)
+	}
+	calls := reached(b)[beforeB:]
+	if len(calls) != 2 || !strings.Contains(calls[0], "/api/v1/todos/todo-b") || !strings.Contains(calls[1], "/api/v1/todos/places") {
+		t.Errorf("B got %v", calls)
+	}
+}
+
 // Every route an extension's token can open (extwire.RouteScopes) is bounded to its manager one way or another; a new
 // one has to say how here. "path": its machine, session, card or conversation is in the path (extensionReach);
-// "manager": it goes to the extension's own manager (requestManager, byConversation, mergeList), which is held to its
+// "manager": it goes to the extension's own manager (requestManager, byConversation, byTodo, mergeList), which is held to its
 // own machines like any manager; "own": the hub's own answer, limited to the manager's things; "body": the route
 // checks what its body or query names itself.
 func TestEveryExtensionRouteIsBounded(t *testing.T) {
@@ -179,9 +241,11 @@ func TestEveryExtensionRouteIsBounded(t *testing.T) {
 		"PUT /api/v1/kb/{kind}/{id}": "manager",
 		"GET /api/v1/inbox":          "manager", "GET /api/v1/inbox/done": "manager", "GET /api/v1/inbox/done/days": "manager", "GET /api/v1/inbox/{id}": "manager", "GET /api/v1/inbox/mutes": "manager",
 		"GET /api/v1/inbox/policies": "manager", "POST /api/v1/inbox/done": "manager", "POST /api/v1/inbox/bulk": "manager",
+		"POST /api/v1/inbox/merge": "manager", "POST /api/v1/inbox/merge/undo": "manager", "POST /api/v1/inbox/todo": "manager", "POST /api/v1/inbox/todo/undo": "manager",
 		"POST /api/v1/inbox/{id}/done": "manager", "POST /api/v1/inbox/{id}/draft": "manager", "POST /api/v1/inbox/{id}/reply": "manager",
 		"POST /api/v1/inbox/{id}/suggestion": "manager", "POST /api/v1/inbox/{id}/handoff": "manager", "POST /api/v1/inbox/{id}/doc/status": "manager",
-		"PUT /api/v1/inbox/{id}/parent": "manager", "GET /api/v1/inbox/tree/{kind}/{id...}": "manager",
+		"POST /api/v1/inbox/{id}/task-link/recheck": "manager",
+		"PUT /api/v1/inbox/{id}/parent":             "manager", "GET /api/v1/inbox/tree/{kind}/{id...}": "manager",
 		"PUT /api/v1/inbox/{id}/folder": "manager", "GET /api/v1/inbox/folders": "manager", "PUT /api/v1/inbox/folders": "manager",
 		"POST /api/v1/inbox/mutes": "manager", "DELETE /api/v1/inbox/mutes/{id}": "manager", "POST /api/v1/inbox/policies": "manager",
 		"PATCH /api/v1/inbox/policies/{id}": "manager", "DELETE /api/v1/inbox/policies/{id}": "manager", "POST /api/v1/inbox/refresh": "manager",
@@ -197,7 +261,9 @@ func TestEveryExtensionRouteIsBounded(t *testing.T) {
 		"GET /api/v1/agents":                                 "manager", "GET /api/v1/agents/sessions": "manager",
 		"GET /api/v1/agents/sessions/{id}": "manager", "GET /api/v1/agents/sessions/{id}/messages": "manager",
 		"GET /api/v1/agents/sessions/{id}/avatar": "manager",
+		"GET /api/v1/saved-agent-searches":        "manager",
 		"GET /api/v1/workspaces":                  "manager", "GET /api/v1/workspace-board": "manager",
+		"GET /api/v1/workspace-board/activity": "manager", "GET /api/v1/workspace-board/activity/{revision}": "manager",
 		"POST /api/v1/sessions":                            "body", // machine_id, resume_session_id: its manager's (startSession)
 		"POST /api/v1/sessions/{mid}/{sid}/messages":       "path",
 		"POST /api/v1/sessions/{mid}/{sid}/interrupt":      "path",
@@ -215,7 +281,10 @@ func TestEveryExtensionRouteIsBounded(t *testing.T) {
 		"GET /api/v1/machines/{id}/metrics":                "path",
 		"GET /api/v1/machines/{id}/usage":                  "path",
 		"GET /api/v1/machines/{mid}/stat":                  "path",
-		"POST /api/v1/notify":                              "body", // machine_id, session_id: its manager's (ownsRef)
+		"POST /api/v1/notify":                              "body",    // machine_id, session_id: its manager's (ownsRef)
+		"GET /api/v1/push/intercepts":                      "manager", // only entries with its manager (lnRoutes, TestLnInterceptsHeldToManager)
+		"GET /api/v1/push/ln-mode":                         "own",     // the hub-wide switch state, no manager's data in the answer
+		"GET /api/v1/push/stats/daily":                     "manager", // only its manager's counts (lnRoutes, TestPushDailyStatsHeldToManager)
 		"GET /api/v1/assistant":                            "manager",
 		"GET /api/v1/assistant/capabilities":               "manager",
 		"POST /api/v1/assistant/conversations":             "manager",
@@ -223,8 +292,17 @@ func TestEveryExtensionRouteIsBounded(t *testing.T) {
 		"POST /api/v1/assistant/conversations/{id}/stop":   "path",
 		"GET /api/v1/assistant/reporters":                  "manager",
 		"GET /api/v1/assistant/leaders":                    "manager",
+		"GET /api/v1/assistant/dispatch-policy":            "manager",
+		"PUT /api/v1/assistant/dispatch-policy":            "manager",
+		"GET /api/v1/assistant/worker-presets":             "manager",
+		"GET /api/v1/assistant/start-defaults":             "manager",
+		"PUT /api/v1/assistant/start-defaults":             "manager",
 		"GET /api/v1/todos":                                "manager", "GET /api/v1/todos/{id}/decisions": "manager",
-		"POST /api/v1/todos": "manager", "PATCH /api/v1/todos/{id}": "manager",
+		"GET /api/v1/todos/{id}": "manager", "GET /api/v1/todos/places": "manager", // TestTodoViewRoutesStayOnTheirManager
+		"GET /api/v1/todos/{id}/repositories":                 "manager", // associations stay with the todo's manager
+		"PUT /api/v1/todos/{id}/repositories":                 "manager",
+		"PUT /api/v1/todos/{id}/repositories/{repo_id}/links": "manager",
+		"POST /api/v1/todos":                                  "manager", "PATCH /api/v1/todos/{id}": "manager",
 		"POST /api/v1/todos/{id}/decisions":                 "manager",
 		"PUT /api/v1/todos/{id}/agents/{mid}/{sid}":         "path",
 		"DELETE /api/v1/todos/{id}/agents/{mid}/{sid}":      "path",

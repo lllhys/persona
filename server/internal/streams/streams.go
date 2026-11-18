@@ -299,6 +299,7 @@ func (s *stream) write() {
 			return
 		}
 		b := s.queue[0]
+		s.queue[0] = nil
 		s.queue = s.queue[1:]
 		s.queued -= len(b)
 		conn := s.conn

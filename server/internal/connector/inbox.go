@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/nwverse/persona/server/internal/connectorwire"
 )
@@ -66,6 +67,11 @@ type Inbox interface {
 	Collect(ctx context.Context) ([]InboxThing, error)
 	Reply(ctx context.Context, r InboxReply) error
 }
+
+// ErrCannotReply is a Reply refused before anything was sent because the thing has no way to be answered through the
+// connector (a read-only document, a thread with no chat to post to). Wrap it (fmt.Errorf("%w: …")) without the
+// thread or other identifiers: the apps get only its kind (inbox_cannot_reply, #9125).
+var ErrCannotReply = errors.New("this item cannot be replied to through its connector")
 
 // InboxSettler is an inbox whose rules can close items the hub still has open (made under older rules, or of a
 // thread the connector no longer brings in): Settle gets the open items' threads and returns, for each that is

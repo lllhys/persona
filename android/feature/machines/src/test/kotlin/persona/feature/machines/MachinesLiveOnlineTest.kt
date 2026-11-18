@@ -57,7 +57,7 @@ class MachinesLiveOnlineTest {
             PersonaTheme(reduceMotion = true) { if (detail) MachinesScreen("lab", page, navigator) else MachinesScreen(null, list, navigator) }
         }
         val cpu = MetricFormat.percent(93.5, Locale.ENGLISH)
-        rule.onNodeWithText("0 of 1 online · 0 needing attention").assertExists()
+        rule.onNodeWithText("0 of 1 online · 1 needing attention · 0 agents need you").assertExists()
         rule.onNodeWithText("Offline").assertExists()
         rule.onNodeWithText("Online").assertDoesNotExist()
         detail = true

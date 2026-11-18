@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The GitHub star toast when first setup finishes (#5761, docs/design/DESIGN_SYSTEM.md "GitHub star prompts"). -->
+<resources>
+    <string name="settings_star_on_github">去 GitHub 点 Star</string>
+    <string name="settings_star_welcome">设置完成！喜欢 Persona 的话，点个 Star 支持一下吧。</string>
+</resources>

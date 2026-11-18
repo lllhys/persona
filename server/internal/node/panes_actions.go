@@ -124,7 +124,19 @@ func (n *Node) closePane(ctx context.Context, pane string) error {
 		return err
 	}
 	if id := n.sessionOfPane(pane); id != "" {
+		release := n.recovery.lock(id)
+		defer release()
+		unlock := n.typing.lock(id)
+		defer unlock()
 		return n.close(ctx, id)
+	}
+	if id := p.Tokens[personaTabToken]; validID(id) {
+		release := n.recovery.lock(id)
+		defer release()
+		if err := n.saveStopCause(ctx, id, proto.StopUser); err != nil {
+			return err
+		}
+		defer n.state.stopped(id, proto.StopUser)
 	}
 	org, ref, err := paneCap[host.Organizer](n, pane)
 	if err != nil {
@@ -215,6 +227,15 @@ func paneShells(ctx context.Context, created *host.Created) []string {
 	return []string{herdrPaneShell()}
 }
 
+// startPaneShells resolves the shell for one start. An adopted pane reuses the foreground answer already gathered by
+// runAgentInPane; a new pane goes through the platform resolver (Windows adds one foreground request, then config).
+func (n *Node) startPaneShells(ctx context.Context, launch host.Launcher, created *host.Created) []string {
+	if _, ok := ctx.Value(adoptedPaneKey{}).(adopted); ok {
+		return paneShells(ctx, created)
+	}
+	return n.freshPaneShells(ctx, launch, created)
+}
+
 // runAgentInPane starts an agent of a launcher in a plain shell pane, the way "New Agent" does in a new tab: same
 // launcher command, same wait for the session, same binding. The pane has to be at its shell prompt: nothing but a
 // shell in front, no agent bound to it. A start that fails leaves the pane as it is (it is not closed: it was not made
@@ -224,7 +245,18 @@ func (n *Node) runAgentInPane(ctx context.Context, pane, launcher string) (*prot
 	if launcher == "" {
 		return nil, errors.New("launcher is required")
 	}
+	if _, err := terminalLauncher(launcher, ""); err != nil { // an app's launcher (claudedesktop_new.go)
+		return nil, err
+	}
 	p, err := n.listedPane(ctx, pane)
+	if err != nil {
+		return nil, err
+	}
+	// Serialize the whole start with any other work-agent start or abandoned-start cleanup for this pane. The first
+	// listedPane was only a cheap lookup; read it again after the wait before trusting the occupancy checks below.
+	unlock := n.typing.lock(workAgentPaneLockPrefix + p.PaneID)
+	defer unlock()
+	p, err = n.listedPane(ctx, pane)
 	if err != nil {
 		return nil, err
 	}

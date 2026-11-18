@@ -344,9 +344,9 @@ func (h *Manager) marketsDir() string { return filepath.Join(h.extensions.root, 
 // packageCache is where market packages are kept by their sha256, so installing one again does not download it again.
 func (h *Manager) packageCache() string { return filepath.Join(h.extensions.root, "cache", "packages") }
 
-// marketClient is how the hub reads markets: GitHub's hosts through hub.json's github.proxy when it is set (the
-// way the hub's other GitHub traffic goes; on a network that reaches GitHub badly a package download stalled for
-// minutes without it, #3277), everything else as the environment says (HTTPS_PROXY). Tests set their own.
+// marketClient is how the hub reads markets. extension_market.proxy sends all of them through its HTTP or SOCKS5
+// proxy. Without one, GitHub's hosts use github.proxy when set (#3277), and everything else follows HTTPS_PROXY.
+// Tests set their own client.
 func (h *Manager) marketClient() *http.Client {
 	ms := h.marketsState()
 	ms.mu.Lock()
@@ -355,16 +355,29 @@ func (h *Manager) marketClient() *http.Client {
 		return ms.client
 	}
 	t := http.DefaultTransport.(*http.Transport).Clone()
-	var gh *url.URL
-	if h.cfg != nil && h.cfg.GitHub != nil {
-		gh, _ = netproxy.Parse(h.cfg.GitHub.Proxy) // a malformed one: as the environment says (the connector says it is wrong)
+	var upstream *url.URL
+	var upstreamErr error
+	if h.cfg != nil {
+		upstream, upstreamErr = netproxy.ParseHTTPOrSOCKS5(h.cfg.ExtensionMarket.Proxy)
 	}
-	if gh != nil {
-		t.Proxy = func(r *http.Request) (*url.URL, error) {
-			if githubHost(r.URL.Hostname()) {
-				return gh, nil
+	switch {
+	case upstreamErr != nil:
+		// An explicit but invalid proxy must never turn into a direct connection.
+		t.Proxy = func(*http.Request) (*url.URL, error) { return nil, upstreamErr }
+	case upstream != nil:
+		t.Proxy = http.ProxyURL(upstream)
+	default:
+		var gh *url.URL
+		if h.cfg != nil && h.cfg.GitHub != nil {
+			gh, _ = netproxy.Parse(h.cfg.GitHub.Proxy) // a malformed one: as the environment says (the connector says it is wrong)
+		}
+		if gh != nil {
+			t.Proxy = func(r *http.Request) (*url.URL, error) {
+				if githubHost(r.URL.Hostname()) {
+					return gh, nil
+				}
+				return envProxy(r)
 			}
-			return envProxy(r)
 		}
 	}
 	ms.client = &http.Client{Transport: t}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/nwverse/persona/server/internal/assistant/archiverecovery"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,14 +108,14 @@ func callArchiveRecoveryFence(t *testing.T, r *archiveSwitchRig, method string, 
 	}
 }
 
-func archiveRecoveryPageWork(page assistantwire.ChangesResult) archiveRecoveryWork {
-	work := archiveRecoveryWork{}
+func archiveRecoveryPageWork(page assistantwire.ChangesResult) archiverecovery.Work {
+	work := archiverecovery.Work{}
 	for _, batch := range page.Batches {
 		source := imessage.ID
 		if batch.Source != "" {
 			source = batch.Source
 		}
-		work.add(source, batch.Chat.ID)
+		work.Add(source, batch.Chat.ID)
 	}
 	return work
 }
@@ -175,21 +176,21 @@ func makeUnfinishedArchiveRecoveryIngest(t *testing.T, r *archiveSwitchRig, page
 	}
 }
 
-func assertArchiveRecoveryData(t *testing.T, e *kb.Engine, stage archiveRecoveryStage) {
+func assertArchiveRecoveryData(t *testing.T, e *kb.Engine, stage archiverecovery.Stage) {
 	t.Helper()
 	chatID := kb.ChatID(imessage.ID, "0123456789ab")
 	chat, exists := e.Store.Chat(chatID)
 	cursor, err := os.ReadFile(filepath.Join(e.Store.Dir, "cursors", imessage.ID+".json"))
 	switch stage {
-	case archiveRecoveryBegin:
+	case archiverecovery.Begin:
 		if exists || !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("pre-Begin recovery wrote data: chat=%+v cursor=%s err=%v", chat, cursor, err)
 		}
-	case archiveRecoverySettle:
+	case archiverecovery.Settle:
 		if !exists || chat.Messages != 1 || !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("unfinished ingest was not settled once: chat=%+v cursor=%s err=%v", chat, cursor, err)
 		}
-	case archiveRecoveryEnd:
+	case archiverecovery.End:
 		if !exists || chat.Messages != 1 || err != nil || string(cursor) != `{"cursor":"9"}` {
 			t.Fatalf("committed data changed during recovery: chat=%+v cursor=%s err=%v", chat, cursor, err)
 		}
@@ -199,13 +200,13 @@ func assertArchiveRecoveryData(t *testing.T, e *kb.Engine, stage archiveRecovery
 func TestIMessageArchiveReservationRecoversAfterAssistantRestart(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
-		stage     archiveRecoveryStage
+		stage     archiverecovery.Stage
 		token     string
 		unrelated bool
 	}{
-		{name: "before Begin", stage: archiveRecoveryBegin, token: strings.Repeat("a", 32)},
-		{name: "unfinished ingest", stage: archiveRecoverySettle, token: strings.Repeat("b", 32), unrelated: true},
-		{name: "after cursor commitment", stage: archiveRecoveryEnd, token: strings.Repeat("c", 32)},
+		{name: "before Begin", stage: archiverecovery.Begin, token: strings.Repeat("a", 32)},
+		{name: "unfinished ingest", stage: archiverecovery.Settle, token: strings.Repeat("b", 32), unrelated: true},
+		{name: "after cursor commitment", stage: archiverecovery.End, token: strings.Repeat("c", 32)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newArchiveSwitchRig(t, false, false, false)
@@ -213,31 +214,31 @@ func TestIMessageArchiveReservationRecoversAfterAssistantRestart(t *testing.T) {
 			page := readArchiveRecoveryPage(t, r)
 			work := archiveRecoveryPageWork(page)
 			req := assistantwire.ArchiveFence{ID: imessage.ID, Generation: page.Generation, Token: tc.token}
-			if tc.stage != archiveRecoveryBegin {
-				if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, archiveRecoveryBegin, work)); err != nil {
+			if tc.stage != archiverecovery.Begin {
+				if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, archiverecovery.Begin, work)); err != nil {
 					t.Fatal(err)
 				}
 				callArchiveRecoveryFence(t, r, assistantwire.ConnectorsArchiveBegin, req)
 			}
 			switch tc.stage {
-			case archiveRecoveryBegin:
-				if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, tc.stage, work)); err != nil {
+			case archiverecovery.Begin:
+				if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, tc.stage, work)); err != nil {
 					t.Fatal(err)
 				}
-			case archiveRecoverySettle:
-				if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, tc.stage, work)); err != nil {
+			case archiverecovery.Settle:
+				if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, tc.stage, work)); err != nil {
 					t.Fatal(err)
 				}
 				makeUnfinishedArchiveRecoveryIngest(t, r, page)
-			case archiveRecoveryEnd:
-				if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, archiveRecoverySettle, work)); err != nil {
+			case archiverecovery.End:
+				if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, archiverecovery.Settle, work)); err != nil {
 					t.Fatal(err)
 				}
 				if err := ingestArchiveRecoveryPage(r, page); err != nil {
 					t.Fatal(err)
 				}
 				writeArchiveRecoveryCursor(t, r, page.Next)
-				if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, tc.stage, work)); err != nil {
+				if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, tc.stage, work)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -251,7 +252,7 @@ func TestIMessageArchiveReservationRecoversAfterAssistantRestart(t *testing.T) {
 			first := newArchiveRecoveryReplacement(t, r, r.e.Store.Dir)
 			first.s.kbConnectors(r.ctx, first.e)
 			recoveryMethod := assistantwire.ConnectorsArchiveEnd
-			if tc.stage == archiveRecoveryBegin {
+			if tc.stage == archiverecovery.Begin {
 				recoveryMethod = assistantwire.ConnectorsArchiveAbort
 			}
 			if first.calls.count(recoveryMethod) != 1 || first.calls.count(assistantwire.ConnectorsChanges) != 0 ||
@@ -260,7 +261,7 @@ func TestIMessageArchiveReservationRecoversAfterAssistantRestart(t *testing.T) {
 					first.calls.count(assistantwire.ConnectorsArchiveAbort), first.calls.count(assistantwire.ConnectorsArchiveEnd),
 					first.calls.count(assistantwire.ConnectorsArchiveBegin), first.calls.count(assistantwire.ConnectorsChanges))
 			}
-			if _, err := os.Stat(archiveRecoveryPath(r.e.Store.Dir, req.Token)); !errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Stat(archiverecovery.Path(r.e.Store.Dir, req.Token)); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("recovered journal remains: %v", err)
 			}
 			assertArchiveRecoveryData(t, first.e, tc.stage)
@@ -294,7 +295,7 @@ func TestIMessageArchiveReservationRecoversAfterAssistantRestart(t *testing.T) {
 			cursors := append([]string(nil), r.node.cursors...)
 			r.node.mu.Unlock()
 			wantCursor := ""
-			if tc.stage == archiveRecoveryEnd {
+			if tc.stage == archiverecovery.End {
 				wantCursor = "9"
 			}
 			if len(cursors) != 2 || cursors[1] != wantCursor {
@@ -332,20 +333,20 @@ func TestIMessageArchiveRecoveryJournalPrecedesBegin(t *testing.T) {
 				t.Errorf("decode Begin: %v", err)
 				return
 			}
-			records, err := readArchiveRecovery(r.e.Store.Dir)
+			records, err := archiverecovery.Read(r.e.Store.Dir)
 			if err != nil || len(records) != 1 {
 				t.Errorf("journal before Begin: records=%d err=%v", len(records), err)
 				return
 			}
 			record := records[0]
-			if record.Stage != archiveRecoveryBegin || record.Token != req.Token || record.Generation != req.Generation ||
+			if record.Stage != archiverecovery.Begin || record.Token != req.Token || record.Generation != req.Generation ||
 				len(record.Chats) != 1 || record.Chats[0].Source != imessage.ID || record.Chats[0].Chat != "0123456789ab" {
 				t.Errorf("wrong pre-Begin journal: %+v request=%+v", record, req)
 			}
 		case assistantwire.ConnectorsArchiveEnd:
 			endSeen = true
-			records, err := readArchiveRecovery(r.e.Store.Dir)
-			if err != nil || len(records) != 1 || records[0].Stage != archiveRecoveryEnd {
+			records, err := archiverecovery.Read(r.e.Store.Dir)
+			if err != nil || len(records) != 1 || records[0].Stage != archiverecovery.End {
 				t.Errorf("journal before End: records=%+v err=%v", records, err)
 			}
 			cursor, err := os.ReadFile(filepath.Join(r.e.Store.Dir, "cursors", imessage.ID+".json"))
@@ -361,14 +362,14 @@ func TestIMessageArchiveRecoveryJournalPrecedesBegin(t *testing.T) {
 	if !beginSeen || !endSeen {
 		t.Fatalf("reservation was not observed: begin=%v end=%v", beginSeen, endSeen)
 	}
-	entries, err := os.ReadDir(filepath.Join(r.e.Store.Dir, archiveRecoveryDir))
+	entries, err := os.ReadDir(filepath.Join(r.e.Store.Dir, archiverecovery.Dir))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
 	if len(entries) != 0 {
 		t.Fatalf("completed reservation left %d journal entries", len(entries))
 	}
-	assertArchiveRecoveryData(t, replacement.e, archiveRecoveryEnd)
+	assertArchiveRecoveryData(t, replacement.e, archiverecovery.End)
 	waitArchiveSetting(t, r.setAsync(r.ctx, false), false)
 }
 
@@ -378,15 +379,15 @@ func TestIMessageArchiveRecoveryUnreadableJournalFailsClosed(t *testing.T) {
 	page := readArchiveRecoveryPage(t, r)
 	work := archiveRecoveryPageWork(page)
 	req := assistantwire.ArchiveFence{ID: imessage.ID, Generation: page.Generation, Token: strings.Repeat("a", 32)}
-	if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, archiveRecoveryBegin, work)); err != nil {
+	if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, archiverecovery.Begin, work)); err != nil {
 		t.Fatal(err)
 	}
 	callArchiveRecoveryFence(t, r, assistantwire.ConnectorsArchiveBegin, req)
-	if err := writeArchiveRecovery(r.e.Store.Dir, newArchiveRecoveryRecord(req, archiveRecoverySettle, work)); err != nil {
+	if err := archiverecovery.Write(r.e.Store.Dir, archiverecovery.NewRecord(req, archiverecovery.Settle, work)); err != nil {
 		t.Fatal(err)
 	}
 	badToken := strings.Repeat("e", 32)
-	badPath := archiveRecoveryPath(r.e.Store.Dir, badToken)
+	badPath := archiverecovery.Path(r.e.Store.Dir, badToken)
 	if err := os.WriteFile(badPath, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +396,7 @@ func TestIMessageArchiveRecoveryUnreadableJournalFailsClosed(t *testing.T) {
 	if replacement.calls.total() != 0 {
 		t.Fatalf("unreadable recovery admitted calls: %v", replacement.calls.called)
 	}
-	if _, err := os.Stat(archiveRecoveryPath(r.e.Store.Dir, req.Token)); err != nil {
+	if _, err := os.Stat(archiverecovery.Path(r.e.Store.Dir, req.Token)); err != nil {
 		t.Fatalf("valid journal was discarded after another journal failed: %v", err)
 	}
 	deadline, cancel := context.WithTimeout(r.ctx, 300*time.Millisecond)

@@ -83,7 +83,8 @@ export function rewindTarget(items: Item[], messageId: string): RewindTarget | n
 
 /** Why "Rewind to here" is off for this session ("" when it is on). Short: it is the hint on the menu row. */
 export function rewindBlock(session: Session | undefined, busy: boolean): string {
-  if (!session || session.assistant || session.source_kind || (session.agent && session.agent !== "claude")) return t("rewind.block_claude_only");
+  const supported = session?.capabilities?.rewind ?? Boolean(session && !session.source_kind && (!session.agent || session.agent === "claude"));
+  if (!session || session.assistant || !supported) return t("rewind.unsupported");
   const state = stateOf(session);
   if (state === "offline" || session.starting) return stateName("offline");
   if (state === "needs_you" || (session.pending_interactions ?? 0) > 0) return stateName("needs_you");

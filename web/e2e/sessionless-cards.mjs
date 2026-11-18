@@ -164,7 +164,6 @@ try {
     await question.getByText("Choose the format", { exact: true }).waitFor();
     await shot("question");
     await question.getByRole("button", { name: "Markdown", exact: true }).click();
-    await question.getByRole("button", { name: labels.send_answer, exact: true }).click();
     await main.locator('[data-answered="script-question"]').waitFor();
     assert.deepEqual(run.writes.filter((w) => w.path.endsWith("/resolve"))[1], { method: "POST", path: "/api/v1/interactions/script-question/resolve", body: { answers: { "Choose the format": "Markdown" } } });
     // Direct notification/deep links must open the same card at phone width too.

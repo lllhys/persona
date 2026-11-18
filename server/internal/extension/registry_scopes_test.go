@@ -115,11 +115,16 @@ func TestRegistrySnapshotKeepsProcessState(t *testing.T) {
 	}
 }
 
-// A token of every scope has every scope but agents.permission_mode, which the install screen still lists.
+// A token of every scope has every scope but agents.permission_mode and assistant.start_defaults, which the install
+// screen still lists: an extension gets them only by name.
 func TestEveryScopeLeavesOutThePermissionMode(t *testing.T) {
 	every := EveryScope()
-	if slices.Contains(every, ScopeAgentsPermissionMode) || !slices.Contains(HubScopes, ScopeAgentsPermissionMode) ||
-		len(every) != len(HubScopes)-1 || InEveryScope(ScopeAgentsPermissionMode) || !InEveryScope(ScopeAgentsControl) {
+	for _, named := range []string{ScopeAgentsPermissionMode, ScopeAssistantStartDefaults} {
+		if slices.Contains(every, named) || !slices.Contains(HubScopes, named) || InEveryScope(named) {
+			t.Fatalf("every scope has %s: %v", named, every)
+		}
+	}
+	if len(every) != len(HubScopes)-2 || !InEveryScope(ScopeAgentsControl) || !InEveryScope(ScopeAssistantDispatchPolicy) {
 		t.Fatalf("every scope: %v", every)
 	}
 	every[0] = "x"

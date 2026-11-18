@@ -80,6 +80,22 @@ type VoiceItem struct {
 	Name string `json:"name,omitempty"`
 }
 
+// TranscriptionItem is a contribution to transcription: transcribing a meeting's audio on the hub for the manager
+// (docs/assistant/meeting-minutes.md "The `transcription` extension point"). Only the manager dials it, over the
+// extension's own socket under /transcription/<id>/ (extwire.TranscriptionProtocol); the apps' forward never reaches it.
+type TranscriptionItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// SpeechItem is a contribution to speech: reading a text aloud for the apps (docs/extensions/extensions.md "Speech"), over
+// the extension's own socket under /speech/<id>/ with the voice extension's read-aloud contract (a meeting answer the
+// iPhone says aloud).
+type SpeechItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
 // ComputerItem is a contribution to computer: operating the user's computers for the assistant (the built-in plugin
 // cua, docs/extensions/computer-use.md).
 type ComputerItem struct {
@@ -595,6 +611,9 @@ var Points = map[string]Point{
 		if u.Icon != "" && (u.Placement != "nav_page" || !slices.Contains(UIIcons, u.Icon)) {
 			return u.ID, fmt.Errorf("ui %s: only a nav_page has an icon, one of %s", u.ID, strings.Join(UIIcons, ", "))
 		}
+		if g := u.Group; g != nil && (u.Placement != "nav_page" || !uiGroupID.MatchString(g.ID) || g.Title == "" || utf8.RuneCountInString(g.Title) > 40) {
+			return u.ID, fmt.Errorf("ui %s: only a nav_page names a group, its id a-z0-9- (at most 32) and its title 1 to 40 characters", u.ID)
+		}
 		if u.Opens != "" && u.Placement != "overview_card" && u.Placement != "capsule_card" && u.Placement != "widget" {
 			return u.ID, fmt.Errorf("ui %s: only an overview_card, capsule_card or widget opens a page", u.ID)
 		}
@@ -713,6 +732,15 @@ var Points = map[string]Point{
 		}
 		return p.ID, nil
 	}},
+	// repository_providers: a code-hosting source for the repository catalog and a to-do's repositories and links on the
+	// exact hosts it names (repo.parse / repo.check / repo.link / repo.describe, docs/extensions/repository-providers.md).
+	"repository_providers": {Name: "repository_providers", Namespace: "repo", Version: 1, NeedsRPC: true, Item: func(raw json.RawMessage) (string, error) {
+		var p RepositoryProviderItem
+		if err := strict(raw, &p); err != nil {
+			return "", err
+		}
+		return p.ID, checkRepositoryProvider(p)
+	}},
 	"voice": {Name: "voice", Namespace: "voice", Version: 1, NeedsHTTP: true, Item: func(raw json.RawMessage) (string, error) {
 		var v VoiceItem
 		if err := strict(raw, &v); err != nil {
@@ -720,6 +748,30 @@ var Points = map[string]Point{
 		}
 		if !idPattern.MatchString(v.ID) {
 			return v.ID, fmt.Errorf("voice id %q: a-z0-9_-", v.ID)
+		}
+		return v.ID, nil
+	}},
+	// transcription: a meeting's audio to text, for the manager only (TranscriptionItem); served over the program's
+	// HTTP socket like voice.
+	"transcription": {Name: "transcription", Namespace: "transcription", Version: 1, NeedsHTTP: true, Item: func(raw json.RawMessage) (string, error) {
+		var v TranscriptionItem
+		if err := strict(raw, &v); err != nil {
+			return "", err
+		}
+		if !idPattern.MatchString(v.ID) {
+			return v.ID, fmt.Errorf("transcription id %q: a-z0-9_-", v.ID)
+		}
+		return v.ID, nil
+	}},
+	// speech: a text read aloud for the apps (SpeechItem); served over the program's HTTP socket, reached through the
+	// apps' forward to the extension.
+	"speech": {Name: "speech", Namespace: "speech", Version: 1, NeedsHTTP: true, Item: func(raw json.RawMessage) (string, error) {
+		var v SpeechItem
+		if err := strict(raw, &v); err != nil {
+			return "", err
+		}
+		if !idPattern.MatchString(v.ID) {
+			return v.ID, fmt.Errorf("speech id %q: a-z0-9_-", v.ID)
 		}
 		return v.ID, nil
 	}},

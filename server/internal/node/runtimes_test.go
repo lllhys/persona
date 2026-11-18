@@ -34,6 +34,9 @@ type runtimeHub struct {
 	asked    []proto.Interaction
 	resolve  func(proto.Interaction) proto.Resolution
 	nodePeer *rpc.Peer
+	cancel   context.CancelFunc
+	// drop ends the link from the hub's side: the node's connection closes, as when the hub goes away.
+	drop func()
 	// answer takes the other hub calls (mcp.tools, assistant.context…); handled false: an unexpected call.
 	answer func(method string, params json.RawMessage) (res any, err error, handled bool)
 }
@@ -90,7 +93,8 @@ func runtimeNodeTapped(t *testing.T, shared *RuntimeHost, tap io.Writer) (*Node,
 	n.peer.OnRequest = n.handle
 	peer := n.peer // served below: a test may give the node another connection later
 	hub := rpc.New("h", h2nW)
-	end := &runtimeHub{nodePeer: hub, resolve: func(proto.Interaction) proto.Resolution { return proto.Resolution{Dismiss: true} }}
+	end := &runtimeHub{nodePeer: hub, cancel: cancel, resolve: func(proto.Interaction) proto.Resolution { return proto.Resolution{Dismiss: true} },
+		drop: func() { _ = h2nW.Close() }}
 	hub.OnEvent = func(event string, params json.RawMessage) {
 		end.mu.Lock()
 		defer end.mu.Unlock()
@@ -162,6 +166,7 @@ type fakeRuntime struct {
 	answer func(method string, params json.RawMessage) (any, error)
 	events []string       // event names the node pushed, in order
 	hubs   []bool         // runtime.hub pushes: whether a hub is connected
+	driven []string       // runtime.driven pushes: the sessions the hub started through another runtime
 	helloR map[string]any // what runtime.hello answered
 	closed chan struct{}  // closed when the connection ends (helloAt)
 }
@@ -207,6 +212,13 @@ func dialRuntimeAt(t *testing.T, path string, hello map[string]any) *fakeRuntime
 			}
 			_ = json.Unmarshal(params, &p)
 			f.hubs = append(f.hubs, p.Connected)
+		}
+		if event == "runtime.driven" {
+			var p struct {
+				SessionID string `json:"session_id"`
+			}
+			_ = json.Unmarshal(params, &p)
+			f.driven = append(f.driven, p.SessionID)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -272,6 +284,31 @@ func TestRuntimeCloseCapabilityIsIndependentOfTerminal(t *testing.T) {
 			caps := listed(t, n)["close-capability"].Capabilities
 			if caps == nil || caps.Close == nil || *caps.Close != allowed || caps.Terminal {
 				t.Fatalf("close %v listed as %+v", allowed, caps)
+			}
+		})
+	}
+}
+
+// A runtime row says whether it can be renamed (#6294): what the runtime declared, for its own sessions; a session
+// another one started never says so, whatever the runtime declared.
+func TestRuntimeRenameCapability(t *testing.T) {
+	for _, allowed := range []bool{false, true} {
+		t.Run(fmt.Sprint(allowed), func(t *testing.T) {
+			n, _ := runtimeNode(t)
+			hello := dshHello()
+			hello["caps"].(map[string]any)["rename"] = allowed
+			host := dialRuntime(t, n, hello)
+			_ = host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{
+				{"session_id": "rename-capability", "status": "idle"},
+				{"session_id": "rename-child", "status": "idle", "is_subagent": true, "parent_session_id": "rename-capability"},
+			}})
+			waitFor(t, "runtime sessions listed", func() bool { _, ok := listed(t, n)["rename-child"]; return ok })
+			got := listed(t, n)
+			if caps := got["rename-capability"].Capabilities; caps == nil || caps.Rename == nil || *caps.Rename != allowed || caps.Terminal {
+				t.Fatalf("rename %v listed as %+v", allowed, caps)
+			}
+			if caps := got["rename-child"].Capabilities; caps == nil || caps.Rename == nil || *caps.Rename {
+				t.Fatalf("a sub-Agent's row lists rename: %+v", caps)
 			}
 		})
 	}
@@ -479,6 +516,124 @@ func TestRuntimeModesCapability(t *testing.T) {
 	}
 }
 
+// A row narrows modes and model for its own session as it narrows rewind (#8133): an agent the runtime keeps archived
+// takes none of them (Paseo refuses them), and the efforts a row lists go with its modes. A row that says nothing keeps
+// what the runtime declared, as an older bridge's rows do; a runtime that declared no modes lists no efforts.
+func TestRuntimeRowNarrowsModesAndModel(t *testing.T) {
+	n, _ := runtimeNode(t)
+	hello := paseoHello()
+	hello["caps"].(map[string]any)["modes"] = true
+	hello["caps"].(map[string]any)["model"] = true
+	h := dialRuntime(t, n, hello)
+	archived := map[string]any{"rewind": false, "rewind_code": false, "modes": false, "model": false}
+	_ = h.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{
+		{"session_id": "live-claude", "status": "idle", "agent": "claude", "capabilities": map[string]any{"rewind": true}},
+		{"session_id": "archived-claude", "status": "offline", "agent": "claude", "capabilities": archived},
+		{"session_id": "live-grok", "status": "idle", "agent": "paseo", "efforts": []string{"low", "high"}},
+		{"session_id": "archived-grok", "status": "offline", "agent": "paseo", "efforts": []string{"low"}, "capabilities": archived},
+		{"session_id": "older-bridge", "status": "idle", "agent": "claude"},
+	}})
+	waitFor(t, "rows listed", func() bool { _, ok := listed(t, n)["older-bridge"]; return ok })
+	rows := listed(t, n)
+	caps := func(id string) (modes, model bool) {
+		c := rows[id].Capabilities
+		if c == nil || c.Modes == nil || c.Model == nil {
+			t.Fatalf("%s: modes and model said: %+v", id, c)
+		}
+		return *c.Modes, *c.Model
+	}
+	for _, c := range []struct {
+		id           string
+		modes, model bool
+		efforts      []string
+	}{
+		{"live-claude", true, true, nil},
+		{"archived-claude", false, false, nil},
+		{"live-grok", false, true, []string{"low", "high"}}, // Paseo's catch-all takes no Claude modes, its efforts all the same
+		{"archived-grok", false, false, nil},
+		{"older-bridge", true, true, nil},
+	} {
+		if modes, model := caps(c.id); modes != c.modes || model != c.model || !slices.Equal(rows[c.id].Efforts, c.efforts) {
+			t.Errorf("%s: modes %v model %v efforts %v, want %v %v %v", c.id, modes, model, rows[c.id].Efforts, c.modes, c.model, c.efforts)
+		}
+	}
+	// A runtime that declared no modes: the node refuses session.modes for its sessions, so none lists efforts.
+	other := dialRuntime(t, n, map[string]any{"runtime": "acme-cloud", "caps": map[string]any{"send": true}})
+	_ = other.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "no-modes", "status": "idle", "efforts": []string{"low"},
+		"capabilities": map[string]any{"permission_modes": []string{"default", "bypassPermissions"}}}}})
+	waitFor(t, "listed", func() bool { _, ok := listed(t, n)["no-modes"]; return ok })
+	if s := listed(t, n)["no-modes"]; s.Efforts != nil || s.Capabilities.PermissionModes != 0 {
+		t.Fatalf("efforts %v, permission modes %v on a runtime without modes", s.Efforts, s.Capabilities.PermissionModes)
+	}
+}
+
+// A row of an agent that is not Claude Code lists the permission modes session.modes takes for it (#8261): Persona's
+// own, each once, beside capabilities.modes false (older apps show no Claude Code chips there). None where the Claude
+// Code chips stand or where the row takes its modes away (archived); and a switch between them reaches the runtime.
+func TestRuntimeRowListsItsPermissionModes(t *testing.T) {
+	n, _ := runtimeNode(t)
+	hello := paseoHello()
+	hello["caps"].(map[string]any)["modes"] = true
+	h := dialRuntime(t, n, hello)
+	both := []string{"default", "bypassPermissions"}
+	listedModes := map[string]any{"permission_modes": []string{"default", "yolo", "bypassPermissions", "default"}}
+	_ = h.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{
+		{"session_id": "grok", "status": "idle", "agent": "paseo", "capabilities": listedModes},
+		{"session_id": "pi", "status": "idle", "agent": "paseo", "capabilities": map[string]any{"permission_modes": []string{"default"}}},
+		{"session_id": "claude", "status": "idle", "agent": "claude", "capabilities": listedModes},
+		{"session_id": "archived", "status": "offline", "agent": "paseo",
+			"capabilities": map[string]any{"modes": false, "permission_modes": both}},
+		{"session_id": "older-bridge", "status": "idle", "agent": "paseo"},
+	}})
+	waitFor(t, "rows listed", func() bool { _, ok := listed(t, n)["older-bridge"]; return ok })
+	rows := listed(t, n)
+	for _, c := range []struct {
+		id    string
+		modes bool
+		want  []string
+	}{
+		{"grok", false, both},
+		{"pi", false, []string{"default"}},
+		{"claude", true, nil},
+		{"archived", false, nil},
+		{"older-bridge", false, nil},
+	} {
+		got := rows[c.id].Capabilities
+		if got == nil || got.Modes == nil || *got.Modes != c.modes || got.PermissionModes != proto.PermissionModeSetOf(c.want...) {
+			t.Errorf("%s: %+v, want modes %v and permission modes %v", c.id, got, c.modes, c.want)
+		}
+	}
+	if _, err := nodeCall(t, n, "session.modes", map[string]any{"session_id": "grok", "permission_mode": "bypassPermissions"}); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	_ = json.Unmarshal(h.got("session.modes")[0], &m)
+	if m["session_id"] != "grok" || m["permission_mode"] != "bypassPermissions" {
+		t.Fatalf("modes %v", m)
+	}
+}
+
+// session.info of a runtime's session whose counts nobody gives (no transcript here) says they are unknown, so the
+// apps leave them out (#8261); the zeros stay for older apps, which decode them as required numbers.
+func TestRuntimeSessionInfoSaysItsCountsAreUnknown(t *testing.T) {
+	n, _ := runtimeNode(t)
+	h := dialRuntime(t, n, paseoHello())
+	_ = h.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{
+		{"session_id": "grok", "status": "idle", "agent": "paseo", "model": "grok-5", "permission_mode": "bypassPermissions"},
+	}})
+	waitFor(t, "listed", func() bool { _, ok := listed(t, n)["grok"]; return ok })
+	raw, err := nodeCall(t, n, "session.info", map[string]any{"session_id": "grok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var info map[string]any
+	_ = json.Unmarshal(raw, &info)
+	if info["usage_unknown"] != true || info["turns"] != float64(0) || info["context_tokens"] != float64(0) || info["model"] != "grok-5" ||
+		info["permission_mode"] != "bypassPermissions" {
+		t.Fatalf("info %s", raw)
+	}
+}
+
 func TestRuntimeItemsAndDeltasReachTheHub(t *testing.T) {
 	n, hub := runtimeNode(t)
 	host := dialRuntime(t, n, dshHello())
@@ -587,6 +742,80 @@ func TestRuntimeInteractionGoesToThePhone(t *testing.T) {
 	if err := host.peer.Call(ctx, "interaction.create", map[string]any{"interaction": map[string]any{
 		"kind": "permission", "session_id": "not-listed"}}, &res); err == nil {
 		t.Fatal("asked for a session the host does not list")
+	}
+}
+
+// A card under an id the runtime chose is resumable, as one with a tool call id is: the runtime SDK asks the next node
+// with the same card. So the hub keeps it through a hub link drop, and the drop answers node_gone (the runtime asks
+// again once a hub is back), never a dismiss: that reached the runtime before it heard the hub was gone, and the Paseo
+// bridge took a Codex or ACP card, which carries no tool call id, for one the user handed back (#8128). A card with
+// neither id is still dismissed: its next ask would be another card.
+func TestRuntimeCardSurvivesAHubLinkDrop(t *testing.T) {
+	for _, tc := range []struct {
+		name, id, toolUseID string
+		resumable           bool
+	}{
+		{name: "the runtime's own id", id: "paseo-0123456789abcdef", resumable: true},
+		{name: "a tool call id", toolUseID: "call_9", resumable: true},
+		{name: "neither", resumable: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, hub := runtimeNode(t)
+			host := dialRuntime(t, n, dshHello())
+			_ = host.peer.Notify("runtime.sessions", map[string]any{"sessions": []map[string]any{{"session_id": "session-7", "title": "build"}}})
+			waitFor(t, "listed", func() bool { _, ok := listed(t, n)["session-7"]; return ok })
+			asked, release := make(chan struct{}), make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			hub.mu.Lock()
+			hub.resolve = func(proto.Interaction) proto.Resolution { // on the phone, unanswered, until the link drops
+				close(asked)
+				<-release
+				return proto.Resolution{Dismiss: true}
+			}
+			hub.mu.Unlock()
+
+			var res proto.Resolution
+			done := make(chan error, 1)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				ix := map[string]any{"kind": "permission", "session_id": "session-7", "tool_name": "shell", "summary": "make"}
+				if tc.id != "" {
+					ix["id"] = tc.id
+				}
+				if tc.toolUseID != "" {
+					ix["tool_use_id"] = tc.toolUseID
+				}
+				done <- host.peer.Call(ctx, "interaction.create", map[string]any{"interaction": ix}, &res)
+			}()
+			select {
+			case <-asked:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the card never reached the hub")
+			}
+			hub.mu.Lock()
+			ix := hub.asked[0]
+			hub.mu.Unlock()
+			if ix.Resumable != tc.resumable || (tc.id != "" && ix.ID != tc.id) {
+				t.Fatalf("asked %s resumable %v (want %v)", ix.ID, ix.Resumable, tc.resumable)
+			}
+
+			hub.drop() // the hub link drops under the card
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the runtime got no answer after the hub link dropped")
+			}
+			var re *rpc.Error
+			gone := errors.As(err, &re) && re.Code == "node_gone"
+			if tc.resumable && !gone {
+				t.Fatalf("a resumable card under a dropped hub link: %v, %+v (want node_gone: the runtime asks the next hub)", err, res)
+			}
+			if !tc.resumable && (err != nil || !res.Dismiss) {
+				t.Fatalf("a card with no stable id under a dropped hub link: %v, %+v (want a dismiss)", err, res)
+			}
+		})
 	}
 }
 

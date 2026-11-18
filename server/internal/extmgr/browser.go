@@ -213,7 +213,7 @@ func (h *Manager) callBrowserTool(ctx context.Context, sessionID, name string, a
 		}
 		in["script"], in["screenshot"], in["timeout_ms"] = a.Script, true, a.TimeoutMS
 		first, _, _ := strings.Cut(strings.TrimSpace(a.Script), "\n")
-		if h.machineExtension(egoExtensionID).Confirm && !h.approve(ctx, h.assistantAsker(sessionID, m.cfg.ID), name, i18n.T(h.userLang(), "hub-browser.confirm_script", i18n.Args{"machine": m.cfg.Name, "line": first}), args) {
+		if h.machineExtension(egoExtensionID).Confirm && !h.approve(ctx, h.assistantAsker(sessionID, m.cfg.ID), name, i18n.T(h.userLang(), "hub-browser.confirm_script", i18n.Args{"machine": m.name(), "line": first}), args) {
 			h.logf("[%s] browser_run declined on the phone (%d bytes)", m.cfg.ID, len(a.Script))
 			return proto.TextResult("The user declined this on the phone. Do not retry it unless they ask.", true)
 		}

@@ -10,6 +10,9 @@ struct APIErrorCard: View {
     var info: APIErrorInfo
     var count: Int
     var at: Date?
+    /// An exhausted model recovery chain (#7824): its cause and recovery time on the card, the models tried folded.
+    /// Declared before `retry` so the memberwise initializer takes it in the call site's order.
+    var recovery: ModelFallbackText.ExhaustedRecovery? = nil
     var retry: (() -> Void)?
     @Environment(AppModel.self) private var model
     #if DEBUG
@@ -77,8 +80,21 @@ struct APIErrorCard: View {
             .accessibilityLabel("API error: \(info.reason)")
             .accessibilityValue(open ? String(localized: "Expanded") : String(localized: "Collapsed [Readiness Card ee6046]"))
 
+            if let recovery {
+                // The exhausted chain's cause and, when known, when the configured model is available again (#7824).
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    Text(recovery.causeLine).font(Theme.Font.labelStrong).foregroundStyle(Color.primary)
+                    if let resetLine = recovery.resetLine {
+                        Text(resetLine).font(Theme.Font.label).foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             if open {
                 VStack(alignment: .leading, spacing: Theme.Space.s) {
+                    if let tried = recovery?.triedLine {
+                        Text(tried).font(Theme.Font.label).foregroundStyle(.secondary)
+                    }
                     if let id = info.requestID { field(String(localized: "Request ID"), id) }
                     if let s = info.session { field("Session", s) }
                     if let at { field(String(localized: "Time"), at.formatted(.dateTime.month().day().hour().minute().second()), copyable: false) }
@@ -122,7 +138,10 @@ struct APIErrorCard: View {
 
     /// BeautifulUI's failed task row: the red cross, the reason, the code; the pill retries when trying again can help.
     private var taskRow: some View {
-        TaskRow(TaskItem(id: pinKey, title: info.reason, subtitle: subtitle, amount: amount, status: .failed),
+        // An exhausted chain's cause replaces the transient subtitle (Retry does help once the model is back), and when
+        // it is available again goes on the quieter line under it (#7824).
+        TaskRow(TaskItem(id: pinKey, title: info.reason, subtitle: recovery?.causeLine ?? subtitle,
+                         footnote: recovery?.resetLine, amount: amount, status: .failed),
                 isOpen: open, titleLines: 2, subtitleLines: 2,
                 action: {
                     Haptics.tap()
@@ -144,6 +163,9 @@ struct APIErrorCard: View {
             }
         } detail: {
             VStack(alignment: .leading, spacing: Theme.Space.s) {
+                if let tried = recovery?.triedLine {
+                    Text(tried).font(Theme.Font.label).foregroundStyle(.secondary)
+                }
                 if let id = info.requestID { field(String(localized: "Request ID"), id) }
                 if let s = info.session { field("Session", s) }
                 if let at { field(String(localized: "Time"), at.formatted(.dateTime.month().day().hour().minute().second()), copyable: false) }

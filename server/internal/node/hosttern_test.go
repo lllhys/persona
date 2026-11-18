@@ -2,8 +2,11 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -309,6 +312,62 @@ func TestTernSessionListedAndSent(t *testing.T) {
 		!slices.Equal(sends[len(sends)-1][3:], []string{"11", "keys", "enter"}) {
 		t.Errorf("sends %q", sends)
 	}
+}
+
+// Tern reports no agent state, so a Claude in a Tern block was judged by its transcript alone: a question it asked was
+// working while the transcript was fresh, then unknown (which the overview does not list), never blocked. The status
+// Claude Code keeps in its sessions/<pid>.json is its state now: waiting is blocked, busy working, idle done once there
+// is a transcript (idle before its first message). An older Claude Code that writes no status: a dialog on the resting
+// Claude's screen is read, as in a herdr pane.
+func TestTernClaudeTakesItsOwnStatus(t *testing.T) {
+	old := paneDialogEvery
+	paneDialogEvery = 0
+	t.Cleanup(func() { paneDialogEvery = old })
+	n, _, home := herdrNode(t)
+	f := &fakeTern{inspect: ternLayout, procs: ternProcs, capture: screenFixture(t, "claude-2.1.312-empty-162.txt")}
+	n.hosts = host.NewRegistry(newTernHost(f.client()))
+	n.eng.name = proto.EngineTern
+	claudeSays := func(status string) {
+		t.Helper()
+		b, _ := json.Marshal(map[string]any{"pid": 101, "sessionId": sidA, "status": status})
+		if err := os.WriteFile(filepath.Join(home, ".claude", "sessions", "101.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeClaudePID(t, home, 101, sidA)
+	claudeSays("idle")
+	if s := byID(listSessions(t, n))[sidA]; s.PaneID != "tern:11" || s.Status != proto.StatusIdle {
+		t.Fatalf("before its first message: %s %s", s.PaneID, s.Status)
+	}
+
+	now := time.Now().UTC()
+	prompt := `{"type":"user","message":{"role":"user","content":"pick a colour"},"uuid":"u1","timestamp":"` + now.Format(time.RFC3339Nano) + `"}`
+	ask := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"AskUserQuestion","input":{"questions":[{"question":"Which colour?","header":"Colour","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":false}]}}]},"uuid":"a1","parentUuid":"u1","timestamp":"` + now.Format(time.RFC3339Nano) + `"}`
+	writeTranscript(t, home, "/home/me/app", sidA, now, prompt, ask)
+	for _, tc := range []struct{ says, want string }{{"waiting", proto.StatusBlocked}, {"busy", proto.StatusWorking}} {
+		claudeSays(tc.says)
+		if s := byID(listSessions(t, n))[sidA]; s.Status != tc.want {
+			t.Errorf("claude says %s: %s, want %s", tc.says, s.Status, tc.want)
+		}
+	}
+	answer := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Red"}]},"uuid":"r1","parentUuid":"a1","timestamp":"` + now.Format(time.RFC3339Nano) + `"}`
+	reply := `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Red."}]},"uuid":"a2","parentUuid":"r1","timestamp":"` + now.Format(time.RFC3339Nano) + `"}`
+	duration := `{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"a2","durationMs":2000,"timestamp":"` + now.Format(time.RFC3339Nano) + `"}`
+	writeTranscript(t, home, "/home/me/app", sidA, now.Add(time.Second), prompt, ask, answer, reply, duration)
+	forgetMetas(n) // a growing transcript is read again at most every metaMinInterval
+	claudeSays("idle")
+	if s := byID(listSessions(t, n))[sidA]; s.Status != proto.StatusDone {
+		t.Errorf("the turn ended: %s, want done", s.Status)
+	}
+
+	writeClaudePID(t, home, 101, sidA) // no status
+	f.mu.Lock()
+	f.capture = screenFixture(t, "claude-2.1.309-auto-mode-notice-120.txt")
+	f.mu.Unlock()
+	waitWithin(t, 2*time.Second, "a dialog on a resting Claude's screen, with no status of its own, to block it", func() bool {
+		s := byID(listSessions(t, n))[sidA]
+		return s.Status == proto.StatusBlocked && strings.HasPrefix(s.AttentionReason, "We're changing auto mode")
+	})
 }
 
 // A claude in a Tern block names its block in TERN_PANE: while Tern lists a claude in that pane it is Tern's

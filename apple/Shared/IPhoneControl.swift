@@ -11,10 +11,18 @@ nonisolated struct MachineIPhone: Codable, Hashable, Sendable {
     var devices: [IPhoneDevice] = []
     /// What is missing on the computer as a whole (no bridge, nothing paired, an old node), in the request's language.
     var note: String? = nil
-    /// Pairing an iPhone from the app (kind pair | forget): the running one, or the last.
+    /// The note's reason as a code (bridge_missing, none_paired); nil from older nodes (#8199).
+    var code: String? = nil
+    /// The computer has the developer disk image Prepare mounts (Xcode's on a Mac); nil from older nodes.
+    var ddiPresent: Bool? = nil
+    /// Pairing an iPhone from the app, installing the bridge or preparing an iPhone (kind pair | forget | install |
+    /// prepare): the running one, or the last.
     var job: ComputerJob? = nil
 
-    enum CodingKeys: String, CodingKey { case enabled, installed, version, devices, note, job }
+    enum CodingKeys: String, CodingKey {
+        case enabled, installed, version, devices, note, code, job
+        case ddiPresent = "ddi_present"
+    }
 
     init(enabled: Bool = false, installed: Bool = false, version: String? = nil, devices: [IPhoneDevice] = [], note: String? = nil,
          job: ComputerJob? = nil) {
@@ -33,6 +41,8 @@ nonisolated struct MachineIPhone: Codable, Hashable, Sendable {
         version = try c.decodeIfPresent(String.self, forKey: .version)
         devices = try c.decodeIfPresent([IPhoneDevice].self, forKey: .devices) ?? []
         note = try c.decodeIfPresent(String.self, forKey: .note)
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        ddiPresent = try c.decodeIfPresent(Bool.self, forKey: .ddiPresent)
         job = try? c.decodeIfPresent(ComputerJob.self, forKey: .job)
     }
 }
@@ -53,12 +63,19 @@ nonisolated struct IPhoneDevice: Codable, Hashable, Sendable, Identifiable {
     var locked = false
     var ready = false
     var note: String? = nil
+    /// The note's reason as a code (usb_unpaired, connecting, developer_mode_off, ddi_not_mounted, locked, …); nil
+    /// from older nodes (#8199).
+    var code: String? = nil
+    /// What the iPhone last said of its Developer Mode; nil when it never said.
+    var developerMode: Bool? = nil
+    /// Its owner prepared it once, so its computer mounts the developer disk image again by itself after a restart.
+    var autoPrepare = false
     /// The computer is on and this iPhone consented: the assistant may operate it.
     var allowed = false
 
     enum CodingKeys: String, CodingKey {
-        case id, name, ios, paired, usb, transport, connected, locked, ready, note, allowed
-        case productType = "product_type"
+        case id, name, ios, paired, usb, transport, connected, locked, ready, note, code, allowed
+        case productType = "product_type", developerMode = "developer_mode", autoPrepare = "auto_prepare"
     }
 
     init(id: String, name: String, productType: String? = nil, ios: String? = nil, paired: Bool = true, usb: Bool = false,
@@ -91,6 +108,9 @@ nonisolated struct IPhoneDevice: Codable, Hashable, Sendable, Identifiable {
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         ready = try c.decodeIfPresent(Bool.self, forKey: .ready) ?? false
         note = try c.decodeIfPresent(String.self, forKey: .note)
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        developerMode = try c.decodeIfPresent(Bool.self, forKey: .developerMode)
+        autoPrepare = try c.decodeIfPresent(Bool.self, forKey: .autoPrepare) ?? false
         allowed = try c.decodeIfPresent(Bool.self, forKey: .allowed) ?? false
     }
 }
@@ -194,5 +214,36 @@ nonisolated enum IPhoneIdentity {
             return p
         }
         return !a.isEmpty && parts(a) == parts(b)
+    }
+}
+
+/// `POST /api/v1/iphone/try`: the guided setup's Try It, a screenshot taken and Weather opened (#8199).
+nonisolated struct IPhoneTryResult: Codable, Hashable, Sendable {
+    struct Shot: Codable, Hashable, Sendable {
+        var mime: String
+        var data: String
+    }
+
+    var screenshot: Shot? = nil
+    var opened = false
+    var app = ""
+    /// Why it stopped short, in the user's words.
+    var error: String? = nil
+
+    enum CodingKeys: String, CodingKey { case screenshot, opened, app, error }
+
+    init(screenshot: Shot? = nil, opened: Bool = false, app: String = "", error: String? = nil) {
+        self.screenshot = screenshot
+        self.opened = opened
+        self.app = app
+        self.error = error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        screenshot = try? c.decodeIfPresent(Shot.self, forKey: .screenshot)
+        opened = try c.decodeIfPresent(Bool.self, forKey: .opened) ?? false
+        app = try c.decodeIfPresent(String.self, forKey: .app) ?? ""
+        error = try c.decodeIfPresent(String.self, forKey: .error)
     }
 }

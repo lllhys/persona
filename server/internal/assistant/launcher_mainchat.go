@@ -34,6 +34,13 @@ const (
 )
 
 func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainChatFit, error) {
+	if proto.IsExternalLauncher(name) {
+		_, err := s.externalTarget(ctx, machine, name)
+		if err != nil {
+			return mainChatRefused, err
+		}
+		return mainChatFits, nil
+	}
 	if name == "" || name == "claude" {
 		return mainChatFits, nil
 	}
@@ -46,12 +53,15 @@ func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainCh
 		case err != nil || allowed[name]:
 			return mainChatFits, nil
 		}
-		return mainChatRefused, s.mainChatRefusal(ctx, machine, name)
+		return mainChatRefused, s.mainChatRefusal(ctx, machine, name, "")
 	}
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	picker, err := s.pickerLaunchers(cctx, machine)
-	if err != nil || !slices.ContainsFunc(picker, func(l ConfiguredLauncher) bool { return l.Source != "" && compat.Source(l.Source) != "persona" }) {
+	if err != nil || !slices.ContainsFunc(picker, func(l ConfiguredLauncher) bool {
+		source := compat.Source(l.Source)
+		return l.Source != "" && source != "persona" && source != "builtin"
+	}) {
 		return mainChatFits, nil // the machine's own list did not come: a shell launcher may still be there
 	}
 	fits, err := s.assistantLaunchersOf(cctx, machine, picker)
@@ -60,7 +70,9 @@ func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainCh
 	case err != nil || slices.ContainsFunc(fits, named):
 		return mainChatFits, nil
 	case slices.ContainsFunc(picker, named):
-		return mainChatRefused, s.mainChatRefusal(ctx, machine, name)
+		label := launcherLabel(picker[slices.IndexFunc(picker, named)])
+		instead, _ := assistantFor(fits, name)
+		return mainChatRefused, s.mainChatRefusal(ctx, machine, label, launcherLabel(instead))
 	}
 	return mainChatGone, nil
 }
@@ -73,6 +85,13 @@ func (s *Service) mainChatFit(ctx context.Context, machine, name string) (mainCh
 // user's language.
 func (s *Service) finishMainChatModel(ctx context.Context, machine, purpose string, params map[string]any, picked bool) (note string, err error) {
 	name, _ := params["launcher"].(string)
+	if proto.IsExternalLauncher(name) {
+		if _, ok := ctx.Value(externalPickKey{}).(externalPickScope); !ok {
+			return "", i18n.Err("external-adapter.scope_required")
+		}
+		_, err := s.externalTarget(ctx, machine, name)
+		return "", err // never swap an explicit external selection
+	}
 	fit, refusal := s.mainChatFit(ctx, machine, name)
 	if fit == mainChatFits {
 		return "", nil
@@ -92,7 +111,7 @@ func (s *Service) finishMainChatModel(ctx context.Context, machine, purpose stri
 		return "", i18n.Err("assistant-start.launcher_no_substitute", i18n.Args{"launcher": name, "machine": where})
 	}
 	model, _ := params["model"].(string)
-	kept := model != "" && s.launcherHasModel(ctx, machine, to, model) // a list it can't read counts as having it
+	kept := model != "" && s.launcherHasModel(withLauncherPurpose(ctx, "assistant"), machine, to, model) // a list it can't read counts as having it
 	s.logf("[%s] resolved assistant launcher %s can't run it, using %s (model kept: %v)", machine, name, to, kept)
 	params["launcher"] = to
 	if !kept {
@@ -144,7 +163,8 @@ func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind stri
 		names = append(names, "claude")
 	}
 	for _, l := range launchers {
-		if agentKind(cmp.Or(l.AgentType, l.Agent)) == kind && !slices.Contains(names, l.Name) {
+		if !proto.IsExternalLauncher(l.Name) && l.Source != proto.ExternalLauncherSource &&
+			agentKind(cmp.Or(l.AgentType, l.Agent)) == kind && !slices.Contains(names, l.Name) {
 			names = append(names, l.Name)
 		}
 	}
@@ -159,11 +179,32 @@ func (s *Service) mainChatInstead(ctx context.Context, d Device, name, kind stri
 // agentKind is the agent a launcher starts: claude when it names none (or is gone: it ran the main chat's kind).
 func agentKind(agent string) string { return cmp.Or(agent, "claude") }
 
-// mainChatRefusal says that launcher can't run the assistant on machine, for the user's language.
-func (s *Service) mainChatRefusal(ctx context.Context, machine, launcher string) error {
+// mainChatRefusal says that launcher can't run the assistant on machine, for the user's language, and names instead
+// when a launcher there declares it runs the assistant for that one (assistantFor; "" when none does).
+func (s *Service) mainChatRefusal(ctx context.Context, machine, launcher, instead string) error {
 	d, _ := s.device(ctx, machine)
-	return i18n.Err("assistant-start.launcher_not_main_chat", i18n.Args{"launcher": launcher, "machine": firstNonEmpty(d.Name, machine)})
+	args := i18n.Args{"launcher": launcher, "machine": firstNonEmpty(d.Name, machine), "instead": instead}
+	if instead != "" {
+		return i18n.Err("assistant-start.launcher_not_main_chat_instead", args)
+	}
+	return i18n.Err("assistant-start.launcher_not_main_chat", args)
 }
+
+// assistantFor is the launcher in fits (the main chat's list on a computer) that declares it runs the assistant for
+// that computer's Agent launcher name (proto.Launcher.AssistantFor): integrations/grok's grok-chat for the Paseo provider
+// grok when its companion was set up so. Only a declaration counts, never a likeness of names or agents: two launchers
+// of one agent may run another account or gateway. The picker points name at it; nothing runs on it in name's place.
+func assistantFor(fits []ConfiguredLauncher, name string) (ConfiguredLauncher, bool) {
+	i := slices.IndexFunc(fits, func(f ConfiguredLauncher) bool { return f.Assistant && f.AssistantFor == name && f.Name != name })
+	if i < 0 {
+		return ConfiguredLauncher{}, false
+	}
+	return fits[i], true
+}
+
+// launcherLabel is the name people know l by: its display name (a runtime's or Paseo's for its provider) or its own;
+// "" for none.
+func launcherLabel(l ConfiguredLauncher) string { return cmp.Or(l.DisplayName, l.Name) }
 
 // ---- what can't run the assistant's conversations, and why ----
 
@@ -177,12 +218,13 @@ const (
 // unavailableLauncher is one launcher or provider the main chat can't run on a machine, and why in the user's words.
 type unavailableLauncher struct {
 	Name        string `json:"name"`
-	DisplayName string `json:"display_name,omitempty"` // a Persona-managed provider's own name ("" shows Name)
+	DisplayName string `json:"display_name,omitempty"` // a Persona-managed provider's own name, or a runtime's for its provider ("" shows Name)
 	Kind        string `json:"kind"`                   // launcher | api
 	Agent       string `json:"agent,omitempty"`
 	API         string `json:"api,omitempty"` // a direct API provider's protocol: messages | responses | chat
 	Code        string `json:"code"`
 	Reason      string `json:"reason"`
+	Instead     string `json:"instead,omitempty"` // the launcher set up to run the assistant for this one here (assistantFor), by name
 }
 
 // mainChatUnavailable lists what the main chat's model panel shows as unavailable on machine, with why in lang: the
@@ -210,15 +252,29 @@ func (s *Service) mainChatUnavailable(ctx context.Context, machine string, picke
 		return stored[i], true
 	}
 	d, _ := s.device(ctx, machine)
-	notMainChat := i18n.T(lang, "assistant-model_pick.unavailable_not_main_chat", i18n.Args{"machine": firstNonEmpty(d.Name, machine)})
+	where := firstNonEmpty(d.Name, machine)
+	notMainChat := i18n.T(lang, "assistant-model_pick.unavailable_not_main_chat", i18n.Args{"machine": where})
 	for _, l := range picker {
 		if seen[l.Name] {
 			continue
 		}
 		seen[l.Name] = true
-		u := unavailableLauncher{Name: l.Name, Kind: "launcher", Agent: cmp.Or(l.AgentType, l.Agent), Code: unavailableNotMainChat, Reason: notMainChat}
+		// named as the picker names it: a runtime's provider by the runtime's name for it (#8261)
+		u := unavailableLauncher{Name: l.Name, DisplayName: l.DisplayName, Kind: "launcher", Agent: cmp.Or(l.AgentType, l.Agent), Code: unavailableNotMainChat,
+			Reason: notMainChat}
+		if proto.IsExternalLauncher(l.Name) || l.Source == proto.ExternalLauncherSource {
+			if l.External != nil {
+				u.DisplayName = cmp.Or(l.External.Name, l.DisplayName)
+			}
+			if err := s.externalLauncherRefusal(ctx, l.Launcher); err != nil {
+				u.Reason = i18n.Localize(err, lang)
+			}
+		}
 		if m, ok := managed(l.Name); ok {
 			u.DisplayName = m.DisplayName
+		} else if f, ok := assistantFor(fits, l.Name); ok { // the launcher set up to run the assistant for this one
+			u.Instead = f.Name
+			u.Reason = i18n.T(lang, "assistant-model_pick.unavailable_not_main_chat_instead", i18n.Args{"machine": where, "instead": launcherLabel(f)})
 		}
 		out = append(out, u)
 	}
@@ -247,6 +303,29 @@ func (s *Service) mainChatUnavailable(ctx context.Context, machine string, picke
 			continue
 		}
 		out = append(out, u)
+	}
+	return out
+}
+
+// ownServiceSkipped lists what New Agent's picker shows as unavailable on machine, with why in lang (#8109): the
+// Persona-managed providers in the computer's scope that its own-service rule leaves out there, where the node said
+// the harness has a service of its own. A provider added with the defaults (own_service skip) would otherwise just be
+// missing from the picker on a computer where Claude Code is signed in. Those out of scope stay out (the scope is
+// what the user chose for the provider), and so do hidden names, direct API connections (never in this picker) and
+// what the picker lists already (a launcher of the computer's own by the same name).
+func (s *Service) ownServiceSkipped(ctx context.Context, machine string, listed []ConfiguredLauncher, lang i18n.Lang) []unavailableLauncher {
+	hidden := s.hiddenLaunchers(ctx)
+	out := []unavailableLauncher{}
+	for _, l := range s.storedLaunchers(ctx) {
+		if l.Kind == "api" || !l.SkipsOwnService() || slices.Contains(hidden, l.Name) ||
+			slices.ContainsFunc(listed, func(c ConfiguredLauncher) bool { return c.Name == l.Name }) {
+			continue
+		}
+		if s.scopeReason(l, machine) != "" || s.usableOn(ctx, l, machine) {
+			continue
+		}
+		out = append(out, unavailableLauncher{Name: l.Name, DisplayName: l.DisplayName, Kind: "launcher", Agent: l.Agent,
+			Code: proto.CodeLauncherOwnService, Reason: s.ownServiceErr(ctx, lang, l, machine).Error()})
 	}
 	return out
 }

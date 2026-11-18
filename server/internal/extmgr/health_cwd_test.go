@@ -23,9 +23,7 @@ func TestHealthConversationsWritesFromItsFoldersAreConfirmed(t *testing.T) {
 		"/home/u/.persona/health/reports": true,
 		"/home/u/.persona/health-bin":     false,
 	} {
-		box.mu.Lock()
-		box.sessions = []proto.Session{{SessionID: "conv1", Cwd: cwd}}
-		box.mu.Unlock()
+		listSessions(h, box.cfg.ID, []proto.Session{{SessionID: "conv1", Cwd: cwd}})
 		if got := chatWrite(t, h, gh, "github_comment", chatIssue12); got != asked {
 			t.Errorf("a write from %s: asked %v, want %v", cwd, got, asked)
 		}

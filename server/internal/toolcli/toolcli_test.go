@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -153,6 +154,30 @@ func TestOneTool(t *testing.T) {
 	f.calls = nil
 	if code, out, errOut := run(t, f, ""); code != exitUsage || out != "" || failureKind(errOut) != "usage" || !strings.Contains(errOut, "personad tool <tool>") || len(f.calls) != 0 {
 		t.Fatalf("nothing: %d stdout %q stderr %q calls %v", code, out, errOut, f.calls)
+	}
+}
+
+func TestOneToolCarriesPaneWithoutSession(t *testing.T) {
+	old := dial
+	t.Cleanup(func() { dial = old })
+	// Herdr's and herdr-core's panes come before Orca's (nodeclient.HookPane): a run inside either must not see its own.
+	t.Setenv(nodeclient.HerdrPaneEnv, "")
+	t.Setenv(nodeclient.HerdrCorePaneEnv, "")
+	t.Setenv(nodeclient.OrcaPaneEnv, "tab:leaf")
+	t.Setenv("CODEX_THREAD_ID", "10000000-0000-0000-0000-000000000001")
+	var request map[string]any
+	dial = func(_ context.Context, req any) ([]byte, error) {
+		request = req.(map[string]any)
+		b, _ := json.Marshal(proto.TextResult("ok", false))
+		return b, nil
+	}
+	var out, errOut bytes.Buffer
+	if code := Main(context.Background(), []string{"task_spawn", `{"prompt":"work","title":"task"}`}, strings.NewReader(""), &out, &errOut); code != exitOK {
+		t.Fatalf("exit %d, stderr %q", code, errOut.String())
+	}
+	if request["pane"] != "orca:tab:leaf" || request["session_id"] != nil || request["assistant"] != nil || request["name"] != "task_spawn" ||
+		request["codex_thread_id"] != os.Getenv("CODEX_THREAD_ID") {
+		t.Fatalf("node request %v, want pane metadata and no caller-supplied session or assistant", request)
 	}
 }
 

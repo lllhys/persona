@@ -48,6 +48,7 @@ struct ComposerRow<MenuItems: View>: View {
                         .padding(.top, Theme.Space.s)
                 }
                 TextField(placeholder, text: $text, selection: $selection, axis: .vertical)
+                    .readingContent() // what is typed grows past the interface's cap, as in Messages
                     .lineLimit(1...6)
                     #if os(macOS)
                     .textFieldStyle(.plain) // the surface below is the field's box; the Mac's own bezel drew a second one inside
@@ -55,6 +56,9 @@ struct ComposerRow<MenuItems: View>: View {
                                      history: history.map { MacComposerHistory(key: $0, text: $text, focus: { focused.wrappedValue = true }) }, send: send)
                     #endif
                     .focused(focused)
+                    #if os(iOS)
+                    .returnSends(text: $text, canSend: canSend, gate: gate?.action, send: sendTyped) // #8178
+                    #endif
                     .padding(.horizontal, Theme.Space.l)
                     .padding(.vertical, Theme.Space.m)
                     .scaledFrame(minHeight: Theme.Size.tapTarget)
@@ -127,7 +131,7 @@ extension ComposerRow {
     #endif
 }
 
-/// A chat's composer's photos, videos and file uploads (#2626): kept by `AppModel.composerAttachments(_:)` per
+/// A chat's composer's photos, videos and files (#2626, #8361): kept by `AppModel.composerAttachments(_:)` per
 /// conversation, as the text is in `drafts`, not by the composer, which is built again with the whole tree when iOS
 /// snapshots the app in another width on its way to the background (iPhone Duo open).
 @MainActor @Observable
@@ -135,8 +139,25 @@ final class ComposerAttachments {
     var images: [(UIImage, ImagePayload)] = [] {
         didSet { edited.removeAll { e in !images.contains { $0.0 === e.result } } }
     }
-    let uploads = FileUploads()
     let videos = VideoAttachments()
+    let files = FileAttachments()
+
+    /// A video or a file still on its way: the message waits for it.
+    var busy: Bool { videos.busy || files.busy }
+    /// What the message carries as `<persona-file>` tags after its words: the videos, then the files.
+    var ready: [AttachedFile] { videos.ready + files.ready }
+
+    /// The message went with what was ready.
+    func sentFiles() {
+        videos.sent()
+        files.sent()
+    }
+
+    /// Why a send waits (`busy`), for the toast.
+    var waitNote: String {
+        files.busy ? String(localized: "The files are still uploading. Send once they're done.")
+            : String(localized: "The video is still uploading. Send once it's done.")
+    }
     /// The photos here that were edited (in the strip or the + panel): each one's source, edits and history beside the
     /// picture that goes, so the editor opens it again as it was left. Dropped with the photo.
     private(set) var edited: [EditedImage] = []
@@ -180,19 +201,20 @@ final class StarterDraft {
         text = ""
         quotes = []
         held.images = []
-        held.videos.sent()
+        held.sentFiles()
         generation += 1
     }
 
     /// The first message as it goes, from what was typed (`typed`, trimmed) and the box: the quoted sessions as
-    /// <persona-context> tags first, as in a chat; with nothing typed, a line saying what to look at; then the videos.
+    /// <persona-context> tags first, as in a chat; with nothing typed, a line saying what to look at; then the videos
+    /// and files.
     func message(_ typed: String, files: [AttachedFile]) -> String {
         let said = typed.isEmpty
-            ? (held.images.isEmpty ? (files.isEmpty ? String(localized: "See the context above.") : String(localized: "Please look at the image [Assistant View a3e0a0]"))
+            ? (held.images.isEmpty ? (files.isEmpty ? String(localized: "See the context above.") : AttachedFile.standIn(files))
                                    : String(localized: "Please look at the image [Assistant View 5ad878]"))
             : typed
         let body = AttachedFile.message(said, files: files)
-        return quotes.isEmpty ? body : quotes.map(\.xml).joined(separator: "\n") + "\n\n" + body
+        return ContextRef.message(quotes, body: body)
     }
 }
 

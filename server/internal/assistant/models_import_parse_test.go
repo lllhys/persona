@@ -856,3 +856,20 @@ func TestLauncherImportOneAlias(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 }
+
+func TestParsePasteShellEnvironmentReset(t *testing.T) {
+	for _, launch := range []string{
+		"env -i ANTHROPIC_BASE_URL=https://explicit.example.com claude",
+		"alias clean='env --ignore-environment ANTHROPIC_BASE_URL=https://explicit.example.com claude'",
+		"alias clean='export ANTHROPIC_MODEL=old; env - ANTHROPIC_BASE_URL=https://explicit.example.com claude'",
+	} {
+		got := parsePaste("export ANTHROPIC_BASE_URL=https://old.example.com ANTHROPIC_API_KEY=" + pasteKeyA + " ANTHROPIC_MODEL=old\n" + launch)
+		if len(got.Drafts) != 1 {
+			t.Fatalf("%s: got %d drafts", launch, len(got.Drafts))
+		}
+		p := got.Drafts[0].Provider
+		if p.BaseURL != "https://explicit.example.com" || p.APIKey != "" || p.Model != "" {
+			t.Errorf("%s: incorrect provider after environment reset", launch)
+		}
+	}
+}

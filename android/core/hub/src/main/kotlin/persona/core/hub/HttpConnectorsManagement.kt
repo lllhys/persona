@@ -43,6 +43,26 @@ class HttpConnectorsManagement internal constructor(
     override suspend fun deleteConnectorArchive(id: String): ConnectorDataDeleted =
         read(call("/api/v1/connectors/$id/archive", "DELETE"), ConnectorDataDeleted.serializer())
 
+    override suspend fun gitHubAuth(): GitHubAuth =
+        read(call("/api/v1/connectors/github/auth", "GET"), GitHubAuth.serializer())
+
+    override suspend fun setGitHubAuth(machine: String?): GitHubAuth {
+        // Device code sends source alone. A null machine field would be a different body from the one iOS sends.
+        val body = buildJsonObject {
+            put("source", if (machine == null) "device" else "machine")
+            if (machine != null) put("machine", machine)
+        }
+        return read(call("/api/v1/connectors/github/auth", "PUT", body), GitHubAuth.serializer())
+    }
+
+    override suspend fun setGitHubInboxOptions(options: GitHubInboxOptions): HubConnector {
+        // Defaults included (`ci` "mine", an empty muted list) so a cleared list is actually cleared. Null
+        // ignore_branches stays omitted (explicitNulls is off) and the hub keeps its own default.
+        val encoded = Json(JsonCodec) { encodeDefaults = true }.encodeToJsonElement(GitHubInboxOptions.serializer(), options)
+        val body = buildJsonObject { put("options", encoded) }
+        return decode { JsonCodec.decodeFromJsonElement(HubConnector.serializer(), parse(call("/api/v1/connectors/github/settings", "PUT", body))) }
+    }
+
     override suspend fun mailAccounts(): List<MailAccount> {
         val body = parse(call("/api/v1/mail/accounts", "GET")) as? JsonObject ?: throw HubFailure(HubError.Protocol)
         val list = body["accounts"] as? JsonArray ?: throw HubFailure(HubError.Protocol)

@@ -10,5 +10,6 @@
   "draw_failed": "拡張機能を表示できませんでした",
   "retry": "再試行",
   "confirm_title": "確認",
-  "ok": "OK"
+  "ok": "OK",
+  "updating": "更新中…"
 }

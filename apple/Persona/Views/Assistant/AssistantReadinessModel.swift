@@ -21,6 +21,7 @@ final class AssistantReadinessModel {
     var failure: CodedFailure?
 
     @ObservationIgnored private var at = Date.distantPast
+    private var dismissedHomeCards: Set<String> = []
     @ObservationIgnored private var asked = 0
     @ObservationIgnored private var answered = 0
     @ObservationIgnored private var latestProbe = 0
@@ -37,12 +38,29 @@ final class AssistantReadinessModel {
     /// What holds the send button (nil: send as before).
     var blocking: AssistantReadiness.Step? { current?.blockingStep }
 
+    /// The step the main conversation's card presents. Dismissal is local presentation state, never a quota recovery.
+    var homeCardStep: AssistantReadiness.Step? {
+        guard let step = current?.cardStep else { return nil }
+        return dismissedHomeCards.contains(Self.homeCardOccurrence(step)) ? nil : step
+    }
+
+    /// Dismisses the current readiness card occurrence.
+    func dismissHomeCard() {
+        guard let step = current?.cardStep else { return }
+        dismissedHomeCards.insert(Self.homeCardOccurrence(step))
+    }
+
+    private static func homeCardOccurrence(_ step: AssistantReadiness.Step) -> String {
+        [step.id, step.state, step.code ?? "", step.launcher ?? "", step.occurrence ?? "", step.title ?? "", step.detail ?? ""].joined(separator: "\u{1f}")
+    }
+
     /// An answer from elsewhere (`warm`): kept unless a later ask has answered. A new answer also retires a failed try.
     func land(_ r: AssistantReadiness) {
         readiness = r
         unsupported = false
         probeError = nil
         at = .now
+        if r.cardStep == nil { dismissedHomeCards.removeAll() } // recovery lets a later failure appear again
     }
 
     /// Asks the hub. `force`: even with a fresh answer; `probe`: try one word on the main conversation (costs a little).
@@ -122,5 +140,6 @@ final class AssistantReadinessModel {
         probeStep = nil
         failure = nil
         at = r == nil ? .distantPast : .now
+        if r?.cardStep == nil { dismissedHomeCards.removeAll() }
     }
 }

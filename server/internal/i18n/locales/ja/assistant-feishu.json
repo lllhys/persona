@@ -134,8 +134,8 @@
   "elsewhere_not_ready": "Lark ボットの準備ができていません。先にオンにしてペアリングしてください。",
   "elsewhere_root": "別のグループから：{text}",
   "elsewhere_root_quote": "返信先：{quote}",
-  "elsewhere_root_hint": "ToDo が完了または承認されると、ここで予告したあと、短い結果がそのメッセージの下に投稿されます。このトピックで /noreply を送ると止められます。",
-  "elsewhere_root_hint_chat": "ToDo が完了または承認されると、ここで予告したあと、短い結果がそのメッセージの下に投稿されます。このメッセージに /noreply と返信すると止められます。",
+  "elsewhere_root_hint": "ToDo が完了または承認されると、元のメッセージに結果を返信します。プレビューが有効な場合はここに表示されます。返信を取り消すには、送信前にこのトピックで /noreply を送ってください。",
+  "elsewhere_root_hint_chat": "ToDo が完了または承認されると、元のメッセージに結果を返信します。プレビューが有効な場合はここに表示されます。返信を取り消すには、送信前にこのメッセージに /noreply と返信してください。",
   "elsewhere_no_topic": "ホームのグループにトピックを開けませんでした。投稿したメッセージがトピックに入っていません。トピック形式のグループですか？使いたいグループで /topics home を送ってください。",
   "elsewhere_needs_text": "/ai の後にやりたいことを書いてください。例：/ai リリースノートを確認して",
   "elsewhere_failed": "この件の ToDo を作れませんでした：{error}",
@@ -150,5 +150,10 @@
   "source_report_unreachable": "結果を依頼の場所に投稿できませんでした：{error}",
   "source_report_notice": "{minutes}分後に元のメッセージの下へ投稿します：{text}（取り消すには /noreply を送ってください）",
   "source_report_notice_chat": "{minutes}分後に元のメッセージの下へ投稿します：{text}（取り消すにはこのメッセージに /noreply と返信してください）",
-  "answer_below": "回答は下にあります"
+  "answer_below": "回答は下にあります",
+  "source_report_full_notice": "{minutes} 分後に元のメッセージにこの回答を返信します。取り消すにはここで /noreply を送ってください。\n\n{text}",
+  "source_report_full_notice_chat": "{minutes} 分後に元のメッセージにこの回答を返信します。取り消すには /noreply と返信してください。\n\n{text}",
+  "source_report_file_notice": "{minutes} 分後に元のメッセージに添付の回答を返信します。取り消すにはここで /noreply を送ってください。",
+  "source_report_file_notice_chat": "{minutes} 分後に元のメッセージに添付の回答を返信します。取り消すにはこのメッセージに /noreply と返信してください。",
+  "source_report_no_final": "タスクは完了しました。返信できる最終回答が見つかりませんでした。"
 }

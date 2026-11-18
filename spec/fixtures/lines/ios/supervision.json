@@ -1,0 +1,1207 @@
+{
+  "schema_version": 1,
+  "domain": "lines",
+  "description": "Current iOS (apple/) only: genuine supervision input (Persona's own message to the model) and input protected as the user's. The lines are an Agent's chat without supervision folding. Not part of the shared corpus that Android's LinesFixtureTest replays; the iOS replay in ../README.md checks these cases exactly.",
+  "cases": [
+    {
+      "name": "queued_supervision_and_next_genuine_input_are_separate_turns",
+      "description": "A queued supervision message opens a turn of its own; the user's next queued message does not join the supervision round but opens another turn, which the message queued after it joins.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (supervision, supervisionRound)",
+        "apple/Shared/Injected.swift: Injected.of / parse (the exact supervision template)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/SupervisionTests.swift: ChatSupervisionTests.queuedSupervisionAndTheNextGenuineQueuedInputAreSeparateTurns"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "第一个真实请求"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "queued": true
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "user",
+            "kind": "text",
+            "text": "下一个真实请求",
+            "queued": true
+          },
+          {
+            "id": "6#0",
+            "seq": 6,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_c",
+            "tool_name": "Read"
+          },
+          {
+            "id": "7#0",
+            "seq": 7,
+            "role": "user",
+            "kind": "text",
+            "text": "再补充一点",
+            "queued": true
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "第一个真实请求",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "3#0",
+            "is_input": true,
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-3#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "4#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "5#0",
+            "is_input": true,
+            "text": "下一个真实请求",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-5#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_c",
+                "failed": false,
+                "id": "6#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "7#0",
+            "is_input": true,
+            "text": "再补充一点",
+            "type": "user"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "3#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "3#0",
+              "tools-4#0"
+            ],
+            "process_ids": [
+              "tools-4#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "3#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "5#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "5#0",
+              "tools-6#0",
+              "7#0"
+            ],
+            "process_ids": [
+              "tools-6#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "5#0",
+              "7#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "from_test": "queuedSupervisionAndTheNextGenuineQueuedInputAreSeparateTurns"
+    },
+    {
+      "name": "protected_supervision_text_stays_the_users_queued_input",
+      "description": "The same supervision template sent by an app (client_msg_id), by another conversation (from) or under the user's message-source sentinel is the user's own words: queued, it joins the running turn and opens no supervision round.",
+      "source": [
+        "apple/Shared/Injected.swift: Injected.of (client_msg_id, from and MessageSource.protectsUser keep the input the user's)",
+        "apple/Shared/MessageSource.swift: MessageSource.protectsUser",
+        "apple/Shared/ChatStore.swift: ChatBlock.build (queued input joins the turn)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/SupervisionTests.swift: ChatSupervisionTests.realUsersAndPeersAreNeverRecognizedFromTheirWords",
+        "apple/PersonaTests/MessageSourceTests.swift: persistedMetadataAndUserSentinelsAreAuthoritative"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "第一个真实请求"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "queued": true,
+            "client_msg_id": "example-message"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "user",
+            "kind": "text",
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "queued": true,
+            "from": "example-peer"
+          },
+          {
+            "id": "6#0",
+            "seq": 6,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_c",
+            "tool_name": "Read"
+          },
+          {
+            "id": "7#0",
+            "seq": 7,
+            "role": "user",
+            "kind": "text",
+            "text": "<persona-context kind=\"message-source\" title=\"\">\n{\"author\":\"user\"}\n</persona-context>\n📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "queued": true
+          },
+          {
+            "id": "8#0",
+            "seq": 8,
+            "role": "assistant",
+            "kind": "text",
+            "text": "都处理好了"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "第一个真实请求",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "3#0",
+            "is_input": true,
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-3#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "4#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "5#0",
+            "is_input": true,
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-5#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_c",
+                "failed": false,
+                "id": "6#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "7#0",
+            "is_input": true,
+            "text": "<persona-context kind=\"message-source\" title=\"\">\n{\"author\":\"user\"}\n</persona-context>\n📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "type": "user"
+          },
+          {
+            "id": "8#0",
+            "is_input": false,
+            "text": "都处理好了",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": "8#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0",
+              "3#0",
+              "tools-4#0",
+              "5#0",
+              "tools-6#0",
+              "7#0",
+              "8#0"
+            ],
+            "process_ids": [
+              "tools-2#0",
+              "tools-4#0",
+              "tools-6#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 3,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0",
+              "3#0",
+              "5#0",
+              "7#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    },
+    {
+      "name": "supervision_round_keeps_same_entry_text_and_images",
+      "description": "A supervision message the hub marked, and the picture and the unqueued text of the same entry, are one input in the supervision round; the next genuine queued message opens another turn.",
+      "source": [
+        "apple/Shared/ChatStore.swift: picturesAfterTheirText / ChatBlock.build (sameMessage by Item.entry, supervisionRound)",
+        "apple/Shared/Injected.swift: Injected.of (the hub's injected mark)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/SupervisionTests.swift: ChatSupervisionTests.sameEntryTextAndImagesStayInTheSupervisionRound",
+        "apple/PersonaTests/RebuildTests.swift: supervisionAndMultiBlockInputsRebuildIncrementallyLikeAFullTranscript"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "第一个真实请求"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "示例督办",
+            "queued": true,
+            "injected": {
+              "kind": "system",
+              "state": "supervise",
+              "line": "检查任务",
+              "level": "triage"
+            }
+          },
+          {
+            "id": "3#1",
+            "seq": 3,
+            "role": "user",
+            "kind": "image",
+            "image": {
+              "mime": "image/png",
+              "data": "iVBORw0KGgo="
+            }
+          },
+          {
+            "id": "3#2",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "额外的示例说明"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "user",
+            "kind": "text",
+            "text": "下一个真实请求",
+            "queued": true
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "第一个真实请求",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "3#0",
+            "is_input": true,
+            "text": "示例督办",
+            "type": "user"
+          },
+          {
+            "id": "img-3#1",
+            "is_input": false,
+            "item_ids": [
+              "3#1"
+            ],
+            "type": "user_images"
+          },
+          {
+            "id": "3#2",
+            "is_input": true,
+            "text": "额外的示例说明",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-3#2",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "4#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "5#0",
+            "is_input": true,
+            "text": "下一个真实请求",
+            "type": "user"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "3#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "3#0",
+              "3#2",
+              "3#1",
+              "tools-4#0"
+            ],
+            "process_ids": [
+              "tools-4#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "3#0",
+              "3#2",
+              "3#1"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "5#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "5#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "5#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    },
+    {
+      "name": "image_only_queued_input_after_supervision_opens_new_turn",
+      "description": "A picture-only message queued during a supervision round is not part of it: it opens a turn, with both pictures of its entry.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (supervisionRound, sameMessage by Item.entry)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/SupervisionTests.swift: ChatSupervisionTests.imageOnlyQueuedInputAfterSupervisionOpensANewTurn"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "user",
+            "kind": "image",
+            "image": {
+              "mime": "image/png",
+              "data": "iVBORw0KGgo="
+            },
+            "queued": true
+          },
+          {
+            "id": "4#1",
+            "seq": 4,
+            "role": "user",
+            "kind": "image",
+            "image": {
+              "mime": "image/png",
+              "data": "iVBORw0KGgo="
+            },
+            "queued": true
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "img-4#0",
+            "is_input": false,
+            "item_ids": [
+              "4#0",
+              "4#1"
+            ],
+            "type": "user_images"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-4#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "5#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "4#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "4#0",
+              "4#1",
+              "tools-5#0"
+            ],
+            "process_ids": [
+              "tools-5#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "4#0",
+              "4#1"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "from_test": "imageOnlyQueuedInputAfterSupervisionOpensANewTurn"
+    },
+    {
+      "name": "recap_does_not_end_a_supervision_round",
+      "description": "A supervision round goes on across a recap: the work after the recap is a turn without a message, and the next genuine queued message does not join it but opens a turn.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (supervisionRound persists across recap blocks until the next input)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/SupervisionTests.swift: ChatSupervisionTests.recapContinuationsDoNotAbsorbTheNextGenuineQueuedInput"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "system",
+            "kind": "recap",
+            "text": "回顾：示例督办"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "user",
+            "kind": "text",
+            "text": "下一个真实请求",
+            "queued": true
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "📋 督办：你派出去的任务有 2 个要你处理\n<persona-supervision level=\"triage\" />\n这是 Persona 的督办消息\n检查示例发布任务。",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "text": "回顾：示例督办",
+            "type": "recap"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-tools-4#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "4#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "5#0",
+            "is_input": true,
+            "text": "下一个真实请求",
+            "type": "user"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "tools-4#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "tools-4#0"
+            ],
+            "process_ids": [
+              "tools-4#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "5#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "5#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "5#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "from_test": "recapContinuationsDoNotAbsorbTheNextGenuineQueuedInput"
+    }
+  ]
+}

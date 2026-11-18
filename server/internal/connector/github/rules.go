@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/connector"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
@@ -208,10 +209,13 @@ func (c *Connector) defaultBranch(ctx context.Context, repo string) (string, err
 	var r struct {
 		DefaultBranch string `json:"default_branch"`
 	}
+	_, epoch := st.bind(ctx)
 	if _, err := c.Get(ctx, "/repos/"+repo, &r); err != nil {
 		return "", err
 	}
-	st.mu.Lock()
+	if !st.enter(epoch) {
+		return "", errAccountChanged
+	}
 	if st.repos == nil {
 		st.repos = map[string]repoMeta{}
 	}
@@ -269,7 +273,10 @@ func (c *Connector) describeCI(ctx context.Context, n notification, run ciRun, m
 	}
 	t.Context = ciContext(repo, run.branch, pr, n.Subject.Title)
 	st := &c.inbox
-	st.mu.Lock()
+	_, epoch := st.bind(ctx)
+	if !st.enter(epoch) {
+		return t, false, errAccountChanged
+	}
 	if st.ci == nil {
 		st.ci = map[string]*ciMeta{}
 	}
@@ -283,7 +290,10 @@ func (c *Connector) describeCI(ctx context.Context, n notification, run ciRun, m
 // GitHub notifies only the account that started a run.
 func (c *Connector) followUpCI(ctx context.Context) bool {
 	st := &c.inbox
-	st.mu.Lock()
+	ctx, epoch := st.bind(ctx)
+	if !st.enter(epoch) {
+		return false
+	}
 	var due []string
 	for thread, m := range st.ci {
 		if t := st.things[thread]; t != nil && t.Done == "" && time.Since(m.checked) >= ciRecheck {
@@ -297,7 +307,9 @@ func (c *Connector) followUpCI(ctx context.Context) bool {
 		if i >= ciChecks || c.ratesLow() {
 			break
 		}
-		st.mu.Lock()
+		if !st.enter(epoch) {
+			return moved
+		}
 		m := *st.ci[thread]
 		st.ci[thread].checked = time.Now()
 		st.mu.Unlock()
@@ -305,14 +317,16 @@ func (c *Connector) followUpCI(ctx context.Context) bool {
 		if err != nil {
 			continue
 		}
-		st.mu.Lock()
+		if !st.enter(epoch) {
+			return moved
+		}
 		if t := st.things[thread]; t != nil && t.Done == "" {
 			switch {
 			case check.over != "":
 				t.Done, t.Why, moved = connector.DoneRead, check.over, true
 			case check.failed.at.After(t.At):
 				// News the user has not seen, even if they read the item's notification: GitHub sent none of this run.
-				t.At, t.Last, t.Read = check.failed.at, check.failed.at.UTC().Format(time.RFC3339), false
+				t.At, t.Last, t.Read = check.failed.at, markLast(check.failed.at.UTC().Format(time.RFC3339), epoch), false
 				t.Preview = check.failed.workflow + " workflow run failed for " + m.branch + " branch" // as GitHub titles its notification
 				t.Context = ciContext(m.repo, m.branch, m.pr, t.Preview)
 				moved = true
@@ -423,13 +437,43 @@ func (c *Connector) over(thread string, o InboxOptions) string {
 
 // Settle closes the hub's open GitHub items the current rules leave out: CI items made one per notification
 // (before CI failures were merged per branch), muted repositories, branches and CI the user does not want.
-func (c *Connector) Settle(_ context.Context, threads []string) map[string]string {
+//
+// After a change of account it also closes the items of the account before (#7832): once the account in use has
+// tried to read its inbox, and until the hub has asked once, every open item the connector holds no thing of. The hub's items come only from the things it was handed, and
+// it asks in the same round it takes them, so an item of the account in use has its thing here when the hub first
+// asks, and whatever has none was read as the account before: answered through Persona, older than things are
+// kept, or from before a restart. A thread both accounts have is held, so its item stays: the hub gives it the
+// new account's thing as a new move (markLast).
+//
+// That it is done is saved before the hub is told (keepSettled), and it is done once. So whatever goes wrong
+// around it (the save fails, the manager stops, the answer is lost) leaves items of the account before open,
+// which cannot be answered, and never closes one of the account in use.
+func (c *Connector) Settle(ctx context.Context, threads []string) map[string]string {
+	c.restore(ctx) // what a restart left unsettled
 	o := c.options()
 	out := map[string]string{}
+	st := &c.inbox
+	st.mu.Lock()
+	epoch, closing := st.epoch, st.unsettled && st.polled && len(threads) > 0
+	st.mu.Unlock()
+	if closing {
+		closing = c.keepSettled(ctx, epoch)
+	}
+	st.mu.Lock()
+	closing = closing && st.unsettled && st.epoch == epoch
 	for _, t := range threads {
 		if why := c.over(t, o); why != "" {
 			out[t] = why
+		} else if closing && st.things[t] == nil {
+			out[t] = i18n.T(i18n.From(ctx), "hub-connectors.github_account_before")
 		}
+	}
+	if closing {
+		st.unsettled = false
+	}
+	st.mu.Unlock()
+	if closing {
+		c.keepAccount(ctx) // a save that ran in between wrote it as unsettled again: what holds now
 	}
 	return out
 }

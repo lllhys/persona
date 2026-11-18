@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.update
 internal data class NewProviderDraft(
     val fromPreset: Boolean = false,
     val name: String = "",
+    val displayName: String? = null,
     val apiKey: String = "",
     /** launcher | api */
     val kind: String = "launcher",
@@ -41,6 +42,8 @@ internal data class NewProviderDraft(
     val smallModel: String = "",
     val subagentModel: String = "",
     val args: String = "",
+    /** Exact arguments from a parsed draft; used while the displayed argument text is unchanged. */
+    val parsedArgs: List<String>? = null,
     /** The picked preset's id and the model picked from it (its default when untouched). */
     val preset: String = "",
     val presetModel: String = "",
@@ -81,7 +84,7 @@ internal data class NewProviderDraft(
  * [Key] (tested by itself) and see what now runs on it ([Done]); a gateway typed in is the [Form]. An older hub opens on the
  * [Form] with its "Fill in" / "From extension" switch.
  */
-internal enum class WizardStep { Pick, Key, Done, Form }
+internal enum class WizardStep { Pick, Key, Done, Form, Paste }
 
 /** A preset key's test: running, or what the hub answered. */
 internal data class KeyTest(val running: Boolean, val result: ProviderTest? = null, val failure: UiText? = null)
@@ -126,6 +129,12 @@ internal data class NewProviderState(
     val opened: Pair<NewProviderDraft, ScopeForm?>? = null,
     /** Saved: the page closes. */
     val saved: Boolean = false,
+    /** Pasted configuration and aliases, only on hubs with launcher_import_parse. */
+    val importParse: Boolean = false,
+    val paste: ProviderPasteUiState = ProviderPasteUiState(),
+    val foundAliases: List<FoundAlias> = emptyList(),
+    /** The form came from Paste; Back returns to its reviewed answer. */
+    val pasteContinued: Boolean = false,
 ) {
     val editing: Boolean get() = existing != null
 
@@ -203,7 +212,8 @@ internal data class NewProviderState(
             auth = d.auth.takeIf { !api && it == "bearer" },
             smallModel = d.smallModel.trim().takeIf { !api && it.isNotEmpty() },
             subagentModel = d.subagentModel.trim().takeIf { !api && it.isNotEmpty() },
-            args = d.args.split(Regex("\\s+")).filter { it.isNotEmpty() }.takeIf { !api && it.isNotEmpty() },
+            args = d.argumentValues().takeIf { !api && it.isNotEmpty() },
+            displayName = d.displayName?.trim()?.takeIf { it.isNotEmpty() },
         ).withExtras(d, fields)
     }
     val canSave: Boolean get() = !busy && request != null
@@ -261,12 +271,15 @@ internal class NewProviderModel(
     val state = mutable.asStateFlow()
     private var readinessAnswer: CompletableDeferred<Unit>? = null
     private var testSeq = 0
+    private var pasteSeq = 0
+    private var listedLaunchers: List<HubLauncher> = emptyList()
 
     /**
      * The presets; the first is picked, and [preferPreset] opens on "From extension" when there are any. [hubNames]: the hub has
      * built-in presets, so the page opens on the list to pick from (the readiness is asked meanwhile).
      */
-    suspend fun load(preferPreset: Boolean = false, hubNames: Boolean = false) {
+    suspend fun load(preferPreset: Boolean = false, hubNames: Boolean = false, importParse: Boolean = false) {
+        mutable.update { it.copy(importParse = importParse, foundAliases = if (importParse) it.foundAliases else emptyList()) }
         if (hubNames) mutable.update { it.copy(hubNames = true, step = WizardStep.Pick) }
         try {
             val presets = api.presets()
@@ -280,6 +293,15 @@ internal class NewProviderModel(
         // "Fill in" still works without them.
         catch (error: Exception) {
             mutable.update { it.copy(loaded = true, presetsError = if (hubNames) ResText.of(R.string.settings_onb_presets_failed, failureReasonText(error)) else null) }
+        }
+        if (importParse) {
+            try {
+                val list = api.launchers()
+                listedLaunchers = list
+                mutable.update { it.copy(foundAliases = foundAliases(list, it.machines, api::ownsMachine)) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            // Finding an alias is optional; the usual add choices still work when the list cannot be read.
+            catch (_: Exception) {}
         }
     }
 
@@ -296,8 +318,88 @@ internal class NewProviderModel(
         } else s.copy(scope = if (scopeShown) s.scope ?: ScopeForm() else null, machines = machines)
     }
 
+    fun openPaste() = mutable.update {
+        if (!it.importParse || it.busy) it else it.copy(step = WizardStep.Paste, error = null, saved = false)
+    }
+
+    fun leavePaste() = mutable.update {
+        it.copy(step = if (it.hubNames) WizardStep.Pick else WizardStep.Form, existing = null, draft = NewProviderDraft(),
+            opened = null, scope = if (it.scope == null) null else ScopeForm(), pasteContinued = false, error = null, saved = false)
+    }
+
+    fun backToPaste() = mutable.update { it.copy(step = WizardStep.Paste, error = null, saved = false) }
+
+    fun editPaste(text: String) {
+        pasteSeq++
+        mutable.update {
+            val immediate = text.length - it.paste.text.length > 1
+            it.copy(paste = it.paste.copy(text = text, reading = false, readImmediately = immediate, error = null))
+        }
+    }
+
+    fun choosePasteDraft(index: Int) = mutable.update {
+        if (index in it.paste.answer?.drafts?.indices ?: IntRange.EMPTY) it.copy(paste = it.paste.copy(draft = index, action = null)) else it
+    }
+
+    fun choosePasteAction(action: ProviderPasteAction) = mutable.update { it.copy(paste = it.paste.copy(action = action)) }
+
+    suspend fun parsePaste() {
+        val text = state.value.paste.text
+        val seq = ++pasteSeq
+        if (text.isBlank()) {
+            mutable.update { it.copy(paste = it.paste.copy(answer = null, answerText = "", draft = -1, action = null, reading = false, readImmediately = false, error = null)) }
+            return
+        }
+        mutable.update { it.copy(paste = it.paste.copy(reading = true, readImmediately = false, error = null)) }
+        try {
+            val answer = api.parse(text)
+            mutable.update {
+                if (seq != pasteSeq || it.paste.text != text) it
+                else it.copy(paste = it.paste.copy(answer = answer, answerText = text, draft = if (answer.drafts.size == 1) 0 else -1,
+                    action = null, reading = false, error = null))
+            }
+        } catch (cancelled: CancellationException) {
+            mutable.update { if (seq == pasteSeq) it.copy(paste = it.paste.copy(reading = false)) else it }
+            throw cancelled
+        } catch (error: Exception) {
+            mutable.update {
+                if (seq != pasteSeq || it.paste.text != text) it
+                else it.copy(paste = it.paste.copy(reading = false, error = ResText.of(R.string.settings_paste_read_failed, failureReasonText(error))))
+            }
+        }
+    }
+
+    suspend fun continuePaste(): Boolean {
+        val choice = state.value.paste.choice ?: return false
+        if (choice.action.kind == PasteActionKind.New) {
+            mutable.update {
+                it.copy(existing = null, draft = choice.draft.newProviderDraft(), opened = null, step = WizardStep.Form,
+                    pasteContinued = true, error = null, probe = null, found = null, saved = false)
+            }
+            return true
+        }
+        if (state.value.busy) return false
+        mutable.update { it.copy(busy = true, paste = it.paste.copy(error = null)) }
+        return try {
+            val existing = api.launcher(choice.action.provider)
+            val base = providerDraftOf(existing)
+            val scope = scopeFrom(existing)
+            mutable.update {
+                it.copy(existing = existing, draft = choice.draft.existingDraft(existing, choice.action), scope = scope,
+                    opened = base to scope, step = WizardStep.Form, pasteContinued = true, error = null, probe = null, found = null, saved = false)
+            }
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) {
+            mutable.update { it.copy(paste = it.paste.copy(error = ResText.of(R.string.settings_providers_load_failed, failureReasonText(error)))) }
+            false
+        } finally { mutable.update { it.copy(busy = false) } }
+    }
+
     /** The machines changed (one came online, another was confirmed): the lists follow, what was chosen stays. */
-    fun setMachines(machines: List<Machine>) = mutable.update { it.copy(machines = machines) }
+    fun setMachines(machines: List<Machine>) = mutable.update {
+        it.copy(machines = machines, foundAliases = if (it.importParse) foundAliases(listedLaunchers, machines, api::ownsMachine) else emptyList())
+    }
 
     fun editScope(scope: ScopeForm) = mutable.update { if (it.busy || it.scope == null) it else it.copy(scope = scope, error = null) }
 

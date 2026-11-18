@@ -95,7 +95,7 @@ internal fun LazyListScope.machineControls(
     }
     item("engine") {
         JGroupItem(GroupPosition.of(first, rows)) {
-            JRow(stringResource(R.string.machines_engine), leadingIcon = PhIcons.TerminalWindow, value = Engines.currentName(machine), onClick = onEngine)
+            JRow(stringResource(R.string.machines_engine), leadingIcon = PhIcons.TerminalWindow, value = Engines.currentLabel(machine).text(), onClick = onEngine)
         }
     }
     if (botmux != null) item("botmux") {
@@ -117,7 +117,10 @@ internal fun LazyListScope.machineControls(
     }
     item("controls-note") {
         Column(Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
-            MachineCaption(stringResource(if (botmux == null) R.string.machines_engine_note else R.string.machines_botmux_note))
+            // With no terminal engine the engine note says what is shown instead; the botmux note still follows when there is a switch.
+            if (Engines.isNone(machine)) MachineCaption(stringResource(R.string.machines_engine_note_none))
+            if (botmux != null) MachineCaption(stringResource(R.string.machines_botmux_note))
+            else if (!Engines.isNone(machine)) MachineCaption(stringResource(R.string.machines_engine_note))
             MachineCaption(if (machine.kind == "local") stringResource(R.string.machines_local_note)
                 else stringResource(R.string.machines_ssh_note, machine.sshHost?.takeIf { it.isNotBlank() } ?: machine.id))
         }

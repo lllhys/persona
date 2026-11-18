@@ -12,5 +12,6 @@
   "see_context": "参考上面的内容。",
   "see_forward": "请看上面转发的消息。",
   "edit_with_ask": "按要求修改上面选中的内容：{ask}",
-  "edit_plain": "按上面选中的内容修改。"
+  "edit_plain": "按上面选中的内容修改。",
+  "see_forwards": "请看上面转发的几条消息。"
 }

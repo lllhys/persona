@@ -85,6 +85,11 @@ func (d *mirrorDevices) Canonical(id string) string {
 	return id
 }
 
+func (d *mirrorDevices) AppendSessions(dst []proto.Session, id string) ([]proto.Session, bool) {
+	list, ok := d.Sessions(id)
+	return append(dst, list...), ok
+}
+
 func (d *mirrorDevices) Sessions(id string) ([]proto.Session, bool) {
 	m := d.h.localMachine(id)
 	if m == nil {

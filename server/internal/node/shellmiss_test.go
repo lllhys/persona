@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -259,6 +260,88 @@ func TestStartProbeRefusalWords(t *testing.T) {
 	refused, _ = p.verdict(typed("$ ", "cc")+"\ncc: command not found\n$ ", shellBack)
 	if !errors.As(refused, &re) || !strings.Contains(string(re.Data), `"pane_shell":"zsh"`) {
 		t.Errorf("a line naming no shell: %v %s", refused, re.Data)
+	}
+}
+
+// A shell's not-found line in another language (bash's gettext catalogs, glibc's errors; lines recorded from bash 5.3)
+// ends the start as the English one does when it names the start's own command, and only then: another command's
+// line, a line before the command, Claude's output quoting one and a line naming no shell are not read (#6122).
+func TestStartProbeReadsLocalizedLines(t *testing.T) {
+	p := &startProbe{anchor: probeID, program: "cc", launcher: "cc", paneShell: "zsh"}
+	for _, tc := range []struct{ name, line, shell string }{
+		{"zh_CN", "bash: 行 1: cc: 未找到命令", "bash"},
+		{"zh_CN exec", "bash: 第 1 行：exec: cc: 未找到", "bash"},
+		{"zh_CN at the prompt", "bash: cc: 未找到命令", "bash"},
+		{"ko", "bash: 줄 1: cc: 명령을 찾을 수 없음", "bash"},
+		{"de", "-bash: Zeile 1: cc: Kommando nicht gefunden", "bash"},
+		{"fr", "/bin/bash: ligne 1: cc: commande introuvable", "bash"},
+		{"fr exec", "bash: ligne 1 : exec: cc : non trouvé", "bash"},
+		{"the word last", "fish: 未知命令：cc", "fish"},
+		{"the word inside another part", "fish: 未知命令「cc」: x", ""},
+	} {
+		refused, other := p.verdict(typed("$ ", "cc")+"\n"+tc.line+"\n$ ", shellBack)
+		var re *rpc.Error
+		if tc.shell == "" {
+			if refused != nil || other != "" {
+				t.Errorf("%s: refused %v, other %q", tc.name, refused, other)
+			}
+			continue
+		}
+		if !errors.As(refused, &re) || re.Code != proto.CodeLauncherMissing ||
+			!strings.Contains(string(re.Data), `"missing":"cc"`) || !strings.Contains(string(re.Data), `"pane_shell":"`+tc.shell+`"`) ||
+			!strings.Contains(re.Message, strconv.Quote(tc.line)) {
+			t.Errorf("%s: %v %s", tc.name, refused, refusalJSON(refused))
+		}
+	}
+	// A managed launcher's personad that is not there (glibc's zh_CN error), claude missing in the launcher, and the
+	// start file itself refused, each in Chinese.
+	managed := &startProbe{anchor: probeID, program: "/opt/p/personad", launcher: "work", paneShell: "bash"}
+	refused, _ := managed.verdict(typed("$ ", "/opt/p/personad launch work")+"\nbash: /opt/p/personad: 没有那个文件或目录\n$ ", shellBack)
+	if !strings.Contains(refusalJSON(refused), `"kind":"no_such_file"`) {
+		t.Errorf("managed: %v %s", refused, refusalJSON(refused))
+	}
+	refused, _ = p.verdict(typed("$ ", "cc")+"\nbash: claude: 未找到命令\n$ ", shellBack)
+	var re *rpc.Error
+	if !errors.As(refused, &re) || re.Code != proto.CodeClaudeMissing {
+		t.Errorf("claude missing: %v", refused)
+	}
+	if refused, _ = p.verdict(typed("$ ", "cc")+"\nbash: claude: 未找到命令\n", shellAway); refused != nil {
+		t.Errorf("claude missing while the launcher goes on: %v", refused)
+	}
+	const file = "/home/u/.persona/agent-start-1.sh"
+	start := &startProbe{anchor: probeID, program: "cc", launcher: "cc", startFile: file, firstWord: "."}
+	refused, _ = start.verdict("$ '"+file+"' && true '"+probeID+"'\nbash: "+file+": 权限不够\n$ ", shellBack)
+	var r *startLineRejected
+	if !errors.As(refused, &r) {
+		t.Errorf("start file refused: %v", refused)
+	}
+	refused, _ = start.verdict("$ . '"+file+"' && true '"+probeID+"'\n"+file+": 行 3: cc: 未找到命令\n$ ", shellBack)
+	if !errors.As(refused, &re) || re.Code != proto.CodeLauncherMissing {
+		t.Errorf("a line the start file prefixes: %v", refused)
+	}
+	for _, tc := range []struct{ name, screen string }{
+		{"another command", typed("$ ", "cc") + "\nbash: 行 1: cc_work: 未找到命令\n$ "},
+		{"rc noise", typed("$ ", "cc") + "\nbash: __git_ps1: 未找到命令\n$ "},
+		{"before the command", "bash: cc: 未找到命令\n" + typed("$ ", "cc") + "\n"},
+		{"Claude quoting a shell", typed("$ ", "cc") + "\n  ⎿  bash: 行 1: cc: 未找到命令\n"},
+		{"no shell in front", typed("$ ", "cc") + "\nerror: cc: 未找到命令\n"},
+		{"the word alone", typed("$ ", "cc") + "\nbash: cc\n"},
+	} {
+		if refused, other := p.verdict(tc.screen, shellBack); refused != nil || other != "" {
+			t.Errorf("%s: refused %v, other %q", tc.name, refused, other)
+		}
+	}
+	// The screen is read again for such a line: one a shell prefixes, not a prompt or Claude's output.
+	for screen, want := range map[string]bool{
+		"$ cc\nbash: 行 1: cc: 未找到命令\n$ ": true,
+		"$ cc\n-bash：cc：未找到命令":           true,
+		"user@host:~$ cc":                false,
+		"  ⎿  bash: x\n":                 false,
+		"bash-5.3$ cc":                   false,
+	} {
+		if got := mayHaveShellMiss(screen); got != want {
+			t.Errorf("mayHaveShellMiss(%q) = %v, want %v", screen, got, want)
+		}
 	}
 }
 

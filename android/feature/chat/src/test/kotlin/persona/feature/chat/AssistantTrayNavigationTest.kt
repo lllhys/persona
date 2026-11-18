@@ -83,7 +83,7 @@ class AssistantTrayNavigationTest {
 
         @Composable fun Content(enabled: Boolean = true) {
             Column(Modifier.fillMaxSize().background(PersonaTheme.palette.background).testTag("tray-navigation-shot")) {
-                AssistantTrays(host, tray, requests, drafts, emptyList(), 600.dp, busy = false, enabled = enabled,
+                AssistantTrays(host, tray, requests, drafts, emptyList(), { 600.dp }, busy = false, enabled = enabled,
                     onApprove = { approvals += it }, onReview = { reviews += it }, onSend = { sends += it }, onSchedule = {},
                     onPlan = { openedPlans += it })
                 AssistantTaskSheets(host)

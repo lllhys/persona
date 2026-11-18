@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
+	"github.com/nwverse/persona/server/internal/screen"
 )
 
 var planIDRe = regexp.MustCompile(`plan_[0-9a-f]+`)
@@ -168,7 +172,19 @@ func TestTaskLeaderGetsRestrictedTaskPlanAndWorkersDoNot(t *testing.T) {
 		t.Fatalf("an agent of no task got task_plan: %v", got)
 	}
 
+	for _, session := range []string{"", "s1"} {
+		if got := leaderToolNames(s.runtimeLeaderTools(ctx, "box", session, false)); !slices.Equal(got, []string{"task_plan", "task_review"}) {
+			t.Fatalf("runtime leader tools for %q: %v", session, got)
+		}
+	}
+	if got := s.runtimeLeaderTools(ctx, "box", "s1", true); len(got) != 0 {
+		t.Fatalf("guest received runtime leader tools: %v", got)
+	}
+
 	w := planWorker(t, s, f, nil)
+	if got := s.runtimeLeaderTools(ctx, "box", w.Agents[0].SessionID, false); len(got) != 0 {
+		t.Fatalf("worker received runtime leader tools: %v", got)
+	}
 	if got := leaderToolNames(s.sessionMCPTools(ctx, "box", w.Agents[0].SessionID, false, false)); slices.Contains(got, "task_plan") {
 		t.Fatalf("a worker got task_plan: %v", got)
 	}
@@ -295,18 +311,11 @@ func TestTaskLeaderWorkersAreBounded(t *testing.T) {
 	}
 }
 
-// An agent that asks for its tools with no session (a pane the node cannot name) gets none and does not wait for a
-// leader being started.
-func TestToolListWithNoSessionDoesNotWait(t *testing.T) {
+// Unknown identities have no leader rights; discovery can be refreshed later.
+func TestLeaderToolListWithNoSessionDoesNotWait(t *testing.T) {
 	s, _ := newQuietService(t)
-	old := leaderListWait
-	leaderListWait = 3 * time.Second
-	t.Cleanup(func() { leaderListWait = old })
-	s.leaderStarts.Add(1)
-	t.Cleanup(func() { s.leaderStarts.Add(-1) })
-	start := time.Now()
-	if got := s.leaderTools(context.Background(), "box", ""); got != nil || time.Since(start) > time.Second {
-		t.Fatalf("no session: %v after %s", got, time.Since(start))
+	if got := s.leaderTools(context.Background(), "box", ""); got != nil {
+		t.Fatalf("no session: %v", got)
 	}
 }
 
@@ -546,6 +555,9 @@ func TestWorkerReportWithNobodyAboveCancelsReadably(t *testing.T) {
 // A worker that does not start is told to its leader as a supervision signal, not to a conversation, and no start remedy
 // (a main-chat tool) is begun for it.
 func TestFailedWorkerStartIsTheLeadersToHear(t *testing.T) {
+	// An unanswered start now reconciles with the machine before it fails (#6540); keep that window to milliseconds
+	// here, this test is about who hears the failure, not how long reconciliation is allowed to take.
+	shortTaskStartReconcile(t)
 	s, f := newQuietService(t)
 	startTaskLeader(t, s, f)
 	f.mu.Lock()
@@ -619,9 +631,9 @@ func TestTaskLeaderSurvivesARestart(t *testing.T) {
 	}
 }
 
-// An agent being started as a leader asks for its tools before it is linked: its list waits for the link, a list of any
-// other unlinked agent waits no longer than the bound, and neither is given the tool by the wait alone.
-func TestTaskLeaderListWaitsForItsLink(t *testing.T) {
+// A legacy one-shot list waits for the leader being linked, bounded; a revision-aware caller returns immediately and
+// recovers through its cursor instead. The wait alone grants rights to nobody.
+func TestLegacyTaskLeaderListWaitsForItsLink(t *testing.T) {
 	s, _ := newQuietService(t)
 	old := leaderListWait
 	leaderListWait = 400 * time.Millisecond
@@ -646,6 +658,59 @@ func TestTaskLeaderListWaitsForItsLink(t *testing.T) {
 	})
 	if got := leaderToolNames(s.leaderTools(ctx, "box", "sx")); !slices.Equal(got, []string{"task_plan", "task_review"}) {
 		t.Fatalf("the leader's list after its link: %v", got)
+	}
+
+	s.leaderStarts.Add(1)
+	defer s.leaderStarts.Add(-1)
+	start = time.Now()
+	watched := s.sessionMCPToolsSince(ctx, "box", "other", false, false, "a-revision")
+	if elapsed := time.Since(start); elapsed >= 200*time.Millisecond {
+		t.Fatalf("a revision-aware list waited for the legacy startup window: %s", elapsed)
+	}
+	if got := leaderToolNames(watched["tools"].([]proto.Tool)); slices.Contains(got, "task_plan") || slices.Contains(got, "task_review") {
+		t.Fatalf("an unrelated agent gained leader rights: %v", got)
+	}
+}
+
+// Registration after the initial list invalidates its cursor. No startup counter
+// or finite wait window is involved, and late watch subscription cannot lose it.
+func TestTaskLeaderListRefreshesAfterItsLink(t *testing.T) {
+	s, _ := newQuietService(t)
+	ctx := context.Background()
+	todo, err := s.createTaskTodo(ctx, "leader", "", "conv1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := s.sessionMCPToolsSince(ctx, "box", "sx", false, false, "")
+	if got := leaderToolNames(before["tools"].([]proto.Tool)); slices.Contains(got, "task_plan") || slices.Contains(got, "task_review") {
+		t.Fatalf("unlinked agent has leader tools: %v", got)
+	}
+	cursor := before["revision"].(string)
+	_, changed := s.mcpChanges.snapshot()
+	if err := s.linkPlanAgent(ctx, PlanTask{TodoID: todo.ID, Role: roleLeader}, "box", "sx", false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("registration did not wake tool discovery")
+	}
+	after := s.sessionMCPToolsSince(ctx, "box", "sx", false, false, cursor)
+	names := leaderToolNames(after["tools"].([]proto.Tool))
+	if after["revision"] == cursor || !slices.Contains(names, "task_plan") || !slices.Contains(names, "task_review") {
+		t.Fatalf("late leader list: %+v", after)
+	}
+	if got := s.leaderTools(ctx, "box", "other"); got != nil {
+		t.Fatalf("another Agent gained rights: %v", got)
+	}
+
+	// Completing the task invalidates discovery too, and the tools disappear.
+	if ok, err := s.autoDoneTodo(ctx, todo.ID, "done", time.Now()); err != nil || !ok {
+		t.Fatalf("close: %v %v", ok, err)
+	}
+	closed := s.sessionMCPToolsSince(ctx, "box", "sx", false, false, after["revision"].(string))
+	if got := leaderToolNames(closed["tools"].([]proto.Tool)); slices.Contains(got, "task_plan") || slices.Contains(got, "task_review") {
+		t.Fatalf("closed task kept leader tools: %v", got)
 	}
 }
 
@@ -772,7 +837,7 @@ func TestTaskLeaderReviewsItsWorkers(t *testing.T) {
 		t.Fatalf("the ledger after a rework: %+v", v)
 	}
 	// accepted: closed by the leader's review, with no card to the user.
-	res = review("s1", map[string]any{"todo_id": w2.ID, "verdict": "accepted", "note": "测试通过"})
+	res = review("s1", map[string]any{"todo_id": w2.ID, "verdict": "accepted", "note": "测试通过", "checks": completeReviewChecks(todoNow(s, w2.ID))})
 	if res.IsError || !strings.Contains(res.Content[0].Text, "accepted and closed") {
 		t.Fatalf("accepted: %+v", res)
 	}
@@ -794,6 +859,55 @@ func TestTaskLeaderReviewsItsWorkers(t *testing.T) {
 	refused("rework of a closed worker", review("s1", map[string]any{"todo_id": w2.ID, "verdict": "rework", "note": "x"}), "is done already")
 	if got := f.notices(); len(got) != 0 {
 		t.Fatalf("the main conversation was told: %q", got)
+	}
+}
+
+// A task leader follows the same complete-evidence rule as a conversation supervisor, with no write on a refusal.
+func TestTaskLeaderAcceptedRequiresCompleteCurrentCriteria(t *testing.T) {
+	for _, stored := range []bool{false, true} {
+		name := "memory"
+		if stored {
+			name = "postgres"
+		}
+		t.Run(name, func(t *testing.T) {
+			var st Store
+			if stored {
+				st = todoTestDB(t)
+			}
+			s, f := newQuietServiceOn(t, st)
+			ctx := context.Background()
+			startTaskLeader(t, s, f)
+			w := planWorker(t, s, f, nil)
+			before := todoNow(s, w.ID)
+			valid := completeReviewChecks(before)
+			for _, tc := range []struct {
+				name   string
+				checks []ReviewCheck
+				want   string
+			}{
+				{name: "missing", checks: valid[:1], want: "has no check"},
+				{name: "duplicate", checks: []ReviewCheck{valid[0], valid[0], valid[1]}, want: "duplicate"},
+				{name: "unknown", checks: append(append([]ReviewCheck{}, valid...), ReviewCheck{Criterion: "old criterion", Met: true, Evidence: "old"}), want: "unknown current done_when"},
+				{name: "unmet", checks: []ReviewCheck{valid[0], {Criterion: before.Supervision.DoneWhen[1], Evidence: "still missing"}}, want: "not met; use rework for what is missing"},
+				{name: "blank evidence", checks: []ReviewCheck{valid[0], {Criterion: before.Supervision.DoneWhen[1], Met: true, Evidence: "  "}}, want: "non-empty evidence"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					res := s.mcpCall(ctx, "box", "s1", "task_review", mustJSON(map[string]any{"todo_id": w.ID, "verdict": "accepted", "checks": tc.checks}), false)
+					if !res.IsError || !strings.Contains(res.Content[0].Text, tc.want) || !strings.Contains(res.Content[0].Text, "nothing was written") ||
+						strings.Contains(res.Content[0].Text, "outcome cannot") {
+						t.Fatalf("accepted invalid checks: %+v", res)
+					}
+					after := todoNow(s, w.ID)
+					if after.DoneAt != nil || !reflect.DeepEqual(after.Supervision, before.Supervision) {
+						t.Fatalf("a refused review wrote the worker or ledger: before %+v, after %+v", before.Supervision, after.Supervision)
+					}
+				})
+			}
+			res := s.mcpCall(ctx, "box", "s1", "task_review", mustJSON(map[string]any{"todo_id": w.ID, "verdict": "accepted", "checks": valid}), false)
+			if res.IsError || !strings.Contains(res.Content[0].Text, "accepted and closed") || todoNow(s, w.ID).DoneAt == nil {
+				t.Fatalf("complete acceptance: %+v", res)
+			}
+		})
 	}
 }
 
@@ -848,6 +962,81 @@ func TestTaskLeaderNeedsUserGoesToItsOwnSupervisor(t *testing.T) {
 	}
 	if v := todoNow(s, w2.ID).Supervision; v.State != reviewNeedsUser {
 		t.Fatalf("the ledger after the third rework: %+v", v)
+	}
+}
+
+func leaderNeedsUserReview(t *testing.T, s *Service, todoID, recommend string) {
+	t.Helper()
+	res := s.mcpCall(context.Background(), "box", "s1", "task_review", mustJSON(map[string]any{
+		"todo_id": todoID, "verdict": "needs_user", "reason": "The owner must choose the release action", "recommend": recommend,
+	}), false)
+	if res.IsError {
+		t.Fatalf("leader needs_user review was rejected: %+v", res)
+	}
+}
+
+func flushLeaderDecisionDigest(s *Service) {
+	b := &s.supervise
+	b.mu.Lock()
+	if b.timer != nil {
+		b.timer.Stop()
+		b.timer = nil
+	}
+	for id, g := range b.pending {
+		g.At = time.Now().Add(-time.Hour)
+		b.pending[id] = g
+	}
+	b.last = time.Now().Add(-time.Hour)
+	b.mu.Unlock()
+	s.superviseTimes = shortSuperviseTimings
+	s.sendDigest(context.Background())
+}
+
+func leaderDecisionFixture(t *testing.T) (*Service, *fakeHub, string) {
+	t.Helper()
+	s, f := newQuietService(t)
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	s.superviseTimes = superviseTimings{gather: time.Hour, every: time.Hour, urgent: time.Hour}
+	return s, f, w.ID
+}
+
+func TestTaskLeaderNeedsUserRecommendationRevisionIsNotDeduplicated(t *testing.T) {
+	s, f, id := leaderDecisionFixture(t)
+	leaderNeedsUserReview(t, s, id, "approve the release")
+	flushLeaderDecisionDigest(s)
+	if got := f.notices(); len(got) != 1 || !strings.Contains(got[0], "approve the release") {
+		t.Fatalf("first decision did not reach the supervisor: %q", got)
+	}
+
+	s.superviseTimes = superviseTimings{gather: time.Hour, every: time.Hour, urgent: time.Hour}
+	leaderNeedsUserReview(t, s, id, "do not release; roll back first")
+	if task := todoNow(s, id); task.DoneAt != nil || task.Supervision.State != reviewNeedsUser || len(task.Supervision.Reviews) != 2 {
+		t.Fatalf("second review was not recorded on the same open needs-user task: %+v", task.Supervision)
+	}
+	flushLeaderDecisionDigest(s)
+	got := f.notices()
+	if len(got) != 2 || !strings.Contains(got[len(got)-1], "do not release; roll back first") {
+		t.Fatalf("revised recommendation was suppressed; notices (%d): %q", len(got), got)
+	}
+}
+
+func TestTaskLeaderNeedsUserIdenticalRecommendationIsDeduplicated(t *testing.T) {
+	s, f, id := leaderDecisionFixture(t)
+	leaderNeedsUserReview(t, s, id, "approve the release")
+	flushLeaderDecisionDigest(s)
+	if got := len(f.notices()); got != 1 {
+		t.Fatalf("first decision notices = %d", got)
+	}
+
+	s.superviseTimes = superviseTimings{gather: time.Hour, every: time.Hour, urgent: time.Hour}
+	leaderNeedsUserReview(t, s, id, "approve the release")
+	if task := todoNow(s, id); len(task.Supervision.Reviews) != 2 {
+		t.Fatalf("repeated review was not recorded: %+v", task.Supervision)
+	}
+	flushLeaderDecisionDigest(s)
+	if got := f.notices(); len(got) != 1 {
+		t.Fatalf("an unchanged recommendation was notified again: %q", got)
 	}
 }
 
@@ -1043,7 +1232,8 @@ func TestClosedLeaderRehomesItsWorkers(t *testing.T) {
 		t.Fatalf("the rehomed worker: %+v %+v", cur, cur.Supervision)
 	}
 	// The conversation can review it, and does not take over a worker whose leader is alive.
-	if _, err := runJSON(t, s, "conv1", "task_review", map[string]any{"todo_id": w.ID, "verdict": "accepted", "note": "测试通过"}); err != nil {
+	if _, err := runJSON(t, s, "conv1", "task_review", map[string]any{"todo_id": w.ID, "verdict": "accepted", "note": "测试通过",
+		"checks": completeReviewChecks(todoNow(s, w.ID))}); err != nil {
 		t.Fatalf("the main conversation reviewing a rehomed worker: %v", err)
 	}
 	if got := todoNow(s, w.ID); got.DoneAt == nil || got.DoneBy != "review" {
@@ -1076,7 +1266,6 @@ func TestLeaderlessWorkerWithNobodyAboveIsCancelled(t *testing.T) {
 func TestLeaderResumeFailureEscalatesAndRetries(t *testing.T) {
 	s, f := newQuietService(t)
 	s.leaderResume = 40 * time.Millisecond
-	ctx := context.Background()
 	startTaskLeader(t, s, f)
 	w := planWorker(t, s, f, nil)
 	lead, _, _ := s.leaderSupervisor(todoNow(s, w.ID))
@@ -1088,9 +1277,7 @@ func TestLeaderResumeFailureEscalatesAndRetries(t *testing.T) {
 	f.mu.Unlock()
 	kept := []superviseSignal{{Todo: w.ID, Kind: sigReview, Key: "review@1", Detail: "做完了"}}
 	text := prompts.RenderWorkerSupervise([]prompts.SuperviseEntry{{ID: w.ID, Title: w.Title, Kind: "review"}})
-	if err := s.sendToLeader(ctx, lead, text, kept); err != nil {
-		t.Fatalf("the resume is scheduled, not failed synchronously: %v", err)
-	}
+	s.resumeLeaderForSupervision(lead, text, kept, func(context.Context, error) {}, nil)
 	waitFor(t, "the failed resume to go up", func() bool { return len(f.notices()) >= 1 })
 	n := f.notices()[0]
 	if !strings.Contains(n, "改登录页") || !strings.Contains(n, w.ID) || !strings.Contains(n, "联系不上") || strings.Contains(n, "判断要用户决定") {
@@ -1121,15 +1308,350 @@ func TestUndeliveredMessageWithNobodyAboveIsRetried(t *testing.T) {
 	f.mu.Unlock()
 	kept := []superviseSignal{{Todo: w.ID, Kind: sigReview, Key: "review@1", Detail: "做完了"}}
 	const text = "Persona · supervision: undelivered"
-	if err := s.sendToLeader(ctx, lead, text, kept); err != nil {
-		t.Fatal(err)
-	}
+	s.resumeLeaderForSupervision(lead, text, kept, func(context.Context, error) {}, nil)
 	time.AfterFunc(150*time.Millisecond, func() { f.mu.Lock(); f.failSend = nil; f.mu.Unlock() })
 	waitFor(t, "the undelivered message to reach the leader after a few tries", func() bool {
 		return slices.Contains(deliveredTo(f, "s1"), text)
 	})
 	if got := f.notices(); len(got) != 0 {
 		t.Fatalf("with nobody above, something was told to the main conversation: %q", got)
+	}
+}
+
+// stopLeader lists task leader s1 on box as an agent that has stopped (read-only: closed, or cut off by a restart, node
+// stopped.go) beside its working worker, and has the node refuse every send to it as it refuses a stopped agent's:
+// agent_stopped, nothing typed.
+func stopLeader(f *fakeHub, worker string) {
+	f.setSessions("box", proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude",
+		Status: proto.StatusInterrupted, Capabilities: &proto.SessionCapabilities{Read: true, Terminal: true}, UpdatedAt: time.Now()},
+		proto.Session{SessionID: worker, MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusWorking,
+			UpdatedAt: time.Now()})
+	f.mu.Lock()
+	f.failSend = &rpc.Error{Code: proto.CodeAgentStopped, Message: "这个 Agent 已经停了，这次没有发送",
+		Data: json.RawMessage(`{"delivered":"none"}`)}
+	f.mu.Unlock()
+}
+
+// leaderEscalations counts the decisions the main conversation got saying a worker's task leader cannot be reached.
+func leaderEscalations(f *fakeHub) int {
+	n := 0
+	for _, m := range f.notices() {
+		n += strings.Count(m, "联系不上")
+	}
+	return n
+}
+
+// blockedReport has worker report that it is blocked, which goes to its leader.
+func blockedReport(t *testing.T, s *Service, worker string) {
+	t.Helper()
+	res := s.agentTool(context.Background(), "box", worker, "report_to_supervisor",
+		json.RawMessage(`{"kind":"blocked","text":"登录页卡在设计评审"}`))
+	if res.IsError {
+		t.Fatalf("the worker's report: %+v", res)
+	}
+}
+
+// A listed task leader whose agent has stopped (#8518): the node refuses the message. That goes as a failed resume
+// does: the conversation above the leader hears of it once, and the leader is not sent the message again at every
+// digest (its next try waits leaderResume, here longer than the test).
+func TestStoppedLeaderIsEscalatedOnceNotRetriedEveryDigest(t *testing.T) {
+	s, f := newQuietService(t)
+	s.leaderResume = time.Hour
+	ctx := context.Background()
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	stopLeader(f, w.Agents[0].SessionID)
+	blockedReport(t, s, w.Agents[0].SessionID)
+	waitFor(t, "the send the stopped leader's node refuses", func() bool { return len(sendsTo(f, "box", "s1")) > 0 })
+	for range 5 {
+		s.sendDigest(ctx) // the digests that follow, every 30 seconds on a running hub
+	}
+	if got := sendsTo(f, "box", "s1"); len(got) != 1 {
+		t.Fatalf("the stopped leader was sent the message %d times: at every digest", len(got))
+	}
+	waitFor(t, "the conversation above the leader to hear of it", func() bool { return leaderEscalations(f) > 0 })
+	for range 5 {
+		s.sendDigest(ctx)
+	}
+	if n := leaderEscalations(f); n != 1 {
+		t.Fatalf("the conversation above the leader heard of it %d times:\n%s", n, strings.Join(f.notices(), "\n---\n"))
+	}
+	if n := f.notices()[0]; !strings.Contains(n, w.ID) || !strings.Contains(n, "改登录页") || !strings.Contains(n, "登录页卡在设计评审") {
+		t.Fatalf("the escalation must name the worker and say what it reported:\n%s", n)
+	}
+	if got := sendsTo(f, "box", "s1"); len(got) != 1 {
+		t.Fatalf("the stopped leader was sent the message %d times", len(got))
+	}
+	if cur := todoNow(s, w.ID); cur.DoneAt != nil {
+		t.Fatalf("the worker was closed by the escalation: %+v", cur)
+	}
+}
+
+// The stopped leader is still tried again, after a wait, though no digest sends it the message any more: once it runs
+// again (the user's Resume) the message reaches it, and the conversation above was told only the once.
+func TestStoppedLeaderGetsTheMessageOnceItRunsAgain(t *testing.T) {
+	s, f := newQuietService(t)
+	s.leaderResume = 50 * time.Millisecond
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	stopLeader(f, w.Agents[0].SessionID)
+	blockedReport(t, s, w.Agents[0].SessionID)
+	waitFor(t, "the conversation above the leader to hear of it", func() bool { return leaderEscalations(f) > 0 })
+	waitFor(t, "the leader to be tried again after its wait", func() bool { return len(sendsTo(f, "box", "s1")) > 1 })
+	f.setSessions("box", proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude",
+		Status: proto.StatusIdle, UpdatedAt: time.Now()},
+		proto.Session{SessionID: w.Agents[0].SessionID, MachineID: "box", Cwd: "/code/app", Agent: "claude",
+			Status: proto.StatusWorking, UpdatedAt: time.Now()})
+	f.mu.Lock()
+	f.failSend = nil
+	f.mu.Unlock()
+	waitFor(t, "the message to reach the leader that runs again", func() bool {
+		for _, m := range deliveredTo(f, "s1") {
+			if strings.Contains(m, "登录页卡在设计评审") {
+				return true
+			}
+		}
+		return false
+	})
+	if n := leaderEscalations(f); n != 1 {
+		t.Fatalf("the conversation above the leader heard of it %d times:\n%s", n, strings.Join(f.notices(), "\n---\n"))
+	}
+}
+
+// A send to a running leader that fails for any other reason (here a dialog in its box) is still put back for the
+// next digest, and nothing goes up: the leader is there, only not now.
+func TestLeaderSendFailingOtherwiseIsRetriedByTheDigest(t *testing.T) {
+	s, f := newQuietService(t)
+	s.leaderResume = time.Hour
+	ctx := context.Background()
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	f.mu.Lock()
+	f.failSend = &rpc.Error{Code: screen.DialogOpen, Message: "a dialog has the keyboard", Data: json.RawMessage(`{"delivered":"none"}`)}
+	f.mu.Unlock()
+	blockedReport(t, s, w.Agents[0].SessionID)
+	waitFor(t, "the refused send", func() bool { return len(sendsTo(f, "box", "s1")) > 0 })
+	s.sendDigest(ctx)
+	waitFor(t, "the next digest to try the leader again", func() bool { return len(sendsTo(f, "box", "s1")) > 1 })
+	f.mu.Lock()
+	f.failSend = nil
+	f.mu.Unlock()
+	waitFor(t, "the message to reach the leader", func() bool {
+		for _, m := range deliveredTo(f, "s1") {
+			if strings.Contains(m, "登录页卡在设计评审") {
+				return true
+			}
+		}
+		return false
+	})
+	if n := leaderEscalations(f); n != 0 {
+		t.Fatalf("a leader that is there was escalated:\n%s", strings.Join(f.notices(), "\n---\n"))
+	}
+}
+
+// A send the node says may already be in the leader's session but was not seen taking (its Claude's inbox read it; held
+// for approval at the computer, dropped, typed part way: delivered unknown) is neither resent by the next digests, which
+// would only pile copies there, nor counted as told (#9607): the conversation above hears of it once, the turn stays
+// untold and the deduplication is released, so a later digest or a restarted manager can still deliver it.
+func TestLeaderSendUnconfirmedIsEscalatedNotResent(t *testing.T) {
+	for _, code := range []string{"peer_held", "peer_unconfirmed", "input_uncertain"} {
+		t.Run(code, func(t *testing.T) {
+			s, f := newQuietService(t)
+			s.leaderResume = time.Hour
+			ctx := context.Background()
+			startTaskLeader(t, s, f)
+			w := planWorker(t, s, f, nil)
+			f.mu.Lock()
+			f.failSend = &rpc.Error{Code: code, Message: "not taken there", Data: json.RawMessage(`{"delivered":"unknown"}`)}
+			f.mu.Unlock()
+			blockedReport(t, s, w.Agents[0].SessionID)
+			waitFor(t, "the unconfirmed send", func() bool { return len(sendsTo(f, "box", "s1")) > 0 })
+			for range 3 {
+				s.sendDigest(ctx)
+			}
+			waitFor(t, "the conversation above the leader to hear of it", func() bool { return leaderEscalations(f) > 0 })
+			if n := len(sendsTo(f, "box", "s1")); n != 1 {
+				t.Errorf("the leader was sent the unconfirmed message %d times", n)
+			}
+			if n := leaderEscalations(f); n != 1 {
+				t.Errorf("the conversation above heard of it %d times:\n%s", n, strings.Join(f.notices(), "\n---\n"))
+			}
+			if !strings.Contains(strings.Join(f.notices(), "\n"), "may not have received") {
+				t.Errorf("the escalation does not say the leader may not have it:\n%s", strings.Join(f.notices(), "\n---\n"))
+			}
+		})
+	}
+}
+
+// An unconfirmed supervision message does not mark the turn it tells as told: the ledger a restarted manager recovers
+// from still has it to tell (#9607).
+func TestLeaderSendUnconfirmedLeavesTheTurnUntold(t *testing.T) {
+	s, f := newQuietService(t)
+	s.leaderResume = time.Hour
+	ctx := context.Background()
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	if _, _, err := s.updateSupervision(ctx, w.ID, func(v *Supervision) bool { v.State = reviewPending; return true }); err != nil {
+		t.Fatal(err)
+	}
+	s.supervise.mu.Lock()
+	s.supervise.init()
+	s.supervise.mu.Unlock()
+	g := superviseSignal{Todo: w.ID, Kind: sigReview, Key: reviewKey(todoNow(s, w.ID).Supervision), Machine: "box",
+		Session: w.Agents[0].SessionID, Detail: "done", At: time.Now()}
+	b := &s.tasks.turns
+	b.mu.Lock()
+	if !s.turnsLocked(ctx) {
+		b.mu.Unlock()
+		t.Fatal("cannot load the turn ledger")
+	}
+	b.doc.Turns[w.ID] = taskTurn{Machine: "box", Session: g.Session, Key: g.Key, State: turnInterrupted,
+		Signal: &turnSignal{Kind: g.Kind, Key: g.Key, Detail: g.Detail}}
+	b.mu.Unlock()
+	f.mu.Lock()
+	f.failSend = &rpc.Error{Code: "peer_unconfirmed", Message: "dropped there", Data: json.RawMessage(`{"delivered":"unknown"}`)}
+	f.mu.Unlock()
+	lead, _, ok := s.leaderSupervisor(todoNow(s, w.ID))
+	if !ok {
+		t.Fatal("no leader")
+	}
+	s.supervise.dedupMu.Lock()
+	delivered := s.deliverToLeaderAgent(ctx, lead, []superviseSignal{g}, "", time.Now(), time.Time{})
+	s.supervise.dedupMu.Unlock()
+	b.mu.Lock()
+	told := b.doc.Turns[w.ID].Signal.Told != nil
+	b.mu.Unlock()
+	if delivered || told {
+		t.Errorf("an unconfirmed send: delivered %v, turn told %v", delivered, told)
+	}
+}
+
+// A supervision message states no permission-mode class (#9607): the assistant cannot bind a worker's report to the
+// mode the worker wrote it in (its session row is a cached list, which may still say bypass after the worker switched),
+// so nothing it sends a leader claims one, whatever the worker's or the leader's listed mode.
+func TestLeaderSupervisionStatesNoClass(t *testing.T) {
+	for _, worker := range []string{"default", "bypassPermissions", "plan"} {
+		t.Run(worker, func(t *testing.T) {
+			s, f := newQuietService(t)
+			ctx := context.Background()
+			startTaskLeader(t, s, f)
+			w := planWorker(t, s, f, nil)
+			sid := w.Agents[0].SessionID
+			f.setSessions("box", proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude",
+				Status: proto.StatusIdle, PermissionMode: proto.ModeBypass, UpdatedAt: time.Now()},
+				proto.Session{SessionID: sid, MachineID: "box", Cwd: "/code/app", Agent: "claude",
+					Status: proto.StatusWorking, PermissionMode: worker, UpdatedAt: time.Now()})
+			const marker = "the login page is stuck in design review"
+			raw, _ := json.Marshal(map[string]any{"kind": "blocked", "text": marker})
+			if res := s.agentTool(ctx, "box", sid, "report_to_supervisor", raw); res.IsError {
+				t.Fatalf("report refused: %+v", res)
+			}
+			waitFor(t, "the report to reach the leader", func() bool { return len(sendsTo(f, "box", "s1")) > 0 })
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			for _, call := range f.calls {
+				if call.Method != DeviceSessionSend {
+					continue
+				}
+				b, _ := json.Marshal(call.Params)
+				var p map[string]any
+				_ = json.Unmarshal(b, &p)
+				if text, _ := p["text"].(string); p["session_id"] == "s1" && strings.Contains(text, marker) {
+					for k := range p {
+						if strings.EqualFold(k, "from_mode") || strings.EqualFold(k, "owner_input") {
+							t.Errorf("a supervision message claims %s: %v", k, p[k])
+						}
+					}
+					return
+				}
+			}
+			t.Fatal("no supervision message to the leader")
+		})
+	}
+}
+
+// A retry that gets an unconfirmed supervision message to the leader records it as a digest would: its turn is told
+// then, so a manager restarted afterwards does not deliver it again (#9607).
+func TestLeaderRetryDeliveredMarksTheTurnToldAndDeduplicatesSignals(t *testing.T) {
+	for _, status := range []string{proto.StatusIdle, proto.StatusOffline} {
+		t.Run(status, func(t *testing.T) { checkLeaderRetryDelivery(t, status) })
+	}
+}
+
+func checkLeaderRetryDelivery(t *testing.T, status string) {
+	t.Helper()
+	s, f := newQuietService(t)
+	s.leaderResume = 50 * time.Millisecond
+	ctx := context.Background()
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	blocked := planWorker(t, s, f, nil)
+	if _, _, err := s.updateSupervision(ctx, w.ID, func(v *Supervision) bool { v.State = reviewPending; return true }); err != nil {
+		t.Fatal(err)
+	}
+	s.supervise.mu.Lock()
+	s.supervise.init()
+	s.supervise.mu.Unlock()
+	g := superviseSignal{Todo: w.ID, Kind: sigReview, Key: reviewKey(todoNow(s, w.ID).Supervision), Machine: "box",
+		Session: w.Agents[0].SessionID, Detail: "done", At: time.Now()}
+	// The blocked report renders before the review, which is first in the input.
+	signals := []superviseSignal{g, {Todo: blocked.ID, Kind: sigReport, Report: upReportBlocked, Machine: "box",
+		Session: blocked.Agents[0].SessionID, Detail: "waiting for access", At: g.At}}
+	b := &s.tasks.turns
+	b.mu.Lock()
+	if !s.turnsLocked(ctx) {
+		b.mu.Unlock()
+		t.Fatal("cannot load the turn ledger")
+	}
+	b.doc.Turns[w.ID] = taskTurn{Machine: "box", Session: g.Session, Key: g.Key, State: turnInterrupted,
+		Signal: &turnSignal{Kind: g.Kind, Key: g.Key, Detail: g.Detail}}
+	b.mu.Unlock()
+	lead, _, ok := s.leaderSupervisor(todoNow(s, w.ID))
+	if !ok {
+		t.Fatal("no leader")
+	}
+	f.setSessions("box", proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude",
+		Status: status, UpdatedAt: time.Now()})
+	f.mu.Lock()
+	f.failSend = &rpc.Error{Code: "peer_unconfirmed", Message: "not taken", Data: json.RawMessage(`{"delivered":"unknown"}`)}
+	f.mu.Unlock()
+	s.supervise.dedupMu.Lock()
+	first := s.deliverToLeaderAgent(ctx, lead, signals, "", time.Now(), time.Time{})
+	s.supervise.dedupMu.Unlock()
+	b.mu.Lock()
+	toldBefore := b.doc.Turns[w.ID].Signal.Told != nil
+	b.mu.Unlock()
+	if first || toldBefore {
+		t.Fatalf("the unconfirmed send: delivered %v, told %v", first, toldBefore)
+	}
+	waitFor(t, "the first attempt to escalate", func() bool { return leaderEscalations(f) > 0 })
+	f.mu.Lock()
+	f.failSend = nil
+	f.mu.Unlock()
+	waitFor(t, "the retry to reach the leader", func() bool { return len(deliveredTo(f, "s1")) > 0 })
+	waitFor(t, "the retried turn to be told", func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.doc.Turns[w.ID].Signal.Told != nil
+	})
+
+	var entries []prompts.SuperviseEntry
+	for _, signal := range signals {
+		entry, ok := s.digestEntry(ctx, signal, "")
+		if !ok {
+			t.Fatalf("signal %s has no digest entry", signal.Kind)
+		}
+		entries = append(entries, entry)
+	}
+	s.supervise.dedupMu.Lock()
+	defer s.supervise.dedupMu.Unlock()
+	remaining, _, rollback, err := s.reserveSupervision(ctx, entries, signals, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollback()
+	if len(remaining) != 0 {
+		t.Errorf("the retry left %d of %d delivered signals eligible for redelivery", len(remaining), len(signals))
 	}
 }
 
@@ -1328,7 +1850,8 @@ func TestNeedsUserFromTaskLeaderIsReviewedByLeaderConversation(t *testing.T) {
 	if cur := todoNow(s, w.ID); cur.Supervision.Supervisor != "box/s1" || cur.Supervision.State != reviewRework {
 		t.Fatalf("lead1 took the worker over, or its state: %+v", cur.Supervision)
 	}
-	if res, err := review("lead1", map[string]any{"todo_id": w.ID, "verdict": "accepted", "note": "好了"}); err != nil || !strings.Contains(res, "accepted and closed") {
+	if res, err := review("lead1", map[string]any{"todo_id": w.ID, "verdict": "accepted", "note": "好了",
+		"checks": completeReviewChecks(todoNow(s, w.ID))}); err != nil || !strings.Contains(res, "accepted and closed") {
 		t.Fatalf("lead1's accepted: %s %v", res, err)
 	}
 	if cur := todoNow(s, w.ID); cur.DoneAt == nil || cur.Supervision.State != reviewAccepted || cur.Supervision.Supervisor != "box/s1" {
@@ -1420,5 +1943,75 @@ func TestLeaderWorkersNeedABrief(t *testing.T) {
 	}
 	if res = call(map[string]any{"title": "查一下", "prompt": "查", "readonly": true, "goal": "知道登录页为什么崩", "expect_minutes": 10}); res.IsError {
 		t.Fatalf("a read-only worker with its brief: %+v", res)
+	}
+}
+
+// A worker's turn whose supervision message went in only on a retry (the first send unconfirmed) is told then, in the
+// stored ledger: a manager restarted afterwards does not deliver the same review to the leader again (#9607).
+func TestLeaderRetryDeliveredIsNotRedeliveredAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	database := &profileTaskStore{memStore: &memStore{}, plans: map[string]db.TaskPlanRow{}}
+	s, f := newQuietServiceOn(t, database)
+	s.leaderResume = 50 * time.Millisecond
+	f.judge = `{"verdict":"done","reason":"PR 已合并"}`
+	startTaskLeader(t, s, f)
+	w := planWorker(t, s, f, nil)
+	worker := w.Agents[0].SessionID
+	s.superviseWatch(ctx, time.Now())
+	f.setSessions("box",
+		proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusIdle},
+		proto.Session{SessionID: worker, MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusWorking, State: proto.StateWorking, UpdatedAt: time.Now()})
+	s.taskWorking(ctx, "box", worker)
+	f.mu.Lock()
+	f.failSend = &rpc.Error{Code: "peer_unconfirmed", Message: "not taken", Data: json.RawMessage(`{"delivered":"unknown"}`)}
+	f.mu.Unlock()
+	f.setSessions("box",
+		proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusIdle, UpdatedAt: time.Now()},
+		proto.Session{SessionID: worker, MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusDone, State: proto.StateUnread, LastText: "做完了，PR https://github.com/o/r/pull/7 已合并", UpdatedAt: time.Now()})
+	s.taskTurnEnded(ctx, "box", worker)
+	turnsQuiet(t, s, w.ID)
+	waitFor(t, "the unconfirmed send", func() bool { return len(sendsTo(f, "box", "s1")) > 0 })
+	s.supervise.dedupMu.Lock()
+	s.supervise.dedupMu.Unlock()
+	f.mu.Lock()
+	f.failSend = nil
+	f.mu.Unlock()
+	waitFor(t, "the retry to reach the leader", func() bool { return len(deliveredTo(f, "s1")) > 0 })
+	waitFor(t, "the retried turn to be told", func() bool {
+		turn, ok := s.turnOf(ctx, w.ID)
+		return ok && turn.Signal != nil && turn.Signal.Told != nil
+	})
+
+	s.supervise.mu.Lock()
+	if s.supervise.timer != nil {
+		s.supervise.timer.Stop()
+		s.supervise.timer = nil
+	}
+	s.supervise.mu.Unlock()
+	restarted, hub := restartedOn(t, database)
+	// The fixture's store keeps no todo rows: the restarted manager gets the same ones, under its lock (its own
+	// goroutines already read them).
+	s.todos.mu.RLock()
+	rows := make(map[string]*Todo, len(s.todos.todos))
+	for id, row := range s.todos.todos {
+		cloned := copyTodoLocked(row)
+		rows[id] = &cloned
+	}
+	s.todos.mu.RUnlock()
+	restarted.todos.mu.Lock()
+	restarted.todos.todos, restarted.todos.loaded = rows, true
+	restarted.todos.mu.Unlock()
+	hub.setSessions("box",
+		proto.Session{SessionID: "s1", MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusIdle, UpdatedAt: time.Now()},
+		proto.Session{SessionID: worker, MachineID: "box", Cwd: "/code/app", Agent: "claude", Status: proto.StatusDone, State: proto.StateUnread, LastText: "做完了，PR https://github.com/o/r/pull/7 已合并", UpdatedAt: time.Now()})
+	restarted.superviseWatch(ctx, time.Now())
+	turnsQuiet(t, restarted, w.ID)
+	for range 3 {
+		restarted.sendDigest(ctx)
+	}
+	for _, m := range deliveredTo(hub, "s1") {
+		if strings.Contains(m, w.ID) {
+			t.Fatalf("the review the leader took on a retry was delivered again after a restart:\n%s", m)
+		}
 	}
 }

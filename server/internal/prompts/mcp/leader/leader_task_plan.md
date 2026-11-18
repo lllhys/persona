@@ -64,7 +64,7 @@ Hand part of your own task to workers: each task you give this starts a new codi
               "bypassPermissions",
               "plan"
             ],
-            "description": "empty: the default mode for a writable task. Claude-family launchers always use bypassPermissions; readonly=true adds a first-prompt constraint instead of forcing plan. Codex read-only tasks keep plan"
+            "description": "empty: the default mode for a writable task. Claude-family launchers always use bypassPermissions; readonly=true adds a first-prompt constraint; Codex keeps plan; traex and omp take none"
           },
           "readonly": {
             "type": "boolean",

@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "operation": "inbox_bar_landing",
+  "cases": [
+    {
+      "name": "action",
+      "description": "需要你的事项落在需要你。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "a1",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z",
+          "tier": "action",
+          "status": "action"
+        }
+      },
+      "expected": {
+        "choice": "action",
+        "open_collapsed": false
+      }
+    },
+    {
+      "name": "untriaged",
+      "description": "还没分拣的落在需要你。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "u1",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z"
+        }
+      },
+      "expected": {
+        "choice": "action",
+        "open_collapsed": false
+      }
+    },
+    {
+      "name": "working",
+      "description": "进行中的落在进行中。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "w1",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z",
+          "tier": "action",
+          "status": "working"
+        }
+      },
+      "expected": {
+        "choice": "working",
+        "open_collapsed": false
+      }
+    },
+    {
+      "name": "fyi",
+      "description": "知悉即可的落在知悉即可。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "f1",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z",
+          "tier": "fyi",
+          "status": "fyi"
+        }
+      },
+      "expected": {
+        "choice": "fyi",
+        "open_collapsed": false
+      }
+    },
+    {
+      "name": "unknown_status",
+      "description": "status 不认识按 tier。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "f2",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z",
+          "tier": "fyi",
+          "status": "later"
+        }
+      },
+      "expected": {
+        "choice": "fyi",
+        "open_collapsed": false
+      }
+    },
+    {
+      "name": "collapsed",
+      "description": "已折叠的没有自己的选项：落在全部，并展开已折叠。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "n1",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z",
+          "tier": "noise",
+          "status": "noise"
+        }
+      },
+      "expected": {
+        "choice": "all",
+        "open_collapsed": true
+      }
+    },
+    {
+      "name": "done",
+      "description": "已处理的落在已处理，done_at 优先于 status。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "item": {
+          "id": "d1",
+          "source": "lark",
+          "kind": "dm",
+          "account": "feishu",
+          "account_name": "飞书",
+          "title": "示例事项",
+          "preview": "示例内容",
+          "count": 1,
+          "updated_at": "2026-01-01T00:59:00Z",
+          "tier": "action",
+          "status": "action",
+          "done_at": "2026-01-01T01:00:00Z"
+        }
+      },
+      "expected": {
+        "choice": "done",
+        "open_collapsed": false
+      }
+    }
+  ]
+}

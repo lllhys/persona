@@ -55,7 +55,12 @@ class AssistantChatDetailsShotsTest {
         toolName = "Bash", summary = "Run the integration tests")
     private val elsewhere = WaitingRequest(SessionKey("computer-b", "weather"), "plan-1", "weather-app", "Plan ready")
 
-    private inner class Fixture {
+    private val transcript = listOf(
+        Item("user", 1, role = "user", kind = "text", text = "What is left on the release?", ts = "2026-11-01T09:00:00Z"),
+        Item("answer", 2, role = "assistant", kind = "text", text = "The web interface is being updated; it needs your go-ahead to run the tests.", ts = "2026-11-01T09:00:01Z"),
+    )
+
+    private inner class Fixture(val items: List<Item> = transcript) {
         val requests = MutableStateFlow(listOf(permission))
         val opened = mutableListOf<Pair<SessionKey, String>>()
         val sessionRows = MutableStateFlow(listOf(Session(main.machineId, main.sessionId, title = "Persona", assistant = true,
@@ -92,10 +97,7 @@ class AssistantChatDetailsShotsTest {
         }
         val tasks = TasksStore(api, connection, scope).also { it.reloadTodos() }
         val chats = object : ChatRepository {
-            override fun observe(session: SessionKey) = flowOf(ChatSnapshot(loading = false, items = listOf(
-                Item("user", 1, role = "user", kind = "text", text = "What is left on the release?", ts = "2026-11-01T09:00:00Z"),
-                Item("answer", 2, role = "assistant", kind = "text", text = "The web interface is being updated; it needs your go-ahead to run the tests.", ts = "2026-11-01T09:00:01Z"),
-            )))
+            override fun observe(session: SessionKey) = flowOf(ChatSnapshot(loading = false, items = items))
             override suspend fun loadOlder(session: SessionKey) = Unit
             override suspend fun expandFold(session: SessionKey, fromSeq: Int, toSeq: Int) = emptyList<Item>()
         }
@@ -177,7 +179,50 @@ class AssistantChatDetailsShotsTest {
             rule.onNodeWithTag("assistant-tray-shelved").performClick(); settle()
             rule.mainClock.advanceTimeBy(1_000); rule.waitForIdle() // the sheet slides up
             rule.onNodeWithText("Tidy the release notes").assertExists()
+            // iOS's board has no Shelved section either (`TaskBoardSheet`): a shelved task sits under its own state, with the
+            // others of it, as Android's always has; "Shelved" is the To-dos page's section.
+            rule.onNodeWithText("Compare the backup plans").assertExists()
+            rule.onAllNodes(hasText("Shelved") and hasAnyAncestor(isDialog())).assertCountEquals(0)
             shot("$name-5-board", dialog = true)
+        }
+    }
+
+    // iOS's DayLine over a first message the transcript does not have yet (#1911): Persona's conversation says its day from the
+    // start (Glass), so the line does not appear above it later; the day it was written. Brief and Board keep the page.
+    @Test fun aFirstMessageNotInTheTranscriptYetHasItsDayOnGlass() {
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        val fixture = Fixture(items = emptyList()).apply {
+            requests.value = emptyList()
+            outbox.value = listOf(OutboxMessage("first", main, "Plan a weekend in the mountains", DeliveryState.Sent, mainTarget = true,
+                createdAt = java.time.LocalDate.now().atTime(8, 30).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()))
+        }
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            val configuration = Configuration(LocalConfiguration.current).apply {
+                uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                    if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+            }
+            CompositionLocalProvider(LocalConfiguration provides configuration) {
+                PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                    Box(Modifier.fillMaxSize().background(PersonaTheme.palette.background).testTag("assistant-chat-shot")) {
+                        ChatScreen(main, fixture.chats, fixture.sender, fixture.interactions, fixture.sessions, {},
+                            chrome = ChatChromeBindings(tasks = fixture.tasks),
+                            renderStyle = ChatRenderStyle.Assistant, embedded = true, showTopBar = false)
+                    }
+                }
+            }
+        }
+        settle()
+        rule.waitUntil(10_000) { rule.onAllNodesWithTag("assistant-tray-bar").fetchSemanticsNodes().isNotEmpty() }
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d; settle()
+            val name = "${s.name.lowercase()}-${if (d) "dark" else "light"}"
+            rule.onNodeWithText("Plan a weekend in the mountains").assertExists()
+            rule.onNodeWithText("Persona is getting ready…").assertExists()
+            if (s == AppStyle.Glass) rule.onNodeWithTag("chat-pending-day").assertExists().assert(hasText("Today · ", substring = true))
+            else rule.onAllNodesWithTag("chat-pending-day").assertCountEquals(0)
+            shot("$name-6-first-message")
         }
     }
 }

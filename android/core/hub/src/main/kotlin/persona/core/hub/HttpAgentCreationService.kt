@@ -44,9 +44,13 @@ class HttpAgentCreationService(
         }
     }
     private fun request(vararg segments: String) = Request.Builder().url(url(*segments)).header("Authorization", "Bearer $token")
-    override suspend fun launchers(machineId: String): List<AgentLauncher> {
+    override suspend fun launchers(machineId: String): List<AgentLauncher> = launcherList(machineId).launchers
+    override suspend fun launcherList(machineId: String): AssistantLaunchers {
         val body = read(request("api", "v1", "machines", machineId, "launchers").build())
-        return JsonCodec.decodeFromJsonElement(body["launchers"] ?: JsonArray(emptyList()))
+        // What New Agent lists off there (#8109) adds to the answer: a list this client can't read costs none of the launchers.
+        val unavailable = try { JsonCodec.decodeFromJsonElement<List<UnavailableLauncher>>(body["unavailable"] ?: JsonArray(emptyList())) }
+            catch (_: IllegalArgumentException) { emptyList() }
+        return AssistantLaunchers(JsonCodec.decodeFromJsonElement(body["launchers"] ?: JsonArray(emptyList())), unavailable = unavailable)
     }
     override suspend fun directories(machineId: String, path: String): AgentDirectories = JsonCodec.decodeFromJsonElement(read(
         request("api", "v1", "machines", machineId, "dirs")
@@ -110,24 +114,63 @@ class HttpAgentCreationService(
         // Hubs without the list: no model picker, the launcher's own model as before.
         if (failure.status == 404) null else throw failure
     }
-    override suspend fun worktreeStatus(machineId: String, cwd: String): WorktreeStatus? = try {
-        JsonCodec.decodeFromJsonElement<WorktreeStatus>(worktree(machineId, "status", buildJsonObject { put("cwd", cwd) }))
+    override suspend fun worktreeStatus(machineId: String, cwd: String, kind: String?): WorktreeStatus? = try {
+        JsonCodec.decodeFromJsonElement<WorktreeStatus>(worktree(machineId, "status", buildJsonObject {
+            put("cwd", cwd)
+            kind?.let { put("kind", it) }
+        }))
     } catch (cancelled: CancellationException) { throw cancelled }
     catch (_: Exception) { null } // an older node or hub, offline, an error: no worktree offered
 
-    override suspend fun addWorktree(machineId: String, cwd: String, nameHint: String, branch: String): WorktreeAdded =
+    override suspend fun addWorktree(machineId: String, cwd: String, nameHint: String, branch: String, kind: String?): WorktreeAdded =
         JsonCodec.decodeFromJsonElement(worktree(machineId, "add", buildJsonObject {
             put("cwd", cwd)
             if (nameHint.isNotEmpty()) put("name_hint", nameHint)
             branch.trim().takeIf(String::isNotEmpty)?.let { put("branch", it) }
+            kind?.let { put("kind", it) }
         }))
 
-    override suspend fun removeWorktree(machineId: String, path: String, deleteBranch: Boolean, force: Boolean): WorktreeRemoved =
+    override suspend fun removeWorktree(machineId: String, path: String, deleteBranch: Boolean, force: Boolean, kind: String?): WorktreeRemoved =
         JsonCodec.decodeFromJsonElement(worktree(machineId, "remove", buildJsonObject {
             put("path", path)
             if (deleteBranch) put("delete_branch", true)
             if (force) put("force", true)
+            kind?.let { put("kind", it) }
         }))
+
+    // The catalog covers every computer of the hub: only [machineId]'s rows. An older hub (404), an offline catalog or
+    // any other failure shows no workspace choice, never an error.
+    override suspend fun workspaces(machineId: String): List<AgentWorkspace> = try {
+        workspaceCatalog(machineId).takeIf { it.complete }?.workspaces.orEmpty()
+    } catch (cancelled: CancellationException) { throw cancelled }
+    catch (_: Exception) { emptyList() }
+
+    override suspend fun workspaceCatalog(machineId: String): AgentWorkspaceCatalog {
+        val body = read(request("api", "v1", "workspaces").build())
+        val workspaces = body["workspaces"] as? JsonArray ?: throw IllegalStateException("Malformed workspace catalog")
+        val errors = when (val value = body["errors"]) {
+            null, JsonNull -> JsonArray(emptyList())
+            is JsonArray -> value
+            else -> throw IllegalStateException("Malformed workspace catalog errors")
+        }
+        // Existing hubs flatten source failures to machine_id/error; never parse their localized error text.
+        val failed = errors.any { element ->
+            val error = element as? JsonObject ?: throw IllegalStateException("Malformed workspace catalog error")
+            val errorMachine = (error["machine_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf(String::isNotBlank)
+                ?: throw IllegalStateException("Malformed workspace catalog error machine")
+            val source = when (val value = error["source"]) {
+                null, JsonNull -> null
+                is JsonPrimitive -> value.takeIf { it.isString }?.content ?: throw IllegalStateException("Malformed workspace catalog error source")
+                else -> throw IllegalStateException("Malformed workspace catalog error source")
+            }
+            errorMachine == machineId && (source.isNullOrBlank() || source == "paseo")
+        }
+        // Every computer's workspaces: decoded off the caller's (the form's main) thread.
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            AgentWorkspaceCatalog(JsonCodec.decodeFromJsonElement<List<AgentWorkspace>>(workspaces)
+                .filter { it.machineId == machineId }, complete = !failed)
+        }
+    }
 
     // git can take a while on a big repository: the start's budget, not the list's.
     private suspend fun worktree(machineId: String, action: String, body: JsonObject) = read(

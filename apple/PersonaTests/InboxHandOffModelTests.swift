@@ -1,10 +1,11 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Hand to AI (docs/assistant/inbox.md "Item actions", #1194): Persona's main chat is the default and goes through the
-/// item's hand-off, Also Mark as Done follows the target until the user sets it, a retry of the same hand-off keeps its
-/// client id and text only while it may have gone, and an older hub gets the text as a plain message.
+/// item's hand-off, Also Mark as Done stays off for every target until the user sets it, a retry of the same hand-off
+/// keeps its client id and text only while it may have gone, and an older hub gets the text as a plain message.
 @MainActor
 struct InboxHandOffModelTests {
     private final class Calls {
@@ -12,7 +13,7 @@ struct InboxHandOffModelTests {
         var opened: [(key: SessionKey, text: String, clientID: UUID)] = []
         var asked: [String] = []
         var started: [String] = []
-        var agents: [(key: SessionKey, text: String)] = []
+        var agents: [(key: SessionKey, text: String, markDone: Bool)] = []
         var agentAccepted = true
         var agentFiled = false
         var agentError: String?
@@ -55,6 +56,7 @@ struct InboxHandOffModelTests {
                 if !calls.failures.isEmpty { throw calls.failures.removeFirst() }
                 return Self.main
             },
+            record: { _, _, _, _, _ in },
             showMain: { calls.opened.append(($0, $1, $2)) },
             plainToMain: {
                 calls.asked.append($0)
@@ -65,11 +67,12 @@ struct InboxHandOffModelTests {
                 calls.started.append($0)
                 return Self.fresh
             },
-            sendToAgent: { key, text, _ in
-                calls.agents.append((key, text))
+            sendToAgent: { key, text, markDone in
+                calls.agents.append((key, text, markDone))
                 if let delay = calls.agentDelay { try? await Task.sleep(for: delay) }
                 return calls.agentAccepted ? InboxHandOffModel.AgentSendResult(delivered: true, error: nil, filed: calls.agentFiled) : .failed(calls.agentError)
             },
+            waitForNewAgent: { _, _ in .sent },
             open: { calls.went.append(($0, $1)) },
             markDone: { calls.done += 1 }))
     }
@@ -90,18 +93,27 @@ struct InboxHandOffModelTests {
         #expect(calls.done == 0 && calls.started.isEmpty && calls.asked.isEmpty && calls.agents.isEmpty)
     }
 
-    @Test func markAsDoneFollowsTheTargetUntilTheUserSetsIt() async {
+    @Test func markAsDoneStaysOffForEveryTargetUntilTheUserSetsIt() async {
+        let agent = SessionKey(machineID: "m", sessionID: "a")
+        for target: InboxHandOffModel.Target in [.main, .newChat, .agent(agent)] {
+            #expect(!InboxHandOffModel.marksDone(target))
+        }
+
         let m = model(Calls())
         m.target = .newChat
-        #expect(m.markDone)
-        m.target = .agent(SessionKey(machineID: "m", sessionID: "a"))
-        #expect(m.markDone)
+        #expect(!m.markDone)
+        m.target = .agent(agent)
+        #expect(!m.markDone)
         m.target = .main
         #expect(!m.markDone)
         m.setMarkDone(true)
         m.target = .newChat
         m.target = .main
         #expect(m.markDone) // the user's choice stays
+        m.setMarkDone(false)
+        m.target = .agent(agent)
+        m.target = .newChat
+        #expect(!m.markDone) // so does an explicit choice to leave the item open
 
         let calls = Calls(), checked = model(calls)
         checked.setMarkDone(true)
@@ -109,16 +121,30 @@ struct InboxHandOffModelTests {
         #expect(calls.done == 1 && calls.opened.count == 1)
     }
 
-    @Test func aNewChatAndAnAgentGetTheTextAndFileTheItem() async throws {
+    @Test func aNewChatAndAnAgentGetTheTextAndLeaveTheItemOpen() async throws {
         let calls = Calls(), m = model(calls)
         m.target = .newChat
         let started = await m.send(ask: "a")
-        #expect(started && calls.started.count == 1 && calls.done == 1 && calls.handOffs.isEmpty)
+        #expect(started && calls.started.count == 1 && calls.done == 0 && calls.handOffs.isEmpty)
         let agent = SessionKey(machineID: "m", sessionID: "a")
         m.target = .agent(agent)
         let sent = await m.send(ask: "b")
         let a = try #require(calls.agents.first)
-        #expect(sent && a.key == agent && ContextRef.parse(a.text).rest == "b" && calls.done == 2 && calls.handOffs.isEmpty)
+        #expect(sent && a.key == agent && ContextRef.parse(a.text).rest == "b" && !a.markDone && calls.done == 0 && calls.handOffs.isEmpty)
+    }
+
+    @Test func aUsersMarkAsDoneChoiceStillFilesNewChatsAndAgents() async throws {
+        let calls = Calls(), m = model(calls)
+        m.target = .newChat
+        m.setMarkDone(true)
+        let started = await m.send(ask: "a")
+        #expect(started && calls.done == 1)
+
+        let agent = SessionKey(machineID: "m", sessionID: "a")
+        m.target = .agent(agent)
+        let sent = await m.send(ask: "b")
+        let a = try #require(calls.agents.first)
+        #expect(sent && a.markDone && calls.done == 2)
     }
 
     @Test func handOffListsOnlyAgentsThatCanTakeAMessage() throws {
@@ -149,6 +175,7 @@ struct InboxHandOffModelTests {
         let calls = Calls(), m = model(calls)
         calls.agentDelay = .milliseconds(100)
         m.target = .agent(SessionKey(machineID: "m", sessionID: "a"))
+        m.setMarkDone(true)
         let sending = Task { await m.send(ask: "a") }
         try await Task.sleep(for: .milliseconds(20))
         #expect(m.sending && calls.done == 0)
@@ -160,6 +187,7 @@ struct InboxHandOffModelTests {
         let calls = Calls(), m = model(calls)
         calls.agentFiled = true
         m.target = .agent(SessionKey(machineID: "m", sessionID: "a"))
+        m.setMarkDone(true)
         #expect(await m.send(ask: "a"))
         #expect(calls.done == 0)
     }
@@ -497,6 +525,29 @@ struct InboxHandOffModelTests {
         #expect(await m.send(ask: "c"))
         m.open()
         #expect(calls.went.last?.target == .agent(agent) && calls.went.last?.key == agent && calls.went.count == 3)
+    }
+
+    /// The Mac sheet (#5921): a send opens nothing while the sheet is up; once it has closed, where it went opens once.
+    @Test func aSendFromTheSheetOpensOnlyOnceTheSheetHasClosed() async {
+        let calls = Calls(), m = model(calls)
+        m.target = .newChat
+        #expect(await m.send(ask: "a"))
+        m.openWhenClosed()
+        #expect(calls.went.isEmpty && m.opensWhenClosed)
+        m.closed()
+        #expect(calls.went.count == 1 && calls.went[0].target == .newChat && calls.went[0].key == Self.fresh)
+        m.closed() // a second disappearance opens nothing more
+        #expect(calls.went.count == 1 && !m.opensWhenClosed)
+    }
+
+    @Test func aSheetClosedWithoutASendOpensNothing() async {
+        let calls = Calls(), m = model(calls)
+        m.closed() // Cancel
+        calls.failures = [APIError(status: 400, message: "no")]
+        #expect(!(await m.send(ask: "a")))
+        m.openWhenClosed() // nothing went, so nothing is waiting
+        m.closed() // Cancel after the error
+        #expect(calls.went.isEmpty && !m.opensWhenClosed)
     }
 
     @Test func aFailedSendHasNowhereToOpen() async {

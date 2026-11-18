@@ -28,7 +28,8 @@ class ExtensionManagementMock:
                 'source': 'installed', 'version': '1.0.0', 'config': {}, 'permissions': [], 'contributes': {}},
             'sample-pack': {'id': 'sample-pack', 'name': '示例扩展合集', 'kind': 'extension_pack', 'status': 'running', 'enabled': True,
                 'source': 'installed', 'version': '1.0.0', 'origin': 'market:' + market + '/sample-pack', 'config': {}, 'permissions': [],
-                'extension_pack': [{'id': 'sample-kit'}, {'id': 'sample-extra'}]},
+                'extension_pack': [{'id': 'sample-kit'}, {'id': 'sample-extra'}], 'pack_members_follow': True,
+                'pack_on': [{'id': 'sample-kit', 'name': '示例工具包'}, {'id': 'sample-extra', 'name': '示例补充工具'}]},
         }
         for eid, name in [('sample-pack', '示例扩展合集'), ('sample-kit', '示例工具包'), ('sample-unresolved', '缺少依赖的示例')]:
             catalog.append({'id': eid, 'name': name, 'version': '1.0.0', 'description': '仅用于扩展管理的回归测试。',
@@ -52,6 +53,24 @@ class ExtensionManagementMock:
         kit = self.plugins.get('sample-kit')
         return bool(kit and kit['enabled'] and next((c['enabled'] for c in kit['contributions'] if c['point'] == point and c['id'] == cid), True))
 
+    def sync_pack(self):
+        pack = self.plugins.get('sample-pack')
+        if not pack:
+            return
+        on = [{'id': ref['id'], 'name': self.plugins[ref['id']]['name']} for ref in pack['extension_pack']
+              if self.plugins.get(ref['id'], {}).get('enabled')]
+        if on:
+            pack['pack_on'] = on
+        else:
+            pack.pop('pack_on', None)
+        if not pack.get('pack_off'):
+            pack.pop('pack_off', None)
+
+    def forget_pack_member(self, member_id):
+        pack = self.plugins.get('sample-pack')
+        if pack and member_id in pack.get('pack_off', []):
+            pack['pack_off'].remove(member_id)
+
     def route(self, handler, path, body):
         parsed = urlsplit(handler.path)
         q = parse_qs(parsed.query)
@@ -60,6 +79,7 @@ class ExtensionManagementMock:
         if path == '/mock/extension-management':
             if method == 'POST':
                 self.reset(request)
+            self.sync_pack()
             handler.send_json({'writes': self.writes, 'theme_reads': self.theme_reads, 'detail_reads': self.detail_reads,
                 'kit': self.plugins.get('sample-kit'), 'pack': self.plugins.get('sample-pack'),
                 'extra': self.plugins.get('sample-extra'), 'child': self.plugins.get('sample-child')})
@@ -125,6 +145,7 @@ class ExtensionManagementMock:
         rest = parts[6:]
         if method == 'GET' and rest in [[], ['']]:
             if eid == 'sample-kit': self.detail_reads += 1
+            if eid == 'sample-pack': self.sync_pack()
             handler.send_json(kit)
             return True
         if method == 'PUT' and rest == ['config']:
@@ -150,12 +171,29 @@ class ExtensionManagementMock:
                     if self.plugins.pop('sample-kit', None): removed.append('sample-kit')
                 handler.send_json({'ok': True, 'removed_members': removed})
                 return True
+            if eid == 'sample-pack':
+                enabled_members = [ref['id'] for ref in kit['extension_pack'] if self.plugins.get(ref['id'], {}).get('enabled')]
+                for member_id in enabled_members:
+                    self.plugins[member_id]['enabled'] = False
+                    self.plugins[member_id]['status'] = 'disabled'
+                    if member_id not in kit.setdefault('pack_off', []):
+                        kit['pack_off'].append(member_id)
+            else:
+                self.forget_pack_member(eid)
             kit['enabled'] = False
             kit['status'] = 'disabled'
         elif method == 'PUT' and rest == ['enabled']:
             kit['enabled'] = True
             kit['status'] = 'running'
+            if eid == 'sample-pack':
+                for member_id in kit.pop('pack_off', []):
+                    if member_id in self.plugins:
+                        self.plugins[member_id]['enabled'] = True
+                        self.plugins[member_id]['status'] = 'running'
+            else:
+                self.forget_pack_member(eid)
         else:
             return False
+        if eid == 'sample-pack': self.sync_pack()
         handler.send_json(kit)
         return True

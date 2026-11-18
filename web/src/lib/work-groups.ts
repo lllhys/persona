@@ -22,6 +22,8 @@ export interface WorkGroupNode {
   id: string;
   /** Its first step's seq: a group inside a fold the reader opened starts open. */
   seq?: number;
+  /** Inner work clock; the outer summary measures the whole exchange. */
+  clock?: "run" | "exchange";
   children: WorkNode[];
   /** The run still going at the end of a live exchange (in a timeline: its last run, with no words after it). */
   live: boolean;
@@ -124,17 +126,16 @@ function createGroup(run: Step[], next: Step | undefined, live: boolean, prevBou
 /** cindy's createCompletedWorkGroup: a summary whose steps hold intermediate narration opens to that narration in order,
  *  each maximal run of other steps between two pieces of it an inner group (its clock from the narration before it, or
  *  the turn's start, to the narration after it, else its latest end). Null without narration: the steps stay direct.
- *  `work` is the summary's steps: the latest text (in the slot) is not among them, so it is no boundary. `answer`: that
- *  text when it came after the last run, which is then over and ends there; otherwise, while the turn is live, the last
- *  run is the one still going. */
-function timeline(work: Step[], answer: Step | undefined, turnStart: number | null, live: boolean): WorkNode[] | null {
+ *  A trailing answer stays in the slot and ends the last run. Interleaved progress also appears here at its original
+ *  position as a clock boundary, but stays only in the latest-text slot until newer words supersede it. */
+function timeline(work: Step[], answer: Step | undefined, turnStart: number | null, live: boolean, latestText?: Step): WorkNode[] | null {
   if (!work.some(isAnswer)) return null;
   const out: WorkNode[] = [];
   let run: Step[] = [];
   let prev = turnStart;
   // a text without words is no boundary: it goes with the run around it, and alone it is drawn as before (as nothing)
   const flush = (next: Step | undefined, live: boolean) => {
-    if (run.some((s) => s.kind !== "text")) out.push(createGroup(run, next, live, prev));
+    if (run.some((s) => s.kind !== "text")) out.push({ ...createGroup(run, next, live, prev), clock: "run" });
     else out.push(...run.map((step) => ({ kind: "step" as const, step })));
     run = [];
   };
@@ -144,7 +145,7 @@ function timeline(work: Step[], answer: Step | undefined, turnStart: number | nu
       continue;
     }
     flush(s, false);
-    out.push({ kind: "step", step: s });
+    if (s !== latestText) out.push({ kind: "step", step: s });
     prev = stepStart(s);
   }
   flush(answer, live && !answer);
@@ -156,11 +157,12 @@ function timeline(work: Step[], answer: Step | undefined, turnStart: number | nu
 function groupTurn(items: Step[], turnStart: number | null, live: boolean, streaming: boolean, identity?: string): WorkNode[] {
   let latest = -1;
   if (!streaming) items.forEach((s, i) => isAnswer(s) && (latest = i));
+  const interleaved = latest >= 0 && items.slice(latest + 1).some((s) => s.kind !== "text");
   const work: Step[] = [];
   const kept: WorkNode[] = [];
   for (let i = 0; i < items.length; i++) {
     const s = items[i];
-    if (i === latest) continue;
+    if (i === latest && !interleaved) continue;
     if (!isCompactStep(s)) work.push(s);
     else kept.push({ kind: "step", step: s });
   }
@@ -168,11 +170,12 @@ function groupTurn(items: Step[], turnStart: number | null, live: boolean, strea
   const group = work.length ? createGroup(work, answer, live, turnStart) : undefined;
   if (group) {
     // the latest text ends the last run when nothing but words came after it
-    const answered = answer && items.slice(latest + 1).every((s) => s.kind === "text") ? answer : undefined;
-    const children = timeline(work, answered, turnStart, live);
+    const answered = interleaved ? undefined : answer;
+    const children = timeline(work, answered, turnStart, live, answer);
     if (identity) group.id = `work-turn-${identity}`;
     if (children) {
       group.children = children;
+      group.clock = "exchange";
       // an outer line without the exchange's key (a part before a compaction or a gap) is known by its first step, as
       // its first inner group is: that one gets a key of its own, so each keeps its own open / closed state
       for (const c of children) if (c.kind === "group" && c.id === group.id) c.id = c.id.replace(/^work-/, "work-run-");
@@ -359,6 +362,21 @@ export function workDuration(msValue: number, opts: { minimumSeconds?: number; a
   const m = Math.floor(total / 60);
   const s = total % 60;
   return s || opts.alwaysShowRemainder ? t("lib-work-groups.dur_minutes_seconds", { m, s }) : t("lib-work-groups.dur_minutes", { m });
+}
+
+/** A tool call's own elapsed time, from its call timestamp to its result's (#8163). Both are transcript timestamps
+ *  rather than provider-recorded timing; null when either is missing or unparseable, or the result predates the call. */
+export function toolDurationMs(s: ToolStep): number | null {
+  const start = tsMs(s.use.ts);
+  const end = tsMs(s.result?.ts);
+  return start !== null && end !== null && end >= start ? end - start : null;
+}
+
+/** The quiet duration shown on an action row: a real span of a second or more. A sub-second or unfinished call says
+ *  nothing rather than guessing. */
+export function toolDurationLabel(s: ToolStep): string | null {
+  const ms = toolDurationMs(s);
+  return ms !== null && ms >= 1000 ? workDuration(ms) : null;
 }
 
 /** A finished group's title: "Worked for 1m 5s" ("Work details" without its times), and what it read when that is all

@@ -1,5 +1,6 @@
 import PersonaKit
 import SwiftUI
+import PersonaWire
 
 // Settings › Connectors (2026-11-01): where Persona' data comes from and acts — this device's data (phone_* tools), the mail
 // accounts, Lark (the hub's Lark gateway), and the Lark Bot the user talks to Persona through (FeishuBotView). Mail used to be managed from the inbox's ⋯ menu, this device's data was Phone Data.
@@ -202,7 +203,25 @@ nonisolated struct ConnectorDataDeleted: Codable, Sendable {
     var inbox: Int?
 }
 
+nonisolated extension LarkStatus {
+    /// An assistant without the chat connector (its manager has no route for it: an uncoded 404): not set up, as the web
+    /// app shows it, rather than a status that could not be read. A coded 404 such as `no_manager` remains an error.
+    static let absent = LarkStatus(configured: false, connected: false)
+}
+
 extension APIClient {
+    /// The chat connector's status as Settings shows it: `LarkStatus.absent` (and `absent` true) when this client's
+    /// assistant has none (404 without an error code), nil when it can't be read now or the assistant is unknown.
+    func chatConnectorStatus() async -> (status: LarkStatus?, absent: Bool) {
+        do {
+            return (try await larkStatus(), false)
+        } catch let e as APIError where e.status == 404 && e.code == nil {
+            return (.absent, true)
+        } catch {
+            return (nil, false)
+        }
+    }
+
     func larkStatus() async throws -> LarkStatus {
         if let source = messagingSource {
             return try await messagingGet(source, "status") { raw in
@@ -420,10 +439,10 @@ struct ConnectorsSection: View {
                         }
                         .settingsListRow(SettingsPage.mail)
                     case .lark:
-                        NavigationLink(value: SettingsPage.feishu) {
+                        NavigationLink(value: SettingsPage.feishu()) {
                             ConnectorRowLabel(title: String(localized: "Lark [Inbox Event Views 7e4419]"), symbol: Theme.Icon.mailAccounts, brand: Theme.Brand.lark, value: ConnectorText.larkSummary(lark))
                         }
-                        .settingsListRow(SettingsPage.feishu)
+                        .settingsListRow(SettingsPage.feishu())
                     case .hub(let c):
                         hubRow(c)
                     }
@@ -462,8 +481,10 @@ struct ConnectorsSection: View {
         bot = nil
         // An older hub has no connectors (feature "connectors"): its list stays as it was.
         let listed = model.hubFeatures.contains("connectors")
+        let chats = model.larkFeatures.chats
         async let a = try? api.mailAccounts()
-        async let l = model.larkFeatures.chats ? try? api.larkStatus() : nil
+        // An assistant without the chat connector says not set up (`LarkStatus.absent`), not a blank row.
+        async let l = chats ? api.chatConnectorStatus().status : nil
         async let b = try? api.feishuBot()
         await hub.load(listed: listed)
         let (accs, st, bs) = await (a, l, b)
@@ -505,6 +526,9 @@ private struct ConnectorRowLabel: View {
 /// Settings › Connectors › Lark: whether the hub reaches the Lark gateway, who is signed in, and what Persona does with it. The account
 /// itself is signed in on the hub's machine (docs/extensions/feishu.md), not here.
 struct FeishuConnectorView: View {
+    /// Whose page it is, as its route names it (Messages' Settings: the default's, whose account its chats follow); nil:
+    /// the current assistant's.
+    var manager: String? = nil
     @Environment(AppModel.self) private var model
     @Bindable private var larkHome = LarkHomePreference.shared
     @State private var status: LarkStatus?
@@ -512,6 +536,8 @@ struct FeishuConnectorView: View {
     @State private var loading = true
     @State private var failure: String?
     @State private var capturedAPI: APIClient?
+    /// The assistant has no chat connector (an uncoded 404): its page says not set up, with nothing to tweak.
+    @State private var absent = false
 
     var body: some View {
         SettingsForm {
@@ -568,15 +594,17 @@ struct FeishuConnectorView: View {
                 #endif
             }
 
-            Section {
-                if let source = model.hub?.messagingSources.first, let page = source.settingsUi {
-                    NavigationLink("Message Tweaks") { ExtensionPageView(plugin: source.`extension`, ui: page, title: String(localized: "Message Tweaks"), manager: capturedAPI?.managerID) }
-                } else if model.api?.messagingSource == nil {
-                    NavigationLink("Message Tweaks") { LarkMessageDisplaySettingsView() }
-                } else {
-                    // A source is in use but its list could not be read yet: not the old page (its switches are the
-                    // source's now), until the list comes.
-                    Text("Message Tweaks").foregroundStyle(.secondary)
+            if !absent {
+                Section {
+                    if let source = model.hub?.messagingSources.first, let page = source.settingsUi {
+                        NavigationLink("Message Tweaks") { ExtensionPageView(plugin: source.`extension`, ui: page, title: String(localized: "Message Tweaks"), manager: capturedAPI?.managerID) }
+                    } else if model.api?.messagingSource == nil {
+                        NavigationLink("Message Tweaks") { LarkMessageDisplaySettingsView() }
+                    } else {
+                        // A source is in use but its list could not be read yet: not the old page (its switches are the
+                        // source's now), until the list comes.
+                        Text("Message Tweaks").foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -589,7 +617,7 @@ struct FeishuConnectorView: View {
                 use(Theme.Icon.ai, String(localized: "Assistant"), String(localized: "Persona can search messages and read docs; sending messages and other changes ask you on your phone first"))
                 #endif
                 use(Theme.Icon.agents, "/agent", String(localized: "Start a message with /agent anywhere in Lark to have an agent handle it and reply for you"))
-                ModelConfigurationLink(title: String(localized: "/agent Model"), purposeID: "lark.agent")
+                ModelConfigurationLink(title: String(localized: "/agent Model"), purposeID: "lark.agent", owner: modelOwner)
             }
         }
         .themedPage()
@@ -606,8 +634,26 @@ struct FeishuConnectorView: View {
 
     private var stateText: String {
         guard let st = status else { return loading ? String(localized: "Checking…") : String(localized: "Couldn't get status") }
-        if !st.configured { return String(localized: "Not set up") }
-        return st.connected ? String(localized: "Connected [V N C Page 5be032]") : String(localized: "Can't reach the Lark gateway")
+        let state = !st.configured ? String(localized: "Not set up")
+            : st.connected ? String(localized: "Connected [V N C Page 5be032]") : String(localized: "Can't reach the Lark gateway")
+        // Another assistant's than the current one (the default's, opened from Messages) says whose it is.
+        return [state, ownerName].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// Whose model settings the page's /agent model is (`modelOwner(_:app:)`).
+    private var modelOwner: ModelSettingsOwner { Self.modelOwner(manager, app: model) }
+
+    /// The default assistant's on its page opened from Messages while another one is current, else the current
+    /// assistant's, as the rest of the page.
+    static func modelOwner(_ manager: String?, app: AppModel) -> ModelSettingsOwner {
+        guard let manager, app.assistantManagerID != nil, manager == app.managerRoster?.defaultID else { return .current }
+        return .defaultAssistant
+    }
+
+    /// The name of the assistant whose page this is, when another than the current one.
+    private var ownerName: String? {
+        guard let manager, manager != model.assistantManagerID, let roster = model.managerRoster, roster.isMulti else { return nil }
+        return roster.installed.first { $0.id == manager }?.name
     }
 
     private func accountRow(_ account: LarkAccount, isDefault: Bool) -> some View {
@@ -646,7 +692,7 @@ struct FeishuConnectorView: View {
     }
 
     private func load() async {
-        if capturedAPI == nil { capturedAPI = model.api?.currentAssistantSettings() }
+        if capturedAPI == nil { capturedAPI = manager.flatMap { model.api?.manager($0) } ?? model.api?.currentAssistantSettings() }
         guard let api = capturedAPI else { return }
         loading = true
         defer { loading = false }
@@ -654,6 +700,12 @@ struct FeishuConnectorView: View {
         do {
             status = try await api.larkStatus()
             failure = nil
+            absent = false
+        } catch let e as APIError where e.status == 404 && e.code == nil {
+            // The connector's route is absent: not set up, as the web app says it. Coded 404s such as no_manager stay errors.
+            status = .absent
+            failure = nil
+            absent = true
         } catch {
             failure = error.shown.map { String(localized: "Couldn't get Lark's status: \($0)") }
         }
@@ -726,7 +778,7 @@ struct HubConnectorView: View {
                 }
             }
             if connector != nil {
-                SubscriptionsEntrySection(counts: subscriptions, state: SubscriptionsUI.state(connector: id))
+                SubscriptionsEntrySection(counts: subscriptions, state: SubscriptionsUI.state(connector: id), manager: manager)
             }
             // Telegram switched off lists nothing until it runs: its switch is here all the same.
             if id == "github", let connector, connector.signsInHere {
@@ -759,7 +811,8 @@ struct HubConnectorView: View {
         .navigationBarTitleDisplayMode(.inline)
         // Again once paired (opened at launch, before the hub's address is known) or paired to another hub.
         .task(id: model.config) { await load() }
-        .subscriptionCounts($subscriptions, enabled: manager == nil) { [id] in $0.connector == id }
+        // Its own manager's subscriptions (the current assistant's in Settings), as everything else on the page.
+        .subscriptionCounts($subscriptions, manager: manager) { [id] in $0.connector == id }
         // Switched on, its program takes a moment to start and say it signs in: asked again until it has (15 s at most).
         .task(id: starting) {
             for _ in 0..<15 where starting {

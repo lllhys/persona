@@ -68,14 +68,14 @@ func (n *Node) worktreeSnapshot(ctx context.Context, kind, cwd, nameHint string)
 	if dest == "" {
 		return res, refusal("worktree_failed", "no free folder for the review copy", nil)
 	}
-	if dest, err = n.checkoutPath(repo.root, dest); err != nil {
+	if dest, err = n.checkoutPath(ctx, repo.root, dest); err != nil {
 		return res, err
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return res, err
 	}
 	head = strings.TrimSpace(head)
-	if _, err := gitTimed(ctx, repo.root, 2*time.Minute, "worktree", "add", "--detach", "--", dest, head); err != nil {
+	if err := n.addWorktree(ctx, repo.root, dest, "worktree", "add", "--detach", "--", dest, head); err != nil {
 		return res, refusal("worktree_failed", gitFailure(err), nil)
 	}
 	res = proto.WorktreeSnapshot{Path: dest, Root: repo.root, Head: head}
@@ -90,6 +90,22 @@ func (n *Node) worktreeSnapshot(ctx context.Context, kind, cwd, nameHint string)
 		return fail(err)
 	}
 	return res, nil
+}
+
+// isReviewCopy: dir is one of the node's review copies: the top of a linked worktree whose folder worktreeSnapshot
+// named (review-…), in the checkouts folder it uses for kind. worktree.remove takes such a copy away as the plain
+// worktree it is on every engine, a runtime's too (agentworktree.go).
+func (n *Node) isReviewCopy(ctx context.Context, kind, dir string) bool {
+	dir = filepath.Clean(dir)
+	if !filepath.IsAbs(dir) || !strings.HasPrefix(filepath.Base(dir), snapshotPrefix) {
+		return false
+	}
+	repo, err := repoAt(ctx, dir)
+	if err != nil || repo.mainRoot == "" || realPath(repo.root) != realPath(dir) { // not a linked worktree's own folder
+		return false
+	}
+	h, _ := n.hostOfKind(kind)
+	return within(realPath(dir), realPath(n.worktreesDir(h, repo.name)))
 }
 
 // applyTrackedChange puts the tracked files' uncommitted change of root (staged and not, against HEAD) into dest.

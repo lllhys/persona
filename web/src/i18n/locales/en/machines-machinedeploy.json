@@ -1,4 +1,5 @@
 {
   "failed": "Deploy failed: {error}",
-  "requesting": "Requesting"
+  "requesting": "Requesting",
+  "details": "Details"
 }

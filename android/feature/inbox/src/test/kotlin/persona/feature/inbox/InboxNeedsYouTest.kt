@@ -1,6 +1,8 @@
 package persona.feature.inbox
 
+import persona.core.domain.inbox.InboxBar
 import persona.core.domain.inbox.InboxItem
+import persona.core.domain.inbox.InboxListSettings
 import persona.core.domain.inbox.buildInboxList
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -28,6 +30,16 @@ class InboxNeedsYouTest {
         val byId = records.associateBy { it.item.id }
         val page = needsYouCount(list) { byId[it.id]?.agentWorking == true }
         assertEquals(page, needsYouCount(list, records))
+    }
+
+    @Test fun theSectionBarCountsTheSameNeedsYou() {
+        // #9053: the bar's Needs you counts the rows the list shows there, the AI twin's In progress (DESIGN_SYSTEM 4.8).
+        val list = buildInboxList(records.map { it.item })
+        val byId = records.associateBy { it.item.id }
+        val shown = inboxDisplayGroups(list, persona.core.contracts.CoreText.plain("In progress")) { byId[it.id]?.agentWorking == true }
+        val bar = InboxBar.bar(shown, InboxBar.ACTION, InboxListSettings())
+        assertEquals(needsYouCount(list, records), bar.choices.first { it.id == InboxBar.ACTION }.count)
+        assertEquals(3, bar.choices.first { it.id == InboxBar.WORKING }.count)
     }
 
     @Test fun aHubThatSaysInProgressCountsTheSame() {

@@ -7,4 +7,4 @@ summary：一句{{if .Language}}{{.Language}}{{else}}中文{{end}}（不超过 4
 reason：不超过 12 个字，为什么这么分。
 urgent：急事才是 true：tier 是 action，而且有人正等着用户回、或截止时间就在眼前（今天、几个小时内）；其余一律 false。
 
-回复 JSON：{"tier":"action|fyi|noise","summary":"…","reason":"…","urgent":false}{{template "shared/user_rules" .}}
+回复 JSON：{"tier":"action|fyi|noise","summary":"…","reason":"…","urgent":false}{{template "shared/user_rules" .}}{{template "inbox/extension_context" .}}

@@ -3,6 +3,9 @@ package persona.feature.assistant
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.navigation3.runtime.NavKey
@@ -62,9 +65,9 @@ class FirstMessageTest {
         }
     }
 
-    private fun mount(hub: Hub = Hub()): Hub {
+    private fun mount(hub: Hub = Hub(), style: () -> AppStyle = { AppStyle.Glass }): Hub {
         rule.setContent {
-            PersonaTheme(reduceMotion = true) {
+            PersonaTheme(reduceMotion = true, style = style()) {
                 CompositionLocalProvider(LocalManagerRoster provides ManagerRoster(listOf(
                     HubManager("assistant", "Helper", online = true, isDefault = true),
                 ), "assistant")) {
@@ -138,8 +141,10 @@ class FirstMessageTest {
 
     @Test fun aKeptFailureComesBackWithThePage() {
         val prefs = FailedStarts(androidx.test.core.app.ApplicationProvider.getApplicationContext())
-        prefs.write("hub/assistant", FirstMessage("Book a table for Friday", failed = true, reason = "offline"))
-        assertEquals(FirstMessage("Book a table for Friday", failed = true, reason = "offline"), prefs.read("hub/assistant"))
+        val failed = FirstMessage("Book a table for Friday", failed = true, reason = "offline", at = 1_762_000_000_000L)
+        prefs.write("hub/assistant", failed)
+        // When it was sent is kept with it: the day over its bubble is that day.
+        assertEquals(failed, prefs.read("hub/assistant"))
         mount()
         rule.onNodeWithTag("assistant-first-failed").assertExists()
         rule.onNodeWithText("Book a table for Friday").assertExists()
@@ -147,5 +152,56 @@ class FirstMessageTest {
         // Sending is not a failure: nothing of it is kept.
         prefs.write("hub/assistant", FirstMessage("Book a table for Friday"))
         assertNull(prefs.read("hub/assistant"))
+    }
+
+    // iOS's DayLine over the bubble (#1911): the day stands there from the start, as the conversation's own will have it, so it
+    // does not appear above the message later. Glass only: Brief and Board keep the page as it was.
+    @Test fun theDayStandsOverTheBubbleOnGlassOnly() {
+        var style by mutableStateOf(AppStyle.Glass)
+        val hub = Hub().apply { gate = CompletableDeferred() }
+        mount(hub) { style }
+        send("Plan a weekend in the mountains")
+        rule.onNodeWithTag("assistant-first-sending").assertExists()
+        rule.onNodeWithTag("assistant-first-day").assertExists().assert(hasText("Today · ", substring = true))
+        for (s in listOf(AppStyle.Brief, AppStyle.Board)) {
+            style = s
+            rule.waitForIdle()
+            rule.onNodeWithTag("assistant-first-sending").assertExists()
+            rule.onAllNodesWithTag("assistant-first-day").assertCountEquals(0)
+        }
+        style = AppStyle.Glass
+        rule.waitForIdle()
+        rule.onAllNodesWithTag("assistant-first-day").assertCountEquals(1)
+        rule.runOnIdle { hub.gate?.complete(Unit) }
+        rule.waitUntil(5_000) { hub.sent.isNotEmpty() }
+    }
+
+    // A failed start kept on the device says the day it was sent, not the day it is shown (iOS `FailedStart.Message.at`).
+    @Test fun aFailedStartSaysTheDayItWasSent() {
+        val prefs = FailedStarts(androidx.test.core.app.ApplicationProvider.getApplicationContext())
+        prefs.write("hub/assistant", FirstMessage("Book a table for Friday", failed = true, reason = "offline",
+            at = java.time.LocalDate.now().minusDays(1).atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()))
+        mount()
+        rule.onNodeWithTag("assistant-first-day").assertExists().assert(hasText("Yesterday · ", substring = true))
+    }
+
+    // The page that starts the main conversation when there is none yet draws the messages it sent to its queue, not iOS's
+    // first-message page: on Glass the day stands over them too, the day the first was written.
+    @Test fun theMainQueuePageHasTheDayOnGlassOnly() {
+        val sentAt = java.time.LocalDate.now().minusDays(1).atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val queued = listOf(OutboxMessage("c1", main, "Plan a weekend", DeliveryState.Sent, mainTarget = true, createdAt = sentAt))
+        var style by mutableStateOf(AppStyle.Glass)
+        rule.setContent { PersonaTheme(reduceMotion = true, style = style) { AssistantPendingConversation(queued, null) } }
+        rule.onNodeWithTag("assistant-pending-day").assertExists().assert(hasText("Yesterday · ", substring = true))
+        for (s in listOf(AppStyle.Brief, AppStyle.Board)) {
+            style = s
+            rule.waitForIdle()
+            rule.onAllNodesWithTag("assistant-pending-day").assertCountEquals(0)
+        }
+    }
+
+    @Test fun noDayStandsOverNothing() {
+        rule.setContent { PersonaTheme(reduceMotion = true, style = AppStyle.Glass) { AssistantPendingConversation(emptyList(), null) } }
+        rule.onAllNodesWithTag("assistant-pending-day").assertCountEquals(0)
     }
 }

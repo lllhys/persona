@@ -17,7 +17,8 @@ class ExtensionUIStreamController(
     extension: String,
     contribution: String,
     initialState: String = "",
-    context: ExtensionUIContext = ExtensionUIContext(uiVersion = 7, platform = "android",
+    // The pages' UI version (8): the stream draws through the same renderer, a section's key (7) and all of 8.
+    context: ExtensionUIContext = ExtensionUIContext(uiVersion = persona.core.hub.HttpExtensionManagement.UI_VERSION, platform = "android",
         locale = ClientLanguage.localeTag(), tz = java.util.TimeZone.getDefault().id,
         stream = ExtensionUIStreamCapability(protocol = 1, components = NativeExtensionStreamAdapter.Components.toList())),
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,

@@ -155,6 +155,7 @@ struct SubagentCard: View {
     @Environment(\.openTools) private var openTools
     @Environment(\.chatPin) private var pin
     @Environment(\.subagentParent) private var parent
+    @Environment(\.dynamicTypeSize) private var typeSize
     var call: ToolCall
     @State private var openHere = Self.debugOpen
 
@@ -250,7 +251,8 @@ struct SubagentCard: View {
                 .padding(.top, Theme.Space.xxs)
         }
         .padding(.vertical, WorkCardSlice.timeline ? Theme.Space.s : Theme.Space.m)
-        .padding(.horizontal, WorkCardSlice.inset)
+        .padding(.leading, WorkCardSlice.iconLeading)
+        .padding(.trailing, WorkCardSlice.inset)
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityHint(open ? String(localized: "Collapses the details") : String(localized: "Shows the details"))
@@ -282,7 +284,7 @@ struct SubagentCard: View {
                 .foregroundStyle(Theme.accent)
             }
         }
-        .padding(.leading, WorkCardSlice.textColumn)
+        .padding(.leading, WorkCardSlice.textColumn(typeSize))
         .padding(.trailing, WorkCardSlice.inset)
         .padding(.bottom, Theme.Space.m)
     }
@@ -343,7 +345,8 @@ struct SubagentGrid: View {
                 .contentTransition(.opacity)
         }
         .padding(.top, alone || WorkCardSlice.timeline ? Theme.Space.s : Theme.Space.m)
-        .padding(.horizontal, WorkCardSlice.inset)
+        .padding(.leading, WorkCardSlice.iconLeading)
+        .padding(.trailing, WorkCardSlice.inset)
         .accessibilityElement(children: .combine)
     }
 }

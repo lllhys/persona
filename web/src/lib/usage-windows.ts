@@ -1,7 +1,7 @@
 // Subscription rate-limit windows (#2432, docs/server/usage-windows.md): GET /api/v1/usage/windows lists the accounts the
 // machines' agents are signed in to with how much of each window (5h, 7d …) is used. Pure helpers here (pace,
 // countdown, sample age, what the sidebar shows); the bars and the popover are views/UsageBars.tsx.
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { formatDate, formatRelative, t as tr } from "../i18n";
 import { api, ApiError } from "./api";
 
@@ -75,7 +75,8 @@ export const PACE_LABEL: Record<PaceState, string> = { over: tr("usage.pace_over
 
 type Countdown = { kind: "due" | "clock" | "span"; text: string };
 
-/** When a window starts over: the span ("45m", "2d 3h"), the local clock time when that is today, or "due". null without a time. */
+/** When a window starts over: the span ("45m", "2d 3h", "5d" with no hours left over; each language's own units, "2 天 3 小时"),
+ *  the local clock time when that is today, or "due". null without a time. */
 function countdownOf(resetsAt: string | undefined, now: number): Countdown | null {
   const at = resetsAt ? Date.parse(resetsAt) : NaN;
   if (!Number.isFinite(at)) return null;
@@ -86,11 +87,12 @@ function countdownOf(resetsAt: string | undefined, now: number): Countdown | nul
   if (new Date(at).toDateString() === new Date(now).toDateString()) return { kind: "clock", text: formatDate(at, { timeStyle: "short" }) };
   const hours = Math.floor(mins / 60);
   const d = Math.floor(hours / 24);
-  return { kind: "span", text: d > 0 ? tr("usage.days_hours", { d, h: hours % 24 }) : tr("usage.hours", { h: hours }) };
+  const h = hours % 24;
+  return { kind: "span", text: d === 0 ? tr("usage.hours", { h: hours }) : h === 0 ? tr("usage.days", { d }) : tr("usage.days_hours", { d, h }) };
 }
 
 /** When a window starts over, as it reads in the popover: "45m" within the hour, the clock time when it is today,
- *  otherwise "2d 3h" (days and hours). "" without a time; "Resets soon" when it is due. */
+ *  otherwise "2d 3h" (days and hours, "5d" without a zero hour). "" without a time; "Resets soon" when it is due. */
 export function countdown(resetsAt: string | undefined, now = Date.now()): string {
   return countdownOf(resetsAt, now)?.text ?? "";
 }
@@ -176,34 +178,54 @@ export function topAccounts(accounts: UsageAccount[], n = 2): UsageAccount[] {
 
 export const isWarn = (percent: number) => percent >= WARN_PERCENT;
 
-/** The accounts for the sidebar; [] until the hub answers and when it has none (the bars are not drawn then). A failed
- *  refresh (the assistant away, the hub out of reach) keeps the last answer, which `liveAccounts` ages (#1905); only an
- *  older hub without the route (404) means there is nothing to show. */
+const emptyAccounts: UsageAccount[] = [];
+let usageAccounts = emptyAccounts;
+let stopPolling: (() => void) | undefined;
+const listeners = new Set<() => void>();
+
+function publishUsage(accounts: UsageAccount[]) {
+  usageAccounts = accounts;
+  for (const listener of listeners) listener();
+}
+
+function pollUsage() {
+  let dead = false;
+  // The tab coming back to the front can overlap the poll. Only the newest reply counts.
+  let seq = 0;
+  const load = () => {
+    if (document.visibilityState !== "visible") return;
+    const mine = ++seq;
+    const current = () => !dead && mine === seq;
+    api<{ accounts?: UsageAccount[] }>("/usage/windows")
+      .then((r) => current() && publishUsage(r.accounts ?? emptyAccounts))
+      .catch((e: unknown) => {
+        if (current()) publishUsage(e instanceof ApiError && e.status === 404 ? emptyAccounts : usageAccounts.slice());
+      });
+  };
+  load();
+  const timer = setInterval(load, POLL_MS);
+  document.addEventListener("visibilitychange", load);
+  return () => {
+    dead = true;
+    clearInterval(timer);
+    document.removeEventListener("visibilitychange", load);
+  };
+}
+
+function subscribeUsage(listener: () => void) {
+  listeners.add(listener);
+  stopPolling ??= pollUsage();
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      stopPolling?.();
+      stopPolling = undefined;
+      usageAccounts = emptyAccounts;
+    }
+  };
+}
+
+/** The sidebar and Agent status lines share one poll, including while switching chats. */
 export function useUsageWindows(): UsageAccount[] {
-  const [accounts, setAccounts] = useState<UsageAccount[]>([]);
-  useEffect(() => {
-    let dead = false;
-    // The tab coming back to the front asks again while the poll's request may still be out; only the newest
-    // request's reply (or failure) counts, so an older one landing late cannot overwrite or blank the bars.
-    let seq = 0;
-    const load = () => {
-      if (document.visibilityState !== "visible") return;
-      const mine = ++seq;
-      const current = () => !dead && mine === seq;
-      api<{ accounts?: UsageAccount[] }>("/usage/windows")
-        .then((r) => current() && setAccounts(r.accounts ?? []))
-        // an older hub has no such route: nothing to show; any other failure keeps the bars it last had, as a copy so
-        // that they render again and liveAccounts judges their age with the time now (#1905)
-        .catch((e: unknown) => current() && setAccounts((kept) => (e instanceof ApiError && e.status === 404 ? [] : kept.slice())));
-    };
-    load();
-    const t = setInterval(load, POLL_MS);
-    document.addEventListener("visibilitychange", load);
-    return () => {
-      dead = true;
-      clearInterval(t);
-      document.removeEventListener("visibilitychange", load);
-    };
-  }, []);
-  return accounts;
+  return useSyncExternalStore(subscribeUsage, () => usageAccounts, () => emptyAccounts);
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/link"
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // ResidentTransport owns the attach listener and its run lock independently of a connection's Node.
@@ -39,12 +40,12 @@ func OpenResidentTransport() (*ResidentTransport, error) {
 		return fail(fmt.Errorf("a resident node is already listening on %s", path))
 	}
 	_ = os.Remove(path)
-	ln, err := net.Listen("unix", path)
+	ln, err := osproc.Listen("unix", path)
 	if err != nil {
 		return fail(err)
 	}
 	_ = os.Chmod(path, 0o600)
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.(*osproc.UnixListener).SetUnlinkOnClose(false)
 	return &ResidentTransport{Listener: ln, lock: lock}, nil
 }
 

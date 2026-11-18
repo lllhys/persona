@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Observation
+import PersonaWire
 
 /// A loopback listener that carries every connection made to it through a SOCKS5 proxy to the hub
 /// (docs/operations/network.md "Connecting to hub through a local SOCKS5 proxy"): each connection dials the proxy, has it

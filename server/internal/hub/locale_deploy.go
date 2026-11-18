@@ -9,8 +9,9 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// The manager's deployment reports (and saved errors) are canonical, not tied to the language at job start.
-// Translate copies at the last boundary, including an old event replayed to a connection in a different language.
+// The manager's deployment reports (and saved errors) are canonical, not tied to the language at job start, and so
+// are the notes nodes write on their engines (i18n.EngineText). Translate copies at the last boundary, including an
+// old event replayed to a connection in a different language.
 func localizedMachines(l i18n.Lang, machines []proto.Machine) []proto.Machine {
 	out := append([]proto.Machine{}, machines...)
 	for i := range out {
@@ -20,6 +21,7 @@ func localizedMachines(l i18n.Lang, machines []proto.Machine) []proto.Machine {
 		out[i].Browser = i18n.BrowserStatus(l, out[i].Browser)
 		out[i].IPhone = i18n.IPhoneStatus(l, out[i].IPhone)
 		out[i].Clipboard = i18n.ClipboardStatus(l, out[i].Clipboard)
+		out[i].Engines = i18n.EngineNotes(l, out[i].Engines)
 	}
 	return out
 }
@@ -42,7 +44,8 @@ func localizedMachineEvent(l i18n.Lang, raw []byte) []byte {
 		changed = changed || machines[i].DeployError != translated[i].DeployError || machines[i].DeployReason != translated[i].DeployReason ||
 			!reflect.DeepEqual(machines[i].Computer, translated[i].Computer) || !reflect.DeepEqual(machines[i].Browser, translated[i].Browser) ||
 			!reflect.DeepEqual(machines[i].IPhone, translated[i].IPhone) ||
-			!reflect.DeepEqual(machines[i].Clipboard, translated[i].Clipboard)
+			!reflect.DeepEqual(machines[i].Clipboard, translated[i].Clipboard) ||
+			!reflect.DeepEqual(machines[i].Engines, translated[i].Engines)
 	}
 	if !changed {
 		return raw

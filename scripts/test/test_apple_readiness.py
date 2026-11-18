@@ -21,7 +21,13 @@ FAKE_XCODE = textwrap.dedent('''\
         log.write(json.dumps(args) + "\\n")
     if args[-1] == "build-for-testing":
         assert args[args.index("-destination") + 1] == "generic/platform=iOS Simulator"
-        sys.exit(int(os.environ.get("BUILD_STATUS", "0")))
+        status = int(os.environ.get("BUILD_STATUS", "0"))
+        if status == 0:
+            # The product the CallKit check reads (#9290): one Mach-O, known by its magic number.
+            app = Path(args[args.index("-derivedDataPath") + 1]) / "Build/Products/Debug-iphonesimulator/Persona.app"
+            app.mkdir(parents=True, exist_ok=True)
+            (app / "Persona").write_bytes(b"\\xcf\\xfa\\xed\\xfe" + bytes(28))
+        sys.exit(status)
     assert args[args.index("-destination") + 1] == "platform=iOS Simulator,id=" + os.environ["OWNED_UDID"]
     probe = "-only-testing:PersonaTests/TypeScaleTests" in args
     if probe:
@@ -93,6 +99,20 @@ FAKE_XCRUN_WRAPPER = textwrap.dedent('''\
     ''')
 
 
+# `otool -arch all -L <file>` for the CallKit check (#9290): libSystem, and CallKit as well with OTOOL_CALLKIT=1.
+FAKE_OTOOL = textwrap.dedent('''\
+    #!/usr/bin/env python3
+    import os, sys
+    from pathlib import Path
+    with (Path(os.environ["FAKE"]) / "otool-calls").open("a") as log:
+        log.write(" ".join(sys.argv[1:]) + "\\n")
+    print(sys.argv[-1] + ":")
+    print("\\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)")
+    if os.environ.get("OTOOL_CALLKIT") == "1":
+        print("\\t/System/Library/Frameworks/CallKit.framework/CallKit (compatibility version 1.0.0, current version 1.0.0)")
+    ''')
+
+
 class AppleReadinessTests(unittest.TestCase):
     def setUp(self):
         self.fixture = test_sim_boot.SimBootTests()
@@ -102,7 +122,7 @@ class AppleReadinessTests(unittest.TestCase):
         self.fixture.state["bootstatus_hang"] = True
         self.fixture.save()
         for name, body in (("xcodebuild", FAKE_XCODE), ("xcrun", FAKE_XCRUN_WRAPPER),
-                           ("fake-simctl", FAKE_XCRUN)):
+                           ("fake-simctl", FAKE_XCRUN), ("otool", FAKE_OTOOL)):
             path = self.fixture.bin / name
             path.write_text(body)
             path.chmod(0o755)
@@ -165,10 +185,21 @@ TEST_SIGNING=(CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manu
         self.assertEqual(self.fixture.device(WATCH)["state"], "Shutdown")
         self.assertIn("1 test cases, zero failed/skipped", (self.output / "simulator-readiness.log").read_text())
         self.assertEqual((self.root / "budgets").read_text().splitlines(), [
-            "Build iOS offline unit tests|1800", "Create stock iOS 26.0 test simulator|100",
+            "Build iOS offline unit tests|1800", "No CallKit in the simulator build|300",
+            "Create stock iOS 26.0 test simulator|100",
             "Verify hosted iOS test readiness|900", "Grant Reminders access to the owned test app|300",
             "iOS offline unit and design/token tests|1800",
         ])
+
+    def test_callkit_in_the_built_app_stops_before_creating_any_device(self):
+        result, calls = self.run_preparation(OTOOL_CALLKIT="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("Persona.app/Persona → /System/Library/Frameworks/CallKit.framework/CallKit",
+                      result.stdout + result.stderr)
+        self.assertEqual(len(calls), 1)
+        app = self.output / "ios-tests/Build/Products/Debug-iphonesimulator/Persona.app"
+        self.assertEqual((self.root / "otool-calls").read_text(), "-arch all -L %s\n" % (app / "Persona"))
+        self.assertFalse((self.root / "calls").exists())
 
     def test_build_failure_stops_before_creating_any_device(self):
         result, calls = self.run_preparation(BUILD_STATUS="7")

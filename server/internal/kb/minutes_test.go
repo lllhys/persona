@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/ai"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
 )
 
@@ -165,7 +167,8 @@ func TestMinutesWritten(t *testing.T) {
 }
 
 // An ordinary recording gets no minutes; one overlapping a calendar item of the knowledge base (and long enough) is a
-// meeting named after it, the event winning over the video meeting; asked for, any complete recording is one.
+// meeting named after it, the event winning over the video meeting, which is its imported meeting (#8872); asked for,
+// any complete recording is one.
 func TestMinutesCalendarAndAsking(t *testing.T) {
 	calls := 0
 	model := &funcModel{f: func(int, string, string) (string, error) {
@@ -194,21 +197,34 @@ func TestMinutesCalendarAndAsking(t *testing.T) {
 		t.Fatalf("wrote %d with %d calls, want only the long one", n, calls)
 	}
 	r := recordingNow(t, e, recID)
-	if r.Meeting == nil || r.Meeting.ID != "e1" || r.Name != "周会" || strings.Join(r.Items, ",") != "events/e1" || r.MinutesState != MinutesReady {
+	if r.Meeting == nil || r.Meeting.ID != "e1" || r.Name != "周会" || strings.Join(r.Items, ",") != "events/e1,meetings/m1" || r.MinutesState != MinutesReady {
 		t.Fatalf("long: %+v %q %v %q", r.Meeting, r.Name, r.Items, r.MinutesState)
+	}
+	if r.ImportedMeeting == nil || r.ImportedMeeting.ID != "m1" || r.ImportedMeeting.Kind != KindMeeting {
+		t.Fatalf("long: imported meeting %+v", r.ImportedMeeting)
+	}
+	if got := listedMeetingID(t, e, recID); got != "m1" {
+		t.Errorf("long: the list's meeting_id %q", got)
 	}
 	if mm, _ := e.Store.ReadMinutes(recID); mm == nil || mm.Title != "周会" {
 		t.Fatalf("minutes %+v", mm)
 	}
 	d, _ := e.Get(KindRecording, recID, 0)
-	if len(d.Links) != 1 || d.Links[0].ID != "e1" {
-		t.Errorf("links %+v", d.Links)
+	var linked []string
+	for _, l := range d.Links {
+		linked = append(linked, l.ID)
+	}
+	if slices.Sort(linked); strings.Join(linked, ",") != "e1,m1" {
+		t.Errorf("links %+v", d.Links) // the event and the imported meeting, as ranked
 	}
 	if s := recordingNow(t, e, short); s.Meeting == nil || s.MinutesState != "" {
 		t.Errorf("short: matched %+v, state %q (too short to be a meeting by the calendar alone)", s.Meeting, s.MinutesState)
 	}
-	if a := recordingNow(t, e, alone); a.Meeting != nil || a.MinutesState != "" {
-		t.Errorf("alone: %+v %q", a.Meeting, a.MinutesState)
+	if a := recordingNow(t, e, alone); a.Meeting != nil || a.ImportedMeeting != nil || a.MinutesState != "" {
+		t.Errorf("alone: %+v %+v %q", a.Meeting, a.ImportedMeeting, a.MinutesState)
+	}
+	if got := listedMeetingID(t, e, alone); got != "" {
+		t.Errorf("alone: the list's meeting_id %q", got)
 	}
 	// Asked for: a meeting from now on, made at the next round.
 	if err := e.AskMinutes(alone); err != nil {
@@ -236,6 +252,83 @@ func TestMinutesCalendarAndAsking(t *testing.T) {
 	if err := e.AskMinutes(open); !errors.Is(err, ErrRecordingIncomplete) {
 		t.Errorf("incomplete: %v", err)
 	}
+}
+
+// A meeting a connected app imports after the recording was matched to its calendar event: a later round links it as
+// the recording's imported meeting, the nearer of two by its start, within a day of the end, the event and the match
+// left as they were; the Meetings list's recording row names it, and the meetings list the app it came from (#8872).
+func TestImportedMeetingAfterTheMatch(t *testing.T) {
+	e := goldenEngine(t, nil) // no model: the rounds match, no minutes are written
+	at := func(h, m int) time.Time { return time.Date(2026, 11, 10, h, m, 0, 0, goldenZone) }
+	now := at(11, 0)
+	e.clock = func() time.Time { return now }
+	if err := e.Store.PutItem(&Item{Kind: KindEvent, ID: "e1", Title: "周会", At: at(9, 55)}); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.Repeat("聊了排期 ", 12), " ")[:12] // 120 s: 10:00 to 10:02
+	putRecording(t, e, recID, meetingUpload(1, at(10, 0), lines...), now)
+	const old = "1f8fad5b-d9cb-469f-a165-70867728950e"
+	putRecording(t, e, old, meetingUpload(1, at(10, 0).AddDate(0, 0, -2), lines...), now)
+	e.WriteMinutes(context.Background(), 2)
+	r := recordingNow(t, e, recID)
+	if r.Meeting == nil || r.Meeting.ID != "e1" || r.ImportedMeeting != nil || listedMeetingID(t, e, recID) != "" {
+		t.Fatalf("matched: %+v %+v", r.Meeting, r.ImportedMeeting)
+	}
+	matched := r.MatchedRev
+
+	// The video meeting's record comes after the call, with another one that started earlier; and one two days back.
+	now = at(13, 0)
+	for _, it := range []*Item{
+		{Kind: KindMeeting, ID: "m-early", Title: "早到的会", At: at(9, 50)},
+		{Kind: KindMeeting, Source: "lark", ID: "m1", Title: "周会（视频）", At: at(10, 1)},
+		{Kind: KindMeeting, ID: "m-old", Title: "两天前的会", At: at(10, 1).AddDate(0, 0, -2)},
+	} {
+		if err := e.Store.PutItem(it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.WriteMinutes(context.Background(), 2)
+	r = recordingNow(t, e, recID)
+	if r.ImportedMeeting == nil || r.ImportedMeeting.ID != "m1" || r.ImportedMeeting.Name != "周会（视频）" {
+		t.Fatalf("later: imported meeting %+v", r.ImportedMeeting)
+	}
+	if r.Meeting == nil || r.Meeting.ID != "e1" || r.MatchedRev != matched || r.Name != "周会" {
+		t.Errorf("later: the calendar match moved: %+v rev %d name %q", r.Meeting, r.MatchedRev, r.Name)
+	}
+	if strings.Join(r.Items, ",") != "events/e1,meetings/m1" {
+		t.Errorf("later: items %v", r.Items)
+	}
+	if got := listedMeetingID(t, e, recID); got != "m1" {
+		t.Errorf("later: the list's meeting_id %q", got)
+	}
+	// The meetings list and the recording's links name the app it came from, for the one row's mark and its page.
+	for _, en := range e.List(KindMeeting, "") {
+		if want := map[string]string{"m1": "lark"}[en.ID]; en.Source != want {
+			t.Errorf("meetings list: %s's source %q, want %q", en.ID, en.Source, want)
+		}
+	}
+	d, err := e.Get(KindRecording, recID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(d.Links, func(l Entry) bool { return l.Kind == KindMeeting && l.ID == "m1" }); i < 0 || d.Links[i].Source != "lark" {
+		t.Errorf("links: %+v", d.Links)
+	}
+	if o := recordingNow(t, e, old); o.ImportedMeeting != nil {
+		t.Errorf("a recording that ended two days before: linked to %+v", o.ImportedMeeting)
+	}
+}
+
+// listedMeetingID is recording id's meeting_id in the recordings list.
+func listedMeetingID(t *testing.T, e *Engine, id string) string {
+	t.Helper()
+	for _, en := range e.List(KindRecording, "") {
+		if en.ID == id {
+			return en.MeetingID
+		}
+	}
+	t.Fatalf("recording %s is not listed", id)
+	return ""
 }
 
 // No connection or the model paused: still pending, nothing counted. Answers that cite nothing count; the third makes
@@ -302,7 +395,8 @@ func TestMinutesFailures(t *testing.T) {
 }
 
 // A long transcript is read in chunks, each cited line checked against its chunk, then merged; the merge may cite only
-// lines that were read.
+// lines that were read. The parts' notes carry their topics (#6563), untagged ones too, but not a part's headline or
+// conclusions; the merge writes the meeting's, and a conclusion citing a line no note carries goes.
 func TestMinutesChunked(t *testing.T) {
 	var texts []string
 	for i := range 300 {
@@ -310,18 +404,22 @@ func TestMinutesChunked(t *testing.T) {
 	}
 	model := &funcModel{f: func(n int, system, user string) (string, error) {
 		if strings.Contains(system, "已经分段整理过") {
-			if !strings.Contains(user, "## 第 1 段") || !strings.Contains(user, "[1] 开场") || strings.Contains(user, "[9999]") {
+			if !strings.Contains(user, "## 第 1 段") || !strings.Contains(user, "[1]〈开场〉 开场") || strings.Contains(user, "[9999]") ||
+				!strings.Contains(user, "[300] 收尾") || strings.Contains(user, "段落概括") || strings.Contains(user, "段落结论") || strings.Contains(user, "**") {
 				return "", fmt.Errorf("merge input:\n%s", user)
 			}
 			// 150 is a line of the transcript, but no part's notes cite it: the merge can't have read it.
-			return `{"title":"长会","points":[{"text":"开场","line":1},{"text":"收尾","line":300},{"text":"没读到的","line":301}],"decisions":[{"text":"定了","line":150}]}`, nil
+			return `{"title":"长会","headline":"整场会的概括","conclusions":[{"text":"开场**定了**","line":1},{"text":"没读到的结论","line":150}],
+			  "topics":[{"title":"开场","points":[{"text":"开场","line":1}]},
+			            {"title":"收尾","points":[{"text":"收尾","line":300},{"text":"没读到的","line":301}],"decisions":[{"text":"定了","line":150}]}]}`, nil
 		}
 		first := strings.SplitN(strings.SplitN(user, "转写：\n", 2)[1], " ", 2)[0] // "[N]"
 		last := ""
 		if strings.Contains(user, "[300] ") {
-			last = `,{"text":"收尾","line":300}`
+			last = `,"points":[{"text":"收尾","line":300}]`
 		}
-		return fmt.Sprintf(`{"points":[{"text":"开场","line":%q},{"text":"不在这段","line":9999}%s]}`, first, last), nil
+		return fmt.Sprintf(`{"headline":"段落概括","conclusions":[{"text":"段落结论","line":%q}],`+
+			`"topics":[{"title":"**开场**","points":[{"text":"**开场**","line":%q},{"text":"不在这段","line":9999}]}]%s}`, first, first, last), nil
 	}}
 	e := goldenEngine(t, model)
 	now := time.Date(2026, 11, 10, 18, 0, 0, 0, goldenZone)
@@ -340,6 +438,11 @@ func TestMinutesChunked(t *testing.T) {
 	if mm == nil || len(mm.Points) != 2 || mm.Points[1].At != 2990 || len(mm.Decisions) != 0 || mm.Partial {
 		t.Fatalf("minutes %+v", mm)
 	}
+	if o := mm.Overview; o == nil || o.Headline != "整场会的概括" || len(o.Conclusions) != 1 || o.Conclusions[0].Text != "开场定了" ||
+		!slices.Equal(groupsOf(o), []string{": 开场, 收尾"}) {
+		t.Fatalf("overview %+v", mm.Overview)
+	}
+	checkOverview(t, mm)
 	chunks, partial := chunkLines([]minutesLine{{N: 1, Text: "aaaa"}, {N: 2, Text: "bbbb"}, {N: 3, Text: "cccc"}}, 10, 25, 2)
 	if len(chunks) != 2 || !partial {
 		t.Errorf("chunks %v partial %v", chunks, partial)
@@ -347,7 +450,8 @@ func TestMinutesChunked(t *testing.T) {
 }
 
 // Deleted while the model was writing: the minutes don't bring the directory back. A new revision keeps the old
-// minutes showing (pending) until new ones are written; confirmed to-dos are recorded for their version only.
+// minutes showing (pending) until new ones are written; confirmed to-dos are recorded for their version only, the
+// overview and the Markdown kept as they are.
 func TestMinutesDeleteRevisionAndTodos(t *testing.T) {
 	var e *Engine
 	deleteDuring := false
@@ -357,12 +461,17 @@ func TestMinutesDeleteRevisionAndTodos(t *testing.T) {
 				return "", err
 			}
 		}
-		return `{"title":"t","actions":[{"what":"写计划","line":1},{"what":"发邮件","line":2}]}`, nil
+		return `{"title":"t","topics":[{"title":"计划","points":[{"text":"计划**写好**","line":1}]}],` +
+			`"actions":[{"what":"写计划","line":1},{"what":"发邮件","line":2}]}`, nil
 	}}
 	e = goldenEngine(t, model)
 	now := time.Now()
 	putRecording(t, e, recID, meetingUpload(1, now.Add(-time.Hour), "写计划", "发邮件"), now)
 	e.WriteMinutes(context.Background(), 2)
+	before, err := e.Store.ReadMinutes(recID)
+	if err != nil || before.Overview == nil {
+		t.Fatalf("written: %+v %v", before, err)
+	}
 	if _, err := e.SetMinutesTodos(recID, 2, map[string]string{"a1": "todo_x"}, nil); !errors.Is(err, ErrMinutesStale) {
 		t.Fatalf("stale version: %v", err)
 	}
@@ -370,8 +479,9 @@ func TestMinutesDeleteRevisionAndTodos(t *testing.T) {
 	if err != nil || mm.Actions[0].TodoID != "todo_x" || mm.Actions[1].TodoID != "" {
 		t.Fatalf("set: %v %+v", err, mm)
 	}
-	if again, _ := e.Store.ReadMinutes(recID); again.Actions[0].TodoID != "todo_x" {
-		t.Fatal("not stored")
+	if again, _ := e.Store.ReadMinutes(recID); again.Actions[0].TodoID != "todo_x" || !jsonEqual[MinutesOverview](t, again.Overview, before.Overview) ||
+		again.Markdown != before.Markdown || readFile(t, e, recID, "minutes.md") != before.Markdown+"\n" {
+		t.Fatalf("not stored as it was: %+v", again)
 	}
 	// Confirmed from version 1 while version 2 was written: linked by task in version 2.
 	mm.Version, mm.Actions[0].TodoID = 2, ""
@@ -436,7 +546,8 @@ func TestRecordingUploadKindAndCalendar(t *testing.T) {
 	}
 }
 
-// The merging call of a long meeting: the parts' notes, each item at its cited line.
+// The merging call of a long meeting: the parts' notes, each item at its cited line, a point or decision of a topic
+// after its topic (#6563).
 func TestGoldenMinutesMerge(t *testing.T) {
 	start := time.Date(2026, 11, 10, 14, 0, 0, 0, goldenZone)
 	in := prompts.KBMinutesMergeInput{
@@ -444,10 +555,11 @@ func TestGoldenMinutesMerge(t *testing.T) {
 			Minutes: 120, Language: "zh-CN", Attendees: []string{"Ada", "Bo"}, Location: "三号会议室"},
 		Parts: []prompts.KBMinutesPart{
 			{Part: 1, From: "14:00:00", To: "14:59:50", Attendees: []string{"Ada"},
-				Points:    []prompts.KBMinutesNote{{Line: 3, Text: "导出超过 4 MB 的条目会被丢掉", Who: "Ada"}},
-				Decisions: []prompts.KBMinutesNote{{Line: 40, Text: "这一版先保留上限"}}},
+				Points: []prompts.KBMinutesNote{{Line: 3, Text: "导出超过 4 MB 的条目会被丢掉", Who: "Ada", Topic: "导出"},
+					{Line: 12, Text: "回归测试覆盖不到老版本"}},
+				Decisions: []prompts.KBMinutesNote{{Line: 40, Text: "这一版先保留上限", Topic: "导出"}}},
 			{Part: 2, From: "15:00:00", To: "15:59:50", Where: "三号会议室",
-				Decisions: []prompts.KBMinutesNote{{Photo: 2, Text: "白板上的排期照此执行"}},
+				Decisions: []prompts.KBMinutesNote{{Photo: 2, Text: "白板上的排期照此执行", Topic: "发布排期"}},
 				Actions:   []prompts.KBMinutesNote{{Line: 410, Text: "补上回归测试", Who: "Bo", By: "周五前", DueDate: "2026-11-13"}},
 				Open:      []prompts.KBMinutesNote{{Line: 700, Text: "上限按条还是按录音"}}},
 		},
@@ -560,9 +672,10 @@ func TestMinutesAnswerRules(t *testing.T) {
 		if err := json.Unmarshal([]byte(reply), &a); err != nil {
 			t.Fatal(err)
 		}
-		return e.buildMinutes(r, a, read, goldenZone)
+		return e.buildMinutes(r, a, read, goldenZone, i18n.ZhHans)
 	}
-	for _, empty := range []string{`{}`, `{"title":"无法总结"}`, `{"points":[{"text":"","line":1}]}`} {
+	for _, empty := range []string{`{}`, `{"title":"无法总结"}`, `{"points":[{"text":"","line":1}]}`,
+		`{"headline":"只有结论","conclusions":[{"text":"定了","line":1}],"topics":[{"title":"空的"}]}`} {
 		if _, err := build(empty); !errors.Is(err, errMinutesUnusable) {
 			t.Errorf("%s: %v", empty, err)
 		}

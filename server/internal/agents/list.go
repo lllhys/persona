@@ -66,7 +66,7 @@ func (s *Service) refreshListIndex(ctx context.Context, opts sessionlist.Options
 }
 
 func (s *Service) ListPage(ctx context.Context, opts sessionlist.Options) (sessionlist.Page, error) {
-	if opts.PaneSource != "" {
+	if opts.Search != "" || opts.PaneSource != "" || opts.ExcludePaneSource != "" || opts.Todo != "" { // runtime only: personal agents have no origin or to-do
 		return sessionlist.Page{}, &sessionlist.Error{Code: "invalid_query"}
 	}
 	if opts.Cursor == "" {
@@ -77,8 +77,30 @@ func (s *Service) ListPage(ctx context.Context, opts sessionlist.Options) (sessi
 	return s.listIndex.Query(opts)
 }
 
+// ListPageWithCounts is a page and its view's current counts (with_counts=1) from one refresh of the sources: what
+// ListPage and a separate ListCounts with the same filters return, since and cursor left out of the counts (#6496).
+func (s *Service) ListPageWithCounts(ctx context.Context, opts sessionlist.Options) (sessionlist.PageWithCounts, error) {
+	if opts.Search != "" || opts.PaneSource != "" || opts.ExcludePaneSource != "" || opts.Todo != "" { // runtime only: personal agents have no origin or to-do
+		return sessionlist.PageWithCounts{}, &sessionlist.Error{Code: "invalid_query"}
+	}
+	if err := s.refreshListIndex(ctx, opts); err != nil {
+		return sessionlist.PageWithCounts{}, err
+	}
+	page, err := s.listIndex.Query(opts)
+	if err != nil {
+		return sessionlist.PageWithCounts{}, err
+	}
+	o := opts
+	o.Since, o.Cursor = "", "" // current membership, as the separate counts read asks for it
+	counts, err := s.listIndex.Counts(o)
+	if err != nil {
+		return sessionlist.PageWithCounts{}, err
+	}
+	return sessionlist.PageWithCounts{Page: page, Counts: counts}, nil
+}
+
 func (s *Service) ListCounts(ctx context.Context, opts sessionlist.Options) (sessionlist.Counts, error) {
-	if opts.PaneSource != "" {
+	if opts.Search != "" || opts.PaneSource != "" || opts.ExcludePaneSource != "" || opts.Todo != "" { // runtime only: personal agents have no origin or to-do
 		return sessionlist.Counts{}, &sessionlist.Error{Code: "invalid_query"}
 	}
 	if err := s.refreshListIndex(ctx, opts); err != nil {

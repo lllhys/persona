@@ -23,7 +23,8 @@ final class ExtensionSettingsLayoutTests: XCTestCase {
             capture(app, "\(id)-top-\(look)", env: env)
             var seen = Set<String>()
             var ordered: [String] = []
-            let headings = ["extension-section-enabled", "extension-section-configuration", "extension-section-information", "extension-section-updates", "extension-section-danger"]
+            // All three have settings, each group with its own heading: no configuration heading over them (#8853).
+            let headings = ["extension-section-enabled", "extension-section-information", "extension-section-updates", "extension-section-danger"]
             for _ in 0..<16 {
                 let visible = headings.compactMap { heading -> (String, CGFloat)? in
                     let element = app.descendants(matching: .any).matching(identifier: heading).firstMatch

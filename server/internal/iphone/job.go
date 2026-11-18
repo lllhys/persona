@@ -6,15 +6,20 @@ import (
 	"time"
 )
 
-// Job is the background pairing or forgetting the app started (one at a time): its state comes back with the
-// machine's phone status, as the computer extension's install job does.
+// Job is the background pairing, forgetting or installing of the bridge the app started (one at a time): its state
+// comes back with the machine's phone status, as the computer extension's install job does.
 type Job struct {
-	Kind    string    `json:"kind"`  // pair / forget
-	UDID    string    `json:"udid"`  // the phone it is for
-	State   string    `json:"state"` // running / done / failed / cancelled
-	Step    string    `json:"step,omitempty"`
-	Error   string    `json:"error,omitempty"`
-	Code    string    `json:"code,omitempty"` // the failure's code (the bridge's, e.g. trust_pending)
+	Kind  string `json:"kind"`  // pair / forget / install / prepare
+	UDID  string `json:"udid"`  // the phone it is for ("" for install)
+	State string `json:"state"` // running / done / failed / cancelled
+	Step  string `json:"step,omitempty"`
+	Error string `json:"error,omitempty"`
+	Code  string `json:"code,omitempty"` // the failure's code (the bridge's, e.g. trust_pending; install's, e.g. download_failed)
+	// Waiting: while a pairing runs, what it waits for from the person at the phone (CodeTrustPending, CodeLocked), ""
+	// when it waits for nothing (PairProgress).
+	Waiting string `json:"waiting,omitempty"`
+	// Stage: while an install or a prepare runs, what it does (StageDownload, StageVerify, StageInstall; StagePrepare).
+	Stage   string    `json:"stage,omitempty"`
 	Started time.Time `json:"started"`
 }
 
@@ -42,7 +47,7 @@ func (m *Manager) Job() *Job {
 
 // StartPair starts pairing udid in the background.
 func (m *Manager) StartPair(udid string) error {
-	return m.startJob("pair", udid, func(ctx context.Context, step func(string)) error {
+	return m.startJob("pair", udid, func(ctx context.Context, step func(string, string)) error {
 		ctx, cancel := context.WithTimeout(ctx, pairTimeout)
 		defer cancel()
 		_, err := m.Pair(ctx, udid, step)
@@ -52,7 +57,7 @@ func (m *Manager) StartPair(udid string) error {
 
 // StartForget forgets udid in the background (quick, but the same shape as pairing for the app).
 func (m *Manager) StartForget(udid string) error {
-	return m.startJob("forget", udid, func(context.Context, func(string)) error { return m.Forget(udid) })
+	return m.startJob("forget", udid, func(context.Context, func(string, string)) error { return m.Forget(udid) })
 }
 
 // Cancel stops the running job.
@@ -65,8 +70,8 @@ func (m *Manager) Cancel() {
 	}
 }
 
-func (m *Manager) startJob(kind, udid string, run func(context.Context, func(string)) error) error {
-	if !ValidUDID(udid) {
+func (m *Manager) startJob(kind, udid string, run func(context.Context, func(step, code string)) error) error {
+	if kind != "install" && !ValidUDID(udid) {
 		return &Error{Code: "bad_request", Message: "invalid device id"}
 	}
 	m.mu.Lock()
@@ -87,13 +92,19 @@ func (m *Manager) startJob(kind, udid string, run func(context.Context, func(str
 	go func() {
 		defer m.wg.Done()
 		defer cancel()
-		err := run(ctx, func(step string) {
+		err := run(ctx, func(step, code string) {
 			m.mu.Lock()
 			job.Step = step
+			if kind == "pair" {
+				job.Waiting = code
+			} else {
+				job.Stage = code
+			}
 			m.mu.Unlock()
 		})
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		job.Waiting, job.Stage = "", ""
 		switch {
 		case err == nil:
 			job.State, job.Step = JobDone, ""
@@ -103,6 +114,12 @@ func (m *Manager) startJob(kind, udid string, run func(context.Context, func(str
 			job.State, job.Error, job.Code = JobFailed, err.Error(), Code(err)
 			if errors.Is(err, context.DeadlineExceeded) {
 				job.Code, job.Error = "timeout", "the phone didn't confirm in time: unlock it, tap Trust and enter its passcode, then try again"
+				switch kind {
+				case "install":
+					job.Error = "the iPhone bridge didn't install in time"
+				case "prepare":
+					job.Error = "the developer disk image didn't mount in time"
+				}
 			}
 		}
 		if m.jobStop != nil && m.job == job {

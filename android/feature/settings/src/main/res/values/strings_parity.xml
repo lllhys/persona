@@ -91,6 +91,12 @@
         <item quantity="other">Import %d providers</item>
     </plurals>
     <string name="settings_claude_dirs">Blocked config directories</string>
+    <string name="settings_live_replies">Live Replies</string>
+    <string name="settings_live_replies_toggle">Stream Replies as Claude Writes</string>
+    <string name="settings_live_replies_on">Replies arrive line by line, seconds sooner</string>
+    <string name="settings_live_replies_off">Replies show up once Claude saves them</string>
+    <string name="settings_live_replies_load_failed">Couldn\'t read this computer\'s setting: %1$s</string>
+    <string name="settings_live_replies_note">When on, the Claude Code sessions Persona starts on this computer send their replies while Claude writes them, so this app and the web show the text sooner. The cost: in this computer\'s terminal, replies appear a few lines at a time instead of word by word. The hub keeps this switch, not ~/.claude/settings.json; with “Change all online machines” on above, the other online computers change too. A change applies to sessions started after it; a session that is already running changes once Claude restarts.</string>
     <string name="settings_claude_dirs_load_failed">Couldn\'t read this computer\'s config directories: %1$s</string>
     <string name="settings_claude_dirs_save_failed">Not changed: %1$s</string>
     <string name="settings_claude_dirs_block">Block</string>

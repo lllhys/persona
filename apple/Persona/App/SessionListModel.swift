@@ -33,6 +33,9 @@ import Observation
     @ObservationIgnored private let refreshes = CoalescedRefresh()
     @ObservationIgnored private var hintTask: Task<Void, Never>?
     @ObservationIgnored private let waitForHints: @MainActor () async throws -> Void
+    /// The list's hint reads, one per window (#9487). Zero-length unless the owner passes one (the hub's live lists do,
+    /// while no Agents list is in sight).
+    @ObservationIgnored private let hintWindow: HintWindow
     @ObservationIgnored private var id: (Row) -> String
     @ObservationIgnored private var removalID: (String) -> String?
     @ObservationIgnored private var fetch: Fetch
@@ -45,12 +48,14 @@ import Observation
 
     init(id: @escaping (Row) -> String, removalID: @escaping (String) -> String?,
          fetch: @escaping Fetch, counts: @escaping @MainActor (SessionListQuery) async throws -> SessionListCounts,
-         waitForHints: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .milliseconds(150)) }) {
+         waitForHints: @escaping @MainActor () async throws -> Void = { try await Task.sleep(for: .milliseconds(150)) },
+         hintWindow: HintWindow = HintWindow(length: { .zero })) {
         self.id = id
         self.removalID = removalID
         self.fetch = fetch
         self.fetchCounts = counts
         self.waitForHints = waitForHints
+        self.hintWindow = hintWindow
     }
 
     func select(_ query: SessionListQuery) async {
@@ -60,12 +65,16 @@ import Observation
 
     func cancel() { reset(query) }
 
+    /// The list came into sight: a hint read waiting for its window goes now.
+    func releaseHintWindow() { hintWindow.release() }
+
     private func reset(_ query: SessionListQuery) {
         recoveries = 0
         generation += 1
         refreshes.reset()
         hintTask?.cancel()
         hintTask = nil
+        hintWindow.reset()
         task?.cancel()
         task = nil
         taskID = nil
@@ -117,15 +126,20 @@ import Observation
     }
 
     /// Preserve the short hint-merging window, then single-flight with one dirty follow-up. Later hints do not
-    /// move the pending deadline; there is no refresh cooldown or maximum request rate. A hint for the revision the
-    /// list already holds (the one every connect sends, a burst's repeat) brings nothing and starts no read.
+    /// move the pending deadline. A list with a `hintWindow` reads for hints at most once a window: a hint less than a
+    /// window after the last hint read waits for the window's end, and the hints until then share that read (#9487).
+    /// A hint for the revision the list already holds (the one every connect sends, a burst's repeat) brings nothing
+    /// and starts no read. Manual refreshes, pages and query changes never wait for the window.
     func invalidate(revision hinted: String? = nil) {
         if let hinted, loaded, paged || complete, hinted == revision { return }
         guard hintTask == nil else { return }
         let gen = generation
         hintTask = Task { [weak self] in
             guard let self else { return }
-            do { try await self.waitForHints() } catch { return }
+            do {
+                try await self.waitForHints()
+                try await self.hintWindow.enter()
+            } catch { return }
             guard self.generation == gen, !Task.isCancelled else { return }
             self.hintTask = nil
             self.refreshes.invalidate { [weak self] in

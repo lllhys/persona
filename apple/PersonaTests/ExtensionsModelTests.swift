@@ -1,6 +1,69 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
+
+struct ExtensionIntegerStepperTests {
+    @Test func stepDecodesAndRoundTripsWithoutChangingLegacyFields() throws {
+        let field = try JSON.decoder.decode(ExtensionField.self, from: Data(#"{"name":"goal","type":"integer","step":250}"#.utf8))
+        #expect(field.step == 250)
+        #expect(try JSON.decoder.decode(ExtensionField.self, from: JSON.encoder.encode(field)).step == 250)
+        let legacy = try JSON.decoder.decode(ExtensionField.self, from: Data(#"{"name":"goal","type":"integer"}"#.utf8))
+        #expect(legacy.step == nil)
+        #expect(ExtensionIntegerStepper.next(legacy, current: 2100, up: true) == 2101)
+        #expect(ExtensionIntegerStepper.next(legacy, current: 2100, up: false) == 2099)
+    }
+
+    @Test func stepsFromTheCurrentValueWithoutSnappingToAGrid() {
+        let field = ExtensionField(name: "goal", type: "integer", step: 250)
+        #expect(ExtensionIntegerStepper.next(field, current: 2100, up: true) == 2350)
+        #expect(ExtensionIntegerStepper.next(field, current: 2100, up: false) == 1850)
+        #expect(ExtensionIntegerStepper.next(field, current: 2_000_000_000, up: true) == 2_000_000_250)
+    }
+
+    @Test func clampsBothDirectionsAndDisablesOnlyTheBoundedDirection() {
+        let field = ExtensionField(name: "goal", type: "integer", minimum: 1000, maximum: 3000, step: 250)
+        #expect(ExtensionIntegerStepper.next(field, current: 2900, up: true) == 3000)
+        #expect(ExtensionIntegerStepper.next(field, current: 1100, up: false) == 1000)
+        #expect(!ExtensionIntegerStepper.canStep(field, current: 3000, up: true))
+        #expect(ExtensionIntegerStepper.canStep(field, current: 3000, up: false))
+        #expect(!ExtensionIntegerStepper.canStep(field, current: 1000, up: false))
+        #expect(ExtensionIntegerStepper.canStep(field, current: 1000, up: true))
+        #expect(ExtensionIntegerStepper.next(field, current: 4000, up: false) == 3000)
+        #expect(ExtensionIntegerStepper.next(field, current: 0, up: true) == 1000)
+    }
+
+    @Test func fallsBackToDefaultThenRoundedMinimumThenZero() {
+        var field = ExtensionField(name: "goal", type: "integer", default: .number(2100), minimum: 1000.2, maximum: 3000.8, step: 250)
+        #expect(ExtensionIntegerStepper.next(field, current: nil, up: true) == 2350)
+        #expect(ExtensionIntegerStepper.next(field, current: 2900, up: true) == 3000)
+        #expect(ExtensionIntegerStepper.next(field, current: 1100, up: false) == 1001)
+        field.default = nil
+        #expect(ExtensionIntegerStepper.next(field, current: nil, up: true) == 1251)
+        #expect(ExtensionIntegerStepper.next(field, current: nil, up: false) == 1001)
+        field.minimum = nil
+        #expect(ExtensionIntegerStepper.next(field, current: nil, up: true) == 250)
+        #expect(ExtensionIntegerStepper.next(field, current: nil, up: false) == -250)
+        #expect(ExtensionIntegerStepper.canStep(field, current: nil, up: true))
+    }
+
+    @MainActor @Test func typedOffGridValuesRemainValidAndAreSavedUnchanged() async throws {
+        let hub = FakeHub()
+        let detail = #"{"id":"goal","name":"Goal","kind":"tools","status":"running","form":{"fields":[{"name":"amount","type":"integer","minimum":0,"maximum":3000,"step":250}]},"config":{"amount":2000}}"#
+        hub.on("GET", "/api/v1/plugins/goal/-/", json: detail)
+        hub.on("PUT", "/api/v1/plugins/goal/-/config") { request in
+            let body = try JSON.decoder.decode(JSONValue.self, from: #require(request.body))
+            #expect(body == .object(["config": .object(["amount": .number(2100)])]))
+            return Data(detail.replacingOccurrences(of: "2000", with: "2100").utf8)
+        }
+        let page = ExtensionModel(id: "goal", deps: .init(api: { hub.client }))
+        await page.load()
+        page.set(.number(2100), at: ["amount"])
+        #expect(page.canSave)
+        #expect(await page.save())
+        #expect(page.value(["amount"]) == .number(2100))
+    }
+}
 
 /// Settings › Extensions' logic (ExtensionsModel, ExtensionModel): what the hub sends decodes, the form's draft is edited by path and
 /// saved as a whole without the emptied fields, a field the hub refuses comes back beside that field.
@@ -49,6 +112,46 @@ struct ExtensionsModelTests {
         for status in ["disabled", "starting", "needs_setup", "incompatible", "error"] {
             #expect(try ExtensionText.runNote(plugin(status)) == nil)
         }
+    }
+
+    /// A node-only extension's line is the aggregate across its machines ("Running on 2 machines"), not the idle hub
+    /// process, and the hub-process small print gives way to it.
+    @Test func nodeProgramStatusDrivesTheStateLine() throws {
+        func plugin(_ json: String) throws -> HubExtension {
+            try JSON.decoder.decode(HubExtension.self, from: Data(json.utf8))
+        }
+        let running = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"running","# +
+            #""node_status":{"total":2,"running":2,"starting":0,"stopped":0,"offline":0,"abnormal":0}}"#)
+        #expect(ExtensionText.state(running) == "在 2 台机器上运行")
+        #expect(ExtensionText.runNote(running) == nil)
+
+        let mixed = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"running","# +
+            #""node_status":{"total":2,"running":1,"starting":0,"stopped":0,"offline":0,"abnormal":1}}"#)
+        #expect(ExtensionText.state(mixed) == "在 1 台机器上运行 · 1 台机器异常")
+
+        let abnormalOnly = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"error","# +
+            #""node_status":{"total":2,"running":0,"starting":0,"stopped":0,"offline":1,"abnormal":1}}"#)
+        #expect(ExtensionText.state(abnormalOnly) == "1 台机器异常 · 1 台机器离线")
+
+        let starting = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"starting","# +
+            #""node_status":{"total":1,"running":0,"starting":1,"stopped":0,"offline":0,"abnormal":0}}"#)
+        #expect(ExtensionText.state(starting) == "正在 1 台机器上启动")
+
+        let allStopped = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"stopped","# +
+            #""node_status":{"total":2,"running":0,"starting":0,"stopped":2,"offline":0,"abnormal":0}}"#)
+        #expect(ExtensionText.state(allStopped) == "2 台机器已停止")
+
+        let allOffline = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"stopped","# +
+            #""node_status":{"total":1,"running":0,"starting":0,"stopped":0,"offline":1,"abnormal":0}}"#)
+        #expect(ExtensionText.state(allOffline) == "1 台机器离线")
+
+        let stoppedAndOffline = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"stopped","# +
+            #""node_status":{"total":2,"running":0,"starting":0,"stopped":1,"offline":1,"abnormal":0}}"#)
+        #expect(ExtensionText.state(stoppedAndOffline) == "1 台机器已停止 · 1 台机器离线")
+
+        let runningAndOffline = try plugin(#"{"id":"p","name":"P","kind":"connectors","status":"running","# +
+            #""node_status":{"total":3,"running":2,"starting":0,"stopped":0,"offline":1,"abnormal":0}}"#)
+        #expect(ExtensionText.state(runningAndOffline) == "在 2 台机器上运行 · 1 台机器离线")
     }
 
     @Test func detailDecodesTheForm() async throws {
@@ -122,10 +225,30 @@ struct ExtensionsModelTests {
             ExtensionField(name: name, type: type, title: name == "machines" ? "能操控的电脑" : nil,
                         items: machines ? ExtensionItems(type: "string", format: "machine") : nil)
         }
-        #expect(ExtensionText.saveFooter([field("url", "string")]) == String(localized: "When you're done, tap Save at the end of Extension configuration; the extension restarts after saving. Empty fields use the extension's defaults."))
+        #expect(ExtensionText.saveFooter([field("url", "string")]) == String(localized: "When you're done, tap Save; the extension restarts after saving. Empty fields use the extension's defaults."))
         #expect(ExtensionText.saveFooter([field("machines", "array", machines: true)]) == nil)
         let names = ExtensionText.list([String(localized: "「\(field("machines", "array", machines: true).label)」", comment: "A field's name in quotes")])
-        #expect(ExtensionText.saveFooter([field("machines", "array", machines: true), field("confirm", "boolean")]) == String(localized: "Switches in \(names) take effect right away. For the rest, tap Save at the end of Extension configuration when you're done; the extension restarts after saving. Empty fields use the extension's defaults."))
+        #expect(ExtensionText.saveFooter([field("machines", "array", machines: true), field("confirm", "boolean")]) == String(localized: "Switches in \(names) take effect right away. For the rest, tap Save when you're done; the extension restarts after saving. Empty fields use the extension's defaults."))
+    }
+
+    /// Same cases as the web's "opens from Still needs the first unset secret…" (lib/extensions.test.ts, #8853).
+    @Test func theStillNeedsLineOpensTheSecretItNames() {
+        let key = ExtensionSecret(name: "key", title: "API Key", set: false)
+        let token = ExtensionSecret(name: "token", title: "Token", required: true, set: false)
+        var setKey = key
+        setKey.set = true
+        // an optional secret the line names (the hub's own words for the extension)
+        #expect(ExtensionText.setupSecret(needs: ["火山引擎的 API Key"], secrets: [key])?.name == "key")
+        // a required one, first among those not set
+        #expect(ExtensionText.setupSecret(needs: ["密钥「Token」"], secrets: [setKey, token])?.name == "token")
+        #expect(ExtensionText.setupSecret(needs: ["密钥「API Key」"], secrets: [token, key])?.name == "token")
+        // nothing it names is a secret here: plain text
+        #expect(ExtensionText.setupSecret(needs: ["依赖「Example」还没准备好"], secrets: [key]) == nil)
+        #expect(ExtensionText.setupSecret(needs: ["密钥「API Key」"], secrets: [setKey]) == nil)
+        // nothing needed: no target, whatever is unset
+        #expect(ExtensionText.setupSecret(needs: [], secrets: [token]) == nil)
+        #expect(ExtensionText.setupSecret(needs: nil, secrets: [token]) == nil)
+        #expect(ExtensionText.setupSecret(needs: ["密钥「API Key」"], secrets: []) == nil)
     }
 
     @Test func aRefusedFieldComesBackBesideIt() async {

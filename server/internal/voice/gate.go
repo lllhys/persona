@@ -33,21 +33,58 @@ var gateWait = 2500 * time.Millisecond
 
 // speechGate is a conversation's gate (under conversation.mu).
 type speechGate struct {
-	user  time.Time // the user's last words (a caption, a typed line)
-	typed time.Time // the user's last typed line
-	voice time.Time // the user's own voice was last heard (ownVoice), or reached a woken session (flushRing)
-	agent time.Time // the last time an agent's words were sent to the model, or it took them in
+	user    time.Time // the user's last words (a caption, a typed line)
+	caption time.Time // the user's last caption
+	typed   time.Time // the user's last typed line
+	voice   time.Time // the user's own voice was last heard (ownVoice), or reached a woken session (flushRing)
+	agent   time.Time // the last time an agent's words were sent to the model, or it took them in
+	// agentBy is what moved agent there (agentSent, agentAcked, agentReconnect), was the agent time before that and
+	// what moved it then: for the log, which says what a handover's agent time came from (movedBy).
+	agentBy string
+	was     agentMove
 	// echoes: the app records without echo cancellation (its start said so), so the model's own speech is in the audio
 	// the service captions, and the measured one captions it as the user's (#5789): a caption is then not the user
 	// speaking; a typed line and their own voice (ownVoice, clear of the model's speech) still are.
 	echoes bool
+	// off: the app's setting turned the gate off for this call (its start said speech_gate: false; only a full
+	// device's call can, #5904): a handover goes without the user's words, and the log still says what the gate would
+	// have decided.
+	off bool
 }
 
-// told: an agent's words were sent, or taken in, at now.
-func (g *speechGate) told(now time.Time) {
+// What moved the gate's agent time (speechGate.told), as the log says it.
+const (
+	agentSent      = "sent"      // an agent's words were sent to the model
+	agentAcked     = "acked"     // the service said the model took them in (evAck)
+	agentReconnect = "reconnect" // a session after a drop was told the bound conversation's new agent words
+)
+
+// agentMove is an agent time of the gate's and what moved it there.
+type agentMove struct {
+	at time.Time
+	by string
+}
+
+// told: an agent's words were sent, or taken in, at now; by is how (agentSent, agentAcked, agentReconnect).
+func (g *speechGate) told(now time.Time, by string) {
 	if now.After(g.agent) {
-		g.agent = now
+		g.was = agentMove{g.agent, g.agentBy}
+		g.agent, g.agentBy = now, by
 	}
+}
+
+// movedBy is what moved the agent time to at, for the log: "" when it is not one of the last two (a handover is held to
+// the agent time when the model made it, which may have moved once since).
+func (g *speechGate) movedBy(at time.Time) string {
+	switch {
+	case at.IsZero():
+		return ""
+	case at.Equal(g.agent):
+		return g.agentBy
+	case at.Equal(g.was.at):
+		return g.was.by
+	}
+	return ""
 }
 
 // openSince: the user has spoken since agent (the gate's agent time when the model acted), within gateWindow of now:
@@ -73,6 +110,74 @@ func (g *speechGate) openedBy(agent, now time.Time) string {
 // before that), within gateWindow of it.
 func (g *speechGate) heardSince(agent, now time.Time) bool {
 	return !g.voice.IsZero() && g.voice.After(agent) && !g.voice.After(now) && now.Sub(g.voice) <= gateWindow
+}
+
+// explain is what the gate's decision on a handover went by, for the log (calllog.go: times and sources, never
+// words): from when the model acted (acted; at its agent time then), the agent's words and what moved the agent time
+// there, and the user's last caption, typed line and own voice, each with whether it counted and why not, as
+// openSince (at now) and heardSince (at acted) count them. voice is the user's own voice as heardSince had it when the
+// model acted: heard again while a caption is waited for, the gate's own voice is not what the decision went by.
+func (g *speechGate) explain(at, acted, now, voice time.Time) string {
+	agent := "none"
+	if !at.IsZero() {
+		agent = fromHandover(at, acted)
+		if by := g.movedBy(at); by != "" {
+			agent += " (" + by + ")"
+		}
+	}
+	return "from the handover: agent words " + agent +
+		", caption " + g.wordsLog(g.caption, at, now, acted, g.echoes) +
+		", typed line " + g.wordsLog(g.typed, at, now, acted, false) +
+		", own voice " + voiceLog(voice, at, acted)
+}
+
+// wordsLog is a caption's or typed line's time from acted and whether it counted for openSince at now (echoes: a
+// caption while the app records without echo cancellation).
+func (g *speechGate) wordsLog(words, at, now, acted time.Time, echoes bool) string {
+	if words.IsZero() {
+		return "none"
+	}
+	excluded := ""
+	if echoes {
+		excluded = "no echo cancellation"
+	}
+	return fromHandover(words, acted) + " (" + counted(excluded, !words.After(at), false, now.Sub(words) > gateWindow) + ")"
+}
+
+// voiceLog is the user's own voice's time (voice, as it was when the model acted) from acted and whether it counted
+// for heardSince at acted.
+func voiceLog(voice, at, acted time.Time) string {
+	if voice.IsZero() {
+		return "none"
+	}
+	return fromHandover(voice, acted) + " (" + counted("", !voice.After(at), voice.After(acted), acted.Sub(voice) > gateWindow) + ")"
+}
+
+// counted says whether the user's words counted, or the first reason they did not: excluded (not "": what keeps
+// them out), not after the agent words, after the handover, older than gateWindow.
+func counted(excluded string, beforeAgent, late, old bool) string {
+	switch {
+	case excluded != "":
+		return "not counted: " + excluded
+	case beforeAgent:
+		return "not counted: not after the agent words"
+	case late:
+		return "not counted: after the handover"
+	case old:
+		return "not counted: over " + gateWindow.String() + " old"
+	}
+	return "counted"
+}
+
+// fromHandover is t from when the model acted, for the log: "1.2s before", "300ms after", "at it".
+func fromHandover(t, acted time.Time) string {
+	switch d := t.Sub(acted); {
+	case d < 0:
+		return logDur(-d).String() + " before"
+	case d > 0:
+		return logDur(d).String() + " after"
+	}
+	return "at it"
 }
 
 var (

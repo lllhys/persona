@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="phonetools_source_contacts">連絡先</string>
-    <string name="phonetools_source_contacts_detail">名前、会社、電話番号、メールを検索</string>
+    <string name="phonetools_source_contacts_detail">名前、会社、電話番号、メールを検索・編集。変更は毎回確認が必要です</string>
     <string name="phonetools_source_calendar">カレンダー</string>
-    <string name="phonetools_source_calendar_detail">予定を表示。新しい予定は毎回確認が必要です</string>
+    <string name="phonetools_source_calendar_detail">予定を表示・編集。変更は毎回確認が必要です</string>
     <string name="phonetools_source_location">位置情報</string>
     <string name="phonetools_source_location_detail">フォアグラウンドでのみ取得、Googleサービス不要</string>
     <string name="phonetools_source_health">ヘルスケア</string>
@@ -51,6 +51,34 @@
     <string name="phonetools_calendar_location">場所：%1$s</string>
     <string name="phonetools_calendar_calendar">カレンダー：%1$s</string>
     <string name="phonetools_calendar_notes">メモ：%1$s</string>
+    <!-- Calendar and contact write confirmations. -->
+    <string name="phonetools_not_set">未設定</string>
+    <string name="phonetools_untitled">（無題）</string>
+    <string name="phonetools_calendar_change">予定を変更「%1$s」</string>
+    <string name="phonetools_calendar_delete">予定を削除「%1$s」</string>
+    <string name="phonetools_calendar_time_change">日時：%1$s → %2$s</string>
+    <string name="phonetools_calendar_title_change">件名：%1$s → %2$s</string>
+    <string name="phonetools_calendar_location_change">場所：%1$s → %2$s</string>
+    <string name="phonetools_calendar_notes_change">メモ：%1$s → %2$s</string>
+    <plurals name="phonetools_text_clipped">
+        <item quantity="other">%1$s…（全%2$d文字）</item>
+    </plurals>
+    <string name="phonetools_calendar_all_day_on">終日の予定に変更</string>
+    <string name="phonetools_calendar_all_day_off">終日の予定ではなくなります</string>
+    <string name="phonetools_calendar_this_occurrence">この回のみ</string>
+    <string name="phonetools_calendar_future_occurrences">この回以降すべて</string>
+    <string name="phonetools_contact_new">新しい連絡先「%1$s」</string>
+    <string name="phonetools_contact_change">連絡先を変更「%1$s」</string>
+    <string name="phonetools_contact_field_change">%1$s：%2$s → %3$s</string>
+    <string name="phonetools_contact_field_value">%1$s：%2$s</string>
+    <string name="phonetools_contact_given_name">名</string>
+    <string name="phonetools_contact_family_name">姓</string>
+    <string name="phonetools_contact_company">会社</string>
+    <string name="phonetools_contact_job_title">役職</string>
+    <string name="phonetools_contact_phones">電話番号</string>
+    <string name="phonetools_contact_emails">メール</string>
+    <string name="phonetools_contact_phones_add">電話番号を追加：%1$s</string>
+    <string name="phonetools_contact_emails_add">メールを追加：%1$s</string>
     <string name="phonetools_health_rationale_title">ヘルスケアデータ</string>
     <string name="phonetools_health_rationale_how">Personaによるヘルスケアデータの使い方</string>
     <string name="phonetools_health_rationale_read">コンピューターでClaudeに健康に関する質問をしたときだけ、ClaudeがPersona経由で1日ごとの集計を1回読み取ります：歩数、距離、アクティブエネルギー、心拍数、安静時心拍数、睡眠時間、体重。</string>

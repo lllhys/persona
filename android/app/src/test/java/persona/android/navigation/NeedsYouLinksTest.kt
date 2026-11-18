@@ -20,6 +20,13 @@ class NeedsYouLinksTest {
         assertEquals(listOf<NavKey>(AssistantRoute), stacks.getValue(AppTab.Persona))
     }
 
+    @Test fun aSideSessionsRequestNamesTheSideSoItsParentOpensWithItShown() {
+        val line = NeedsYouLine.Agent(SessionKey("m", "parent"), "r2", "question", null, "Plan", "Which format?",
+            side = SessionKey("m", "side"))
+        assertEquals(AppTab.Agents, needsYouRoute(line).open(stacks))
+        assertEquals(ChatRoute("m", "side", ConversationKind.Agent), stacks.getValue(AppTab.Agents).last())
+    }
+
     @Test fun anInboxItemOpensUnderPersonaWithTheInboxParent() {
         val line = NeedsYouLine.Inbox("item-1", lark = true, itemKind = "dm", who = "发布群", what = "要你确认")
         assertEquals(AppTab.Persona, needsYouRoute(line).open(stacks))

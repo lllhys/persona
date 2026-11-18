@@ -221,6 +221,9 @@ describe("会话页", () => {
     expect(mediaLine({ kind: "voice", duration: 72 })).toBe("语音 1:12");
     expect(mediaLine({ kind: "file", name: "示例.pdf", size: 284000 })).toBe("示例.pdf · 277 KB");
     expect(mediaLine({ kind: "file", size: 3 << 20 })).toBe("文件 · 3.0 MB");
+    expect(mediaLine({ kind: "file", size: 1048000 })).toBe("文件 · 1023 KB");
+    expect(mediaLine({ kind: "file", size: 1048500 })).toBe("文件 · 1.0 MB");
+    expect(mediaLine({ kind: "file", size: 1048575 })).toBe("文件 · 1.0 MB");
     expect(labelColor("a2eeef")).toBe("#a2eeef");
     expect(labelColor("red")).toBeUndefined();
   });

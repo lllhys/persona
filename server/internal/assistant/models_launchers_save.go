@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"maps"
 	"net/url"
@@ -71,6 +72,31 @@ type launcherInput struct {
 	// keyRefSealed and machineRefsSealed are the references above, checked and sealed (sealKeyReferences).
 	keyRefSealed      string
 	machineRefsSealed map[string]string
+	// modelsNamed: for each of Models, whether the body named any of reportedKeys for it (false or null too), as the
+	// web does and older apps never do (keepReported).
+	modelsNamed []bool
+}
+
+// UnmarshalJSON decodes the body as usual and notes which models name a field of a gateway's report (modelsNamed).
+func (in *launcherInput) UnmarshalJSON(b []byte) error {
+	type plain launcherInput
+	if err := json.Unmarshal(b, (*plain)(in)); err != nil {
+		return err
+	}
+	var raw struct {
+		Models []map[string]json.RawMessage `json:"models"`
+	}
+	in.modelsNamed = nil
+	if json.Unmarshal(b, &raw) == nil {
+		for _, m := range raw.Models {
+			named := false // the keys as encoding/json matches them, in any case
+			for k := range m {
+				named = named || slices.ContainsFunc(reportedKeys, func(r string) bool { return strings.EqualFold(k, r) })
+			}
+			in.modelsNamed = append(in.modelsNamed, named)
+		}
+	}
+	return nil
 }
 
 // checkEffort: a thinking level Claude Code takes (CLAUDE_CODE_EFFORT_LEVEL), or none. whose is the error's key
@@ -153,6 +179,9 @@ func (in launcherInput) checkProvider() error {
 			if m.ContextWindow < 0 {
 				return i18n.Err("assistant-models_launchers.err_model_context_negative", i18n.Args{"model": id})
 			}
+			if m.MaxOutputTokens < 0 {
+				return i18n.Err("assistant-models_launchers.err_model_output_negative", i18n.Args{"model": id})
+			}
 			for _, e := range m.Efforts {
 				if e == "" {
 					return i18n.Err("assistant-models_launchers.err_model_effort_empty", i18n.Args{"model": id})
@@ -224,9 +253,9 @@ func (in launcherInput) applyProvider(s *storedLauncher) {
 	}
 	if in.Models != nil {
 		var models []proto.ProviderModel
-		for _, m := range *in.Models {
+		for i, m := range *in.Models {
 			m.ID, m.Name = strings.TrimSpace(m.ID), strings.TrimSpace(m.Name)
-			models = append(models, m)
+			models = append(models, keepReported(m, s.Models, i < len(in.modelsNamed) && in.modelsNamed[i]))
 		}
 		s.Models = models
 	}
@@ -242,6 +271,13 @@ func (in launcherInput) applyProvider(s *storedLauncher) {
 	num(&s.MaxContext, in.MaxContext)
 	if in.SubagentForce != nil {
 		s.SubagentForce = *in.SubagentForce
+	}
+	// thinking levels in the words this provider's agent or API takes, kept with the models or not: the kind or agent
+	// may have changed
+	vocab := providerEffortVocab(s.Kind, s.AgentType())
+	s.Models = slices.Clone(s.Models) // an update's are the stored record's until now
+	for i := range s.Models {
+		s.Models[i] = settleSavedEfforts(s.Models[i], vocab)
 	}
 }
 
@@ -266,6 +302,9 @@ func onlyHost(list, host string) bool {
 }
 
 func (in launcherInput) check() error {
+	if proto.IsExternalLauncher(in.Name) {
+		return i18n.Err("external-adapter.purpose_unsupported")
+	}
 	if in.Kind != "" && in.Kind != "api" && in.Kind != "launcher" {
 		return i18n.Err("assistant-models_launchers.err_kind")
 	}
@@ -377,6 +416,9 @@ func errViaMachine(id string) error {
 
 // saveLauncher stores in (over old on an update) and tells the nodes.
 func (s *Service) saveLauncher(ctx context.Context, in launcherInput, old *storedLauncher) (storedLauncher, error) {
+	if proto.IsExternalLauncher(in.Name) {
+		return storedLauncher{}, i18n.Err("external-adapter.purpose_unsupported")
+	}
 	s.models.mu.Lock()
 	defer s.models.mu.Unlock()
 	list, err := s.readStoredLaunchers(ctx)
@@ -493,7 +535,7 @@ func (s *Service) saveLauncher(ctx context.Context, in launcherInput, old *store
 		}
 	}
 	if l.API == "chat" && (l.EnvSealed != "" || l.TimeoutMS != 0 || l.CompactWindow != 0 || l.MaxContext != 0 ||
-		l.Effort != "" || l.OpusModel != "" || l.SonnetModel != "" || l.HaikuModel != "" || l.FableModel != "" || l.SubagentForce) {
+		l.OpusModel != "" || l.SonnetModel != "" || l.HaikuModel != "" || l.FableModel != "" || l.SubagentForce) {
 		return storedLauncher{}, errChatLaunchSettings
 	}
 	if err := in.applyScope(&l, old == nil, len(in.Assign) > 0); err != nil {

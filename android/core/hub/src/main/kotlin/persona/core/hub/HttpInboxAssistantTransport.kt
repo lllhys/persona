@@ -1,6 +1,7 @@
 package persona.core.hub
 
 import persona.core.contracts.JsonCodec
+import persona.core.contracts.SessionKey
 
 import persona.core.contracts.api.InboxAssistantTransport
 import persona.core.contracts.api.InboxBulkAction
@@ -52,7 +53,7 @@ class HttpInboxAssistantTransport private constructor(
 
     private fun checkScope() { if (!isCurrent()) throw CancellationException("Pairing changed") }
 
-    private suspend fun json(url: HttpUrl, body: JsonObject? = null, method: String = if (body == null) "GET" else "POST"): JsonObject {
+    private suspend fun json(url: HttpUrl, body: JsonElement? = null, method: String = if (body == null) "GET" else "POST"): JsonObject {
         return withContext(Dispatchers.IO) {
             // Acquire before requesting: queued responses must not occupy the heap either.
             jsonDecodeGate.withPermit {
@@ -71,6 +72,7 @@ class HttpInboxAssistantTransport private constructor(
     // Connectors' items too (`sources=all`): each opens as its connector's thread (#2726); without it the hub lists
     // Feishu and mail only.
     override suspend fun inbox() = json(url("api", "v1", "inbox").newBuilder().addQueryParameter("sources", "all").build())
+    override suspend fun item(itemId: String) = json(url("api", "v1", "inbox", itemId))
     override suspend fun doneHistory(manager: String?, before: String?, beforeId: String?, limit: Int) =
         json(url("api", "v1", "inbox", "done").newBuilder().addQueryParameter("sources", "all").addQueryParameter("limit", limit.toString())
             .apply { if (before != null) { addQueryParameter("before", before); beforeId?.let { addQueryParameter("before_id", it) } } }
@@ -131,6 +133,18 @@ class HttpInboxAssistantTransport private constructor(
             put("text", text); put("client_id", clientId)
         })
     }
+    override suspend fun recordAgentHandOff(itemId: String, session: SessionKey, title: String, clientId: String): JsonObject {
+        require(itemId.isNotBlank() && session.machineId.isNotBlank() && session.sessionId.isNotBlank() && clientId.isNotBlank())
+        return json(url("api", "v1", "inbox", itemId, "handoff"), buildJsonObject {
+            put("session", buildJsonObject {
+                put("machine_id", session.machineId)
+                put("session_id", session.sessionId)
+            })
+            put("kind", "agent")
+            title.takeIf { it.isNotBlank() }?.let { put("title", it) }
+            put("client_id", clientId)
+        })
+    }
     override suspend fun suggestion(itemId: String, version: Long, action: String, text: String?, clientId: String): JsonObject {
         require(itemId.isNotBlank() && clientId.isNotBlank() && action in setOf("confirm", "reject", "instruct"))
         return try {
@@ -142,6 +156,19 @@ class HttpInboxAssistantTransport private constructor(
             val item = e.body?.let { runCatching { JsonCodec.parseToJsonElement(it).jsonObject["item"] as? JsonObject }.getOrNull() }
             throw persona.core.contracts.api.InboxSuggestionStale(item)
         }
+    }
+    override suspend fun tree(kind: String, id: String): JsonObject {
+        require(kind in setOf("inbox", "todo", "session") && id.isNotBlank())
+        val parts = if (kind == "session") id.split('/').also { parts -> require(parts.all { it.isNotBlank() }) } else listOf(id)
+        return json(url("api", "v1", "inbox", "tree", kind, *parts.toTypedArray()))
+    }
+    override suspend fun setParent(itemId: String, parent: persona.core.contracts.api.InboxParentRef?): JsonObject {
+        require(itemId.isNotBlank())
+        val body: JsonElement = parent?.let { ref ->
+            require(ref.kind in setOf("inbox", "todo", "session") && ref.id.isNotBlank())
+            buildJsonObject { put("kind", ref.kind); put("id", ref.id) }
+        } ?: JsonNull
+        return json(url("api", "v1", "inbox", itemId, "parent"), body, method = "PUT")
     }
     override suspend fun replyMail(itemId: String, text: String, clientId: String, target: MailReplyTarget): JsonObject {
         require(text.isNotBlank() && clientId.isNotBlank() && target.uid > 0 && target.version.isNotBlank())
@@ -368,7 +395,7 @@ class HttpInboxAssistantTransport private constructor(
             val http = client.newBuilder().followRedirects(false).followSslRedirects(false)
                 .retryOnConnectionFailure(false).build()
             return { path, method, body, buffered ->
-                val target = base.hubUrl(path)
+                val target = base.hubUrl(path).withRequestManager()
                 http.newCall(Request.Builder().url(target).header("Authorization", "Bearer $token")
                     .method(method, body).build()).awaitResponse(buffered = buffered).also { response ->
                     if (!response.isSuccessful) throw response.use { HubFailure.from(it) }

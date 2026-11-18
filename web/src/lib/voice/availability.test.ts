@@ -28,6 +28,19 @@ describe("whether a conversation offers voice", () => {
     for (const k of ["noConversation", "readOnly", "noExtension", "limitedDevice", "unknown"] as const) expect(entryMode({ kind: k } as never)).toBeNull();
   });
 
+  it("offers nothing in a meeting's room, whatever the hub and the browser can do (#3862)", () => {
+    const room = session({ origin: "meeting", origin_ref: "8a1d2c3e-0000-4000-8000-000000000001" });
+    for (const browser of [ok, { secure: false, audio: false }]) {
+      const a = evaluate({ session: room, extensions: [ext("voice", "running")], info: info(2), browser });
+      expect(a).toEqual({ kind: "meetingRoom" });
+      expect(entryMode(a)).toBeNull();
+      expect(unavailableNote(a, "https://hub.example.com/s/m/s")).toBeNull();
+    }
+    expect(evaluate({ session: room, extensions: [ext("voice", "needs_setup")], info: undefined, browser: ok })).toEqual({ kind: "meetingRoom" });
+    // its follow-up is an ordinary conversation
+    expect(evaluate({ session: session({ origin: "meeting_followup" }), extensions: [ext("voice", "running")], info: info(2), browser: ok })).toEqual({ kind: "available", extensionID: "voice" });
+  });
+
   it("explains a hub that needs setting up or is too old", () => {
     expect(evaluate({ session: session(), extensions: [ext("voice", "needs_setup", { needs_setup: ["No key"] })], info: undefined, browser: ok })).toEqual({ kind: "needsSetup", extensionID: "voice", reasons: ["No key"] });
     expect(evaluate({ session: session(), extensions: [ext("voice", "running")], info: info(2, ["No address"]), browser: ok })).toEqual({ kind: "needsSetup", extensionID: "voice", reasons: ["No address"] });

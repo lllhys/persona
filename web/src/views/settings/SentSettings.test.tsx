@@ -310,6 +310,25 @@ describe("设置 › 以你的名义发出", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
+  it("shows an edited send's original and actual text separately, each copyable", async () => {
+    await loaded([row(2, {
+      text: "The edited text actually sent",
+      let_through: { kind: "card", interaction_id: "ix-2", edited_from: "The original approval text" },
+    })]);
+    expect(rowOf("Subject 2")!.parentElement!.textContent).toContain("已编辑");
+    await click(rowOf("Subject 2"));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("原始正文");
+    expect(dialog.textContent).toContain("The original approval text");
+    expect(dialog.textContent).toContain("实际发送正文");
+    expect(dialog.textContent).toContain("The edited text actually sent");
+    const copies = [...dialog.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "复制正文");
+    expect(copies).toHaveLength(2);
+    await click(copies[0]);
+    await click(copies[1]);
+    expect(copied).toEqual(["The original approval text", "The edited text actually sent"]);
+  });
+
   it("notes that a text of exactly 4000 characters was cut, and one of 3999 was not", async () => {
     await loaded([row(2, { text: "y".repeat(4000) }), row(3, { text: "z".repeat(3999) })]);
     await click(rowOf("Subject 2"));

@@ -225,7 +225,8 @@ func (h *ternHost) build(ctx context.Context, ins []windowInspect) *ternView {
 
 // ternAgent is a terminal block as an agent pane. Its agent is what runs in its foreground (claude, codex, also
 // behind node or bun); none when a shell, classic herdr's client (whatever runs inside belongs to herdr) or nothing is
-// in front. Tern does not report an agent's state: the node judges it from the transcript and hooks.
+// in front. Tern does not report an agent's state: the node takes a Claude's from Claude Code's own sessions file
+// (ternClaudeStatus), else judges it from the transcript and hooks.
 func ternAgent(s terncli.Session, t terncli.Tab, b terncli.Block, p *terncli.Process) host.Agent {
 	a := host.Agent{
 		Cwd: b.Cwd, PaneID: host.PaneRef{Kind: host.Tern, ID: string(b.ID)}.String(),

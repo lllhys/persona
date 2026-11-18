@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,10 @@ func TestNorthStarInterruptionsAndAvailability(t *testing.T) {
 		{At: at(13), MachineID: "pc", SessionID: "worker", Kind: "ask_escalated", Detail: map[string]any{"todo": "task-1"}},
 		{At: at(14), MachineID: "pc", SessionID: "dot-chat", Kind: notifyEvent, Detail: map[string]any{}},
 		{At: at(14), MachineID: "pc", SessionID: "probe", Kind: notifyEvent, Detail: map[string]any{"probe": true}},
+		// notify_user calls no device took (#8138): listed apart, never interruptions.
+		{At: at(14), MachineID: "pc", SessionID: "dot-chat", Kind: notifyEvent, Detail: map[string]any{"missed": missedNoDevice}},
+		{At: at(15), MachineID: "pc", SessionID: "dot-chat", Kind: notifyEvent, Detail: map[string]any{"missed": missedNoDevice}},
+		{At: at(15), MachineID: "pc", SessionID: "worker", Kind: notifyEvent, Detail: map[string]any{"todo": "task-1", "missed": missedHubAway}},
 		// Availability: the main conversation before the split (build b1), the leader conversation after it (b2).
 		{At: at(8), MachineID: "pc", SessionID: "main-chat", Kind: sendEvent, Detail: map[string]any{"op": "resume", "origin": originApp, "role": roleMain, "outcome": outcomeOK, "build": "b1"}},
 		{At: at(9), MachineID: "pc", SessionID: "main-chat", Kind: sendEvent, Detail: map[string]any{"op": "resume", "origin": originApp, "role": roleMain, "outcome": outcomeFailed, "reason": "conversation_not_found", "build": "b1"}},
@@ -122,8 +127,9 @@ func TestNorthStarInterruptionsAndAvailability(t *testing.T) {
 	if in.Categories[nsAuthorization].ByKind[proto.IxPermission] != 1 || in.Categories[nsActionCard].ByKind[proto.IxQuestion] != 2 {
 		t.Fatalf("kinds: %+v %+v", in.Categories[nsAuthorization], in.Categories[nsActionCard])
 	}
-	wantExcluded := InterruptExcluded{SupervisorRouted: 2, SupervisorHeld: 1, SupervisorEscalated: 1, AutoAuthorized: 1, Probe: 2}
-	if in.Excluded != wantExcluded {
+	wantExcluded := InterruptExcluded{SupervisorRouted: 2, SupervisorHeld: 1, SupervisorEscalated: 1, AutoAuthorized: 1, Probe: 2,
+		NotifyMissed: map[string]int{missedNoDevice: 2, missedHubAway: 1}, CallSkipped: map[string]int{}}
+	if !reflect.DeepEqual(in.Excluded, wantExcluded) {
 		t.Fatalf("excluded %+v, want %+v", in.Excluded, wantExcluded)
 	}
 	if len(in.Sources) == 0 || in.Sources[0].Count != 2 || in.Sources[0].TodoID != "task-1" || in.Sources[0].Title != "Fix the build" {
@@ -403,10 +409,14 @@ func TestNorthStarCommandReadsReadOnly(t *testing.T) {
 		{"00000000-0000-0000-0000-000000000002", "/api/v1/sessions/pc/dot-chat/messages", "done", `{}`},
 		{"00000000-0000-0000-0000-000000000003", "/api/v1/sessions/pc/worker/messages", "failed", `{"code":"offline"}`},
 	}
+	var latestMessageAt time.Time
 	for _, op := range ops {
 		target, _ := json.Marshal(map[string]string{"path": op.path, "query": ""})
-		_, _, err := hubDB.BeginClientOp(ctx, db.ClientOp{ID: op.id, DeviceID: "phone", Kind: "message", Target: target, Digest: "d"})
+		stored, _, err := hubDB.BeginClientOp(ctx, db.ClientOp{ID: op.id, DeviceID: "phone", Kind: "message", Target: target, Digest: "d"})
 		mustDo(t, err)
+		if stored.CreatedAt.After(latestMessageAt) {
+			latestMessageAt = stored.CreatedAt
+		}
 		result, _ := json.Marshal(map[string]any{"status": 200, "body": []byte(op.body)})
 		mustDo(t, hubDB.FinishClientOp(ctx, op.id, op.state, result))
 	}
@@ -419,6 +429,11 @@ func TestNorthStarCommandReadsReadOnly(t *testing.T) {
 	if err := ro.PutSetting(ctx, "north-star-write-probe", 1); err == nil || !strings.Contains(err.Error(), "read-only") {
 		t.Fatalf("the command's connection could write: %v", err)
 	}
+	// Postgres timestamps the messages on its own clock, which may be ahead of the test host's. The command only
+	// counts records up to its supplied time, so wait until all fixture messages are inside that window.
+	waitFor(t, "the command clock to reach the hub message timestamps", func() bool {
+		return !time.Now().Before(latestMessageAt)
+	})
 	ns, err := northStarCommand(ctx, ro, roHub, "", "", "", time.Now())
 	mustDo(t, err)
 	if ns.TimeZone != loc.String() || ns.RecordingSince != nil {
@@ -515,6 +530,7 @@ func TestNorthStarRecordsSendsRefusedBeforeTheyRan(t *testing.T) {
 	ctx := context.Background()
 	s, database, _ := northStarDB(t)
 	b := &BusHub{svc: s, helloed: make(chan struct{})}
+	close(b.helloed) // the hub's hello is answered: the request does not wait helloWait for it
 	if _, err := b.request(ctx, assistantwire.MethodSendParams, json.RawMessage(`{"machine_id":"server","session_id":"main-chat","params":{"text":"hi","model":"not a model id!"}}`)); err == nil {
 		t.Fatal("a bad model was taken")
 	}

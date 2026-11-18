@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestSubscriptionsRevisionLeaseAndRun(t *testing.T) {
 	}
 	seen := []SubscriptionSeenRow{{UID: "n1", ContentHash: "h1"}, {UID: "n2", ContentHash: "h2"}}
 	items := []SubscriptionItemRow{{UID: "n1", Data: []byte(`{"title":"One"}`)}, {UID: "n2", Data: []byte(`{"title":"Two"}`)}}
-	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, seen, items, now); err != nil {
+	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, seen, items, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.Subscription(ctx, "sub_a")
@@ -58,13 +59,25 @@ func TestSubscriptionsRevisionLeaseAndRun(t *testing.T) {
 	if !known["n1"] || !known["n2"] || known["n3"] {
 		t.Fatalf("seen: %v", known)
 	}
-	// The same keys again add nothing; the items are kept in order.
-	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, seen[:1], nil, now.Add(time.Minute)); err != nil {
+	// The same keys again add nothing; the items are kept in order. One read in the source since is marked seen
+	// (#6176), the other left as it was; a uid held by no item marks nothing.
+	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, seen[:1], nil, []string{"n1", "gone"}, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	kept, err := d.SubscriptionItems(ctx, "sub_a", SubscriptionItemsQuery{Limit: 10})
 	if err != nil || len(kept) != 2 || kept[0].UID != "n1" || kept[0].Seq >= kept[1].Seq || !kept[0].CreatedAt.Equal(now) {
 		t.Fatalf("items: %+v %v", kept, err)
+	}
+	if r, err := d.SubscriptionItem(ctx, "sub_a", "n2"); err != nil || r == nil || r.UID != "n2" || r.Seq != kept[1].Seq {
+		t.Fatalf("the held item n2: %+v %v", r, err)
+	}
+	if r, err := d.SubscriptionItem(ctx, "sub_a", "gone"); err != nil || r != nil {
+		t.Fatalf("an item it doesn't hold: %+v %v", r, err)
+	}
+	var one, two map[string]any
+	if json.Unmarshal(kept[0].Data, &one) != nil || one["seen"] != true || one["title"] != "One" ||
+		json.Unmarshal(kept[1].Data, &two) != nil || two["seen"] != nil || two["title"] != "Two" {
+		t.Fatalf("seen marks: %s %s", kept[0].Data, kept[1].Data)
 	}
 	// The cursor and the window pick: after the first one; the newest one; none stored since later.
 	if after, _ := d.SubscriptionItems(ctx, "sub_a", SubscriptionItemsQuery{After: kept[0].Seq, Limit: 10}); len(after) != 1 || after[0].UID != "n2" {
@@ -78,7 +91,7 @@ func TestSubscriptionsRevisionLeaseAndRun(t *testing.T) {
 	}
 	// A third run's item stays when the older ones are pruned; the keys stay too.
 	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, []SubscriptionSeenRow{{UID: "n3", ContentHash: "h3"}},
-		[]SubscriptionItemRow{{UID: "n3", Data: []byte(`{"title":"Three"}`)}}, now.Add(time.Hour)); err != nil {
+		[]SubscriptionItemRow{{UID: "n3", Data: []byte(`{"title":"Three"}`)}}, nil, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.PruneSubscriptionItems(ctx, "sub_a", now.Add(time.Minute)); err != nil {
@@ -92,7 +105,7 @@ func TestSubscriptionsRevisionLeaseAndRun(t *testing.T) {
 	}
 	// A run that fails to merge keeps nothing.
 	bad := func([]byte, int64) ([]byte, error) { return nil, fmt.Errorf("no") }
-	if err := d.CommitSubscriptionRun(ctx, "sub_a", bad, []SubscriptionSeenRow{{UID: "n9", ContentHash: "h"}}, nil, now); err == nil {
+	if err := d.CommitSubscriptionRun(ctx, "sub_a", bad, []SubscriptionSeenRow{{UID: "n9", ContentHash: "h"}}, nil, nil, now); err == nil {
 		t.Fatal("a failed merge committed")
 	}
 	if known, _ := d.SubscriptionSeen(ctx, "sub_a", []string{"n9"}); known["n9"] {
@@ -108,8 +121,30 @@ func TestSubscriptionsRevisionLeaseAndRun(t *testing.T) {
 		t.Fatal("deleting kept the keys")
 	}
 	// A run of a deleted subscription keeps nothing and is no error.
-	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, seen, items, now); err != nil {
+	if err := d.CommitSubscriptionRun(ctx, "sub_a", merge, seen, items, nil, now); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDeleteSubscriptionAtRevision(t *testing.T) {
+	d, ctx := openSubscriptions(t), context.Background()
+	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	row := SubscriptionRow{ID: "sub_delete_at", Connector: "example", Source: "notices", Revision: 3, Data: []byte(`{}`),
+		CreatedAt: now, UpdatedAt: now}
+	if err := d.CreateSubscription(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.DeleteSubscriptionAt(ctx, row.ID, row.Revision-1); err != nil || ok {
+		t.Fatalf("stale delete = %v, %v", ok, err)
+	}
+	if got, err := d.Subscription(ctx, row.ID); err != nil || got == nil || got.Revision != row.Revision {
+		t.Fatalf("stale delete changed the row: %+v, %v", got, err)
+	}
+	if ok, err := d.DeleteSubscriptionAt(ctx, row.ID, row.Revision); err != nil || !ok {
+		t.Fatalf("fresh delete = %v, %v", ok, err)
+	}
+	if got, err := d.Subscription(ctx, row.ID); err != nil || got != nil {
+		t.Fatalf("fresh delete left the row: %+v, %v", got, err)
 	}
 }
 
@@ -122,7 +157,7 @@ func TestSubscriptionSeenIsPruned(t *testing.T) {
 		t.Fatal(err)
 	}
 	keep := func(data []byte, _ int64) ([]byte, error) { return data, nil }
-	if err := d.CommitSubscriptionRun(ctx, "sub_b", keep, []SubscriptionSeenRow{{UID: "old", ContentHash: "h"}}, nil,
+	if err := d.CommitSubscriptionRun(ctx, "sub_b", keep, []SubscriptionSeenRow{{UID: "old", ContentHash: "h"}}, nil, nil,
 		now.Add(-401*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +165,7 @@ func TestSubscriptionSeenIsPruned(t *testing.T) {
 	for i := range subscriptionSeenKeep + 10 {
 		batch = append(batch, SubscriptionSeenRow{UID: fmt.Sprintf("k%05d", i), ContentHash: "h"})
 	}
-	if err := d.CommitSubscriptionRun(ctx, "sub_b", keep, batch, nil, now); err != nil {
+	if err := d.CommitSubscriptionRun(ctx, "sub_b", keep, batch, nil, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	var n int

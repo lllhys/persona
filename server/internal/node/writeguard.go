@@ -88,6 +88,19 @@ func isHome(p, home string) bool {
 	return err == nil && p == fold(real)
 }
 
+// realHome is home with its links followed when that is another path, for node.info's home_real; "" when it is the
+// same path, is not absolute, or cannot be resolved.
+func realHome(home string) string {
+	if home == "" || !filepath.IsAbs(home) {
+		return ""
+	}
+	real, err := filepath.EvalSymlinks(home)
+	if err != nil || real == filepath.Clean(home) {
+		return ""
+	}
+	return real
+}
+
 // writableDir resolves a folder to write into like a listing does (~/, relative to cwd) and checks it is an
 // existing directory a client may change. shown is the path as the app knows it, real the one behind its links.
 func (n *Node) writableDir(path, cwd string) (shown, real string, err error) {

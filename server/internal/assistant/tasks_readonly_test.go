@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -645,4 +646,181 @@ func testReusedWritableTaskKeepsApproval(t *testing.T, report bool) {
 			})
 		}
 	}
+}
+
+// readonlyEngineLaunchers is box's list with every engine a task names: Claude Code's and Codex's launchers, which take a
+// read-only task, and pi, the Cursor CLI and the Antigravity CLI, which have no read-only mode (#8316).
+func readonlyEngineLaunchers() []proto.Launcher {
+	return []proto.Launcher{{Name: "claude", Agent: "claude"}, {Name: "codex", Agent: "codex"},
+		{Name: "pi", Agent: "pi"}, {Name: "cursor", Agent: "cursor"}, {Name: "agy", Agent: "agy"}}
+}
+
+// A read-only task for pi, cursor or agy is refused when it is planned, naming the launchers on that computer that take
+// a read-only task: nothing is saved or started, and no other launcher is put in its place (#8316).
+func TestReadonlyTaskPlanRefusesLaunchersWithoutReadonly(t *testing.T) {
+	for _, launcher := range []string{"pi", "cursor", "agy"} {
+		t.Run(launcher, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s, f := readonlyTaskService(t)
+				f.hello.Locale = string(i18n.En)
+				f.launcherList = readonlyEngineLaunchers()
+				ctx := context.Background()
+				task := readonlyTestTask("")
+				task.Launcher = launcher
+				_, err := s.toolTaskPlan(ctx, "readonly-chat", readonlyTaskArgs(t, task))
+				var re *rpc.Error
+				if !errors.As(err, &re) || re.Code != "readonly_unsupported" {
+					t.Fatalf("read-only %s plan: error = %v, want readonly_unsupported", launcher, err)
+				}
+				if !strings.HasPrefix(err.Error(), "task 1: "+launcher+" on box ") || !strings.Contains(err.Error(), "readonly false") ||
+					!strings.HasSuffix(err.Error(), "launchers: claude, codex") {
+					t.Fatalf("refusal does not name the launcher, the way out and the read-only launchers: %v", err)
+				}
+				var data map[string]string
+				if json.Unmarshal(re.Data, &data) != nil || data["launcher"] != launcher || data["launchers"] != "claude, codex" ||
+					data["delivered"] != "none" {
+					t.Fatalf("refusal data = %s", re.Data)
+				}
+				synctest.Wait()
+				if _, plans, err := s.feed(ctx, "readonly-chat", time.Time{}); err != nil || len(plans) != 0 {
+					t.Fatalf("a refused plan was saved: %v, error = %v", plans, err)
+				}
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if len(f.starts) != 0 {
+					t.Fatalf("a refused read-only task started: %v", f.starts)
+				}
+			})
+		})
+	}
+}
+
+// Claude Code's and Codex's launchers still take a read-only task beside those three: Claude with Allow all and the
+// constraint in its first message, Codex in its plan sandbox.
+func TestReadonlyTaskPlanStartsClaudeAndCodex(t *testing.T) {
+	for _, tc := range []struct{ launcher, mode string }{{"claude", "bypassPermissions"}, {"codex", "plan"}} {
+		t.Run(tc.launcher, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s, f := readonlyTaskService(t)
+				f.launcherList = readonlyEngineLaunchers()
+				task := readonlyTestTask("")
+				task.Launcher = tc.launcher
+				if _, err := s.toolTaskPlan(context.Background(), "readonly-chat", readonlyTaskArgs(t, task)); err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				p := readonlyFeedPlan(t, s, "readonly-chat")
+				if got := p.Tasks[0]; p.State != planStarted || got.Launcher != tc.launcher || got.Permission != tc.mode || got.Error != "" {
+					t.Fatalf("read-only %s plan = %+v", tc.launcher, p)
+				}
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if len(f.starts) != 1 || f.starts[0]["launcher"] != tc.launcher || f.starts[0]["permission_mode"] != tc.mode {
+					t.Fatalf("read-only %s start = %v", tc.launcher, f.starts)
+				}
+			})
+		})
+	}
+}
+
+// A writable task starts on every engine as before, pi, cursor and agy included.
+func TestWritableTaskPlanStartsEveryEngine(t *testing.T) {
+	for _, launcher := range []string{"claude", "codex", "pi", "cursor", "agy"} {
+		t.Run(launcher, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s, f := readonlyTaskService(t)
+				f.launcherList = readonlyEngineLaunchers()
+				ctx := context.Background()
+				task := readonlyTestTask("")
+				task.Launcher, task.Readonly = launcher, false
+				if _, err := s.toolTaskPlan(ctx, "writable-chat", readonlyTaskArgs(t, task)); err != nil {
+					t.Fatal(err)
+				}
+				p := readonlyFeedPlan(t, s, "writable-chat")
+				if p.State != planOpen || p.Tasks[0].Launcher != launcher {
+					t.Fatalf("writable %s plan = %+v", launcher, p)
+				}
+				if _, err := s.startPlan(ctx, p.ID, nil, false); err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				if p = readonlyFeedPlan(t, s, "writable-chat"); p.Tasks[0].Error != "" || p.Tasks[0].ErrorCode != "" {
+					t.Fatalf("writable %s task did not start: %+v", launcher, p.Tasks[0])
+				}
+				f.mu.Lock()
+				defer f.mu.Unlock()
+				if len(f.starts) != 1 || f.starts[0]["launcher"] != launcher {
+					t.Fatalf("writable %s start = %v", launcher, f.starts)
+				}
+			})
+		})
+	}
+}
+
+// A read-only task that reaches its start on one of them (a plan saved before #8316, a card edited to one) is refused
+// the same way before the node is asked: the task fails with readonly_unsupported and the node gets no start.
+func TestReadonlyTaskStartRefusesLaunchersWithoutReadonly(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, f := readonlyTaskService(t)
+		f.hello.Locale = string(i18n.En)
+		f.launcherList = readonlyEngineLaunchers()
+		ctx := context.Background()
+		p := &TaskPlan{ID: "plan_card_pi", Conversation: "readonly-chat", State: planOpen, Tasks: []PlanTask{readonlyTestTask("plan")}}
+		if err := s.savePlan(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.startPlan(ctx, p.ID, []PlanTask{{Launcher: "pi"}}, false); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		saved, err := s.loadPlan(ctx, p.ID)
+		if err != nil || saved.Tasks[0].ErrorCode != "readonly_unsupported" || !strings.HasSuffix(saved.Tasks[0].Error, "launchers: claude, codex") {
+			t.Fatalf("read-only pi start = %+v, error = %v", saved, err)
+		}
+		if todo := onlyTodo(s); todo.DoneAt == nil || todo.StartError != i18n.T(i18n.En, "rpc-errors.readonly_unsupported") {
+			t.Fatalf("refused start did not fail its task: %+v", todo)
+		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(f.starts) != 0 {
+			t.Fatalf("the node was asked to start a read-only pi: %v", f.starts)
+		}
+	})
+}
+
+// A launcher whose agent the computer's list does not say is not refused on a guess: the start goes to the node, whose
+// readonly_unsupported stays the last guard (TestReadonlyTaskUnsupportedLauncherReportsFailure).
+func TestReadonlyTaskPlanUnknownLauncherGoesToNode(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s, f := readonlyTaskService(t)
+		f.launcherList = nil // the list can't be read
+		task := readonlyTestTask("")
+		task.Launcher = "pi"
+		if _, err := s.toolTaskPlan(context.Background(), "readonly-chat", readonlyTaskArgs(t, task)); err != nil {
+			t.Fatal(err)
+		}
+		synctest.Wait()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(f.starts) != 1 || f.starts[0]["launcher"] != "pi" || f.starts[0]["permission_mode"] != "plan" {
+			t.Fatalf("start = %v, want the node asked for a read-only pi", f.starts)
+		}
+	})
+}
+
+// A start an engine runtime runs is the runtime's to refuse (Paseo holds a read-only start to its Claude Code providers,
+// caps.readonly): a read-only task on its pi provider is not refused when it is planned, and goes to the engine.
+func TestReadonlyTaskPlanOnEngineRuntimeGoesToEngine(t *testing.T) {
+	s, f := paseoFitHub(t)
+	f.hostLaunchers["pbox"] = append(f.hostLaunchers["pbox"], proto.Launcher{Name: "pi-paseo", Source: "paseo", Agent: "pi"})
+	task := readonlyTestTask("")
+	task.Machine, task.Cwd, task.Launcher = "pbox", "~/code/app", "pi-paseo"
+	if _, err := s.toolTaskPlan(context.Background(), "readonly-chat", readonlyTaskArgs(t, task)); err != nil {
+		t.Fatalf("a read-only task on an engine's provider was refused before the engine: %v", err)
+	}
+	waitFor(t, "read-only start on Paseo", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.starts) == 1 && f.starts[0]["launcher"] == "pi-paseo"
+	})
 }

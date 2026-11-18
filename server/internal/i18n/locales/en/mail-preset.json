@@ -1,4 +1,6 @@
 {
   "guide_qq": "QQ Mail needs an authorization code, not your QQ password: on the web at {site}, open Settings › Account & Security › Security Settings, turn on “POP3/IMAP/SMTP/Exchange/CardDAV service”, verify as prompted, then click “Generate authorization code” and use the 16-character code as the password",
-  "guide_netease": "NetEase Mail needs an authorization code, not your sign-in password: on the web at {site}, open Settings › POP3/SMTP/IMAP and turn on “IMAP/SMTP service”; after you verify with your phone as prompted the code is shown: use it as the password"
+  "guide_netease": "NetEase Mail needs an authorization code, not your sign-in password: on the web at {site}, open Settings › POP3/SMTP/IMAP and turn on “IMAP/SMTP service”; after you verify with your phone as prompted the code is shown: use it as the password",
+  "guide_gmail": "Gmail needs an app password, not your Google password: turn on 2-Step Verification, then create a 16-character app password at {site} and use it as the password",
+  "guide_icloud": "iCloud Mail needs an app-specific password, not your Apple Account password: sign in at {site}, open Sign-In and Security › App-Specific Passwords, create one and use it as the password"
 }

@@ -8,9 +8,10 @@ import (
 func (h *Hub) sessionRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/v1/sessions", h.listSessions)
 	api.HandleFunc("POST /api/v1/sessions", h.withoutTerminalControls(h.withClientOp("start", h.startSession)))
-	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/items", h.withMachine(h.sessionItems))
-	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/items/{iid}/image", h.withMachine(h.sessionImage))
-	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/items/{iid}/full", h.withMachine(h.sessionItemFull))
+	// extensionReadable: an extension's token never reads a health-space conversation (extension_private.go).
+	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/items", h.extensionReadable(h.withMachine(h.sessionItems)))
+	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/items/{iid}/image", h.extensionReadable(h.withMachine(h.sessionImage)))
+	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/items/{iid}/full", h.extensionReadable(h.withMachine(h.sessionItemFull)))
 	api.HandleFunc("POST /api/v1/sessions/{mid}/{sid}/messages", h.withoutTerminalControls(h.withClientOp("message", h.withMachine(h.sendMessage))))
 	api.HandleFunc("POST /api/v1/sessions/{mid}/{sid}/attach", h.proxyBody("session.attach"))
 	api.HandleFunc("POST /api/v1/sessions/{mid}/{sid}/interrupt", h.withClientOp("interrupt", h.withMachine(h.interruptSession)))
@@ -28,12 +29,12 @@ func (h *Hub) sessionRoutes(api *http.ServeMux) {
 	// Model, permission, effort and the independent ultracode switch may each be left out (ultracode.go).
 	api.HandleFunc("POST /api/v1/sessions/{mid}/{sid}/modes", h.withClientOp("modes", h.withMachine(h.sessionModes)))
 	api.HandleFunc("POST /api/v1/machines/{mid}/spaces/{wid}/rename", h.withMachine(h.renameSpace))
-	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/info", h.proxy("session.info", func(r *http.Request) any {
+	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/info", h.extensionReadable(h.proxy("session.info", func(r *http.Request) any {
 		return map[string]any{"session_id": r.PathValue("sid")}
-	}))
+	})))
 	api.HandleFunc("POST /api/v1/sessions/{mid}/{sid}/screen/before", paneAddressFullOnly(h.proxyBody("session.screen.before")))
-	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/screen", paneAddressFullOnly(h.proxy("session.screen", func(r *http.Request) any {
+	api.HandleFunc("GET /api/v1/sessions/{mid}/{sid}/screen", h.extensionReadable(paneAddressFullOnly(h.proxy("session.screen", func(r *http.Request) any {
 		q := r.URL.Query()
 		return map[string]any{"session_id": r.PathValue("sid"), "lines": atoi(q.Get("lines")), "source": q.Get("source"), "format": q.Get("format")}
-	})))
+	}))))
 }

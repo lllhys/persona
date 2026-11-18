@@ -161,7 +161,7 @@ func (h *Manager) imessageOneMac(raw json.RawMessage) *extension.FieldError {
 	}
 	name := other
 	if m := h.localMachine(other); m != nil {
-		name = m.cfg.Name
+		name = m.name()
 	}
 	return &extension.FieldError{Path: "machines", Message: i18n.T(h.userLang(), "hub-imessage_extension.one_mac", i18n.Args{"name": name})}
 }

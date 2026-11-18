@@ -27,6 +27,11 @@ data class SessionInfo(
     @SerialName("output_tokens") val outputTokens: Long = 0,
     val compactions: Int = 0,
     val turns: Int = 0,
+    /**
+     * Nobody gives its counts (a runtime's session with no transcript on the computer, #8261): the zeros above stand in
+     * for older apps and are not shown.
+     */
+    @SerialName("usage_unknown") val usageUnknown: Boolean = false,
     @WireTime @SerialName("started_at") val startedAt: String? = null,
     @WireTime @SerialName("last_activity") val lastActivity: String? = null,
 )

@@ -36,8 +36,12 @@ internal fun agentsOverrideMode(res: Resources, purpose: ModelPurpose): String? 
             R.string.settings_src_model_agents_separate else R.string.settings_src_model_agents_follow
     )
 
-/** A purpose's row: what is in effect, then the hub's status or where it inherits from. */
+/** How many lines a purpose's row may take: three for what is in effect, and room for what it is for when the hub says so. */
+internal fun purposeSubtitleLines(purpose: ModelPurpose): Int = if (purpose.about != null) 6 else 3
+
+/** A purpose's row: what it is for (#5086, the hub's sentence), what is in effect, then the hub's status or where it inherits from. */
 internal fun purposeSubtitle(res: Resources, purpose: ModelPurpose, catalog: ModelCatalog): String = listOfNotNull(
+    purpose.about,
     summaryWords(res, purpose, catalog.providers).joinToString(res.getString(R.string.settings_src_model_summary_separator))
         .ifEmpty { res.getString(R.string.settings_src_state_not_configured) },
     agentsOverrideMode(res, purpose),
@@ -83,9 +87,10 @@ internal class ModelCatalogModel(private val api: ModelConfiguration) {
     val state = mutable.asStateFlow()
 
     /**
-     * The background supervisor's use (#4927, [BackgroundSupervisor.PURPOSE]) is read by its own id: the hub's catalog
-     * does not list it (docs/assistant/model-config.md). A hub without it, or one that cannot answer now, lists the
-     * catalog as it is.
+     * The background supervisor's use (#4927, [BackgroundSupervisor.PURPOSE]). A hub since #5806 lists it in its catalog,
+     * last of its group, which is where this page always drew it: nothing more is asked for. A hub from before leaves it
+     * out, and it is read by its own id and put after the last use of its group (docs/assistant/model-config.md). A hub
+     * without it, or one that cannot answer now, lists the catalog as it is.
      */
     private suspend fun withBackgroundSupervisor(catalog: ModelCatalog): ModelCatalog {
         if (catalog.purposes.any { it.id == BackgroundSupervisor.PURPOSE }) return catalog

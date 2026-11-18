@@ -57,27 +57,13 @@ func TestModelFingerprintTracksManagedProviderChanges(t *testing.T) {
 	}
 }
 
-// The runtime (#2455) and every provider field are in the fingerprint; "cli" is the CLI as "" is, and a fingerprint
-// without a runtime is what it was before.
-func TestModelFingerprintTracksRuntimeAndProviderFields(t *testing.T) {
+// Every provider field (#2455) is in the fingerprint.
+func TestModelFingerprintTracksProviderFields(t *testing.T) {
 	n, _ := testNode(t)
 	base := proto.ManagedLauncher{Name: "p", Kind: "api", BaseURL: "https://gw.example.com", APIKey: "sk-test-k", Model: "m"}
 	opt := modelExecution{Model: "m", Fingerprint: "b"}
 	n.setManaged([]proto.ManagedLauncher{base})
 	plain := n.executionFingerprint("p", opt)
-	cli := opt
-	cli.Runtime = proto.AssistantRuntimeCLI
-	if n.executionFingerprint("p", cli) != plain {
-		t.Fatal(`"cli" differs from ""`)
-	}
-	sdk := opt
-	sdk.Runtime = proto.AssistantRuntimeAgentSDK
-	if n.executionFingerprint("p", sdk) == plain {
-		t.Fatal("runtime change reused old process")
-	}
-	if raw, _ := json.Marshal(opt); strings.Contains(string(raw), "Runtime") {
-		t.Fatalf("an empty runtime changes old fingerprints: %s", raw)
-	}
 	for name, change := range map[string]func(*proto.ManagedLauncher){
 		"models":         func(l *proto.ManagedLauncher) { l.Models = []proto.ProviderModel{{ID: "m", ContextWindow: 1000000}} },
 		"opus":           func(l *proto.ManagedLauncher) { l.OpusModel = "o" },

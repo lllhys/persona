@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentGrouping, type AgentMutes, awaitsReply, buildAgentGroups, hostsOf, isQuiet, replyAsk, sessionHost, splitAgentSessions } from "./agent-groups";
+import { agentGrouping, type AgentMutes, awaitsReply, buildAgentGroups, hostsOf, isQuiet, justFinished, replyAsk, sessionHost, splitAgentSessions } from "./agent-groups";
 import { byAttention } from "./format";
 import type { AgentState, Machine, Session } from "./types";
 
@@ -147,6 +147,46 @@ describe("待你回复（#5096）", () => {
     expect(replyAsk(asking("a", { work: { phase: "blocked", on: "user", line: "等你定 A 还是 B" } }))).toBe("等你定 A 还是 B");
     expect(replyAsk(asking("a", { work: { phase: "blocked", on: "external", line: "在等 CI" } }))).toBe("要不要推到 beta？");
     expect(replyAsk(session("plain", "idle"))).toBe("");
+  });
+});
+
+describe("Just finished (#9751)", () => {
+  const finished = (id: string, patch: Partial<Session> = {}) => session(id, "idle", { work: { phase: "done", line: "Merged", just_finished: true }, ...patch });
+
+  it("is a seen agent the hub marks just finished, unless muted", () => {
+    expect(justFinished(finished("a"))).toBe(true);
+    expect(justFinished(finished("a"), mutes)).toBe(true);
+    expect(justFinished(session("u", "unread", { work: { phase: "done", just_finished: true } }))).toBe(false);
+    expect(justFinished(finished("muted-idle"), mutes)).toBe(false);
+    expect(justFinished(finished("in-space", { space_name: "项目" }), mutes)).toBe(false);
+    expect(justFinished(session("done", "idle", { work: { phase: "done", line: "Merged" } }))).toBe(false);
+  });
+
+  it("is not quiet, so it never folds into Idle spaces; a muted one still is", () => {
+    expect(isQuiet(finished("a"))).toBe(false);
+    expect(isQuiet(finished("muted-idle"), mutes)).toBe(true);
+  });
+
+  it("By status: its own section after Working and Waiting in the background, before Waiting; a muted one is Seen", () => {
+    const all = [session("idle", "idle"), finished("done"), session("working", "working"), session("sleeping", "working", { background_waiting: true }),
+      session("waiting", "unknown", { loop: { kind: "cron" } }), finished("muted-idle"), session("muted-working", "working")];
+    const groups = buildAgentGroups(all, machines, "state", mutes);
+    expect(groups.map((g) => [g.key, ids(g.sessions)])).toEqual([
+      ["state:working", ["working"]], ["state:bg_waiting", ["sleeping"]], ["state:just_finished", ["done"]], ["state:waiting", ["waiting"]],
+      ["state:muted", ["muted-working"]], ["state:idle", ["idle", "muted-idle"]],
+    ]);
+    expect(groups[2]!.name).toBe("刚做完待看");
+    expect(groups[2]!.folded).toBeFalsy();
+  });
+
+  it("one a /loop wakes again is Waiting", () => {
+    const groups = buildAgentGroups([finished("loop", { loop: { kind: "cron" } })], machines, "state", { spaces: [], sessions: [] });
+    expect(groups.map((g) => g.key)).toEqual(["state:waiting"]);
+  });
+
+  it("ranks after Working and before the seen ones (byAttention)", () => {
+    const all = [session("idle", "idle", { updated_at: date(9) }), finished("done"), session("working", "working"), session("unread", "unread")];
+    expect(ids(all.sort(byAttention))).toEqual(["unread", "working", "done", "idle"]);
   });
 });
 

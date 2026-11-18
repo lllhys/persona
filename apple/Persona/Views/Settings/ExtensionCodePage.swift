@@ -1,4 +1,6 @@
+import PersonaKit
 import SwiftUI
+import PersonaWire
 
 // An extension's page with UI version 4's code-hosting parts (#2961, docs/extensions/extensions.md「UI version 4: code hosting」): tabs at the
 // top, a header across, and on a wide display (iPad, Mac) the `side` sections (a file tree) in a column on the left
@@ -30,6 +32,19 @@ nonisolated extension ExtensionComponent {
 /// What the page keeps of its own between draws: open directories, folded diffs, the inline comment being written,
 /// what is typed in reply boxes, the diffs' look. By component key, so a View drawn again keeps them.
 @MainActor @Observable final class CodePageState {
+    /// Viewed marks kept on this device (for extensions without `mark_viewed`).
+    let marks: CodeViewedMarks
+    /// Where the page's display options are kept (nil: nowhere, a test's page).
+    private let defaults: UserDefaults?
+
+    /// The device's viewed marks and display options; a test's page passes its own (none kept), so what the app or
+    /// another run saved on the device does not change what it draws.
+    /// Assignments only: SwiftUI makes it again each time the page's parent redraws (docs/apple/performance.md P3).
+    init(marks: CodeViewedMarks = .shared, defaults: UserDefaults? = .standard) {
+        self.marks = marks
+        self.defaults = defaults
+    }
+
     /// Open directories by tree key.
     var open: [String: Set<String>] = [:]
     /// Diffs folded by the user (by diff key); a diff the extension sends `collapsed` starts folded.
@@ -64,6 +79,13 @@ nonisolated extension ExtensionComponent {
         var diff: String
         var side: String
         var line: Int
+        /// A comment on several lines (UI version 5's `start_line`): from this one to `line`, on the same side.
+        var start: Int? = nil
+
+        /// Whether line `n` of `side` in diff `key` is one the comment is on.
+        func covers(_ key: String, _ side: String, _ n: Int) -> Bool {
+            diff == key && self.side == side && ((start ?? line)...line).contains(n)
+        }
     }
 
     func toggle(dir: String, tree: String) {
@@ -73,21 +95,155 @@ nonisolated extension ExtensionComponent {
         version += 1
     }
 
-    func isFolded(_ key: String, collapsed: Bool) -> Bool {
-        collapsed ? !unfolded.contains(key) : folded.contains(key)
+    /// Whether a diff is folded: as it starts (`initially`: generated, big, viewed, the extension's `collapsed`)
+    /// unless the user changed it.
+    func isFolded(_ key: String, initially: Bool) -> Bool {
+        initially ? !unfolded.contains(key) : folded.contains(key)
     }
 
-    func toggle(diff key: String, collapsed: Bool) {
-        if collapsed {
-            if unfolded.contains(key) { unfolded.remove(key) } else { unfolded.insert(key) }
+    func toggle(diff key: String, initially: Bool) {
+        setFolded(key, !isFolded(key, initially: initially), initially: initially)
+    }
+
+    func setFolded(_ key: String, _ on: Bool, initially: Bool) {
+        if initially {
+            if on { unfolded.remove(key) } else { unfolded.insert(key) }
         } else {
-            if folded.contains(key) { folded.remove(key) } else { folded.insert(key) }
+            if on { folded.insert(key) } else { folded.remove(key) }
         }
         version += 1
     }
 
+    // MARK: Code review (UI version 5)
+
+    /// Viewed marks changed here and sent with the extension's `mark_viewed`, by path, until its page says so too.
+    private(set) var viewedOver: [String: Bool] = [:]
+    /// Changes that are only whitespace drawn as unchanged; the app's choice, kept for every page.
+    var whitespace: Bool { chosenWhitespace ?? savedWhitespace }
+    /// The choice made on this page.
+    private var chosenWhitespace: Bool?
+    /// The device's choice, read the first time the page asks (once a page, not when its state is made: P2, P3).
+    @ObservationIgnored private lazy var savedWhitespace = defaults?.bool(forKey: Self.whitespaceKey) ?? false
+    static let whitespaceKey = "extension.code.ignoreWhitespace"
+    /// A thread to scroll to (its block's id), and the open thread the last jump went to.
+    var jump: String?
+    @ObservationIgnored var lastJump = -1
+    /// Hunks numbered, with whitespace ignored or not and their changed words marked, by what they are: worked out
+    /// once, not on every draw.
+    @ObservationIgnored private var marked: [MarkKey: [[CodeDiffLine]]] = [:]
+
+    private struct MarkKey: Hashable {
+        var hunks: [ExtensionHunk]
+        var whitespace: Bool
+    }
+
+    /// Whether a file is marked viewed: as just changed here, else the extension's mark, else (no `mark_viewed`) this
+    /// device's.
+    func isViewed(_ d: ExtensionDiffComponent) -> Bool {
+        if let v = viewedOver[d.path] { return v }
+        if d.markViewed == nil { return marks.ids.contains(CodeReview.changeID(d)) }
+        return d.viewed == true
+    }
+
+    /// Whether a diff starts folded (`CodeReview.foldedAtFirst`); one without hunks never does (it is to be loaded).
+    func initiallyFolded(_ d: ExtensionDiffComponent) -> Bool {
+        CodeReview.foldedAtFirst(d, viewed: isViewed(d)) != nil && !(d.hunks ?? []).isEmpty
+    }
+
+    /// Marks a file viewed or not, at once: checked, it folds; unchecked, it stays as it is. With `mark_viewed` the
+    /// mark is the page's until the extension's answer: the returned attempt puts back what was there if it fails.
+    @discardableResult func setViewed(_ d: ExtensionDiffComponent, key: String, _ v: Bool) -> (attempt: Int, before: Bool?) {
+        let wasFolded = isFolded(key, initially: initiallyFolded(d))
+        let before = viewedOver[d.path]
+        if d.markViewed == nil { marks.set(CodeReview.changeID(d), viewed: v) } else { viewedOver[d.path] = v }
+        viewedAttempts += 1
+        viewedAttempt[d.path] = viewedAttempts
+        setFolded(key, v || wasFolded, initially: initiallyFolded(d))
+        return (viewedAttempts, before)
+    }
+
+    /// The extension's `mark_viewed` failed: what was there before, unless the mark was changed again since.
+    func viewedFailed(_ path: String, attempt: Int, before: Bool?) {
+        guard viewedAttempt[path] == attempt else { return }
+        viewedOver[path] = before
+        version += 1
+    }
+
+    @ObservationIgnored private var viewedAttempts = 0
+    @ObservationIgnored private var viewedAttempt: [String: Int] = [:]
+
+    // MARK: Hidden lines (UI version 5's `context`)
+
+    /// The lines of each file that came, by path: a gap shown again needs no request.
+    private(set) var lineCaches: [String: CodeReview.LineCache] = [:]
+    /// What is shown of each gap, by diff key and gap.
+    private(set) var gapShown: [String: CodeReview.Shown] = [:]
+    /// The gaps whose lines are on their way.
+    private(set) var gapBusy: Set<String> = []
+
+    static func gapKey(_ key: String, _ at: Int) -> String { key + "#" + String(at) }
+
+    func shown(_ key: String, _ at: Int) -> CodeReview.Shown { gapShown[Self.gapKey(key, at)] ?? CodeReview.Shown() }
+
+    func setShown(_ key: String, _ at: Int, _ s: CodeReview.Shown) {
+        gapShown[Self.gapKey(key, at)] = s
+        version += 1
+    }
+
+    func setGapBusy(_ key: String, _ at: Int, _ busy: Bool) {
+        if busy { gapBusy.insert(Self.gapKey(key, at)) } else { gapBusy.remove(Self.gapKey(key, at)) }
+    }
+
+    /// Lines that came for a file (its new side).
+    func put(_ lines: ExtensionUIStreamFileLines) {
+        guard lines.side == nil || lines.side == "new" else { return }
+        lineCaches[lines.path, default: CodeReview.LineCache()].put(start: lines.start, lines.lines, total: lines.total)
+        version += 1
+    }
+
+    func setWhitespace(_ on: Bool) {
+        chosenWhitespace = on
+        defaults?.set(on, forKey: Self.whitespaceKey)
+        version += 1
+    }
+
+    /// A diff's hunks as lines: numbered, whitespace ignored when the page says so, the words that changed marked.
+    func lines(of hunks: [ExtensionHunk]) -> [[CodeDiffLine]] {
+        let key = MarkKey(hunks: hunks, whitespace: whitespace)
+        if let done = marked[key] { return done }
+        var budget = LineDiff.maxWordWork
+        let out = hunks.map { h in
+            let numbered = CodeDiffModel.lines(oldStart: h.oldStart, newStart: h.newStart, raw: h.lines)
+            return CodeReview.markWords(whitespace ? CodeReview.ignoringWhitespace(numbered) : numbered, budget: &budget)
+        }
+        if marked.count >= 256 { marked = [:] }
+        marked[key] = out
+        return out
+    }
+
     func compose(_ a: Anchor?) {
         composing = composing == a ? nil : a
+        version += 1
+    }
+
+    /// A line number tapped: the comment box opens on it; another line on the same side of the same diff makes it a
+    /// comment on the lines from the first to that one (`start_line`, UI version 5); the one line tapped again closes it.
+    func pick(_ a: Anchor) {
+        if let c = composing, c.diff == a.diff, c.side == a.side, c.line != a.line || c.start != nil {
+            let first = c.start ?? c.line
+            composing = first == a.line ? Anchor(diff: a.diff, side: a.side, line: a.line)
+                : Anchor(diff: a.diff, side: a.side, line: max(first, a.line), start: min(first, a.line))
+        } else {
+            composing = composing == a ? nil : a
+        }
+        version += 1
+    }
+
+    /// Resolved threads opened to all their comments, by block id.
+    private(set) var openThreads: Set<String> = []
+
+    func openThread(_ id: String) {
+        openThreads.insert(id)
         version += 1
     }
 
@@ -108,6 +264,15 @@ enum CodePageBlock: Identifiable {
     case diffLine(id: String, key: String, diff: ExtensionDiffComponent, line: CodeDiffLine, language: SyntaxLanguage?, digits: Int)
     case diffPair(id: String, key: String, diff: ExtensionDiffComponent, left: CodeDiffLine?, right: CodeDiffLine?, language: SyntaxLanguage?, digits: Int)
     case diffNote(id: String, text: String)
+    /// Lines hidden between hunks (UI version 5's `context`): how many, the way to show more of them (down, up, all;
+    /// the first gap only up, the last only down), the next hunk's header.
+    case gapBar(id: String, key: String, diff: ExtensionDiffComponent, gap: CodeReview.Gap, hidden: Int, first: Bool,
+                last: Bool, header: String?)
+    /// A diff folded at first because it is generated, big or viewed: why, and a way to show it (UI version 5).
+    case diffFolded(id: String, key: String, note: String)
+    /// Over a page of diffs (UI version 5): how many are viewed, the threads still open (by their blocks' ids, in
+    /// order, with their diff's key and whether it starts folded), the page's display options.
+    case reviewTools(id: String, files: Int, viewed: Int, open: [(block: String, diff: String, folded: Bool)])
     case diffLoad(id: String, diff: ExtensionDiffComponent)
     case diffMore(id: String, diff: ExtensionDiffComponent, index: Int)
     case inlineThread(id: String, diff: ExtensionDiffComponent, thread: ExtensionThread)
@@ -124,6 +289,7 @@ enum CodePageBlock: Identifiable {
              .treeEmpty(let id), .code(let id, _), .diffHeader(let id, _, _, _), .hunk(let id, _, _, _),
              .diffLine(let id, _, _, _, _, _), .diffPair(let id, _, _, _, _, _, _), .diffNote(let id, _),
              .diffLoad(let id, _), .diffMore(let id, _, _), .inlineThread(let id, _, _), .inlineComposer(let id, _, _),
+             .diffFolded(let id, _, _), .reviewTools(let id, _, _, _), .gapBar(let id, _, _, _, _, _, _, _),
              .threadTitle(let id, _, _), .comment(let id, _), .reply(let id, _, _), .composer(let id, _), .gap(let id):
             id
         }
@@ -180,7 +346,23 @@ enum CodePageBlock: Identifiable {
             }
             flush(true)
         }
+        if let first = out.firstIndex(where: { if case .diffHeader = $0 { true } else { false } }) {
+            let diffs = sections.filter { $0 < view.sections.count }.flatMap { view.sections[$0].items }.compactMap { c -> (String, ExtensionDiffComponent)? in
+                if case .diff(let d) = c, !d.path.isEmpty { (c.key ?? "diff:" + d.path, d) } else { nil }
+            }
+            let open = diffs.flatMap { key, d in
+                (d.threads ?? []).enumerated().filter { $1.resolved != true && $1.pending != true }
+                    .map { (block: threadID(key, $1, $0), diff: key, folded: state.initiallyFolded(d)) }
+            }
+            out.insert(.reviewTools(id: "review-tools", files: diffs.count, viewed: diffs.filter { state.isViewed($1) }.count,
+                                    open: open), at: first)
+        }
         return out
+    }
+
+    /// A thread's block id on its diff: where the open threads' jump goes.
+    static func threadID(_ key: String, _ t: ExtensionThread, _ index: Int) -> String {
+        "th:\(key):\(t.id ?? String(index))"
     }
 
     /// A directory's rows on its own (drilling in on a narrow page).
@@ -206,13 +388,23 @@ enum CodePageBlock: Identifiable {
 
     static func diff(_ d: ExtensionDiffComponent, key: String, state: CodePageState, look: CodeDiffLook,
                      canComment: Bool) -> [CodePageBlock] {
-        // `collapsed` without hunks: the file is there to be loaded (its Load diff shows); with hunks, it starts folded.
+        // Folded at first: generated, big, viewed, or `collapsed` by the extension (UI version 5). Without hunks the file
+        // is there to be loaded (its Load Diff shows), never folded at first: a generated one is not loaded by itself.
         let hunks = d.hunks ?? []
-        let collapsed = d.collapsed == true && !hunks.isEmpty
-        let folded = state.isFolded(key, collapsed: collapsed)
+        let reason = CodeReview.foldedAtFirst(d, viewed: state.isViewed(d))
+        let folded = state.isFolded(key, initially: state.initiallyFolded(d))
         var out: [CodePageBlock] = [.diffHeader(id: "dh:" + key, key: key, diff: d, folded: folded)]
         defer { out.append(.gap(id: "gap:" + key)) }
-        guard !folded else { return out }
+        guard !folded else {
+            let note: String? = switch reason {
+            case .generated: String(localized: "Generated file, folded")
+            case .big: String(localized: "Large change, folded")
+            case .viewed: String(localized: "Viewed")
+            case .collapsed, nil: nil
+            }
+            if let note, !hunks.isEmpty { out.append(.diffFolded(id: "fold:" + key, key: key, note: note)) }
+            return out
+        }
         if d.binary == true {
             out.append(.diffNote(id: "bin:" + key, text: String(localized: "Binary file; changes not shown")))
             return out
@@ -223,32 +415,75 @@ enum CodePageBlock: Identifiable {
             return out
         }
         let language = d.language.flatMap(SyntaxLanguage.named) ?? SyntaxLanguage.detect(name: d.path)
-        let numbered = hunks.map { CodeDiffModel.lines(oldStart: $0.oldStart, newStart: $0.newStart, raw: $0.lines) }
-        let digits = CodeGutter.digits(numbered.flatMap { $0 })
+        // Numbered, whitespace ignored when the page says so, the words that changed marked (worked out once).
+        let numbered = state.lines(of: hunks)
+        if state.whitespace, numbered.allSatisfy({ $0.allSatisfy { $0.kind == .context || $0.kind == .note } }) {
+            out.append(.diffNote(id: "ws:" + key, text: String(localized: "Only whitespace changed")))
+            return out
+        }
+        // UI version 5's `context`: the lines between hunks are asked of the extension (`expand` is not used then); a file
+        // added whole has none hidden.
+        let cache = state.lineCaches[d.path]
+        let gaps = d.context != nil && d.status != "added" ? CodeReview.gaps(hunks, total: cache?.total) : []
+        let digits = max(CodeGutter.digits(numbered.flatMap { $0 }), gaps.isEmpty ? 0 : String(cache?.total ?? 0).count)
         let oneSided = d.status == "added" || d.status == "deleted"
             || numbered.allSatisfy { $0.allSatisfy { $0.kind != .context && $0.kind != .del } }
             || numbered.allSatisfy { $0.allSatisfy { $0.kind != .context && $0.kind != .add } }
         // Threads under the line they are on; ones whose line is not in the hunks (outdated) after the file.
-        var threads: [String: [ExtensionThread]] = [:]
         var placed: Set<Int> = []
         let anchors = Set(numbered.flatMap { $0 }.compactMap { $0.anchor.map { "\($0.side):\($0.line)" } })
+        var threads: [String: [(Int, ExtensionThread)]] = [:]
         for (i, t) in (d.threads ?? []).enumerated() {
             let k = "\(t.side):\(t.line)"
-            if anchors.contains(k) { threads[k, default: []].append(t); placed.insert(i) }
+            if anchors.contains(k) { threads[k, default: []].append((i, t)); placed.insert(i) }
         }
         func after(_ l: CodeDiffLine?) -> [CodePageBlock] {
             guard let l, let a = l.anchor else { return [] }
             var out: [CodePageBlock] = []
-            for t in threads["\(a.side):\(a.line)"] ?? [] {
-                out.append(.inlineThread(id: "th:\(key):\(t.id ?? "\(a.side)\(a.line)")", diff: d, thread: t))
+            for (i, t) in threads["\(a.side):\(a.line)"] ?? [] {
+                out.append(.inlineThread(id: threadID(key, t, i), diff: d, thread: t))
             }
-            let anchor = CodePageState.Anchor(diff: key, side: a.side, line: a.line)
-            if state.composing == anchor { out.append(.inlineComposer(id: "ic:\(key):\(a.side)\(a.line)", diff: d, anchor: anchor)) }
+            // The comment box under the last line it is on.
+            if let c = state.composing, c.diff == key, c.side == a.side, c.line == a.line {
+                // By diff and side: what is typed stays while the lines it is on change.
+                out.append(.inlineComposer(id: "ic:\(key):\(a.side)", diff: d, anchor: c))
+            }
+            return out
+        }
+        // A gap's unchanged lines, as any other (side by side: on both sides).
+        func unchanged(_ lines: [CodeDiffLine], _ tag: String) -> [CodePageBlock] {
+            lines.flatMap { l -> [CodePageBlock] in
+                let id = "gl:\(key):\(tag):\(l.new ?? 0)"
+                let row: CodePageBlock = look == .split && !oneSided
+                    ? .diffPair(id: id, key: key, diff: d, left: l, right: l, language: language, digits: digits)
+                    : .diffLine(id: id, key: key, diff: d, line: l, language: language, digits: digits)
+                return [row] + after(l)
+            }
+        }
+        /// The gap before hunk `i` (`i` = the hunks' count: after the last): its lines shown, the bar for the rest.
+        func gap(_ i: Int, header: String?) -> [CodePageBlock] {
+            guard i < gaps.count else { return [] }
+            let g = gaps[i]
+            let r = CodeReview.rows(g, shown: state.shown(key, g.at), cache: cache)
+            var out = unchanged(r.top, "\(i)t")
+            if r.hidden > 0 {
+                out.append(.gapBar(id: "gap-bar:\(key):\(i)", key: key, diff: d, gap: g, hidden: r.hidden, first: i == 0,
+                                   last: i == hunks.count, header: header))
+            }
+            out += unchanged(r.bottom, "\(i)b")
             return out
         }
         for (hi, h) in hunks.enumerated() {
-            out.append(.hunk(id: "hk:\(key):\(hi)", diff: d, index: hi,
-                             header: h.header?.isEmpty == false ? h.header! : "@@ -\(h.oldStart) +\(h.newStart) @@"))
+            let header = h.header?.isEmpty == false ? h.header! : "@@ -\(h.oldStart) +\(h.newStart) @@"
+            if gaps.isEmpty {
+                out.append(.hunk(id: "hk:\(key):\(hi)", diff: d, index: hi, header: header))
+            } else {
+                let g = gap(hi, header: h.header)
+                // Nothing hidden over it and nothing shown: its header as before.
+                let bare = !g.contains { if case .gapBar = $0 { true } else { false } }
+                    && !g.contains { if case .diffLine = $0 { true } else if case .diffPair = $0 { true } else { false } }
+                out += bare ? [.hunk(id: "hk:\(key):\(hi)", diff: d, index: hi, header: header)] : g
+            }
             let lines = numbered[hi]
             // A file added or removed whole has one side only: side by side would leave half the column empty.
             if look == .split, !oneSided {
@@ -265,9 +500,10 @@ enum CodePageBlock: Identifiable {
                 }
             }
         }
-        if d.expand != nil { out.append(.diffMore(id: "more:" + key, diff: d, index: hunks.count - 1)) }
+        if !gaps.isEmpty { out += gap(hunks.count, header: nil) }
+        else if d.expand != nil { out.append(.diffMore(id: "more:" + key, diff: d, index: hunks.count - 1)) }
         for (i, t) in (d.threads ?? []).enumerated() where !placed.contains(i) {
-            out.append(.inlineThread(id: "th:\(key):\(t.id ?? "o\(i)")", diff: d, thread: t))
+            out.append(.inlineThread(id: threadID(key, t, i), diff: d, thread: t))
         }
         return out
     }
@@ -284,7 +520,7 @@ enum CodePageBlock: Identifiable {
 nonisolated extension CodeTreeEntry {
     init(_ e: ExtensionTreeEntry) {
         self.init(path: e.path, kind: e.kind, status: e.status, additions: e.additions, deletions: e.deletions,
-                  comments: e.comments, badge: e.badge?.text)
+                  comments: e.comments, badge: e.badge?.text, viewed: e.viewed)
     }
 }
 

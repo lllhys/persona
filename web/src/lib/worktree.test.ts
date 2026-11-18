@@ -140,6 +140,16 @@ describe("a new agent's own worktree (#6115)", () => {
     expect(agentBranch("a".repeat(30) + " " + "b".repeat(30))).toBe("persona/" + "a".repeat(30) + "-" + "b".repeat(9));
   });
 
+  it("names it after a Windows computer's folder by that folder's own separator (#9911)", () => {
+    expect(agentNameHint("修登录", "C:\\Users\\me\\code\\weather")).toBe("weather");
+    expect(agentBranch(agentNameHint("修登录", "C:\\Users\\me\\code\\weather\\"))).toBe("persona/weather");
+    expect(agentBranch(agentNameHint("修登录", "\\\\server\\share\\weather"))).toBe("persona/weather");
+    expect(agentBranch(agentNameHint("修登录", "d:/code/weather"))).toBe("persona/weather");
+    // elsewhere a backslash is part of a name; the root still has no name to give
+    expect(agentNameHint("修登录", "/home/me/a\\b")).toBe("a\\b");
+    expect(agentNameHint("修登录", " / ")).toBe("");
+  });
+
   it("counts what removing it loses: the branch's commits only with the branch", () => {
     const st = { worktree: true, ours: true, path: "/wt/x", branch: "persona/x", dirty: 2, unmerged: 3 };
     expect(worktreeLoss(st, false)).toEqual({ dirty: 2, unmerged: 0 });
@@ -155,13 +165,25 @@ describe("a new agent's own worktree (#6115)", () => {
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ cwd: "/r/sub" });
   });
 
-  it("makes it with the agent's name, a branch only when typed", async () => {
+  it("asks the engine the agent opens in, or ran in: the one that made its worktree", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response({ worktree: true, ours: false, path: "/wt/x", dirty: 0, unmerged: 0 }));
+    vi.stubGlobal("fetch", fetcher);
+    await worktreeStatus("m", "/wt/x", undefined, "paseo");
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ cwd: "/wt/x", kind: "paseo" });
+    // none: the computer's default decides
+    await worktreeStatus("m", "/wt/x", undefined, undefined);
+    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ cwd: "/wt/x" });
+  });
+
+  it("makes it with the agent's name, a branch only when typed, by the engine it opens in", async () => {
     const fetcher = vi.fn().mockResolvedValue(response({ path: "/wt/proj/persona-x", branch: "persona/x", root: "/r" }));
     vi.stubGlobal("fetch", fetcher);
     await addAgentWorktree("m", "/r", "x");
     await addAgentWorktree("m", "/r", "x", " feat/y ");
+    await addAgentWorktree("m", "/r", "x", "", {}, "paseo");
     expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ cwd: "/r", name_hint: "x" });
     expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ cwd: "/r", name_hint: "x", branch: "feat/y" });
+    expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ cwd: "/r", name_hint: "x", kind: "paseo" });
   });
 
   it("removes it once the closed agent is gone, trying again while the node still lists it", async () => {
@@ -176,5 +198,9 @@ describe("a new agent's own worktree (#6115)", () => {
     fetcher.mockReset().mockResolvedValue(response({ code: "worktree_dirty", error: "the worktree has uncommitted changes" }, 409));
     await expect(removeAgentWorktree("m", "/wt/x", { deleteBranch: false, force: false }, 3, 1)).rejects.toBeInstanceOf(ApiError);
     expect(fetcher).toHaveBeenCalledTimes(1);
+    // by the engine the agent ran in
+    fetcher.mockReset().mockResolvedValue(response({ removed: true, branch_deleted: false }));
+    await removeAgentWorktree("m", "/wt/x", { deleteBranch: false, force: false, kind: "paseo" }, 3, 1);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ path: "/wt/x", kind: "paseo" });
   });
 });

@@ -11,6 +11,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // This descriptor ticket is valid only in the same PID after exec, and is consumed before starting any child.
@@ -45,7 +47,7 @@ func inheritedResidentTransport(path string) (*ResidentTransport, bool, error) {
 		return invalid()
 	}
 	defer listener.Close()
-	ln, err := net.FileListener(listener)
+	ln, err := osproc.FileListener(listener)
 	if err != nil {
 		_ = lock.Close()
 		return invalid()
@@ -65,12 +67,12 @@ func inheritedResidentTransport(path string) (*ResidentTransport, bool, error) {
 	}
 	// SealInherited normally did this already. Keep it explicit for direct callers and tests.
 	syscall.CloseOnExec(lockFD)
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.(*osproc.UnixListener).SetUnlinkOnClose(false)
 	return &ResidentTransport{Listener: ln, lock: lock}, true, nil
 }
 
 func (t *ResidentTransport) PrepareExec() (*ResidentFiles, error) {
-	listener, err := t.Listener.(*net.UnixListener).File()
+	listener, err := t.Listener.(*osproc.UnixListener).File()
 	if err != nil {
 		return nil, err
 	}

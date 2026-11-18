@@ -6,7 +6,7 @@
   "newer_format": "This marketplace's catalog uses format {version}, which needs a newer hub. Update the hub, then try again.",
   "no_name": "The catalog needs a name (60 characters at most).",
   "description_too_long": "The catalog's description is too long.",
-  "too_many": "The catalog lists more than {most} extensions.",
+  "catalog_over_limit": "The catalog lists more than {most} extensions.",
   "entry_skipped": "Extension {n} isn't listed: {err}",
   "entry_duplicate": "Extension {id} is listed more than once; only the first is used.",
   "entry_no_manifest": "It has no manifest.",

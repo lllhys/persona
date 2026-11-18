@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Answers requests to access.invalid as a hub behind Cloudflare Access would (docs/operations/network.md "Behind
 /// Cloudflare Access"), and keeps the headers each one carried.

@@ -1,8 +1,15 @@
 package persona.core.data
 
-import persona.core.contracts.DirectionsEvent
 import persona.core.contracts.CoreText
 import persona.core.contracts.CoreText.Key
+import persona.core.contracts.Direction
+import persona.core.contracts.DirectionAgent
+import persona.core.contracts.DirectionCounts
+import persona.core.contracts.DirectionTask
+import persona.core.contracts.DirectionTaskState
+import persona.core.contracts.DirectionTree
+import persona.core.contracts.DirectionsEvent
+import persona.core.contracts.Hello
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.ServerEvent
 import persona.core.contracts.Session
@@ -26,6 +33,7 @@ class RealAssistantRepository(
     scope: CoroutineScope,
     private val snapshots: ListSnapshotStore? = null,
     private val preferences: HubPreferences? = null,
+    /** The hub's pushes: `{"type":"directions"}` (#4352) and a new hello read the direction tree again. */
     events: Flow<ServerEvent> = emptyFlow(),
 ) : AssistantConversations {
     private val current = MutableStateFlow(AssistantSnapshot())
@@ -71,8 +79,9 @@ class RealAssistantRepository(
     }
 
     /**
-     * The direction tree (#4352): the current directions in the hub's order, without the secretary group. The hub answers
-     * it for the default manager alone; null where it cannot be read (an older hub answers 404), which changes nothing.
+     * The direction tree (#4352), the one place the app reads and parses it: the drawer's 常驻 rows, To-dos and Agents
+     * all draw this. The hub answers it for the default manager alone; null where it cannot be read (an older hub answers
+     * 404), which changes nothing.
      */
     private suspend fun directionTree(request: Request): DirectionTree? {
         if (request.manager != null) return null
@@ -86,11 +95,11 @@ class RealAssistantRepository(
     }
 
     /**
-     * What the drawer shows: the tree's ids in the hub's order, names and open tasks where it answers. A hub without the
-     * tree (an older one answers 404) keeps [held] and takes the leaders answer's names, which have no counts.
+     * What the drawer shows: the tree's ids in the hub's order, names and the tree itself where it answers. A hub without
+     * the tree (an older one answers 404) keeps [held] and takes the leaders answer's names, which have no counts.
      */
     private suspend fun directionsOf(request: Request, held: LeaderInfo): LeaderInfo {
-        directionTree(request)?.let { return LeaderInfo(it.ids, it.names, it.counts) }
+        directionTree(request)?.let { return LeaderInfo(it.ids, it.names, it) }
         val names = try {
             directionNamesOf(request.transport.assistantLeadersOf(request.owner))
         } catch (e: CancellationException) {
@@ -98,7 +107,7 @@ class RealAssistantRepository(
         } catch (e: Exception) {
             return held
         }
-        return LeaderInfo(held.ids, names.ifEmpty { held.names }, held.counts)
+        return LeaderInfo(held.ids, names.ifEmpty { held.names }, held.tree)
     }
 
     private fun noteConversation(id: String, request: Request) {
@@ -128,9 +137,10 @@ class RealAssistantRepository(
             }
         }
         // The direction tree changed (a direction made, ended or renamed, a to-do or an Agent: `directions`, #4352): the
-        // drawer follows at once, whichever device did it, by reading the tree again.
+        // drawer, To-dos and Agents follow at once, whichever device did it, by reading the tree again; also on a new
+        // hello (the socket came back without the transport changing, so no refresh ran).
         scope.launch {
-            events.filterIsInstance<DirectionsEvent>().collect {
+            events.filter { it === DirectionsEvent || it is Hello }.collect {
                 try {
                     applyDirections()
                 } catch (e: CancellationException) {
@@ -227,7 +237,7 @@ class RealAssistantRepository(
             val main = snapshot.mainSession?.sessionId
             val ids = tree.ids.filter { it.isNotEmpty() && it != main }
             val known = snapshot.conversations.mapTo(HashSet()) { it.sessionId }
-            current.value = snapshot.copy(leaders = ids, directionNames = tree.names, leaderCounts = tree.counts)
+            current.value = snapshot.copy(leaders = ids, directionNames = tree.names, directionTree = tree)
             cached[request.key] = current.value
             ids.any { it !in known }
         }
@@ -248,12 +258,12 @@ class RealAssistantRepository(
         // leaders changing, and the tree is also where the order and names come from (#4352).
         val fresh = decode(data, request)
         val held = current.value.takeIf { it.managerId == request.owner }
-        val info = directionsOf(request, held?.let { LeaderInfo(it.leaders, it.directionNames, it.leaderCounts) } ?: LeaderInfo.EMPTY)
+        val info = directionsOf(request, held?.let { LeaderInfo(it.leaders, it.directionNames, it.directionTree) } ?: LeaderInfo.EMPTY)
         val pins = if (preferences != null) preferences.preferences.value.pins.sessions.mapNotNull(::sessionPath).toSet()
             else request.transport.pins().array("sessions").mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.let(::sessionPath) }.toSet()
         lock.withLock {
             if (!selected(request) || version != refreshVersion) return
-            val snapshot = fresh.copy(leaders = info.ids ?: fresh.leaders, directionNames = info.names, leaderCounts = info.counts)
+            val snapshot = fresh.copy(leaders = info.ids ?: fresh.leaders, directionNames = info.names, directionTree = info.tree)
             cached[request.key] = snapshot
             current.value = snapshot
             currentPins.value = pins
@@ -387,36 +397,50 @@ internal fun directionNamesOf(data: JsonObject): Map<String, String> = data.arra
     .toMap()
 
 /**
- * `GET /api/v1/assistant/directions/tree` (#4352): the current directions in the hub's order, never the secretary group,
- * with their names and open tasks. Empty where the hub lists none.
+ * `GET /api/v1/assistant/directions/tree` (#4352) as the app keeps it; null without `directions` (an older hub's empty
+ * answer). Directions, tasks and agents without an id are left out, except the secretary group: its id is the main
+ * conversation's, which is empty on a hub that has none yet, and it must still carry its tasks.
  */
-internal data class DirectionTree(
-    val ids: List<String> = emptyList(), val names: Map<String, String> = emptyMap(),
-    val counts: Map<String, LeaderCounts> = emptyMap(),
-)
-
-internal fun directionTreeOf(data: JsonObject): DirectionTree {
-    val directions = data.array("directions").mapNotNull { it as? JsonObject }.filter { !it.flag("secretary") }
-        .mapNotNull { direction -> direction.string("id").takeIf(String::isNotEmpty)?.let { id -> id to direction } }
-    return DirectionTree(
-        ids = directions.map { it.first },
-        names = directions.mapNotNull { (id, direction) ->
-            direction.string("name").trim().takeIf(String::isNotEmpty)?.let { id to it }
-        }.toMap(),
-        counts = directions.associate { (id, direction) -> id to direction.counts() },
-    )
+internal fun directionTreeOf(data: JsonObject): DirectionTree? {
+    val directions = data["directions"] as? JsonArray ?: return null
+    return DirectionTree(directions.mapNotNull { (it as? JsonObject)?.let(::directionOf) })
 }
 
-private fun JsonObject.counts(): LeaderCounts = obj("counts")?.let { c -> LeaderCounts(c.number("working")?.toInt() ?: 0, c.number("needs_you")?.toInt() ?: 0) }
-    ?: LeaderCounts()
+private fun directionOf(data: JsonObject): Direction? {
+    val secretary = data.flag("secretary")
+    val id = data.string("id")
+    if (id.isEmpty() && !secretary) return null
+    val counts = data.obj("counts")
+    fun count(key: String) = counts?.number(key)?.toInt()?.coerceAtLeast(0) ?: 0
+    return Direction(id, data.string("name").trim(), secretary,
+        DirectionCounts(count("working"), count("needs_you"), count("stuck"), count("review"), count("planned")),
+        data.array("tasks").mapNotNull { task ->
+            (task as? JsonObject)?.let { t ->
+                t.string("id").takeIf { it.isNotEmpty() }?.let { taskId ->
+                    DirectionTask(taskId, t.string("title"), DirectionTaskState.of(t.string("state")),
+                        t.array("agents").mapNotNull { (it as? JsonObject)?.let(::directionAgentOf) })
+                }
+            }
+        },
+        // #6626: the hub's; a hub without it (it always sends it, false too) spins on a working task, as before
+        running = (data["running"] as? JsonPrimitive)?.booleanOrNull ?: (count("working") > 0))
+}
+
+private fun directionAgentOf(data: JsonObject): DirectionAgent? {
+    val machine = data.string("machine_id")
+    val session = data.string("session_id")
+    if (machine.isEmpty() || session.isEmpty()) return null
+    return DirectionAgent(machine, session, data.string("title"), data.string("agent"), data.string("state"),
+        data.array("children").mapNotNull { (it as? JsonObject)?.let(::directionAgentOf) })
+}
 
 /**
- * The directions to show: their ids in the hub's order (null: not read, keep the ones we have), their names and open
- * tasks (`GET /api/v1/assistant/directions/tree`, or the leaders answer's names alone).
+ * The directions to show: their ids in the hub's order (null: not read, keep the ones we have), their names and the tree
+ * they came from (`GET /api/v1/assistant/directions/tree`, or the leaders answer's names alone, which have no tree).
  */
 private data class LeaderInfo(
     val ids: List<String>? = null, val names: Map<String, String> = emptyMap(),
-    val counts: Map<String, LeaderCounts> = emptyMap(),
+    val tree: DirectionTree? = null,
 ) {
     companion object { val EMPTY = LeaderInfo() }
 }

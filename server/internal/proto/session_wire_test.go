@@ -47,6 +47,10 @@ func wireSamples(t *testing.T, ty reflect.Type) []reflect.Value {
 		for _, source := range []TitleSource{TitleSourceUnknown, TitleSourceManual, TitleSourceAuto, TitleSourcePrompt, TitleSourceRuntime, 255} {
 			add(source)
 		}
+	case ty == reflect.TypeFor[PermissionModeSet]():
+		for _, set := range []PermissionModeSet{PermissionModeSetOf("default", "bypassPermissions"), PermissionModeSetOf("default"), 255} {
+			add(set)
+		}
 	case ty == timeType:
 		for _, tm := range wireTimes {
 			add(tm)

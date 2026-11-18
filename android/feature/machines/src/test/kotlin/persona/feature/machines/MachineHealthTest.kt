@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Test
 import persona.core.contracts.Machine
 import persona.core.contracts.api.*
+import persona.core.domain.engines.Engines
 import persona.core.domain.usage.*
 import java.time.Instant
 
@@ -39,6 +40,27 @@ class MachineHealthTest {
         assertEquals(HealthNote.Plain("do this"), features.getValue("other").note)
         assertEquals(2, attentionCount(features.values.toList()))
         assertEquals(listOf("claude-settings.json"), fixableChecks(report).map { it.name })
+    }
+
+    /** No terminal engine keeps `engine` herdr (the empty host set); the features are judged by the choice, not by herdr. */
+    @Test fun aMachineWithNoTerminalEngineIsNotJudgedByHerdr() {
+        val herdrMachine = Machine("desk", engine = "herdr", engineHosts = listOf("herdr"))
+        val none = herdrMachine.copy(engineHosts = emptyList())
+        val warn = DoctorReport(checks = listOf(check("node.sock"), check("command-paths"), check("herdr", "warn")))
+        val fail = DoctorReport(checks = listOf(check("node.sock"), check("command-paths"), check("herdr", "fail")))
+        fun terminal(report: DoctorReport, machine: Machine) = deriveFeatures(report, Engines.judged(machine)).first { it.id == "terminal" }
+        assertEquals(FeatureState.Broken, terminal(warn, herdrMachine).state)
+        assertEquals(FeatureState.Off, terminal(warn, none).state)
+        assertEquals(FeatureState.Broken, terminal(fail, herdrMachine).state)
+        assertEquals(FeatureState.Off, terminal(fail, none).state)
+        // The check itself is still reported as found; only the feature's state follows the choice.
+        assertEquals(listOf("herdr"), terminal(fail, none).checks.map { it.name })
+        assertEquals("nothing needs attention for it", 0, attentionCount(listOf(terminal(warn, none))))
+        // A machine that does have herdr, or a hub with no host sets, stays as before.
+        assertEquals(FeatureState.Broken, terminal(warn, herdrMachine.copy(engineHosts = null)).state)
+        assertEquals(FeatureState.Ready, terminal(DoctorReport(checks = listOf(check("herdr"))), none).state)
+        // Choosing herdr again brings the judgement back.
+        assertEquals(FeatureState.Broken, terminal(warn, none.copy(engineHosts = listOf("herdr"))).state)
     }
 
     @Test fun unavailableSelfChecksSayWhy() {

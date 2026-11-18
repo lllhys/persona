@@ -56,6 +56,11 @@ type WorkState struct {
 	// Deferred: the user put the decision off on its card (Skip for now, Not now, Stop waiting, Hold off, or closed it): the agent is no
 	// Awaiting Reply for it and is not reminded of (#5096).
 	Deferred bool `json:"deferred,omitempty"`
+	// JustFinished: the triage found this turn done before anybody looked at it, and the turn ended less than the
+	// manager's window ago (agents.triage.just_finished_hours, 3 by default). The apps list it as Just finished, apart
+	// from the seen ones, until it is seen, a new turn starts or the window passes (docs/protocol/agent-states.md "Just
+	// finished", #9751). Only on the manager's lists, never stored.
+	JustFinished bool `json:"just_finished,omitempty"`
 	// TurnAt is the end of the turn this state is about (the session's updated_at then); At when it was found, By how:
 	// "rule" or "model".
 	TurnAt time.Time `json:"turn_at,omitzero"`

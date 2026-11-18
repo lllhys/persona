@@ -11,6 +11,8 @@ from pathlib import Path
 
 os.environ["MOCK_TASKS"] = "1"
 os.environ["MOCK_TASKS_NO_ASKS"] = "1"
+# The conversation and its dispatched Agents belong to the same assistant in this fixture.
+os.environ.setdefault("MOCK_MANAGERS", "1")
 root = Path(__file__).resolve().parents[3]
 spec = importlib.util.spec_from_file_location("dispatch_mock", root / "scripts/mock/mock_hub.py")
 hub = importlib.util.module_from_spec(spec)

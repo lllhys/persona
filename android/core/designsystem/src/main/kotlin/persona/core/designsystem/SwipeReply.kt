@@ -42,7 +42,9 @@ object SwipeReply {
 /**
  * Drag a message left to reply to it (iOS #1058): it follows the finger, the reply icon comes in at its right and
  * fills with the style's action colour once past [SwipeReply.threshold] (with a haptic tap); letting go there calls [onReply], and the
- * message springs back either way. Accessibility services get [label] as a custom action instead of the drag.
+ * message springs back either way on [Tokens.Motion.SpringBack], copying `withAnimation(Theme.Motion.springBack)` at
+ * `MessageMenu.swift:470`. That call does not read Reduce Motion, on iPhone and iPad alike, so Android springs in
+ * every style with animations off too. Accessibility services get [label] as a custom action instead of the drag.
  * Vertical drags still scroll the list: only a sideways move past the touch slop is taken.
  */
 fun Modifier.swipeToReply(label: String, onReply: () -> Unit): Modifier = composed {
@@ -57,8 +59,7 @@ fun Modifier.swipeToReply(label: String, onReply: () -> Unit): Modifier = compos
     val well = 32.dp
     val glyph = 18.dp
     val inset = Tokens.Space.s
-    val reduce = PersonaTheme.reduceMotion
-    val spring = PersonaTheme.motion.enter<Float>()
+    val spring = IosSpring(Tokens.Motion.SpringBack.duration, Tokens.Motion.SpringBack.bounce).spec<Float>()
     this
         // Merged so the screen reader focuses the message as one node, the one that carries the action (links and
         // buttons inside stay their own stops: clickable nodes are not merged in).
@@ -69,7 +70,7 @@ fun Modifier.swipeToReply(label: String, onReply: () -> Unit): Modifier = compos
                 if (armed) reply()
                 armed = false
                 drag = 0f
-                scope.launch { if (reduce) offset.snapTo(0f) else offset.animateTo(0f, spring) }
+                scope.launch { offset.animateTo(0f, spring) }
             }
             detectHorizontalDragGestures(
                 onDragEnd = ::settle,

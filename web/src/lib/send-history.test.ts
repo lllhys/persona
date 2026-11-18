@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  canRecall, composing, HISTORY_MAX, moveActive, opensSearch, readAllHistory, readHistory, recallIndexOf, recallStep, recordSent, searchAction, searchSent, withSent,
+  canRecall, composing, HISTORY_MAX, opensSearch, readHistory, recallIndexOf, recallStep, recordSent, withSent,
   type KeyLike, type SentEntry,
 } from "./send-history";
+import { moveActive, readAllHistory, searchAction, searchSent } from "./send-history-search";
 
 function memory() {
   const m = new Map<string, string>();

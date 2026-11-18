@@ -304,6 +304,29 @@ func profilerModel(b []byte) string {
 	return ""
 }
 
+// ioregModel is the model name from the "product-name" line of `ioreg -p IODeviceTree -rd1 -n product` (Apple
+// silicon), without its parenthesised size and year, as system_profiler's Model Name has it: "MacBook Pro (14-inch,
+// 2021)" is "MacBook Pro". Nothing else of the output is read.
+func ioregModel(b []byte) string {
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		k, v, ok := strings.Cut(sc.Text(), "=")
+		if !ok || strings.TrimSpace(k) != `"product-name"` {
+			continue
+		}
+		v, ok = strings.CutPrefix(strings.TrimSpace(v), `<"`) // a string; data that is not prints as hex
+		if !ok {
+			return ""
+		}
+		v = strings.TrimSuffix(v, `">`)
+		if i := strings.Index(v, " ("); i > 0 && strings.HasSuffix(v, ")") {
+			v = v[:i]
+		}
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
 // vmStat is one row of `vm_stat <interval>` in pages (the gauges; the counters after them are not used).
 type vmStat struct {
 	free, active, speculative, inactive, wired, purgeable, fileBacked, anonymous, compressor uint64

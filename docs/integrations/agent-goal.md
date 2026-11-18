@@ -85,6 +85,25 @@ one, is more specific).
   are left. iOS and Android follow separately.
 - Not persisted: it is read from the transcript on each scan, and after a node restart by the first full scan.
 
+## A goal set at the start
+
+A new Claude Code session can begin with a goal of its own: `session.start` carries `goal`, a one-line condition the
+node types as `/goal <condition>` right **after** the first message is in the transcript, while the agent works
+([protocol.md](../protocol/protocol.md), "A goal set at the start"). Claude Code runs `/goal` at once even mid-turn. It
+goes after the task, and on its own, because `/goal` answers `Goal set: …` and then starts a turn toward its condition:
+typed first, the agent would begin from the criteria alone, without the task (checked 2026-11-15 with Claude Code
+2.1.325 through a relay launcher: with `/goal` first the agent acted on the condition before the task arrived; with the
+task first and `/goal` mid-turn, the goal was set at once, the agent did the task, and the Stop hook found it met). The
+node confirms `Goal set:` on the screen with a bounded wait; a refusal (an untrusted workspace, restricted hooks, a
+policy not read yet, an empty or too-long condition, a CLI without `/goal`) or no answer never stops the work, and a
+first message that never reaches the transcript gets no goal.
+
+The assistant attaches such a goal when a start-defaults rule asks for one (`goal: "done_when"`,
+[assistant.md](../assistant/assistant.md) "Start defaults") and the task's `done_when` gives it something checkable,
+rendered as one sentence (`prompts/assistant/task_goal.md`); tasks without criteria start without one, and only
+brand-new Claude Code sessions take one. Its transcript lines, `goal_status` attachment, `Session.goal` and the goal bar are the ordinary
+goal's below; nothing else about goals changes.
+
 ## Screenshots
 
 Mock hub with `MOCK_GOAL=1`: on the MacBook, "Add a home screen widget to the weather app" has an active goal (with the reason from the latest check), and the goal of "Review the changes in PR #42" is achieved;

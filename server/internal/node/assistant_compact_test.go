@@ -1,9 +1,15 @@
 package node
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -25,11 +31,11 @@ func TestAssistantManualCompaction(t *testing.T) {
 		return *st.Compaction
 	}
 
-	if code := refusalCode(n.assistantCompact(t.Context(), id)); code != "busy" {
+	if code := refusalCode(n.assistantCompact(t.Context(), id, false)); code != "busy" {
 		t.Fatalf("while it answers: %q", code)
 	}
 	p.busy = false
-	if err := n.assistantCompact(t.Context(), id); err != nil {
+	if err := n.assistantCompact(t.Context(), id, true); err != nil { // only_running (the hub's, #8253): it runs
 		t.Fatal(err)
 	}
 	if got := strings.TrimSpace(in.String()); got != `{"message":{"content":"/compact","role":"user"},"type":"user"}` {
@@ -38,7 +44,7 @@ func TestAssistantManualCompaction(t *testing.T) {
 	if c := state(); c.State != proto.CompactionRunning || c.StartedAt.IsZero() || c.FinishedAt != nil {
 		t.Fatalf("started: %+v", c)
 	}
-	if code := refusalCode(n.assistantCompact(t.Context(), id)); code != "compacting" {
+	if code := refusalCode(n.assistantCompact(t.Context(), id, false)); code != "compacting" {
 		t.Fatalf("twice: %q", code)
 	}
 	stream(`{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"manual","pre_tokens":180902,"post_tokens":9500}}`,
@@ -52,7 +58,7 @@ func TestAssistantManualCompaction(t *testing.T) {
 		t.Fatalf("an automatic one: %+v", c)
 	}
 
-	if err := n.assistantCompact(t.Context(), id); err != nil {
+	if err := n.assistantCompact(t.Context(), id, false); err != nil {
 		t.Fatal(err)
 	}
 	stream(`{"type":"result","subtype":"success","is_error":false,"result":"Error: Not enough messages to compact."}`)
@@ -66,7 +72,7 @@ func TestAssistantManualCompaction(t *testing.T) {
 		t.Fatal("still compacting after the turn ended")
 	}
 
-	if err := n.assistantCompact(t.Context(), id); err != nil {
+	if err := n.assistantCompact(t.Context(), id, false); err != nil {
 		t.Fatal(err)
 	}
 	n.sweepCompactions()
@@ -130,5 +136,136 @@ func TestHandoffReadsTheLastSummaryAndWhatCameAfter(t *testing.T) {
 	}
 	if len(got) == 0 || len(got) > handoffTurns || total > handoffRecentMax || got[len(got)-1].Text != many[39].Text {
 		t.Fatalf("bounded, newest kept: %d messages, %d characters", len(got), total)
+	}
+}
+
+// Compacting a meeting's room whose process is not running (#8253: the hub compacts long meetings' rooms) starts it as
+// any resume of the room does: no built-in tools, the strict MCP config with only its meeting tools, the project's
+// setting sources and its own settings, never the assistant's flags. The hub asks only_running, which refuses
+// not_running instead: its process exited since the hub saw it running, and it is not started only to be compacted.
+func TestCompactingAStoppedRoomKeepsItsRestrictions(t *testing.T) {
+	fakeClaudeHome(t, "for a in \"$@\"; do printf ' [%s]' \"$a\"; done > \"$HOME/args-$$\"\nread line\necho '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
+	n := codexTestNode(t)
+	n.dir = filepath.Join(os.Getenv("HOME"), ".persona")
+	if err := os.MkdirAll(n.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	withFakeHub(t, n)
+	rec, room := "0f8fad5b-d9cb-469f-a165-70867728950e", "7d4a3c1e-1111-4222-8333-444455556666"
+	out, err := n.assistantGuestPrepare(json.RawMessage(`{"dir":".persona/guest-meeting/` + rec + `","claude_md":"# room","kind":"meeting"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := out.(map[string]any)["cwd"].(string)
+	tools := []string{"meeting_lines", "meeting_earlier", "meeting_topics_set"}
+	if _, err := n.assistantSend(withNewID(withGuestKind(context.Background(), tools, guestMeeting), room), "", cwd, "claude", "the meeting's header", nil, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { n.stopAssistant(room) })
+	st, _ := n.state.get(room)
+	transcript := filepath.Join(n.assistantConfigPath(st.ConfigDir), "projects", claudeProjectName(cwd), room+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte(`{"type":"user","message":{"role":"user","content":"the meeting's header"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n.setPath(room, transcript)
+	n.stopAssistant(room) // idle long enough: let go
+
+	// The hub compacting it asks only_running: refused, nothing starts, no compaction is recorded.
+	if code := refusalCode(n.assistantCompact(context.Background(), room, true)); code != "not_running" {
+		t.Fatalf("only_running on a room that is not running: %q", code)
+	}
+	n.mu.Lock()
+	p := n.procs[room]
+	n.mu.Unlock()
+	if st, _ := n.state.get(room); p != nil || st.Compaction != nil {
+		t.Fatalf("only_running started it: process %v, compaction %+v", p != nil, st.Compaction)
+	}
+	if err := n.assistantCompact(context.Background(), room, false); err != nil {
+		t.Fatal(err)
+	}
+	line := startedArgs(t, "[--resume] ["+room+"]")
+	for _, want := range []string{"[--tools] []", "[--strict-mcp-config]", "[--setting-sources] [project]",
+		"[--allowedTools] [" + strings.Join(compat.MCPToolNames(tools), ",") + "]"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the room's process for its compaction has no %s: %s", want, line)
+		}
+	}
+	if strings.Contains(line, assistantBuiltinTools) {
+		t.Fatalf("the room's process got the assistant's tools: %s", line)
+	}
+	assertGuestSettings(t, line, "assistant-room-"+room+".json", cwd)
+	if st, _ := n.state.get(room); st.Compaction == nil || st.Compaction.State != proto.CompactionRunning {
+		t.Fatalf("compaction %+v", st.Compaction)
+	}
+}
+
+// A guest whose process is not running and whose launcher runs another agent by now (a meeting's room, an
+// extension's guest) is never compacted: its process would start on that agent, with its own tools and the owner's
+// setup. Refused before anything starts, and no compaction is recorded as running; spawnAssistant refuses it to any
+// other caller too.
+func TestCompactingAGuestOnAnotherAgentIsRefused(t *testing.T) {
+	n := codexTestNode(t)
+	n.dir = filepath.Join(n.home, ".persona")
+	withFakeHub(t, n)
+	probedLaunchers(t, map[string]string{"work": "codex"})
+	room, guest := "7d4a3c1e-1111-4222-8333-444455556666", "8e5b4d2f-2222-4333-8444-555566667777"
+	dir := n.assistantDirOf(".persona/guest-meeting/0f8fad5b-d9cb-469f-a165-70867728950e")
+	n.state.put(room, sessionState{Launcher: "work", Cwd: dir, Guest: []string{"meeting_lines"}, GuestKind: guestMeeting})
+	n.state.put(guest, sessionState{Launcher: "work", Cwd: filepath.Join(n.dir, "guest"), Guest: []string{"lark_send"}})
+	for _, id := range []string{room, guest} {
+		transcript := filepath.Join(n.home, ".claude", "projects", "x", id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(transcript, []byte(`{"type":"user","message":{"role":"user","content":"x"}}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		n.setPath(id, transcript)
+		if err := n.assistantCompact(context.Background(), id, false); !errors.Is(err, errGuestAgent) {
+			t.Fatalf("%s on a Codex launcher compacted: %v", id, err)
+		}
+		if _, err := n.spawnAssistant(id, dir, "work", true, false); !errors.Is(err, errGuestAgent) {
+			t.Fatalf("%s started on a Codex launcher: %v", id, err)
+		}
+		n.mu.Lock()
+		p := n.procs[id]
+		n.mu.Unlock()
+		if st, _ := n.state.get(id); p != nil || st.Compaction != nil {
+			t.Fatalf("%s: process %v, compaction %+v", id, p != nil, st.Compaction)
+		}
+	}
+}
+
+// The hub compacting a meeting's room (#8253) asks only_running: the room's process exited since the hub saw it running
+// (let go in a quiet spell), so it is refused not_running, a refusal the hub tries again after, and nothing starts:
+// neither its process nor a compaction. Without only_running (the owner's compaction, an older hub) it starts as before.
+func TestCompactingOnlyRunningLeavesAStoppedOneAlone(t *testing.T) {
+	n := codexTestNode(t)
+	n.dir = filepath.Join(n.home, ".persona")
+	withFakeHub(t, n)
+	probedLaunchers(t, map[string]string{"room-cc": "claude"})
+	room := "7d4a3c1e-1111-4222-8333-444455556666"
+	dir := n.assistantDirOf(".persona/guest-meeting/0f8fad5b-d9cb-469f-a165-70867728950e")
+	n.state.put(room, sessionState{Launcher: "room-cc", Cwd: dir, Guest: []string{"meeting_lines"}, GuestKind: guestMeeting})
+	transcript := filepath.Join(n.home, ".claude", "projects", "x", room+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(transcript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(transcript, []byte(`{"type":"user","message":{"role":"user","content":"x"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n.setPath(room, transcript)
+	err := n.assistantCompact(context.Background(), room, true)
+	if code := refusalCode(err); code != "not_running" {
+		t.Fatalf("only_running on a room that is not running: %v", err)
+	}
+	n.mu.Lock()
+	p := n.procs[room]
+	n.mu.Unlock()
+	if st, _ := n.state.get(room); p != nil || st.Compaction != nil {
+		t.Fatalf("only_running: process %v, compaction %+v", p != nil, st.Compaction)
 	}
 }

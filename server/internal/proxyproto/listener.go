@@ -84,10 +84,11 @@ type Conn struct {
 	remote net.Addr
 	err    error
 
-	mu           sync.Mutex
-	rest         []byte    // read past the header along with it, handed out before the socket's
-	parsing      bool      // the header's own deadline is on the socket
-	readDeadline time.Time // the caller's, applied when the header is in
+	mu             sync.Mutex
+	rest           []byte    // read past the header along with it, handed out before the socket's
+	parsing        bool      // the header's own deadline is on the socket
+	headerDeadline time.Time // fixed limit while the header is being read
+	readDeadline   time.Time // the caller's, applied when the header is in
 }
 
 // Header is the connection's PROXY header, once read (Read, Write or RemoteAddr), and why it was refused.
@@ -100,6 +101,7 @@ func (c *Conn) readHeader() {
 	limit := time.Now().Add(c.timeout)
 	c.mu.Lock()
 	c.parsing = true
+	c.headerDeadline = limit
 	if !c.readDeadline.IsZero() && c.readDeadline.Before(limit) {
 		limit = c.readDeadline
 	}
@@ -179,13 +181,14 @@ func (c *Conn) SetDeadline(t time.Time) error {
 	return c.Conn.SetWriteDeadline(t)
 }
 
-// SetReadDeadline is kept back while the header is read under its own deadline, and applied right after.
+// SetReadDeadline applies to pending reads, including the header read, without extending the header's own limit.
+// A timed-out header still refuses and closes the connection; extending the deadline afterwards cannot retry it.
 func (c *Conn) SetReadDeadline(t time.Time) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.readDeadline = t
-	if c.parsing {
-		return nil
+	if c.parsing && (t.IsZero() || c.headerDeadline.Before(t)) {
+		t = c.headerDeadline
 	}
 	return c.Conn.SetReadDeadline(t)
 }

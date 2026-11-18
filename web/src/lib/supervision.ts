@@ -13,6 +13,28 @@ export interface Parked {
   until: string;
   waiting_on: "owner_priority" | "someone_else" | "external_event" | "date";
   count: number;
+  /** Source-backed account recorded by task_review, not a provider receipt fetched by the hub. */
+  evidence?: ParkEvidence;
+}
+
+export interface ParkContact {
+  channel: string;
+  url: string;
+  sender: string;
+  sent_at: string;
+  request: string;
+  status: string;
+}
+
+export interface ParkEvidence {
+  kind: "person_reply" | "merge_review" | "external_event" | "date";
+  target: string;
+  url?: string;
+  wake: string;
+  contact?: ParkContact;
+  ready?: boolean;
+  /** Recording conversation, not the person who sent the request. */
+  recorded_by?: string;
 }
 
 export interface ReviewCheck {
@@ -32,6 +54,10 @@ export interface TaskReview {
   reason?: string;
   recommend?: string;
   options?: { label: string; leads_to?: string }[];
+  until?: string;
+  waiting_on?: Parked["waiting_on"];
+  parks?: number;
+  evidence?: ParkEvidence;
 }
 
 export interface Supervision {
@@ -46,6 +72,9 @@ export interface Supervision {
   round?: number;
   reviews?: TaskReview[];
   updated_at?: string;
+  /** When the task entered `pending_review`; absent in every other state, and from an older hub. The web lists every
+   *  review alike (Persona reviewing, #8678); Android and Apple read it to tell an overdue one. */
+  pending_since?: string;
   /** What its agent last reported to Persona (report_to_supervisor); kept by the hub while it runs. */
   progress?: TaskProgress;
   /** The latest independent review of its change (#2173); absent when none ran (or on an older hub). */
@@ -138,10 +167,18 @@ export function parkedLine(todo: (Pick<Todo, "done_at"> & { supervision?: Superv
 
 export type ReviewTone = "accent" | "red" | "orange" | "green" | "muted";
 
+/** The owner chose Don't handle on the decision round waiting now (the hub's task_review_dismissals): it no longer waits
+ *  on them, in the main conversation, on the To-dos page and in the badge alike. An answer later undoes it on the hub. */
+export function decisionDismissed(todo: Pick<Todo, "decision_review"> & { supervision?: Supervision }): boolean {
+  const r = todo.decision_review;
+  return !!r?.dismissal_id && r.review_at === (todo.supervision?.reviews?.at(-1)?.at || r.review_at);
+}
+
 /** What the state is called and how it is coloured; undefined for a task that is not supervised. */
-export function reviewBadge(todo: Pick<Todo, "done_at"> & { supervision?: Supervision }): { label: string; tone: ReviewTone } | undefined {
+export function reviewBadge(todo: Pick<Todo, "done_at" | "decision_review"> & { supervision?: Supervision }): { label: string; tone: ReviewTone } | undefined {
   const sup = todo.supervision;
   if (!sup) return undefined;
+  if (reviewState(todo) === "needs_user" && decisionDismissed(todo)) return { label: t("assistant-tasks.review_dismissed"), tone: "muted" };
   switch (reviewState(todo)) {
     case "pending_review":
       return { label: t("assistant-tasks.review_pending"), tone: "accent" };

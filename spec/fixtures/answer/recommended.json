@@ -400,6 +400,56 @@
         }
       },
       "derived": true
+    },
+    {
+      "name": "recommended_corefoundation_boundary",
+      "description": "Display trims CoreFoundation whitespace, including U+200B, but keeps the trailing newline; submission keeps the original label.",
+      "source": [
+        "apple/Shared/Models.swift: QuestionOption.display uses .whitespaces",
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.pick sends the original option label"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which option?",
+              "header": "Choice",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "\u200b \tKeep current settings\n \u200b (Recommended)"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "pick_option",
+          "option_index": 0,
+          "page": 0,
+          "picks": {},
+          "other": {},
+          "sending": false
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": {
+          "answers": {
+            "Which option?": "\u200b \tKeep current settings\n \u200b (Recommended)"
+          }
+        },
+        "display": {
+          "text": "Keep current settings\n",
+          "recommended": true
+        }
+      },
+      "derived": true
     }
   ]
 }

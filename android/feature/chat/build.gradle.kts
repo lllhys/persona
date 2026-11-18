@@ -7,7 +7,17 @@ plugins {
 android {
     namespace = "persona.feature.chat"
     // A message's source line is drawn on the JVM (Robolectric's native graphics) for its screenshots.
-    testOptions { unitTests { isIncludeAndroidResources = true } }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                // The screenshot classes share one test process; full GCs left 498 MiB live on the 512 MB default,
+                // led by Robolectric resource/theme tables. Leave room for more captures, as the other screenshot modules do.
+                it.maxHeapSize = "1g"
+            }
+        }
+    }
+    defaultConfig { testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
 }
 
 dependencies {
@@ -35,4 +45,8 @@ dependencies {
     testImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

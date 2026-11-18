@@ -15,7 +15,7 @@ export interface LiveTranscript {
   loading: boolean;
   loadingEarlier: boolean;
   loadEarlier: () => Promise<void>;
-  expandFold: (fold: Item) => Promise<void>;
+  expandFold: (fold: Item) => Promise<boolean | void>;
 }
 
 /** One earlier stretch as the chat draws it: its session's items in it, and how its folds open. */
@@ -27,7 +27,7 @@ export interface EarlierStretch {
   /** Its engine ("claude" / "codex"), as the row's history says. */
   agent?: string;
   items: Item[];
-  expandFold: (fold: Item) => Promise<void>;
+  expandFold: (fold: Item) => Promise<boolean | void>;
 }
 
 /** What the stretches' module tells the chat, each time it changes. */
@@ -37,6 +37,9 @@ export interface StretchesReport {
   loadEarlier: () => Promise<void>;
   /** The earlier stretches drawn, oldest first: a new array whenever what they draw changes. */
   stretches: EarlierStretch[];
+  /** The local calendar days (YYYY-MM-DD) the drawn stretches cover: the live transcript skips its own divider for
+   *  them, so a day split across an engine switch gets one divider, not two. */
+  dayKeys: string[];
   /** Moves each time a page that failed may be asked for again (its wait is over): the chat asks if its top is in view. */
   due: number;
 }
@@ -62,6 +65,8 @@ export interface Stitched {
   liveHasMore: boolean;
   /** The earlier stretches drawn, oldest first. */
   stretches: EarlierStretch[];
+  /** The calendar days the drawn stretches cover (StretchesReport.dayKeys). */
+  stretchDays: readonly string[];
   /** Anything older left to load, the live session's own pages included. */
   hasMore: boolean;
   loadingEarlier: boolean;
@@ -96,6 +101,7 @@ export function useEarlierStretches(mid: string, sid: string, history: readonly 
     // the live stretch reaches its start once an item of the live session's earlier stretch is loaded too
     liveHasMore: live.hasMore && (!own || own.length === live.items.length),
     stretches: report?.stretches ?? NO_STRETCHES,
+    stretchDays: report?.dayKeys ?? [],
     // until the module has said (it loads with the chat): the live session's own pages, and something earlier is left
     hasMore: key ? (report?.hasMore ?? true) : live.hasMore,
     loadingEarlier: live.loadingEarlier || Boolean(report?.loading),

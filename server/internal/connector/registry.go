@@ -282,6 +282,14 @@ func (r *Registry) Offers(name string) bool {
 	return c != nil && slices.Contains(ToolNames(c), name)
 }
 
+// ReadOnly says whether name is one of its connector's declared ReadTools. Actions are never read-only, including
+// actions added after a caller's policy was written.
+func (r *Registry) ReadOnly(name string) bool {
+	c := r.Owner(name)
+	t, ok := As[ReadTools](c)
+	return ok && has(t.Tools(), name)
+}
+
 // ForAgents says whether the tool name is a connector's that the coding agents get too (Manifest.AgentTools).
 func (r *Registry) ForAgents(name string) bool {
 	c := r.Owner(name)
@@ -366,6 +374,13 @@ func (r *Registry) call(ctx context.Context, name string, args json.RawMessage, 
 		return proto.ErrorResult(kind, fmt.Sprintf("%s is not available: %s", c.Name(), why), 0)
 	}
 	if t, ok := As[ReadTools](c); ok && has(t.Tools(), name) {
+		if it, ok := t.(ImageTools); ok { // its answer may carry pictures for the model (#8484)
+			a, err := it.CallImages(ctx, name, args)
+			if err != nil {
+				return result(a.Text, err)
+			}
+			return ToolResult(a)
+		}
 		return result(t.Call(ctx, name, args))
 	}
 	a, ok := As[Actions](c)

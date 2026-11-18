@@ -42,7 +42,8 @@ func (subscriptionSource) Reply(context.Context, connector.InboxReply) error {
 }
 
 // caughtUp is a subscription whose Inbox was just turned on, with 30 items its first run since caught up on: one of
-// them due tomorrow.
+// them due tomorrow. It is grouped by source, so that one is the subscription's one row (#5671), as the run that ended
+// the catch-up marked.
 func caughtUp(t *testing.T) subscriptionSource {
 	t.Helper()
 	ctx, now := context.Background(), time.Now().UTC()
@@ -50,7 +51,7 @@ func caughtUp(t *testing.T) subscriptionSource {
 	from, mark := now.Add(-time.Minute), now.Add(-30*time.Second)
 	sub := subscriptions.Subscription{ID: "sub_example", Connector: "example", Source: "notices", Label: "Notices",
 		Recipe: subscriptions.Recipe{Mode: "items", Kind: "sub_notice", GroupBy: "source"}, ToInbox: true, InboxFrom: &from,
-		InboxCatchup: &mark, Revision: 1, CreatedAt: now.Add(-time.Hour)}
+		InboxCatchup: &mark, InboxGroup: "source", Revision: 1, CreatedAt: now.Add(-time.Hour)}
 	if err := store.CreateSubscription(ctx, sub); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestASubscriptionWithoutATriageModelComesInByItsFallback(t *testing.T) {
 	h, _ := admitHub(t, client, src)
 	collectAndAdmit(h)
 	digest := itemOf(h, src.id, "sub:"+src.id+":catchup")
-	deadline := itemOf(h, src.id, "sub:"+src.id+":n3")
+	deadline := itemOf(h, src.id, "sub:"+src.id+":all")
 	if digest == nil || digest.Tier != TierFYI || deadline == nil || deadline.Tier != TierAction {
 		t.Fatalf("without a model: the digest %+v, the deadline %+v", digest, deadline)
 	}

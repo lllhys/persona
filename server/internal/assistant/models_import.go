@@ -751,20 +751,12 @@ func (s *Service) pickerDefault(ctx context.Context, r *http.Request) map[string
 }
 
 // launcherDefault is what a launcher picker shows as "Default: …": purpose's effective provider (the launcher's name),
-// model and effort, and for the main chat its runtime. Nil when purpose is not a launcher use.
+// model and effort. Nil when purpose is not a launcher use.
 func (s *Service) launcherDefault(ctx context.Context, purpose string) map[string]any {
 	p, err := s.modelPurpose(ctx, purpose, s.modelProviders(ctx))
 	if err != nil || p.Kind != "launcher" {
 		return nil
 	}
 	b := p.Effective
-	out := map[string]any{"provider": strings.TrimPrefix(b.Provider, "launcher."), "model": b.Model, "effort": b.Effort}
-	if len(p.Runtimes) > 0 {
-		runtime := b.Runtime
-		if runtime == "" {
-			runtime = proto.AssistantRuntimeCLI
-		}
-		out["runtime"] = runtime
-	}
-	return out
+	return map[string]any{"provider": strings.TrimPrefix(b.Provider, "launcher."), "model": b.Model, "effort": b.Effort}
 }

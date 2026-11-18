@@ -34,6 +34,7 @@
   "waiting_auth": "等你在 {name} 上授权…",
   "open_to_enter_code": "打开 {name} 输入验证码",
   "qr_label": "登录用的二维码",
+  "scan_to_authorize": "用手机扫码并确认，这里会自动继续；也可以在这台电脑上打开链接。",
   "bind_in_channels": "也可以到 设置 › 渠道 › {name} 里绑定。",
   "verifying": "正在验证…",
   "next": "下一步",

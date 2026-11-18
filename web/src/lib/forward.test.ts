@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../spec/fixtures/forward/cases.json";
 import { initI18n, t } from "../i18n";
-import { forwardDraftOf, forwardHeading, forwardMeta, forwardOrigin, forwardSummary, jumpWhenOpen, peekJump, takeJump, type ForwardSource } from "./forward";
+import { forwardHeading, forwardMeta, forwardOrigin, forwardSummary, jumpWhenOpen, peekJump, takeJump, type ForwardSource } from "./forward";
+import { forwardDraftOf } from "./forward-draft";
 import { forwardBody, forwardRef, forwardRoute, forwardURL, FORWARD_LIMIT, isoWithOffset } from "./forward-block";
 import { addContext, contextXML, getContexts, removeContext, withContexts } from "./links";
 import { parseUserText } from "./turns";

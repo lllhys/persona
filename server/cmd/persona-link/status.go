@@ -9,14 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/link"
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // report is `persona-link status --json`: what is known here about the link, without asking the running persona-link
 // (it keeps its last status on disk, link.status.json) and without touching the resident node (a connection to its
 // socket would take the node from the hub).
 type report struct {
-	// Running: a persona-link holds the run lock (whoever started it: the service, the menu bar app, a person).
+	// Running: a persona-link holds the run lock (whoever started it: the service, a compatible parent or a person).
 	Running bool `json:"running"`
 	// Mode: active (this computer dials the hub) | passive (the hub dials it).
 	Mode string `json:"mode"`
@@ -39,10 +41,13 @@ type report struct {
 	// Passive is passive mode's pairing, whichever mode is on.
 	Passive *passiveReport `json:"passive,omitempty"`
 	Service *serviceState  `json:"service,omitempty"`
-	Tray    *trayState     `json:"tray,omitempty"` // Windows
-	Config  string         `json:"config"`
-	Log     string         `json:"log"`
-	Error   string         `json:"error,omitempty"` // link.json there but unreadable
+	// ClaudePlugin is the Persona plugin for Claude Code as the node last checked it (persona-link plugin status checks
+	// now).
+	ClaudePlugin *proto.ClaudePlugin `json:"claude_plugin,omitempty"`
+	Config       string              `json:"config"`
+	Log          string              `json:"log"`
+	Error        string              `json:"error,omitempty"` // link.json there but unreadable
+	loadErr      error               // the same error with its catalog identity; never serialized
 }
 
 // passiveReport is passive mode's part of link.json, without the credential's hash.
@@ -58,15 +63,9 @@ type passiveReport struct {
 	FP          string     `json:"fp,omitempty"`           // the connector's pin (public: anyone reaching the port sees the key)
 }
 
-// trayState is the Windows tray: running now, and started at sign-in.
-type trayState struct {
-	Running   bool `json:"running"`
-	Autostart bool `json:"autostart"`
-}
-
-// serviceState is the systemd user service (Linux) or the scheduled task (Windows).
+// serviceState is the systemd user service (Linux), launchd user agent (Mac) or scheduled task (Windows).
 type serviceState struct {
-	Manager   string `json:"manager"` // systemd, schtasks
+	Manager   string `json:"manager"` // systemd, launchd, schtasks
 	Unit      string `json:"unit"`    // the unit, the task's name
 	File      string `json:"file"`
 	Installed bool   `json:"installed"`
@@ -88,7 +87,7 @@ func gather(e *env) report {
 			r.Trust = link.TrustSystem
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		r.Error = err.Error()
+		r.Error, r.loadErr = err.Error(), err
 	}
 	if c, err := link.Read(cfg); err == nil {
 		r.Mode = c.CurrentMode()
@@ -124,10 +123,13 @@ func gather(e *env) report {
 		}
 		r.Service = s
 	}
+	if e.goos == "darwin" {
+		r.Service = e.macServiceState() // service_mac.go
+	}
 	if e.goos == "windows" {
 		r.Service = e.taskState() // winservice.go
-		r.Tray = trayStatus(e)
 	}
+	r.ClaudePlugin = e.savedPluginStatus() // plugin.go
 	return r
 }
 
@@ -172,31 +174,31 @@ func (r report) text(now time.Time, user string) string {
 	if r.Mode == link.ModePassive {
 		r.passiveText(line, now, live)
 		r.serviceText(line, user)
-		r.trayText(line)
+		r.pluginText(line)
 		if live {
-			line("进程：pid %d · 版本 %s", st.PID, st.Version)
+			line("%s", terminalText("link-cli.process", i18n.Args{"pid": st.PID, "version": st.Version}))
 		}
-		line("日志：%s（persona-link logs -f）", r.Log)
+		line("%s", terminalText("link-cli.log_path", i18n.Args{"path": r.Log}))
 		return b.String()
 	}
-	line("模式：%s", modeName(r.Mode))
+	line("%s", terminalText("link-cli.mode_current", i18n.Args{"mode": modeName(r.Mode)}))
 	switch {
 	case r.Error != "":
-		line("凭据：读不了（%s）", r.Error)
+		line("%s", terminalText("link-cli.credentials_error", i18n.Args{"error": r.credentialsErrorText()}))
 	case !r.Paired:
-		line("链路：还没配对。在 hub 机器上运行 personad hub pair --machine <这台的 id> --add，再在这里 persona-link pair '<链接>'")
+		line("%s", terminalText("link-cli.link_unpaired"))
 	case !r.Running && st != nil && st.State != "stopped":
 		// How long ago, not a clock time: this computer's zone may well be UTC (a server) and not the user's.
-		line("链路：没在运行（%s前最后一次报告：%s）", duration(now.Sub(st.Updated)), stateText(&st.Status, now))
+		line("%s", terminalText("link-cli.link_not_running_last", i18n.Args{"ago": duration(now.Sub(st.Updated)), "state": stateText(&st.Status, now)}))
 	case !r.Running:
-		line("链路：没在运行")
+		line("%s", terminalText("link-cli.link_not_running"))
 	case st == nil:
-		line("链路：在运行，还没报告状态")
+		line("%s", terminalText("link-cli.link_running_no_status"))
 	default:
-		line("链路：%s", stateText(&st.Status, now))
+		line("%s", terminalText("link-cli.link_state", i18n.Args{"state": stateText(&st.Status, now)}))
 		if st.State == "waiting" || st.State == "refused" {
 			for _, part := range errorParts(st.Error) {
-				line("  · %s", part)
+				line("%s", terminalText("link-cli.error_part", i18n.Args{"error": link.StatusErrorText(i18n.Terminal(), part)}))
 			}
 		}
 	}
@@ -205,39 +207,43 @@ func (r report) text(now time.Time, user string) string {
 		if live && st.State == "connected" {
 			mesh = st.MeshHubs
 		}
-		line("hub：%s", hubText(r.HubName, mesh, r.HubID, live && st.State == "connected"))
+		line("%s", terminalText("link-cli.hub_status", i18n.Args{"hub": hubText(r.HubName, mesh, r.HubID, live && st.State == "connected")}))
 		if live && st.State == "connected" {
 			switch st.Node {
 			case "online":
-				line("本机 node：在线")
+				line("%s", terminalText("link-cli.node_online"))
 			case "offline":
-				line("本机 node：hub 连不上（%s）%s", st.NodeError, nodeHint(st.NodeError))
+				line("%s", terminalText("link-cli.node_offline", i18n.Args{
+					"error": link.StatusErrorText(i18n.Terminal(), st.NodeError), "hint": nodeHint(st.NodeError),
+				}))
 			default:
-				line("本机 node：hub 正在连")
+				line("%s", terminalText("link-cli.node_checking"))
 			}
 		}
-		line("这台电脑：hub 上的%s", machineText(r.MachineName, r.Machine))
+		line("%s", terminalText("link-cli.machine_status", i18n.Args{"machine": machineText(r.MachineName, r.Machine)}))
 		if r.Trust == link.TrustSystem {
-			line("校验：经反向代理 · 系统证书（按系统信任的 CA 和域名，没有钉住 hub 的公钥）")
+			line("%s", terminalText("link-cli.trust_system"))
 		}
 		if len(r.Endpoints) > 0 || r.SSH != nil {
-			line("候选地址（按尝试顺序）：")
+			line("%s", terminalText("link-cli.candidates_header"))
 			sshLine := func() {
 				if r.SSH == nil {
 					return
 				}
 				var notes []string
 				if live && st.State == "connected" && st.Kind == link.KindSSH {
-					notes = append(notes, "在用")
+					notes = append(notes, terminalText("link-cli.note_in_use"))
 				}
 				if r.SSH.Always {
-					notes = append(notes, "总是走 SSH")
+					notes = append(notes, terminalText("link-cli.note_always_ssh"))
 				}
 				note := ""
 				if len(notes) > 0 {
-					note = "（" + strings.Join(notes, "，") + "）"
+					note = terminalText("link-cli.candidate_notes", i18n.Args{"notes": strings.Join(notes, terminalText("link-cli.candidate_note_separator"))})
 				}
-				line("  · %s %s → %s%s", kindName(link.KindSSH), r.SSH.Server, r.SSH.Target, note)
+				line("%s", terminalText("link-cli.candidate_ssh", i18n.Args{
+					"kind": kindName(link.KindSSH), "server": r.SSH.Server, "target": r.SSH.Target, "notes": note,
+				}))
 			}
 			if r.SSH != nil && r.SSH.Always {
 				sshLine()
@@ -245,19 +251,19 @@ func (r report) text(now time.Time, user string) string {
 			for _, ep := range r.Endpoints {
 				var notes []string
 				if live && st.State == "connected" && st.Kind != link.KindSSH && st.Address == ep.URL {
-					notes = append(notes, "在用")
+					notes = append(notes, terminalText("link-cli.note_in_use"))
 				}
 				if ep.Manual {
-					notes = append(notes, "手动加的")
+					notes = append(notes, terminalText("link-cli.note_manual"))
 				}
 				if r.SSH != nil && r.SSH.Always {
-					notes = append(notes, "已设总是走 SSH")
+					notes = append(notes, terminalText("link-cli.note_skip_direct"))
 				}
 				note := ""
 				if len(notes) > 0 {
-					note = "（" + strings.Join(notes, "，") + "）"
+					note = terminalText("link-cli.candidate_notes", i18n.Args{"notes": strings.Join(notes, terminalText("link-cli.candidate_note_separator"))})
 				}
-				line("  · %s %s%s", kindName(ep.Kind), ep.URL, note)
+				line("%s", terminalText("link-cli.candidate_endpoint", i18n.Args{"kind": kindName(ep.Kind), "address": ep.URL, "notes": note}))
 			}
 			if r.SSH != nil && !r.SSH.Always {
 				sshLine()
@@ -265,12 +271,29 @@ func (r report) text(now time.Time, user string) string {
 		}
 	}
 	r.serviceText(line, user)
-	r.trayText(line)
+	r.pluginText(line)
 	if live {
-		line("进程：pid %d · 版本 %s", st.PID, st.Version)
+		line("%s", terminalText("link-cli.process", i18n.Args{"pid": st.PID, "version": st.Version}))
 	}
-	line("日志：%s（persona-link logs -f）", r.Log)
+	line("%s", terminalText("link-cli.log_path", i18n.Args{"path": r.Log}))
 	return b.String()
+}
+
+// pluginText is the report's line about the Claude Code plugin, when the node has checked it.
+func (r report) pluginText(line func(string, ...any)) {
+	if r.ClaudePlugin == nil {
+		return
+	}
+	for _, l := range strings.Split(strings.TrimRight(pluginText(r.ClaudePlugin, false), "\n"), "\n") {
+		line("%s", l)
+	}
+}
+
+func (r report) credentialsErrorText() string {
+	if r.loadErr != nil {
+		return link.ErrorText(i18n.Terminal(), r.loadErr)
+	}
+	return link.StatusErrorText(i18n.Terminal(), r.Error)
 }
 
 // passiveText is the report's part about passive mode.
@@ -283,115 +306,122 @@ func (r report) passiveText(line func(string, ...any), now time.Time, live bool)
 	if live && st.Listen != "" {
 		listen = st.Listen
 	}
-	line("模式：%s，监听 %s", modeName(link.ModePassive), listen)
+	line("%s", terminalText("link-cli.mode_passive_listen", i18n.Args{"mode": modeName(link.ModePassive), "listen": listen}))
 	paired := p != nil && p.Paired
 	switch {
 	case r.Error != "":
-		line("凭据：读不了（%s）", r.Error)
+		line("%s", terminalText("link-cli.credentials_error", i18n.Args{"error": r.credentialsErrorText()}))
 	case !r.Running && st != nil && st.State != "stopped":
-		line("链路：没在运行（%s最后一次报告：%s）", ago(now, st.Updated), stateText(&st.Status, now))
+		line("%s", terminalText("link-cli.passive_not_running_last", i18n.Args{"ago": ago(now, st.Updated), "state": stateText(&st.Status, now)}))
 	case !r.Running:
-		line("链路：没在运行")
+		line("%s", terminalText("link-cli.link_not_running"))
 	case st == nil:
-		line("链路：在运行，还没报告状态")
+		line("%s", terminalText("link-cli.link_running_no_status"))
 	default:
-		line("链路：%s", stateText(&st.Status, now))
+		line("%s", terminalText("link-cli.link_state", i18n.Args{"state": stateText(&st.Status, now)}))
 		if st.State == "waiting" {
 			for _, part := range errorParts(st.Error) {
-				line("  · %s", part)
+				line("%s", terminalText("link-cli.error_part", i18n.Args{"error": link.StatusErrorText(i18n.Terminal(), part)}))
 			}
 		}
 	}
 	if !paired {
-		line("配对：还没有 hub 来配对。persona-link pair --listen 打印链接，粘贴到 hub 管理界面「电脑 › 添加电脑 › hub 来连」")
+		line("%s", terminalText("link-cli.pairing_none"))
 	}
 	if p != nil && p.CodeExpires != nil {
-		line("配对链接：还剩 %s（只能用一次）", duration(p.CodeExpires.Sub(now)))
+		line("%s", terminalText("link-cli.pair_code_left", i18n.Args{"duration": duration(p.CodeExpires.Sub(now))}))
 	}
 	if paired {
 		hub := "hub" + passiveHubText(&link.Passive{HubID: p.HubID, HubName: p.HubName})
 		if p.PairedAt != nil {
-			hub += fmt.Sprintf("（%s配对）", ago(now, *p.PairedAt))
+			hub += terminalText("link-cli.paired_ago", i18n.Args{"ago": ago(now, *p.PairedAt)})
 		}
 		line("%s", hub)
 	}
 	if live && st.LastSeen != nil {
-		line("上一次 hub 连进来：%s，来自 %s", ago(now, *st.LastSeen), st.From)
+		line("%s", terminalText("link-cli.last_hub_connection", i18n.Args{"ago": ago(now, *st.LastSeen), "from": st.From}))
 	}
 	if live && st.Node != "" {
 		switch {
 		case st.State == "connected" && st.Node == "online":
-			line("本机 node：在线")
+			line("%s", terminalText("link-cli.node_online"))
 		case st.Node == "offline":
-			line("本机 node：hub 连不上（%s）%s", st.NodeError, nodeHint(st.NodeError))
+			line("%s", terminalText("link-cli.node_offline", i18n.Args{
+				"error": link.StatusErrorText(i18n.Terminal(), st.NodeError), "hint": nodeHint(st.NodeError),
+			}))
 		}
 	}
 	if paired && p.Machine != "" {
-		line("这台电脑：hub 上的%s", machineText(p.MachineName, p.Machine))
+		line("%s", terminalText("link-cli.machine_status", i18n.Args{"machine": machineText(p.MachineName, p.Machine)}))
 	}
 	if p != nil && p.FP != "" {
-		line("连接器指纹：%s", p.FP)
+		line("%s", terminalText("link-cli.connector_fingerprint", i18n.Args{"fingerprint": p.FP}))
 	}
 	if live && len(st.Addrs) > 0 {
-		line("hub 可以连的本机地址（按顺序）：")
+		line("%s", terminalText("link-cli.passive_addresses_header"))
 		for _, a := range st.Addrs {
-			line("  · %s", a)
+			line("%s", terminalText("link-cli.error_part", i18n.Args{"error": a}))
 		}
 	}
 	if r.Paired {
-		line("主动模式也配对过（hub 上的「%s」）：persona-link mode active 切回去", r.Machine)
+		line("%s", terminalText("link-cli.active_also_paired", i18n.Args{"machine": r.Machine}))
 	}
 }
 
-// trayText is the report's line about the Windows tray.
-func (r report) trayText(line func(string, ...any)) {
-	t := r.Tray
-	if t == nil {
-		return
-	}
-	running, at := "没在运行（persona-link tray，或者重新 install）", "登录时不启动"
-	if t.Running {
-		running = "在运行"
-	}
-	if t.Autostart {
-		at = "登录时启动"
-	}
-	line("托盘图标：%s · %s", running, at)
-}
-
-// serviceText is the report's line about the systemd user service or the scheduled task.
+// serviceText is the report's line about the connector's platform service.
 func (r report) serviceText(line func(string, ...any), user string) {
 	if s := r.Service; s != nil && s.Manager == "schtasks" {
 		taskText(s, line)
+	} else if s != nil && s.Manager == "launchd" {
+		text := func(key string, args ...i18n.Args) string {
+			return i18n.T(i18n.Terminal(), key, args...)
+		}
+		switch {
+		case !s.Installed:
+			line("%s", text("link-service.status_missing"))
+		case s.Active != "":
+			line("%s", text("link-service.status_loaded", i18n.Args{"label": s.Unit, "state": s.Active}))
+		default:
+			line("%s", text("link-service.status_not_loaded", i18n.Args{"label": s.Unit, "path": s.File}))
+		}
 	} else if s != nil {
 		switch {
-		case strings.HasPrefix(s.Missing, noUserInstance) && s.Installed && !s.Linger:
-			line("后台服务：装了 %s，但%s（%s）；没开 linger 时没人登录它就不在：sudo loginctl enable-linger %s",
-				s.Unit, noUserInstance, strings.TrimPrefix(s.Missing, noUserInstance+"："), user)
+		case strings.HasPrefix(s.Missing, noUserInstance()) && s.Installed && !s.Linger:
+			line("%s", terminalText("link-cli.service_linger_unavailable", i18n.Args{
+				// i18n-ignore: trims the canonical full-width colon in a persisted systemd reason
+				"unit": s.Unit, "missing": noUserInstance(), "detail": strings.TrimPrefix(s.Missing, noUserInstance()+"："), "user": user,
+			}))
 		case s.Missing != "":
-			line("后台服务：没有 systemd 用户服务（%s）", s.Missing)
+			line("%s", terminalText("link-cli.service_missing", i18n.Args{"missing": systemdReason(s.Missing).Text(i18n.Terminal())}))
 		case !s.Installed:
-			line("后台服务：没装（persona-link install）")
+			line("%s", terminalText("link-cli.service_not_installed"))
 		default:
-			linger := "linger 已开"
+			linger := terminalText("link-cli.linger_enabled")
 			if !s.Linger {
-				linger = "linger 没开，退出登录就停：sudo loginctl enable-linger " + user
+				linger = terminalText("link-cli.linger_disabled", i18n.Args{"user": user})
 			}
-			line("后台服务：systemd 用户服务 %s · %s · %s · %s", s.Unit, s.Active, s.Enabled, linger)
+			line("%s", terminalText("link-cli.service_systemd", i18n.Args{
+				"unit": s.Unit, "active": s.Active, "enabled": s.Enabled, "linger": linger,
+			}))
 		}
 	}
 }
 
-var kindNames = map[string]string{"lan": "内网", "ipv6": "公网 IPv6", "name": "域名", "ipv4": "公网 IPv4", link.KindSSH: "SSH"}
-
-func kindName(kind string) string {
-	if n, ok := kindNames[kind]; ok {
-		return n
-	}
-	return "地址"
+var kindNames = map[string]string{
+	"lan": "link-errors.kind_lan", "ipv6": "link-errors.kind_ipv6", "name": "link-errors.kind_name", "ipv4": "link-errors.kind_ipv4",
 }
 
-// addressText is a hub URL as the menu bar app shows it: its kind and host:port.
+func kindName(kind string) string {
+	if kind == link.KindSSH {
+		return "SSH"
+	}
+	if key, ok := kindNames[kind]; ok {
+		return terminalText(key)
+	}
+	return terminalText("link-errors.kind_address")
+}
+
+// addressText is a hub URL as a person sees it: its kind and host:port.
 func addressText(kind, address string) string {
 	host := address
 	if u, err := url.Parse(address); err == nil && u.Host != "" {
@@ -400,15 +430,15 @@ func addressText(kind, address string) string {
 	return kindName(kind) + " " + host
 }
 
-// machineText names this computer as the hub calls it, with its id when that is another ("「Studio」（id studio-pc）").
+// machineText names this computer as the hub calls it, with its id when that is another.
 func machineText(name, id string) string {
 	switch {
 	case name == "" || name == id:
-		return "「" + id + "」"
+		return terminalText("link-cli.machine_name", i18n.Args{"name": id})
 	case id == "":
-		return "「" + name + "」"
+		return terminalText("link-cli.machine_name", i18n.Args{"name": name})
 	}
-	return "「" + name + "」（id " + id + "）"
+	return terminalText("link-cli.machine_name_id", i18n.Args{"name": name, "id": id})
 }
 
 // hubText names the hub: by the name it gave, with its mesh's size when known (mesh 0); else by id, and a hub that
@@ -417,9 +447,9 @@ func hubText(name string, mesh int, id string, connected bool) string {
 	var s string
 	switch {
 	case name != "":
-		s = "「" + name + "」"
+		s = terminalText("link-cli.hub_name", i18n.Args{"name": name})
 	case id != "" && connected:
-		s = id + "（旧版 hub 不报名字）"
+		s = terminalText("link-cli.hub_old_unnamed", i18n.Args{"id": id})
 	case id != "":
 		s = id
 	default:
@@ -427,9 +457,9 @@ func hubText(name string, mesh int, id string, connected bool) string {
 	}
 	switch {
 	case mesh > 1:
-		s += fmt.Sprintf("，互联组共 %d 台 hub", mesh)
+		s += terminalText("link-cli.hub_mesh_many", i18n.Args{"count": mesh})
 	case mesh == 1:
-		s += "，没和别的 hub 互联"
+		s += terminalText("link-cli.hub_mesh_one")
 	}
 	return s
 }
@@ -439,22 +469,22 @@ func stateText(s *link.Status, now time.Time) string {
 	if s.Mode == link.ModePassive {
 		switch s.State {
 		case "connected":
-			t := "已连接 · hub 从 " + s.Address + " 连进来"
+			t := terminalText("link-cli.state_passive_connected", i18n.Args{"address": s.Address})
 			if s.Since != nil {
-				t += " · 已连 " + duration(now.Sub(*s.Since))
+				t += terminalText("link-cli.state_connected_for", i18n.Args{"duration": duration(now.Sub(*s.Since))})
 			}
 			return t
 		case "listening":
-			return "在监听，等 hub 连进来"
+			return terminalText("link-cli.state_listening")
 		case "unpaired":
-			return "在监听，还没配对"
+			return terminalText("link-cli.state_passive_unpaired")
 		case "waiting":
-			t := "监听不了"
+			t := terminalText("link-cli.state_listen_failed")
 			if s.Retry != nil {
 				if d := s.Retry.Sub(now).Round(time.Second); d > 0 {
-					t += " · " + duration(d) + "后重试"
+					t += terminalText("link-cli.state_retry_after", i18n.Args{"duration": duration(d)})
 				} else {
-					t += " · 马上重试"
+					t += terminalText("link-cli.state_retry_now")
 				}
 			}
 			return t
@@ -462,26 +492,26 @@ func stateText(s *link.Status, now time.Time) string {
 	}
 	switch s.State {
 	case "connected":
-		t := "已连接 · " + addressText(s.Kind, s.Address)
+		t := terminalText("link-cli.state_connected", i18n.Args{"address": addressText(s.Kind, s.Address)})
 		if s.Since != nil {
-			t += " · 已连 " + duration(now.Sub(*s.Since))
+			t += terminalText("link-cli.state_connected_for", i18n.Args{"duration": duration(now.Sub(*s.Since))})
 		}
 		return t
 	case "connecting":
-		return "正在找 hub"
+		return terminalText("link-cli.state_connecting")
 	case "unpaired":
-		return "还没配对"
+		return terminalText("link-cli.state_unpaired")
 	case "refused":
-		return "hub 拒绝了这台的凭据"
+		return terminalText("link-cli.state_refused")
 	case "stopped":
-		return "已停止"
+		return terminalText("link-cli.state_stopped")
 	}
-	t := "未连接"
+	t := terminalText("link-cli.state_disconnected")
 	if s.Retry != nil {
 		if d := s.Retry.Sub(now).Round(time.Second); d > 0 {
-			t += " · " + duration(d) + "后重试"
+			t += terminalText("link-cli.state_retry_after", i18n.Args{"duration": duration(d)})
 		} else {
-			t += " · 马上重试"
+			t += terminalText("link-cli.state_retry_now")
 		}
 	}
 	return t
@@ -490,7 +520,7 @@ func stateText(s *link.Status, now time.Time) string {
 // errorParts: persona-link joins why each candidate failed with a full-width semicolon.
 func errorParts(s string) []string {
 	var out []string
-	for _, p := range strings.Split(s, "；") {
+	for _, p := range strings.Split(s, i18n.T(i18n.Default, "link-errors.error_separator")) {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
@@ -502,11 +532,11 @@ func duration(d time.Duration) string {
 	s := int(max(d, 0) / time.Second)
 	switch {
 	case s < 60:
-		return fmt.Sprintf("%d 秒", s)
+		return terminalText("link-cli.duration_seconds", i18n.Args{"count": s})
 	case s < 3600:
-		return fmt.Sprintf("%d 分钟", s/60)
+		return terminalText("link-cli.duration_minutes", i18n.Args{"count": s / 60})
 	case s < 86400:
-		return fmt.Sprintf("%d 小时 %d 分钟", s/3600, s%3600/60)
+		return terminalText("link-cli.duration_hours_minutes", i18n.Args{"hours": s / 3600, "minutes": s % 3600 / 60})
 	}
-	return fmt.Sprintf("%d 天 %d 小时", s/86400, s%86400/3600)
+	return terminalText("link-cli.duration_days_hours", i18n.Args{"days": s / 86400, "hours": s % 86400 / 3600})
 }

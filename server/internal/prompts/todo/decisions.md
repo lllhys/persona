@@ -4,5 +4,5 @@
 {{.N}}. {{.Question}}
    选了：{{.Choice}}{{if .Reason}}
    原因：{{.Reason}}{{end}}
-   （{{.When}}{{with .From}}，{{.}}{{end}}）
+   （{{.When}}{{if eq .Source "outcome"}}，Agent 做完时记的，不是用户定的{{else if eq .Source "earlier-outcome"}}，前一阶段的记录，不代表待办当前已完成，也不是用户定的{{else if eq .Source "agent"}}，Agent 干活时记的，不是用户定的{{else if eq .Source "thread"}}，用户在飞书话题里回的{{else if eq .Source "card"}}，{{if .Asker}}在「{{.Asker}}」{{else}}在 Agent {{end}}的提问里答的{{end}}{{if .Ancestor}}{{if .Source}}；{{else}}，{{end}}前序任务「{{.Ancestor}}」{{end}}）
 {{end}}</persona-context>

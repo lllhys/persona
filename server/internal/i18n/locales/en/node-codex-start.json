@@ -1,3 +1,4 @@
 {
-  "cleanup_failed": "Could not stop the abandoned Codex start in pane {pane}. No new tab will be opened until it can be closed: {reason}"
+  "cleanup_failed": "Could not stop the abandoned Codex start in pane {pane}. No new tab will be opened until it can be closed: {reason}",
+  "no_box_here": "Codex started in the pane you picked, but its input box didn’t appear within {seconds} seconds. The pane is left as it is."
 }

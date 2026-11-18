@@ -117,6 +117,8 @@ type session struct {
 	lastDemand time.Time     // last time a call wanted the link
 	lastUse    time.Time     // last time a call finished
 	since      time.Time     // when the state last changed
+	// prepared: this link already tried to mount the developer disk image by itself (maybePrepare), once per link.
+	prepared *conn
 }
 
 func newSession(m *Manager, udid string) *session {
@@ -409,6 +411,7 @@ func (s *session) serve(c *conn, ep Endpoint, rec Record) {
 	s.mu.Unlock()
 	s.setState(StateConnected, nil)
 	s.m.logf("iphone %s: connected at %s (%s)", short(s.udid), ep, ep.Source)
+	s.maybePrepare(c)
 	tick := time.NewTicker(healthEvery)
 	defer tick.Stop()
 loop:
@@ -457,11 +460,44 @@ func (s *session) health(c *conn) {
 		s.mu.Lock()
 		s.info = info
 		s.mu.Unlock()
+		defer s.maybePrepare(c) // only starts the mount, which then waits for the turn like any call
 	case errors.Is(err, errLinkLost) || errors.Is(err, errNotSent):
 	case Code(err) == bridgeDisconnected || Code(err) == bridgeTimeout || ctx.Err() != nil:
 		s.m.logf("iphone %s: health check: %v", short(s.udid), err)
 		c.link.Close()
 	}
+}
+
+// maybePrepare mounts the developer disk image by itself, once per link, when the phone came up without it and its
+// owner allowed that (Record.AutoPrepare, after preparing it from the app): a restarted phone has dropped the image.
+// In the background, as one call like any other; a failure is only logged (the app's status says ddi_not_mounted).
+func (s *session) maybePrepare(c *conn) {
+	s.mu.Lock()
+	info, done := s.info, s.prepared == c
+	s.mu.Unlock()
+	if done || len(info) == 0 {
+		return
+	}
+	var di deviceInfo
+	if json.Unmarshal(info, &di) != nil || di.DDIMounted == nil || *di.DDIMounted {
+		return // mounted, or Developer Mode off (null): nothing to mount now
+	}
+	rec, err := s.m.store.Load(s.udid)
+	if err != nil || !rec.AutoPrepare {
+		return
+	}
+	s.mu.Lock()
+	s.prepared = c
+	s.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(s.m.ctx, prepareTimeout)
+		defer cancel()
+		if _, err := s.m.Call(ctx, s.udid, opMountDDI, json.RawMessage(`{}`)); err != nil {
+			s.m.logf("iphone %s: mounting the developer disk image again: %v", short(s.udid), err)
+			return
+		}
+		s.m.logf("iphone %s: mounted the developer disk image again", short(s.udid))
+	}()
 }
 
 // restartLink ends c on purpose: the supervisor connects again at once.
@@ -689,6 +725,9 @@ func (s *session) status(d *Device) {
 			if di.OSVersion != "" {
 				d.OSVersion = di.OSVersion
 			}
+			if di.DeveloperMode != nil {
+				d.DeveloperMode = di.DeveloperMode
+			}
 		}
 	}
 }
@@ -705,10 +744,12 @@ func (s *session) stop() {
 
 // deviceInfo is what the node reads of the bridge's device_info.
 type deviceInfo struct {
-	Name        string `json:"name"`
-	ProductType string `json:"product_type"`
-	OSVersion   string `json:"os_version"`
-	Locked      *bool  `json:"locked"`
+	Name          string `json:"name"`
+	ProductType   string `json:"product_type"`
+	OSVersion     string `json:"os_version"`
+	Locked        *bool  `json:"locked"`
+	DeveloperMode *bool  `json:"developer_mode"`
+	DDIMounted    *bool  `json:"ddi_mounted"`
 }
 
 func newID() string {

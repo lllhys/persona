@@ -166,14 +166,35 @@ func (f *fakeAPNs) calls(t *testing.T, n int) []apnsCall {
 // Real transaction/row-lock behavior is covered by db.TestLiveActivityStartBudget.
 type fleetStartStore struct {
 	Store
-	mu   sync.Mutex
-	rows map[string]db.LiveActivity
-	due  map[string]time.Time
-	fail bool
+	mu      sync.Mutex
+	rows    map[string]db.LiveActivity
+	due     map[string]time.Time
+	claimed map[string]time.Time
+	fail    bool
 }
 
 func newFleetStartStore() *fleetStartStore {
-	return &fleetStartStore{rows: map[string]db.LiveActivity{}, due: map[string]time.Time{}}
+	return &fleetStartStore{rows: map[string]db.LiveActivity{}, due: map[string]time.Time{}, claimed: map[string]time.Time{}}
+}
+
+// HoldLiveActivityStart is the store's: only a start claimed up to asOf, and changed only when the deadline moved.
+func (s *fleetStartStore) HoldLiveActivityStart(_ context.Context, device string, asOf time.Time, hold time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.fail {
+		return false, fmt.Errorf("injected hold persistence failure")
+	}
+	at, ok := s.claimed[device]
+	if !ok || at.After(asOf) || s.due[device].Equal(at.Add(hold)) {
+		return false, nil
+	}
+	s.due[device] = at.Add(hold)
+	return true, nil
+}
+
+// A phone registering over its socket saves its tools: nothing these tests read.
+func (s *fleetStartStore) ReplacePhoneTools(context.Context, db.PhoneToolRegistration) error {
+	return nil
 }
 
 func (s *fleetStartStore) SaveLiveActivity(_ context.Context, v db.LiveActivity) error {
@@ -206,7 +227,7 @@ func (s *fleetStartStore) ClaimLiveActivityStart(_ context.Context, device, toke
 	if due := s.due[device]; at.Before(due) {
 		return due, false, nil
 	}
-	s.due[device] = at.Add(cooldown)
+	s.claimed[device], s.due[device] = at, at.Add(cooldown)
 	return s.due[device], true, nil
 }
 
@@ -288,6 +309,9 @@ func TestFleetStartAcrossFiveEpisodes(t *testing.T) {
 		if got := sink.count("phone", "liveactivity", "start"); got != 1 {
 			t.Fatalf("after: five episodes produced %d starts, want 1", got)
 		}
+		// The phone answers that start (its app connected): the next waits for the rolling cooldown alone. Unanswered,
+		// it would wait for fleetMaxAge (#7641, TestFleetUnansweredStartHoldsTheNext).
+		h.live.phoneAnswered(context.Background(), "phone")
 		// The timer reads the newest active state, not any of the five old ones.
 		h.live = newLiveActivities(h)
 		reportLive(t, h, FleetState{Phase: "working", Working: 9}, FleetStats{})
@@ -330,6 +354,8 @@ func TestFleetDeferredStartCancellation(t *testing.T) {
 				reportLive(t, h, FleetState{Phase: "working", Working: 1}, FleetStats{})
 				time.Sleep(fleetCoalesce)
 				synctest.Wait()
+				// Answered: the next round's start is the one the cooldown defers, not one held for fleetMaxAge (#7641).
+				h.live.phoneAnswered(context.Background(), "phone")
 				reportLive(t, h, FleetState{Phase: "done"}, FleetStats{})
 				time.Sleep(fleetCoalesce)
 				synctest.Wait()
@@ -379,6 +405,9 @@ func TestFleetStartRestartAndConcurrentInstances(t *testing.T) {
 		if got := sink.count("phone", "liveactivity", "start"); got != 1 {
 			t.Fatalf("concurrent instances started %d times", got)
 		}
+		// Answered, so that what follows is the rolling cooldown: unanswered, a start holds the next for fleetMaxAge
+		// across a restart too (#7641, TestFleetUnansweredStartHoldsTheNext).
+		h.live.phoneAnswered(context.Background(), "phone")
 		// Reconstruct all ephemeral state and run with no further fleet changes:
 		// startup must recover the due time from Postgres and eventually flush.
 		h.live = newLiveActivities(h)
@@ -404,14 +433,14 @@ func TestFleetStartPersistenceFailsClosedWithoutLimitingAlertsOrUrgentUpdates(t 
 	for _, unavailable := range []bool{false, true} {
 		t.Run(fmt.Sprintf("no_store=%v", unavailable), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				h, sink, stop := localFleetLoop(t)
+				h, sink, stop := localFleetLoopWith(t, func(h *Hub) {
+					h.store.(*fleetStartStore).fail = true
+					if unavailable {
+						h.store = nil
+					}
+				})
 				defer stop()
 				h.live.update("phone", func(v *db.LiveActivity) { v.PushToken = "" })
-				store := h.store.(*fleetStartStore)
-				store.fail = true
-				if unavailable {
-					h.store = nil
-				}
 				reportLive(t, h, FleetState{Phase: "working", Working: 1}, FleetStats{})
 				time.Sleep(fleetCoalesce + fleetMinGap)
 				synctest.Wait()
@@ -600,6 +629,8 @@ func TestPrefsChangeResends(t *testing.T) {
 type fleetPushSink struct {
 	mu  sync.Mutex
 	got []fleetPushCall
+	// answer, when set, answers a call instead of 200: a status (and body) the relay returns, or an error for no answer.
+	answer func(fleetPushCall) (status int, body string, err error)
 }
 
 type fleetPushCall struct {
@@ -620,8 +651,16 @@ func (s *fleetPushSink) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	s.mu.Lock()
 	s.got = append(s.got, call)
+	answer := s.answer
 	s.mu.Unlock()
-	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true}`)), Request: r}, nil
+	status, body := http.StatusOK, `{"ok":true}`
+	if answer != nil {
+		var err error
+		if status, body, err = answer(call); err != nil {
+			return nil, err
+		}
+	}
+	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 }
 
 func (s *fleetPushSink) count(device, kind, event string) int {
@@ -637,6 +676,13 @@ func (s *fleetPushSink) count(device, kind, event string) int {
 }
 
 func localFleetLoop(t *testing.T) (*Hub, *fleetPushSink, func()) {
+	t.Helper()
+	return localFleetLoopWith(t, nil)
+}
+
+// localFleetLoopWith is localFleetLoop with prepare run on the hub after its devices are set up and before the loop
+// starts: a test changes what the loop reads (h.store) here, not while it runs.
+func localFleetLoopWith(t *testing.T, prepare func(h *Hub)) (*Hub, *fleetPushSink, func()) {
 	t.Helper()
 	h := newTestHub(t)
 	h.store = newFleetStartStore()
@@ -655,6 +701,9 @@ func localFleetLoop(t *testing.T) (*Hub, *fleetPushSink, func()) {
 		h.live.update(id, func(v *db.LiveActivity) {
 			v.ActivityID, v.PushToken, v.PushToStartToken, v.StartedAt = id+"-activity", id+"-update", id+"-start", time.Now()
 		})
+	}
+	if prepare != nil {
+		prepare(h)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1489,6 +1538,104 @@ func TestFleetAssistantHoldsActivity(t *testing.T) {
 	la.tick()
 	if n, _ := pushes("padact", "end", 1); n != 1 {
 		t.Fatalf("pad: %d ends fleetEndAfter after the assistant stopped, want 1", n)
+	}
+}
+
+// TestFleetClearsWhenTheLastRequestGoes: the last request answered on a computer, or gone, empties the fleet. The
+// running activities lose the request and its buttons at once (priority 10, no items), not when they end a minute
+// later; they still end only fleetEndAfter on, since an early end would leave the next request no activity to open
+// (push-starts are rationed). An island showing the assistant answering keeps it, without the request.
+func TestFleetClearsWhenTheLastRequestGoes(t *testing.T) {
+	h, f, clock := fleetClock(t)
+	la := h.live
+	h.push.register(Device{DeviceID: "pad", Name: "pad", APNSToken: "padtok", Topic: "app.example"})
+	la.update("pad", func(v *db.LiveActivity) { v.ActivityID, v.PushToken, v.StartedAt = "act2", "padact", *clock })
+	showing := NotifyPrefs{Input: true, Done: DoneLong, LiveActivity: true, Island: IslandPrefs{Preset: "custom", Left: SlotStatus, Right: SlotAssistant}}
+	if err := h.push.setPrefs("pad", showing); err != nil {
+		t.Fatal(err)
+	}
+	// A device with only a push-to-start token gets no activity started to show that nothing is left.
+	h.push.register(Device{DeviceID: "mini", Name: "mini", APNSToken: "minitok", Topic: "app.example"})
+	if err := h.push.setPrefs("mini", NotifyPrefs{Input: true, Done: DoneLong, LiveActivity: true}); err != nil {
+		t.Fatal(err)
+	}
+	// last is the latest of the n calls (waited for) that went to token with event, and how many did.
+	last := func(n int, token, event string) (count int, c apnsCall) {
+		for _, call := range f.calls(t, n) {
+			if call.Token == token && call.Event == event {
+				count, c = count+1, call
+			}
+		}
+		return count, c
+	}
+	// offer and flush as the run loop does: the coalescer decides the urgency.
+	deliver := func(st FleetState) {
+		reportLive(t, h, st, FleetStats{})
+		urgent, _ := la.coal.offer(st)
+		la.flush(st, urgent, false)
+	}
+
+	t0 := *clock
+	asks := FleetState{Phase: "needsYou", NeedsYou: 1, Assistant: true,
+		Items: []FleetItem{{ID: "m/b", Title: "api", Kind: proto.IxPermission, Interaction: "ix1", Detail: "Bash: go test"}}}
+	deliver(asks)
+	f.calls(t, 2)
+	la.update("mini", func(v *db.LiveActivity) { v.PushToStartToken = "minip2s" })
+
+	// Answered on the computer 10 s later, with the assistant still answering: both running activities are cleared now.
+	*clock = t0.Add(10 * time.Second)
+	deliver(FleetState{Assistant: true})
+	if n, c := last(4, "acttok", "update"); n != 2 || c.Priority != "10" || c.State.Phase != "" || c.State.NeedsYou != 0 || len(c.State.Items) != 0 || c.State.Assistant {
+		t.Fatalf("phone: %d updates, want the request cleared at once; last %+v", n, c)
+	}
+	if n, c := last(4, "padact", "update"); n != 2 || c.Priority != "10" || len(c.State.Items) != 0 || !c.State.Assistant {
+		t.Fatalf("pad: %d updates, want the request cleared and the assistant kept; last %+v", n, c)
+	}
+	la.mu.Lock()
+	_, started := la.started["mini"]
+	la.mu.Unlock()
+	if started {
+		t.Fatal("clearing started an activity")
+	}
+
+	// Nothing comes back: the phone's activity ends fleetEndAfter on, not earlier (ending forgets its token at once).
+	for *clock = clock.Add(15 * time.Second); clock.Before(t0.Add(10*time.Second + fleetEndAfter)); *clock = clock.Add(15 * time.Second) {
+		la.tick()
+	}
+	la.mu.Lock()
+	phone, pad := la.rows["phone"].PushToken, la.rows["pad"].PushToken
+	la.mu.Unlock()
+	if phone != "acttok" || pad != "padact" {
+		t.Fatalf("an activity ended before fleetEndAfter: phone %q, pad %q", phone, pad)
+	}
+	la.tick()
+	if n, _ := last(5, "acttok", "end"); n != 1 {
+		t.Fatalf("phone: %d ends fleetEndAfter after the request went, want 1", n)
+	}
+	// Nothing else in that minute; the pad's activity stays while the assistant answers.
+	if n := len(f.calls(t, 5)); n != 5 || la.rows["pad"].PushToken != "padact" {
+		t.Fatalf("%d pushes, want 5 (two updates each, the phone's end); pad token %q", n, la.rows["pad"].PushToken)
+	}
+}
+
+// An ordinary change that empties the fleet (the last agent done and seen) is not urgent: no clearing push, the
+// activity ends fleetEndAfter on as before.
+func TestFleetEmptiedWithoutARequestPushesOnlyTheEnd(t *testing.T) {
+	h, f, clock := fleetClock(t)
+	la := h.live
+	working := FleetState{Phase: "working", Working: 1, Items: []FleetItem{{ID: "m/a", Title: "api", Kind: "working"}}}
+	la.coal.offer(working)
+	la.flush(working, false, false)
+	f.calls(t, 1)
+	*clock = clock.Add(10 * time.Second)
+	if urgent, _ := la.coal.offer(FleetState{}); urgent {
+		t.Fatal("an agent finishing is not urgent")
+	}
+	la.flush(FleetState{}, false, false)
+	*clock = clock.Add(fleetEndAfter)
+	la.tick()
+	if c := f.calls(t, 2); len(c) != 2 || c[1].Event != "end" {
+		t.Fatalf("want only the end after the first update, got %+v", c)
 	}
 }
 

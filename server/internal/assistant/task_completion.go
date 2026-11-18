@@ -139,13 +139,16 @@ func freshTaskDoneReport(t Todo, items []proto.Item, since time.Time) (text stri
 
 // Every linked agent must be observed. A missing session or disconnected node is
 // not evidence that its work ended; raw runtime status also outranks a stale UI state.
+// A link another agent took over from (supersededAgents) is no longer the task's agent and is not waited for.
 func taskAgentsSettled(t Todo, agents []proto.Session) bool {
+	gone := supersededAgents(t, agents)
 	expected := 0
 	for _, a := range t.Agents {
-		if a.ReleasedAt == nil && a.DismissedAt == nil {
+		if a.ReleasedAt == nil && a.DismissedAt == nil && !gone[[2]string{a.MachineID, a.SessionID}] {
 			expected++
 		}
 	}
+	agents = currentTaskAgents(agents, gone)
 	if expected == 0 || len(agents) != expected {
 		return false
 	}
@@ -160,6 +163,54 @@ func taskAgentsSettled(t Todo, agents []proto.Session) bool {
 		}
 	}
 	return true
+}
+
+// supersededAgents are the links of t another agent took over from (#6483): an unreleased link whose session is
+// offline or no longer listed in agents, while a link made after it is listed and not offline. A takeover that did not
+// release the earlier link (made before takeovers released it, or by a path that does not) would otherwise keep the
+// task from ever settling, so the current agent's stop had no receipt and no judgment, and keep raising stalled from
+// the old agent's last update. A lone offline agent, with no later one, is no takeover: it stays the task's agent, and
+// the orphan and stall signals speak of it as before. Keyed by machine and session.
+func supersededAgents(t Todo, agents []proto.Session) map[[2]string]bool {
+	listed := make(map[[2]string]proto.Session, len(agents))
+	for _, c := range agents {
+		listed[[2]string{c.MachineID, c.SessionID}] = c
+	}
+	live := func(a TodoAgent) bool {
+		c, ok := listed[[2]string{a.MachineID, a.SessionID}]
+		return ok && c.Status != proto.StatusOffline && c.State != proto.StateOffline
+	}
+	var latest time.Time // when the newest link with a live session was made
+	for _, a := range t.Agents {
+		if a.ReleasedAt == nil && a.DismissedAt == nil && live(a) && a.LinkedAt.After(latest) {
+			latest = a.LinkedAt
+		}
+	}
+	var gone map[[2]string]bool
+	for _, a := range t.Agents {
+		if a.ReleasedAt != nil || a.DismissedAt != nil || live(a) || !a.LinkedAt.Before(latest) {
+			continue
+		}
+		if gone == nil {
+			gone = map[[2]string]bool{}
+		}
+		gone[[2]string{a.MachineID, a.SessionID}] = true
+	}
+	return gone
+}
+
+// currentTaskAgents is agents without the superseded ones in gone (supersededAgents).
+func currentTaskAgents(agents []proto.Session, gone map[[2]string]bool) []proto.Session {
+	if len(gone) == 0 {
+		return agents
+	}
+	out := make([]proto.Session, 0, len(agents))
+	for _, c := range agents {
+		if !gone[[2]string{c.MachineID, c.SessionID}] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // A status tick can briefly say idle between tool output and the next model
@@ -216,7 +267,7 @@ func (s *Service) taskCompletionCurrent(ctx context.Context, t Todo, work time.T
 
 func (s *Service) taskRuntimeSettled(ctx context.Context, t Todo) bool {
 	agents, reached := s.taskAgentsReached(ctx, t)
-	return reached && taskAgentsSettled(t, agents)
+	return reached && taskAgentsSettled(t, s.rowsProven(agents))
 }
 
 // A turn that starts before this lock invalidates the judgment. One that starts

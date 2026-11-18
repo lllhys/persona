@@ -89,5 +89,19 @@
   "sandbox_off_body": "Without it, the extension can read and write every file the hub user can, and reach any address.",
   "sandbox_off_confirm": "Turn Off Sandbox",
   "sandbox_turned_on": "Sandbox on for {name}",
-  "sandbox_turned_off": "Sandbox off for {name}"
+  "sandbox_turned_off": "Sandbox off for {name}",
+  "sandbox_off_one_host": "To reach one address, allowing that address below is enough.",
+  "hosts_blocked": "Blocked addresses",
+  "hosts_allowed": "Addresses you allowed",
+  "host_blocked_times_one": "{count} time · last {when}",
+  "host_blocked_times_other": "{count} times · last {when}",
+  "host_allow": "Allow",
+  "host_revoke": "Revoke",
+  "host_undo": "Undo",
+  "host_any_port": "Any port",
+  "host_this_port": "This port only",
+  "host_placeholder": "Address, e.g. rss.example.org or rss.example.org:8443",
+  "host_field_label": "Address to allow {name}",
+  "host_allowed": "Allowed {host}",
+  "host_revoked": "Revoked {host}"
 }

@@ -19,5 +19,10 @@
   "avatar_footer": "Changing the avatar changes Persona's name, face, the site's logo and tab icon, and the moving state in conversations, on all your devices when the hub supports it. With the theme color set to follow the avatar, the site's colors change too.",
   "access": "Can access",
   "access_footer": "Anything that acts on your behalf, like sending Lark messages or email or creating events, asks you on your phone first.",
+  "edit_name": "Edit name",
+  "name_dialog_title": "Change the assistant's name",
+  "name_placeholder": "Name your assistant",
+  "name_saved": "Name saved",
+  "name_failed": "Could not rename: {error}",
   "subtitle_no_machine": "Your personal assistant · No computer connected yet"
 }

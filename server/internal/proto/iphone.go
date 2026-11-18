@@ -18,8 +18,13 @@ type IPhone struct {
 	Devices []IPhoneDevice `json:"devices"`
 	// Note: what is missing on this computer as a whole (no bridge, nothing paired, an old node), in Chinese for the
 	// hub to translate.
-	Note    string    `json:"note,omitempty"`
-	Checked time.Time `json:"checked,omitempty"`
+	Note string `json:"note,omitempty"`
+	// Code is Note's reason as a code, for an app to act on without reading the words: bridge_missing, none_paired.
+	Code string `json:"code,omitempty"`
+	// DDIPresent: this computer has the developer disk image a phone's Prepare mounts (Xcode's, or
+	// PERSONA_IPHONE_DDI_DIR's); absent from a node that doesn't say (#8199).
+	DDIPresent *bool     `json:"ddi_present,omitempty"`
+	Checked    time.Time `json:"checked,omitempty"`
 	// Job: pairing or forgetting an iPhone from the app (kind pair | forget), the one running or the last one since the
 	// node started.
 	Job *ComputerJob `json:"job,omitempty"`
@@ -46,6 +51,16 @@ type IPhoneDevice struct {
 	// Ready: it can be operated now. Note says what is missing and what to do, in Chinese for the hub to translate.
 	Ready bool   `json:"ready"`
 	Note  string `json:"note,omitempty"`
+	// Code is Note's reason as a code (#8199), for an app to act on without reading the words: the bridge's or the
+	// session's (developer_mode_off, ddi_not_mounted, unsupported, locked, unreachable, pairing_rejected, …), or
+	// usb_unpaired (on the cable, not paired), connecting, failed (no better word). Empty with no note.
+	Code string `json:"code,omitempty"`
+	// DeveloperMode is what the iPhone last said of its Developer Mode (at pairing, then whenever it answered); absent
+	// when it never said.
+	DeveloperMode *bool `json:"developer_mode,omitempty"`
+	// AutoPrepare: its owner prepared it once from the app (its developer disk image mounted), so this computer mounts
+	// the image again by itself whenever it comes back without it, as after a restart (#8199).
+	AutoPrepare bool `json:"auto_prepare,omitempty"`
 	// Allowed is the manager's: the computer is on and this iPhone consented.
 	Allowed bool `json:"allowed"`
 }

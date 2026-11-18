@@ -22,6 +22,8 @@
   "target_main_sub": "发到 Persona 的主对话",
   "target_persona": "Persona（新对话）",
   "target_persona_sub": "开一段新的 Persona 对话",
+  "target_new_agent": "开 Agent…",
+  "target_new_agent_sub": "选电脑、文件夹和模型",
   "last_time": "上次",
   "last_gone": "上次交给的 Agent 已经结束，这次默认交给主对话。"
 }

@@ -36,6 +36,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 //go:embed sampler.go
@@ -148,7 +150,7 @@ func run(ctx context.Context, o *options) (*report, error) {
 
 	say("starting Postgres")
 	o.pgc = fmt.Sprintf("persona-ci-db-fleetsoak-%d", os.Getpid())
-	defer func() { _ = exec.Command("docker", "rm", "-f", o.pgc).Run() }()
+	defer func() { _ = exec.Command("docker", "rm", "-fv", o.pgc).Run() }()
 	database, err := startPostgres(ctx, o.pgc)
 	if err != nil {
 		return nil, err
@@ -341,7 +343,7 @@ func startPostgres(ctx context.Context, name string) (string, error) {
 }
 
 func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := osproc.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}

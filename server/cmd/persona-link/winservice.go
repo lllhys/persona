@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/link"
 )
 
@@ -170,7 +171,7 @@ func (e *env) installNodeBinary(from string) error {
 	bin := e.nodeBin()
 	if from == "" {
 		if !fileExists(bin) {
-			return fmt.Errorf("没有 %s：用 --personad <personad.exe 的路径> 给一个", bin)
+			return link.NewTextError("link-cli.windows_node_binary_required", nil, i18n.Args{"path": bin})
 		}
 		return nil
 	}
@@ -180,38 +181,37 @@ func (e *env) installNodeBinary(from string) error {
 		return nil
 	}
 	if err := copyExecutable(from, bin); err != nil {
-		return fmt.Errorf("放不进 %s：%w", bin, err)
+		return link.NewTextError("link-cli.binary_install_failed", err, i18n.Args{"path": bin})
 	}
-	fmt.Fprintf(e.stdout, "装好了 %s。\n", bin)
+	fmt.Fprintln(e.stdout, terminalText("link-cli.binary_installed", i18n.Args{"path": bin}))
 	return nil
 }
 
 // installTask is install's Windows part, after the pairing: stop the task if it runs (the programs it runs cannot be
 // replaced while they run), put the programs in place, register the task and start it, then wait for the link.
-func installTask(e *env, withNode, withTray bool, from string, invite *link.PairInvite) error {
+func installTask(e *env, withNode bool, from string, invite *link.PairInvite) error {
 	if e.user == "" {
-		return errors.New("不知道当前的 Windows 用户是谁，装不了计划任务")
+		return link.NewTextError("link-cli.windows_user_unknown", nil)
 	}
 	var oldPID int
 	if st, err := link.ReadStatus(e.configPath()); err == nil && link.Running(e.configPath()) {
 		oldPID = st.PID
 	}
 	e.stopTask()
-	stopTray(e) // it runs from the console-less copy replaced below
 	if link.Running(e.configPath()) {
-		fmt.Fprintln(e.stdout, "注意：还有一个 persona-link 在运行（不是这个计划任务起的，比如前台的 persona-link run）：停掉它，计划任务里的那个会接上。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.windows_other_process"))
 	}
 	bin, copied, err := e.installBinary()
 	if err != nil {
-		return fmt.Errorf("放不进 %s：%w", e.binPath(), err)
+		return link.NewTextError("link-cli.binary_install_failed", err, i18n.Args{"path": e.binPath()})
 	}
 	if copied {
-		fmt.Fprintf(e.stdout, "装好了 %s。\n", bin)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.binary_installed", i18n.Args{"path": bin}))
 	}
 	args := "supervise"
 	if withNode {
 		if err := e.installNodeBinary(from); err != nil {
-			fmt.Fprintf(e.stdout, "常驻 node 没装好：%v；计划任务先只跑 persona-link。\n", err)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.windows_node_install_failed", i18n.Args{"error": link.ErrorText(i18n.Terminal(), err)}))
 			withNode = false
 		}
 	}
@@ -219,26 +219,24 @@ func installTask(e *env, withNode, withTray bool, from string, invite *link.Pair
 		args += " --no-node"
 	}
 	if err := guiCopy(bin, e.serviceExePath()); err != nil {
-		return fmt.Errorf("放不进 %s：%w", e.serviceExePath(), err)
+		return link.NewTextError("link-cli.binary_install_failed", err, i18n.Args{"path": e.serviceExePath()})
 	}
 	file := e.taskFile()
 	if err := writeUTF16(file, taskXML(e.user, e.serviceExePath(), args, e.now())); err != nil {
 		return err
 	}
 	if out, err := e.schtasks("/Create", "/TN", taskName, "/XML", file, "/F"); err != nil {
-		return fmt.Errorf("schtasks /Create 失败：%s", orErr(out, err))
+		return link.NewTextError("link-cli.schtasks_create_failed", nil, i18n.Args{"error": orErr(out, err)})
 	}
 	started := e.now()
 	if out, err := e.schtasks("/Run", "/TN", taskName); err != nil {
-		return fmt.Errorf("schtasks /Run 失败：%s", orErr(out, err))
+		return link.NewTextError("link-cli.schtasks_run_failed", nil, i18n.Args{"error": orErr(out, err)})
 	}
 	what := "persona-link"
 	if withNode {
-		what = "常驻 node 和 persona-link"
+		what = terminalText("link-cli.windows_task_programs")
 	}
-	fmt.Fprintf(e.stdout, "装好了计划任务「%s」（%s），已启动：登录 Windows 时启动，%s退出了几秒内重启，不弹窗口；日志在 %s。\n",
-		taskName, file, what, e.personaDir())
-	startTray(e, withTray)
+	fmt.Fprintln(e.stdout, terminalText("link-cli.windows_task_installed", i18n.Args{"task": taskName, "path": file, "programs": what, "log": e.personaDir()}))
 	return waitStarted(e, started, oldPID, invite)
 }
 
@@ -246,14 +244,13 @@ func installTask(e *env, withNode, withTray bool, from string, invite *link.Pair
 func uninstallTask(e *env) {
 	_, registered := e.taskStatus()
 	if !registered && !fileExists(e.taskFile()) {
-		fmt.Fprintf(e.stdout, "没装计划任务「%s」。\n", taskName)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.windows_task_missing", i18n.Args{"task": taskName}))
 		return
 	}
-	removeTray(e)
 	if registered {
 		e.stopTask()
 		if out, err := e.schtasks("/Delete", "/TN", taskName, "/F"); err != nil {
-			fmt.Fprintf(e.stdout, "删计划任务时出错：%s\n", orErr(out, err))
+			fmt.Fprintln(e.stdout, terminalText("link-cli.windows_task_delete_error", i18n.Args{"error": orErr(out, err)}))
 		}
 	}
 	_ = os.Remove(e.taskFile())
@@ -263,7 +260,7 @@ func uninstallTask(e *env) {
 			break
 		}
 	}
-	fmt.Fprintf(e.stdout, "停掉并删掉了计划任务「%s」（常驻 node 和 persona-link 一起停了）。\n", taskName)
+	fmt.Fprintln(e.stdout, terminalText("link-cli.windows_task_removed", i18n.Args{"task": taskName}))
 }
 
 // taskState is status's line about the scheduled task.
@@ -279,18 +276,22 @@ func (e *env) taskState() *serviceState {
 	return s
 }
 
+// windowsTaskActiveText localizes Link's own fallback, never the status words returned by schtasks.
+func windowsTaskActiveText(active string) string {
+	if active == "registered" {
+		return terminalText("link-cli.windows_task_registered")
+	}
+	return active
+}
+
 // taskText is the report's line about the scheduled task.
 func taskText(s *serviceState, line func(string, ...any)) {
 	switch {
 	case s.Active == "" && !s.Installed:
-		line("后台服务：没装（persona-link install）")
+		line("%s", terminalText("link-cli.service_not_installed"))
 	case s.Active == "":
-		line("后台服务：计划任务「%s」不在了（%s 还在）：再 persona-link install", s.Unit, s.File)
+		line("%s", terminalText("link-cli.windows_service_unregistered", i18n.Args{"task": s.Unit, "path": s.File}))
 	default:
-		line("后台服务：计划任务「%s」· %s · 登录时启动", s.Unit, s.Active)
+		line("%s", terminalText("link-cli.windows_service_installed", i18n.Args{"task": s.Unit, "active": windowsTaskActiveText(s.Active)}))
 	}
 }
-
-// windowsNodeHint answers `persona-link node install|uninstall` on Windows, where the node is part of the one task.
-const windowsNodeHint = "Windows 上常驻 node 和 persona-link 在同一个计划任务里：persona-link install [--personad <personad.exe 的路径>] 装上（带 node），" +
-	"persona-link install --no-node 只留 persona-link，persona-link uninstall 都去掉"

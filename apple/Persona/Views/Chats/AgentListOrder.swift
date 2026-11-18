@@ -43,14 +43,17 @@ nonisolated struct AgentListOrder {
         }
     }
 
-    /// By rank, then the most recently updated (working: most recently started) first, then by id so equal times
-    /// never swap between renders.
+    /// By rank, then the most recently updated (working: most recently started) first, then by session id and, for the
+    /// same session id on two machines, by the complete id (hub group, machine, session), so equal times never swap
+    /// between renders or with the order the machines answered in: the core's last key too (#9064).
     func ordered(_ list: [Session]) -> [Session] {
         list.map { session -> (session: Session, rank: Int, sortDate: Date) in
             (session: session, rank: byRank ? rank(session) : 0, sortDate: session.sortDate)
         }.sorted { a, b in
             if a.rank != b.rank { return a.rank < b.rank }
-            return a.sortDate != b.sortDate ? a.sortDate > b.sortDate : a.session.sessionID < b.session.sessionID
+            if a.sortDate != b.sortDate { return a.sortDate > b.sortDate }
+            if a.session.sessionID != b.session.sessionID { return a.session.sessionID < b.session.sessionID }
+            return a.session.id < b.session.id
         }
         .map(\.session)
     }

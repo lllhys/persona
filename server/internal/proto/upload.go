@@ -28,6 +28,11 @@ const (
 	UploadDestInbox     = "inbox"
 	MaxInboxUploadBytes = MaxDirUploadBytes
 	DefaultInboxDir     = "~/Downloads/Persona"
+	// A file sent with a chat message and kept for good (dest=attachment, docs/protocol/protocol.md "Sending files",
+	// #8361): it lands beside the pictures the chat sent that day, in the node's uploads/<date>/, under its own name
+	// (a taken one gets " 2"), where agents read it and nothing sweeps it. The limit is MaxUploadBytes. A node from
+	// before it uses its temp directory instead (the hub falls back), as every chat attachment did before.
+	UploadDestAttachment = "attachment"
 	// What dest=dir does when the name is taken: "" refuses with CodeExists (409, the app asks), replace overwrites
 	// the file, keep puts it beside as "name 2.ext".
 	UploadConflictReplace = "replace"

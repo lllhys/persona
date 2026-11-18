@@ -25,6 +25,8 @@
   "row_label": "{title}，{rule}，{next}",
   "created_by_persona": "Persona 建的",
   "push_asked": "只在提醒时推送",
+  "inbox_worthy": "收件箱：值得看才放",
+  "inbox_every": "收件箱：每次",
   "last_failed": "{text}：{error}",
   "turn_off": "关闭「{title}」",
   "turn_on": "开启「{title}」",

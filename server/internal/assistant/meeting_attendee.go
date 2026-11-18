@@ -105,6 +105,12 @@ func (s *Service) attendeeCheck(ctx context.Context, ref kb.SessionRef, now time
 // attendeeCheckFor is attendeeCheck for recording's meeting: its own room is exempt from "Sessions that never
 // attend", which refuses every guest conversation; any other meeting's room is refused all the same.
 func (s *Service) attendeeCheckFor(ctx context.Context, ref kb.SessionRef, now time.Time, recording string) (attendeeTarget, string) {
+	return s.attendeeCheckRead(ctx, ref, now, recording, nil)
+}
+
+// attendeeCheckRead is attendeeCheckFor with the session's row as a look read it already (a lean room's, #8253), nil:
+// read now.
+func (s *Service) attendeeCheckRead(ctx context.Context, ref kb.SessionRef, now time.Time, recording string, rd *roomRead) (attendeeTarget, string) {
 	if s.devs != nil {
 		ref.MachineID = s.devs.Canonical(ref.MachineID) // an id another one absorbed: that one
 	}
@@ -116,7 +122,14 @@ func (s *Service) attendeeCheckFor(ctx context.Context, ref kb.SessionRef, now t
 	if !f.ours || f.work || !f.online {
 		return t, attendeeVerdict(proto.Session{}, f)
 	}
-	sess, found, err := s.attendeeRow(ctx, machine, ref.SessionID)
+	var sess proto.Session
+	var found bool
+	var err error
+	if rd != nil {
+		sess, found, err = rd.row, rd.found, rd.err
+	} else {
+		sess, found, err = s.attendeeRow(ctx, machine, ref.SessionID)
+	}
 	if err != nil {
 		s.logf("meeting: sessions of %s: %v", machine, err)
 		return t, attendeeUnavailable
@@ -128,6 +141,8 @@ func (s *Service) attendeeCheckFor(ctx context.Context, ref kb.SessionRef, now t
 		f.guest, f.unknown = guest, err != nil
 		if rec, room, rerr := s.roomOf(ctx, machine, ref.SessionID); guest && rerr == nil && room && recording != "" && rec == recording {
 			f.guest = false // the meeting's own room: it has no tool that acts
+			// Its conversation being compacted (#8253): batches and photos wait for that as for a turn.
+			f.running = roomCompacting(sess)
 		}
 		if origins, ok := s.conversationOrigins(); !ok {
 			f.unknown = true
@@ -141,7 +156,7 @@ func (s *Service) attendeeCheckFor(ctx context.Context, ref kb.SessionRef, now t
 	if found {
 		s.meetingTurnStopped(machine, ref.SessionID, sess, false) // stopped since its batch: whatever its end looked like
 		running, err := s.meetingTurnRunning(ctx, machine, ref.SessionID)
-		f.running = running || err != nil
+		f.running = f.running || running || err != nil
 		f.settling = s.turnSettling(machine, ref.SessionID, now)
 	}
 	return t, attendeeVerdict(sess, f)

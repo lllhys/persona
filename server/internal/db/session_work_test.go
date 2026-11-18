@@ -8,6 +8,25 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+// Work-event evidence has no todo foreign key, so truncating todos cannot
+// remove it. Every fixture must start without a previous test's decisions.
+func TestTruncateForTestClearsDetachedWorkEvents(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	at := time.Now().UTC()
+	if err := d.AddWorkEvent(ctx, WorkEvent{At: at, Kind: "owner_decided", Detail: map[string]any{"decision_id": "synthetic-detached"}}); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := d.WorkEvents(ctx, at.Add(-time.Second)); err != nil || len(events) != 1 {
+		t.Fatalf("fixture event missing: %+v %v", events, err)
+	}
+	if err := d.TruncateForTest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := d.WorkEvents(ctx, time.Time{}); err != nil || len(events) != 0 {
+		t.Fatalf("detached events survived fixture cleanup: %+v %v", events, err)
+	}
+}
+
 func TestSessionWork(t *testing.T) {
 	d, ctx := open(t), context.Background()
 	_, _ = d.pool.Exec(ctx, `TRUNCATE session_work, session_work_events`)

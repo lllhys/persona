@@ -43,7 +43,25 @@ final class ExtensionManagementUITests: XCTestCase {
     }
 
     @MainActor private func toggle(_ element: XCUIElement) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed,
+                       "the switch must finish loading before it is tapped")
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+    }
+
+    @MainActor private func togglePack(_ element: XCUIElement, app: XCUIApplication) {
+        // Stock can drop a synthesized coordinate tap while its system UI settles. Retry only when no question appeared;
+        // the caller still requires the question, the unchanged switch and zero writes.
+        for _ in 0..<3 {
+            HomeScreen.dismissIconNote()
+            let control = element.switches.firstMatch
+            let target = control.exists ? control : element
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: target)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed,
+                           "the switch must finish loading before it is tapped")
+            target.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+            if app.buttons["extension-pack-disable-confirm"].waitForExistence(timeout: 2) { return }
+        }
     }
 
     @MainActor private func value(_ expected: String, of element: XCUIElement) {
@@ -105,6 +123,43 @@ final class ExtensionManagementUITests: XCTestCase {
         XCTAssertEqual((enables.last?["body"] as? [String: Any])?["cascade"] as? Bool, true)
         XCTAssertFalse(writes.contains { ($0["path"] as? String)?.hasSuffix("/config") == true })
         try shot(app, "draft-kept")
+    }
+
+    @MainActor func testPackAndOutsideDependentAskInSequence() async throws {
+        _ = try await state(reset: [:])
+        let app = try launch(["-openExtension", "sample-pack"])
+        let enabled = app.switches["plugin-enabled"]
+        show(enabled, app: app, up: false)
+        value("1", of: enabled)
+        togglePack(enabled, app: app)
+        let pack = app.buttons["extension-pack-disable-confirm"].firstMatch
+        XCTAssertTrue(pack.waitForExistence(timeout: 5), app.debugDescription)
+        value("1", of: enabled)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "示例工具包、示例补充工具")).firstMatch.exists)
+        cancel(app)
+        XCTAssertTrue(pack.waitForNonExistence(timeout: 5))
+        value("1", of: enabled)
+        let cancelledWrites = try await recordedWrites()
+        XCTAssertTrue(cancelledWrites.isEmpty, "cancelling the pack question must not write")
+
+        togglePack(enabled, app: app)
+        XCTAssertTrue(pack.waitForExistence(timeout: 5), app.debugDescription)
+        pack.tap()
+
+        let cascade = app.buttons["extension-cascade-confirm"].firstMatch
+        XCTAssertTrue(cascade.waitForExistence(timeout: 10), "the hub's immediate dependent answer must remain visible")
+        value("1", of: enabled)
+        XCTAssertFalse(pack.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "示例依赖者")).firstMatch.exists)
+        try shot(app, "pack-dependent")
+        cascade.tap()
+        value("0", of: enabled)
+
+        let writes = try await recordedWrites()
+        let enables = writes.filter { ($0["path"] as? String)?.hasSuffix("/enabled") == true }
+        XCTAssertEqual(enables.count, 2)
+        XCTAssertNil((enables.first?["body"] as? [String: Any])?["cascade"])
+        XCTAssertEqual((enables.last?["body"] as? [String: Any])?["cascade"] as? Bool, true)
     }
 
     @MainActor func testTemplateOnlyReplacesDraftAfterConfirmation() async throws {

@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// Settings › hub › Addresses (#4670, docs/operations/network.md "Client-added candidates"): other addresses of one paired
 /// hub, tried after the paired one in the order shown (`HubRoute`). Each may carry its own Cloudflare Access service
@@ -10,6 +11,9 @@ struct HubAddressesPage: View {
     @State private var clientID = ""
     @State private var clientSecret = ""
     @State private var showAccess = false
+    #if DEBUG
+    @State private var seeded = false
+    #endif
 
     var body: some View {
         if let hub = model.registry.hubs.first(where: { $0.id == hubID }) {
@@ -37,17 +41,20 @@ struct HubAddressesPage: View {
                 Text("The app asks every address at once and uses the first in this order that answers; a later one when the earlier ones don't answer quickly. The paired address always comes first.")
             }
             Section {
-                #if os(macOS)
-                TextField(String(localized: "Address"), text: $url, prompt: Text(verbatim: "https://hub.example.com"))
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("addresses.url")
-                #else
-                TextField(String(localized: "Address"), text: $url, prompt: Text(verbatim: "https://hub.example.com"))
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("addresses.url")
-                #endif
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    #if os(macOS)
+                    TextField(String(localized: "Address"), text: $url, prompt: Text(verbatim: "https://hub.example.com"))
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("addresses.url")
+                    #else
+                    TextField(String(localized: "Address"), text: $url, prompt: Text(verbatim: "https://hub.example.com"))
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("addresses.url")
+                    #endif
+                    hint(input(hub))
+                }
                 // Closed until needed, as in the pairing sheet: most addresses have no token.
                 DisclosureGroup(isExpanded: $showAccess) {
                     CloudflareAccessFields(clientID: $clientID, clientSecret: $clientSecret, idPrefix: "addresses.access")
@@ -75,6 +82,14 @@ struct HubAddressesPage: View {
             }
         }
         .themedPage()
+        #if DEBUG
+        // `-showHubAddressDraft <text>`: the field starts with this text (screenshots of the line under it).
+        .onAppear {
+            guard !seeded else { return }
+            seeded = true
+            if let s = UserDefaults.standard.string(forKey: "showHubAddressDraft") { url = s }
+        }
+        #endif
         #if os(macOS)
         .formStyle(.grouped)
         #else
@@ -104,11 +119,37 @@ struct HubAddressesPage: View {
         Button(role: .destructive) { save(added) { $0.remove(at: i) } } label: { Label("Remove Address", systemImage: Theme.Icon.delete) }
     }
 
+    /// The address typed, `https://` in front when it has no scheme (`HubAddressInput`).
+    private func input(_ hub: PairedHub) -> HubAddressInput { HubAddressInput(url, existing: hub.configs.map(\.url)) }
+
+    /// One line under the field: the address that Add will add, or why there is none. Nothing while the field is empty.
+    @ViewBuilder private func hint(_ input: HubAddressInput) -> some View {
+        switch input {
+        case .empty:
+            EmptyView()
+        case .ready(let u):
+            Text("Will add \(u.absoluteString)")
+                .font(Theme.Font.caption).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.middle)
+                .accessibilityIdentifier("addresses.hint")
+        case .unsupportedScheme, .invalid, .duplicate:
+            problem(input).font(Theme.Font.caption).foregroundStyle(Theme.danger)
+                .accessibilityIdentifier("addresses.problem")
+        }
+    }
+
+    /// Verbatim: as a `LocalizedStringKey` the example addresses would turn into links.
+    private func problem(_ input: HubAddressInput) -> Text {
+        switch input {
+        case .unsupportedScheme: Text(verbatim: String(localized: "Only addresses starting with https:// or http:// work."))
+        case .duplicate: Text(verbatim: String(localized: "This hub already has this address."))
+        default: Text(verbatim: String(localized: "This isn't a valid address. Write it like hub.example.com or https://hub.example.com:8443."))
+        }
+    }
+
     /// The address typed, as one to add: http or https with a host, not one the hub has already.
     private func draft(_ hub: PairedHub) -> HubAddress? {
-        let text = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let u = URL(string: text.hasSuffix("/") ? String(text.dropLast()) : text), ["http", "https"].contains(u.scheme?.lowercased() ?? ""),
-              u.host()?.isEmpty == false, !hub.configs.contains(where: { $0.url == u }) else { return nil }
+        guard case .ready(let u) = input(hub) else { return nil }
         let id = clientID.trimmingCharacters(in: .whitespacesAndNewlines), secret = clientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
         guard id.isEmpty == secret.isEmpty else { return nil } // half a token: neither
         return HubAddress(url: u, access: HubAccess(clientID: id, clientSecret: secret))

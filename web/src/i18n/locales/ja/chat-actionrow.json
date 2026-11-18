@@ -38,10 +38,5 @@
   "status_running": "実行中",
   "status_error": "エラー",
   "status_done": "完了",
-  "no_content": "内容がありません",
-  "changes": "変更",
-  "changes_in": "{name}の変更",
-  "open_file": "ファイルを開く",
-  "close": "閉じる",
-  "show_rest_other": "残り{count}行を表示"
+  "no_content": "内容がありません"
 }

@@ -1,3 +1,4 @@
 {
-  "outdated": "personad on {name} is too old to rename, move or delete files. Redeploy it"
+  "outdated": "personad on {name} is too old to rename, move or delete files. Redeploy it",
+  "outdated_feature": "personad on {name} is too old for this. Redeploy it"
 }

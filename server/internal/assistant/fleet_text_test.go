@@ -2,7 +2,6 @@ package assistant
 
 import (
 	"encoding/json"
-	"fmt"
 	"slices"
 	"testing"
 
@@ -54,6 +53,30 @@ func TestLocalizeSession(t *testing.T) {
 	}
 	if bg[0].Description != "超时转到后台的命令" || queued[0] != "【来自 另一个会话】look at this" {
 		t.Fatal("the node's slices were written to")
+	}
+}
+
+// A runtime session's last words, when its agent stopped on a failure, are the bridge's own (transcript.RuntimeError…,
+// Paseo's): they read in the user's language (#8133). Any other session's last words are its agent's and stay as they
+// are, Chinese included, and so do a runtime agent's words that only look like the bridge's.
+func TestLocalizeRuntimeFailureLastText(t *testing.T) {
+	row := func(source, text string) proto.Session { return proto.Session{SourceKind: source, LastText: text} }
+	for _, c := range []struct {
+		s      proto.Session
+		en, ja string
+	}{
+		{row(proto.SourceRuntime, "出错了：Provider crashed"), "Error: Provider crashed", "エラー：Provider crashed"},
+		{row(proto.SourceRuntime, "出错了"), "Something went wrong", "エラーが発生しました"},
+		{row(proto.SourceRuntime, "出错了吗？再看看"), "出错了吗？再看看", "出错了吗？再看看"},
+		{row("", "出错了：编译没过"), "出错了：编译没过", "出错了：编译没过"}, // a terminal agent's own words
+	} {
+		for l, want := range map[i18n.Lang]string{i18n.ZhHans: c.s.LastText, i18n.En: c.en, i18n.Ja: c.ja} {
+			s := c.s
+			localizeSession(l, &s)
+			if s.LastText != want {
+				t.Errorf("%s %q: %q, want %q", l, c.s.LastText, s.LastText, want)
+			}
+		}
 	}
 }
 
@@ -121,34 +144,6 @@ func TestLocalizeSubagentTools(t *testing.T) {
 	localizeSession(i18n.ZhHans, &zh)
 	if zh.Subagents[0].LastTool != bash {
 		t.Fatal("zh-Hans rewritten")
-	}
-}
-
-// The node's reasons for running an Agent SDK conversation on the CLI read in the app's language, the cause as it was;
-// a reason the hub does not know, and Chinese, stay as they are.
-func TestRuntimeFallbackInEachLanguage(t *testing.T) {
-	for _, c := range []struct{ node, en string }{
-		{fmt.Sprintf(proto.FallbackShellLauncher, "kcc"), "Launcher kcc is a shell command on this computer; the Agent SDK can’t use its settings"},
-		{proto.FallbackNoNode + "exec: \"node\": not found", "No Node.js 22 or later: exec: \"node\": not found"},
-		{proto.FallbackNoClaude + "nope", "Can’t find claude: nope"},
-		{proto.FallbackNoBridge, "This personad doesn’t include the Agent SDK bridge"},
-		{proto.FallbackNoBridgeScript, "The Agent SDK bridge package has no bridge.mjs"},
-		{proto.FallbackReadBridge + "x", "Couldn’t read the Agent SDK bridge: x"},
-		{proto.FallbackWriteBridge + "y", "Couldn’t write the Agent SDK bridge: y"},
-		{proto.FallbackNoBridge + "，还有别的", proto.FallbackNoBridge + "，还有别的"},
-		{"别的原因", "别的原因"},
-		{"", ""},
-	} {
-		s := proto.Session{RuntimeFallback: c.node}
-		localizeSession(i18n.En, &s)
-		if s.RuntimeFallback != c.en {
-			t.Errorf("%q: %q", c.node, s.RuntimeFallback)
-		}
-		s = proto.Session{RuntimeFallback: c.node}
-		localizeSession(i18n.ZhHans, &s)
-		if s.RuntimeFallback != c.node {
-			t.Errorf("zh %q: %q", c.node, s.RuntimeFallback)
-		}
 	}
 }
 

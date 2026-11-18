@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nwverse/persona/sdk/go/wire"
+	"github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/subscriptions"
@@ -233,24 +234,38 @@ func recipeFormat() map[string]any {
 		"keys":   subscriptions.RecipeKeys,
 		"fields": subscriptions.FieldKeys,
 		"field_meaning": map[string]string{
-			"id":       "the item's stable id: dedup key (without one, items are told apart by title, time and sender)",
-			"thread":   "items with the same thread share one Inbox row and one knowledge-base chat (group_by thread)",
-			"title":    "required: what the Inbox row says",
-			"sender":   "who it is from",
-			"time":     "when it happened: RFC 3339, a date and time (user's zone), a date, or Unix seconds / milliseconds",
-			"body":     "the text (kept up to 8000 characters)",
-			"link":     "where to open it (https links become the row's link)",
-			"due_date": "a deadline: a row with one is Needs you without a triage model",
+			"id":        "the item's stable id: dedup key (without one, items are told apart by title, time and sender)",
+			"thread":    "the conversation an item belongs to: with group_by thread, items with the same thread share one Inbox row and one knowledge-base chat",
+			"title":     "required: what the Inbox row says",
+			"sender":    "who it is from",
+			"time":      "when it happened: RFC 3339, a date and time (user's zone), a date, or Unix seconds / milliseconds",
+			"body":      "the text (kept up to 8000 characters)",
+			"link":      "where to open it (https links become the row's link)",
+			"due_date":  "a deadline: a row with one is Needs you without a triage model",
+			"sender_id": "the sender's stable id, as the source writes it: muting the sender matches it (without it, the lowercased name)",
+			"chat":      "the conversation's stable id: the row can then be muted by chat",
+			"chat_name": "the conversation's name, which the chat mute shows",
+			"seen":      "whether it was already seen in the source (true, a non-zero number, or true / yes / read / seen): the Inbox row is then read",
+			"reply_to":  "where a reply goes and who sees it, in a line for people: with it, an item with an id can be replied to through the connector",
 		},
-		"paths":         "relative to one item: $, .key (letters, digits, _ and -) and [index]; no wildcards, filters or expressions",
-		"items_path":    "where the list of items is in the result ($ by default); leave it empty to have the dry run find the result's one top-level list",
+		"paths":      "relative to one item: $, .key (letters, digits, _ and -) and [index]; no wildcards, filters or expressions",
+		"items_path": "where the list of items is in the result ($ by default); leave it empty to have the dry run find the result's one top-level list",
+		"pagination": map[string]string{
+			"cursor": "set cursor_arg and next_cursor_path: the tool argument and result path for an opaque next-page cursor",
+			"page":   "set page_arg and optionally next_page_path: numeric next page or boolean has-more; without a result path, a full requested page continues",
+			"resume": "one page is committed per leased run; the original window advances only after the terminal page",
+		},
 		"template_vars": map[string]string{"{{since}}": "RFC 3339 time: an hour before the newest item already pulled, a day back on the first run", "{{since_date}}": "the same as a date, YYYY-MM-DD in the user's zone"},
 		"modes": map[string]string{
 			wire.ConnectorSubscriptionModeItems:    "new items, each kept once (a JSON result with a list)",
 			wire.ConnectorSubscriptionModeSnapshot: "the result as one state kept when it changes (any result; text can only be a snapshot); at most hourly, daily by default",
+			wire.ConnectorSubscriptionModeThings:   "a tool that answers Inbox rows ready-made (a connector's own inbox_things): kept and handed to the Inbox as they are; group_by thread, no fields, Inbox only",
 		},
-		"kinds":    wire.ConnectorSubscriptionKinds,
-		"group_by": wire.ConnectorSubscriptionGroups,
+		"kinds": wire.ConnectorSubscriptionKinds,
+		"group_by": map[string]string{
+			wire.ConnectorSubscriptionGroupSource: "the whole subscription is one Inbox row (its newest item on top) and one knowledge-base chat: for one conversation, such as a group chat or a channel",
+			wire.ConnectorSubscriptionGroupThread: "a row and a chat per thread, an item without one its own: for items that stand on their own (articles, notifications, mail) or belong to one of several conversations",
+		},
 		"intervals": "interval_seconds is at least 300 and the source's min_interval_seconds; a snapshot at least 3600, by default daily at daily_at (HH:MM). " +
 			"items default to every 900 seconds",
 	}
@@ -480,6 +495,7 @@ func (a saveArgs) patch(revision int64, recipe *subscriptions.Recipe) (subscript
 	if a.Existing != "" && !slices.Contains([]string{subscriptions.ExistingDigest, subscriptions.ExistingBaseline, subscriptions.ExistingDeliver}, a.Existing) {
 		return p, badArgs("existing is digest, baseline or deliver")
 	}
+	// "" clears fallback_tier at runtime; the MCP schema enum omits "" because Gemini rejects empty enum values.
 	if a.FallbackTier != nil && !slices.Contains([]string{"", "fyi", "action", "wait"}, *a.FallbackTier) {
 		return p, badArgs(`fallback_tier is "", fyi, action or wait`)
 	}
@@ -604,25 +620,68 @@ func (h *Manager) saveCreate(ctx context.Context, by asker, a saveArgs) (any, er
 	if err := checkSchedule(after, p); err != nil {
 		return nil, err
 	}
-	text := subscriptionsui.Card(ctx, h.subs, h.subscriptionCardEnv(), subscriptionsui.Change{Action: "create", After: after, Source: src,
-		Connector: h.subscriptionConnectorName(a.Connector), DryRun: &dr})
-	if res, ok := h.askSubscriptionCard(ctx, by, after.Label, "create", text); !ok {
-		return res, nil
-	}
-	created, err := h.subs.Create(ctx, subscriptions.CreateRequest{Connector: a.Connector, Source: a.Source, Recipe: r, Label: deref(a.Label)},
-		subscriptionActor)
+	existingBefore, _, err := h.subs.List(ctx, subscriptions.Filter{Connector: a.Connector})
 	if err != nil {
 		return nil, err
 	}
-	p.Label = nil // given to Create
-	if !emptyPatch(created, p) {
-		p.Revision = created.Revision
-		if created, err = h.subs.Update(ctx, created.ID, p, subscriptionActor); err != nil {
-			return map[string]any{"saved": true, "subscription": nil, "warning": "made with both destinations off; its other settings failed: " + err.Error()}, nil
+	beforeIDs := map[string]bool{}
+	for _, candidate := range existingBefore {
+		if candidate.Source == a.Source && candidate.Label == after.Label {
+			beforeIDs[candidate.ID] = true
 		}
 	}
-	return map[string]any{"saved": true, "subscription": subscriptionLine(created), "warnings": dr.Warnings,
-		"undo": "subscription_save with action delete (the user confirms again)"}, nil
+	text := subscriptionsui.Card(ctx, h.subs, h.subscriptionCardEnv(), subscriptionsui.Change{Action: "create", After: after, Source: src,
+		Connector: h.subscriptionConnectorName(a.Connector), DryRun: &dr})
+	return h.askSubscriptionCard(ctx, by, after.Label, "create", text, "create\x00"+a.Connector+"\x00"+a.Source+"\x00"+after.Label,
+		func(ctx context.Context) (string, error) {
+			// The source's name, limits and defaults are part of the visible
+			// proposal. Rebuild them now; a changed proposal needs a fresh card.
+			currentSource := h.cachedSource(ctx, a.Connector, a.Source)
+			if currentSource == nil {
+				return "", approval.ErrStale
+			}
+			currentMin := 0
+			if currentSource.MinIntervalSeconds != nil {
+				currentMin = *currentSource.MinIntervalSeconds
+			}
+			currentBase := subscriptions.Subscription{Connector: a.Connector, Source: a.Source, SourceName: currentSource.Name,
+				Label: currentSource.Name, Recipe: *recipe, IntervalSeconds: subscriptions.DefaultInterval(recipe.Mode, currentMin), SourceMin: currentMin}
+			if recipe.Mode == wire.ConnectorSubscriptionModeSnapshot {
+				currentBase.DailyAt = "08:00"
+			}
+			currentAfter := subscriptions.Patched(currentBase, p)
+			if currentAfter.Label != after.Label || currentAfter.SourceName != after.SourceName ||
+				currentAfter.IntervalSeconds != after.IntervalSeconds || currentAfter.DailyAt != after.DailyAt ||
+				!subscriptions.SameRecipe(currentAfter.Recipe, after.Recipe) {
+				return "", approval.ErrStale
+			}
+			existing, _, err := h.subs.List(ctx, subscriptions.Filter{Connector: a.Connector})
+			if err != nil {
+				return "", err
+			}
+			for _, candidate := range existing {
+				if candidate.Source == a.Source && candidate.Label == after.Label && !beforeIDs[candidate.ID] {
+					// The draft's before-state gains no new equivalent subscription.
+					// One created while the owner was reading or asking makes it stale.
+					return "", approval.ErrStale
+				}
+			}
+			created, err := h.subs.Create(ctx, subscriptions.CreateRequest{Connector: a.Connector, Source: a.Source, Recipe: r, Label: deref(a.Label)},
+				subscriptionActor)
+			if err != nil {
+				return "", err
+			}
+			p.Label = nil // given to Create
+			if !emptyPatch(created, p) {
+				p.Revision = created.Revision
+				if created, err = h.subs.Update(ctx, created.ID, p, subscriptionActor); err != nil {
+					return subscriptionApplyJSON(map[string]any{"saved": true, "subscription": nil,
+						"warning": "made with both destinations off; its other settings failed: " + err.Error()})
+				}
+			}
+			return subscriptionApplyJSON(map[string]any{"saved": true, "subscription": subscriptionLine(created), "warnings": dr.Warnings,
+				"undo": "subscription_save with action delete (the user confirms again)"})
+		})
 }
 
 func deref(s *string) string {
@@ -683,19 +742,41 @@ func (h *Manager) saveUpdate(ctx context.Context, by asker, a saveArgs, cur subs
 	text := subscriptionsui.Card(ctx, h.subs, h.subscriptionCardEnv(), subscriptionsui.Change{Action: "update", Before: &cur, After: after,
 		Source: h.cachedSource(ctx, cur.Connector, cur.Source), Connector: h.subscriptionConnectorName(cur.Connector), DryRun: dr,
 		Existing: cmpOr(p.Existing, subscriptions.ExistingDigest)})
-	if res, ok := h.askSubscriptionCard(ctx, by, cur.Label, "update", text); !ok {
-		return res, nil
-	}
-	saved, err := h.subs.Update(ctx, cur.ID, p, subscriptionActor)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]any{"saved": true, "subscription": subscriptionLine(saved), "previous": previousOf(cur, p),
-		"undo": "subscription_save update with previous and the new revision puts it back (the user confirms again)"}
-	if dr != nil {
-		out["warnings"], out["existing"] = dr.Warnings, cmpOr(p.Existing, subscriptions.ExistingDigest)
-	}
-	return out, nil
+	return h.askSubscriptionCard(ctx, by, cur.Label, "update", text, cur.ID, func(ctx context.Context) (string, error) {
+		// Get is the immediate precondition check; Update repeats the same
+		// revision predicate atomically in the store.
+		current, _, err := h.subs.Get(ctx, cur.ID)
+		if err != nil {
+			if subscriptionConflict(err) {
+				return "", approval.ErrStale
+			}
+			return "", err
+		}
+		if current.Revision != cur.Revision {
+			return "", approval.ErrStale
+		}
+		currentAfter := subscriptions.Patched(current, p)
+		if currentAfter.Label != after.Label || currentAfter.IntervalSeconds != after.IntervalSeconds ||
+			currentAfter.DailyAt != after.DailyAt || currentAfter.ToInbox != after.ToInbox || currentAfter.ToKB != after.ToKB ||
+			currentAfter.TriageRules != after.TriageRules || currentAfter.FallbackTier != after.FallbackTier ||
+			!subscriptions.SameRecipe(currentAfter.Recipe, after.Recipe) {
+			return "", approval.ErrStale
+		}
+		p.Revision = current.Revision
+		saved, err := h.subs.Update(ctx, current.ID, p, subscriptionActor)
+		if subscriptionConflict(err) {
+			return "", approval.ErrStale
+		}
+		if err != nil {
+			return "", err
+		}
+		out := map[string]any{"saved": true, "subscription": subscriptionLine(saved), "previous": previousOf(current, p),
+			"undo": "subscription_save update with previous and the new revision puts it back (the user confirms again)"}
+		if dr != nil {
+			out["warnings"], out["existing"] = dr.Warnings, cmpOr(p.Existing, subscriptions.ExistingDigest)
+		}
+		return subscriptionApplyJSON(out)
+	})
 }
 
 // previousOf are cur's values of what p changes: the arguments that put it back.
@@ -731,29 +812,69 @@ func previousOf(cur subscriptions.Subscription, p subscriptions.Patch) map[strin
 func (h *Manager) saveDelete(ctx context.Context, by asker, a saveArgs, cur subscriptions.Subscription) (any, error) {
 	text := subscriptionsui.Card(ctx, h.subs, h.subscriptionCardEnv(), subscriptionsui.Change{Action: "delete", After: cur,
 		Source: h.cachedSource(ctx, cur.Connector, cur.Source), Connector: h.subscriptionConnectorName(cur.Connector), DeleteData: a.DeleteData})
-	if res, ok := h.askSubscriptionCard(ctx, by, cur.Label, "delete", text); !ok {
-		return res, nil
-	}
-	if err := h.subs.Delete(ctx, cur.ID, a.DeleteData, subscriptionActor); err != nil {
-		return nil, err
-	}
-	return map[string]any{"saved": true, "deleted": cur.ID, "deleted_data": a.DeleteData}, nil
+	return h.askSubscriptionCard(ctx, by, cur.Label, "delete", text, cur.ID, func(ctx context.Context) (string, error) {
+		current, _, err := h.subs.Get(ctx, cur.ID)
+		if err != nil {
+			if subscriptionConflict(err) {
+				return "", approval.ErrStale
+			}
+			return "", err
+		}
+		if current.Revision != cur.Revision {
+			return "", approval.ErrStale
+		}
+		if err := h.subs.DeleteAt(ctx, current.ID, current.Revision, a.DeleteData, subscriptionActor); err != nil {
+			if subscriptionConflict(err) {
+				return "", approval.ErrStale
+			}
+			return "", err
+		}
+		return subscriptionApplyJSON(map[string]any{"saved": true, "deleted": current.ID, "deleted_data": a.DeleteData})
+	})
 }
 
-// askSubscriptionCard asks the user to approve text on the phone, in the conversation by. ok false: not approved, and
-// the answer says how it ended (only the user's own answer counts: an expired, closed or proxy-answered card is no
-// decline).
-func (h *Manager) askSubscriptionCard(ctx context.Context, by asker, label, action, text string) (any, bool) {
+// askSubscriptionCard retains one prepared mutation through clarification. Its
+// apply returns the successful tool response as JSON; non-approval responses
+// keep the existing {saved:false, why} shape. No captured resolution is reused.
+func (h *Manager) askSubscriptionCard(ctx context.Context, by asker, label, action, text, replacement string,
+	apply func(context.Context) (string, error)) (any, error) {
 	shown, _ := json.Marshal(map[string]string{"subscription": label, "action": action})
-	r, _ := h.approveCard(ctx, by, "subscription_save", text, shown)
-	switch {
-	case r.UserAllowed():
-		return nil, true
-	case r.UserDenied():
-		h.logf("subscription %s: declined on the phone", action)
-		return map[string]any{"saved": false, "why": "The user declined on the phone: nothing changed. Do not retry unless they ask."}, false
+	now := time.Now().UTC()
+	ix := proto.Interaction{ID: "ix_" + randomHex(6), MachineID: by.machine, SessionID: by.session,
+		Kind: proto.IxPermission, ToolName: "subscription_save", Summary: text, ToolInput: shown, SessionTitle: "Persona",
+		Cwd: h.askerCwd(by), CreatedAt: now, ExpiresAt: now.Add(15 * time.Minute)}
+	outcome, err := h.waitPrepared(ctx, ix, approval.Operation{
+		Replacement: by.machine + "\x00" + by.session + "\x00subscription\x00" + replacement,
+		Denied:      "The user declined on the phone: nothing changed. Do not retry unless they ask.",
+		Unanswered:  prompts.RenderSettingUnanswered(),
+		Apply: func(ctx context.Context, _ proto.Resolution) (string, error) {
+			return apply(ctx)
+		},
+	})
+	if err != nil {
+		return nil, err
 	}
-	return map[string]any{"saved": false, "why": prompts.RenderSettingUnanswered()}, false
+	if outcome.Clarifying {
+		return outcome.Text, nil
+	}
+	var out any
+	if json.Unmarshal([]byte(outcome.Text), &out) == nil {
+		return out, nil
+	}
+	if outcome.Text == "The user declined on the phone: nothing changed. Do not retry unless they ask." {
+		h.logf("subscription %s: declined on the phone", action)
+	}
+	return map[string]any{"saved": false, "why": outcome.Text}, nil
+}
+
+func subscriptionApplyJSON(v any) (string, error) {
+	raw, err := json.Marshal(v)
+	return string(raw), err
+}
+
+func subscriptionConflict(err error) bool {
+	var e *subscriptions.Error
+	return errors.As(err, &e) && (e.Code == subscriptions.CodeConflict || e.Code == subscriptions.CodeNotFound)
 }
 
 // subscriptionCardEnv is the card's language and zone: the user's.
@@ -810,7 +931,7 @@ func (h *Manager) toolSubscriptionRun(ctx context.Context, args json.RawMessage)
 		if err != nil {
 			return nil, err
 		}
-		if len(runs) > 0 && !runs[0].At.Before(asked) {
+		if len(runs) > 0 && runs[0].Trigger == subscriptions.TriggerNow && !runs[0].At.Before(asked) {
 			run := runs[0]
 			items := []heldSample{}
 			if run.New > 0 {

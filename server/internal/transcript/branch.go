@@ -1,12 +1,14 @@
 package transcript
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -47,7 +49,9 @@ type treeLine struct {
 	sidechain    bool
 	assistant    bool // the line is the assistant's (a reply, a tool call): the message it grew from was answered
 	system       bool // a system line (a recap, a turn's duration, a notice)
-	turnEnd      bool // a turn_duration line: the turn it closes ended
+	turnEnd      bool
+	turnStart    bool // an image-only or task-notification skipped prompt opened a model turn
+	raw          []byte
 	// said / saidAt: the agent's words on this line (Meta.LastText / LastTextAt as it set them); spoke says it wrote
 	// text at all (said is "" for botmux's sentinel alone).
 	said   string
@@ -56,19 +60,28 @@ type treeLine struct {
 }
 
 // treeRec is a line with a uuid, as the tree keeps it: prompt says it is one of the user's own messages, reply that it
-// is the assistant's, system that it is a system line and turnEnd a turn_duration one.
+// is the assistant's, system that it is a system line and turnEnd a turn_duration one. raw is the parsed record to
+// replay when it remains visible; hasOutcome is false for a structural-only skipped tool result or compact summary.
+// round: it is a supervision message sent as a round of the background supervisor (prompts.IsSuperviseRound, #7315).
 type treeRec struct {
 	uuid, parent string
 	prompt       bool
 	reply        bool
 	system       bool
 	turnEnd      bool
+	turnStart    bool
+	wake         bool
+	raw          []byte
+	errorLine    string
+	hasOutcome   bool
+	round        bool
 }
 
 // branchTree tracks the lines read so far (file order) and which of them lie on abandoned branches.
 type branchTree struct {
 	recs    []treeRec
 	replies map[string]bool     // lines that are the assistant's
+	rounds  map[string]bool     // the background supervisor's rounds (treeRec.round)
 	ends    map[string]bool     // turn_duration lines
 	kids    map[string][]string // parent → the lines hanging from it
 	last    map[string]string   // parent → the latest message of the user's hanging from it
@@ -88,7 +101,7 @@ type branchTree struct {
 func (t *branchTree) init() {
 	if t.kids == nil {
 		t.kids, t.last, t.hidden, t.roots = map[string][]string{}, map[string]string{}, map[string]bool{}, map[string]bool{}
-		t.replies, t.ends, t.up = map[string]bool{}, map[string]bool{}, map[string]string{}
+		t.replies, t.ends, t.up, t.rounds = map[string]bool{}, map[string]bool{}, map[string]string{}, map[string]bool{}
 	}
 }
 
@@ -107,6 +120,9 @@ func (t *branchTree) add(r treeRec) (drop bool, newly []string) {
 	}
 	if r.turnEnd {
 		t.ends[r.uuid] = true
+	}
+	if r.round {
+		t.rounds[r.uuid] = true
 	}
 	if t.hidden[r.uuid] {
 		return true, nil // a line repeated in the file (a resume copies lines)
@@ -131,6 +147,12 @@ func (t *branchTree) add(r treeRec) (drop bool, newly []string) {
 		t.last[r.parent] = r.uuid
 	}
 	if prev == "" || prev == r.uuid || t.hidden[prev] {
+		return false, nil
+	}
+	if r.round || t.rounds[prev] {
+		// The background supervisor's rounds all resume at the end of its first turn (#7315): each hangs from that line
+		// beside the ones before it on purpose, and none was gone back over. Neither a round nor what comes beside one
+		// (a later round, a recap written there) takes the one before for abandoned.
 		return false, nil
 	}
 	if answered, ended := t.answered(prev); !answered || !r.prompt && !ended {
@@ -321,19 +343,37 @@ func trackLine(t *branchTree, meta *Meta, items []proto.Item, kept, sent *[]prot
 }
 
 func (tl treeLine) rec(items []proto.Item) treeRec {
-	return treeRec{uuid: tl.uuid, parent: tl.parent, prompt: isMessage(items), reply: tl.assistant, system: tl.system, turnEnd: tl.turnEnd}
+	prompt := isMessage(items)
+	return treeRec{uuid: tl.uuid, parent: tl.parent, prompt: prompt, reply: tl.assistant, system: tl.system, turnEnd: tl.turnEnd, raw: tl.raw,
+		round: prompt && isSuperviseRound(items)}
+}
+
+// isSuperviseRound says the items of a message are a supervision message sent as a round of the background supervisor
+// (prompts.SuperviseRoundMarker): a round, not a rewind (branchTree.add).
+func isSuperviseRound(items []proto.Item) bool {
+	for _, it := range items {
+		if it.Role == "user" && it.Kind == proto.KindText && prompts.IsSuperviseRound(it.Text) {
+			return true
+		}
+	}
+	return false
 }
 
 // Tail follows the tree over lines read one at a time with ParseLine outside a File (the node's quick read of a
 // transcript's end), so that the agent's last words it ends up with are not ones on an abandoned branch: a turn gone back
 // over that ended in an API error would otherwise stay the session's last words, and its error the session's.
 type Tail struct {
-	tree    branchTree
-	words   []treeLine      // the lines that said something, in order
-	gone    map[string]bool // Rewound's lines still left out
-	rewound []string        // Rewound's lines as it was told them
-	revoked bool
+	tree          branchTree
+	words         []treeLine      // the lines that said something, in order
+	gone          map[string]bool // Rewound's lines still left out
+	rewound       []string        // Rewound's lines as it was told them
+	modelFallback *proto.ModelRefusal
+	revoked       bool
 }
+
+// PriorModelFallback supplies the session's fallback from before the quick tail. Settle starts visible-record replay
+// from it, not from meta after records on an abandoned branch may have cleared or replaced it.
+func (t *Tail) PriorModelFallback(fallback *proto.ModelRefusal) { t.modelFallback = fallback }
 
 // Rewound tells the tail about lines the node itself rewound over (File.RewoundLines): Claude writes nothing for that,
 // so they and what grows from them are left out too. All of them, not only where the branch starts: that may be
@@ -359,7 +399,9 @@ func (t *Tail) Revoked() (rest []string, revoked bool) {
 }
 
 // Line is told about the line ParseLine just read into meta, with the items it returned.
-func (t *Tail) Line(meta *Meta, items []proto.Item) {
+func (t *Tail) Line(meta *Meta, items []proto.Item) { t.line(meta, items, true) }
+
+func (t *Tail) line(meta *Meta, items []proto.Item, recordOutcome bool, skippedStart ...bool) {
 	tl := meta.tree
 	meta.tree = treeLine{}
 	if tl.spoke {
@@ -369,6 +411,16 @@ func (t *Tail) Line(meta *Meta, items []proto.Item) {
 		return
 	}
 	rec := tl.rec(items)
+	// A parsed record is replayable. A skipped large prompt is replayable too (its quick-tail transition is real),
+	// while a skipped tool result or compact summary is tree shape only.
+	rec.hasOutcome = recordOutcome || rec.prompt || len(skippedStart) > 0 && skippedStart[0]
+	rec.turnStart = len(skippedStart) > 0 && skippedStart[0] && !rec.prompt
+	if len(skippedStart) > 1 {
+		rec.wake = skippedStart[1]
+	}
+	if meta.TurnError != "" {
+		rec.errorLine = meta.turnErrorLine
+	}
 	if (rec.prompt || rec.reply) && t.gone[rec.parent] && !t.gone[rec.uuid] {
 		// Claude went on from a line Rewound named: that rewind was not one (File.RewoundAt). The lines of its turn, as
 		// far back as the tail goes, stop being left out (another turn's stay out), and the tree is worked out again.
@@ -402,6 +454,27 @@ func (t *Tail) take(rec treeRec) {
 	}
 }
 
+func skippedTurnStart(e map[string]json.RawMessage) (start, wake bool) {
+	if rawString(e["type"]) != "user" || string(e["isCompactSummary"]) == "true" || string(e["isMeta"]) == "true" {
+		return false, false
+	}
+	var message struct {
+		Content json.RawMessage `json:"content"`
+	}
+	_ = json.Unmarshal(e["message"], &message)
+	var blocks []map[string]json.RawMessage
+	if json.Unmarshal(message.Content, &blocks) == nil {
+		for _, b := range blocks {
+			if rawString(b["type"]) == "tool_result" {
+				return false, false
+			}
+		}
+	}
+	start = true
+	wake = bytes.Contains(message.Content, []byte("<task-notification>")) || bytes.Contains(e["content"], []byte("<task-notification>"))
+	return start, wake
+}
+
 // Skipped is told about a line the caller left unparsed for its size (a prompt with an image or a long paste, a big
 // tool result). The line still takes its place in the tree: without it a turn whose prompt is one is not found gone
 // back over, and one with a big tool result in it is hidden only up to there (the chain breaks at the line). What makes
@@ -412,6 +485,7 @@ func (t *Tail) Skipped(line []byte) {
 	if json.Unmarshal(line, &e) != nil {
 		return
 	}
+	start, wake := skippedTurnStart(e)
 	delete(e, "toolUseResult")
 	if raw, ok := e["message"]; ok {
 		var msg map[string]json.RawMessage
@@ -436,36 +510,67 @@ func (t *Tail) Skipped(line []byte) {
 		return
 	}
 	var m Meta
-	t.Line(&m, parseLine(0, small, &m))
+	t.line(&m, parseLine(0, small, &m), false, start, wake)
 }
 
 // Settle puts into meta the agent's last words on the lines still in the conversation, when words on an abandoned
 // branch were among them (meta is left as it is otherwise). It says whether it changed them; LastText is "" then when
 // no words in the lines read are left. A turn error said on such a branch goes too: the conversation that is left did
-// not fail there, and nothing older comes back (the user went back to start over).
+// not fail there, and nothing older comes back (the user went back to start over). Replaying only the visible raw
+// records likewise keeps turn success, open/closed/local state, and automatic resume on the current branch.
 func (t *Tail) Settle(meta *Meta) bool {
 	if meta.turnErrorLine != "" && t.tree.hidden[meta.turnErrorLine] {
 		meta.clearTurnError()
 	}
-	dropped := false
+	wordsDropped, outcomeDropped := false, false
 	for _, w := range t.words {
 		if t.tree.hidden[w.uuid] {
-			dropped = true
+			wordsDropped = true
 			break
 		}
 	}
-	if !dropped {
+	for _, rec := range t.tree.recs {
+		if t.tree.hidden[rec.uuid] && rec.hasOutcome && len(rec.raw) > 0 {
+			outcomeDropped = true
+			break
+		}
+	}
+	if !wordsDropped && !outcomeDropped {
 		return false
 	}
-	meta.LastText, meta.LastTextAt = "", time.Time{}
-	for _, w := range t.words {
-		if t.tree.hidden[w.uuid] {
+	// Replay the raw records that remain visible, not the parser state that an abandoned turn left behind. ParseLine
+	// supplies the real prompt/wake/local/close and error transitions, including idempotent starts and resume state.
+	// The pre-tail fallback is replay's initial state; meta may instead describe an abandoned branch's last reply.
+	replay := Meta{ModelFallback: t.modelFallback}
+	for _, rec := range t.tree.recs {
+		if t.tree.hidden[rec.uuid] || !rec.hasOutcome || len(rec.raw) == 0 || rec.errorLine != "" && t.tree.hidden[rec.errorLine] {
 			continue
 		}
-		if w.said != "" {
-			meta.LastText = w.said
+		ParseLine(0, rec.raw, &replay)
+		if rec.turnStart {
+			replay.ClaudeTurnStarted(rec.wake)
+			replay.TurnOpen, replay.TurnClosed = true, false
+			replay.LastTurnWake = rec.wake
 		}
-		meta.LastTextAt = w.saidAt
+	}
+	meta.TurnOpen, meta.TurnClosed = replay.TurnOpen, replay.TurnClosed
+	meta.localTurn, meta.beforeLocal = replay.localTurn, replay.beforeLocal
+	meta.LastTurnWake, meta.ModelFallback = replay.LastTurnWake, replay.ModelFallback
+	meta.turnWorked, meta.turnSucceeded = replay.turnWorked, replay.turnSucceeded
+	meta.TurnError, meta.TurnErrorKind, meta.TurnErrorCode = replay.TurnError, replay.TurnErrorKind, replay.TurnErrorCode
+	meta.TurnErrorResetsAt, meta.TurnErrorResumes, meta.TurnErrorAfterWork = replay.TurnErrorResetsAt, replay.TurnErrorResumes, replay.TurnErrorAfterWork
+	meta.turnErrorLine, meta.resumesSaid = replay.turnErrorLine, replay.resumesSaid
+	if wordsDropped {
+		meta.LastText, meta.LastTextAt = "", time.Time{}
+		for _, w := range t.words {
+			if t.tree.hidden[w.uuid] {
+				continue
+			}
+			if w.said != "" {
+				meta.LastText = w.said
+			}
+			meta.LastTextAt = w.saidAt
+		}
 	}
 	return true
 }

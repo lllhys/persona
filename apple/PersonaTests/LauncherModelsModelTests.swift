@@ -88,6 +88,21 @@ import Testing
         #expect(m.list == nil && m.error == nil && !m.loading)
     }
 
+    @Test func typedAssistantModelsKeepTheirPurposeWhenLoadedAndForgotten() async {
+        let hub = FakeHub()
+        hub.on("GET", path, json: list)
+        hub.on("DELETE", path + "/custom", json: #"{"ok":true}"#)
+        let model = LauncherModelsModel(deps: .init(api: { _ in hub.client }))
+        await model.load(box, launcher: "claude", purpose: "assistant")
+        #expect(model.key == "box|claude|assistant")
+        #expect(hub.sent("GET", path).first?.query == ["purpose": "assistant"])
+        await model.forget("vendor/model-x", machine: box, launcher: "claude", purpose: "assistant")
+        #expect(model.remembered.map(\.id) == ["~vendor/model-latest"])
+        #expect(hub.sent("DELETE", path + "/custom").count == 1)
+        model.select(box, launcher: "claude")
+        #expect(model.key == "box|claude" && model.list == nil)
+    }
+
     @Test func aFailedReadSaysWhyAndAnotherLauncherStartsOver() async {
         let hub = FakeHub()
         hub.on("GET", path) { _ in throw APIError(status: 502, message: "claude 没登录") }
@@ -95,6 +110,24 @@ import Testing
         #expect(m.list == nil && m.error == "claude 没登录")
         m.select(box, launcher: "codex")
         #expect(m.key == "box|codex" && m.error == nil && m.list == nil)
+    }
+
+    @Test func assistantManagersKeepTheirOwnListAndForgetRoute() async throws {
+        let hub = FakeHub()
+        hub.on("GET", path, json: list)
+        hub.on("DELETE", path + "/custom", json: #"{"ok":true}"#)
+        var api = hub.client.showing("first")
+        let m = LauncherModelsModel(deps: .init(api: { _ in api }))
+        await m.load(box, launcher: "claude", purpose: "assistant")
+        #expect(m.key == "box|claude|assistant|first")
+        api = hub.client.showing("second")
+        await m.forget("vendor/model-x", machine: box, launcher: "claude", purpose: "assistant")
+        #expect(hub.sent("DELETE", path + "/custom").isEmpty)
+        await m.load(box, launcher: "claude", purpose: "assistant")
+        await m.forget("vendor/model-x", machine: box, launcher: "claude", purpose: "assistant")
+        #expect(m.key == "box|claude|assistant|second")
+        #expect(hub.sent("GET", path).map { $0.headers[APIClient.managerHeader] } == ["first", "second"])
+        #expect(hub.sent("DELETE", path + "/custom").first?.headers[APIClient.managerHeader] == "second")
     }
 }
 

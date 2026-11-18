@@ -109,7 +109,7 @@ final class ExtensionNotificationUITests: XCTestCase {
         let recorded = try await writes()
         XCTAssertEqual(recorded.filter { $0["action"] as? String == "open" }.count, 1)
         XCTAssertEqual(recorded.first?["state"] as? String, "notice-state")
-        app.buttons["完成"].firstMatch.tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         XCTAssertFalse(app.staticTexts["通知操作已执行"].exists)
     }
 

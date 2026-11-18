@@ -28,11 +28,13 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
         case notSent
         /// The computer is offline: nothing said can go.
         case offline
+        /// A system call to Persona on hold (#9290): nothing said goes and nothing plays until it is off hold.
+        case held
 
         /// Worth saying to VoiceOver as it comes (docs/assistant/voice.md 6.6「无障碍」): it asks for the user, or the voice stops.
         var announced: Bool {
             switch self {
-            case .needsTap, .asking, .notSent, .offline, .paused: true
+            case .needsTap, .asking, .notSent, .offline, .paused, .held: true
             case .ready, .muted, .handing, .working, .waiting: false
             }
         }
@@ -45,6 +47,9 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
         case resend(run: String)
         /// Clear and Send: the computer's unsent line cleared first (`run.clearable`), then the instruction.
         case clearAndSend(run: String)
+        /// Send Anyway: an instruction the user-speech gate held back (`unprompted`: no fresh request was heard) sent
+        /// under its id, the user's tap their confirmation (#5904).
+        case sendAnyway(run: String)
         /// Send Back as Feedback: the plan card answered with the refused words as its feedback (the app's own resolve).
         case returnPlan(card: String, feedback: String, run: String)
         /// Never Mind: the line about it goes away.
@@ -55,6 +60,7 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
             case .stopAgent: "stop"
             case .resend(let run): "resend-" + run
             case .clearAndSend(let run): "clear-" + run
+            case .sendAnyway(let run): "anyway-" + run
             case .returnPlan(let card, _, let run): "plan-" + card + "-" + run
             case .dismiss(let run): "dismiss-" + run
             }
@@ -73,6 +79,7 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
             case .stopAgent: "stop"
             case .resend: "resend"
             case .clearAndSend: "clear"
+            case .sendAnyway: "anyway"
             case .returnPlan: "plan"
             case .dismiss: "dismiss"
             }
@@ -87,9 +94,10 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
 
     /// The second line now. `cards`: the bound conversation's pending ones; `label`: who works in it (「Claude」,
     /// 「Codex」, the persona's name for its own conversations); `dismissed`: refusals put away with Never Mind; `resendable`:
-    /// the refused runs the connection up now still knows (`VoiceConversation.canResend`).
+    /// the refused runs the connection up now still knows (`VoiceConversation.canResend`); `held`: a system call to
+    /// Persona on hold (`VoiceConversation.held`).
     static func make(phase: VoicePhase, link: VoiceLink, runs: [VoiceRun], session: Session?, cards: [Interaction],
-                     muted: Bool, asking: String? = nil, notice: VoiceFailure? = nil, label: String,
+                     muted: Bool, held: Bool = false, asking: String? = nil, notice: VoiceFailure? = nil, label: String,
                      dismissed: Set<String> = [], resendable: Set<String> = []) -> VoiceBarLine {
         let live = runs.filter { !dismissed.contains($0.id) && $0.state != .folded }
         // What did not go, while it is the latest word on it: a later instruction that went takes its place.
@@ -99,13 +107,19 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
         if notice?.code == .machineOffline {
             return VoiceBarLine(kind: .offline, text: String(localized: "This computer is offline; what you say can’t be sent"), since: nil, actions: [])
         }
+        let working = session?.status == .working || session?.state == .working
+        if held {
+            // Not the paused, listening, muted or asking line: speaking does nothing until the call is off hold. Stop Claude
+            // still works.
+            let stop: [Action] = working && session?.canInterrupt != false ? [.stopAgent] : []
+            return VoiceBarLine(kind: .held, text: String(localized: "The call is on hold; nothing you say is sent"), since: nil, actions: stop)
+        }
         if let asking, cards.contains(where: { $0.id == asking }) {
             return VoiceBarLine(kind: .asking, text: String(localized: "\(label) is asking you; just say your answer"), since: nil, actions: [])
         }
         if !cards.isEmpty {
             return VoiceBarLine(kind: .needsTap, text: String(localized: "Needs a tap from you"), since: nil, actions: [])
         }
-        let working = session?.status == .working || session?.state == .working
         let open = live.filter(\.state.isOpen)
         let stop: [Action] = working && session?.canInterrupt != false ? [.stopAgent] : []
         let since = working ? session?.stateSince ?? open.compactMap(\.startedAt?.date).min()
@@ -145,7 +159,8 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
     }
 
     /// Why `run` did not go, in the user's words (docs/assistant/voice.md 1.3), and what can be done: send it again (when the
-    /// connection up now still knows it), clear the computer's line first, give it to the plan card as its feedback.
+    /// connection up now still knows it), send anyway what the user-speech gate held back, clear the computer's line
+    /// first, give it to the plan card as its feedback.
     private static func notSent(_ run: VoiceRun, cards: [Interaction], label: String, resendable: Bool) -> VoiceBarLine {
         let dismiss = Action.dismiss(run: run.id)
         func line(_ text: String, _ actions: [Action] = []) -> VoiceBarLine {
@@ -173,7 +188,13 @@ nonisolated struct VoiceBarLine: Equatable, Sendable {
             }
             return line(String(localized: "\(label) is waiting for you to handle the card above"))
         case "unprompted":
-            return line(String(localized: "You didn’t say this, so it wasn’t sent"))
+            // The gate heard no fresh request (docs/assistant/voice.md 4.4): never worded as if someone else said it. What
+            // was held back is quoted, as a draft is: Send Anyway confirms words the user can see (last, so a long one
+            // only loses its end to the bar's line limit).
+            let task = run.task.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = task.isEmpty ? String(localized: "Didn’t hear you ask for this just now, so it wasn’t sent")
+                : String(localized: "Didn’t hear you ask for this just now, so it wasn’t sent: “\(task)”")
+            return line(text, resendable && !task.isEmpty ? [.sendAnyway(run: run.id)] : [])
         case "on_screen":
             return line(String(localized: "Approve it by tapping on screen"))
         case "empty":
@@ -195,8 +216,10 @@ nonisolated struct VoiceBarStatus: Equatable, Sendable {
     var text: String
     var orb: VoiceOrb.Phase
 
-    /// `working`: the bound conversation works (the orb's ring laps); `tool`: a read-only tool the voice runs.
-    static func make(phase: VoicePhase, link: VoiceLink, muted: Bool, working: Bool, tool: String? = nil) -> VoiceBarStatus {
+    /// `working`: the bound conversation works (the orb's ring laps); `tool`: a read-only tool the voice runs; `held`: a
+    /// system call to Persona on hold (the call screen's On Hold, whatever the connection does meanwhile).
+    static func make(phase: VoicePhase, link: VoiceLink, muted: Bool, working: Bool, tool: String? = nil, held: Bool = false) -> VoiceBarStatus {
+        if held, !phase.isEnded { return VoiceBarStatus(text: String(localized: "On Hold [Call Screen]"), orb: .paused) }
         switch phase {
         case .connecting:
             return VoiceBarStatus(text: String(localized: "Connecting… [Feishu Bot Model 8be0ea]"), orb: .connecting)

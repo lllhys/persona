@@ -127,9 +127,16 @@ func (c *Conn) Tools() []proto.Tool {
 }
 
 func (c *Conn) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	a, err := c.CallImages(ctx, name, args)
+	return a.Text, err
+}
+
+// CallImages is Call with the pictures the program answered (connector.ImageTools, #8484): a program that has none,
+// or does not know the field, answers the text alone.
+func (c *Conn) CallImages(ctx context.Context, name string, args json.RawMessage) (connector.ToolAnswer, error) {
 	var out serve.CallResult
 	err := c.call(ctx, serve.MCall, serve.CallParams{Name: name, Args: args}, &out)
-	return out.Text, err
+	return connector.ToolAnswer{Text: out.Text, Images: out.Images}, err
 }
 
 // Actions answers from memory, as Tools.

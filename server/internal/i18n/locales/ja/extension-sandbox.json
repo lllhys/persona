@@ -8,5 +8,12 @@
   "agent_profile_refused": "sandbox-exec が今回のルールを受け付けません：{err}",
   "agent_too_many_args": "Linux エージェントコマンドの bwrap 引数が {count} 個で、上限 {limit} を超えています。データディレクトリの最上位項目または明示的な別名を減らしてください",
   "agent_unsupported": "エージェント用サンドボックスは macOS と Linux に対応しています。このシステム（{os}）では使えません",
-  "probe_tmp": "サンドボックスの確認用に一時ディレクトリを作成できません：{err}"
+  "probe_tmp": "サンドボックスの確認用に一時ディレクトリを作成できません：{err}",
+  "allow_empty": "許可するアドレスを入力してください。",
+  "allow_wildcard": "許可できるのは特定のアドレスだけです。*は使えません。",
+  "allow_form": "ホスト名かIPアドレスを入力し、必要ならポートを付けてください：rss.example.orgまたはrss.example.org:8443。",
+  "allow_port": "ポートは1～65535の数字です。",
+  "allow_loopback": "このマシンのサービスはここでは許可しません：拡張機能は{name}で接続し、manifestで申請します。",
+  "allow_unreachable": "このアドレスは許可できません：リンクローカル、マルチキャスト、またはクラウドのメタデータのアドレスです。",
+  "allow_too_many_other": "拡張機能ごとに許可できるアドレスは{count}個までです。"
 }

@@ -94,7 +94,7 @@ func (s *Service) digestTo(cfg Settings, g superviseSignal) string {
 	if lead == "" || lead == cfg.Main {
 		return own
 	}
-	if t.Supervision.state(t) == reviewNeedsUser {
+	if t.Supervision.state(t) == reviewNeedsUser && g.Kind != sigAllStopped {
 		return cfg.Main
 	}
 	return lead
@@ -243,7 +243,16 @@ func (s *Service) stopCancelledAgent(ctx context.Context, id, machine, session s
 		return
 	}
 	machine = c.MachineID
-	if c.Status != proto.StatusOffline {
+	closed := false
+	if !agentCloseBusy(c) && s.closeEndedTerminals(ctx) {
+		// A cancelled task ends its idle Agent's session: with the owner's close-on-end setting its terminal goes
+		// too (#10355); a busy one is only stopped below and keeps its terminal.
+		var err error
+		if closed, err = s.closeEndedTerminal(ctx, machine, session, proto.StopUser); err != nil {
+			s.logf("task %s cancelled: close agent %s/%s: %v", id, machine, short(session), err)
+		}
+	}
+	if c.Status != proto.StatusOffline && !closed {
 		cctx, cancel := context.WithTimeout(ctx, agentArchiveCloseTimeout)
 		err := s.call(cctx, machine, deviceSessionStop, map[string]any{"session_id": session}, nil)
 		if re := (*rpc.Error)(nil); errors.As(err, &re) && re.Code == "no_terminal" {

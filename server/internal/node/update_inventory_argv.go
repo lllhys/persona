@@ -34,3 +34,18 @@ func updateDarwinArgv(data []byte) ([]string, error) {
 	}
 	return args, nil
 }
+
+// darwinExecPath is the executable path of KERN_PROCARGS2: the file the kernel ran, kept ahead of the arguments.
+// A process that renames itself rewrites only its arguments (Node.js's process.title: Paseo's supervisor is "Paseo
+// Supervisor", which is also what `ps -o comm=` shows), so this still says what it runs.
+func darwinExecPath(data []byte) (string, error) {
+	if len(data) < 4 {
+		return "", errors.New("incomplete process arguments")
+	}
+	data = data[4:]
+	end := bytes.IndexByte(data, 0)
+	if end < 1 {
+		return "", errors.New("incomplete process arguments")
+	}
+	return string(data[:end]), nil
+}

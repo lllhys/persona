@@ -20,6 +20,7 @@
   "open_folder": "{name}を開く",
   "permission_mode": "権限モード",
   "permission_mode_hint": "権限モードはチャット中にも変更できます。「フルアクセス」は新規作成時にのみ選べます。",
+  "provider_mode_hint": "「フルアクセス」を選ばない限り、このエージェントは自身の承認設定に従います。あとからチャットで切り替えることもできます。",
   "no_computer_title": "まだコンピューターがありません",
   "no_computer_body": "エージェントはあなたのコンピューターで動くため、まだ選べるものがありません。まず 1 台追加してください。",
   "worktree": "新しい worktree で",
@@ -50,5 +51,9 @@
   "follow_row": "モデル設定に従う",
   "carry_dropped": "{computer} では {name} を使えないため、このコンピューターのデフォルトに戻しました。",
   "preset_picked": "プリセット {name} · {what}",
-  "typed_now": "今回入力したモデル ID"
+  "typed_now": "今回入力したモデル ID",
+  "temporary_session": "一時セッション",
+  "runs": "実行回数",
+  "runs_hint": "このタスクを {count} 回、それぞれの worktree で起動して結果を比べます。",
+  "start_runs": "{count} 回起動"
 }

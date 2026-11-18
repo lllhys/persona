@@ -165,8 +165,9 @@ class CodexTaskForestTest {
                 assertEquals("$grouping", mapOf(AgentState.NeedsYou to 1, AgentState.Working to 1, AgentState.Idle to 0),
                     listOf(AgentState.NeedsYou, AgentState.Working, AgentState.Idle).associateWith { machine.stateCounts[it] })
             }
-            // The groups' headers ("By state"'s sections are the states themselves and count nothing).
-            if (grouping == AgentGrouping.State) continue
+            // By Status's sections are the states themselves and count nothing; By Machine leaves stateCounts null
+            // (shared fixtures / feature-layer header counts, #9319).
+            if (grouping == AgentGrouping.State || grouping == AgentGrouping.Machine) continue
             val leaves = list.groups.filter { it.rows.isNotEmpty() }.map { requireNotNull(it.stateCounts) }
             assertEquals("$grouping", 1, leaves.sumOf { it[AgentState.NeedsYou] ?: 0 })
             assertEquals("$grouping", 1, leaves.sumOf { it[AgentState.Working] ?: 0 })

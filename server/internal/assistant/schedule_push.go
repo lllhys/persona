@@ -22,7 +22,7 @@ import (
 //   - pushAsked: only what the run pushes itself (notify_user); a run with nothing new is not pushed at all.
 //
 // Such a task runs in its own conversation unless it goes on in one it came from (SessionID), and never in the main
-// one (ownConversationIfQuiet). In its own conversation, that conversation's finished turns are not pushed when they
+// one (isolateScheduledConversation). In its own conversation, that conversation's finished turns are not pushed when they
 // end normally: the hub's finished push (quietTaskFinish in fleet_push.go, by the tasks of the last snapshot) and the
 // channels' mirror (quietTaskTurn) leave them out. A turn the user starts in that conversation is not pushed either:
 // the price of judging by the conversation, not by the turn — which, across queued messages, background turns and
@@ -84,11 +84,10 @@ func pushIn(raw map[string]json.RawMessage) (push string, has bool, err error) {
 	return push, true, checkPush(push)
 }
 
-// ownConversationIfQuiet: a task that pushes only what its runs send does not go on in the main conversation, or one
-// that may be it (mayBeMain): the main one is never quiet, so the task runs in its own. Another conversation it came
-// from it keeps: its input's persisted push mode identifies its normal answer, not the conversation's own turns.
-func ownConversationIfQuiet(t *Task, mayBeMain func(string) bool) {
-	if t.pushesOnlyAsked() && t.SessionID != "" && mayBeMain(t.SessionID) {
+// isolateScheduledConversation keeps quiet runs and recurring runs out of the main chat.
+// A quiet run needs its own delivery policy, and a recurring run keeps its own history.
+func isolateScheduledConversation(t *Task, mayBeMain func(string) bool) {
+	if t.SessionID != "" && (t.pushesOnlyAsked() || t.Repeat != repeatOnce) && mayBeMain(t.SessionID) {
 		t.SessionID = ""
 	}
 }

@@ -13,6 +13,30 @@ import {
 } from '../lib/map.js'
 
 describe('antigravity transcript and tool mapping', () => {
+  it('keeps reply previews within the latest explicit user turn', () => {
+    const question = { type: 'PLANNER_RESPONSE', content: 'Which configuration should I use?' }
+    const prompt = { type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'What were the results?' }
+    const tools = [
+      { type: 'PLANNER_RESPONSE', thinking: 'Should I inspect the logs?', tool_calls: [{ name: 'run_command', args: { CommandLine: 'cat result.log' } }] },
+      { type: 'GENERIC', content: 'Retry the command?' },
+    ]
+    const cases = [
+      ['user question alone', [prompt], ''],
+      ['answered assistant question', [question, prompt], ''],
+      ['thinking and tools after user question', [question, prompt, ...tools], ''],
+      ['new assistant question', [prompt, ...tools, question], question.content],
+      ['empty explicit prompt', [question, { ...prompt, content: '' }], ''],
+      ['system input preserves assistant reply', [question, { ...prompt, source: 'SYSTEM' }], question.content],
+    ]
+    for (const [name, steps, expected] of cases) {
+      assert.equal(stepsToItems(steps).lastText, expected, name)
+    }
+    const { items } = stepsToItems([prompt, ...tools])
+    assert.equal(items[0].role, 'user')
+    assert.equal(items[0].text, prompt.content)
+    assert.equal(items.at(-1).text, tools[1].content)
+  })
+
   it('converts session ids between persona and agy', () => {
     assert.equal(toPersonaId('ad40e999-0253-4097-8ee2-a70f9259e88b'), 'agy-ad40e999-0253-4097-8ee2-a70f9259e88b')
     assert.equal(toPersonaId('agy-ad40e999-0253-4097-8ee2-a70f9259e88b'), 'agy-ad40e999-0253-4097-8ee2-a70f9259e88b')

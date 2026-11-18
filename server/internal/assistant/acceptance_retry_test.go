@@ -29,7 +29,8 @@ type acceptSend struct {
 }
 
 // acceptLark answers feishu.post as Feishu does for a send with a key (uuid): a card whose key already landed does not
-// land again, and the answer is the first one's id. The "Please verify" sends end as next says, in order, then land.
+// land again, and the answer is the first one's id. The "Please verify" sends (or those of the cards it was made for,
+// newCardLark) end as next says, in order, then land.
 type acceptLark struct {
 	mu     sync.Mutex
 	next   []acceptSend
@@ -40,6 +41,11 @@ type acceptLark struct {
 
 // newAcceptLark answers f's feishu.post with a fresh acceptLark; any other card (a task report) just lands.
 func newAcceptLark(f *fakeHub, next ...acceptSend) *acceptLark {
+	return newCardLark(f, "请验收", next...)
+}
+
+// newCardLark is newAcceptLark for the cards that say mark (a conclusion's "结论：") instead of "Please verify".
+func newCardLark(f *fakeHub, mark string, next ...acceptSend) *acceptLark {
 	l := &acceptLark{next: next, landed: map[string]string{}}
 	f.answerApp(AppFeishu, FeishuPost, func(p json.RawMessage) (any, error) {
 		var m struct {
@@ -47,7 +53,7 @@ func newAcceptLark(f *fakeHub, next ...acceptSend) *acceptLark {
 			UUID string `json:"uuid"`
 		}
 		_ = json.Unmarshal(p, &m)
-		if !strings.Contains(m.Card, "请验收") {
+		if !strings.Contains(m.Card, mark) {
 			return map[string]any{"message_id": "om_other"}, nil
 		}
 		l.mu.Lock()

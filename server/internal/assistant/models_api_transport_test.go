@@ -14,8 +14,85 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/proto"
 )
+
+func TestLauncherUserAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name, headers, want string
+		set                 bool
+	}{
+		{name: "default"},
+		{name: "other headers", headers: "X-Secret: synthetic-private-header"},
+		{name: "canonical", headers: "User-Agent: first-agent\nX-Secret: synthetic-private-header", want: "first-agent", set: true},
+		{name: "case insensitive and last wins", headers: "USER-AGENT: first-agent\nuSeR-aGeNt: second-agent", want: "second-agent", set: true},
+		{name: "empty", headers: "user-agent: ", set: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				want := modelhttp.UserAgent()
+				if tc.set {
+					want = tc.want
+				}
+				if got := r.Header.Get("User-Agent"); got != want {
+					t.Errorf("User-Agent = %q, want %q", got, want)
+				}
+				if r.Header.Get("X-Secret") != "" {
+					t.Error("unrelated header was sent")
+				}
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+			}))
+			defer gw.Close()
+			s, _, _ := modelService(t)
+			key, err := s.sealKey("synthetic-key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			l := storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "stored", Kind: "launcher", API: "messages", BaseURL: gw.URL, Model: "m"}, KeySealed: key}
+			if tc.headers != "" {
+				l.HeadersSealed, err = s.sealKey(tc.headers)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			putLaunchers(t, s, l)
+			cfg, err := s.apiConfig(context.Background(), ModelBinding{Provider: "launcher.stored"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (cfg.UserAgent != nil) != tc.set || (tc.set && *cfg.UserAgent != tc.want) {
+				t.Fatalf("unexpected UserAgent configuration")
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "UserAgent") || strings.Contains(string(raw), "user_agent") || (tc.want != "" && strings.Contains(string(raw), tc.want)) {
+				t.Fatalf("User-Agent leaked into JSON: %s", raw)
+			}
+			answer, err := s.aiClient(cfg).Complete(context.Background(), "system", "hello", 8)
+			if err != nil || answer != "ok" || calls != 1 {
+				t.Fatalf("answer=%q err=%v calls=%d", answer, err, calls)
+			}
+		})
+	}
+}
+
+func TestLauncherUserAgentUnreadableHeaders(t *testing.T) {
+	s, _, _ := modelService(t)
+	key, err := s.sealKey("synthetic-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "stored", Kind: "launcher", API: "messages", BaseURL: "https://api.example.com", Model: "m"}, KeySealed: key, HeadersSealed: "synthetic-secret-invalid-ciphertext"})
+	_, err = s.apiConfig(context.Background(), ModelBinding{Provider: "launcher.stored"})
+	if err == nil || strings.Contains(err.Error(), "synthetic-secret") {
+		t.Fatalf("unsafe or missing error: %v", err)
+	}
+}
 
 func TestDirectAPITransportSave(t *testing.T) {
 	for _, api := range []string{"", "messages", "responses"} {
@@ -182,8 +259,12 @@ func TestDirectAPITransportProbe(t *testing.T) {
 				} else {
 					out = s.providerDiscover(ctx, in)
 				}
+				want := int32(1)
+				if operation == "discover" {
+					want = 2 // the model list, then the capability report
+				}
 				if tc.allowed {
-					if calls.Load() != 1 || out["error"] != nil {
+					if calls.Load() != want || out["error"] != nil {
 						t.Fatalf("allowed calls=%d result=%v", calls.Load(), out)
 					}
 				} else if calls.Load() != 0 || out["error"] != i18n.T(i18n.En, "assistant-models_launchers.err_api_transport") {

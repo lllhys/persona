@@ -27,6 +27,17 @@ type ShareAuthority struct {
 }
 type callerContextKey struct{}
 type shareAuthorityKey struct{}
+type ownerAnswerKey struct{}
+
+// WithOwnerAnswer carries a card answer's provenance from the authenticated hub bus to Devices.
+func WithOwnerAnswer(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ownerAnswerKey{}, true)
+}
+
+func IsOwnerAnswer(ctx context.Context) bool {
+	ok, _ := ctx.Value(ownerAnswerKey{}).(bool)
+	return ok
+}
 
 func WithShareAuthority(ctx context.Context, a ShareAuthority) context.Context {
 	return context.WithValue(ctx, shareAuthorityKey{}, a)

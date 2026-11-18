@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "exact_echo",
+      "description": "Persona 刚说的答案被麦克风原样转写进来：时间重叠、文字一致，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 10.2, "end": 17.8, "text": "You kept the cap for this release."},
+        "spans": [{"start": 10, "end": 17.5, "text": "You kept the cap for this release."}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "asr_punctuation_and_case",
+      "description": "识别结果的标点、大小写、空格和答案原文不同，归一化后一致，仍是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 10.2, "end": 17.8, "text": "you kept  the cap for this release"},
+        "spans": [{"start": 10, "end": 17.5, "text": "You kept the cap — for this release!"}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "participant_inside_span",
+      "description": "Persona 说话期间别人说了另一句话：时间在区间里，文字对不上，不是回声，留在转写里。",
+      "source": "issue #5905; apple/PersonaTests/MeetingAttendanceTests.swift anotherVoiceInsideTheSpanIsTheMeetings",
+      "input": {
+        "line": {"start": 10.2, "end": 17.8, "text": "Bo owns the regression test."},
+        "spans": [{"start": 10, "end": 17.5, "text": "You kept the cap."}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "just_outside_margin",
+      "description": "文字一致，但这一句在区间结束 0.6 秒后才开始，超出 0.5 秒余量，不是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 15.6, "end": 18, "text": "Ship it on Friday."},
+        "spans": [{"start": 10, "end": 15, "text": "Ship it on Friday."}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "overlap_only_within_margin_after",
+      "description": "这一句在区间结束 0.4 秒后开始，只在余量里重叠，文字一致，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 15.4, "end": 18, "text": "ship it on friday"},
+        "spans": [{"start": 10, "end": 15, "text": "Ship it on Friday."}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "overlap_only_within_margin_before",
+      "description": "这一句在区间开始前 0.4 秒结束（识别时间偏早），只在余量里重叠，文字一致，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 7, "end": 9.6, "text": "Ship it on Friday."},
+        "spans": [{"start": 10, "end": 15, "text": "Ship it on Friday."}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "merged_with_participant_below_threshold",
+      "description": "回声和别人的话被识别成同一句，Persona 的字不到这一句字符二元组的 60%，不是回声，整句保留。",
+      "source": "issue #5905",
+      "input": {
+        "line": {"start": 10.2, "end": 21, "text": "You kept the cap. Wait, Bo, can you own the regression test before Friday?"},
+        "spans": [{"start": 10, "end": 15, "text": "You kept the cap."}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "merged_with_short_interjection_above_threshold",
+      "description": "回声末尾带了别人一个很短的「OK」，Persona 的字仍超过 60%，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "derived": true,
+      "input": {
+        "line": {"start": 10.1, "end": 16, "text": "We will keep the cap for this release and revisit it next quarter. OK."},
+        "spans": [{"start": 10, "end": 15.5, "text": "We will keep the cap for this release and revisit it next quarter."}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "containment_exactly_at_threshold",
+      "description": "这一句 5 个不同的字符二元组里有 3 个在答案里，正好 0.6，算回声（阈值含等号）。",
+      "source": "server/internal/kb/echo.go echoMatches",
+      "derived": true,
+      "input": {
+        "line": {"start": 11, "end": 12, "text": "Friday"},
+        "spans": [{"start": 10, "end": 15, "text": "Fri, May"}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "containment_below_threshold",
+      "description": "5 个字符二元组只有 2 个在答案里（0.4），不是回声。",
+      "source": "server/internal/kb/echo.go echoMatches",
+      "derived": true,
+      "input": {
+        "line": {"start": 11, "end": 12, "text": "Friday"},
+        "spans": [{"start": 10, "end": 15, "text": "Fr. Kay"}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "chinese_echo",
+      "description": "中文答案的回声，识别结果少了标点，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 20.3, "end": 25, "text": "回归测试由张三负责周五前完成"},
+        "spans": [{"start": 20, "end": 25.2, "text": "回归测试由张三负责，周五前完成。"}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "chinese_participant_inside_span",
+      "description": "Persona 说中文答案时有人插话，只有「周五」两个字相同，不是回声。",
+      "source": "issue #5905",
+      "input": {
+        "line": {"start": 21, "end": 23, "text": "我觉得周五太赶了"},
+        "spans": [{"start": 20, "end": 25.2, "text": "回归测试由张三负责，周五前完成。"}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "japanese_halfwidth_echo",
+      "description": "日语答案的回声，识别结果里是半角片假名，NFKC 归一化后一致，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "derived": true,
+      "input": {
+        "line": {"start": 30.2, "end": 34, "text": "回帰ﾃｽﾄは金曜日までに張さんが担当します"},
+        "spans": [{"start": 30, "end": 34.5, "text": "回帰テストは金曜日までに張さんが担当します。"}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "japanese_participant_inside_span",
+      "description": "Persona 说日语答案时有人问了别的问题，不是回声。",
+      "source": "issue #5905",
+      "input": {
+        "line": {"start": 31, "end": 33, "text": "予算はどうなりましたか"},
+        "spans": [{"start": 30, "end": 34.5, "text": "回帰テストは金曜日までに張さんが担当します。"}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "mixed_chinese_english_echo",
+      "description": "中英混排的答案，识别结果里是全角数字和字母，归一化后一致，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "derived": true,
+      "input": {
+        "line": {"start": 40.1, "end": 43, "text": "这一版先保留４ＭＢ的上限"},
+        "spans": [{"start": 40, "end": 46, "text": "这一版先保留 4 MB 的上限，下个版本再看。"}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "mixed_chinese_english_participant",
+      "description": "中英混排答案期间有人说「Bo 下周把 PR 合进去」，不是回声。",
+      "source": "issue #5905",
+      "input": {
+        "line": {"start": 41, "end": 44, "text": "Bo 下周把 PR 合进去"},
+        "spans": [{"start": 40, "end": 46, "text": "这一版先保留 4 MB 的上限，下个版本再看。"}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "zero_length_line_inside",
+      "description": "开始和结束相同的一句：开始时间在加了余量的区间里，文字一致，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 15.3, "end": 15.3, "text": "ship it"},
+        "spans": [{"start": 10, "end": 15, "text": "Ship it."}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "zero_length_line_outside",
+      "description": "开始和结束相同的一句在加了余量的区间外，不是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 15.7, "end": 15.7, "text": "ship it"},
+        "spans": [{"start": 10, "end": 15, "text": "Ship it."}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "legacy_span_time_rule",
+      "description": "改动前存下的区间没有文字：沿用旧的时间规则，一句至少一半在区间里就是回声，不管说了什么。",
+      "source": "apple/PersonaTests/MeetingAttendanceTests.swift personasOwnVoiceIsLeftOutOfTheTranscript",
+      "input": {
+        "line": {"start": 10.2, "end": 17.8, "text": "Bo owns the regression test."},
+        "spans": [{"start": 10, "end": 17.5}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "legacy_span_less_than_half",
+      "description": "没有文字的旧区间：这一句不到一半在区间里，不是回声。",
+      "source": "apple/PersonaTests/MeetingAttendanceTests.swift aSpanHoldsLinesAtLeastHalfInsideIt",
+      "input": {
+        "line": {"start": 16, "end": 30, "text": "Thanks, next item."},
+        "spans": [{"start": 10, "end": 20}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "legacy_span_has_no_margin",
+      "description": "没有文字的旧区间不加余量：这一句在区间结束 0.1 秒后才开始，不是回声。",
+      "source": "apple/Shared/Recording/MeetingAttendance.swift RecordingSpan.holds",
+      "derived": true,
+      "input": {
+        "line": {"start": 17.6, "end": 18, "text": "You kept the cap."},
+        "spans": [{"start": 10, "end": 17.5}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "words_of_another_span",
+      "description": "文字和第二段答案一致，但时间只和第一段重叠：要在同一段里时间和文字都对上，不是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "derived": true,
+      "input": {
+        "line": {"start": 12, "end": 14, "text": "keep the cap"},
+        "spans": [{"start": 10, "end": 15, "text": "Ship it."}, {"start": 40, "end": 45, "text": "Keep the cap."}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "single_character_in_answer",
+      "description": "归一化后只剩一个字的一句：答案里有这个字，是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 11, "end": 11.4, "text": "好。"},
+        "spans": [{"start": 10, "end": 15, "text": "好的，我们保留上限。"}]
+      },
+      "expected": {"echo": true}
+    },
+    {
+      "name": "single_character_not_in_answer",
+      "description": "归一化后只剩一个字的一句：答案里没有这个字（别人「嗯」了一声），不是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 11, "end": 11.4, "text": "嗯"},
+        "spans": [{"start": 10, "end": 15, "text": "好的，我们保留上限。"}]
+      },
+      "expected": {"echo": false}
+    },
+    {
+      "name": "punctuation_only_line",
+      "description": "只有标点的一句，归一化后什么都不剩，不是回声。",
+      "source": "docs/assistant/meeting-minutes.md「Persona's echo」",
+      "input": {
+        "line": {"start": 11, "end": 12, "text": "……！"},
+        "spans": [{"start": 10, "end": 15, "text": "好的……！"}]
+      },
+      "expected": {"echo": false}
+    }
+  ]
+}

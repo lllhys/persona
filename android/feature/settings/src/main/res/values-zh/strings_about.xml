@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_about_commit">提交</string>
+    <string name="settings_about_commit_unknown">未知</string>
+    <string name="settings_about_commit_copy">拷贝构建提交</string>
+    <string name="settings_about_commit_copied">已拷贝构建提交</string>
+</resources>

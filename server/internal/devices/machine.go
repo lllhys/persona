@@ -65,7 +65,12 @@ type MachineConfig struct {
 // connection to its resident node, a stream on the Persona Link it keeps to the hub (kind link, link.go), a
 // connector's stream (kind service), or a stream through a member hub (a derived machine).
 type Machine struct {
-	cfg MachineConfig
+	callCount atomic.Uint64 // calls that worked, for sampling their log lines (calllog.go)
+	// callLogMu guards offlineLogged (when an offline call was last logged) and offlineSkipped (how many since were not).
+	callLogMu      sync.Mutex
+	offlineLogged  time.Time
+	offlineSkipped int
+	cfg            MachineConfig
 	// named is what the computer is called now: cfg.Name until the hub renames it, which changes nothing else of the
 	// running machine (startMachines); read through name().
 	named atomic.Pointer[string]
@@ -79,6 +84,11 @@ type Machine struct {
 	mu   sync.Mutex
 	peer *rpc.Peer
 	info proto.NodeInfo
+	// pingPeer is the connection measureNodes' last ping went on, pingMisses how many pings in a row it left
+	// unanswered there, pingJudged when the last of them was counted (paths_view.go).
+	pingPeer   *rpc.Peer
+	pingMisses int
+	pingJudged time.Time
 	// online: shown online (its node answered on the current connection, or warm); connectedAt: when the node's
 	// current connection began.
 	online      bool
@@ -92,11 +102,15 @@ type Machine struct {
 	dialErrAt       time.Time
 	lastSeen        time.Time
 	sessions        []proto.Session
+	sessionsListed  bool                     // the current connection has really supplied a snapshot, successful empty ones included
+	sessionsReady   chan struct{}            // closed once the current connection's first sessions.list has been handled
 	lists           proto.SessionListDecoder // decodes the node's lists, only the sessions whose bytes changed (onEvent)
-	sessionRevision uint64                   // local ordering of session snapshots, independent of node transcript revisions
-	watched         map[string]bool          // sessions the hub watches (session.watch): watched again on a new connection
-	followed        map[string]bool          // sessions the manager itself follows (Follow: a channel's turn): watched as well
-	lastSeq         map[string]int           // session id -> highest item seq seen
+	sessionRevision uint64                   // advanced by sessions.changed, independent of node transcript revisions
+	// sessionsEventMu serializes sessions.list response and sessions.changed cache application and forwarding.
+	sessionsEventMu sync.Mutex
+	watched         map[string]bool // sessions the hub watches (session.watch): watched again on a new connection
+	followed        map[string]bool // sessions the manager itself follows (Follow: a channel's turn): watched as well
+	lastSeq         map[string]int  // session id -> highest item seq seen
 	// unsettled: sessions whose last Follow the node did not take (the next Follow asks it again; a new connection
 	// settles them).
 	unsettled map[string]bool
@@ -116,9 +130,11 @@ type Machine struct {
 	reloadUntil                time.Time     // a resident announced exec; never extends display/reconnect grace
 	storeWait                  time.Duration // how long a node event waits on the store (nodeStoreWait; tests: shorter)
 	engineMu                   sync.Mutex
-	link                       *mgrLink      // kind link: the link Persona Link keeps open, nil while there is none
-	linkDown                   error         // why the last link went away
-	linkUp                     chan struct{} // a link arrived
+	// eventRetire admits an ordinary event callback or retires its connection; never lets a retired event follow the replacement.
+	eventRetire sync.Mutex
+	link        *mgrLink      // kind link: the link Persona Link keeps open, nil while there is none
+	linkDown    error         // why the last link went away
+	linkUp      chan struct{} // a link arrived
 	// presence: what its Persona Link last said about the user (presence.go).
 	presence *presence
 	// herdrAsked: when the node last said whether herdr's server answers (herdr.go, its row).
@@ -274,6 +290,7 @@ func (m *Machine) snapshot() proto.Machine {
 		EngineSuggested: suggested, EngineSetsUnsupported: setsUnsupported, Link: link, System: d.metrics.system(m.cfg.ID),
 		Clipboard:    m.clipboardStateLocked(clipboardOn),
 		FileTransfer: m.fileTransferState(fileTransferOn),
+		ClaudePlugin: m.info.ClaudePlugin,
 	}
 }
 
@@ -405,6 +422,9 @@ func (m *Machine) open(ctx context.Context, via string) (*nodePipe, error) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := m.command(ctx)
+	if via == "ssh" {
+		stopSSHTreeOnCancel(cmd)
+	}
 	// Bound pipe draining if a node descendant inherits stdout or stderr.
 	cmd.WaitDelay = shutdownStepTimeout
 	stdin, err := cmd.StdinPipe()
@@ -416,7 +436,8 @@ func (m *Machine) open(ctx context.Context, via string) (*nodePipe, error) {
 		// This machine's node is ended the way a hub that went away ends it, by EOF on its stdin: it stops the
 		// assistant's conversations, whose processes lead their own groups, and exits (node.Serve). Killed straight
 		// away, as the default Cancel does, it left them running beside the ones the next node started for the same
-		// conversations (#4259). An ssh node's own end sees EOF when ssh is killed, so ssh keeps the default.
+		// conversations (#4259). A local node's children need this graceful stop. An ssh node's own end instead sees
+		// EOF when its process group is killed; its ProxyCommand cannot outlive it either.
 		cmd.Cancel = stdin.Close
 		cmd.WaitDelay = localNodeStopGrace
 	}
@@ -471,11 +492,14 @@ func (m *Machine) open(ctx context.Context, via string) (*nodePipe, error) {
 			case <-time.After(shutdownStepTimeout):
 			}
 			_ = cmd.Wait()
+			if via == "ssh" {
+				sweepSSHProcessTree(cmd.Process.Pid)
+			}
 		},
 	}, nil
 }
 
-func (m *Machine) callOnce(ctx context.Context, method string, params any, out any) error {
+func (m *Machine) callOnce(ctx context.Context, method string, params any, out any, snapshot *sessionSnapshot) error {
 	m.mu.Lock()
 	p := m.peer
 	info := m.info
@@ -503,6 +527,16 @@ func (m *Machine) callOnce(ctx context.Context, method string, params any, out a
 		}
 		return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), key)}
 	}
+	if (method == "session.skills" || method == "session.send") && !nodeHas(info, nodeproto.SessionSkills) {
+		var fields struct {
+			SkillOwner string `json:"skill_owner"`
+		}
+		raw, _ := json.Marshal(params)
+		_ = json.Unmarshal(raw, &fields)
+		if method == "session.skills" || method == "session.send" && strings.HasPrefix(fields.SkillOwner, "agents:") {
+			return refusalSessionSkillNode()
+		}
+	}
 	if !nodeHas(info, nodeproto.ModelConfiguration) && (method == "assistant.send" || method == "assistant.warm" || devicewire.IsSessionStart(method) || method == "session.send") {
 		raw, _ := json.Marshal(params)
 		var fields struct {
@@ -524,6 +558,16 @@ func (m *Machine) callOnce(ctx context.Context, method string, params any, out a
 			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-ultracode.node_outdated")}
 		}
 	}
+	if devicewire.IsSessionStart(method) && !nodeHas(info, nodeproto.StartGoal) {
+		raw, _ := json.Marshal(params)
+		var fields struct {
+			Goal string `json:"goal"`
+		}
+		_ = json.Unmarshal(raw, &fields)
+		if strings.TrimSpace(fields.Goal) != "" { // its own code: the caller starts again without the goal
+			return &rpc.Error{Code: proto.CodeStartGoalUnsupported, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_start_goal")}
+		}
+	}
 	if !nodeHas(info, nodeproto.AssistantConfigDir) && (method == "assistant.send" || method == "assistant.warm" || method == "session.send") {
 		raw, _ := json.Marshal(params)
 		var fields struct {
@@ -534,16 +578,57 @@ func (m *Machine) callOnce(ctx context.Context, method string, params any, out a
 			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_assistant_config_dir")}
 		}
 	}
+	if !nodeHas(info, nodeproto.AssistantSupervisionInstructions) && (method == "assistant.send" || method == "assistant.warm" || method == "session.send") {
+		raw, _ := json.Marshal(params)
+		var fields struct {
+			Instructions string `json:"supervision_instructions"`
+		}
+		_ = json.Unmarshal(raw, &fields)
+		if fields.Instructions != "" {
+			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "rpc-errors.assistant_supervision_node_outdated")}
+		}
+	}
+	if method == "assistant.send" && !nodeHas(info, nodeproto.AssistantServiceTier) {
+		raw, _ := json.Marshal(params)
+		var fields struct {
+			ServiceTier string `json:"service_tier"`
+		}
+		_ = json.Unmarshal(raw, &fields)
+		if fields.ServiceTier != "" {
+			// An older node would start the conversation at Standard and drop an explicit, billable Fast choice.
+			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_assistant_service_tier")}
+		}
+	}
+	if method == "session.send" && !nodeHas(info, nodeproto.LauncherSwitchNow) {
+		raw, _ := json.Marshal(params)
+		var fields struct {
+			SwitchNow bool `json:"switch_now"`
+		}
+		_ = json.Unmarshal(raw, &fields)
+		if fields.SwitchNow {
+			// An older node would take it as apply_switch alone: typed on the launcher the agent runs on while it is
+			// busy, the switch left waiting for the user (the assistant's agent_switch, #5973).
+			return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_launcher_switch_now")}
+		}
+	}
+	if method == "session.switch" && !nodeHas(info, nodeproto.LauncherSwitchIdle) {
+		// An older node answers "unknown method", or would take it as another session call (the batch switch, #6008).
+		return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_launcher_switch_now")}
+	}
 	if method == proto.MethodModelHTTP && !nodeHas(info, nodeproto.ModelHTTP) {
 		// An older node would answer "unknown method": an API connection that sends through it says to update it.
 		return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_model_http")}
+	}
+	if method == proto.MethodModelRun && !nodeHas(info, nodeproto.ModelRun) {
+		// The same for an API purpose that runs on a launcher there.
+		return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_model_run")}
 	}
 	if method == proto.MethodSecretRun && !nodeHas(info, nodeproto.SecretRun) {
 		// An older node would answer "unknown method"; this says what to do about it before the user types anything.
 		return &rpc.Error{Code: proto.CodeNodeOutdated, Message: i18n.T(i18n.From(ctx), "hub-machine.node_no_secret_run")}
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return rpc.NotSent(ctx.Err()) // waited for the connection or the resident handover: nothing went out
 	}
 	if p == nil {
 		return fmt.Errorf("%s: %w", m.name(), errOffline)
@@ -558,6 +643,14 @@ func (m *Machine) callOnce(ctx context.Context, method string, params any, out a
 	}
 	if method == "node.configure" {
 		params = m.withClaudeDirs(ctx, params)
+	}
+	if snapshot != nil {
+		m.mu.Lock()
+		snapshot.peer, snapshot.revision = p, m.sessionRevision
+		m.mu.Unlock()
+	}
+	if nodeHas(info, nodeproto.OwnerControls) {
+		method = ownerControlMethod(ctx, method)
 	}
 	return p.Call(ctx, method, params, out)
 }
@@ -649,6 +742,7 @@ func (m *Machine) setSessions(list []proto.Session) {
 	}
 	m.mu.Lock()
 	m.sessions = list
+	m.sessionsListed = true
 	m.sessionRevision++
 	m.lastSeen = time.Now().UTC()
 	m.mu.Unlock()
@@ -658,6 +752,13 @@ func (m *Machine) sessionList() []proto.Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.sessions)
+}
+
+// appendSessions appends the machine's sessions to dst (Devices.AppendSessions).
+func (m *Machine) appendSessions(dst []proto.Session) []proto.Session {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append(dst, m.sessions...)
 }
 
 // sessionsWhere copies out the sessions keep accepts (Devices.SessionsWhere).
@@ -708,6 +809,8 @@ func (m *Machine) onEvent(event string, params json.RawMessage) {
 	m.noteClosed(event, params)
 	switch event {
 	case "sessions.changed":
+		m.sessionsEventMu.Lock()
+		defer m.sessionsEventMu.Unlock() // held through OnEvent and forward below
 		if list, ok := m.decodeSessions(params); ok {
 			m.setSessions(list)
 		}
@@ -773,8 +876,20 @@ func (m *Machine) onEvent(event string, params json.RawMessage) {
 			devicewire.ShareCreationLog(m.d.logf, p.SessionID, "manager_persist", "store_unavailable")
 		}
 		return // the manager's alone
+	case proto.EventModeRestart: // what became of a queued restart into a mode (mode_changes.go)
+		m.onModeRestart(params)
+		return // the manager's alone
 	case "claude.dirs":
 		m.rememberClaudeDirs(params)
+	case "claude.plugin": // the Persona plugin for Claude Code there changed (node/claudeplugin.go)
+		var st proto.ClaudePlugin
+		if json.Unmarshal(params, &st) == nil && st.State != "" {
+			m.mu.Lock()
+			m.info.ClaudePlugin = &st
+			m.mu.Unlock()
+			m.d.changed()
+		}
+		return
 	case "metrics": // the monitoring is the manager's (metrics.go)
 		if !m.stopped() { // a late one from a machine let go would bring it back (forgetMachine)
 			m.d.onMetrics(m.cfg.ID, params)
@@ -838,6 +953,12 @@ func (m *Machine) onRequest(ctx context.Context, method string, params json.RawM
 			}
 		}
 		return map[string]any{"sessions": out}, nil
+	case "usage.backfill.status": // the token usage backfill (usage_backfill.go)
+		return m.d.usageBackfillStatus(ctx, m.cfg.ID, params, time.Now())
+	case "usage.backfill":
+		sctx, cancel := m.storeCtx()
+		defer cancel()
+		return m.d.putUsageBackfill(sctx, m.cfg.ID, params, time.Now())
 	}
 	if method == "notify" {
 		if id := spoolID(params); id != "" { // replayed by a resident node (spooldedupe.go)

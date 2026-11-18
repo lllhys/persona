@@ -7,6 +7,7 @@ import persona.core.contracts.*
 import persona.core.designsystem.LocalizedFormats
 import persona.core.domain.sort.AgentSession
 import persona.core.domain.sort.isNestedSubtask
+import persona.core.domain.sort.foldRows
 import java.text.NumberFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -45,8 +46,9 @@ internal fun alerts(sample: MetricSample?, cores: Int?): List<MetricAlert> {
  * A computer's running sessions, as the Agents list counts them on its computer chip and header: a subtask another
  * session started, listed under that one's "Subtasks", is not one of them unless it needs the user (#4494).
  */
-internal fun machineSessions(sessions: List<Session>, machineId: String): List<Session> = sessions
-    .filter { it.machineId == machineId && !it.assistant && it.isLive && !AgentSession(it).isNestedSubtask }
+internal fun machineSessions(sessions: List<Session>, machineId: String, hierarchy: Boolean = false): List<Session> =
+    foldRows(sessions.filter { it.machineId == machineId }.map(::AgentSession), hierarchy)
+    .filter { !it.session.assistant && it.isLive && !it.isNestedSubtask }.map { it.session }
     .sortedWith(compareBy<Session> { it.agentState.priority }.thenByDescending { it.updated })
 
 /** History keeps the disk's used bytes; the chart shows them as a share of [total] (gaps stay gaps). */
@@ -71,16 +73,26 @@ internal fun segments(points: List<MetricPoint>, step: Int, value: (MetricPoint)
     return result
 }
 
-internal fun selectedPoint(points: List<MetricPoint>, time: Long, step: Int): MetricPoint? {
+internal fun selectedPoint(
+    points: List<MetricPoint>,
+    time: Long,
+    step: Int,
+    hasValue: (MetricPoint) -> Boolean = { true },
+): MetricPoint? {
     val ordered = points.sortedBy { it.t }
-    // Do not borrow an edge value from either side of an explicitly marked outage.
     val before = ordered.lastOrNull { it.t <= time }
     val after = ordered.firstOrNull { it.t >= time }
-    if (before?.gap == true || after?.gap == true) return null
+    // Do not borrow an edge value from either side of an explicitly marked outage or a missing series.
+    if (before?.let { it.gap || !hasValue(it) } == true) return null
+    if (after?.let { it.gap || !hasValue(it) } == true) return null
     if (before != null && after != null && after.t - before.t > 3L * step) return null
-    return ordered.filterNot { it.gap }.minByOrNull { abs(it.t - time) }
+    return listOfNotNull(before, after).filterNot { it.gap }.minByOrNull { abs(it.t - time) }
         ?.takeIf { abs(it.t - time) <= 2L * step }
 }
+
+/** A saved scrub survives refreshes and range changes while its timestamp is still inside the visible window. */
+internal fun retainedMetricSelection(selection: Long?, end: Long, span: Long): Long? =
+    selection?.takeIf { span > 0 && it in (end - span)..end }
 
 /** Numbers, sizes, rates and times on the machine pages, in the language of the page (docs/protocol/i18n.md). */
 internal object MetricFormat {

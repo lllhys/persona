@@ -1,6 +1,7 @@
 import BeautifulUI
 import Observation
 import SwiftUI
+import PersonaWire
 
 // The UI slots (docs/extensions/extensions.md「UI slots」): where plugins put their declarative UI beyond their own settings.
 //
@@ -104,6 +105,13 @@ import SwiftUI
         return (count, count == 0 && badges.contains { Int($0.text) == nil })
     }
 
+    /// `total` as the ways to Settings show it (its tab, the drawer's button), for one that is read naming none (the
+    /// default assistant's, as `shared` is): only while the default is current. Settings shows the current assistant's
+    /// entries (Extensions), so with another one current these would point at nothing there.
+    func settingsTotal(_ model: AppModel) -> (count: Int, dot: Bool) {
+        model.assistantManagerID == nil ? total : (0, false)
+    }
+
     static func key(_ p: ExtensionUIPlace) -> String { p.owner + "/" + p.id }
 
     /// What the lists depend on: which hub (paired again with another, or another group picked) and whether it has slots.
@@ -156,7 +164,7 @@ struct ExtensionBadgeView: View {
         if let n = Int(badge.text), n > 0 {
             CountBadge(count: n, look: .solid(badge.tone == nil || badge.tone == "neutral" ? Theme.countBadge : ExtensionUIStyle.tone(badge.tone)))
         } else {
-            Chip(text: badge.text, look: badge.tone == nil || badge.tone == "neutral" ? .neutral : .tint(ExtensionUIStyle.tone(badge.tone)))
+            Chip(text: badge.text, look: ExtensionUIStyle.badge(badge))
                 .lineLimit(1)
         }
     }
@@ -165,8 +173,10 @@ struct ExtensionBadgeView: View {
 /// What the plugins' entries' badges add up to, on a way to Settings that is not its tab (the shell drawer's Settings button):
 /// the sum as a count badge, only words a dot, nothing without badges.
 struct ExtensionSettingsBadge: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
-        let total = ExtensionSlots.shared.total
+        let total = ExtensionSlots.shared.settingsTotal(model)
         if total.count > 0 {
             CountBadge(count: total.count, look: .neutral)
                 .offset(x: Theme.Space.xs, y: -Theme.Space.xs)

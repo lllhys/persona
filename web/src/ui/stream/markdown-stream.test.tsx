@@ -85,7 +85,7 @@ describe("Markdown's code", () => {
     await loadHighlight();
     const html = render({ text });
     expect(html).toContain('<span class="hljs-keyword">const</span>');
-    expect(html).toContain('aria-label="拷贝代码"');
+    expect(html).toContain('aria-label="复制代码"');
     expect(render({ text: "```mermaid\ngraph TD; A-->B\n```" })).not.toContain("hljs");
     // not inside the fade's spans while streaming either
     expect(render({ text, streaming: true })).toContain('<span class="hljs-keyword">const</span>');

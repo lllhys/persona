@@ -252,6 +252,7 @@ func TestMasterAddsAConfirmedComputer(t *testing.T) {
 // `personad hub pair --machine <id> --add --name <name>`: the add request, the link alone on stdout, "Added" on stderr;
 // without --add, a computer the hub does not have says to add --add.
 func TestPairMachineCLIAdd(t *testing.T) {
+	setPairLanguage(t, "zh-Hans")
 	var got map[string]any
 	expires := time.Now().Add(pairLifetime)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

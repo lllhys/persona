@@ -2,6 +2,12 @@
 
 Pitfalls, odd behavior and the trade-offs made at the time (originally in `CLAUDE.md`; index in `docs/lessons/README.md`). Put new lessons in the matching section; if none fits, start a new one.
 
+## Saving mail attachments
+
+- Enforce a save limit while spooling, not after writing the attachment to disk (#9398). Keep reading and hashing the
+  full decoded attachment when its identity depends on its content, so the ID still matches and the IMAP connection
+  remains synchronized. Test a large attachment, the exact limit, a wrong ID, and a subsequent mailbox request.
+
 ## Sending attachments
 
 - Don't extend the client_id idempotency of text / images to files: the Lark gateway's direct file upload doesn't go through the outbox, and an unknown result must not be uploaded again. An API success whose receipt is lost or can't be parsed is also unknown; only an explicit rejection allows a retry. Test mocks must tell a 429 rejection apart from a receipt lost after acceptance, rather than always returning 502 and assuming a retry is safe.
@@ -48,6 +54,7 @@ When mainline hides the send button for an empty composer, attachment drafts sti
 - Some networks (the author's hub machine) can't reach most of Google's IPv4 addresses (`imap.gmail.com` / `smtp.gmail.com` often resolve to 173.194.x.x, and every port times out); HTTPS works only because it goes over IPv6.
   The hub always reaches Gmail through `google.proxy` in `hub.json` (for example a local proxy on the hub machine); don't add a direct-connection fallback again (`docs/extensions/mail.md`).
 - MIME bodies nest: mixed messages usually wrap multipart/alternative, so any walker that only looks at top-level parts finds no text. The list snippet (`textFromRaw`) and `GetMessage` must both recurse; an empty snippet silently blanks Inbox rows, `mail_search` hits and the knowledge-base archive body.
+- One body can span several inline parts: Apple Mail (iPhone and Mac) splits the text around every file or photo placed in it (`multipart/mixed {text, file, text}`, rich text `multipart/related {html, image, html}`). Keeping only the first text part dropped everything after the file from `mail_read` and the Inbox (#6023). Join the parts of a mixed or related entity in order, keep one rendering per `multipart/alternative`, and walk the MIME tree for that: go-message's `mail.Reader` flattens it and cannot tell the two apart. Attachments keep their own flat walk so their IDs match the download.
 - Attachment IDs use physical MIME attachment order, including undecodable parts omitted from the displayed list (#1497). Count the same `AttachmentHeader` parts as the downloader before decoding; counting successful decodes shifts later IDs and breaks downloads and saves. Exercise the real parser and IMAP download/save boundary with corrupt preceding parts, nested bodies, and repeated or empty names.
 - Text-only sends (`RenderMessage` without html) must set `Content-Type: text/plain; charset=utf-8` themselves: go-message's `CreateSingleInlineWriter` adds none, and a message without one is US-ASCII (RFC 2045 §5.2), so UTF-8 bodies show as mojibake in clients that trust the header.
 - Sent mail must not carry the hub machine's host name (a Mac's default one includes its owner's first name): go-message's `GenerateMessageID` puts `os.Hostname()` after the `@`, so build the Message-ID with `GenerateMessageIDWithHostname` and the sender's domain; SMTP servers record the EHLO name in the `Received` header of every message they accept, so the client greets with an address literal (`ehloName`).
@@ -107,6 +114,7 @@ Review follow-up: the optional projection isn't a required field for a whole pag
   reread the whole window as in the previous item. Events for other accounts aren't read; reconnects and events without chats (pinned, settings) still reread the whole window.
 - A load request at the end of the page can't just be dropped when a refresh comes along: SwiftUI doesn't restart the task when the cursor is unchanged. Wait for the refresh to finish, then continue with the new cursor; the queued refresh stays inside the page's own task, so leaving doesn't spawn a separate background task.
 - The chat list isn't the message subscription list; listing every group shouldn't make every active group keep prefetching chat content.
+- A plain `.task` following `LarkSync.changes(of:)` keeps listening and fetching on a hidden shell page (the shell keeps it mounted); follow from `.tabActiveTask` and catch up once when it starts again (#10337).
 
 - The persistent send queue must record separately whether a submission has been attempted. On restart, only files whose submission started with an unknown result need checking; queued files that were never sent should keep an explicit retry. Offline, DNS or connection failures must not be misjudged as uploaded-but-unknown either.
 - The Lark gateway's successful file receipt may omit the message ID; both the client and the hub must accept the success, and the client must not turn the optional field back into a send failure.

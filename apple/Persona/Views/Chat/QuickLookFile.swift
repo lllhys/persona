@@ -28,13 +28,19 @@ nonisolated enum QuickLookFileType {
 enum MachineFileDownload {
     static func fetch(_ ref: FileRef, file: FileContent, api: APIClient, prefix: String,
                       progress: @escaping @MainActor @Sendable (Int64, Int64) -> Void) async throws -> URL {
+        try await fetch(ref, path: file.path, name: file.name, api: api, prefix: prefix, progress: progress)
+    }
+
+    /// The file at path on ref's machine, saved under name (the viewer's Download, before the file's details are here).
+    static func fetch(_ ref: FileRef, path: String, name: String, api: APIClient, prefix: String,
+                      progress: @escaping @MainActor @Sendable (Int64, Int64) -> Void) async throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(prefix + UUID().uuidString, isDirectory: true)
-        let url = directory.appendingPathComponent((file.name as NSString).lastPathComponent)
+        let url = directory.appendingPathComponent((name as NSString).lastPathComponent)
         var kept = false
         defer { if !kept { try? FileManager.default.removeItem(at: directory) } }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try await api.download("/api/v1/machines/\(ref.machineID)/file/download",
-                               query: ["path": file.path, "cwd": ref.cwd ?? ""], to: url) { received, total in
+                               query: ["path": path, "cwd": ref.cwd ?? ""], to: url) { received, total in
             Task { @MainActor in progress(received, total) }
         }
         try Task.checkCancellation()

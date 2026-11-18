@@ -133,17 +133,9 @@ func (h *Manager) catalog(q, market string) []CatalogItem {
 
 // catalogIn is catalog with its problems in l.
 func (h *Manager) catalogIn(l i18n.Lang, q, market string) []CatalogItem {
-	ms := h.marketsState()
-	ms.mu.Lock()
-	states := make([]*marketState, 0, len(ms.byID))
-	for _, s := range ms.byID {
-		states = append(states, &marketState{rec: s.rec, index: s.index})
-	}
-	ms.mu.Unlock()
-	slices.SortFunc(states, func(a, b *marketState) int { return marketBefore(a.rec, b.rec) })
 	q = strings.ToLower(strings.TrimSpace(q))
 	out := []CatalogItem{}
-	for _, s := range states {
+	for _, s := range h.marketStates() {
 		if s.index == nil || (market != "" && market != s.rec.ID) {
 			continue
 		}
@@ -155,50 +147,78 @@ func (h *Manager) catalogIn(l i18n.Lang, q, market string) []CatalogItem {
 			if q != "" && !strings.Contains(strings.ToLower(strings.Join(append(append([]string{m.ID, m.Name, m.Description, m.Publisher}, translatedWords(ts)...), e.Tags...), "\n")), q) {
 				continue
 			}
-			it := CatalogItem{Replaces: e.Replaces, Market: s.rec.ID, MarketName: marketName(l, s.rec), ID: m.ID, Name: ts.Name(l, m.Name), Version: m.Version, Description: ts.Description(l, m.Description),
-				Publisher: m.Publisher, Homepage: m.Homepage, IconURL: catalogIconURL(s.rec.ID, e), Downloads: e.Downloads, DownloadsUpdatedAt: s.index.DownloadsUpdatedAt,
-				Tags: append([]string{}, e.Tags...), Contributes: m.Contributions(), Permissions: extension.ExplainIn(l, m)}
-			if s.rec.Signature.Bad() || (extension.IsOfficialMarket(s.rec.Spec) && (s.rec.Signature.State != extension.SigSigned || s.rec.Signature.KeyID != keyIDOf(extension.Official.SigningKey))) {
-				it.Problem = i18n.T(l, "hub-extension_market.bad_signature", i18n.Args{"err": i18n.MarketText(l, s.rec.Error)})
-			} else if e.PackageFor(extension.Platform()) == nil {
-				it.Problem = i18n.T(l, "hub-extension_market.no_package", i18n.Args{"platform": extension.Platform()})
-			} else if _, err := extension.CheckEngines(m, h.build.Number); err != nil {
-				it.Problem = i18n.Localize(err, l)
-			} else if err := h.cantRunHere(m); err != nil {
-				it.Problem = i18n.Localize(err, l)
-			}
-			cur := h.extensions.reg.GetExact(m.ID)
-			if cur == nil && e.Replaces != "" {
-				if old := h.extensions.reg.GetExact(e.Replaces); old != nil && old.Record.Source == extension.SourceInstalled && old.Record.Origin == "market:"+s.rec.ID+"/"+e.Replaces {
-					cur, it.RenameFrom = old, old.Record.ID
-				}
-			}
-			if cur != nil {
-				it.Installed, it.InstalledSource = cur.Record.Version, cur.Record.Source
-				it.FromThisMarket = extension.FromMarket(cur.Record.Origin) == s.rec.ID
-				it.Upgradable = cur.Record.Source == extension.SourceInstalled && extension.NewerVersion(m.Version, cur.Record.Version)
-			}
-			out = append(out, it)
+			out = append(out, h.catalogItem(l, s, e, ts))
 		}
 		if extension.IsOfficialMarket(s.rec.Spec) {
-			slices.SortFunc(out[start:], func(a, b CatalogItem) int {
-				count := func(it CatalogItem) int64 {
-					if it.Downloads != nil {
-						return *it.Downloads
-					}
-					return 0
-				}
-				if c := cmp.Compare(count(b), count(a)); c != 0 {
-					return c
-				}
-				if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
-					return c
-				}
-				return strings.Compare(a.ID, b.ID)
-			})
+			slices.SortFunc(out[start:], officialCatalogOrder)
 		}
 	}
 	return out
+}
+
+// officialCatalogOrder orders the official market's entries: most downloaded first, then by name, then by id. No two
+// entries of a market compare equal, so the entries a filter keeps are in the order the whole catalog has them
+// (marketChannels sorts only the ones it builds).
+func officialCatalogOrder(a, b CatalogItem) int {
+	count := func(it CatalogItem) int64 {
+		if it.Downloads != nil {
+			return *it.Downloads
+		}
+		return 0
+	}
+	if c := cmp.Compare(count(b), count(a)); c != 0 {
+		return c
+	}
+	if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+		return c
+	}
+	return strings.Compare(a.ID, b.ID)
+}
+
+// marketStates are the markets with the indexes they have now, in the catalog's order (marketBefore).
+func (h *Manager) marketStates() []*marketState {
+	ms := h.marketsState()
+	ms.mu.Lock()
+	states := make([]*marketState, 0, len(ms.byID))
+	for _, s := range ms.byID {
+		states = append(states, &marketState{rec: s.rec, index: s.index})
+	}
+	ms.mu.Unlock()
+	slices.SortFunc(states, func(a, b *marketState) int { return marketBefore(a.rec, b.rec) })
+	return states
+}
+
+// catalogItem is entry e of market s as the catalog shows it in l (ts are e's translations), with what this hub has
+// of it.
+func (h *Manager) catalogItem(l i18n.Lang, s *marketState, e *extension.MarketEntry, ts extension.Translations) CatalogItem {
+	m := e.Parsed
+	it := CatalogItem{Replaces: e.Replaces, Market: s.rec.ID, MarketName: marketName(l, s.rec), ID: m.ID, Name: ts.Name(l, m.Name), Version: m.Version, Description: ts.Description(l, m.Description),
+		Publisher: m.Publisher, Homepage: m.Homepage, IconURL: catalogIconURL(s.rec.ID, e), Downloads: e.Downloads, DownloadsUpdatedAt: s.index.DownloadsUpdatedAt,
+		Tags: append([]string{}, e.Tags...), Contributes: m.Contributions(), Permissions: extension.ExplainIn(l, m)}
+	if s.rec.Signature.Bad() || (extension.IsOfficialMarket(s.rec.Spec) && (s.rec.Signature.State != extension.SigSigned || s.rec.Signature.KeyID != keyIDOf(extension.Official.SigningKey))) {
+		it.Problem = i18n.T(l, "hub-extension_market.bad_signature", i18n.Args{"err": i18n.MarketText(l, s.rec.Error)})
+	} else if e.PackageFor(extension.Platform()) == nil {
+		it.Problem = i18n.T(l, "hub-extension_market.no_package", i18n.Args{"platform": extension.Platform()})
+	} else if _, err := extension.CheckEngines(m, h.build.Number); err != nil {
+		it.Problem = i18n.Localize(err, l)
+	} else if err := h.cantRunHere(m); err != nil {
+		it.Problem = i18n.Localize(err, l)
+	}
+	cur := h.extensions.reg.GetExact(m.ID)
+	if cur == nil && e.Replaces != "" {
+		if old := h.extensions.reg.GetExact(e.Replaces); old != nil && old.Record.Source == extension.SourceInstalled && old.Record.Origin == "market:"+s.rec.ID+"/"+e.Replaces {
+			cur, it.RenameFrom = old, old.Record.ID
+		}
+	}
+	if cur != nil {
+		it.Installed, it.InstalledSource = cur.Record.Version, cur.Record.Source
+		it.FromThisMarket = extension.FromMarket(cur.Record.Origin) == s.rec.ID
+		it.Upgradable = cur.Record.Source == extension.SourceInstalled && extension.NewerVersion(m.Version, cur.Record.Version)
+		if cur.Record.Source == extension.SourceInstalled { // an upgrade keeps its settings: the address config: lines name (#8570)
+			it.Permissions = extension.ExplainWith(l, m, h.extensions.reg.SavedConfig(cur))
+		}
+	}
+	return it
 }
 
 // translatedWords are the names and descriptions of every translation an entry carries: the catalog's search finds

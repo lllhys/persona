@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// A stable card location is supplied by the owning assistant conversation, never inferred from model JSON.
 nonisolated struct AssistantCardLocation: Hashable, Sendable {
@@ -104,7 +105,7 @@ struct InteractiveAssistantViewCard: View {
         #endif
         .sheet(item: $openedFile) { FileViewer(ref: $0) }
         .sheet(item: $openedKnowledge) { entry in
-            NavigationStack { KnowledgeDetailView(entry: entry) }
+            NavigationStack { KnowledgeDetailView(entry: entry).toolbar { SheetClose { openedKnowledge = nil } } }
         }
         .onAppear { model.update(source, version: version, complete: complete); model.registered = registered }
         .onDisappear { model.decline() }

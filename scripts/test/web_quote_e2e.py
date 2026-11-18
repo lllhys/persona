@@ -8,9 +8,6 @@ history: MOCK_QUOTE's earlier message) shows it as a folded quote card at its to
     (cd web && PERSONA_HUB_URL=http://127.0.0.1:18841 npx vite --port 5341 --strictPort &)
     python3 scripts/test/web_quote_e2e.py http://127.0.0.1:5341 [--shots <dir>]
 
-`--tasks` checks a task's receipt card instead (#2462; the fake hub with `MOCK_TASKS=1`): "Copy" / "Quote" in its corner on
-hover, "Quote" names the task above the input, and the sent block's first line carries its title and todo id.
-
 `--before` only takes the same screenshots (for the build before #2427, which typed `> ` lines into the input).
 Prints one line per check and a verdict; exits 1 on the first failure. Runs light and dark, at desktop and phone
 widths; --shots saves each.
@@ -123,68 +120,12 @@ def case(browser, base, token, size, theme, shots, before):
     ctx.close()
 
 
-def task_case(browser, base, token, size, theme, shots):
-    tag = f"{size}/{theme} task"
-    name = f"quote-task-{size}-{theme}"
-    ctx = browser.new_context(viewport=SIZES[size], device_scale_factor=2)
-    page = ctx.new_page()
-    page.set_default_timeout(15000)
-    page.goto(base + "/overview?token=" + token)
-    page.wait_for_function("localStorage.getItem('persona.token')")
-    page.evaluate(f"localStorage.setItem('persona.theme', '{theme}')")
-    page.goto(base + "/")
-    card = page.locator("[data-receipt]").filter(has_text="整理发布说明 完成")
-    expect(card).to_have_count(1)
-    card.scroll_into_view_if_needed()
-    if size == "wide":
-        card.hover()
-        # the card's own hover bar (its MessageActions wrapper is two levels up)
-        bar_quote = card.locator("xpath=../..").get_by_role("button", name="引用")
-        expect(bar_quote).to_have_count(1)
-        page.wait_for_timeout(300)
-        shot(page, shots, name + "-hover")
-        bar_quote.click()
-    else:
-        card.locator("div").filter(has_text="整理好了").last.click(button="right")
-        page.get_by_role("menuitem", name="引用").click()
-    bar = page.get_by_label("引用的消息")
-    expect(bar).to_contain_text("引用任务「整理发布说明」")
-    expect(bar).to_contain_text("整理好了：这周合并了 7 个 PR")
-    if "todo_" in bar.inner_text():
-        fail(f"{tag}: the bar shows the todo id")
-    box = page.locator("textarea").last
-    if box.input_value() != "" or not box.evaluate("el => el === document.activeElement"):
-        fail(f"{tag}: the input is not empty and focused")
-    ok(f"{tag}: 引用 names the task above an empty, focused input")
-    box.fill("新功能那组再细分一下")
-    page.wait_for_timeout(400)
-    shot(page, shots, name + "-composer")
-    posts = []
-    page.on("request", lambda r: posts.append(r.post_data or "") if r.method == "POST" else None)
-    page.get_by_role("button", name=SEND).click()
-    page.wait_for_timeout(1200)
-    body = next((p for p in posts if "新功能那组再细分一下" in p), "")
-    if "> 任务「整理发布说明」（todo id: todo_task_release）" not in body or "> 整理好了" not in body:
-        fail(f"{tag}: the sent block does not carry the task and its todo id: {body[:240]!r}")
-    ok(f"{tag}: sent with the task's title and todo id on the quote's first line")
-    bubble = page.locator("[data-user-bubble]").filter(has_text="新功能那组再细分一下").last
-    bubble.scroll_into_view_if_needed()
-    expect(bubble.locator("[data-quote-task]")).to_contain_text("任务「整理发布说明」")
-    if "todo id" in bubble.inner_text():
-        fail(f"{tag}: the bubble shows the todo id")
-    ok(f"{tag}: the bubble names the task, not its todo id")
-    page.wait_for_timeout(300)
-    shot(page, shots, name + "-sent")
-    ctx.close()
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("base")
     ap.add_argument("--token", default="mock")
     ap.add_argument("--shots")
     ap.add_argument("--before", action="store_true")
-    ap.add_argument("--tasks", action="store_true")
     a = ap.parse_args()
     if a.shots:
         os.makedirs(a.shots, exist_ok=True)
@@ -193,10 +134,7 @@ def main():
         try:
             for size in SIZES:
                 for theme in ("light", "dark"):
-                    if a.tasks:
-                        task_case(browser, a.base.rstrip("/"), a.token, size, theme, a.shots)
-                    else:
-                        case(browser, a.base.rstrip("/"), a.token, size, theme, a.shots, a.before)
+                    case(browser, a.base.rstrip("/"), a.token, size, theme, a.shots, a.before)
         finally:
             browser.close()
     print("PASS")

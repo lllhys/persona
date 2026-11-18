@@ -30,11 +30,28 @@ class PhoneToolCatalogTest {
         assertEquals(ios.keys, android.toSet() - "phone_notifications_list")
     }
 
+    /**
+     * Sentences an iPhone description has that Android's does not, by tool name. The fixture is the iOS text verbatim,
+     * so every difference is listed here with its reason instead of being trimmed by the exporter.
+     */
+    private val iosOnlyDescriptionSentences = mapOf(
+        // iPhone-only behavior: a locked iPhone cannot read HealthKit and answers with the last snapshot it saved. Android
+        // reads Health Connect and has no such snapshot, so promising one would mislead the model when this phone is the
+        // one called. Drop this entry when the Health space gives Android the same behavior or the sentence changes.
+        "phone_health_summary" to " When the iPhone is locked the app cannot read HealthKit: it returns the last snapshot " +
+            "saved while the device was unlocked (\"source\": \"snapshot\" with \"as_of\"), or a device_locked error " +
+            "when no snapshot exists yet.",
+    )
+
     @Test fun everyToolIsDeclaredWordForWordAsOnIos() {
         for (tool in PhoneToolCatalog.all.filter { it.spec.name in ios }) {
             val want = ios.getValue(tool.spec.name).jsonObject
             val name = tool.spec.name
-            assertEquals(name, want.getValue("description").jsonPrimitive.content, tool.spec.description)
+            val iosDescription = want.getValue("description").jsonPrimitive.content
+            val extra = iosOnlyDescriptionSentences[name]
+            // The listed sentence must still be on iOS's description (a stale entry fails) and is the only difference.
+            if (extra != null) assertTrue("$name: the allowlisted sentence is no longer in the iOS text", iosDescription.endsWith(extra))
+            assertEquals(name, iosDescription.removeSuffix(extra.orEmpty()), tool.spec.description)
             assertEquals(name, want.getValue("source").jsonPrimitive.content, tool.source.key)
             // iOS Schema.object: additionalProperties false, properties and required only when there are some.
             val properties = want.getValue("properties").jsonObject
@@ -46,12 +63,25 @@ class PhoneToolCatalogTest {
             }
             assertEquals(name, schema, tool.spec.inputSchema)
         }
+        // An allowlist entry for a tool Android does not declare, or one that no longer differs, is dead weight.
+        for ((name, extra) in iosOnlyDescriptionSentences) {
+            assertNotEquals(name, ios.getValue(name).jsonObject.getValue("description").jsonPrimitive.content,
+                PhoneToolCatalog.all.single { it.spec.name == name }.spec.description)
+            assertTrue(name, extra.isNotBlank())
+        }
         // register_phone's wire shape.
         assertEquals(setOf("name", "description", "input_schema"), PhoneToolCatalog.all.first().spec.toWire().keys)
     }
 
     @Test fun onlyWritesAskFirstAndForegroundToolsAreTheOnesAndroidRestricts() {
-        assertEquals(listOf("phone_calendar_create_event"), PhoneToolCatalog.all.filter { it.confirmation != null }.map { it.spec.name })
+        assertEquals(PhoneToolCatalog.confirmedWriteNames, PhoneToolCatalog.all
+            .filter { it.confirmation != null || it.confirmationNeedsPreparation }.map { it.spec.name }.toSet())
+        assertEquals(setOf("phone_calendar_create_event", "phone_calendar_update_event", "phone_calendar_delete_event",
+            "phone_contacts_create", "phone_contacts_update"), PhoneToolCatalog.confirmedWriteNames)
+        // Updates and deletes show before → after, so their card is prepared in the suspend path; the others stay pure.
+        assertEquals(setOf("phone_calendar_update_event", "phone_calendar_delete_event", "phone_contacts_update"),
+            PhoneToolCatalog.all.filter { it.confirmationNeedsPreparation }.map { it.spec.name }.toSet())
+        assertTrue(PhoneToolCatalog.all.filter { it.confirmationNeedsPreparation }.all { it.confirmation == null })
         assertEquals(setOf("phone_location_current", "phone_clipboard_get", "phone_clipboard_set"),
             PhoneToolCatalog.all.filter { it.foregroundOnly }.map { it.spec.name }.toSet())
         assertEquals(listOf("phone_photos_recent", "phone_photo_get"),

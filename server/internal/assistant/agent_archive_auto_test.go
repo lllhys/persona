@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/transcript"
 )
 
 // Archiving closed sessions by themselves (agent_archive_auto.go).
@@ -53,6 +54,10 @@ func TestAutoArchivable(t *testing.T) {
 		{"a review's reviewer", func(*proto.Session) {}, link{reviewer: true, onTodo: true, lastDone: old}, idle, false},
 		{"a subagent's row", func(s *proto.Session) { s.IsSubagent = true }, none, idle, false},
 		{"another tool's session", func(s *proto.Session) { s.SourceKind = "codex_app_server" }, none, idle, false},
+		{"the Claude desktop app's session, quiet in its sidebar", func(s *proto.Session) {
+			s.Agent, s.AgentSurface, s.Status, s.State = "claude", transcript.SurfaceDesktop, proto.StatusOffline, proto.StateOffline
+		}, doneLong, idle, false},
+		{"a command-line session", func(s *proto.Session) { s.Agent, s.AgentSurface = "claude", transcript.SurfaceCLI }, none, idle, true},
 		{"still open in a tab", func(s *proto.Session) { s.Status, s.PaneID = proto.StatusIdle, "w1:p1" }, none, idle, false},
 		{"a tab without a status", func(s *proto.Session) { s.PaneID = "w1:p1" }, none, idle, false},
 		{"working", func(s *proto.Session) { s.Status, s.State = proto.StatusWorking, proto.StateWorking }, none, idle, false},

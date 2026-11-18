@@ -126,50 +126,63 @@ func (n *Node) setOmpSetting(key string, value any) error {
 		return err
 	}
 	path := n.ompConfigPath()
+	agentConfigMu.Lock()
+	defer agentConfigMu.Unlock()
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	text := yamlSimpleSet(string(b), key, value)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+	return writeConfigFile(path, []byte(text), 0o600)
+}
+
+// yamlLine splits a `key: value` line into its indent, key and value, with a trailing comment removed from the value
+// (`computer: # desktop` is a section header). ok is false for blank lines, comments and lines without a key.
+func yamlLine(line string) (indent int, k, v string, ok bool) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return 0, "", "", false
 	}
-	mode := os.FileMode(0o600)
-	if st, err := os.Stat(path); err == nil {
-		mode = st.Mode().Perm()
+	k, v, ok = strings.Cut(trimmed, ":")
+	if !ok {
+		return 0, "", "", false
 	}
-	tmp := path + ".persona.tmp"
-	if err := os.WriteFile(tmp, []byte(text), mode); err != nil {
-		return err
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "#") {
+		v = ""
+	} else if i := strings.Index(v, " #"); i >= 0 {
+		v = strings.TrimSpace(v[:i])
 	}
-	return os.Rename(tmp, path)
+	return len(line) - len(strings.TrimLeft(line, " ")), strings.TrimSpace(k), v, true
 }
 
 func yamlSimpleParse(text string) map[string]any {
 	out := map[string]any{}
 	var section string
+	childIndent := 0 // the indent of the current section's keys: its first key's (2, 4, …)
 	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		k, v, ok := strings.Cut(trimmed, ":")
+		indent, k, v, ok := yamlLine(line)
 		if !ok {
 			continue
 		}
-		k = strings.TrimSpace(k)
-		v = strings.TrimSpace(v)
 		if indent == 0 {
+			section, childIndent = "", 0
 			if v == "" {
 				section = k
 				continue
 			}
-			section = ""
 			if parsed, ok := yamlScalar(v); ok {
 				out[k] = parsed
 			}
-		} else if indent == 2 && section != "" && v != "" {
+			continue
+		}
+		if section == "" {
+			continue
+		}
+		if childIndent == 0 {
+			childIndent = indent
+		}
+		if indent == childIndent && v != "" {
 			if parsed, ok := yamlScalar(v); ok {
 				out[section+"."+k] = parsed
 			}
@@ -236,38 +249,43 @@ func yamlSimpleSet(text, key string, value any) string {
 		return strings.Join(lines, "\n") + "\n"
 	}
 
-	secHeader := parent + ":"
 	secIdx := -1
 	for i, line := range lines {
-		if len(line)-len(strings.TrimLeft(line, " ")) == 0 && strings.TrimSpace(line) == secHeader {
+		if indent, k, v, ok := yamlLine(line); ok && indent == 0 && k == parent && v == "" {
 			secIdx = i
 			break
 		}
 	}
 	if secIdx >= 0 {
 		endIdx := len(lines)
+		childIndent := 0 // the section's own indent, so a 4-space block stays 4-space
 		for j := secIdx + 1; j < len(lines); j++ {
-			trimmed := strings.TrimSpace(lines[j])
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			indent, k, _, ok := yamlLine(lines[j])
+			if !ok {
 				continue
 			}
-			indent := len(lines[j]) - len(strings.TrimLeft(lines[j], " "))
 			if indent == 0 {
 				endIdx = j
 				break
 			}
-			if indent == 2 && strings.HasPrefix(trimmed, child+":") {
+			if childIndent == 0 {
+				childIndent = indent
+			}
+			if indent == childIndent && k == child {
 				if remove {
 					lines = append(lines[:j], lines[j+1:]...)
 				} else {
-					lines[j] = "  " + child + ": " + yamlFormatScalar(value)
+					lines[j] = strings.Repeat(" ", indent) + child + ": " + yamlFormatScalar(value)
 				}
 				return strings.Join(lines, "\n") + "\n"
 			}
 		}
+		if childIndent == 0 {
+			childIndent = 2
+		}
 		if !remove {
 			next := append([]string{}, lines[:endIdx]...)
-			next = append(next, "  "+child+": "+yamlFormatScalar(value))
+			next = append(next, strings.Repeat(" ", childIndent)+child+": "+yamlFormatScalar(value))
 			next = append(next, lines[endIdx:]...)
 			lines = next
 		}

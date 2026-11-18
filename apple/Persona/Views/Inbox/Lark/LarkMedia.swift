@@ -3,6 +3,7 @@ import CryptoKit
 import ImageIO
 import QuickLook
 import SwiftUI
+import PersonaWire
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -234,7 +235,7 @@ struct LarkRemoteImage: View {
                 Image(uiImage: image).resizable().aspectRatio(contentMode: contentMode)
             } else if failed {
                 Rectangle().fill(Color.primary.opacity(0.05))
-                    .overlay { Image(systemName: "photo.badge.exclamationmark").font(Theme.Font.title).foregroundStyle(.tertiary) }
+                    .overlay { Image(systemName: Theme.Icon.brokenImage).font(Theme.Font.title).foregroundStyle(.tertiary) }
             } else {
                 Rectangle().fill(Color.primary.opacity(0.05)).overlay { ProgressView().controlSize(.small) }
             }
@@ -298,7 +299,10 @@ struct LarkPlayerView: View {
             } else {
                 ProgressView().tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            Button { dismiss() } label: { Image(systemName: Theme.Icon.close).font(Theme.Font.heading).scaledFrame(width: Theme.Size.avatar, height: Theme.Size.avatar) }
+            Button { dismiss() } label: {
+                ThemedIcon(Theme.Icon.close).font(Theme.Font.heading).sheetBarLabel()
+                    .scaledFrame(width: Theme.Size.avatar, height: Theme.Size.avatar)
+            }
                 .themedButton()
                 .clipShape(.circle)
                 .padding(Theme.Space.l)

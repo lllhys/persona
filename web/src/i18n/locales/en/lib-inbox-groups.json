@@ -1,0 +1,10 @@
+{
+  "group_just": "Just now",
+  "group_today": "Today",
+  "group_yesterday": "Yesterday",
+  "group_week": "7+ days ago",
+  "group_month": "1+ month ago",
+  "group_lark": "Lark",
+  "group_mail": "Mail · {account}",
+  "group_agents": "Agents waiting on you"
+}

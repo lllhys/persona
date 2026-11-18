@@ -6,8 +6,8 @@ package persona.core.domain.sort
  * or a detached HEAD as a caution), how many agents at the end (Idle when nothing goes on), and dimmed while its
  * computer is offline.
  *
- * iOS reads the branch, the detached HEAD and the offline state from its host's workspace catalog; Android has no
- * catalog (phase 3 F7) and reads them from where the node placed the sessions in git (#1805) and from the computer.
+ * Paseo's source catalog supplies its workspace's branch, pin and availability. Other engines keep the node's git
+ * placement (#1805) and their computer's state until their catalogs are connected to this list.
  */
 data class WorktreeLine(
     /** The main checkout: ⌂ and the Primary chip. */
@@ -20,6 +20,8 @@ data class WorktreeLine(
     val tally: WorktreeTally? = null,
     /** Its computer is out of reach: the name in the secondary color. */
     val offline: Boolean = false,
+    /** Native workspace pin. Persona's independent session/project pin controls do not edit it. */
+    val pinned: Boolean = false,
 )
 
 /** The end of a working tree's line: "Idle" while nothing goes on in it, else "N agents". */
@@ -41,7 +43,8 @@ fun worktreeLine(tree: AgentWorktree, quiet: Boolean, agents: Int, online: Boole
         agents > 0 -> WorktreeTally.Agents(agents)
         else -> null
     },
-    offline = !online,
+    offline = !online || tree.workspace?.online == false || tree.workspace?.available == false,
+    pinned = tree.pinnedAt != null,
 )
 
 /**

@@ -1,0 +1,9 @@
+<resources>
+    <string name="chat_codex_waiting">Codex 已在「%1$s」上打开。在下面发第一条消息，或直接在它的终端里输入。</string>
+    <string name="chat_codex_computer">你的电脑</string>
+    <string name="chat_codex_first_message">给 Codex 的第一条消息</string>
+    <string name="chat_delivery_codex_not_ready">Codex 还没准备好接收第一条消息。请查看终端后重试。</string>
+    <string name="chat_delivery_codex_first_text">发给 Codex 的第一条消息只能是文字。开始后再添加图片和文件。</string>
+    <string name="chat_delivery_codex_waiting">请先发第一条消息，再切换模式、排队或分支。</string>
+    <string name="chat_delivery_codex_first_unconfirmed">还不能确认第一条消息是否送达。请先查看终端，再决定是否重发。</string>
+</resources>

@@ -253,12 +253,143 @@ class ReleaseWorkerTest(unittest.TestCase):
             with patch.object(worker, "run", side_effect=run) as calls, \
                     patch.object(worker, "version_code", return_value=100002):
                 result = worker.build(config, root, "a" * 40, directory)
-            self.assertIn("scripts/release/check_android_shrink.py", calls.call_args_list[-1].args[0])
+            commands = [call.args[0] for call in calls.call_args_list]
+            self.assertIn("scripts/release/check_android_shrink.py", commands[-2])
+            self.assertIn("scripts/release/check_android_build_commit.py", commands[-1])
+            self.assertEqual(result["build_commit"], "a" * 40)
             self.assertEqual(result["unsigned_sha256"], hashlib.sha256(built[apk]).hexdigest())
             self.assertEqual((directory / "unsigned.apk").read_bytes(), built[apk])
             archived = directory / f"mapping-{result['unsigned_sha256']}.txt.gz"
             self.assertEqual(gzip.decompress(archived.read_bytes()), built[mapping])
             self.assertEqual(sorted(p.name for p in directory.iterdir()), sorted(["build.json", "unsigned.apk", archived.name]))
+
+    def build_with_receipt(self, root, sha, receipt, rebuilt=b"rebuilt APK"):
+        """Run build() over an existing run directory holding unsigned.apk and [receipt]; return (result, commands)."""
+        directory = root / "runs" / sha
+        directory.mkdir(parents=True)
+        (directory / "unsigned.apk").write_bytes(b"earlier APK")
+        config = dict(repository="example/app", application_id="com.example.app")
+        worker.atomic_json(directory / "build.json", dict(
+            repository="example/app", source_sha=sha, version_code=100002, version_name="0.1.100002-" + sha[:12],
+            package="com.example.app", unsigned_sha256=hashlib.sha256(b"earlier APK").hexdigest(), **receipt))
+        apk = root / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
+        commands = []
+
+        def run(args, cwd=None, capture=False, env=None):
+            commands.append(list(args))
+            if args[0] == "./gradlew":
+                apk.parent.mkdir(parents=True, exist_ok=True)
+                apk.write_bytes(rebuilt)
+
+        with patch.object(worker, "run", side_effect=run), patch.object(worker, "version_code", return_value=100002):
+            return worker.build(config, root, sha, directory), commands, directory
+
+    def test_a_receipt_with_this_build_commit_is_reused(self):
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            result, commands, _ = self.build_with_receipt(Path(tmp), sha, dict(build_commit=sha))
+            self.assertEqual(result["build_commit"], sha)
+            self.assertFalse(any(command[0] == "./gradlew" for command in commands))
+
+    def test_a_receipt_from_before_the_build_commit_existed_is_not_reused(self):
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            result, commands, directory = self.build_with_receipt(Path(tmp), sha, {})
+            self.assertTrue(any(command[0] == "./gradlew" for command in commands))
+            # The APK was built again, checked, and the receipt now names the commit it carries.
+            self.assertEqual(result["build_commit"], sha)
+            self.assertEqual((directory / "unsigned.apk").read_bytes(), b"rebuilt APK")
+            self.assertEqual(json.loads((directory / "build.json").read_text())["build_commit"], sha)
+
+    def test_a_receipt_with_another_or_empty_build_commit_is_not_reused(self):
+        sha = "a" * 40
+        for value in ("b" * 40, "unknown", "", None):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                _, commands, _ = self.build_with_receipt(Path(tmp), sha, dict(build_commit=value))
+                self.assertTrue(any(command[0] == "./gradlew" for command in commands))
+
+    def test_the_apk_is_checked_for_its_commit_after_the_build_and_before_it_is_kept(self):
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            _, commands, _ = self.build_with_receipt(Path(tmp), sha, {})
+            names = [command[1] if command[0] == "python3" else command[0] for command in commands]
+            self.assertEqual(commands[names.index("scripts/release/check_android_build_commit.py")][2:],
+                             [str(Path(tmp) / "android/app/build/outputs/apk/release/app-release-unsigned.apk"), sha])
+            self.assertLess(names.index("./gradlew"), names.index("scripts/release/check_android_build_commit.py"))
+            self.assertLess(names.index("scripts/release/check_android_shrink.py"),
+                            names.index("scripts/release/check_android_build_commit.py"))
+
+    def test_an_apk_without_the_build_commit_is_not_kept_or_receipted(self):
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "runs" / sha
+            directory.mkdir(parents=True)
+            apk = root / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
+
+            def run(args, cwd=None, capture=False, env=None):
+                if args[0] == "./gradlew":
+                    apk.parent.mkdir(parents=True, exist_ok=True)
+                    apk.write_bytes(b"built without the commit")
+                if "check_android_build_commit.py" in args[1]:
+                    raise subprocess.CalledProcessError(1, args)
+
+            config = dict(repository="example/app", application_id="com.example.app")
+            with patch.object(worker, "run", side_effect=run), patch.object(worker, "version_code", return_value=100002):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    worker.build(config, root, sha, directory)
+            self.assertEqual(list(directory.iterdir()), [])
+
+    def test_gradle_release_command_carries_the_source_sha_as_the_build_commit(self):
+        sha = "b" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "runs" / sha
+            directory.mkdir(parents=True)
+            apk = root / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
+            mapping = root / "android/app/build/outputs/mapping/release/mapping.txt"
+            gradle = []
+
+            def run(args, cwd=None, capture=False, env=None):
+                if args[0] == "./gradlew":
+                    gradle.append(list(args))
+                    for path in (apk, mapping):
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b"built")
+
+            config = dict(repository="example/app", application_id="com.example.app")
+            with patch.object(worker, "run", side_effect=run), patch.object(worker, "version_code", return_value=100003):
+                worker.build(config, root, sha, directory)
+            self.assertEqual(len(gradle), 1)
+            commits = [arg for arg in gradle[0] if arg.startswith("-PpersonaBuildCommit")]
+            # Exactly the checked-out source, in full: the receipt's source_sha and the APK's commit are one value.
+            self.assertEqual(commits, ["-PpersonaBuildCommit=" + sha])
+            self.assertIn(":app:assembleRelease", gradle[0])
+            # The version name keeps its own short form; the build commit does not change it.
+            self.assertIn("-PpersonaVersionName=0.1.100003-" + sha[:12], gradle[0])
+
+    def test_tag_release_builds_with_the_tagged_commit(self):
+        sha = "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "tags" / "1.2.3"
+            directory.mkdir(parents=True)
+            apk = root / "android/app/build/outputs/apk/release/app-release-unsigned.apk"
+            mapping = root / "android/app/build/outputs/mapping/release/mapping.txt"
+            gradle = []
+
+            def run(args, cwd=None, capture=False, env=None):
+                if args[0] == "./gradlew":
+                    gradle.append(list(args))
+                    for path in (apk, mapping):
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b"built")
+
+            config = dict(repository="example/app", application_id="com.example.app")
+            with patch.object(worker, "run", side_effect=run), patch.object(worker, "version_code", return_value=100004):
+                worker.build(config, root, sha, directory, "1.2.3")
+            self.assertIn("-PpersonaBuildCommit=" + sha, gradle[0])
+            self.assertIn("-PpersonaVersionName=1.2.3", gradle[0])
 
     def test_new_source_cannot_decrease_version(self):
         with tempfile.TemporaryDirectory() as tmp:

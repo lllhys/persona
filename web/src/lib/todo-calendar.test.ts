@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Todo } from "./todos";
 import {
   addDays,
@@ -184,4 +184,29 @@ describe("moving a to-do on the calendar (#2045)", () => {
     expect(todoEntry(movedTodo(moved, { due_date: "2026-11-13" }))).toMatchObject({ start: at(13, 0), allDay: true });
     expect(due.due_date).toBe("2026-11-10");
   });
+});
+
+describe("a day the clocks change on (#9851)", () => {
+  // The axis is labelled by the clock: on these days an hour is skipped or repeated, and a 10:00 to-do still sits on
+  // the 10:00 line, where a click and a drop there say 10:00 too.
+  const savedTZ = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/New_York";
+  });
+  afterAll(() => {
+    if (savedTZ === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTZ;
+  });
+
+  for (const [name, month, date] of [["clocks forward", 2, 8], ["clocks back", 10, 1]] as const) {
+    it(`${name}: minutes into the day are the clock's`, () => {
+      const day = new Date(2026, month, date).getTime();
+      const ten = new Date(2026, month, date, 10, 0).getTime();
+      expect(minutesInto(ten, day)).toBe(10 * 60);
+      expect(minutesInto(new Date(2026, month, date, 23, 45).getTime(), day)).toBe(23 * 60 + 45);
+      expect(minutesInto(new Date(2026, month, date, 0, 30).getTime(), day)).toBe(30);
+      expect(slotAt(day, minutesInto(ten, day))).toBe(ten);
+      expect(dropOnAxis(day, minutesInto(ten, day)).at).toBe(ten);
+    });
+  }
 });

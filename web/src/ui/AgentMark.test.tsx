@@ -31,7 +31,7 @@ describe("AgentMark", () => {
   it("says which agent it is, in the interface language", () => {
     expect(draw("claude")).toContain('role="img"');
     expect(draw("claude")).toContain('aria-label="Claude Code"');
-    expect(draw("opencode")).toContain('aria-label="OpenCode"');
+    expect(draw("opencode")).toContain('aria-label="opencode"');
     expect(draw("cursor-agent")).toContain('aria-label="Cursor"');
   });
 
@@ -103,5 +103,28 @@ describe("SessionMark", () => {
     expect(html).toBe(draw("opencode"));
     expect(renderToStaticMarkup(<SessionMark s={{ agent: "claude", source_kind: "codex_history" }} size={14} />)).toBe(draw("codex"));
     expect(renderToStaticMarkup(<SessionMark s={{ agent: "dsh", agent_label: "DSH" }} size={14} />)).toContain('aria-label="DSH"');
+  });
+
+  it("draws one of Paseo's providers by its provider: the mark the app has for it, else its label's letter (#8142)", () => {
+    const paseo = (launcher: string, agent_label: string) => renderToStaticMarkup(<SessionMark s={{ agent: "paseo", source_kind: "runtime", launcher, agent_label }} size={14} />);
+    expect(src(paseo("cursor", "Cursor"))).toBe(src(draw("cursor")));
+    expect(src(paseo("traecli", "TRAE CLI"))).toBe(src(draw("trae")));
+    expect(src(paseo("opencode", "OpenCode"))).toBe(src(draw("opencode")));
+    expect(src(paseo("pi", "Pi"))).toBe(src(draw("pi")));
+    // a provider id of the user's own, with a label naming a known agent
+    expect(src(paseo("my-gemini", "Gemini"))).toBe(src(draw("gemini")));
+    const grok = paseo("grok", "Grok");
+    expect(grok).toContain('data-agent-mark="letter"');
+    expect(grok).toContain(">G</span>");
+    expect(grok).toContain('aria-label="Grok"');
+    expect(grok).not.toMatch(/paseo/i);
+  });
+});
+
+describe("AgentMark's label (#8142)", () => {
+  it("draws the mark its label names for an agent with none of its own, and keeps an agent's own mark", () => {
+    expect(src(draw("paseo", { label: "Cursor" }))).toBe(src(draw("cursor")));
+    expect(draw("paseo", { label: "Grok" })).toContain(">G</span>");
+    expect(src(draw("codex", { label: "Cursor" }))).toBe(src(draw("codex")));
   });
 });

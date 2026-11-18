@@ -46,8 +46,8 @@
   "test_cost": "The model here is only for this test and isn't saved. The default model is set in \"Choose models\". Testing sends one very short request, which may cost a little.",
   "test_cost_current": "The model here is only for this test and isn't saved. The default model is set in \"Choose models\"; it's {model} now. Testing sends one very short request, which may cost a little.",
   "discover_failed": "Couldn't fetch the model list: {error}. You can add models by hand in the next step.",
-  "discover_found_one": "Found {count} model. Check it in the next step.",
-  "discover_found_other": "Found {count} models. Check them in the next step.",
+  "discover_found_one": "Found {count} model.",
+  "discover_found_other": "Found {count} models.",
   "advanced": "Advanced",
   "advanced_badge": "Tier models, subagents, headers, proxy, timeout, context",
   "custom": "Custom compatible gateway",
@@ -183,5 +183,7 @@
   "found_on_offline": "On {computer} (offline)",
   "via": "Send through",
   "via_hub": "The hub itself",
-  "via_hint": "Which machine sends this connection’s requests. Choose one of your computers when the hub can’t reach the provider and that computer can; it must be online when a request goes out."
+  "via_hint": "Which machine sends this connection’s requests. Choose one of your computers when the hub can’t reach the provider and that computer can; it must be online when a request goes out.",
+  "filter_models": "Filter models",
+  "filter_none": "No model matches."
 }

@@ -11,6 +11,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import java.time.Instant
 import persona.core.contracts.api.ExtensionDependency
 import persona.core.contracts.api.ExtensionDetail
 import persona.core.contracts.api.ExtensionPackMember
@@ -73,7 +78,7 @@ internal fun LazyListScope.installedExtensionModel(detail: ExtensionDetail, name
     }
 }
 
-internal fun LazyListScope.sandbox(s: ExtensionSandbox?) {
+internal fun LazyListScope.sandbox(s: ExtensionSandbox?, name: String, onAllow: (() -> Unit)? = null) {
     s ?: return
     item("sandbox-title") { JSectionHeader(stringResource(R.string.settings_ext_sandbox_title)) }
     item("sandbox-state") {
@@ -81,16 +86,39 @@ internal fun LazyListScope.sandbox(s: ExtensionSandbox?) {
             JRow(ExtensionModelText.sandbox(LocalResources.current, s), subtitle = s.why?.ifBlank { null }, subtitleLines = 4)
         }
     }
+    s.egress?.let { e ->
+        item("sandbox-egress") {
+            JGroupItem(GroupPosition.Single) {
+                val allowed = pluralStringResource(R.plurals.settings_ext_sandbox_allowed, e.allowed.quantity(), e.allowed)
+                val blocked = pluralStringResource(R.plurals.settings_ext_sandbox_blocked, e.denied.quantity(), e.denied)
+                val separator = stringResource(R.string.settings_ext_dot_separator)
+                val palette = PersonaTheme.palette
+                JRow(stringResource(R.string.settings_ext_sandbox_network), trailing = {
+                    Text(buildAnnotatedString {
+                        withStyle(SpanStyle(color = palette.positive)) { append(allowed) }
+                        append(separator)
+                        withStyle(SpanStyle(color = if (e.denied > 0) palette.danger.text else palette.ink3)) { append(blocked) }
+                    }, style = PersonaTheme.type.callout, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                })
+            }
+        }
+        e.lastDenied?.ifBlank { null }?.let { host ->
+            item("sandbox-denied") {
+                val res = LocalResources.current
+                val ago = e.deniedAt?.let { at -> runCatching { agoText(res, Instant.parse(at)) }.getOrNull() }
+                JNotice(
+                    stringResource(R.string.settings_ext_sandbox_blocked_sentence, name, host) + ago?.let { "\n$it" }.orEmpty(),
+                    Modifier.padding(top = Tokens.Space.s), status = Status.NeedsYou,
+                    actionLabel = if (onAllow == null) null else stringResource(R.string.settings_ext_sandbox_go_admin),
+                    onAction = onAllow,
+                )
+            }
+        }
+    }
     item("sandbox-note") {
-        SettingsCaption(stringResource(R.string.settings_ext_sandbox_note),
+        SettingsCaption(stringResource(if (s.egress == null) R.string.settings_ext_sandbox_note else R.string.settings_ext_sandbox_footer),
             Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s))
     }
-    s.egress?.let { e -> item("sandbox-egress") {
-        SettingsCaption(stringResource(R.string.settings_ext_sandbox_egress,
-            pluralStringResource(R.plurals.settings_ext_sandbox_allowed, e.allowed.quantity(), e.allowed),
-            pluralStringResource(R.plurals.settings_ext_sandbox_denied, e.denied.quantity(), e.denied)) +
-            e.lastDenied?.let { "\n" + stringResource(R.string.settings_ext_sandbox_last_denied, it) }.orEmpty(), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s))
-    } }
 }
 
 @Composable

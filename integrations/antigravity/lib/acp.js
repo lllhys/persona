@@ -3,6 +3,10 @@ import { assistantSearchPaths } from './compat.js'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createInterface } from 'node:readline'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { request } from 'node:http'
 
 export class AgyAcpClient extends EventEmitter {
   constructor(options = {}) {
@@ -25,6 +29,7 @@ export class AgyAcpClient extends EventEmitter {
     // Kills in flight: each resolves once its agy is gone. stop() waits for all of them, so an agy dropped earlier (a
     // failed initialize, a stdin error) that ignores SIGTERM cannot outlive the companion.
     this.dying = new Set()
+    this.nativeLogs = new Map()
   }
 
   async ensureStarted() {
@@ -37,16 +42,21 @@ export class AgyAcpClient extends EventEmitter {
   async _start() {
     const home = process.env.HOME || '/root'
     const extraPath = assistantSearchPaths(home).join(':')
-    const child = spawn(this.bin, this.args, {
+    const directory = mkdtempSync(join(tmpdir(), 'persona-agy-'))
+    const nativeLog = join(directory, 'native.log')
+    writeFileSync(nativeLog, '', { mode: 0o600 })
+    const child = spawn(this.bin, [...this.args, '--log-file', nativeLog], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PATH: `${extraPath}:${process.env.PATH || ''}` },
     })
     this.proc = child
+    this.nativeLogs.set(child, { directory, file: nativeLog })
     this.loadedSessions.clear()
     // A missing binary ('exit' never comes then) or a failed kill: without a listener the companion would crash.
     child.on('error', (err) => {
       this.log(`agy acp process error: ${err.message}`)
       this._forget(child, err)
+      if (!child.pid) this._removeNativeLog(child)
     })
 
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity })
@@ -75,6 +85,7 @@ export class AgyAcpClient extends EventEmitter {
     child.on('exit', (code, sig) => {
       this.log(`agy acp exited (code=${code}, sig=${sig})`)
       this._forget(child, new Error(`agy acp exited (${code ?? sig})`))
+      this._removeNativeLog(child)
     })
 
     let init
@@ -260,6 +271,53 @@ export class AgyAcpClient extends EventEmitter {
   async listSessions() {
     const res = await this.call('session/list', {}, 20_000)
     return Array.isArray(res?.sessions) ? res.sessions : []
+  }
+
+  _removeNativeLog(child) {
+    const log = this.nativeLogs.get(child)
+    this.nativeLogs.delete(child)
+    try { if (log) rmSync(log.directory, { recursive: true, force: true }) } catch (error) { this.log(`agy acp log cleanup: ${error.message}`) }
+  }
+
+  /** The native service belongs to this ACP process. Its port comes only from that process's private log. */
+  async nativeRequest(method, params) {
+    await this.ensureStarted()
+    const child = this.proc
+    const file = this.nativeLogs.get(child)?.file
+    const portOf = () => file && Number(/random port at (\d+) for HTTP(?:\r?\n|$)/m.exec(readFileSync(file, 'utf8'))?.[1])
+    // Initialize alone leaves the native service unopened. Listing sessions opens it without resuming one.
+    if (!portOf()) {
+      const state = this.nativeLogs.get(child)
+      state.ready ??= this._rawCall('session/list', {}, 20_000).catch((error) => {
+        delete state.ready
+        throw error
+      })
+      await state.ready
+    }
+    if (child !== this.proc) throw new Error('Antigravity process changed during the conversation operation')
+    const port = portOf()
+    if (!port || port > 65535) throw new Error('Antigravity did not expose its native conversation service')
+    const body = JSON.stringify(params)
+    return new Promise((resolve, reject) => {
+      const req = request({ hostname: '127.0.0.1', port,
+        path: `/exa.language_server_pb.LanguageServerService/${method}`, method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Connect-Protocol-Version': '1', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('error', reject)
+        res.on('end', () => {
+          if (child !== this.proc) return reject(new Error('Antigravity process changed during the conversation operation'))
+          let value
+          try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch (error) { return reject(error) }
+          if (res.statusCode !== 200) return reject(new Error(value.message || `Antigravity conversation service returned ${res.statusCode}`))
+          resolve(value)
+        })
+      })
+      req.setTimeout(15_000, () => req.destroy(new Error('Antigravity conversation operation timed out')))
+      req.on('error', reject)
+      req.end(body)
+    })
   }
 
   async newSession({ cwd, mcpServers = [] }) {

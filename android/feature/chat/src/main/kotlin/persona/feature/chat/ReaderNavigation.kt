@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 
 @Composable
-internal fun DiffNavigation(diff: ToolDiff, list: LazyListState, expand: () -> Unit) {
+internal fun DiffNavigation(diff: ToolDiff, list: LazyListState, expanded: Boolean, expand: () -> Unit) {
     val changes = remember(diff) { diffChangeStarts(diff) }
     var selected by remember(diff) { mutableIntStateOf(-1) }
     val scope = rememberCoroutineScope()
@@ -26,8 +26,8 @@ internal fun DiffNavigation(diff: ToolDiff, list: LazyListState, expand: () -> U
         expand()
         val target = changes[selected]
         scope.launch {
-            // Wait for the expanded list to expose changes beyond its preview.
-            snapshotFlow { list.layoutInfo.totalItemsCount }.first { it > target }
+            // The preview folds unchanged runs, so its rows do not line up with the lines: wait for the whole diff.
+            if (!expanded) snapshotFlow { list.layoutInfo.totalItemsCount }.first { it == diff.lines.size }
             list.scrollToItem(target)
         }
     }

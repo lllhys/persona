@@ -1,0 +1,10 @@
+{
+  "read_only": "这台设备不能查看或清理这台电脑",
+  "bad_section": "没有叫“{section}”的诊断内容",
+  "need_ids": "至少选一个要清理的缓存",
+  "bad_cache": "“{id}”不是 Persona 能清理的缓存",
+  "offline": "{name} 不在线",
+  "node_outdated": "更新这台电脑上的 Persona 后，才能查看是什么在占用它、清理缓存",
+  "deadline": "{name} 太久没有回应，请重试",
+  "failed": "没能从 {name} 得到回应"
+}

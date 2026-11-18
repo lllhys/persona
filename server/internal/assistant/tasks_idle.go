@@ -81,7 +81,7 @@ func (s *Service) closeIdleAgents(ctx context.Context, refused taskCloseRefused,
 			}
 			continue
 		}
-		list, err := s.sessions(ctx, d.ID)
+		list, err := s.listedSessions(ctx, d.ID) // an archive row is offline: never closed, never running
 		if err != nil {
 			for k := range seen {
 				if k[0] == d.ID {

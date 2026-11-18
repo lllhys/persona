@@ -1,12 +1,8 @@
 import Foundation
 
-/// A draft grows with the viewport left above the keyboard, bounded to leave room for the conversation.
+/// The iOS draft grows through six complete lines, independently of keyboard height; longer drafts scroll.
 nonisolated enum ComposerGrowth {
-    static func maximumLines(viewportHeight: CGFloat, lineHeight: CGFloat) -> Int {
-        guard viewportHeight > 0, lineHeight > 0 else { return Theme.Shell.composerMinimumLines }
-        let lines = floor(viewportHeight * Theme.Shell.composerHeightFraction / lineHeight)
-        return Int(min(CGFloat(Theme.Shell.composerMaximumLines), max(CGFloat(Theme.Shell.composerMinimumLines), lines)))
-    }
+    static var maximumLines: Int { Theme.Shell.composerPhoneMaximumLines }
 
     /// Measure at the unreserved width: adding the button must not change the decision that added it.
     static func offersExpansion(textHeight: CGFloat, lineHeight: CGFloat, maximumLines: Int) -> Bool {

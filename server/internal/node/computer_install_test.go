@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,44 @@ func TestInstallCuaCanBeCancelled(t *testing.T) {
 	}
 	if cancelJob() {
 		t.Fatal("nothing left to stop")
+	}
+}
+
+// An install's last operation can succeed as cancellation lands. The cancelled install must not start a grant.
+func TestInstallCuaCancellationDoesNotGrant(t *testing.T) {
+	fakeInstaller(t, t.TempDir(), nil)
+
+	// Make the asynchronous handoff deterministic: once the terminal state is visible, yield so a misplaced success
+	// callback and its grant goroutine run before the assertions below. No real Cua binary is involved.
+	procs := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(procs) })
+	grantCalled := make(chan struct{})
+	cuaBin = func() string {
+		close(grantCalled)
+		return "/bin/true"
+	}
+
+	if err := startJob("install", func(ctx context.Context, step func(string)) error {
+		<-ctx.Done()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !cancelJob() {
+		t.Fatal("a running install stops")
+	}
+	waitFor(t, "the install job to finish", func() bool {
+		j := currentJob()
+		return j != nil && j.State != "running"
+	})
+	runtime.Gosched()
+	select {
+	case <-grantCalled:
+		t.Fatal("grant ran after the install was cancelled")
+	default:
+	}
+	if j := currentJob(); j == nil || j.Kind != "install" || j.State != "cancelled" {
+		t.Fatalf("the cancelled install was replaced: %+v", j)
 	}
 }
 

@@ -70,7 +70,7 @@ func (c *Remote) Name() string { return "信息" }
 func (c *Remote) Manifest() connector.Manifest {
 	return connector.Manifest{
 		Capabilities: []connector.Capability{connector.CapStatus, connector.CapTools, connector.CapEvents, connector.CapInbox,
-			connector.CapArchive, connector.CapMachines},
+			connector.CapArchive, connector.CapMachines, connector.CapCatalog},
 		Kinds: []string{"dm", "group"},
 	}
 }

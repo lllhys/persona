@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// Repository browsing keeps one compact line per Agent, without reply previews.
 nonisolated enum WorkspaceList {
@@ -87,6 +88,10 @@ struct WorkspaceSidebarCard<AgentContent: View, Actions: View>: View {
                             Text(workspace.name)
                                 .font(workspace.sidebarUnread ? Theme.WorkspaceSidebar.titleUnread : Theme.WorkspaceSidebar.title)
                                 .foregroundStyle(Theme.WorkspaceSidebar.foreground).lineLimit(1)
+                            if workspace.workspace?.pinnedAt != nil {
+                                ThemedIcon(Theme.Icon.pinned).font(Theme.WorkspaceSidebar.meta).foregroundStyle(Theme.accent)
+                                    .accessibilityHidden(true)
+                            }
                             if workspace.main {
                                 Text(String(localized: "workspace.primary", defaultValue: "Primary"))
                                     .font(Theme.WorkspaceSidebar.meta).foregroundStyle(Theme.WorkspaceSidebar.foreground.opacity(0.7))
@@ -108,6 +113,7 @@ struct WorkspaceSidebarCard<AgentContent: View, Actions: View>: View {
             .accessibilityIdentifier("agents.worktree")
             .accessibilityLabel(workspace.name)
             .accessibilityValue([workspace.main ? String(localized: "workspace.primary", defaultValue: "Primary") : "",
+                                 workspace.workspace?.pinnedAt != nil ? String(localized: "Pinned [Personal Agent List View fb47db]") : "",
                                  workspace.workspace?.branch ?? ""].filter { !$0.isEmpty }.joined(separator: ", "))
             if !workspace.sessions.isEmpty || !workspace.children.isEmpty {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
@@ -285,30 +291,13 @@ struct WorkspaceAgentRow: View {
     var session: Session
     var time: AgentTime?
     var muted: Bool
-    @Environment(\.dynamicTypeSize) private var typeSize
-
     var body: some View {
-        Group {
-            if typeSize.isAccessibilitySize {
-                // Keep the Agent's name above model and age at accessibility text sizes.
-                VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                    HStack(spacing: Theme.Space.xs) {
-                        title
-                        Spacer(minLength: 0)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: Theme.Space.xs) { metadata }
-                }
-                .padding(.vertical, Theme.Space.xs)
-            } else {
-                HStack(spacing: Theme.Space.xs) {
-                    title
-                    Spacer(minLength: 0)
-                    metadata
-                }
-                .scaledFrame(height: Theme.WorkspaceSidebar.agentHeight)
-            }
+        HStack(spacing: Theme.Space.xs) {
+            title
+            Spacer(minLength: 0)
+            metadata
         }
+        .scaledFrame(height: Theme.WorkspaceSidebar.agentHeight)
         .frame(maxWidth: .infinity, alignment: .leading).contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityValue(session.stateLabel(muted: muted))
@@ -321,13 +310,13 @@ struct WorkspaceAgentRow: View {
         AgentMark(session, side: Theme.Size.markXS)
         Text(session.displayTitle).font(session.state == .unread ? Theme.Font.labelStrong : Theme.WorkspaceSidebar.agent)
             .foregroundStyle(session.state == .unread ? Theme.WorkspaceSidebar.foreground : Theme.WorkspaceSidebar.muted)
-            .lineLimit(typeSize.isAccessibilitySize ? 2 : 1).layoutPriority(1)
+            .lineLimit(1).layoutPriority(1)
     }
 
     @ViewBuilder private var metadata: some View {
         Text(session.model.flatMap { $0.isEmpty ? nil : $0 } ?? session.agentLabel)
             .font(Theme.WorkspaceSidebar.meta.monospaced()).foregroundStyle(Theme.WorkspaceSidebar.muted).lineLimit(1)
-            .scaledWidthCap(Theme.WorkspaceSidebar.projectBadgeWidth).fixedSize(horizontal: !typeSize.isAccessibilitySize, vertical: false)
+            .scaledWidthCap(Theme.WorkspaceSidebar.projectBadgeWidth).fixedSize(horizontal: true, vertical: false)
             .accessibilityIdentifier("agents.workspaceModel")
         if let at = time?.updatedAt ?? session.updatedAt, at.isMeaningful {
             TimelineView(.periodic(from: .now, by: 30)) { tick in
@@ -361,8 +350,9 @@ struct HostHeading: View {
     }
 }
 
-/// A working tree's row in its repository's card (By Repository): ⌂ for the main checkout, the branch mark for the others, how
-/// many agents (Idle when nothing goes on), and the chevron that turns as it opens.
+/// A working tree's row in its repository's card (By Repository): ⌂ for the main checkout, and no mark for the others
+/// so the name and indentation carry the meaning like the web sidebar; how many agents (Idle when nothing goes on),
+/// and the chevron that turns as it opens.
 struct WorktreeRow: View {
     var name: String
     var main: Bool
@@ -374,10 +364,17 @@ struct WorktreeRow: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.s) {
-            ThemedIcon(main ? Theme.Icon.home : Theme.Icon.gitBranch)
-                .font(compact ? CompactList.meta : Theme.Font.caption)
-                .foregroundStyle(.secondary)
-                .scaledFrame(width: compact ? CompactList.mark : Theme.Size.iconXS)
+            // Only the main checkout wears a mark; other worktrees stay text-only, matching the web sidebar. The
+            // same-width clear lane keeps every row's name aligned whether the home mark is present or not.
+            if main {
+                ThemedIcon(Theme.Icon.home)
+                    .font(compact ? CompactList.meta : Theme.Font.caption)
+                    .foregroundStyle(.secondary)
+                    .scaledFrame(width: compact ? CompactList.mark : Theme.Size.iconXS)
+            } else {
+                Color.clear
+                    .scaledFrame(width: compact ? CompactList.mark : Theme.Size.iconXS)
+            }
             Text(name)
                 .font(compact ? CompactList.metaStrong : Theme.Font.secondaryMedium)
                 .foregroundStyle(quiet ? Color.secondary : Color.primary)
@@ -485,7 +482,7 @@ struct ButtonRowInsets: ViewModifier {
         } else if let edges {
             content.listRowInsets(EdgeInsets(top: Theme.Space.flush, leading: edges.leading, bottom: Theme.Space.flush, trailing: edges.trailing))
         } else {
-            content.listRowInsets(.vertical, Theme.Space.flush)
+            content.listRowVerticalInsets(Theme.Space.flush)
         }
         #else
         content.listRowInsets(edges)
@@ -602,9 +599,9 @@ struct RepoCardHeader: View {
     }
 }
 
-/// A worktree's line: ⌂ for the main checkout (with its Primary badge), the branch mark for the others, its name and,
-/// small, what the name does not say (its branch, Detached HEAD, another repository's name); at the end how many agents
-/// (Idle when nothing goes on) and the chevron that turns as it opens.
+/// A worktree's line: ⌂ for the main checkout (with its Primary badge) and no mark for the others, matching the web
+/// sidebar; its name and, small, what the name does not say (its branch, Detached HEAD, another repository's name);
+/// at the end how many agents (Idle when nothing goes on) and the chevron that turns as it opens.
 struct RepoWorktreeLine: View {
     var name: String
     var main: Bool
@@ -618,14 +615,22 @@ struct RepoWorktreeLine: View {
     /// Its computer is out of reach (a worktree the host lists).
     var offline = false
     var showChevron = true
+    /// Pinned in its engine (Paseo's Pin to top, #9316): the pin mark after its name.
+    var pinned = false
 
     var body: some View {
         RepoTreeLine(level: level) {
-            ThemedIcon(main ? Theme.Icon.home : Theme.Icon.gitBranch).font(Theme.Font.caption).foregroundStyle(.secondary)
+            // Non-main worktrees carry no glyph: the name, indentation and detail text identify them, as on web.
+            // RepoTreeLine reserves the mark column either way, so the names stay aligned.
+            if main { ThemedIcon(Theme.Icon.home).font(Theme.Font.caption).foregroundStyle(.secondary) }
         } content: {
             HStack(spacing: Theme.Space.s) {
                 Text(name).font(Theme.Font.secondaryMedium).foregroundStyle(quiet || offline ? Color.secondary : Color.primary)
                     .lineLimit(1).layoutPriority(1)
+                if pinned {
+                    ThemedIcon(Theme.Icon.pinned).font(Theme.Font.caption).foregroundStyle(Theme.accent)
+                        .accessibilityHidden(true)
+                }
                 if main {
                     Chip(text: String(localized: "workspace.primary", defaultValue: "Primary"), look: .neutral, compact: true).fixedSize()
                 }
@@ -642,6 +647,7 @@ struct RepoWorktreeLine: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([main ? String(localized: "Main worktree") : String(localized: "Worktree"), name, detail ?? "",
+                             pinned ? String(localized: "Pinned [Personal Agent List View fb47db]") : "",
                              offline ? String(localized: "This computer is offline") : "", tally ?? "",
                              showChevron ? (open ? String(localized: "Expanded") : String(localized: "Collapsed [Readiness Card ee6046]")) : ""]
             .filter { !$0.isEmpty }

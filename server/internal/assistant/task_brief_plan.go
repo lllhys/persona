@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -42,6 +43,61 @@ func briefRequired(t *PlanTask) error {
 		"gives continues and continues_why instead and keeps that task's brief)", kind, strings.Join(missing, " and "))
 }
 
+// openSuccessor is an open to-do that already carries on to-do id (continues, directly or down a chain of to-dos that
+// did): a second continuation of id would be a second to-do for the same work (#6427). False when there is none.
+func (s *Service) openSuccessor(id string) (Todo, bool) {
+	seen := map[string]bool{id: true}
+	next := []string{id}
+	for len(next) > 0 {
+		b := &s.tbriefs
+		b.mu.Lock()
+		b.init()
+		var found []string
+		for todo, l := range b.links {
+			if l.Continues != "" && slices.Contains(next, l.Continues) && !seen[todo] {
+				found = append(found, todo)
+			}
+		}
+		b.mu.Unlock()
+		slices.Sort(found)
+		next = nil
+		for _, todo := range found {
+			seen[todo] = true
+			if t, ok := s.todoNow(todo); ok && t.DoneAt == nil && !t.Cancelled() {
+				return t, true
+			}
+			next = append(next, todo)
+		}
+	}
+	return Todo{}, false
+}
+
+// errContinued refuses a task that continues prev when to-do succ already does.
+func errContinued(prev string, succ Todo) error {
+	return fmt.Errorf("continues: %s is already carried on by to-do %s (%q), which is still open. Do not open a second "+
+		"to-do for the same work: plan the task with todo_id %s (it runs on that to-do), or send its agent what is new "+
+		"(agent_send)", prev, succ.ID, succ.Title, succ.ID)
+}
+
+// takeOver binds a continuation to its original to-do, without stopping Agents or reopening it before Start.
+// An unsafe or unauthorized handoff is refused, never replaced with a second to-do.
+func (s *Service) takeOver(ctx context.Context, conversation string, t *PlanTask) error {
+	if t.Continues == "" {
+		return nil
+	}
+	if t.ReuseTodo != "" && t.ReuseTodo != t.Continues {
+		return fmt.Errorf("continues and todo_id must name the same to-do")
+	}
+	if succ, ok := s.openSuccessor(t.Continues); ok {
+		return errContinued(t.Continues, succ)
+	}
+	if _, err := s.taskTodoForConversation(conversation, t.Continues); err != nil {
+		return err
+	}
+	t.ReuseTodo = t.Continues
+	return nil
+}
+
 // planBriefs gives each task of a plan from conversation (on machine) its brief as it will be kept, for the card to
 // show before "Start": who asked is read off the conversation once (briefOrigin); a task that continues another takes
 // that task's brief, with its criteria and expected time as they stand.
@@ -61,6 +117,9 @@ func (s *Service) planBriefs(ctx context.Context, machine, conversation string, 
 			if err != nil {
 				return fmt.Errorf("task %d: continues: %v", i+1, err)
 			}
+			if t.ScopeRevision != "" && t.ScopeRevision != brief.ClockAt.Format(time.RFC3339Nano) {
+				return fmt.Errorf("task %d: the scope of %s changed; read its brief and plan the continuation again", i+1, prev.ID)
+			}
 			// Its own prompt stays its own; what done means is the brief's, as its scope changes left it.
 			t.DoneWhen, t.ExpectMinutes = brief.Criteria, brief.ExpectNow
 			t.Brief = &brief
@@ -78,6 +137,20 @@ func (s *Service) planBriefs(ctx context.Context, machine, conversation string, 
 		}
 		v := (&taskBrief{rec: rec}).view()
 		t.Brief = &v
+	}
+	return nil
+}
+
+// checkContinuationScope rejects a plan that was prepared against a different
+// revision of the original brief. ClockAt advances for every scope entry,
+// including changes that keep the effective criteria and expected time.
+func (s *Service) checkContinuationScope(t *PlanTask) error {
+	if t.Continues == "" {
+		return nil
+	}
+	current, ok := s.briefOfTodo(t.Continues)
+	if !ok || t.Brief == nil || current.ID != t.Brief.ID || !current.ClockAt.Equal(t.Brief.ClockAt) {
+		return fmt.Errorf("the scope of %s changed or is unavailable; read its brief and plan the continuation again", t.Continues)
 	}
 	return nil
 }

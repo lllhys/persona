@@ -16,4 +16,6 @@ func (h *Hub) agentSettingsRoutes(api *http.ServeMux) {
 	api.HandleFunc("PUT /api/v1/machines/{mid}/agy-settings", h.proxyBody("agy.settings.set"))
 	api.HandleFunc("GET /api/v1/machines/{mid}/omp-settings", h.proxy("omp.settings", nil))
 	api.HandleFunc("PUT /api/v1/machines/{mid}/omp-settings", h.proxyBody("omp.settings.set"))
+	api.HandleFunc("GET /api/v1/machines/{mid}/grok-settings", h.proxy("grok.settings", nil))
+	api.HandleFunc("PUT /api/v1/machines/{mid}/grok-settings", h.proxyBody("grok.settings.set"))
 }

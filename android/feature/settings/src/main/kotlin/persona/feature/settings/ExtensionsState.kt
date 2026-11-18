@@ -44,22 +44,69 @@ import kotlinx.serialization.json.contentOrNull
 /** What an extension is called and says in the settings. */
 internal object ExtensionText {
     /** Running or idle until something needs it (stopped) is all one to the user: it is on. */
-    fun state(res: Resources, p: HubExtension): String = when (p.status) {
-        "running", "stopped" -> res.getString(R.string.settings_ext_state_on)
-        "starting" -> res.getString(R.string.settings_ext_state_starting)
-        "needs_setup" -> res.getString(R.string.settings_ext_state_needs_setup)
-        "disabled" -> res.getString(R.string.settings_ext_state_off)
-        "incompatible" -> res.getString(R.string.settings_ext_state_incompatible)
-        "error" -> res.getString(R.string.settings_ext_state_error)
-        else -> res.getString(R.string.settings_ext_state_unknown)
+    fun state(res: Resources, p: HubExtension): String =
+        nodeStatusNote(res, p) ?: when (p.status) {
+            "running", "stopped" -> res.getString(R.string.settings_ext_state_on)
+            "starting" -> res.getString(R.string.settings_ext_state_starting)
+            "needs_setup" -> res.getString(R.string.settings_ext_state_needs_setup)
+            "disabled" -> res.getString(R.string.settings_ext_state_off)
+            "incompatible" -> res.getString(R.string.settings_ext_state_incompatible)
+            "error" -> res.getString(R.string.settings_ext_state_error)
+            else -> res.getString(R.string.settings_ext_state_unknown)
+        }
+
+    /**
+     * One line for an extension whose work happens on computers, from the hub's aggregate: "Running on 2 machines",
+     * with the abnormal or offline count when there is one. Null without a node summary, so the hub-process wording stands.
+     * The hub ships node_status only while the aggregate drives status, so each headline count is non-zero.
+     */
+    fun nodeStatusNote(res: Resources, p: HubExtension): String? {
+        val s = p.nodeStatus ?: return null
+        if (s.total == 0) return null
+        fun q(plural: Int, count: Int) = res.getQuantityString(plural, count, count)
+        fun offline() = if (s.offline > 0) " · " + q(R.plurals.settings_ext_node_offline, s.offline) else ""
+        return when (p.status) {
+            "running" -> buildList {
+                add(q(R.plurals.settings_ext_node_running, s.running))
+                if (s.abnormal > 0) add(q(R.plurals.settings_ext_node_abnormal, s.abnormal))
+                if (s.offline > 0) add(q(R.plurals.settings_ext_node_offline, s.offline))
+            }.joinToString(" · ")
+            "error" -> buildList {
+                add(q(R.plurals.settings_ext_node_abnormal, s.abnormal))
+                if (s.offline > 0) add(q(R.plurals.settings_ext_node_offline, s.offline))
+            }.joinToString(" · ")
+            "starting" -> q(R.plurals.settings_ext_node_starting, s.starting) + offline()
+            "stopped" ->
+                // All offline: no machine is merely stopped, so the offline count is the headline rather than "Stopped on 0".
+                if (s.stopped == 0 && s.offline > 0) {
+                    q(R.plurals.settings_ext_node_offline, s.offline)
+                } else {
+                    q(R.plurals.settings_ext_node_stopped, s.stopped) + offline()
+                }
+            else -> null
+        }
     }
 
     /** Whether an enabled extension's program runs right now (the detail page's small print); null for any other state. */
-    fun runNote(res: Resources, p: HubExtension): String? = when {
-        p.kind == "extension_pack" -> res.getString(R.string.settings_ext_run_pack)
+    fun runNote(res: Resources, p: HubExtension, packMembersFollow: Boolean = false): String? = when {
+        p.nodeStatus != null -> null // the node status line already says where it runs
+        p.kind == "extension_pack" -> res.getString(if (packMembersFollow) R.string.settings_ext_run_pack_members_follow else R.string.settings_ext_run_pack)
         p.status == "running" -> res.getString(R.string.settings_ext_run_running)
         p.status == "stopped" -> res.getString(R.string.settings_ext_run_idle)
         else -> null
+    }
+
+    /** The Enabled switch's explanation, matching the web's pack decisions and the older-hub fallback. */
+    fun enabledFooter(res: Resources, detail: ExtensionDetail, memberNames: Map<String, String> = emptyMap()): String {
+        if (detail.extensionPack.isEmpty()) return res.getString(R.string.settings_extension_enabled_note)
+        if (!detail.packMembersFollow) return res.getString(R.string.settings_ext_enable_footer_pack_alone)
+        if (detail.extension.enabled == false && detail.packOff.isNotEmpty()) {
+            val names = detail.packOff.joinToString(res.getString(R.string.settings_ext_list_separator)) { id ->
+                memberNames[id]?.takeIf { it.isNotBlank() } ?: id
+            }
+            return res.getString(R.string.settings_ext_enable_footer_pack_off, names)
+        }
+        return res.getString(R.string.settings_ext_enable_footer_pack)
     }
 
     /** Broken: drawn in the danger colour, not as a status dot. */
@@ -329,7 +376,12 @@ internal object ExtensionPickers {
     /** A whole number one step down or up from [current] (else the default, else the minimum, else 0), within the field's bounds. */
     fun stepped(field: ExtensionField, current: Long?, up: Boolean): Long {
         val from = current ?: (field.fallback as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toLong() ?: field.minimum?.let { kotlin.math.ceil(it).toLong() } ?: 0L
-        var next = if (up) from + 1 else from - 1
+        val step = field.step ?: 1L
+        var next = if (up) {
+            if (from > Long.MAX_VALUE - step) Long.MAX_VALUE else from + step
+        } else {
+            if (from < Long.MIN_VALUE + step) Long.MIN_VALUE else from - step
+        }
         field.minimum?.let { next = maxOf(next, kotlin.math.ceil(it).toLong()) }
         field.maximum?.let { next = minOf(next, kotlin.math.floor(it).toLong()) }
         return next
@@ -420,12 +472,23 @@ internal class ExtensionListModel(private val api: ExtensionManagement, private 
     private val mutable = MutableStateFlow(ExtensionListState())
     val state = mutable.asStateFlow()
 
+    /** Identity distinguishes every push, even when it repeats the same auth. */
+    private class AuthPush(val auth: ExtensionAuth)
+    private val authPushes = MutableStateFlow<Map<Pair<String, String>, AuthPush>>(emptyMap())
+
     suspend fun load() {
         if (state.value.loading) return
+        val authAtStart = authPushes.value
         mutable.update { it.copy(loading = true) }
         try {
             val listing = api.listing()
-            mutable.update { it.copy(extensions = listing.extensions, markets = listing.markets, error = null) }
+            mutable.update {
+                val pushes = authPushes.value
+                it.copy(extensions = listing.extensions.map { extension ->
+                    val key = extension.id to ExtensionOwners.of(extension.manager)
+                    pushes[key]?.takeIf { push -> push !== authAtStart[key] }?.let { push -> extension.copy(auth = push.auth) } ?: extension
+                }, markets = listing.markets, error = null)
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) { mutable.update { it.copy(error = res.getString(R.string.settings_ext_load_failed, failureReasonText(error).resolve(res))) } }
         finally { mutable.update { it.copy(loading = false) } }
@@ -433,6 +496,7 @@ internal class ExtensionListModel(private val api: ExtensionManagement, private 
 
     /** Follows the hub's `extension_auth` pushes while the list is open: each changes its own manager's copy (#1834). */
     suspend fun watchAuth() = api.authUpdates.collect { event ->
+        authPushes.update { it + ((event.extension to pushManager(event.manager)) to AuthPush(event.auth)) }
         mutable.update { s ->
             s.copy(extensions = s.extensions?.map {
                 if (it.id == event.extension && ExtensionOwners.of(it.manager) == pushManager(event.manager)) it.copy(auth = event.auth) else it
@@ -469,8 +533,12 @@ internal data class ExtensionState(
     val error: String? = null,
     /** The hub would switch others off with it (409 `has_dependents`): asked before going on with `cascade`. */
     val cascade: ExtensionCascade? = null,
+    /** A new hub would switch the named pack members off too; nothing is sent before the user confirms. */
+    val packOff: Boolean = false,
     /** The pack's members were partly uninstalled (#1154): said in a dialog. */
     val partial: PackPartial? = null,
+    /** Cleanup left after a successful uninstall: shown until its OK, before leaving this page. */
+    val removalNotice: ExtensionRemovalNotice? = null,
 ) {
     val editable: Boolean get() = detail?.readOnly == false
     val dirty: Boolean get() = detail != null && (draft != detail.config || numberProblems.isNotEmpty())
@@ -540,6 +608,26 @@ internal class ExtensionModel(
 
     suspend fun setEnabled(on: Boolean, cascade: Boolean = false) = busy { run { api.setEnabled(id, on, cascade) } }
 
+    /** A new hub's pack switch asks before taking enabled members off; every other switch writes directly. */
+    suspend fun requestEnabled(on: Boolean): Boolean {
+        val detail = state.value.detail
+        if (!on && detail?.packMembersFollow == true && detail.packOn.isNotEmpty()) {
+            mutable.update { it.copy(packOff = true) }
+            return false
+        }
+        mutable.update { it.copy(packOff = false) }
+        return setEnabled(on)
+    }
+
+    /** Confirms the pack member switch-off; a dependent refusal may still ask its own question. */
+    suspend fun confirmPackOff(): Boolean {
+        if (!state.value.packOff) return false
+        mutable.update { it.copy(packOff = false) }
+        return setEnabled(false, cascade = false)
+    }
+
+    fun dismissPackOff() = mutable.update { it.copy(packOff = false) }
+
     /** Asked about the dependents: switches them off with it and goes on with what was refused. */
     suspend fun confirmCascade(): Boolean {
         val ask = state.value.cascade ?: return false
@@ -550,6 +638,12 @@ internal class ExtensionModel(
     fun dismissPartial() = mutable.update { it.copy(partial = null) }
 
     fun dismissCascade() = mutable.update { it.copy(cascade = null) }
+
+    /** The cleanup sheet's OK: the page may leave after the warnings have been seen. */
+    fun dismissRemovalNotice() {
+        removal = null
+        mutable.update { it.copy(removalNotice = null) }
+    }
 
     /** Follows the hub's `extension_auth` pushes for this extension while the page is open (#4507), its manager's only (#1834). */
     suspend fun watchAuth() = api.authUpdates.collect { event ->
@@ -636,9 +730,14 @@ internal class ExtensionModel(
      */
     suspend fun uninstall(keepData: Boolean, cascade: Boolean = false, members: Boolean = false): Boolean {
         if (state.value.busy || state.value.saving || state.value.loading || state.value.loadFailed || state.value.updates.checking) return false
-        mutable.update { it.copy(busy = true, error = null, partial = null) }
+        removal = null
+        mutable.update { it.copy(busy = true, error = null, partial = null, removalNotice = null) }
         return try {
-            removal = api.uninstall(id, keepData, cascade, members)
+            val completed = api.uninstall(id, keepData, cascade, members)
+            removal = completed
+            val name = state.value.detail?.extension?.name?.ifBlank { null } ?: id
+            val notice = extensionRemovalNotice(res, name, members, completed)
+            mutable.update { it.copy(removalNotice = notice) }
             ExtensionChanges.changed(api)
             true
         } catch (cancelled: CancellationException) { throw cancelled }

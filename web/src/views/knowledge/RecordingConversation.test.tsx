@@ -143,8 +143,9 @@ describe("a recorded meeting's conversation", () => {
     expect(s.querySelector("h2")!.textContent).toBe("Conversation");
     expect(s.querySelector("[role=status]")!.textContent).toBe("Persona is in the meeting as a participant · answers can be said aloud");
     expect(s.querySelector('a[title="Open the meeting’s conversation"]')!.getAttribute("href")).toBe(`/persona/${room}`);
-    expect(kinds()).toEqual(["joined", "lines", "question", "answer"]);
-    expect(s.textContent).toContain("Persona joined the meeting");
+    // No "Persona joined the meeting" (#9411): the web can't know whether Persona was ever in it.
+    expect(kinds()).toEqual(["lines", "question", "answer"]);
+    expect(s.textContent).not.toContain("joined the meeting");
     expect(s.textContent).toContain("2 lines from the meeting");
     expect(s.textContent).toContain("You kept the 4 MB cap.");
     expect(s.querySelector('[title="Typed on the phone"]')).not.toBeNull();
@@ -155,6 +156,14 @@ describe("a recorded meeting's conversation", () => {
     expect(s.textContent).toContain("Bo: The cap is 4 MB.");
     expect(s.querySelector("textarea")).toBeNull();
     expect(s.textContent).toContain("Questions are asked on the phone while the meeting runs.");
+  });
+
+  it("says a notes room (#8851) keeps notes without Persona in the meeting, not that Persona stopped listening", async () => {
+    await load(fixture({ attendance: "notes" }));
+    expect(factRow("Persona")).toBeUndefined();
+    await reply(pending(livePath)[0], live({ attendance: "notes", asks: [] }));
+    await reply(pending(itemsPath(room))[0], { items: roomItems(), has_more: false });
+    expect(section()!.querySelector("[role=status]")!.textContent).toBe("Persona isn’t in this meeting: it keeps the topics and highlights and answers nothing.");
   });
 
   it("reads only the newer parts a meeting_live event names, and the thread again when the asks moved", async () => {
@@ -304,7 +313,7 @@ describe("a recorded meeting's conversation", () => {
     await reply(pending(itemsPath(follow))[0], { items: followItems() });
     const s = section()!;
     expect(s.querySelector("[role=separator]")!.textContent).toContain("After the meeting");
-    expect(kinds()).toEqual(["joined", "lines", "question", "answer", "material", "question", "answer"]);
+    expect(kinds()).toEqual(["lines", "question", "answer", "material", "question", "answer"]);
     const seed = s.querySelector<HTMLButtonElement>('li[data-thread="material"] button')!;
     expect(seed.textContent).toBe("The meeting’s material");
     expect(seed.getAttribute("aria-expanded")).toBe("false");
@@ -415,5 +424,160 @@ describe("a recorded meeting's conversation", () => {
     expect(s.querySelector("[role=separator]")).toBeNull();
     expect(s.textContent).toContain("After the meeting");
     expect(kinds()).toEqual(["material", "question", "answer"]);
+  });
+});
+
+describe("a recorded meeting's live view (phase 2)", () => {
+  const withLive = () => Object.assign(getState(), { features: ["meeting_attendance", "meeting_conversation", "meeting_live_view"] });
+  const line = (n: number, text = `Line ${n}.`) => ({ n, start: 10 * n, end: 10 * n + 4, text });
+  const topics = [
+    { title: "Export cap", state: "done", at: 0 },
+    { title: "Pricing", state: "current", at: 300, note: "Two options on the table" },
+    { title: "Hiring", state: "open" },
+  ];
+  const topicsBox = () => host.querySelector<HTMLElement>("[data-live-topics]");
+  const linesBox = () => host.querySelector<HTMLElement>("[data-live-lines]");
+  const shownLines = () => [...host.querySelectorAll("[data-live-line]")].map((li) => li.lastElementChild!.textContent);
+  const reads = () => requests.filter((r) => r.url.startsWith(livePath)).map((r) => r.url.slice(livePath.length));
+
+  it("shows nothing of it on a hub without meeting_live_view, and reads no lines", async () => {
+    await load();
+    await reply(pending(livePath)[0], live({ revs: { asks: 1, room: 2, lines: 3, topics: 1 }, topics }));
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines", "topics"], revs: { lines: 5, topics: 2 } });
+    expect(topicsBox()).toBeNull();
+    expect(linesBox()).toBeNull();
+    expect(reads()).toEqual([""]);
+  });
+
+  it("shows a running room meeting's topics in order and its newest lines, and reads only what an event says is newer", async () => {
+    withLive();
+    await load();
+    expect(reads()).toEqual([""]);
+    await reply(pending(livePath)[0], live({ revs: { asks: 1, room: 2, lines: 3, topics: 1 }, topics, topics_at: "2026-11-10T06:05:00Z" }));
+    const chips = [...topicsBox()!.querySelectorAll("li")];
+    expect(topicsBox()!.querySelector("h2")!.textContent).toBe("Topics");
+    expect(chips.map((li) => li.getAttribute("data-topic"))).toEqual(["done", "current", "open"]);
+    // Each state in words; the other topics' start for screen readers, the current one's start and note shown under the chips.
+    expect(chips.map((li) => li.textContent)).toEqual([expect.stringMatching(/^DoneExport cap, From \d\d:\d\d:\d\d$/), "NowPricing", "Still to comeHiring"]);
+    expect(chips[0].lastElementChild!.className).toContain("sr-only");
+    expect(chips[1].getAttribute("title")).toMatch(/^Now · Pricing · From \d\d:\d\d:\d\d · Two options on the table$/);
+    expect(topicsBox()!.querySelector("[data-live-topic-now]")!.textContent).toMatch(/^From \d\d:\d\d:\d\d · Two options on the table$/);
+    // The lines once the live log's length is known, from the start of this short one.
+    expect(reads()).toEqual(["", "?parts=lines&from=0"]);
+    await reply(pending(`${livePath}?parts=lines&from=0`)[0], { lines: [line(0), line(1), line(2)], revs: { lines: 3 } });
+    expect(linesBox()!.querySelector("h2")!.textContent).toBe("Live");
+    expect(shownLines()).toEqual(["Line 0.", "Line 1.", "Line 2."]);
+    // The log is the scroller the keyboard reaches, named by its heading, with a plain list inside; nothing was cut.
+    const log = linesBox()!.querySelector<HTMLElement>("[role=log]")!;
+    expect([log.tagName, log.tabIndex, log.getAttribute("aria-labelledby")]).toEqual(["DIV", 0, linesBox()!.querySelector("h2 span")!.id]);
+    expect(log.className).toContain("focus-visible:outline-accent");
+    expect(log.querySelector("ol")!.hasAttribute("role")).toBe(false);
+    expect(linesBox()!.querySelector("[data-live-line]")!.parentElement!.tagName).toBe("OL");
+    expect(linesBox()!.querySelector("[data-live-earlier]")).toBeNull();
+    // Nothing newer: nothing read. Newer lines and topics: from this page's own next position.
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines", "topics"], revs: { lines: 3, topics: 1 } });
+    expect(reads()).toHaveLength(2);
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines", "topics"], revs: { lines: 5, topics: 2 } });
+    expect(reads().at(-1)).toBe("?parts=lines,topics&from=3");
+    await reply(pending(`${livePath}?parts=lines,topics&from=3`)[0], {
+      lines: [line(3), line(4, "Ada: we keep the vendor.")], topics: [{ ...topics[0] }, { ...topics[1], state: "done" }, { ...topics[2], state: "current" }], revs: { lines: 5, topics: 2 },
+    });
+    expect(shownLines()).toEqual(["Line 0.", "Line 1.", "Line 2.", "Line 3.", "Ada: we keep the vendor."]);
+    expect([...topicsBox()!.querySelectorAll("li")].map((li) => li.getAttribute("data-topic"))).toEqual(["done", "done", "current"]);
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines"], revs: { lines: 5 } });
+    expect(reads()).toHaveLength(3);
+  });
+
+  it("starts a long meeting near its newest lines and reads on while there are more", async () => {
+    withLive();
+    await load();
+    await reply(pending(livePath)[0], live({ revs: { asks: 1, room: 2, lines: 1000, topics: 0 }, topics: [] }));
+    expect(topicsBox()).toBeNull(); // no Topics before the room set any
+    expect(linesBox()!.querySelector("[role=log]")).toBeNull();
+    expect(reads().at(-1)).toBe("?parts=lines&from=800");
+    await reply(pending(`${livePath}?parts=lines&from=800`)[0], { lines: [800, 801, 802].map((n) => line(n)), more: true, revs: { lines: 1000 } });
+    expect(reads().at(-1)).toBe("?parts=lines&from=803");
+    await reply(pending(`${livePath}?parts=lines&from=803`)[0], { lines: Array.from({ length: 197 }, (_, i) => line(803 + i)), revs: { lines: 1000 } });
+    expect(reads()).toHaveLength(3);
+    expect(shownLines()).toHaveLength(200);
+    // The first read skipped the 800 before: the note says the transcript has them.
+    expect(linesBox()!.querySelector("[data-live-earlier]")!.textContent).toBe("Earlier lines are in the transcript.");
+  });
+
+  it("says earlier lines are in the transcript only once some were skipped or let go, not for a blank first position", async () => {
+    withLive();
+    await load();
+    await reply(pending(livePath)[0], live({ revs: { asks: 1, room: 2, lines: 150, topics: 0 }, topics: [] }));
+    await reply(pending(`${livePath}?parts=lines&from=0`)[0], { lines: [{ n: 0, start: 0, end: 1, text: "" }, ...Array.from({ length: 149 }, (_, i) => line(i + 1))], revs: { lines: 150 } });
+    expect(shownLines()[0]).toBe("Line 1.");
+    expect(linesBox()!.querySelector("[data-live-earlier]")).toBeNull();
+    // More than LIVE_KEEP read: the oldest are let go.
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines"], revs: { lines: 250 } });
+    await reply(pending(`${livePath}?parts=lines&from=150`)[0], { lines: Array.from({ length: 100 }, (_, i) => line(150 + i)), revs: { lines: 250 } });
+    expect(shownLines()).toHaveLength(200);
+    expect(shownLines()[0]).toBe("Line 50.");
+    expect(linesBox()!.querySelector("[data-live-earlier]")).not.toBeNull();
+  });
+
+  it("shows nothing of it for a meeting Persona doesn't attend, and comes up with the room", async () => {
+    withLive();
+    const none = { state: "none" };
+    await load(fixture({ room: none, attendance: "off" }));
+    await reply(pending(livePath)[0], live({ room: none, attendance: "off", asks: [], revs: { asks: 0, room: 1, lines: 2, topics: 0 }, topics: [] }));
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines"], revs: { lines: 4 } });
+    expect(topicsBox()).toBeNull();
+    expect(linesBox()).toBeNull();
+    expect(reads()).toEqual([""]);
+    // Persona turned on: once the room's part says it attends, its topics and lines are read at once.
+    fire({ type: "meeting_live", recording_id: id, changed: ["room"], revs: { room: 2 } });
+    await reply(pending(`${livePath}?parts=room`)[0], { room: { state: "starting" }, revs: { room: 2 } });
+    expect(reads().at(-1)).toBe("?parts=topics,lines&from=0");
+    await reply(pending(`${livePath}?parts=topics,lines&from=0`)[0], { topics, lines: [line(0), line(1), line(2), line(3)], revs: { topics: 1, lines: 4 } });
+    expect(topicsBox()).not.toBeNull();
+    expect(shownLines()).toEqual(["Line 0.", "Line 1.", "Line 2.", "Line 3."]);
+  });
+
+  it("is gone once the room says the meeting ended, before the detail is read again", async () => {
+    withLive();
+    await load();
+    await reply(pending(livePath)[0], live({ revs: { asks: 1, room: 2, lines: 1, topics: 1 }, topics }));
+    await reply(pending(`${livePath}?parts=lines&from=0`)[0], { lines: [line(0)], revs: { lines: 1 } });
+    expect(topicsBox()!.querySelector("[data-topic=current]")).not.toBeNull();
+    expect(shownLines()).toEqual(["Line 0."]);
+    fire({ type: "meeting_live", recording_id: id, changed: ["room"], revs: { room: 3 } });
+    await reply(pending(`${livePath}?parts=room`)[0], { room: ended, revs: { room: 3 } });
+    expect(topicsBox()).toBeNull();
+    expect(linesBox()).toBeNull();
+    fire({ type: "meeting_live", recording_id: id, changed: ["lines", "topics"], revs: { lines: 2, topics: 2 } });
+    expect(reads().filter((u) => u.includes("lines") || u.includes("topics"))).toEqual(["?parts=lines&from=0"]);
+  });
+
+  it("polls with its own next position while the meeting records, and is gone once the recording is complete", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    withLive();
+    await load();
+    await reply(pending(livePath)[0], live({ revs: { asks: 1, room: 2, lines: 0, topics: 0 }, topics: [] }));
+    expect(linesBox()!.textContent).toContain("Lines show here as the meeting is heard.");
+    act(() => vi.advanceTimersByTime(5000));
+    expect(reads()).toEqual(["", ""]);
+    await reply(pending(livePath)[1], live({ revs: { asks: 1, room: 2, lines: 2, topics: 0 }, topics: [] }));
+    expect(reads().at(-1)).toBe("?parts=lines&from=0");
+    await reply(pending(`${livePath}?parts=lines&from=0`)[0], { lines: [line(0), line(1)], revs: { lines: 2 } });
+    act(() => vi.advanceTimersByTime(5000));
+    expect(reads().at(-1)).toBe("?from=2");
+    await reply(pending(`${livePath}?from=2`)[0], live({ lines: [line(2)], revs: { asks: 1, room: 2, lines: 3, topics: 0 }, topics: [] }));
+    expect(shownLines()).toEqual(["Line 0.", "Line 1.", "Line 2."]);
+    // Complete, or a #2981 meeting: no live view, no lines read.
+    fresh();
+    await load(fixture({ complete: true, ended_at: recent(), room: ended }));
+    await reply(pending(livePath)[0], live({ room: ended, revs: { asks: 1, room: 3, lines: 3, topics: 0 }, topics: [] }));
+    expect(linesBox()).toBeNull();
+    expect(topicsBox()).toBeNull();
+    fresh();
+    await load(fixture({ room: undefined, attending_session: { machine_id: "server", session_id: "conv-2" } }));
+    for (const r of pending(livePath)) await reply(r, live({ room: undefined, revs: { asks: 1, lines: 3 } }));
+    expect(linesBox()).toBeNull();
+    expect(reads().every((u) => !u.includes("from="))).toBe(true);
   });
 });

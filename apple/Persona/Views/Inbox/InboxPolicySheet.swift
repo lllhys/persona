@@ -26,16 +26,9 @@ struct InboxPolicySheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Text("Cancel").lineLimit(1) }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button { save() } label: {
-                        if model.busy { ProgressView().controlSize(.small) } else { Text("Save").lineLimit(1) }
-                    }
-                    .disabled(!model.canSave)
-                    .accessibilityIdentifier("inbox.policy.save")
-                }
+                SheetClose { dismiss() }
+                SheetConfirm(id: "inbox.policy.save", name: String(localized: "Save"), disabled: !model.canSave,
+                             busy: model.busy) { save() }
             }
             .task { await model.load() }
         }
@@ -140,9 +133,7 @@ struct InboxRulesView: View {
             .macSheetDone { dismiss() }
             #else
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button { dismiss() } label: { Text("Done [Extension System Presentation c0b3fb]").lineLimit(1) }
-                }
+                SheetClose { dismiss() }
             }
             #endif
             .task(id: model.readKey) {

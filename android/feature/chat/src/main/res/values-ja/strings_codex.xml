@@ -1,0 +1,9 @@
+<resources>
+    <string name="chat_codex_waiting">Codexは「%1$s」で開いています。下で最初のメッセージを送るか、ターミナルに直接入力してください。</string>
+    <string name="chat_codex_computer">お使いのコンピューター</string>
+    <string name="chat_codex_first_message">Codex への最初のメッセージ</string>
+    <string name="chat_delivery_codex_not_ready">Codex はまだ最初のメッセージを受け取れません。ターミナルを確認してから再試行してください。</string>
+    <string name="chat_delivery_codex_first_text">Codex への最初のメッセージはテキストのみです。画像やファイルは開始後に追加してください。</string>
+    <string name="chat_delivery_codex_waiting">モードの変更、キューへの追加、分岐の前に最初のメッセージを送ってください。</string>
+    <string name="chat_delivery_codex_first_unconfirmed">最初のメッセージの送信を確認できません。再送する前にターミナルを確認してください。</string>
+</resources>

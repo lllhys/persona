@@ -129,6 +129,11 @@ extension AppIconModel {
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
             return AppIconModel(system: nil)
         }
+        // UI tests that switch Light & Dark (-ui.scheme) keep the icon as it is (-showSameIcon YES): the switch would raise
+        // the system's "You have changed the icon" alert over the page, and nothing in a test answers it.
+        if UserDefaults.standard.bool(forKey: "showSameIcon") {
+            return AppIconModel(system: nil)
+        }
         #endif
         #if os(iOS) || os(visionOS)
         return AppIconModel(system: UIApplication.shared)

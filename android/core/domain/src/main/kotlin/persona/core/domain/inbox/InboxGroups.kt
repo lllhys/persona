@@ -46,8 +46,8 @@ object InboxGroups {
 
     /**
      * Done's group counts from the hub's done items per day (#2967, #3016): each day's count goes to its time group;
-     * "Just now" is [justNow] (the list holds the last hour whole) and comes out of "Today". Newest group first; groups
-     * with none are left out.
+     * "Just now" is [justNow] (the list holds the last hour whole) and comes out of "Today", then "Yesterday" when that
+     * hour crosses midnight. Newest group first; groups with none are left out.
      */
     fun doneCounts(days: List<Pair<LocalDate, Int>>, justNow: Int, now: Instant, zone: ZoneId): List<Pair<String, Int>> {
         val today = now.atZone(zone).toLocalDate()
@@ -55,7 +55,13 @@ object InboxGroups {
         days.forEach { (day, n) -> dayKey(day, today).let { counts[it] = (counts[it] ?: 0) + n } }
         if (justNow > 0) {
             counts["just"] = justNow
-            counts["today"] = ((counts["today"] ?: 0) - justNow).coerceAtLeast(0)
+            val todayCount = counts["today"] ?: 0
+            val fromToday = minOf(todayCount, justNow)
+            counts["today"] = todayCount - fromToday
+            val left = justNow - fromToday
+            if (left > 0 && now.minusSeconds(3600).atZone(zone).toLocalDate() != today) {
+                counts["yesterday"] = ((counts["yesterday"] ?: 0) - left).coerceAtLeast(0)
+            }
         }
         return counts.entries.filter { it.value > 0 }.sortedBy { timeRank(it.key, now, zone) }.map { it.key to it.value }
     }

@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
+const source=readFileSync(new URL('../entry/src/main/ets/core/ComposerPopupLayout.ts',import.meta.url),'utf8');
+const layout=new Function(stripTypeScriptTypes(source).replace(/^export /gm,'')+';return composerPopupLayout;')();
+const policy={ordinaryWidth:280,maximumWidth:680,margin:16};
+test('ordinary phone popup fits fully above the editor',()=>{const result=layout({left:24,top:1454/3,width:372,height:48},{width:420,top:39,bottom:1778/3},56,280,1,policy);assert.equal(result.side,'above');assert.equal(result.width,280);assert.equal(result.maximumHeight,280);assert.ok(result.maximumHeight+32<1454/3-39);});
+test('wide landscape with maximum text and keyboard uses the side of the editor',()=>{const result=layout({left:947/2.75,top:404/2.75,width:1571/2.75,height:277/2.75},{width:2584/2.75,top:107/2.75,bottom:1011/2.75},179,895,3.2,policy);assert.equal(result.side,'left');assert.equal(result.width,280);assert.ok(result.maximumHeight>=219);assert.ok(result.width+32<947/2.75);assert.ok(result.maximumHeight+32<=904/2.75);});
+test('large phone and conventional fold keep each long action row reachable above the editor',()=>{for(const [width,left,top,bottom,editorWidth,row] of [[420,24,1116/3,1778/3,372,154],[2224/3.125,40,800/3.125,1489/3.125,632,89]]){const result=layout({left,top,width:editorWidth,height:100},{width,top:39,bottom},row,row*5,3.2,policy);assert.equal(result.side,'above');assert.ok(result.maximumHeight>=row);assert.ok(result.maximumHeight+32<=top-39);assert.ok(result.width+32<=width);}});
+test('right and below placement are bounded when those are the available spaces',()=>{const right=layout({left:20,top:60,width:200,height:200},{width:940,top:40,bottom:500},150,600,2,policy);assert.equal(right.side,'right');assert.ok(right.width+32<=940-220);const below=layout({left:20,top:50,width:380,height:48},{width:420,top:39,bottom:590},89,445,2,policy);assert.equal(below.side,'below');assert.ok(below.maximumHeight+32<=590-98);});

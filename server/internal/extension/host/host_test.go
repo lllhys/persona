@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/extension/serve"
@@ -837,5 +838,33 @@ func TestStopClosesIdleHTTPConnections(t *testing.T) {
 			t.Fatalf("%d connection(s) to the plugin still open after Stop", cl.count())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A long line in Chinese is cut on a whole character: it takes three bytes a character, and a cut at LogLineMost bytes
+// fell inside one, which the log then showed as a broken character before the ellipsis.
+func TestLogLineCutsOnWholeCharacters(t *testing.T) {
+	o := &observed{}
+	p := &Proc{spec: Spec{ID: "demo", Observe: o, Logf: func(string, ...any) {}}}
+	const unit = "无法连接服务"
+	long := strings.Repeat(unit, LogLineMost/len(unit)+2)
+	for _, extra := range []string{"", "a", "ab"} { // moves the cut to each byte of a character
+		p.logLine([]byte(extra+long), false)
+	}
+	short := strings.Repeat(unit, 100)
+	p.logLine([]byte(short), false)
+	_, _, logs := o.snapshot()
+	if len(logs) != 4 {
+		t.Fatalf("observed %d lines", len(logs))
+	}
+	for i, l := range logs[:3] {
+		line, ok := strings.CutPrefix(l, LogProgram+": ")
+		text, cut := strings.CutSuffix(line, "…")
+		if !ok || !cut || !utf8.ValidString(line) || len(text) > LogLineMost || len(text) < LogLineMost-3 {
+			t.Errorf("line %d: valid UTF-8 %v, %d bytes before the ellipsis (want %d to %d)", i, utf8.ValidString(line), len(text), LogLineMost-3, LogLineMost)
+		}
+	}
+	if logs[3] != LogProgram+": "+short {
+		t.Errorf("a short line was changed: %.40q", logs[3])
 	}
 }

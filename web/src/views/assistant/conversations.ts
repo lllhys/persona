@@ -1,10 +1,26 @@
 // "All chats" (docs/assistant/assistant.md "Managing its own conversations"): the assistant's conversations, the main one first, the rest newest first
 // by day; search on the title and the last message; the archived ones apart. Pure functions, tested without a DOM.
 import type { Session } from "../../lib/types";
+import { sameManager } from "../../lib/manager-choice";
 import { t } from "../../i18n";
 
 /** A conversation as `GET /api/v1/assistant?archived=1` lists it. */
 export type Conversation = Session & { archived?: boolean };
+
+/** The write rules the hub enforces (server's conversationTagMaxRunes / conversationTagsMax), mirrored so the editor
+ *  refuses what the API would. */
+export const TAG_MAX_LENGTH = 32;
+export const TAGS_MAX = 10;
+
+/** Trim, drop empties and de-duplicate to the first occurrence, exactly as the hub's normalization does. */
+export function normalizeTags(input: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of input) {
+    const tag = raw.trim();
+    if (tag && !out.includes(tag)) out.push(tag);
+  }
+  return out;
+}
 
 /** "1101 | fix | search box overlaps the top bar" (docs/assistant/assistant.md "Chat titles") → head "1101 | fix | " and topic; null for other titles. */
 export function splitTitle(title: string): { head: string; topic: string } | null {
@@ -18,8 +34,24 @@ export const MAIN_TITLE = "Persona";
 
 export function conversationTitle(s: Pick<Session, "title">, isMain = false): string {
   if (isMain) return MAIN_TITLE;
-  const title = s.title?.trim();
+  const title = readableTitle(s.title?.trim() ?? "");
   return !title || title === "Claude Code" || title === "assistant" ? t("assistant-conversations.untitled") : title;
+}
+
+/** A chat started from picked context is titled by its first message, a `<persona-context …>` tag (docs/protocol/protocol.md
+ *  "Tags in messages"): what was typed after the tag, else the tag's own title, entities decoded; empty when it has
+ *  neither. Any other title as it is. */
+const CONTEXT_BLOCK = /^\s*<persona-context\b[^>]*>[\s\S]*?<\/persona-context>/;
+const CONTEXT_OPEN = /^<persona-context\b([^>]*)/;
+const decodeAttr = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+
+function readableTitle(title: string): string {
+  const open = CONTEXT_OPEN.exec(title);
+  if (!open) return title;
+  let rest = title;
+  for (let m = CONTEXT_BLOCK.exec(rest); m; m = CONTEXT_BLOCK.exec(rest)) rest = rest.slice(m[0].length);
+  const typed = rest === title ? "" : rest.trim().split("\n")[0].trim();
+  return typed || decodeAttr(/\btitle="([^"]*)"/.exec(open[1])?.[1] ?? "").trim();
 }
 
 const fold = (s: string) => s.normalize("NFKC").toLowerCase();
@@ -29,6 +61,19 @@ export function filterConversations<T extends Conversation>(list: T[], query: st
   const q = fold(query.trim());
   if (!q) return list;
   return list.filter((s) => fold(conversationTitle(s)).includes(q) || fold(s.last_text ?? "").includes(q));
+}
+
+/** Every tag in use, each once and sorted: the filter chips' row (docs/assistant/assistant.md "Conversation tags"). */
+export function inUseTags<T extends Conversation>(list: T[]): string[] {
+  const seen = new Set<string>();
+  for (const s of list) for (const tag of s.tags ?? []) seen.add(tag);
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
+/** Only the conversations carrying this exact tag; an empty filter is the whole list. */
+export function withTag<T extends Conversation>(list: T[], tag: string): T[] {
+  if (!tag) return list;
+  return list.filter((s) => s.tags?.includes(tag));
 }
 
 function time(s: Session): number {
@@ -58,14 +103,15 @@ export function groupByDay<T extends Session>(list: T[], now: Date): { title: st
 
 /** One list from what was fetched with the archived ones (`fetched`), the store's list (newer conversations, without
  *  the archived ones) and the live sessions pushed since (state, title, last message, and the archive mark: the hub
- *  marks every assistant session it pushes, `archived` only when it is, so one without it was brought back since). */
-export function mergeConversations(fetched: Conversation[], listed: Session[], live: Session[]): Conversation[] {
+ *  marks every assistant session it pushes, `archived` only when it is, so one without it was brought back since).
+ *  Live sessions must belong to the selected manager and the main assistant space. */
+export function mergeConversations(fetched: Conversation[], listed: Session[], live: Session[], manager?: string): Conversation[] {
   const by = new Map<string, Conversation>();
   for (const s of fetched) by.set(s.session_id, s);
   for (const s of listed) by.set(s.session_id, { ...by.get(s.session_id), ...s });
   for (const s of live) {
-    const had = by.get(s.session_id);
-    if (had) by.set(s.session_id, { ...had, ...s, archived: s.archived === true });
+    if (!s.assistant || s.space || !sameManager(s.manager, manager)) continue;
+    by.set(s.session_id, { ...by.get(s.session_id), ...s, archived: s.archived === true });
   }
   return [...by.values()];
 }

@@ -363,9 +363,14 @@ func wbGist(it InboxItem) string {
 	return ""
 }
 
+// wbSource is where an item came from, in words: a connector's label for it, else its source's name (a subscription's
+// one row has no label, its title being the subscription's name, #5671), never an id when there is a name.
 func wbSource(l i18n.Lang, it InboxItem) string {
 	if it.Connector != nil && it.Connector.Label != "" {
 		return it.Connector.Label
+	}
+	if it.Connector != nil && strings.TrimSpace(it.AccountName) != "" {
+		return it.AccountName
 	}
 	if it.Mail != nil || it.Source == "mail" {
 		return wbT(l, "source_mail")

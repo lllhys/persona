@@ -16,6 +16,18 @@ func RenderTranslateMailInput(subject, text string) string {
 	return render("tools/translate_mail_input", struct{ Subject, Text string }{subject, text})
 }
 
+// LauncherRunTurn is one turn of a conversation an API purpose sends to a launcher's CLI (tools/launcher_run_input).
+type LauncherRunTurn struct {
+	Assistant bool // the model's own earlier answer; else the user's
+	Text      string
+}
+
+// RenderLauncherRunInput is a conversation of several turns as one prompt, for a CLI run that takes a single message
+// (assistant/models_run.go).
+func RenderLauncherRunInput(turns []LauncherRunTurn) string {
+	return render("tools/launcher_run_input", turns)
+}
+
 // RenderLauncherCheck is the one-word prompt Settings › Models' "Test" runs a launcher with (tools/launcher_check).
 func RenderLauncherCheck() string { return render("tools/launcher_check", nil) }
 

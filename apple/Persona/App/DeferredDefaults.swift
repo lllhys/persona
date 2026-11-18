@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 #if os(macOS)
 import AppKit
 #endif

@@ -1,7 +1,6 @@
 package persona.feature.chat
 
 import android.content.res.Resources
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,11 +42,14 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import persona.core.contracts.Session
 import persona.core.contracts.Subagent
 import persona.core.designsystem.JIcon
 import persona.core.designsystem.JSpinner
 import persona.core.designsystem.JTextButton
 import persona.core.designsystem.PersonaTheme
+import persona.core.designsystem.rememberOpenEdge
+import persona.core.designsystem.unfolding
 import persona.core.designsystem.Tokens
 import persona.core.designsystem.icons.PersonaIcons
 import persona.core.domain.lines.SubagentStatus
@@ -63,9 +65,20 @@ internal class SubagentFolds {
     private val open = mutableStateMapOf<String, Boolean>()
     fun isOpen(call: String) = open[call] == true
     fun toggle(call: String) { open[call] = !isOpen(call) }
+    fun open(call: String) { open[call] = true }
 }
 
 internal val LocalSubagentFolds = staticCompositionLocalOf<SubagentFolds?> { null }
+
+/**
+ * What runs the subagents of the chat open ([subagentHarness], #8143): its own agent, a Paseo provider by its own name;
+ * null outside an Agent's chat, where a task card says Claude Code as before.
+ */
+internal val LocalSubagentHarness = staticCompositionLocalOf<String?> { null }
+
+/** What a task card says ran [session]'s subagents: Claude Code for Claude's, else the agent by its name ([Session.agentLabel]). */
+internal fun subagentHarness(session: Session, res: Resources): String =
+    if (session.isClaude) res.getString(R.string.chat_subagent_harness_claude) else session.agentLabel
 
 /** A task card's words (the web's `taskStatusWord` and `subagentMeta`). */
 internal object SubagentCardText {
@@ -78,12 +91,12 @@ internal object SubagentCardText {
     })
 
     /**
-     * The second line's pieces, in order: what ran it (Claude Code; none in a Persona conversation, whose reader does not
-     * work with the tool), the model chip (empty: none), its tokens, its tool uses and how long it took ([took], none while
-     * it runs: "Running for …" counts there instead).
+     * The second line's pieces, in order: what ran it ([harness], the chat's agent; Claude Code when not known; none in
+     * a Persona conversation, whose reader does not work with the tool), the model chip (empty: none), its tokens, its
+     * tool uses and how long it took ([took], none while it runs: "Running for …" counts there instead).
      */
-    fun meta(res: Resources, agent: Subagent?, took: Long?, assistant: Boolean): Meta = Meta(
-        harness = if (assistant) null else res.getString(R.string.chat_subagent_harness_claude),
+    fun meta(res: Resources, agent: Subagent?, took: Long?, assistant: Boolean, harness: String? = null): Meta = Meta(
+        harness = if (assistant) null else harness?.takeIf(String::isNotBlank) ?: res.getString(R.string.chat_subagent_harness_claude),
         model = persona.core.domain.modelShortName(agent?.model).ifEmpty { null },
         tokens = agent?.tokens?.takeIf { it > 0 }?.let { res.getString(R.string.chat_subagent_tokens, Subagents.tokens(it)) },
         uses = agent?.steps?.takeIf { it > 0 }?.let { res.getQuantityString(R.plurals.chat_subagent_tool_uses, it, it) },
@@ -102,29 +115,33 @@ internal object SubagentCardText {
  * [live]: its exchange is the running one; [assistant]: a Persona conversation.
  */
 @Composable
-internal fun SubagentCard(call: ToolCall, live: Boolean, assistant: Boolean, modifier: Modifier = Modifier) {
+internal fun SubagentCard(call: ToolCall, live: Boolean, assistant: Boolean, modifier: Modifier = Modifier,
+    statusOverride: SubagentStatus? = null, metaOverride: SubagentCardText.Meta? = null) {
     val links = LocalChatSubagents.current
     val agent = call.use.item.toolUseId?.let { links?.agents?.get(it) }
     val res = LocalResources.current
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
-    val status = Subagents.status(call, agent, live)
+    val status = statusOverride ?: Subagents.status(call, agent, live)
     val running = status == SubagentStatus.Running
     val folds = LocalSubagentFolds.current
     var openHere by rememberSaveable(call.id) { mutableStateOf(false) }
     val open = folds?.isOpen(call.id) ?: openHere
     val title = Subagents.title(call, agent) ?: stringResource(R.string.chat_subagent_untitled)
-    val meta = SubagentCardText.meta(res, agent, Subagents.took(call, agent, status), assistant)
+    val meta = metaOverride ?: SubagentCardText.meta(res, agent, Subagents.took(call, agent, status), assistant, LocalSubagentHarness.current)
     val started = Subagents.started(call, agent)
     val now by rememberNow(1_000, enabled = running && started != null)
     val runningFor = if (running && started != null)
         stringResource(R.string.chat_subagent_running_for, workDuration(res, java.time.Duration.between(started, now).seconds.coerceAtLeast(1)))
         else null
     val shape = PersonaTheme.shapes.cardShape
+    // Details fade over the space they take (SubagentCard.swift:220, ChatPin.swift:707-726). The .move transition is on
+    // that view, and the open runs with animations disabled (ChatPin.swift:686-688), so this does not slide.
+    val edge = rememberOpenEdge(call.id)
+    val revealing = edge.revealing(open)
     // The page under the card hides the work rail behind it; its avatar sits where the rail runs.
     Column(modifier.fillMaxWidth().padding(vertical = Tokens.Space.xs).clip(shape).background(palette.background)
         .background(palette.surface).border(Tokens.Size.lineMedium, palette.line, shape)
-        .animateContentSize(PersonaTheme.motion.size())
         .padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s)
         .semantics { testTag = "chat.subagent-card" }) {
         val state = stringResource(if (open) R.string.chat_tasks_expanded else R.string.chat_tasks_collapsed)
@@ -156,7 +173,7 @@ internal fun SubagentCard(call: ToolCall, live: Boolean, assistant: Boolean, mod
             JIcon(PersonaIcons.disclosure, null, Modifier.padding(top = Tokens.Space.xs).rotate(if (open) 90f else 0f),
                 size = Tokens.Space.m, tint = palette.ink3)
         }
-        if (open) Details(call, agent, status)
+        if (open) Details(call, agent, status, Modifier.unfolding(revealing))
     }
 }
 
@@ -201,10 +218,10 @@ private fun MetaLine(meta: SubagentCardText.Meta, runningFor: String?) {
 
 /** The opened card: what it was asked, its latest result, its last tool and its output, on a rail of their own. */
 @Composable
-private fun Details(call: ToolCall, agent: Subagent?, status: SubagentStatus) {
+private fun Details(call: ToolCall, agent: Subagent?, status: SubagentStatus, modifier: Modifier = Modifier) {
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
-    Row(Modifier.fillMaxWidth().padding(top = Tokens.Space.s).height(IntrinsicSize.Min).semantics { testTag = "chat.subagent-details" }) {
+    Row(modifier.fillMaxWidth().padding(top = Tokens.Space.s).height(IntrinsicSize.Min).semantics { testTag = "chat.subagent-details" }) {
         Box(Modifier.width(Tokens.Space.xxs).fillMaxHeight().background(palette.line))
         Column(Modifier.weight(1f).padding(start = Tokens.Space.m), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
             Subagents.prompt(call).takeIf(String::isNotEmpty)?.let { Text(it, style = type.caption, color = palette.ink2) }

@@ -67,6 +67,7 @@ class NewAgentViewModelTest {
         try {
             advanceUntilIdle()
             model.selection(model.state.value.selection.copy(mode = "plan", effort = "high"))
+            model.prompt("Review the changes")
             model.submit()
             advanceUntilIdle()
             assertEquals("codex", store.operation?.request?.agentType)
@@ -93,6 +94,7 @@ class NewAgentViewModelTest {
         try {
             advanceUntilIdle()
             model.selection(model.state.value.selection.copy(cwd = "/code/new", launcher = "codex"))
+            model.prompt("Review the changes")
             model.submit() // the answer is lost
             advanceUntilIdle()
             model.submit() // asking again finds it created
@@ -188,6 +190,35 @@ class NewAgentViewModelTest {
         }
     }
 
+    /**
+     * What the hub lists off on a computer (#8109) is that computer's: read with its launchers, gone with another one,
+     * and never what the form starts on, even where it was the launcher used there last.
+     */
+    @Test fun theProvidersLeftOutAreTheComputersOwnAndNeverPicked() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val machines = MutableStateFlow(listOf(Machine("first", online = true), Machine("second", online = true)))
+        val deepseek = UnavailableLauncher("deepseek", "DeepSeek", "launcher", "claude", code = "launcher_own_service", reason = "first has its own sign-in")
+        val service = FakeService().apply { leftOut = mapOf("first" to listOf(deepseek)) }
+        val store = MemoryStore().apply { saved["first"] = AgentDefaults(cwd = "/code", launcher = "deepseek") }
+        val model = NewAgentViewModel(service, store, machines)
+        try {
+            advanceUntilIdle()
+            assertEquals("first", model.state.value.machineId)
+            assertEquals(listOf(deepseek), model.state.value.unavailable)
+            assertEquals("claude", model.state.value.selection.launcher)
+            model.selectMachine("second")
+            assertTrue(model.state.value.unavailable.isEmpty()) // not the first computer's while the second's is read
+            advanceUntilIdle()
+            assertTrue(model.state.value.unavailable.isEmpty())
+            model.selectMachine("first")
+            advanceUntilIdle()
+            assertEquals(listOf(deepseek), model.state.value.unavailable)
+        } finally {
+            model.viewModelScope.cancel()
+            Dispatchers.resetMain()
+        }
+    }
+
     private class MemoryStore : AgentCreationStore {
         var operation: AgentStartOperation? = null
         val saved = mutableMapOf<String, AgentDefaults>()
@@ -204,8 +235,10 @@ class NewAgentViewModelTest {
         var request: AgentStartRequest? = null
         var result: AgentStartResult = AgentStartResult.Unknown
         var available = listOf(AgentLauncher("claude"))
+        var leftOut = emptyMap<String, List<UnavailableLauncher>>()
         var beforeStart: () -> Unit = {}
         override suspend fun launchers(machineId: String) = available
+        override suspend fun launcherList(machineId: String) = AssistantLaunchers(available, unavailable = leftOut[machineId].orEmpty())
         override suspend fun directories(machineId: String, path: String) = AgentDirectories(path.ifEmpty { "/code" })
         override suspend fun start(request: AgentStartRequest, operationId: String): AgentStartResult {
             beforeStart()

@@ -2,7 +2,9 @@ package assistant
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -169,5 +171,26 @@ func TestMachineLaunchersCarryDisplayNames(t *testing.T) {
 	}
 	if got := shown("/api/v1/machines/mac/launchers"); len(got) != 4 || got["box"] != nil || got["gw-example-com"] != "团队中转" {
 		t.Fatalf("mac, where box is its rc file's: %v", got)
+	}
+}
+
+// A runtime's provider keeps the name the runtime gives it and the permission modes a start on it takes, as the node
+// lists them (#8261): the manager names only its own providers.
+func TestMachineLaunchersCarryARuntimesNameAndModes(t *testing.T) {
+	s, f := scopeService(t)
+	f.launcherList = []proto.Launcher{{Name: "claude"}, {Name: "grok", Source: "paseo", Agent: "paseo", DisplayName: "Grok",
+		PermissionModes: proto.PermissionModeSetOf("default", "bypassPermissions")}}
+	var out struct {
+		Launchers []map[string]any `json:"launchers"`
+	}
+	if err := json.Unmarshal(getJSON(t, s, "/api/v1/machines/server/launchers"), &out); err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(out.Launchers, func(l map[string]any) bool { return l["name"] == "grok" })
+	if i < 0 {
+		t.Fatalf("launchers %v", out.Launchers)
+	}
+	if l := out.Launchers[i]; l["display_name"] != "Grok" || fmt.Sprint(l["permission_modes"]) != "[default bypassPermissions]" {
+		t.Fatalf("grok %v", l)
 	}
 }

@@ -340,7 +340,7 @@ func TestTheHubAsksTheMachinesManager(t *testing.T) {
 		strings.Contains(a.log(), "claude-dirs") {
 		t.Fatalf("mb's claude dirs: %v", got)
 	}
-	h.cfg.Machines = append(h.cfg.Machines, MachineConfig{ID: "svc", Name: "svc", Kind: kindService})
+	addCfgMachines(h, MachineConfig{ID: "svc", Name: "svc", Kind: kindService})
 	if _, err := h.moveMachine(context.Background(), "svc", "m-0b0b0b"); err != nil {
 		t.Fatal(err)
 	}

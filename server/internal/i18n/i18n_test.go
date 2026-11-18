@@ -28,6 +28,18 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+// Match is Resolve without its fallback: a tag no catalog matches is "", like an empty one.
+func TestMatch(t *testing.T) {
+	for tag, want := range map[string]Lang{
+		"zh-CN": ZhHans, "zh_TW": ZhHans, " ja-JP ": Ja, "EN-us": En, "en": En,
+		"ko-KR": "", "fr": "", "yue-CN": "", "-": "", "": "",
+	} {
+		if got := Match(tag); got != want {
+			t.Errorf("Match(%q) = %q, want %q", tag, got, want)
+		}
+	}
+}
+
 func TestAcceptLanguage(t *testing.T) {
 	for h, want := range map[string]Lang{
 		"ja":                         Ja,
@@ -131,6 +143,30 @@ func TestCatalogsAgree(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestLinkPeerCatalogIsExhaustivelyPinned(t *testing.T) {
+	var got []string
+	for key := range catalogs()[ZhHans] {
+		if strings.HasPrefix(key, "link-peer.") {
+			got = append(got, key)
+		}
+	}
+	slices.Sort(got)
+	want := []string{
+		"link-peer.bad_code",
+		"link-peer.code_required",
+		"link-peer.machine_required",
+		"link-peer.pair_json_required",
+		"link-peer.pair_save_failed",
+		"link-peer.rate_limited",
+		"link-peer.token_invalid",
+		"link-peer.websocket_required",
+		"link-peer.wrong_credential",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("link-peer keys = %v, want exactly %v; pin every new peer text in internal/link", got, want)
 	}
 }
 

@@ -3,12 +3,190 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/modelhttp"
 )
+
+func TestChatSendsDefaultUserAgent(t *testing.T) {
+	for _, tt := range []struct {
+		name, api, path, response string
+		bearer, retry             bool
+	}{
+		{"messages", "", "/v1/messages", `{"content":[{"type":"text","text":"ok"}]}`, false, false},
+		{"messages bearer", "", "/v1/messages", `{"content":[{"type":"text","text":"ok"}]}`, true, false},
+		{"responses", "responses", "/v1/responses", "data: {\"type\":\"response.completed\"}\n\n", false, false},
+		{"chat completions retry", "chat", "/v1/chat/completions", "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := make(chan string, 3)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != tt.path {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				requests <- r.UserAgent()
+				if tt.retry && len(requests) == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":{"message":"max_tokens is unsupported; use max_completion_tokens"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(tt.response))
+			}))
+			defer srv.Close()
+			_, err := New(Config{API: tt.api, BaseURL: srv.URL, APIKey: "k", Model: "m", Bearer: tt.bearer}).Chat(
+				context.Background(), Request{Messages: []Message{{RoleUser, "hi"}}, MaxTokens: 42})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCount := 1
+			if tt.retry {
+				wantCount = 2
+			}
+			if len(requests) != wantCount {
+				t.Fatalf("got %d requests, want %d", len(requests), wantCount)
+			}
+			for i := 0; i < wantCount; i++ {
+				if got, want := <-requests, modelhttp.UserAgent(); got != want {
+					t.Errorf("request %d User-Agent = %q, want %q", i+1, got, want)
+				}
+			}
+		})
+	}
+}
+
+type countingTransport struct {
+	calls atomic.Int32
+}
+
+func (tr *countingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	tr.calls.Add(1)
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func TestRedirectUserAgent(t *testing.T) {
+	const custom = "private-launcher-agent"
+	for _, api := range []string{"messages", "responses", "chat"} {
+		for _, crossOrigin := range []bool{false, true} {
+			t.Run(api+"/cross="+fmt.Sprint(crossOrigin), func(t *testing.T) {
+				var first, second *httptest.Server
+				var got []string
+				first = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					got = append(got, r.UserAgent())
+					if r.Method != http.MethodPost {
+						t.Errorf("method = %s, want POST", r.Method)
+					}
+					switch r.URL.Path {
+					case "/v1/messages", "/v1/responses", "/v1/chat/completions":
+						http.Redirect(w, r, "/same", http.StatusTemporaryRedirect)
+					case "/same":
+						if crossOrigin {
+							http.Redirect(w, r, second.URL+"/first", http.StatusTemporaryRedirect)
+							return
+						}
+						fallthrough
+					case "/final":
+						switch api {
+						case "messages":
+							fmt.Fprint(w, `{"content":[{"type":"text","text":"ok"}]}`)
+						case "responses":
+							fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n")
+						case "chat":
+							fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+						}
+					default:
+						t.Errorf("unexpected path %s", r.URL.Path)
+					}
+				}))
+				defer first.Close()
+				second = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					got = append(got, r.UserAgent())
+					if r.Method != http.MethodPost {
+						t.Errorf("method = %s, want POST", r.Method)
+					}
+					if r.URL.Path == "/first" {
+						http.Redirect(w, r, "/second", http.StatusTemporaryRedirect)
+					} else {
+						http.Redirect(w, r, first.URL+"/final", http.StatusTemporaryRedirect)
+					}
+				}))
+				defer second.Close()
+				transport := &countingTransport{}
+				c := NewWith(Config{API: api, BaseURL: first.URL, APIKey: "k", Model: "m", UserAgent: strPtr(custom)}, transport)
+				reply, err := c.Complete(context.Background(), "system", "hello", 8)
+				if err != nil || reply != "ok" {
+					t.Fatalf("reply = %q, error = %v", reply, err)
+				}
+				want := []string{custom, custom}
+				if crossOrigin {
+					want = append(want, modelhttp.UserAgent(), modelhttp.UserAgent(), modelhttp.UserAgent())
+				}
+				if !reflect.DeepEqual(got, want) || int(transport.calls.Load()) != len(want) {
+					t.Errorf("User-Agents = %q, transport calls = %d; want %q", got, transport.calls.Load(), want)
+				}
+			})
+		}
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+func TestRedirectLimit(t *testing.T) {
+	for _, redirects := range []int{9, 10} {
+		t.Run(fmt.Sprint(redirects), func(t *testing.T) {
+			calls := 0
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls <= redirects {
+					http.Redirect(w, r, "/", http.StatusFound)
+				}
+			}))
+			defer s.Close()
+			resp, err := New(Config{}).http.Get(s.URL)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			if redirects == 9 && (err != nil || calls != 10) {
+				t.Fatalf("calls = %d, error = %v", calls, err)
+			}
+			if redirects == 10 && (err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") || calls != 10) {
+				t.Fatalf("calls = %d, error = %v", calls, err)
+			}
+		})
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{
+		{"http://example.com", "http://EXAMPLE.com:80", true},
+		{"https://example.com", "https://example.com:443", true},
+		{"http://example.com", "https://example.com", false},
+		{"http://example.com", "http://other.example.com", false},
+		{"http://example.com", "http://example.com:81", false},
+	} {
+		a, err := url.Parse(tt.a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := url.Parse(tt.b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sameOrigin(a, b); got != tt.want {
+			t.Errorf("sameOrigin(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
 
 func TestChatSendsTheTurnsAndReadsTheUsage(t *testing.T) {
 	var got struct {

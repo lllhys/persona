@@ -9,6 +9,10 @@ import (
 	"github.com/nwverse/persona/server/internal/i18n"
 )
 
+// pushRegistrationRequired: a device's prefs or Live Activity write names a push registration the hub retired; the
+// app registers again (POST /api/v1/devices) before it retries.
+const pushRegistrationRequired = "push_registration_required"
+
 // deviceRoutes are a device's own: its registration for pushes, its sessions, and which pushes it wants.
 func (h *Hub) deviceRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/v1/devices", func(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +37,9 @@ func (h *Hub) deviceRoutes(api *http.ServeMux) {
 		resp := map[string]any{"ok": true}
 		if route, ok := h.push.routeOfID(d.DeviceID); ok {
 			resp["push"] = route // the app's Settings › Notifications says which way, or why none (#5998)
+		}
+		if route, ok := h.push.callRouteOfID(d.DeviceID); ok {
+			resp["call"] = route // whether urgent calls can ring it (urgent_call.go), for Settings › Urgent calls
 		}
 		writeJSON(w, resp)
 	})
@@ -62,6 +69,11 @@ func (h *Hub) deviceRoutes(api *http.ServeMux) {
 		})
 		if bad != nil {
 			writeErr(w, http.StatusBadRequest, bad)
+			return
+		}
+		if errors.Is(err, db.ErrPushRegistrationConflict) {
+			// The registration this id names was retired (its credential revoked, inactive): the app registers again.
+			writeErrCode(w, http.StatusConflict, pushRegistrationRequired, i18n.Err("push.registration_required"))
 			return
 		}
 		if err != nil {

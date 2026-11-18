@@ -19,7 +19,7 @@ export const CAPABILITIES = {
 }
 
 const PING_EVERY = 10_000 // ms: as Paseo's own client
-const SILENT_FOR = 25_000 // ms: no frame for this long (two pings unanswered) → the connection is dead
+const SILENT_FOR = 25_000 // ms: no frame for this long (two pings unanswered) → the connection is dead (a sleep not counted)
 const HELLO_WAIT = 15_000 // ms: the daemon answers a hello with server_info at once
 const RETRY_MIN = 1000
 const RETRY_MAX = 30_000
@@ -46,8 +46,7 @@ export class PaseoError extends Error {
 export class PaseoClient extends EventEmitter {
   /**
    * @param {{ home?: string, env?: object, log?: (msg: string) => void, dial?: typeof dialWebSocket,
-   *   clientId?: string, appVersion?: string, retryMin?: number, retryMax?: number, pingEvery?: number,
-   *   silentFor?: number }} [opts]
+   *   clientId?: string, retryMin?: number, retryMax?: number, pingEvery?: number, silentFor?: number }} [opts]
    */
   constructor(opts = {}) {
     super()
@@ -57,7 +56,6 @@ export class PaseoClient extends EventEmitter {
     this.dial = opts.dial ?? dialWebSocket
     // The same id across reconnects: the daemon takes it for this client coming back.
     this.clientId = opts.clientId ?? `cid_persona_${randomUUID().replaceAll('-', '')}`
-    this.appVersion = opts.appVersion
     this.retryMin = opts.retryMin ?? RETRY_MIN
     this.retryMax = opts.retryMax ?? RETRY_MAX
     this.pingEvery = opts.pingEvery ?? PING_EVERY
@@ -107,9 +105,16 @@ export class PaseoClient extends EventEmitter {
     }
     this.ws = ws
     let heard = Date.now()
+    let ticked = heard
     let helloTimer
     const pinger = setInterval(() => {
-      if (Date.now() - heard > this.silentFor) {
+      const now = Date.now()
+      // A tick long after the last one: the machine slept (its timers stopped, its clock did not) or this process was
+      // held up, and nothing was read meanwhile. That silence is not Paseo's: it is measured from now, so the connection
+      // is judged by the answer to the ping sent now, as Paseo's own client waits for its ping before it gives up.
+      if (now - ticked > 2 * this.pingEvery) heard = now
+      ticked = now
+      if (now - heard > this.silentFor) {
         this.log('paseo: no answer to pings; connecting again')
         ws.close(4000, 'keepalive timeout')
         return
@@ -148,17 +153,24 @@ export class PaseoClient extends EventEmitter {
       clearTimeout(helloTimer)
       if (this.ws === ws) this.ws = undefined
       const was = this.connected
+      const what = `${code}${reason ? ` ${reason}` : ''}`
       this.drop(new PaseoError('Paseo 的连接断了', 'disconnected'))
-      if (was) this.emit('disconnected', `${code}${reason ? ` ${reason}` : ''}`)
+      if (was) this.emit('disconnected', what)
       if (code === 4401 || code === 4003) this.lastError ||= `Paseo refused the connection (${code} ${reason})`
       const refused = code === 4401 || code === 4003 || code === 4002
-      this.again(this.lastError || `Paseo closed the connection (${code}${reason ? ` ${reason}` : ''})`, !refused && daemonTarget(this.home).running)
+      // Who ended it: the bridge (no answer to its pings, no server_info, its setup failed, a frame it refused), Paseo
+      // (its close frame), or nobody said: a socket that ended without a close frame (1006) dropped, as when Paseo is
+      // killed.
+      const ended = ws.local ? `the bridge closed the connection (${what})`
+        : code === 1006 ? 'the connection to Paseo dropped (1006)' : `Paseo closed the connection (${what})`
+      this.again(this.lastError || ended, !refused && daemonTarget(this.home).running)
     })
     ws.on('error', () => {}) // 'close' follows
     helloTimer = setTimeout(() => ws.close(4000, 'no server_info'), HELLO_WAIT)
     helloTimer.unref?.()
+    // No appVersion: Paseo reads one as a version of its own app (session.ts isAppVersionAtLeast) and decides what the
+    // client gets by it. The bridge is no Paseo app; the capabilities say what it takes.
     const hello = { type: 'hello', clientId: this.clientId, clientType: 'cli', protocolVersion: 1, capabilities: CAPABILITIES }
-    if (this.appVersion) hello.appVersion = this.appVersion
     // Checked only when the daemon has a password; then the local credential is what Paseo's own CLI shows.
     const token = localCredential(this.home)
     if (token) hello.auth = { kind: 'localCredential', token }
@@ -189,28 +201,30 @@ export class PaseoClient extends EventEmitter {
     this.subs.clear()
   }
 
-  /** A session message from the daemon: a reply to a request, a subscription's event, or nothing the bridge waits for. */
+  /**
+   * A session message from the daemon: a reply to a request, a subscription's event, both, or nothing the bridge
+   * waits for. Both: Paseo tells a permission's resolution to the subscriptions under the permission's own id, which
+   * the bridge answers it under, so that event settles the answer and reaches its subscription too.
+   */
   route(inner) {
     const p = inner.payload
     const id = p?.requestId
     const w = typeof id === 'string' ? this.pending.get(id) : undefined
-    // A reply first: a subscription's own reply carries its subscriptionId too.
+    // Read before a reply settles: a subscription's own reply carries its new subscriptionId, and is no event of it.
+    const on = p && typeof p.subscriptionId === 'string' ? this.subs.get(p.subscriptionId) : undefined
     if (w) {
       if (inner.type === 'rpc_error') return this.settle(id, w, new PaseoError(p.error || 'Paseo 出错了', p.code))
       if (inner.type === 'status' && p.status === 'agent_create_failed') {
         return this.settle(id, w, new PaseoError(p.error || 'Paseo 没能建出这个 Agent', p.errorCode ?? 'create_failed'))
       }
       const type = inner.type === 'status' ? `status:${p.status}` : inner.type
-      if (!w.expect || w.expect === type) return this.settle(id, w, undefined, p)
+      if (!w.expect || w.expect === type) this.settle(id, w, undefined, p)
     }
-    if (p && typeof p.subscriptionId === 'string') {
-      const on = this.subs.get(p.subscriptionId)
-      if (!on) return
-      try {
-        on(inner)
-      } catch (err) {
-        this.log(`paseo: ${inner.type}: ${err.stack ?? err.message}`)
-      }
+    if (!on) return
+    try {
+      on(inner)
+    } catch (err) {
+      this.log(`paseo: ${inner.type}: ${err.stack ?? err.message}`)
     }
   }
 

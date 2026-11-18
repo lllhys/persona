@@ -20,7 +20,6 @@
   "pinned": "已置顶",
   "remove": "从列表移除",
   "removed_toast": "已移除「{title}」，有新消息时会自动回到列表",
-  "restore": "恢复",
   "restored_toast": "已恢复「{title}」",
   "undo": "撤销",
   "hide_failed": "移除失败：{error}",

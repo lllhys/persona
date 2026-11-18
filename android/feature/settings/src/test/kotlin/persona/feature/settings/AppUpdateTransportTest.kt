@@ -13,6 +13,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import persona.core.contracts.api.AppUpdate
+import persona.core.contracts.api.AppUpdateLookup
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 
@@ -39,10 +40,12 @@ class AppUpdateTransportTest {
 
     @Test fun metadataAndDownloadUsePairedPrefixAndCurrentCredentials() = runBlocking {
         val adapter = api()
-        body = """{"version_code":42,"version_name":"1.0.42","sha256":"$digest","notes":"Release notes"}"""
+        body = """{"version_code":42,"version_name":"1.0.42","sha256":"$digest","notes":"Release notes","package_name":"app.example","certificate_sha256":"${"c".repeat(64)}"}"""
         val update = requireNotNull(adapter.check())
         assertEquals(42L, update.versionCode)
         assertEquals("Release notes", update.releaseNotes)
+        assertEquals("app.example", update.packageName)
+        assertEquals("c".repeat(64), update.certificateSha256)
         assertEquals("/persona/api/v1/app/android/latest", requests.last().url.encodedPath)
         assertEquals("Bearer fixture-device-token", requests.last().header("Authorization"))
         token = "rotated-fixture-token"
@@ -59,6 +62,7 @@ class AppUpdateTransportTest {
         for (status in listOf(204, 404)) {
             code = status
             assertNull(runBlocking { adapter.check() })
+            assertEquals(AppUpdateLookup.NotPublished, runBlocking { adapter.lookup() })
         }
         for (status in listOf(401, 403, 302, 500)) {
             code = status

@@ -10,7 +10,7 @@ import { SESSIONS_LIST_FEATURE } from "../../lib/session-list";
 import { openPanel } from "../../lib/panel";
 import { getSession, refresh as refreshSessions, useStore } from "../../lib/store";
 import { usePanes, type Listing } from "../../lib/terminal-panes";
-import { buildTerminalTree, keepOnlyShown, keepRecent, paneCwd, paneTrail, sameTerminal, type OpenTerminal, type TermSpace } from "../../lib/terminals";
+import { buildTerminalTree, homeShellHost, keepOnlyShown, keepRecent, paneCwd, paneTrail, sameTerminal, type OpenTerminal, type TermSpace } from "../../lib/terminals";
 import type { Machine } from "../../lib/types";
 import { NARROW, useMedia } from "../../lib/viewport";
 import { finishedCount, readListView, rememberListView, resolveListView, type TerminalListView } from "../../lib/terminal-list";
@@ -45,6 +45,8 @@ export function TerminalPage({ route, onToggleSidebar, onNewAgent, detail, onWor
   const allMachines = useStore((s) => s.machines);
   const sessions = useStore((s) => s.sessions);
   const panesOn = useStore((s) => s.features.includes("terminal_panes"));
+  // New terminal on a computer with no workspace yet (#6362): a hub that checks the node can (else 409 node_outdated)
+  const newSpaceOn = useStore((s) => s.features.includes("pane_new_space"));
   const legacyList = useStore((s) => s.loaded && !s.features.includes(SESSIONS_LIST_FEATURE) && !s.features.includes("sessions_dimensions"));
   const addressed = route?.mid ?? detail?.selected?.mid;
   // A bookmarked terminal or session may name another assistant's computer. Only the current one's are listed.
@@ -114,9 +116,10 @@ export function TerminalPage({ route, onToggleSidebar, onNewAgent, detail, onWor
     setOpen((list) => list.filter((x) => !sameTerminal(x, item)));
     if (sameTerminal(item, shown)) navigate(browse);
   };
-  const openShell = async (mid: string, space: TermSpace) => {
+  // in a workspace, or (no workspace yet) the node opens one in the home folder
+  const openShell = async (mid: string, at: { kind: string; workspace_id: string } | { kind: string; cwd: "~"; new_space: true }) => {
     try {
-      const r = await api<{ terminal: string }>(`/machines/${enc(mid)}/panes`, { method: "POST", json: { kind: space.host, workspace_id: space.id } });
+      const r = await api<{ terminal: string }>(`/machines/${enc(mid)}/panes`, { method: "POST", json: at });
       void reload([mid]);
       navigate({ name: "terminal", mid, id: r.terminal, view: "terminals" }); // "New terminal" is the Terminals list's
     } catch (e) {
@@ -172,7 +175,8 @@ export function TerminalPage({ route, onToggleSidebar, onNewAgent, detail, onWor
                   finished={listing[m.id]?.error ? 0 : finishedCount(trees[m.id] ?? [])}
                   closing={finished.previewing === m.id}
                   onCloseFinished={() => void finished.start(m.id)}
-                  onOpenShell={(sp) => void openShell(m.id, sp)}
+                  onOpenShell={(sp) => void openShell(m.id, { kind: sp.host, workspace_id: sp.id })}
+                  onNewShell={newSpaceOn ? (kind) => void openShell(m.id, { kind, cwd: "~", new_space: true }) : undefined}
                   onRetry={() => void refresh()}
                   open={(node, at, header, toggle) => setMenu((prev) => (toggle && at.anchor && prev?.at.anchor === at.anchor ? null : { node, at, header }))}
                 />
@@ -264,6 +268,7 @@ function MachineBlock({
   closing,
   onCloseFinished,
   onOpenShell,
+  onNewShell,
   onRetry,
   open,
 }: {
@@ -278,13 +283,19 @@ function MachineBlock({
   closing: boolean;
   onCloseFinished: () => void;
   onOpenShell: (space: TermSpace) => void;
+  /** A terminal on a computer with no workspace yet, in the engine `kind` (the node opens one in the home folder);
+   *  absent where the hub lacks `pane_new_space`. */
+  onNewShell?: (kind: string) => void;
   onRetry: () => void;
 } & Menus) {
   const mid = machine.id;
   const [folded, toggle] = useFolded(`term:m:${mid}`);
   const hide = named && folded;
   const name = machine.name;
-  const node = machineNode(machine, { fold: { folded, toggle }, onRefresh: onRetry });
+  const empty = Boolean(machine.online && listing?.data && !listing.error && spaces.length === 0);
+  const homeKind = empty && onNewShell ? homeShellHost(listing?.data) : undefined;
+  const newShell = homeKind && onNewShell ? () => onNewShell(homeKind) : undefined;
+  const node = machineNode(machine, { fold: { folded, toggle }, onRefresh: onRetry, onOpenShell: newShell });
   return (
     <div className="mt-2">
       {named && (
@@ -309,7 +320,16 @@ function MachineBlock({
               </button>
             </p>
           )}
-          {machine.online && listing?.data && !listing.error && spaces.length === 0 && <p className="px-2.5 py-2 text-[12px] text-ink-3">{t("terminal-terminalpage.no_panes")}</p>}
+          {empty && (
+            <p className="flex items-center gap-2 px-2.5 py-2 text-[12px] text-ink-3">
+              <span className="min-w-0 flex-1">{t(newShell ? "terminal-terminalpage.no_panes" : "terminal-terminalpage.no_panes_agent")}</span>
+              {newShell && (
+                <button type="button" onClick={newShell} className="shrink-0 whitespace-nowrap rounded-control px-2 py-0.5 text-accent-ink hover:bg-hover">
+                  {t("terminal-terminalpage.new_terminal")}
+                </button>
+              )}
+            </p>
+          )}
           {finished > 0 && (
             <div className="flex px-1 pt-1">
               <Button tone="quiet" icon="x" busy={closing} onClick={onCloseFinished}>{t("terminal-terminalpage.close_finished")}</Button>

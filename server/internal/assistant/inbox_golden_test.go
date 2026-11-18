@@ -132,12 +132,32 @@ func TestGoldenInboxDraft(t *testing.T) {
 	}
 }
 
+// A draft uses About me as the user edited it in the app, not the config file's notes it replaced (#5769).
+func TestInboxDraftUsesEditedAboutMe(t *testing.T) {
+	ctx := context.Background()
+	h := goldenInbox(t)
+	model, calls := captureModel(t, "好的")
+	h.in.models[purposeDraft] = model
+	h.f.hello.OwnerNotes = "config file notes"
+	edited := "  notes edited in the app  "
+	setSettings(t, h.Service, func(v *Settings) { v.Notes = &edited })
+	it := goldenItems(t)["dm"]
+	h.inbox.items[it.ID] = it
+	if _, err := h.draftReply(ctx, it.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	system := onlyCall(t, calls()).System
+	if !strings.Contains(system, "notes edited in the app") || strings.Contains(system, "config file notes") {
+		t.Fatalf("the draft should know About me as edited in the app:\n%s", system)
+	}
+}
+
 func TestGoldenInboxJudge(t *testing.T) {
 	ctx := context.Background()
 	items := goldenItems(t)
 	for _, c := range []struct{ name, item, owner, rules string }{
 		{"summary_rules", "dm", "示例用户", " 告警都不用交 "},
-		{"plain", "bot", "", ""},
+		{"plain", "dm", "", ""}, // the direct human Lark message remains eligible
 	} {
 		h := goldenInbox(t)
 		model, calls := captureModel(t, `{"handle":false,"reason":"r"}`)
@@ -147,7 +167,8 @@ func TestGoldenInboxJudge(t *testing.T) {
 		it := *items[c.item]
 		h.inbox.items[it.ID] = &it
 		it.Agent = &InboxAgent{State: AgentQueued}
-		h.linkTask(ctx, &it, nil)
+		h.linkTask(ctx, &it, []prompts.InboxTask{{ID: "todo_1", Title: "修登录崩溃", State: "在做", Last: "测试通过",
+			Notes: "客户端发版群反馈登录后崩溃，修好后回复陈晓。"}})
 		goldenCall(t, "inbox_judge."+c.name, onlyCall(t, calls()))
 	}
 }
@@ -155,24 +176,52 @@ func TestGoldenInboxJudge(t *testing.T) {
 func TestGoldenInboxAgentPrompt(t *testing.T) {
 	items := goldenItems(t)
 	ctx := context.Background()
-	for _, name := range []string{"dm", "doc_rows", "doc_plain", "moment", "mail_direct", "github_review"} {
+	for _, name := range []string{"dm", "doc_rows", "doc_plain", "moment", "mail_direct", "github_review", "imessage_dm"} {
 		h := goldenInbox(t)
 		h.f.hello.Owner = "示例用户"
-		golden(t, "inbox_agent."+name, h.inbox.inboxAgentPrompt(items[name], h.owner(ctx), h.kbChatContext(ctx, kbChatOf(items[name]))))
+		golden(t, "inbox_agent."+name, h.inbox.inboxAgentPrompt(items[name], h.owner(ctx), h.kbChatContext(ctx, h.inbox.kbChatOf(items[name]))))
 	}
 	// With the knowledge base (the assistant's own): the chat's summary and projects follow.
 	h, e := newInboxHubKB(t)
 	h.inboxReady(ctx)
 	goldenKB(t, e)
 	it := *items["mention"]
-	golden(t, "inbox_agent.mention_kb", h.inbox.inboxAgentPrompt(&it, h.owner(ctx), h.kbChatContext(ctx, kbChatOf(&it))))
+	golden(t, "inbox_agent.mention_kb", h.inbox.inboxAgentPrompt(&it, h.owner(ctx), h.kbChatContext(ctx, h.inbox.kbChatOf(&it))))
 	// A chat in another Feishu account than lark.account: the prompt names it for lark_messages.
 	it = *items["dm"]
 	it.Lark = &InboxLark{AccountID: 2, FeedID: "f2"}
 	golden(t, "inbox_agent.dm_second_account", h.inbox.inboxAgentPromptFor(&it, "示例用户", nil, nil, 1, time.UTC))
 	it = *items["mail_direct"]
 	it.Mail = &InboxMail{AccountID: "acc1", Mailbox: "INBOX", UIDs: []uint32{3}, From: MailAddress{Email: "Sender@Example.com"}}
-	golden(t, "inbox_agent.mail_kb", h.inbox.inboxAgentPrompt(&it, "", h.kbChatContext(ctx, kbChatOf(&it))))
+	golden(t, "inbox_agent.mail_kb", h.inbox.inboxAgentPrompt(&it, "", h.kbChatContext(ctx, h.inbox.kbChatOf(&it))))
+
+	// A subscription's row (#6222): the subscription and the connector it reads, its link, and no reply line when it
+	// can't be replied to; its knowledge-base chat while its knowledge base is on.
+	h = goldenInbox(t)
+	h.f.hello.Owner = "示例用户"
+	h.inbox.srcMu.Lock()
+	h.inbox.names["sub_x"], h.inbox.names["sub_gh"] = "学校通知", "我的 PR"
+	h.inbox.vias["sub_x"] = inboxVia{connector: "example", source: "通知", chats: map[string]string{"sub:sub_x:t1": "tabc"}}
+	h.inbox.vias["sub_gh"] = inboxVia{connector: "github", source: "通知"}
+	h.inbox.srcMu.Unlock()
+	it = *items["github_review"]
+	it.ID, it.Source, it.Kind, it.Title, it.Context = "sub_x:1", "sub_x", "sub_notice", "下周的答疑改到周三", "【下周的答疑改到周三】\n示例：地点不变"
+	it.Connector = &InboxConnector{Thread: "sub:sub_x:t1", Label: "学校通知", URL: "https://notices.example.com/n1", RuleTier: TierFYI}
+	golden(t, "inbox_agent.subscription", h.inbox.inboxAgentPrompt(&it, h.owner(ctx), nil))
+	if got := h.inbox.kbChatOf(&it); got != kb.ChatID("sub_x", "tabc") {
+		t.Errorf("a subscription's chat: %q", got)
+	}
+	gh := *items["github_review"]
+	gh.ID, gh.Source = "sub_gh:1", "sub_gh"
+	gh.Connector = &InboxConnector{Thread: "sub:sub_gh:example-org/example-repo#12", URL: gh.Connector.URL, ReplyTo: gh.Connector.ReplyTo, CanReply: true}
+	golden(t, "inbox_agent.subscription_github", h.inbox.inboxAgentPrompt(&gh, h.owner(ctx), nil))
+	if got := h.inbox.kbChatOf(&gh); got != "" {
+		t.Errorf("a subscription whose knowledge base is off has a chat: %q", got)
+	}
+	// A connector's row that says nothing of replies: no empty reply line.
+	quiet := *items["imessage_dm"]
+	quiet.Connector = &InboxConnector{Thread: quiet.Connector.Thread, OpenURL: quiet.Connector.OpenURL}
+	golden(t, "inbox_agent.connector_no_reply", h.inbox.inboxAgentPrompt(&quiet, h.owner(ctx), nil))
 }
 
 // An item about one of the user's tasks: the judge's input lists the tasks, the AI twin is told the linked one.

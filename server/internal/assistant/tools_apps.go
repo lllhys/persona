@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,9 +46,9 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		var hits []kb.Hit
 		switch {
 		case a.Kind == "":
-			hits = e.Search(a.Query, messages, limit)
+			hits = e.Search(a.Query, messages, limit, profileSkip(ctx)...)
 		case kbRPCKind(a.Kind):
-			hits = e.SearchKind(a.Query, a.Kind, messages, limit)
+			hits = e.SearchKind(a.Query, a.Kind, messages, limit, profileSkip(ctx)...)
 		default:
 			return "", fmt.Errorf("kind %q: one of projects, chats, people, docs, meetings, events, recordings, topics", a.Kind)
 		}
@@ -110,14 +111,18 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if err != nil {
 			return "", fmt.Errorf("%s/%s: %w", a.Kind, a.ID, err)
 		}
-		// meta.json as the file has it (one edited by hand into something else: its text, as it is).
-		meta := []byte(d.Meta)
+		// meta.json as the file has it (one edited by hand into something else: its text, as it is), a project's people
+		// folded to the first few (kb_get_fit.go).
+		meta, folded := []byte(d.Meta), ""
+		if a.Kind == kb.KindProject {
+			meta, folded = foldPeople(meta, d.Links, filepath.Join(d.Path, "meta.json"))
+		}
 		var indented bytes.Buffer
-		if json.Valid(d.Meta) && json.Indent(&indented, bytes.TrimSpace(d.Meta), "", "  ") == nil {
+		if json.Valid(meta) && json.Indent(&indented, bytes.TrimSpace(meta), "", "  ") == nil {
 			meta = append(indented.Bytes(), '\n')
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "Path: %s\n\nmeta.json:\n%s\n", d.Path, meta)
+		fmt.Fprintf(&b, "Path: %s\n\nmeta.json:\n%s%s\n", d.Path, meta, folded)
 		if d.Summary != "" {
 			fmt.Fprintf(&b, "\nsummary.md:\n%s\n", d.Summary)
 		}
@@ -173,7 +178,7 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		case d.Recent != "":
 			fmt.Fprintf(&b, "\nMessages, last 7 days:\n%s\n", d.Recent)
 		}
-		return b.String(), nil
+		return fitKBGet(b.String(), d.Path), nil
 	case "kb_update":
 		if e.Store.ReadOnly() {
 			return "", kb.ErrReadOnly
@@ -186,6 +191,7 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if err := json.Unmarshal(args, &a); err != nil {
 			return "", err
 		}
+		ignored := kb.Unsupported(a.Kind, a.Update)
 		id, err := e.ApplyUser(a.Kind, a.ID, a.UserUpdate)
 		if err != nil {
 			return "", err
@@ -193,7 +199,11 @@ func (s *Service) toolKB(ctx context.Context, name string, args json.RawMessage)
 		if a.Unmerge {
 			return "Unmerged " + a.Kind + "/" + id + ".", nil
 		}
-		return "Saved " + a.Kind + "/" + id + ".", nil
+		out := "Saved " + a.Kind + "/" + id + "."
+		for _, f := range ignored { // said, so the model does not take a dropped field for written
+			out += "\nNot saved: " + f.Field + " (" + f.Reason + ")."
+		}
+		return out, nil
 	}
 	return "", fmt.Errorf("unknown tool %s", name)
 }
@@ -246,6 +256,11 @@ func (s *Service) toolInteractionAnswer(ctx context.Context, self string, args j
 		return "", interactionEnded(id, got.Status)
 	}
 	ix := got.Interaction
+	if ix.Kind == proto.IxScreen {
+		// A terminal dialog (Claude's Bypass Permissions confirmation, a safety check): its card offers the user its
+		// choices; it is never answered for them.
+		return "", fmt.Errorf("interaction %s is a screen (a terminal dialog), only the user can answer it in the app, where its card offers its choices", ix.ID)
+	}
 	if ix.Kind != proto.IxQuestion {
 		return "", fmt.Errorf("interaction %s is a %s (approval), only the user can answer it in the app", ix.ID, ix.Kind)
 	}
@@ -506,8 +521,9 @@ func draftPlaceholder(text string) string {
 // it waits on the item for the user to send.
 func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.RawMessage) (string, error) {
 	var a struct {
-		Text, Note string
-		Changes    []DocChange
+		Text, Note     string
+		Changes        []DocChange
+		ProcessingTurn string `json:"processing_turn"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil || strings.TrimSpace(a.Text) == "" {
 		return "", errors.New("text is required")
@@ -516,7 +532,7 @@ func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.Raw
 	if p := draftPlaceholder(a.Text); p != "" {
 		return "", fmt.Errorf("the draft leaves %s to fill in, and it goes out as it is: leave out what you could not find (say so in note) and submit again", p)
 	}
-	itemID, refused, err := s.inboxDraft(ctx, self, strings.TrimSpace(a.Text), clip(strings.TrimSpace(a.Note), 600), a.Changes)
+	itemID, refused, err := s.inboxDraft(ctx, self, strings.TrimSpace(a.Text), clip(strings.TrimSpace(a.Note), 600), a.Changes, a.ProcessingTurn)
 	if err != nil { // not kept: the event is back where the turn found it, so the draft can be handed in again
 		return "", err
 	}
@@ -531,11 +547,12 @@ func (s *Service) toolInboxDraft(ctx context.Context, self string, args json.Raw
 }
 
 // recordingsAt is what kb_get adds to calendar item kind/id (meetings or events, id as stored): the recordings matched
-// to it by time (kb/minutes.go matchRecordings), which hold its minutes; "" when there are none.
+// to it by time (kb/minutes.go matchRecordings), as their calendar item or their imported meeting (#8872), which hold
+// its minutes; "" when there are none.
 func (s *Service) recordingsAt(ctx context.Context, e *kb.Engine, kind, id string) string {
 	var at []kb.Entry
 	for _, r := range e.Store.Recordings() {
-		if r.Meeting != nil && r.Meeting.Kind == kind && kb.SafeID(r.Meeting.ID) == id {
+		if matchedAt(r.Meeting, kind, id) || matchedAt(r.ImportedMeeting, kind, id) {
 			at = append(at, kb.Entry{Kind: kb.KindRecording, ID: r.ID, Name: r.Name, Updated: r.StartedAt})
 		}
 	}
@@ -548,6 +565,11 @@ func (s *Service) recordingsAt(ctx context.Context, e *kb.Engine, kind, id strin
 		fmt.Fprintf(&b, "- %s · %s %s\n", x.ID, x.Name, x.Extra)
 	}
 	return b.String()
+}
+
+// matchedAt says whether ref names calendar item kind/id (id as stored).
+func matchedAt(ref *kb.MeetingRef, kind, id string) bool {
+	return ref != nil && ref.Kind == kind && kb.SafeID(ref.ID) == id
 }
 
 // recordingLines is kb_list's first limit recordings newest first (what "the meeting just now" asks for), each saying

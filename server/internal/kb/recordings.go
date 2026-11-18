@@ -21,12 +21,14 @@ import (
 
 // Recordings (docs/assistant/knowledge.md "Recordings", docs/protocol/protocol.md "Recording sync"): the phone uploads each recording's transcript,
 // keyed by its UUID, the whole state every time (revision orders them), so replays, reordering and a transcript
-// completed later all land on one entry. Only text: the audio stays on the phone. A directory per recording:
-// meta.json, segments.json, transcript.md (what the searches read), summary.md (the model's, once it is complete), and
-// for an attended meeting live.json (live.go), for a meeting with photos photos.json, photos.md and attachments/
-// (recording_photos.go). Uploads journal the accepted files until all replacements commit (recording_commit.go). Past
-// recording_days a recording with minutes keeps only meta.json, its minutes and the photos they cite until
-// minutes_days (recording_trim.go); any other goes.
+// completed later all land on one entry. Only text: the audio stays on the phone, except a meeting transcribed on the
+// hub, whose audio the hub keeps until the minutes from its final transcript are written (recording_audio.go). A
+// directory per recording: meta.json, segments.json, transcript.md (what the searches read: the transcript of record,
+// hub_segments.go), summary.md (the model's, once it is complete), and for an attended meeting live.json (live.go),
+// for a meeting with photos photos.json, photos.md and attachments/ (recording_photos.go), for one transcribed on the
+// hub hub_segments.json and attachments/audio/ (transcription.go). Uploads journal the accepted files until all
+// replacements commit (recording_commit.go). Past recording_days a recording with minutes keeps only meta.json, its
+// minutes and the photos they cite until minutes_days (recording_trim.go); any other goes.
 // recordings/.deleted.json is the tombstones: a late upload of a deleted one is refused. Kept recordingDays.
 
 // KindRecording is the recordings' kind and directory.
@@ -91,6 +93,9 @@ type RecordingUpload struct {
 	Complete  bool                `json:"complete"`
 	Kind      string              `json:"kind"`
 	Calendar  *RecordingCalendar  `json:"calendar,omitempty"`
+	// Spoken is where Persona spoke in the meeting and what it said (#5905, echo.go): clean marks the segments that are
+	// its echo by it, beside the phone's own marks. Read leniently (UnmarshalJSON, readSpoken); never stored.
+	Spoken []SpokenSpan `json:"spoken,omitempty"`
 	// Attendance is the role Persona attends the meeting in ("" or AttendanceOff: none) and AttendingSession the
 	// session that attends (nil: the main chat); see normalizeAttendance and live.go.
 	Attendance       string      `json:"attendance,omitempty"`
@@ -112,6 +117,12 @@ type RecordingUpload struct {
 	// room is the upload's room (meeting.go), nil without one; roomProblem what was wrong with its role.
 	room        *roomUpload
 	roomProblem string
+	// transcription is the mode the upload names ("" when none, or a value that names none) and timeline its timeline
+	// (nil without one, or when it was malformed or over the limits); transcriptionProblem why the mode it named was
+	// not taken (transcription.go).
+	transcription        string
+	timeline             *Timeline
+	transcriptionProblem string
 }
 
 // MeetingRef is the knowledge base's calendar item (meetings or events) a recording overlaps.
@@ -145,10 +156,25 @@ type Recording struct {
 	Chars     int                 `json:"chars"`
 	Projects  []string            `json:"projects,omitempty"`
 	OneLine   string              `json:"one_line,omitempty"`
-	AITitle   string              `json:"ai_title,omitempty"`
-	// SummarizedRev is the revision summary.md was written from (0: none yet).
-	SummarizedRev int64     `json:"summarized_rev,omitempty"`
-	Updated       time.Time `json:"updated"`
+	// AITitle is the model's title (#8873, recording_title.go) and AITitleFrom what wrote it: AITitleLive while it
+	// records, AITitleSummary (or "", from before it was said) once complete, AITitleMinutes from a meeting's minutes,
+	// which the summary never replaces. LiveTitles counts the live title's calls, the last at LiveTitleAt, and
+	// LiveTitleChars is the meeting's text (Chars) its last title was written from.
+	// Renamed is the owner's name given on the web (#8877, RenameRecording), RenamedAt when: it comes before the upload's
+	// title until an upload changes that title (the phone renamed it since), and is not the phone's to replace.
+	Renamed        string     `json:"renamed,omitempty"`
+	RenamedAt      *time.Time `json:"renamed_at,omitempty"`
+	AITitle        string     `json:"ai_title,omitempty"`
+	AITitleFrom    string     `json:"ai_title_from,omitempty"`
+	LiveTitles     int        `json:"live_titles,omitempty"`
+	LiveTitleAt    time.Time  `json:"live_title_at,omitzero"`
+	LiveTitleChars int        `json:"live_title_chars,omitempty"`
+	// SummarizedRev is the revision summary.md was written from (0: none yet). SummarizedFinal: in hub mode, it was
+	// written from the final transcript (the transcription final or failed when it was read): one written from the
+	// live text, also one whose call was still running when the final pass ended, is made again (summaryDue).
+	SummarizedRev   int64     `json:"summarized_rev,omitempty"`
+	SummarizedFinal bool      `json:"summarized_final,omitempty"`
+	Updated         time.Time `json:"updated"`
 	// Meeting minutes (minutes.go). Kind and Calendar are the phone's, replaced by every upload; the rest is the hub's.
 	Kind     string             `json:"kind,omitempty"`
 	Calendar *RecordingCalendar `json:"calendar,omitempty"`
@@ -157,11 +183,16 @@ type Recording struct {
 	Attendance       string      `json:"attendance,omitempty"`
 	AttendingSession *SessionRef `json:"attending_session,omitempty"`
 	// Meeting is the overlapping calendar item, matched once per revision (MatchedRev); Items links it ("events/<id>").
-	Meeting      *MeetingRef `json:"meeting,omitempty"`
-	Items        []string    `json:"items,omitempty"`
-	MatchedRev   int64       `json:"matched_rev,omitempty"`
-	MinutesState string      `json:"minutes_state,omitempty"`
-	MinutesAsked bool        `json:"minutes_asked,omitempty"` // the user asked for minutes: a meeting whatever its kind
+	Meeting *MeetingRef `json:"meeting,omitempty"`
+	// ImportedMeeting is the overlapping meeting imported from a connected app (a meetings item), by the same rule
+	// among meetings only (#8872): Meeting's event wins for the minutes, while the lists show this recording and that
+	// meeting as one row. Matched with Meeting, and looked for again until minutesImportWait after the end, as an
+	// imported meeting comes after the call. Items links it too.
+	ImportedMeeting *MeetingRef `json:"imported_meeting,omitempty"`
+	Items           []string    `json:"items,omitempty"`
+	MatchedRev      int64       `json:"matched_rev,omitempty"`
+	MinutesState    string      `json:"minutes_state,omitempty"`
+	MinutesAsked    bool        `json:"minutes_asked,omitempty"` // the user asked for minutes: a meeting whatever its kind
 	// MinutesRev is the revision minutes.json was made from (0: none, or asked to be made again); MinutesVersion counts
 	// the minutes written; MinutesFails the unusable answers for MinutesFailRev (failed after minutesTries), and
 	// MinutesTimeouts its tries that ran out of time, the next not before MinutesRetryAt (minutes_timeout.go).
@@ -258,6 +289,10 @@ type RecordingState struct {
 	RecapState   string     `json:"recap_state,omitempty"`
 	RecapFinal   bool       `json:"recap_final,omitempty"`
 	RecapFinalAt *time.Time `json:"recap_final_at,omitempty"`
+	// Name is what the hub calls it and NameSource where that came from (#8873, NameSource); both absent while it is
+	// called only by when it started.
+	Name       string `json:"name,omitempty"`
+	NameSource string `json:"name_source,omitempty"`
 }
 
 // What PutRecording did.
@@ -284,6 +319,19 @@ type RecordingPut struct {
 	// after it (nil without one).
 	Room    bool
 	Meeting *Meeting
+	// Name and NameSource are the stored recording's name and where it came from ("" while it is named only by when
+	// it started; #8873); TitleDue: its live title is due now (recording_title.go).
+	Name       string
+	NameSource string
+	TitleDue   bool
+	// Transcription is the transcription mode in effect after the upload (TranscriptionDevice, TranscriptionHub: the
+	// 200's transcription), and TranscriptionProblem why it is not the one asked for (TranscriptionUnavailable,
+	// TranscriptionNotMeeting).
+	Transcription        string
+	TranscriptionProblem string
+	// Segments are the upload's segments as stored: trimmed, empty ones dropped, in order (the upload itself is never
+	// changed). Nil when the upload was refused before they were read.
+	Segments []RecordingSegment
 }
 
 var (
@@ -347,14 +395,14 @@ func (s *Store) Recordings() []*Recording {
 	return out
 }
 
-// RecordingSegments reads a recording's segments.
+// RecordingSegments reads a recording's transcript of record (TranscriptOfRecord): its upload's segments, in hub mode
+// with the hub's sentences.
 func (s *Store) RecordingSegments(id string) []RecordingSegment {
-	var segs []RecordingSegment
-	raw, err := s.recordingRead(id, "segments.json")
-	if err == nil {
-		_ = json.Unmarshal(raw, &segs)
+	files, m, h, err := s.recordSnapshot(id)
+	if err != nil {
+		return nil
 	}
-	return segs
+	return recordOf(files, m, h)
 }
 
 func (s *Store) tombstonesPath() string { return filepath.Join(s.Dir, KindRecording, ".deleted.json") }
@@ -366,21 +414,53 @@ func (s *Store) tombstones() map[string]time.Time {
 }
 
 // recordingName is what a recording is called in lists: the user's title, the phone calendar's, the matched calendar
-// item's, the model's, else when it started.
+// item's, the model's, else when it started (NameSource says which).
 func (s *Store) recordingName(r *Recording) string {
-	switch {
-	case r.Title != "":
+	switch r.NameSource() {
+	case NamedByRename:
+		return r.Renamed
+	case NamedByTitle:
 		return r.Title
-	case r.Kind == RecordingDay:
-		return "全天录音 " + r.Day // Engine.recordingName has it in the owner's language
-	case r.Calendar != nil && r.Calendar.Title != "":
-		return r.Calendar.Title
-	case r.Meeting != nil && r.Meeting.Name != "":
-		return r.Meeting.Name
-	case r.AITitle != "":
+	case NamedByCalendar:
+		return calendarTitle(r)
+	case NamedByModel:
 		return r.AITitle
+	case "":
+		if r.Kind == RecordingDay {
+			return "全天录音 " + r.Day // Engine.recordingName has it in the owner's language
+		}
 	}
 	return "录音 " + r.StartedAt.In(s.Zone()).Format("2006-01-02 15:04")
+}
+
+// Where a recording's name comes from (RecordingState.NameSource, #8873): an open set, "" when it is named only by
+// when it started (or, an all-day recording, by its day).
+const (
+	NamedByRename   = "renamed"  // the owner's name given on the web (Renamed, #8877)
+	NamedByTitle    = "title"    // the upload's title, not its calendar hint's
+	NamedByCalendar = "calendar" // the phone's calendar hint, or the knowledge base's calendar item it overlaps
+	NamedByModel    = "model"    // AITitle
+)
+
+// NameSource is where r's name comes from: the owner's name from the web, the upload's title (the phone's calendar when
+// it says the same), the phone's calendar hint, the matched calendar item, the model's title, else "".
+func (r *Recording) NameSource() string {
+	switch {
+	case r.Renamed != "":
+		return NamedByRename
+	case r.Title != "":
+		if r.Calendar != nil && r.Calendar.Title == r.Title {
+			return NamedByCalendar
+		}
+		return NamedByTitle
+	case r.Kind == RecordingDay:
+		return ""
+	case calendarTitle(r) != "":
+		return NamedByCalendar
+	case r.AITitle != "":
+		return NamedByModel
+	}
+	return ""
 }
 
 // clean checks an upload and puts its segments in order (empty ones dropped).
@@ -403,12 +483,14 @@ func (u *RecordingUpload) clean() error {
 		u.dayFull = true
 	}
 	u.next = len(u.Segments)
-	segs := u.Segments[:0]
+	// A fresh slice: the caller's upload (its Segments' backing array) is never changed.
+	segs := make([]RecordingSegment, 0, len(u.Segments))
 	total := 0
 	for i, sg := range u.Segments {
-		sg.Text, sg.N = strings.TrimSpace(sg.Text), 0
+		sg.Text, sg.N, sg.Source = strings.TrimSpace(sg.Text), 0, "" // only the hub sets a source
 		if day {
-			sg.N = i + 1 // its position, empty ones counted
+			sg.N = i + 1    // its position, empty ones counted
+			sg.Echo = false // Persona never speaks in an all-day recording
 		}
 		if sg.Text == "" {
 			continue
@@ -424,6 +506,12 @@ func (u *RecordingUpload) clean() error {
 	}
 	sort.SliceStable(segs, func(i, j int) bool { return segs[i].Start < segs[j].Start })
 	u.Segments = segs
+	u.Bookmarks = slices.Clone(u.Bookmarks)
+	if day {
+		u.Spoken = nil
+	}
+	// Persona's echo: the phone's mark, or the same rule against the stretches it says Persona spoke in.
+	markEcho(u.Segments, u.Spoken)
 	sort.SliceStable(u.Bookmarks, func(i, j int) bool { return u.Bookmarks[i].At < u.Bookmarks[j].At })
 	u.Title = oneLine(u.Title)
 	u.Language = strings.TrimSpace(u.Language)
@@ -491,6 +579,10 @@ type recordingPut struct {
 func (e *Engine) putRecording(rawID string, u RecordingUpload, now time.Time) (put recordingPut, live bool, err error) {
 	put.Attendance = AttendanceOff
 	put.Room = u.room != nil
+	// Whatever the upload became (stored, stale, expired), the mode in effect after it.
+	defer func() {
+		put.Transcription, put.TranscriptionProblem = transcriptionOf(put.Meeting, u.transcription, u.Kind, u.transcriptionProblem)
+	}()
 	if e.Store.ReadOnly() {
 		return put, false, ErrReadOnly
 	}
@@ -502,6 +594,7 @@ func (e *Engine) putRecording(rawID string, u RecordingUpload, now time.Time) (p
 	if err := u.clean(); err != nil {
 		return put, false, err
 	}
+	put.Segments = u.Segments
 	put.AttendanceProblem = u.normalizeAttendance()
 	day := u.Kind == RecordingDay
 	if day {
@@ -536,6 +629,7 @@ func (e *Engine) putRecording(rawID string, u RecordingUpload, now time.Time) (p
 	}
 	if exists && r.Revision > u.Revision {
 		put.Status, put.Attendance = RecordingStale, r.AttendanceRole()
+		put.named(r)
 		return put, false, nil
 	}
 	if u.dayFull {
@@ -550,7 +644,7 @@ func (e *Engine) putRecording(rawID string, u RecordingUpload, now time.Time) (p
 		}
 	}
 	wasAttending := exists && r.Attending()
-	meeting, parts, err := e.putMeetingFields(id, &u)
+	meeting, parts, err := e.putMeetingFields(id, &u, now)
 	if err != nil {
 		return put, false, err
 	}
@@ -570,12 +664,27 @@ func (e *Engine) putRecording(rawID string, u RecordingUpload, now time.Time) (p
 		t := r.EndedAt.UTC()
 		r.EndedAt = &t
 	}
+	// An ended hub-mode meeting is as long as the audio the hub holds when the upload says less (#9587): a phone killed
+	// mid-segment loses the segment it was writing and ends the recording before it, while the hub got that audio.
+	if r.EndedAt != nil && r.HubTranscribed() {
+		if held := e.audioHeldEnd(id); held > r.Duration {
+			r.Duration = held
+			if end := r.StartedAt.Add(time.Duration(held * float64(time.Second))); end.After(*r.EndedAt) {
+				r.EndedAt = &end
+			}
+		}
+	}
+	if r.Renamed != "" && u.Title != r.Title { // the phone renamed it since the web did: the newer name wins (#8877)
+		r.Renamed, r.RenamedAt = "", nil
+	}
 	r.Language, r.Device, r.Title, r.Bookmarks, r.Complete = u.Language, u.Device, u.Title, u.Bookmarks, u.Complete
 	r.Kind, r.Calendar = u.Kind, u.Calendar
 	r.Attendance, r.AttendingSession = u.Attendance, u.AttendingSession // never a room meeting's (putMeetingFields)
-	r.Segments, r.Chars = len(u.Segments), 0
-	for _, sg := range u.Segments {
-		r.Chars += len([]rune(sg.Text))
+	// chars counts the transcript of record without Persona's echo, which is not the meeting's text (a meeting of
+	// only that has none, planMinutes): in hub mode the hub's sentences too (a phone that wrote nothing).
+	r.Segments, r.Chars = len(u.Segments), recordChars(u.Segments)
+	if r.HubTranscribed() {
+		r.Chars = recordChars(TranscriptOfRecord(true, u.Segments, st.hubSegmentsOf(id)))
 	}
 	if day {
 		r.putDay(&u)
@@ -602,6 +711,8 @@ func (e *Engine) putRecording(rawID string, u RecordingUpload, now time.Time) (p
 	}
 	put.Status, put.Attendance = RecordingStored, r.AttendanceRole()
 	put.Revision, put.Base, put.Next = r.Revision, r.Base, r.Next
+	put.named(r)
+	put.TitleDue = r.liveTitleDue(now)
 	st.notify(KindRecording, id, "metadata")
 	st.notify(KindRecording, id, "messages")
 	e.index(KindRecording, id, r.Name, r.Tagging, r.OneLine, r.StartedAt)
@@ -622,7 +733,8 @@ func nonNilSegments(s []RecordingSegment) []RecordingSegment {
 	return s
 }
 
-// renderTranscript is transcript.md: a line per segment (and bookmark) at its clock time in the user's zone.
+// renderTranscript is transcript.md: a line per segment (and bookmark) at its clock time in the user's zone; Persona's
+// echo (#5905) keeps its line, marked.
 func (s *Store) renderTranscript(r *Recording, segs []RecordingSegment) string {
 	zone := s.RecordingZone(r)
 	at := func(sec float64) string {
@@ -634,7 +746,11 @@ func (s *Store) renderTranscript(r *Recording, segs []RecordingSegment) string {
 	}
 	var lines []line
 	for _, sg := range segs {
-		lines = append(lines, line{sg.Start, "- " + at(sg.Start) + " " + strings.Join(strings.Fields(sg.Text), " ")})
+		text := strings.Join(strings.Fields(sg.Text), " ")
+		if sg.Echo {
+			text = "[Persona 回声] " + text // i18n-ignore: knowledge-base data, like the bookmarks' mark
+		}
+		lines = append(lines, line{sg.Start, "- " + at(sg.Start) + " " + text})
 	}
 	for _, b := range r.Bookmarks {
 		lines = append(lines, line{b.At, "- " + at(b.At) + " [书签] " + oneLine(b.Label)})
@@ -658,6 +774,7 @@ func (e *Engine) DeleteRecording(rawID string, now time.Time) (bool, error) {
 	if e.Store.ReadOnly() {
 		return false, ErrReadOnly
 	}
+	defer e.Store.SearchIndexPurge() // its summary, minutes and recap leave the search index at its next update
 	id, ok := RecordingID(rawID)
 	if !ok {
 		return false, badRecording("id must be a UUID")
@@ -677,8 +794,10 @@ func (e *Engine) DeleteRecording(rawID string, now time.Time) (bool, error) {
 		return false, nil
 	}
 	st.recFilesMu.Lock()
+	st.audioDroppedLocked(id, ErrRecordingDeleted)
 	err := os.RemoveAll(st.path(KindRecording, id))
 	st.recFilesMu.Unlock()
+	st.audioFileClosed(id)
 	if err != nil {
 		return false, err
 	}
@@ -704,6 +823,9 @@ func (e *Engine) RecordingStates() (kept []RecordingState, deleted []string) {
 	for _, r := range e.Store.Recordings() {
 		s := RecordingState{ID: r.ID, Revision: r.Revision, Complete: r.Complete, StartedAt: r.StartedAt,
 			MinutesState: r.MinutesState, TrimmedAt: r.TrimmedAt}
+		if s.NameSource = r.NameSource(); s.NameSource != "" {
+			s.Name = r.Name
+		}
 		if r.Kind == RecordingDay {
 			next, base := r.Next, r.Base
 			s.Kind, s.Day, s.Part, s.Next, s.Base = r.Kind, r.Day, r.Part, &next, &base
@@ -722,20 +844,42 @@ func (e *Engine) RecordingStates() (kept []RecordingState, deleted []string) {
 // PruneRecordings applies retention to files and the index. Past recording_days, minutes are kept forever or within
 // a finite minutes_days window, and the recording is trimmed to them (recording_trim.go); other recordings go.
 // Interrupted trims finish whatever the window. Tombstones older than recording_days go too.
-// It returns how many recordings were deleted, not counting trimmed ones.
+// It returns how many recordings were deleted, not counting trimmed ones. Then it deletes the hub-mode audio that
+// should be gone and mends what a crash left of a hub transcript (sweepTranscriptions).
 func (e *Engine) PruneRecordings(now time.Time) int {
 	if e.Store.ReadOnly() {
 		return 0
 	}
+	n := e.pruneRecordings(now)
+	e.sweepTranscriptions()
+	if n > 0 {
+		e.Store.SearchIndexPurge() // their summaries, minutes and recaps leave the search index at its next update
+	}
+	return n
+}
+
+func (e *Engine) pruneRecordings(now time.Time) int {
 	cut := now.UTC().AddDate(0, 0, -recordingDays(e.RecordingDays()))
 	minutesDays := e.MinutesDays()
 	minutesCut := now.UTC().AddDate(0, 0, -minutesDays)
 	st := e.Store
-	// The trims' photo changes are told once recMu is let go (deferred calls run last first).
-	var photos []string
+	// The trims' meeting changes (photos, transcription) are told once recMu is let go (deferred calls run last first).
+	told := map[string][]string{}
+	var order []string
+	tell := func(id string, parts []string) {
+		if len(parts) > 0 {
+			if told[id] == nil {
+				order = append(order, id)
+			}
+			told[id] = append(told[id], parts...)
+		}
+	}
 	defer func() {
-		for _, id := range photos {
-			e.meetingChanged(id, []string{PartPhotos})
+		if len(order) > 0 {
+			st.SearchIndexPurge() // a trimmed recording's files, too
+		}
+		for _, id := range order {
+			e.meetingChanged(id, told[id])
 		}
 	}()
 	st.recMu.Lock()
@@ -745,20 +889,20 @@ func (e *Engine) PruneRecordings(now time.Time) int {
 		if !r.StartedAt.Before(cut) {
 			// Within recording_days only a trimmed one has anything to do: the files an interrupted trim left (a crash
 			// after its meta.json, a failed removal) go even once recording_days made longer lets it back in the window.
-			if r.Trimmed() && e.trimPruned(r, now) {
-				photos = append(photos, r.ID)
+			if r.Trimmed() {
+				tell(r.ID, e.trimPruned(r, now))
 			}
 			continue
 		}
 		if (minutesDays == 0 || !r.StartedAt.Before(minutesCut)) && (r.Trimmed() || st.hasMinutes(r.ID) || st.hasRecap(r.ID)) {
-			if e.trimPruned(r, now) {
-				photos = append(photos, r.ID)
-			}
+			tell(r.ID, e.trimPruned(r, now))
 			continue
 		}
 		st.recFilesMu.Lock()
+		st.audioDroppedLocked(r.ID, ErrNotFound)
 		err := os.RemoveAll(st.path(KindRecording, r.ID))
 		st.recFilesMu.Unlock()
+		st.audioFileClosed(r.ID)
 		if err == nil {
 			e.unlinkRecording(r.ID, r.Projects)
 			st.notify(KindRecording, r.ID, "metadata")
@@ -786,9 +930,9 @@ func (e *Engine) PruneRecordings(now time.Time) int {
 }
 
 // trimPruned trims recording r for PruneRecordings (which holds recMu), or finishes its trim: idempotent, it says
-// what changed and indexes the recording again only when something did. photos: PartPhotos' revision moved (the
-// caller tells MeetingChanged once it let recMu go).
-func (e *Engine) trimPruned(r *Recording, now time.Time) (photos bool) {
+// what changed and indexes the recording again only when something did. parts are the meeting parts that changed
+// (PartPhotos, PartTranscription), which the caller tells MeetingChanged once it let recMu go.
+func (e *Engine) trimPruned(r *Recording, now time.Time) (parts []string) {
 	st := e.Store
 	trimmed, photos, err := st.trimRecording(r, now)
 	if err != nil {
@@ -799,7 +943,13 @@ func (e *Engine) trimPruned(r *Recording, now time.Time) (photos bool) {
 		st.notify(KindRecording, r.ID, "summary")
 		e.index(KindRecording, r.ID, r.Name, r.Tagging, r.OneLine, r.StartedAt)
 	}
-	return photos
+	if photos {
+		parts = append(parts, PartPhotos)
+	}
+	if err == nil {
+		parts = append(parts, e.trimTranscription(r.ID, now)...)
+	}
+	return parts
 }
 
 // RecordingDays is the retention in days (Engine.RecordingDaysFunc, the assistant's setting), the default without one.
@@ -866,7 +1016,7 @@ func (e *Engine) SummarizeRecordings(ctx context.Context, max int) int {
 	var todo []*Recording
 	due := map[string]bool{}
 	for _, r := range e.Store.Recordings() {
-		if r.Complete && r.SummarizedRev < r.Revision && r.Chars > 0 && !r.Trimmed() && r.Kind != RecordingDay {
+		if r.summaryDue() {
 			due[r.ID] = true
 			if e.retries().recordings.waits(r.ID, recordingAbout(r), now) {
 				continue
@@ -901,13 +1051,37 @@ func (e *Engine) SummarizeRecordings(ctx context.Context, max int) int {
 	return n
 }
 
-// recordingAbout is what a recording's summary is asked about: its revision (a new upload is tried at once).
-func recordingAbout(r *Recording) string { return strconv.FormatInt(r.Revision, 10) }
+// recordingAbout is what a recording's summary is asked about: its revision, and in hub mode whether its final
+// transcript is in (a new upload, or the final pass's end, is tried at once).
+func recordingAbout(r *Recording) string {
+	about := strconv.FormatInt(r.Revision, 10)
+	if r.hubFinalIn() {
+		about += "/final"
+	}
+	return about
+}
+
+// summaryDue: recording r's short summary is to be written (again): a complete recording with text, not trimmed nor
+// an all-day one, whose latest revision has none, or, in hub mode, whose summary was written before the final pass
+// stored its transcript ("the short summary (made again after the final pass)"). r's Conv is read.
+func (r *Recording) summaryDue() bool {
+	if !r.Complete || r.Chars == 0 || r.Trimmed() || r.Kind == RecordingDay {
+		return false
+	}
+	return r.SummarizedRev < r.Revision || r.hubFinalIn() && !r.SummarizedFinal
+}
+
+// hubFinalIn: r is transcribed on the hub and its final pass ended (final or failed): its transcript of record is the
+// final one.
+func (r *Recording) hubFinalIn() bool {
+	t := r.hubTranscription()
+	return t != nil && t.done()
+}
 
 // summarizeRecording writes r's summary; called: the model was asked (not when r changed meanwhile so that it needs
 // none, or could not be read).
 func (e *Engine) summarizeRecording(ctx context.Context, r *Recording) (called bool, err error) {
-	files, err := e.Store.recordingSnapshot(r.ID)
+	files, meeting, hub, err := e.Store.recordSnapshot(r.ID)
 	if err != nil {
 		return false, err
 	}
@@ -918,22 +1092,24 @@ func (e *Engine) summarizeRecording(ctx context.Context, r *Recording) (called b
 	if err := json.Unmarshal(files["meta.json"], &snapshot); err != nil {
 		return false, err
 	}
+	snapshot.Conv = meeting
 	r = &snapshot
-	if !r.Complete || r.Chars == 0 || r.SummarizedRev >= r.Revision || r.Trimmed() || r.Kind == RecordingDay {
+	if !r.summaryDue() {
 		return false, nil // a day recording's summary is its recap's (day_recap.go): it would read the whole day
 	}
-	var segs []RecordingSegment
-	if err := json.Unmarshal(files["segments.json"], &segs); err != nil {
+	var device []RecordingSegment
+	if err := json.Unmarshal(files["segments.json"], &device); err != nil {
 		return false, err
 	}
+	segs := TranscriptOfRecord(hubMode(meeting), device, hub.Segments) // in hub mode the hub's sentences too
 	called = true
 	zone := e.Store.Zone()
 	in := prompts.KBRecordingInput{Pinned: r.Pinned, Title: r.Title, Device: r.Device, Language: r.Language,
 		Start: r.StartedAt.In(zone), Minutes: int(r.Duration / 60), Projects: e.knownProjects(), Tags: e.TopTags(40),
-		Transcript: clipMiddle(e.Store.renderTranscript(r, segs), recordingPromptChars)}
+		Transcript: clipMiddle(e.Store.renderTranscript(r, MeetingLines(segs)), recordingPromptChars)}
 	var out recordingSummary
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	err = e.modelFor("kb.compress").JSONMax(cctx, prompts.RenderKBRecording(prompts.KBOwner{Owner: e.ownerName()}), prompts.RenderKBRecordingInput(in), 4000, &out)
+	err = e.modelFor("kb.compress").JSONMax(cctx, prompts.RenderKBRecording(e.writingOwner(e.outputLang(r))), prompts.RenderKBRecordingInput(in), 4000, &out)
 	cancel()
 	if err != nil {
 		return true, err
@@ -953,12 +1129,13 @@ func (e *Engine) summarizeRecording(ctx context.Context, r *Recording) (called b
 	}
 	applyTags(&cur.Tagging, out.Importance, int(out.Relevance), out.Tags, now)
 	cur.OneLine = oneLine(out.OneLine)
-	if t := oneLine(out.Title); t != "" {
-		cur.AITitle = t
+	if t := titleLine(out.Title); t != "" && cur.AITitleFrom != AITitleMinutes { // the minutes' title settles it
+		cur.AITitle, cur.AITitleFrom = t, AITitleSummary
 	}
 	cur.Name = st.recordingName(cur)
-	// It summarized r's revision: a newer upload meanwhile is summarized again.
-	cur.SummarizedRev = r.Revision
+	// It summarized r's revision, and r's final transcript when it was in: a newer upload meanwhile, or the final pass
+	// ending meanwhile, has it summarized again.
+	cur.SummarizedRev, cur.SummarizedFinal = r.Revision, r.hubFinalIn()
 	for _, p := range out.Projects {
 		pr := e.FindProject(p.Name)
 		if pr == nil || !pr.Live() {

@@ -22,6 +22,7 @@ import (
 	"github.com/nwverse/persona/server/internal/clitext"
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/managerconf"
 )
 
 // `personad hub admin …` on the hub's machine (docs/operations/admin.md): widen or set the admin UI's scope, reset its password.
@@ -247,7 +248,8 @@ func notifyAdminReload(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// adminLoopbackPost posts {} to the hub on this machine with the master token (errHubNotRunning when nothing answers).
+// adminLoopbackPost posts {} to the hub on this machine from loopback (managerconf.CLIHubURL, CLIDial) with the master
+// token (errHubNotRunning when nothing answers).
 func adminLoopbackPost(ctx context.Context, cfg *Config, path string) (*http.Response, error) {
 	if cfg.Token == "" {
 		return nil, errHubNotRunning
@@ -256,13 +258,13 @@ func adminLoopbackPost(ctx context.Context, cfg *Config, path string) (*http.Res
 	if n, perr := strconv.Atoi(port); err != nil || perr != nil || n <= 0 || n > 65535 {
 		return nil, errors.New("hub.json listen has no valid port")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+net.JoinHostPort("127.0.0.1", port)+path, strings.NewReader("{}"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, managerconf.CLIHubURL(cfg.Listen)+path, strings.NewReader("{}"))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	req.Header.Set("Content-Type", "application/json")
-	transport := &http.Transport{Proxy: nil}
+	transport := &http.Transport{Proxy: nil, DialContext: managerconf.CLIDial}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Timeout: 5 * time.Second, Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

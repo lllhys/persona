@@ -98,11 +98,19 @@ export interface Segment {
   usage?: TurnUsage;
 }
 
-function blockOrder(a: Item, b: Item) {
+function blockPart(id: string) {
+  return Number(id.split("#")[1] ?? 0);
+}
+
+function blockOrder(a: Pick<Item, "id" | "seq">, b: Pick<Item, "id" | "seq">) {
   if (a.seq !== b.seq) return a.seq - b.seq;
-  const ia = Number(a.id.split("#")[1] ?? 0);
-  const ib = Number(b.id.split("#")[1] ?? 0);
-  return ia - ib;
+  return blockPart(a.id) - blockPart(b.id);
+}
+
+/** Fold bounds are seq + numeric block, not seq alone: a final answer can share the fold's last line. */
+export function insideFold(i: Item, f: Item) {
+  if (!f.fold || blockOrder(i, f) < 0 || i.seq > f.fold.through_seq) return false;
+  return i.seq < f.fold.through_seq || !f.fold.through_id || blockPart(i.id) <= blockPart(f.fold.through_id);
 }
 
 export function sortItems(items: Item[]): Item[] {
@@ -120,14 +128,15 @@ export function mergeItems(have: Item[], batch: Item[]): Item[] {
     byId.set(it.id, next);
   }
   const all = [...byId.values()];
-  const work = all.filter((i) => i.kind === "tool_use" || i.kind === "tool_result" || i.kind === "thinking");
+  const work = all.filter((i) => i.kind === "tool_use" || i.kind === "tool_result" || i.kind === "thinking" ||
+    (i.kind === "text" && i.role === "assistant")); // text inside a fold's range is its narration; outside it is the answer
   const promotedFolds = all.filter((i) => i.fold?.supervision_user);
-  const kept = all.filter((f) => f.kind !== "fold" || !f.fold || !work.some((i) => i.seq >= f.seq && i.seq <= f.fold!.through_seq));
+  const kept = all.filter((f) => f.kind !== "fold" || !f.fold || !work.some((i) => insideFold(i, f)));
   // An overlapping page may replace only part of a fold. Its authoritative promotion must survive that replacement,
   // even if the real visibility tool is on the part that has not arrived yet, or a later receipt says silent.
   if (!promotedFolds.length) return sortItems(kept);
   const realWork = new Set(work);
-  return sortItems(kept.map((i) => realWork.has(i) && promotedFolds.some((f) => i.seq >= f.seq && i.seq <= f.fold!.through_seq) ? { ...i, supervisionUser: true } : i));
+  return sortItems(kept.map((i) => realWork.has(i) && promotedFolds.some((f) => insideFold(i, f)) ? { ...i, supervisionUser: true } : i));
 }
 
 /** `have` without what a fold of this fresh page now stands for. Left in, a step kept from before the fold existed
@@ -135,7 +144,7 @@ export function mergeItems(have: Item[], batch: Item[]): Item[] {
 export function withoutFolded(have: Item[], page: Item[]): Item[] {
   const folds = page.filter((f) => f.fold);
   if (!folds.length) return have;
-  return have.filter((i) => !((i.kind === "thinking" || i.kind === "fold" || i.tool_use_id) && folds.some((f) => i.seq >= f.seq && i.seq <= f.fold!.through_seq)));
+  return have.filter((i) => !((i.kind === "thinking" || (i.kind === "text" && i.role === "assistant") || i.kind === "fold" || i.tool_use_id) && folds.some((f) => insideFold(i, f))));
 }
 
 // Only the canonical persona-context tag is recognized.
@@ -209,12 +218,23 @@ export function viewFeedbackOnly(it: Item): boolean {
   return it.role === "user" && it.kind === "text" && !!it.text?.includes("<persona-view-errors") && !withoutViewErrors(it.text).trim();
 }
 
+/** The hub's mid-turn interject note (server/internal/prompts/assistant/interject.md): instructions for the model
+ *  inside `<persona-context kind="context" title="插话">`, never a quote the owner picked, so it never renders as one.
+ *  The title is pinned by server/internal/node/assistant_interject_test.go. */
+export const INTERJECT_TITLE = "插话"; // i18n-ignore: canonical hub prompt title
+
+/** A persona-context block that is the hub's interject note rather than user-picked context. */
+export function isInterjectContext(attrs: { kind?: string; title?: string }): boolean {
+  return (attrs.kind ?? "context") === "context" && attrs.title === INTERJECT_TITLE;
+}
+
 export function parseUserText(raw: string): { text: string; contexts: Context[]; files: AttachedFile[]; photos: string[] } {
   const contexts: Context[] = [];
   const files: AttachedFile[] = [];
   const photos: string[] = [];
   let text = withoutViewErrors(raw).replace(CONTEXT_RE, (_, attrs: string, body: string) => {
     const { kind, title, url, ...rest } = tagAttrs(attrs);
+    if (kind === "skill-instructions" || isInterjectContext({ kind, title })) return "";
     contexts.push({ kind: kind ?? "context", title, url, text: body.trim(), ...(Object.keys(rest).length ? { attrs: rest } : {}) });
     return "";
   });
@@ -445,9 +465,9 @@ export function pickSubject(inp: Record<string, unknown>): string {
 
 const baseFileName = (p: string) => p.split(/[/\\]/).filter(Boolean).pop() ?? p;
 
-type Pick = (...keys: string[]) => string;
+type PickToolField = (...keys: string[]) => string;
 /** What Claude Code's newer tools are about (iOS ToolPresentation.subject). */
-const CLAUDE_TOOL_CHIP: Record<string, (inp: Record<string, unknown>, pick: Pick) => string> = {
+const CLAUDE_TOOL_CHIP: Record<string, (inp: Record<string, unknown>, pick: PickToolField) => string> = {
   TaskCreate: (_, pick) => pick("subject", "description"),
   TaskUpdate: (inp, pick) => pick("subject", "activeForm") || (inp.taskId != null ? `#${String(inp.taskId)}` : ""),
   TaskGet: (inp) => (inp.taskId != null ? `#${String(inp.taskId)}` : ""),
@@ -673,7 +693,8 @@ export function personaToolVerb(name?: string): { verb: string; what?: string } 
 // ── exchanges and lines (iOS ChatBlock.build + ChatLines) ──────────────────────────
 // Items group into exchanges (`Turn`): what you said (messages typed while the agent worked join the exchange they were
 // sent during), everything the agent did, and its answer; recaps stand between them. A background task that wakes the
-// idle agent stays in the exchange; the lines are then what the chat draws, one per row.
+// idle agent starts an exchange of its own (#9140): the turn before it had ended, and its last words stay its answer.
+// The lines are then what the chat draws, one per row.
 
 export interface Turn {
   id: string;
@@ -684,8 +705,6 @@ export interface Turn {
   answer?: Item;
   /** Notices that close the exchange visibly ("Interrupted"). */
   trailing: Item[];
-  /** Background tasks that woke the agent during this exchange (their notices). */
-  wakes: Item[];
   /** Messages and steps in arrival order (how the exchange is drawn). */
   ordered: Item[];
 }
@@ -701,14 +720,12 @@ function isAnswerText(i: Item): boolean {
   return i.role === "assistant" && i.kind === "text" && Boolean(i.text?.trim());
 }
 
-const isWake = (i: Item) => i.kind === "notice" && i.wake === true;
+/** What woke the idle agent (docs/protocol/protocol.md `wake`): a background task's notice, or a subagent's report as
+ *  its call's result. The turn before it was over, so it starts an exchange as a message does (#9140). */
+const isWake = (i: Item) => i.wake === true;
 
 function newTurn(id: string): Turn {
-  return { id, users: [], process: [], trailing: [], wakes: [], ordered: [] };
-}
-
-function cloneTurn(t: Turn): Turn {
-  return { ...t, users: [...t.users], process: [...t.process], trailing: [...t.trailing], wakes: [...t.wakes], ordered: [...t.ordered] };
+  return { id, users: [], process: [], trailing: [], ordered: [] };
 }
 
 /** Only Persona's visibility tools, not similarly named tools on unrelated MCP servers. */
@@ -766,29 +783,14 @@ export function backgroundSource(it: Item): MessageSource | undefined {
 export function buildBlocks(items: Item[], background = false): Block[] {
   const blocks: Block[] = [];
   let cur: Turn | null = null;
-  // the last exchange as it was before closing, and where it sits: a background task that reports back after a recap
-  // (Claude Code writes one when a finished session sits idle) still belongs to that exchange
-  // (a holder: the closure assigns these, which the loop's narrowing would not see)
-  const last: { raw: Turn | null; index: number; reopenedAt: number | null } = { raw: null, index: 0, reopenedAt: null };
   let lastUserEntry = "";
   let supervisionRound = false;
 
   const close = () => {
     if (!cur) return;
-    const t: Turn = cur;
-    last.raw = cloneTurn(t);
-    // Background tasks split an exchange into runs (before the first wake, after each one), each ending in the agent's
-    // words. The answer is the latest words, like any exchange's (#3783: the longest run's used to be, so a
-    // long-running agent's newest words were out of sight for hours).
-    t.answer = [...t.process].reverse().find(isAnswerText);
-    if (last.reopenedAt !== null) {
-      blocks.splice(last.reopenedAt, 0, { kind: "turn", turn: t }); // back in its place, the recap still after it
-      last.index = last.reopenedAt;
-    } else {
-      last.index = blocks.length;
-      blocks.push({ kind: "turn", turn: t });
-    }
-    last.reopenedAt = null;
+    // the answer is the exchange's latest words
+    cur.answer = [...cur.process].reverse().find(isAnswerText);
+    blocks.push({ kind: "turn", turn: cur });
     cur = null;
   };
   const add = (t: Turn, it: Item, process = true) => {
@@ -818,6 +820,16 @@ export function buildBlocks(items: Item[], background = false): Block[] {
       lastUserEntry = entry;
       continue;
     }
+    if (isWake(it)) {
+      // A background task woke the idle agent: the turn before it was over, and the last words of that turn stay its
+      // answer. The work it woke is an exchange of its own that opens with the notice, where a message would be
+      // (#9140: kept in the exchange before it, each woken turn's last words took the answer's place and the real
+      // answer folded into the work). After a recap it simply follows the recap.
+      close();
+      cur = newTurn(it.id);
+      add(cur, it);
+      continue;
+    }
     // a compaction is a divider of its own after the exchange; in the middle of work (more of it follows) it stays a
     // step of that work, so an auto-compaction does not split the exchange
     if (isCompaction(it)) {
@@ -843,18 +855,7 @@ export function buildBlocks(items: Item[], background = false): Block[] {
       continue;
     }
     if (it.kind === "notice") {
-      const raw = last.raw;
-      const closed = blocks[last.index];
-      if (isWake(it) && !cur && raw && closed?.kind === "turn" && closed.turn.id === raw.id) {
-        blocks.splice(last.index, 1); // reopen the exchange the recap closed
-        last.reopenedAt = last.index;
-        cur = cloneTurn(raw);
-      }
-      if (isWake(it) && cur) {
-        // a background task woke the idle agent: still the same exchange (the answer is picked at close)
-        cur.wakes.push(it);
-        add(cur, it);
-      } else if (!cur) {
+      if (!cur) {
         // e.g. a background command finishing after a recap: part of the (next) work, never its own line
         cur = newTurn(it.id);
         add(cur, it);
@@ -882,7 +883,7 @@ export type ChatLine =
    *  background round's (another conversation, a scheduled task, a follow-up); absent for supervision. */
   | { kind: "supervision"; id: string; lines: ChatLine[]; live: boolean; source?: MessageSource }
   /** A message (or none), one work row for what the agent did after it, the agent's last words. */
-  | { kind: "segment"; id: string; seg: Segment; live: boolean; wakes?: Turn }
+  | { kind: "segment"; id: string; seg: Segment; live: boolean }
   /** A notice of its own line: a wake that opens new work, "Interrupted" after an exchange. */
   | { kind: "notice"; id: string; item: Item }
   /** Where the context was compacted: a divider across the chat (lib/compaction.ts). */
@@ -904,39 +905,41 @@ export interface ChatLinesOptions {
 function turnLines(t: Turn, live: boolean, results?: ReadonlyMap<string, Item>): ChatLine[] {
   const out: ChatLine[] = [];
   let ordered = t.ordered;
-  let wokeAt: string | undefined;
-  // work a background task woke the agent for opens with that notice, where a message would be
-  if (ordered[0] && isWake(ordered[0])) {
-    out.push({ kind: "notice", id: ordered[0].id, item: ordered[0] });
-    wokeAt = ordered[0].ts;
+  // work a background task woke the agent for opens with that notice, where a message would be (a subagent's report
+  // that woke it is drawn under its call, so it opens with the work)
+  const woke = ordered[0] && isWake(ordered[0]) ? ordered[0] : undefined;
+  if (woke) {
+    if (woke.kind === "notice") out.push({ kind: "notice", id: woke.id, item: woke });
     ordered = ordered.slice(1);
   }
   const segs = segments(ordered, results);
+  // woken and at work with nothing of it here yet: its work row
+  if (woke && live && !segs.length) segs.push({ id: `seg:${woke.id}`, steps: [], tools: 0, thoughts: 0, replies: 0, folds: [] });
   // what the background task that woke it used is the work it woke
-  if (ordered !== t.ordered && segs[0]) countUsage(segs[0], t.ordered[0]);
+  if (woke && segs[0]) countUsage(segs[0], woke);
   // stopped after everything it did (not an exchange that went on after it): its last words are not a finished reply
   const end = segs.at(-1), at = t.ordered.at(-1)?.seq ?? 0;
   if (end && !live && t.trailing.some((n) => isInterruptNotice(n) && n.seq > at)) end.cut = true;
   // what a stopped turn's notice carries (a Codex turn's total) is its last exchange's
   if (end) for (const n of t.trailing) countUsage(end, n);
   segs.forEach((seg, k) => {
-    if (k === 0 && !seg.user && wokeAt) seg.start = wokeAt;
-    const last = k === segs.length - 1;
-    // woken by background tasks: the last segment carries the exchange and its wakes (#3783)
-    out.push({ kind: "segment", id: segmentIdentity(seg), seg, live: live && last, ...(last && t.wakes.length ? { wakes: t } : {}) });
+    const opening = k === 0 && !seg.user && woke;
+    // the work a wake opened is known by the wake: its row keeps its key from before its first step to its last
+    if (opening) Object.assign(seg, { id: `seg:${woke.id}`, start: woke.ts });
+    out.push({ kind: "segment", id: opening ? `exchange-${woke.seq}` : segmentIdentity(seg), seg, live: live && k === segs.length - 1 });
   });
   for (const n of t.trailing) out.push({ kind: "notice", id: n.id, item: n });
   return out;
 }
 
-/** The chat as lines (iOS ChatLines.lines): exchanges, their wakes and notices, recaps, API errors as cards. */
+/** The chat as lines (iOS ChatLines.lines): exchanges, the notices that opened or closed them, recaps, API errors as cards. */
 export function chatLines(items: Item[], opts: ChatLinesOptions = {}): ChatLine[] {
   const attached = attachedAgentNotices(items);
   const feed = items.filter((i) => !attached.has(i.id));
   const background = opts.background === true;
   const blocks = buildBlocks(foldCompactions(feed), background);
   const source = feed.at(-1);
-  // A wake can reopen a turn before a recap. Select the owner of the latest source item, not the last drawn block.
+  // The live exchange is the owner of the latest source item, not the last drawn block.
   const active = opts.live && source ? blocks.find((b) => b.kind === "turn" && (b.turn.ordered.some((i) => i.id === source.id) || b.turn.trailing.some((i) => i.id === source.id))) : undefined;
   const liveId = active && active.kind === "turn" ? active.turn.id : undefined;
   const out: ChatLine[] = [];

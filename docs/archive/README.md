@@ -9,6 +9,10 @@ Place necessary historical text under its module directory and list it below.
 
 | File | Contents |
 | --- | --- |
+| `operations/2026-11-16-web-update-review-6923.md` | Web development update: review reproductions, admission/Edge/boot recovery, owned route declarations, retained platform identity, real PostgreSQL dump/restore and recovery input validation (#6923) |
+| `operations/2026-11-12-skill-zip-timeout-5581.md` | Skill ZIP import five-package 600-second timeout reproduction, exact main comparison, fixture boundaries and unresolved verification (#5478 / #5581) |
+| `operations/2026-11-12-server-test-latency-5730.md` | Fixed-revision shared node fixture latency, bounded package-set comparisons, terminal accounting, verifier adoption limits and November 13 main synchronization (#5730) |
+| `operations/cpu-memory-2026-11-13.md` | CPU and memory optimization measurements, equivalence checks and independent round reviews |
 | `operations/2026-11-09-client-error-semantics.md` | Cross-client error classification audit, narrow legacy compatibility, recording retry boundaries and unverified native/UI gates (#1915) |
 | `android/2026-11-09-inbox-completion-section-read.md` | Completion projection, assistant-section read controls and synthetic UI/API checks (#1807) |
 | `android/2026-11-08-inbox-conversation-identity.md` | Grouped inbox chat-kind and sender identity loss, historical negative controls and native render checks (#1583) |
@@ -26,6 +30,8 @@ Place necessary historical text under its module directory and list it below.
 | `apple/ios-state-records.md` | iOS redraw work: data flow before it, root causes, staged plan, per-step push costs and the pre-#1046 follow-latest review (2026-11-04) |
 | `apple/live-activity-records.md` | Live Activity: build 92 avatar investigation and battery-investigation push counts (2026-11-02) |
 | `apple/mac-records.md` | Mac acceptance checklist review history and real-window roles and checklist rules (2026-11-01 to 2026-11-03, #403) |
+| `apple/mac.md` | Retired native Mac app: its former frozen scope, implementation and performance records (#6770) |
+| `apple/mac-design.md` | Retired native Mac design language and historical layout conventions (#6770) |
 | `apple/persona-native-6152-acceptance.md` | Apple native naming migration acceptance (#6152) |
 | `apple/persona-native-6152-reversible-acceptance.md` | Apple reversible native-state compatibility acceptance (#6152) |
 | `assistant/assistant-rich-ui-predeployment-2026-11-06.md` | Main chat rich UI: pre-deployment acceptance |
@@ -50,6 +56,7 @@ Place necessary historical text under its module directory and list it below.
 | `operations/plan-hub-mesh.md` | Superseded multi-hub topology proposal; current primary/member behavior is in the mesh guide |
 | `operations/rolling-upgrade-compatibility-verification.md` | Rolling-upgrade verification (#6223) |
 | `operations/windows-records.md` | node on Windows: real-machine checks of Orca, herdr, install, tray, Claude outside Persona's terminals and Codex (2026-11-03 to 2026-11-07) |
+| `operations/link-menu-tray.md` | Retired Mac menu bar and Windows tray implementation and migration record; current independent Link service is in `docs/operations/link.md` (#6770) |
 | `operations/hub-restart-records.md` | Seamless hub restarts: measured results after #1617 and the before-change journal (2026-11-04) |
 | `redesign/android.md` | Android plan |
 | `redesign/flows.md` | Main feature flow diagrams |
@@ -67,6 +74,8 @@ Place necessary historical text under its module directory and list it below.
 | `redesign/research/public-direct-ipv6.md` | Direct public connectivity, IPv6, TLS, and persistent-connection keepalive: research notes |
 | `redesign/ux.md` | Interaction and UI specification (shared by both platforms) |
 | `apple/2026-11-09-ios-idle-energy.md` | Six synthetic before/after energy-workload windows, single-flight boundaries, lifecycle regressions and preserved Instruments/device acceptance gaps (#1634 / #1633) |
+| `native-rewind-5878/acceptance.md` | Native conversation rewind for Codex and Antigravity in the web app: native runtime runs, browser checks in both themes at large text, and synthetic completion latency (#5878 / #5919) |
+| `worktree-mark-6644/acceptance.md` | Worktree rows in the By-repository sidebar without the bare branch glyph: web browser and Android Robolectric screenshots in both themes; iOS not captured (#6644 / #6701) |
 
 The [historical redesign index](redesign/README.md) groups the retained interaction drafts and research.
 The retained [chat-header prototype](apple/prototypes/chat-topbar.html) is a text-only historical design, not a production screen.

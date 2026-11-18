@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import WidgetKit
+import PersonaWire
 
 /// What a complication draws; the watch app compiles it too, for its debug preview of the faces.
 struct PetEntry: TimelineEntry {

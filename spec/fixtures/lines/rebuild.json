@@ -6,8 +6,8 @@
       "name": "incremental_with_late_result_and_older_page",
       "description": "逐项重建与全量重建一致，前插历史后也能重建正确行。",
       "source": [
-        "ios/Shared/ChatStore.swift: rebuild / standsAlone",
-        "ios/PersonaTests/RebuildTests.swift: incrementalRebuildEqualsAFullOne"
+        "apple/Shared/ChatStore.swift: rebuild / standsAlone",
+        "apple/PersonaTests/RebuildTests.swift: incrementalRebuildEqualsAFullOne"
       ],
       "input": {
         "items": [],
@@ -451,8 +451,8 @@
       "name": "background_bursts_and_replacement",
       "description": "突发消息后替换整段记录，后台重建收敛到替换后的行。",
       "source": [
-        "ios/Shared/ChatStore.swift: scheduleRebuild / replace",
-        "ios/PersonaTests/RebuildTests.swift: backgroundRebuildConvergesAfterBurstsAndReplacement"
+        "apple/Shared/ChatStore.swift: scheduleRebuild / replace",
+        "apple/PersonaTests/RebuildTests.swift: backgroundRebuildConvergesAfterBurstsAndReplacement"
       ],
       "input": {
         "items": [],

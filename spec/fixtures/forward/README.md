@@ -20,3 +20,18 @@ writes and reads these blocks and checks them against these cases; the web app a
 
 `cases.json` holds `{"version": 1, "cases": [...]}`. A writing case has `block` (the fields) and `xml` (the block it
 writes); a reading case has `message` and `expected`.
+
+## Several at once
+
+Forwarding several messages at once (#3838) sends one block per message; nothing new is written into a block.
+
+- The blocks go in the chat's order, not the order they were picked, one per line; a blank line, then the note.
+  `three_then_a_note`
+- Each message is cut at the smaller of 20,000 characters and 60,000 divided by the number forwarded (rounded down),
+  with the usual line saying so; at most 30 go at once. `budget`
+- Reading: forward blocks next to each other whose `url` names the same session make one group, shown as one card;
+  another session's forward or any other block ends it. `groups`
+
+`several.json` holds `budget` (`each`, `total`, `most` and the limit for some counts), `write` (`blocks`, `note` and the
+`message` they make) and `read` (`message`, each block's `msgs`, the `rest` after the blocks, and the `groups` as
+indices of the blocks).

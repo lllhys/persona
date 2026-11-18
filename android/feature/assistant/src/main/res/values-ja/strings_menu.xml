@@ -8,6 +8,7 @@
     <string name="assistant_directory_copied">作業ディレクトリをコピーしました</string>
     <string name="assistant_info_copied">チャット情報をコピーしました</string>
     <string name="assistant_interrupt">中断</string>
+    <string name="assistant_menu_title_new">新しいチャット · %1$s</string>
     <string name="assistant_copy_info_quoted">「%1$s」</string>
     <string name="assistant_copy_info_hub">Personaアシスタント（ハブ上のClaude）</string>
     <string name="assistant_copy_info_chat">Personaアシスタントのチャット</string>

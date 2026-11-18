@@ -192,3 +192,51 @@ func TestPlainMarkdownAndPlanTitleUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// Text outside code gives the character a backslash escape or a character reference stands for, as a CommonMark
+// renderer writes it, so a push or a one-line title shows "snake_case", not "snake\_case". Code spans and code blocks
+// keep their text as it is; an escaped & starts no reference; what is not an escape or a known reference stays.
+func TestPlainMarkdownResolvesEscapesAndReferences(t *testing.T) {
+	for _, c := range []struct{ name, md, want string }{
+		{"escaped punctuation", `Use snake\_case and 1\. step and \#tag and \*not bold\* done`, "Use snake_case and 1. step and #tag and *not bold* done"},
+		{"escaped backslash", `a \\ b`, `a \ b`},
+		{"escaped bracket", `a \[link\](x)`, "a [link](x)"},
+		{"named references", `5 &lt; 6 &amp; 7 &gt; 3, &quot;q&quot; &copy; 2026`, `5 < 6 & 7 > 3, "q" © 2026`},
+		{"numeric references", `&#39;x&#39; &#x7B;y&#x7D; &#169;`, "'x' {y} ©"},
+		{"escaped ampersand", `\&amp; and \&lt;`, "&amp; and &lt;"},
+		{"not an escape", `C:\Users \a`, `C:\Users \a`},
+		{"not a reference", `AT&T &nosuchname; & &#; &lt`, `AT&T &nosuchname; & &#; &lt`},
+		{"in a link text", `[a\_b &amp; c](https://example.com/x)`, "a_b & c"},
+		{"in a heading and a list", "# a\\_b\n\n- c &amp; d\n- e\\*", "a_b\nc & d\ne*"},
+		{"code span keeps its text", "`a\\_b &amp; c` and d\\_e &amp; f", "a\\_b &amp; c and d_e & f"},
+		{"code block keeps its text", "```\na\\_b &amp; c\n```\n\nd\\_e", "a\\_b &amp; c\nd_e"},
+	} {
+		if got := PlainMarkdown(c.md); got != c.want {
+			t.Errorf("%s: PlainMarkdown(%q) = %q, want %q", c.name, c.md, got, c.want)
+		}
+	}
+	if got, want := PushText(`done: snake\_case &amp; 1\. step`), "done: snake_case & 1. step"; got != want {
+		t.Errorf("PushText = %q, want %q", got, want)
+	}
+	if got, want := PlanTitle("## Plan for snake\\_case &amp; more\n\nbody"), "Plan for snake_case & more"; got != want {
+		t.Errorf("PlanTitle = %q, want %q", got, want)
+	}
+}
+
+func TestSearchMarkdownKeepsFoldedWordsWithoutHiddenHTML(t *testing.T) {
+	input := "<details>\n<summary data-secret=\"attribute-token\">Result</summary>\n**foldedneedle** proof\n<script>script-token</script><style>style-token</style><!-- comment-token -->\n</details>"
+	got := SearchMarkdown(input)
+	for _, word := range []string{"Result", "foldedneedle", "proof"} {
+		if !strings.Contains(got, word) {
+			t.Fatalf("visible word %q lost in %q", word, got)
+		}
+	}
+	for _, word := range []string{"attribute-token", "script-token", "style-token", "comment-token", "<details>"} {
+		if strings.Contains(got, word) {
+			t.Fatalf("hidden HTML %q included in %q", word, got)
+		}
+	}
+	if PlainMarkdown(input) != "" {
+		t.Fatal("search changed the legacy preview's HTML behavior")
+	}
+}

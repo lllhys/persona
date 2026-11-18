@@ -203,9 +203,27 @@ func (n *Node) mayCall(cwd, tool string) bool {
 	return slices.ContainsFunc(n.signedInConnectors(cwd), func(id string) bool { return strings.HasPrefix(tool, id+"_") })
 }
 
-// cliCall runs one of the command lines' calls (personad tool) on the hub as the assistant's, or refuses
-// it.
+// cliCall runs a scoped task_spawn as the Agent's, or a connector call as the assistant's. No Agent-side exception
+// grants connector access.
 func (n *Node) cliCall(ctx context.Context, c net.Conn, req sockRequest) proto.ToolResult {
+	if req.Name == "task_spawn" {
+		session := n.paneCaller(req.Pane)
+		if req.CodexThreadID != "" {
+			session = n.taskCodexCaller(req.CodexThreadID)
+		}
+		if session == "" {
+			return proto.ErrorResult(proto.ToolErrorUnavailable, "task_spawn is not available: no Agent session is known for this pane or Codex thread", 0)
+		}
+		if n.peer == nil {
+			return proto.ErrorResult(proto.ToolErrorUnavailable, "Persona hub error: not connected", 0)
+		}
+		var res proto.ToolResult
+		if err := n.peer.Call(ctx, "mcp.call", map[string]any{"name": req.Name, "args": req.Args, "session_id": session,
+			"assistant": false, "guest": n.guestOf(session) != nil}, &res); err != nil {
+			return proto.ErrorResult(proto.ToolErrorUnavailable, "Persona hub error: "+err.Error(), 0)
+		}
+		return res
+	}
 	session, ok := n.assistantCaller(c)
 	if !ok {
 		return proto.ErrorResult(proto.ToolErrorUnavailable, "这个命令只能在助手的对话里用：这个进程不是 Persona 为助手起的", 0)
@@ -226,10 +244,34 @@ func (n *Node) cliCall(ctx context.Context, c net.Conn, req sockRequest) proto.T
 		return proto.ErrorResult(proto.ToolErrorUnavailable, "Persona hub error: not connected", 0)
 	}
 	var res proto.ToolResult
-	if err := n.peer.Call(ctx, "mcp.call", map[string]any{"name": req.Name, "args": req.Args, "session_id": session, "assistant": true}, &res); err != nil {
+	params := map[string]any{"name": req.Name, "args": req.Args, "session_id": session, "assistant": true}
+	if origin := n.assistantOrigin(session); origin != "" {
+		params["origin"] = origin
+	}
+	if err := n.peer.Call(ctx, "mcp.call", params, &res); err != nil {
 		return proto.ErrorResult(proto.ToolErrorUnavailable, "Persona hub error: "+err.Error(), 0)
 	}
 	return res
+}
+
+// Codex's shared daemon can inherit a different pane's environment. A tool's per-turn thread id takes precedence;
+// resolve it to exactly one public session, including non-default Codex homes, and never fall back to a stale pane.
+func (n *Node) taskCodexCaller(thread string) string {
+	if n.codices == nil || !validID(thread) {
+		return ""
+	}
+	n.codices.mu.Lock()
+	defer n.codices.mu.Unlock()
+	found := ""
+	for id, src := range n.codices.threads {
+		if src.thread == thread {
+			if found != "" {
+				return "" // identical raw thread ids in different Codex homes are ambiguous
+			}
+			found = id
+		}
+	}
+	return found
 }
 
 // signedInConnectors are this directory's signed-in connectors as of its last assistant.prepare: whose built-in

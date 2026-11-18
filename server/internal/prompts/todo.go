@@ -10,13 +10,25 @@ type TodoDecisions struct {
 	Decisions []TodoDecision
 }
 
-// TodoDecision is one decision: N counts from 1; When is its time as the user reads it, From where it came from
-// ("answered in <Agent>'s question", in Chinese), empty for one written in the todo.
+// TodoDecision is one decision: N counts from 1; When is its time as the user reads it. Source is where it came from
+// (TodoDecisionOutcome, …), "" for one written in the todo; Asker the title of the agent whose question it answered
+// (TodoDecisionCard), "" for an unnamed one; Ancestor the title of the earlier todo it was carried from, "" for this
+// todo's own. The template words them.
 type TodoDecision struct {
 	N                        int
 	Question, Choice, Reason string
-	When, From               string
+	When                     string
+	Source, Asker, Ancestor  string
 }
+
+// Where a decision came from (TodoDecision.Source).
+const (
+	TodoDecisionOutcome        = "outcome"         // pulled out of a finished task's reply
+	TodoDecisionEarlierOutcome = "earlier-outcome" // from an earlier phase of the same task
+	TodoDecisionAgent          = "agent"           // todo_decision_add, the agent's own call
+	TodoDecisionThread         = "thread"          // the user's reply in the to-do's chat thread
+	TodoDecisionCard           = "card"            // the user's answer to an agent's question
+)
 
 // RenderTodoDecisions is the context block of a todo's decisions; empty when it has none.
 func RenderTodoDecisions(d TodoDecisions) string {
@@ -101,6 +113,15 @@ func RenderTodoOutcomeInput(in TodoOutcomeInput) string { return render("todo/ou
 type TodoProject struct {
 	Name, OneLine string
 	Outcomes      []TodoProjectOutcome
+	// Extensions are what extensions wrote for this project (contributes.prompts project_context), each under its
+	// extension's name.
+	Extensions []ExtensionContext
+}
+
+// ExtensionContext is one extension's text for a prompt: Name is the extension's, Text what it wrote (cleaned and
+// within its limit by the extension manager).
+type ExtensionContext struct {
+	Name, Text string
 }
 
 // TodoProjectOutcome is one finished todo's outcome as the project's timeline keeps it.
@@ -108,9 +129,10 @@ type TodoProjectOutcome struct {
 	When, Title, Text string
 }
 
-// RenderTodoProject is the block; empty when there is nothing to say (no one line and no outcomes).
+// RenderTodoProject is the block; empty when there is nothing to say (no one line, no outcomes, nothing from an
+// extension).
 func RenderTodoProject(p TodoProject) string {
-	if p.OneLine == "" && len(p.Outcomes) == 0 {
+	if p.OneLine == "" && len(p.Outcomes) == 0 && len(p.Extensions) == 0 {
 		return ""
 	}
 	return render("todo/project", p)

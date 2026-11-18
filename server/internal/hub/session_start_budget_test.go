@@ -80,3 +80,37 @@ func TestSessionStartBudgetMatchesNodeStartup(t *testing.T) {
 		})
 	}
 }
+
+// A start's goal (POST /api/v1/sessions) reaches the node's session.start, where the node sets it after the first
+// message: the route does not drop the documented field.
+func TestSessionStartForwardsTheGoal(t *testing.T) {
+	h := newTestHub(t)
+	connectAssistant(t, h)
+	var gotGoal string
+	startReceiptNode(t, h, func(_ context.Context, params json.RawMessage) (any, error) {
+		var in struct {
+			Goal string `json:"goal"`
+		}
+		if err := json.Unmarshal(params, &in); err != nil {
+			return nil, err
+		}
+		gotGoal = in.Goal
+		return map[string]any{"session": proto.Session{SessionID: "created"}}, nil
+	})
+	body, err := json.Marshal(map[string]any{
+		"machine_id": "machine", "cwd": "/code", "launcher": "claude", "prompt": "fix the build", "tab_name": "t",
+		"goal": "CI is green",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/api/v1/sessions", strings.NewReader(string(body)))
+	w := httptest.NewRecorder()
+	h.startSession(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("start = %d %s", w.Code, w.Body)
+	}
+	if gotGoal != "CI is green" {
+		t.Fatalf("the node got goal %q", gotGoal)
+	}
+}

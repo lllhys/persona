@@ -16,6 +16,24 @@ extension AppModel {
         return features(key.group).contains(MainConversationActions.newMainFeature)
     }
 
+    /// Clear context is offered: on the main conversation, when its hub can.
+    func canClearMain(_ key: SessionKey?) -> Bool {
+        guard let key, key == assistantMain else { return false }
+        return MainConversationActions.offersClear(isMain: true, features: features(key.group))
+    }
+
+    /// Another manager or hub: the empty page belonged to the one that was cleared.
+    func forgetMainClear() {
+        guard mainClear.cleared != nil || mainClear.busy else { return }
+        mainClear = MainClearState()
+    }
+
+    /// New Chat from an open conversation forgets a cleared main, so the welcome page shows.
+    /// From the empty cleared page (`current` nil) that page stays.
+    func forgetMainClearForNewChat(from current: SessionKey?) {
+        if current != nil { forgetMainClear() }
+    }
+
     /// Asks the hub to compact `key`; its progress comes on the session (`compaction`). A refusal (already answering, already compacting…)
     /// is the hub's own words.
     func compactConversation(_ key: SessionKey) async {
@@ -57,6 +75,48 @@ extension AppModel {
         assistantCurrent = nil
         await refreshAssistant()
     }
+
+    /// Archives the main conversation and leaves the empty conversation page (the same top bar and composer, nothing
+    /// in the middle). Nothing is asked: the old chat is archived, not deleted. True when `/clear` is used up, including
+    /// a second one while the first is on its way. False when it failed: the caller puts `/clear` back in the box.
+    func clearMainContext() async -> Bool {
+        guard let main = assistantMain, let api = api(main.group),
+              MainConversationActions.offersClear(isMain: true, features: features(main.group)) else { return false }
+        var state = mainClear
+        guard state.begin(group: main.group, manager: assistantManagerID ?? "", sessionID: main.sessionID) else { return true }
+        mainClear = state
+        // Looking at the main conversation, or already on the empty page: stay there. A side conversation stays put.
+        let viewing = assistantCurrent == main || assistantCurrent == nil
+        if assistantCurrent == main { assistantCurrent = nil }
+        Haptics.tap()
+        do {
+            _ = try await api.clearMainConversation(expect: main.sessionID)
+            var done = mainClear
+            done.succeed()
+            mainClear = done
+            await refreshAssistant()
+            if viewing, assistantCurrent == nil || assistantCurrent == main { assistantCurrent = nil }
+            Haptics.success()
+            return true
+        } catch let e as APIError where e.code == "main_changed" {
+            // Another device replaced it already: show what the hub has now.
+            var dropped = mainClear
+            dropped.fail()
+            mainClear = dropped
+            await refreshAssistant()
+            if viewing { assistantCurrent = assistantMain }
+            toast = Toast(String(localized: "The main chat was replaced on another device. Refreshed."), style: .info)
+            return true
+        } catch {
+            var dropped = mainClear
+            dropped.fail()
+            mainClear = dropped
+            if viewing, assistantCurrent == nil { assistantCurrent = main }
+            Haptics.error()
+            toast = Toast(String(localized: "Couldn't clear the context: \(error.shown ?? String(localized: "Try again later."))"), style: .error)
+            return false
+        }
+    }
 }
 
 /// The menu entries (the top bar's menu, the Mac's toolbar menu, the sidebar row's context menu); nothing where they
@@ -72,6 +132,13 @@ struct MainConversationMenu: View {
                 Label(running ? String(localized: "Compacting Context…") : String(localized: "Compact context"), systemImage: Theme.Icon.compactContext)
             }
             .disabled(running)
+        }
+        if model.canClearMain(key) {
+            Button { Task { await model.clearMainContext() } } label: {
+                Label("Clear context", systemImage: Theme.Icon.clearContext)
+            }
+            .disabled(model.mainClear.busy)
+            .accessibilityIdentifier("main-clear")
         }
         if model.canStartNewMain(key) {
             Button { model.newMainAsked = true } label: { Label("New Main Chat…", systemImage: Theme.Icon.newConversation) }
@@ -238,10 +305,7 @@ struct NewMainSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Text("Cancel").lineLimit(1) }
-                        .disabled(busy)
-                }
+                SheetClose(disabled: busy) { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { Task { await go() } } label: {
                         if busy { ProgressView().controlSize(.small) } else { Text("New Main Chat").lineLimit(1) }

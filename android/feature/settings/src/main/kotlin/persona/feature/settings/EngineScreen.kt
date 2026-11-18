@@ -20,7 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
- * Which terminal engine a machine uses (docs/integrations/engines.md), as on iOS `EngineSelectionView`. Right after pairing
+ * Which terminal engine a machine uses, or none (docs/integrations/engines.md), as on iOS `EngineSelectionView`. Right after pairing
  * ([pairing]) an engine must be chosen: no back, no skip, and a failed save stays on the step; from the machine page
  * it is an ordinary page that saves and goes back.
  */
@@ -108,7 +108,7 @@ fun EngineSelectionScreen(
                     enabled = !state.saving && Engines.canSelect(found.id, machine)) { model.choose(found.id) }
             }
         }
-        item("footer") { SettingsCaption(Engines.footer(machine).text(), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s)) }
+        item("footer") { SettingsCaption(Engines.footer(machine, state.selected).text(), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.s)) }
     }
 }
 
@@ -144,9 +144,11 @@ private fun EngineOption(found: DetectedEngine, machine: Machine, selected: Bool
         JRadio(selected, null, enabled = enabled)
         Spacer(Modifier.width(Tokens.Space.m))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xxs)) {
-            Text(found.name.ifBlank { found.id }, style = PersonaTheme.type.body, color = PersonaTheme.palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // No terminal engine is named in the app's language, not by the hub; there is nothing to detect for it.
+            val title = if (found.id == Engines.NONE) Engines.label(found.id, machine).text() else found.name.ifBlank { found.id }
+            Text(title, style = PersonaTheme.type.body, color = PersonaTheme.palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Engines.detail(found.id)?.let { Text(it.text(), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            Text(Engines.detection(found.id, machine).text(), style = PersonaTheme.type.caption,
+            if (Engines.showsDetection(found.id)) Text(Engines.detection(found.id, machine).text(), style = PersonaTheme.type.caption,
                 color = if (found.available && machine.online) PersonaTheme.palette.tone(Tone.Positive).text else PersonaTheme.palette.ink3, maxLines = 1)
             found.note?.takeIf { it.isNotBlank() }?.let {
                 Text(it, style = PersonaTheme.type.caption, color = PersonaTheme.palette.cautionText, maxLines = 2, overflow = TextOverflow.Ellipsis)

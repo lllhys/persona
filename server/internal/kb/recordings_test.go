@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-const recID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+const (
+	recID  = "0f8fad5b-d9cb-469f-a165-70867728950e"
+	recID2 = "1a2b3c4d-0000-4000-8000-000000000002"
+)
 
 func recUpload(rev int64, start time.Time, complete bool, texts ...string) RecordingUpload {
 	u := RecordingUpload{Revision: rev, StartedAt: start, Duration: float64(10 * len(texts)), Language: "zh-CN", Device: "phone", Complete: complete}
@@ -106,7 +109,7 @@ func TestRecordingPartialThenComplete(t *testing.T) {
 	if err != nil || len(d.Segments) != 2 || !strings.Contains(d.Summary, "周会") || !strings.Contains(d.Recent, "[书签] 灰度时间") {
 		t.Fatalf("get %+v %v", d, err)
 	}
-	if l := e.List(KindRecording, ""); len(l) != 1 || l[0].Name != "周会" || l[0].Extra != "phone" {
+	if l := e.List(KindRecording, ""); len(l) != 1 || l[0].Name != "周会" || l[0].Extra != "phone" || l[0].RecordingKind != RecordingNote {
 		t.Fatalf("list %+v", l)
 	}
 	// Re-transcribed (another language): summarized again.
@@ -262,5 +265,26 @@ func TestRecordingRetentionDST(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// The recordings list says each recording's kind (#8731): the apps' Meetings list marks notes among meetings.
+func TestRecordingListKind(t *testing.T) {
+	e := goldenEngine(t, nil)
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, goldenZone)
+	meeting := recUpload(1, now.Add(-2*time.Hour), true, "先说发布")
+	meeting.Kind = RecordingMeeting
+	if _, err := e.PutRecording(recID, meeting, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PutRecording(recID2, recUpload(1, now.Add(-time.Hour), true, "旅行清单"), now); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, x := range e.List(KindRecording, "") {
+		kinds[x.ID] = x.RecordingKind
+	}
+	if kinds[recID] != RecordingMeeting || kinds[recID2] != RecordingNote || len(kinds) != 2 {
+		t.Fatalf("kinds %v", kinds)
 	}
 }

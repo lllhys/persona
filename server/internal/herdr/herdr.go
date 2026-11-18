@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -141,7 +142,7 @@ const worktreeTimeout = 2 * time.Minute
 
 // timeoutOf is how long a call may take: a worktree checkout is slow, everything else is one quick request.
 func timeoutOf(method string) time.Duration {
-	if method == "worktree.create" {
+	if method == "worktree.create" || method == "worktree.remove" || method == "workspace.close" {
 		return worktreeTimeout
 	}
 	return rpcTimeout
@@ -499,12 +500,17 @@ func (c *Client) AgentGet(ctx context.Context, target string) (*Agent, error) {
 }
 
 type Workspace struct {
-	ID      string `json:"workspace_id"`
-	Label   string `json:"label"`
-	Number  int    `json:"number"`
-	Cwd     string `json:"cwd,omitempty"`
-	Branch  string `json:"branch,omitempty"`
-	Focused bool   `json:"focused,omitempty"`
+	ID       string `json:"workspace_id"`
+	Label    string `json:"label"`
+	Number   int    `json:"number"`
+	Cwd      string `json:"cwd,omitempty"`
+	Branch   string `json:"branch,omitempty"`
+	Focused  bool   `json:"focused,omitempty"`
+	Worktree *struct {
+		RepoRoot         string `json:"repo_root"`
+		CheckoutPath     string `json:"checkout_path"`
+		IsLinkedWorktree bool   `json:"is_linked_worktree"`
+	} `json:"worktree,omitempty"`
 }
 
 type Tab struct {
@@ -517,9 +523,13 @@ type Tab struct {
 
 // Snapshot is the whole live layout: workspaces, tabs, panes, agents and focus.
 type Snapshot struct {
-	Workspaces []Workspace `json:"workspaces"`
-	Tabs       []Tab       `json:"tabs"`
-	Agents     []Agent     `json:"agents"`
+	// InventoryIncomplete means a successful reply omitted the pane or agent inventory
+	// (or a list needed to reconstruct it). Display callers can still use its fields,
+	// but destructive callers must not treat missing data as confirmed absence.
+	InventoryIncomplete bool        `json:"-"`
+	Workspaces          []Workspace `json:"workspaces"`
+	Tabs                []Tab       `json:"tabs"`
+	Agents              []Agent     `json:"agents"`
 	// Panes is every pane, agent or not (agent empty): where agents herdr does not detect, such as a compatible CLI, are found.
 	Panes []Agent `json:"panes"`
 	// Layouts are the tabs' split layouts: where each pane sits in its tab (layout.go).
@@ -549,11 +559,53 @@ type Created struct {
 	} `json:"root_pane"`
 }
 
-func (c *Client) WorkspaceCreate(ctx context.Context, cwd, label string) (*Created, error) {
+// WorkspaceCreate opens a workspace in cwd without moving the computer's focus; env ("KEY=VALUE") is added to the
+// environment its first pane's shell starts with.
+func (c *Client) WorkspaceCreate(ctx context.Context, cwd, label string, env ...string) (*Created, error) {
+	return c.createWithEnv(ctx, "workspace.create", map[string]any{"cwd": cwd, "label": label, "focus": false},
+		[]string{"workspace", "create", "--cwd", cwd, "--label", label, "--no-focus"}, env)
+}
+
+// createWithEnv is workspace.create / tab.create with env ("KEY=VALUE", herdr's `env` object and `--env`). A herdr
+// that refuses the request because it has no `env` (one before environment support) is asked again without it: the
+// shell then starts without those variables, as before, rather than no terminal opening.
+func (c *Client) createWithEnv(ctx context.Context, method string, params map[string]any, cli []string, env []string) (*Created, error) {
+	vars := map[string]string{}
+	var flags []string
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			vars[k] = v
+			flags = append(flags, "--env", kv)
+		}
+	}
 	var res Created
-	err := c.call(ctx, "workspace.create", map[string]any{"cwd": cwd, "label": label, "focus": false}, &res,
-		"workspace", "create", "--cwd", cwd, "--label", label, "--no-focus")
+	if len(vars) == 0 {
+		err := c.call(ctx, method, params, &res, cli...)
+		return &res, err
+	}
+	with := map[string]any{"env": vars}
+	for k, v := range params {
+		with[k] = v
+	}
+	err := c.call(ctx, method, with, &res, append(slices.Clone(cli), flags...)...)
+	if err == nil || !envRefused(err) {
+		return &res, err
+	}
+	res = Created{}
+	err = c.call(ctx, method, params, &res, cli...)
 	return &res, err
+}
+
+// envRefused: herdr answered that it does not take the request as given (an unknown `env` field or `--env` flag),
+// so nothing was created.
+func envRefused(err error) bool {
+	var he *Error
+	if errors.As(err, &he) {
+		return strings.Contains(strings.ToLower(he.Code+" "+he.Message), "env") ||
+			strings.Contains(strings.ToLower(he.Message), "unknown field")
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "--env") || strings.Contains(msg, "unexpected argument")
 }
 
 // WorktreeCreated is what worktree.create opened: the new workspace (with its first tab and pane) and the checkout.
@@ -567,20 +619,38 @@ type WorktreeCreated struct {
 
 // WorktreeCreate has herdr make a Git worktree checkout at path (an absolute path) from the repository of a workspace
 // and open it as a workspace grouped under that one, without moving the computer's focus. An existing local branch is
-// checked out; any other name becomes a new branch from the workspace's HEAD. herdr never forces anything: a branch
+// checked out; any other name becomes a new branch from base when given, else from the workspace's HEAD. herdr never forces anything: a branch
 // checked out elsewhere, or a path git refuses, is an error.
-func (c *Client) WorktreeCreate(ctx context.Context, workspace, branch, path string) (*WorktreeCreated, error) {
+func (c *Client) WorktreeCreate(ctx context.Context, workspace, branch, path string, base ...string) (*WorktreeCreated, error) {
+	params := map[string]any{"workspace_id": workspace, "branch": branch, "path": path, "focus": false}
+	args := []string{"worktree", "create", "--workspace", workspace, "--branch", branch, "--path", path}
+	if len(base) > 0 && base[0] != "" {
+		params["base"] = base[0]
+		args = append(args, "--base", base[0])
+	}
 	var res WorktreeCreated
-	err := c.call(ctx, "worktree.create", map[string]any{"workspace_id": workspace, "branch": branch, "path": path, "focus": false}, &res,
-		"worktree", "create", "--workspace", workspace, "--branch", branch, "--path", path, "--no-focus")
+	err := c.call(ctx, "worktree.create", params, &res, append(args, "--no-focus")...)
 	return &res, err
 }
 
-func (c *Client) TabCreate(ctx context.Context, workspace, cwd, label string) (*Created, error) {
-	var res Created
-	err := c.call(ctx, "tab.create", map[string]any{"workspace_id": workspace, "cwd": cwd, "label": label, "focus": false}, &res,
-		"tab", "create", "--workspace", workspace, "--cwd", cwd, "--label", label, "--no-focus")
+// WorktreeCreateFromCwd is WorktreeCreate from a main checkout that has no open workspace.
+func (c *Client) WorktreeCreateFromCwd(ctx context.Context, cwd, branch, path string, base ...string) (*WorktreeCreated, error) {
+	params := map[string]any{"cwd": cwd, "branch": branch, "path": path, "focus": false}
+	args := []string{"worktree", "create", "--cwd", cwd, "--branch", branch, "--path", path}
+	if len(base) > 0 && base[0] != "" {
+		params["base"] = base[0]
+		args = append(args, "--base", base[0])
+	}
+	var res WorktreeCreated
+	err := c.call(ctx, "worktree.create", params, &res, append(args, "--no-focus")...)
 	return &res, err
+}
+
+// TabCreate opens a tab in a workspace without moving the computer's focus; env ("KEY=VALUE") is added to the
+// environment its shell starts with.
+func (c *Client) TabCreate(ctx context.Context, workspace, cwd, label string, env ...string) (*Created, error) {
+	return c.createWithEnv(ctx, "tab.create", map[string]any{"workspace_id": workspace, "cwd": cwd, "label": label, "focus": false},
+		[]string{"tab", "create", "--workspace", workspace, "--cwd", cwd, "--label", label, "--no-focus"}, env)
 }
 
 func (c *Client) TabRename(ctx context.Context, tab, label string) error {
@@ -590,6 +660,18 @@ func (c *Client) TabRename(ctx context.Context, tab, label string) error {
 func (c *Client) WorkspaceRename(ctx context.Context, workspace, label string) error {
 	return c.call(ctx, "workspace.rename", map[string]any{"workspace_id": workspace, "label": label}, nil,
 		"workspace", "rename", workspace, label)
+}
+
+func (c *Client) WorkspaceClose(ctx context.Context, workspace string) error {
+	return c.call(ctx, "workspace.close", map[string]any{"workspace_id": workspace}, nil, "workspace", "close", workspace)
+}
+
+func (c *Client) WorktreeRemove(ctx context.Context, workspace string, force bool) error {
+	args := []string{"worktree", "remove", "--workspace", workspace}
+	if force {
+		args = append(args, "--force")
+	}
+	return c.call(ctx, "worktree.remove", map[string]any{"workspace_id": workspace, "force": force}, nil, args...)
 }
 
 func (c *Client) TabClose(ctx context.Context, tab string) error {
@@ -838,5 +920,46 @@ func (c *Client) PaneReportResume(ctx context.Context, pane, source, agent, sess
 	return err
 }
 
+// ServerID names the server instance listening on c's socket: every server start (a restart, a live handoff, an
+// upgrade) binds the socket anew, so its modification time changes. "" when there is no socket. A reporter compares it
+// to the one it reported to: state a server keeps only in memory (or an older herdr ignored, such as resume_argv
+// before 0.9.2) has to be reported again to a new one.
+func (c *Client) ServerID() string {
+	if c.Socket == "" {
+		return ""
+	}
+	fi, err := os.Stat(c.Socket)
+	if err != nil {
+		return ""
+	}
+	return strconv.FormatInt(fi.ModTime().UnixNano(), 10)
+}
+
 // ReportSeq orders a reporter's reports (herdr drops one older than the last it took); tests fix it.
 var ReportSeq = func() int64 { return time.Now().UnixNano() }
+
+// Panes lists all panes in a workspace, including panes with no detected agent.
+func (c *Client) Panes(ctx context.Context, workspace string) ([]Agent, error) {
+	var res struct {
+		Panes []Agent `json:"panes"`
+	}
+	err := c.call(ctx, "pane.list", map[string]any{"workspace_id": workspace}, &res, "pane", "list", "--workspace", workspace)
+	return res.Panes, err
+}
+
+// PaneCount is how many panes the server has, in every workspace (socket only: no CLI fallback, which could reach
+// another server).
+func (c *Client) PaneCount(ctx context.Context) (int, error) {
+	var res struct {
+		Panes []json.RawMessage `json:"panes"`
+	}
+	if err := c.rpc(ctx, "pane.list", map[string]any{}, &res); err != nil {
+		return 0, err
+	}
+	return len(res.Panes), nil
+}
+
+// ServerStop stops the server listening on c's socket (socket only, like PaneCount).
+func (c *Client) ServerStop(ctx context.Context) error {
+	return c.rpc(ctx, "server.stop", map[string]any{}, nil)
+}

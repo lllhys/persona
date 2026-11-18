@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/dialogwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -40,7 +41,9 @@ func TestKBProjectNoteRoundTrip(t *testing.T) {
 		"importance": "invalid", "relevance": 101,
 		"chats": []string{"missing"},
 	})
-	if err != nil || out != "Saved projects/project-note." {
+	// A project does not use projects: said, not dropped silently. Invalid values of fields it does use are still
+	// dropped as before (projectUpdate).
+	if err != nil || out != "Saved projects/project-note.\nNot saved: projects (projects entries do not use projects)." {
 		t.Fatalf("update: %q %v", out, err)
 	}
 	out, err = runTool(s, "c1", "kb_get", map[string]any{"kind": "projects", "id": "Project note"})
@@ -245,6 +248,9 @@ func TestInteractionAnswerRefusesApprovals(t *testing.T) {
 		{Kind: proto.IxPermission, ToolName: "Bash", Summary: "rm -rf"},
 		{Kind: proto.IxPlan, Plan: "1. do it"},
 		{Kind: proto.IxScreen},
+		// Claude Code's Bypass Permissions confirmation read off the terminal: the user's choice, never the assistant's.
+		{Kind: proto.IxScreen, Dialog: &dialogwire.Dialog{Question: "WARNING: Claude Code running in Bypass Permissions mode",
+			Options: []dialogwire.Option{{Key: "1", Label: "No, exit", Keys: []string{"enter"}}, {Key: "2", Label: "Yes, I accept", Keys: []string{"down", "enter"}}}}},
 	} {
 		s, _, q, _ := answerService(t)
 		ix.ID, ix.MachineID, ix.SessionID = "ix_"+ix.Kind, "mac", "abcdef12-agent"

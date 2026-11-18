@@ -204,4 +204,61 @@ class HubSessionFilesTest {
         assertEquals(listOf("song.mp3"), (java.io.File(dir, "a").list()!!.toList()).zhAny())
         dir.deleteRecursively()
     }
+
+    @Test fun fileEditsPostTheirBodiesAndDecodeTheAnswers(): Unit = runBlocking {
+        val posts = mutableListOf<Pair<String, String>>()
+        var status = 200
+        var answer = """{"path":"~/proj/b c.txt"}"""
+        val api = HubSessionFiles({ error("GET used for a change") }, post = { _, _ -> error("pull's POST used for a change") },
+            editPost = { path, body ->
+                posts += path to body
+                val response = Response.Builder().request(Request.Builder().url("https://example.com$path").build()).protocol(Protocol.HTTP_1_1)
+                    .code(status).message("response").body(answer.toResponseBody()).build()
+                // As OkHttpHubConnection.request: any status but 2xx arrives as a HubFailure.
+                if (status !in 200..299) response.use { throw HubFailure.from(it) }
+                response
+            })
+        assertEquals("~/proj/b c.txt", api.rename("machine/segment", "/w/中文 &", "~/proj/a.txt", "b c.txt"))
+        assertEquals("/api/v1/machines/machine%2Fsegment/files/rename", posts.last().first)
+        assertEquals("""{"path":"~/proj/a.txt","cwd":"/w/中文 &","name":"b c.txt"}""", posts.last().second)
+
+        answer = """{"trashed":[{"path":"~/d/b.txt","trash_id":"t1"},{"path":"~/d/c","trash_id":"t2"}],"future":1}"""
+        assertEquals(listOf("t1", "t2"), api.trash("m", "/w", listOf("~/d/b.txt", "~/d/c")).map { it.trashId })
+        assertEquals("/api/v1/machines/m/files/trash", posts.last().first)
+        assertEquals("""{"paths":["~/d/b.txt","~/d/c"],"cwd":"/w"}""", posts.last().second)
+        answer = """{"trashed":null}"""
+        assertTrue(api.trash("m", "/w", listOf("a")).isEmpty())
+
+        answer = """{"restored":[{"path":"~/d/b.txt"}]}"""
+        assertEquals(listOf("~/d/b.txt"), api.restore("m", listOf("t1")))
+        assertEquals("/api/v1/machines/m/files/restore", posts.last().first)
+        assertEquals("""{"trash_ids":["t1"]}""", posts.last().second)
+
+        // The machine's refusals keep their code: outside the home, a taken name, an old node, an old hub without the routes.
+        for ((code, body) in listOf(409 to """{"error":"only the home","code":"read_only"}""", 409 to """{"error":"taken","code":"exists","name":"b"}""",
+                409 to """{"error":"personad on box is too old","code":"node_outdated"}""", 404 to "404 page not found")) {
+            status = code; answer = body
+            try { api.rename("m", "/w", "/etc/hosts", "b"); fail("Expected a refusal") }
+            catch (failure: HubFailure) {
+                assertEquals(code, failure.status)
+                assertEquals(Regex("\"code\":\"(\\w+)\"").find(body)?.groupValues?.get(1), failure.code)
+            }
+        }
+        // A dropped connection stays the connection's failure.
+        val offline = HubSessionFiles({ error("unused") }, editPost = { _, _ -> throw HubFailure(HubError.Timeout) })
+        try { offline.trash("m", "/w", listOf("a")); fail("Expected a timeout") }
+        catch (failure: HubFailure) { assertEquals(HubError.Timeout, failure.kind) }
+        assertTrue(HubSessionFiles.EDIT_TIMEOUT_SECONDS > 120)
+    }
+
+    @Test fun editsAreOfferedByTheHubsFileEditFeature() {
+        var features = emptySet<String>()
+        val api = HubSessionFiles({ error("unused") }, features = { features })
+        // No list yet (an older hub's hello): offered, and the answer tells (iOS FolderEdits.available).
+        assertTrue(api.editsFiles("m"))
+        features = setOf("git_blob", "upload_dir")
+        assertFalse(api.editsFiles("m"))
+        features = setOf("git_blob", "file_edit")
+        assertTrue(api.editsFiles("m"))
+    }
 }

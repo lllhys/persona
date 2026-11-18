@@ -26,6 +26,9 @@ import (
 // always had, a switch of the setting moves every open task at once, and a background supervisor that is gone leaves
 // no task naming a conversation that does not exist. Who gets a task's signals is decided when they are sent
 // (ownSupervisor), and what the background supervisor may do to a task follows the same rule (backgroundSupervises).
+//
+// Each of its rounds starts from its first turn, with only that round's facts and tools (#7315, supervise_round.go),
+// unless assistant.background_supervisor_keeps_context is on.
 
 // purposeSupervise is the model purpose the background supervisor runs under; it inherits the main chat's.
 const purposeSupervise = "assistant.supervise"
@@ -36,9 +39,11 @@ const purposeSupervise = "assistant.supervise"
 var backgroundGrace, backgroundRetry = 2 * time.Minute, 10 * time.Minute
 
 // backgroundBook holds the background supervisor's start still: one at a time, and not again right after a failure.
+// rounds is what its rounds' answers said (supervise_round.go), under its own lock.
 type backgroundBook struct {
 	mu       sync.Mutex
 	failedAt time.Time
+	rounds   superviseRounds
 }
 
 // backgroundOn: the background supervisor is on with settings cfg (assistant.main_supervises_own_tasks is not on).
@@ -97,8 +102,9 @@ func (s *Service) followUpWords(ctx context.Context, self string) string {
 // ensureBackground is the background supervisor to send to now, made if there is none yet or the one there was is
 // gone; "" while it is off, there is no main conversation or machine, or it cannot start (its tasks' signals then go
 // to the main conversation, and the start is tried again after backgroundRetry). gone is the one it found gone (on
-// another machine than the assistant's now, or no longer listed), whose queued message the caller takes back
-// (backgroundLost).
+// another machine than the assistant's now, or no longer listed), or the one it replaced because its rounds can no
+// longer start from its first turn (backgroundOutgrown, supervise_round.go), whose queued message the caller takes
+// back (backgroundLost).
 func (s *Service) ensureBackground(ctx context.Context) (id, gone string) {
 	b := &s.background
 	b.mu.Lock()
@@ -109,6 +115,11 @@ func (s *Service) ensureBackground(ctx context.Context) (id, gone string) {
 	}
 	if id := s.ownSupervisor(cfg); id != cfg.Main {
 		if s.backgroundThere(ctx, cfg, id) {
+			if why := s.backgroundOutgrown(ctx, cfg, id); why != "" {
+				if next := s.replaceBackground(ctx, cfg, id, why); next != id {
+					return next, id
+				}
+			}
 			return id, ""
 		}
 		s.logf("supervise: the background supervisor %s is gone from %s", short(id), cfg.MachineID)
@@ -134,7 +145,9 @@ func (s *Service) ensureBackground(ctx context.Context) (id, gone string) {
 // again where they go now, and that message is dropped. When the signals are not known (the manager restarted since it
 // was queued: supervise.queued is memory only, the deduplication history is not) the message itself moves to
 // conversation to, the new background supervisor or the main conversation, as do the other messages that waited
-// there: nothing queued is dropped unread. dedupMu is held.
+// there: nothing queued is dropped unread. A background supervisor reserved for its replacement (backgroundOutgrown)
+// takes messages again from here: it is no longer the background supervisor, and nothing waits for it. dedupMu is
+// held.
 func (s *Service) backgroundLost(ctx context.Context, old, to, web string) []superviseSignal {
 	if old == "" || old == to {
 		return nil
@@ -160,6 +173,7 @@ func (s *Service) backgroundLost(ctx context.Context, old, to, web string) []sup
 		delete(r.st.Queue, old)
 		s.saveRelayLocked()
 	}
+	delete(r.replacing, old)
 	r.mu.Unlock()
 	if moved > 0 {
 		s.logf("supervise: %d message(s) queued for the background supervisor %s, which is gone, wait for %s now", moved, short(old), short(to))
@@ -232,7 +246,7 @@ func (s *Service) backgroundThere(ctx context.Context, cfg Settings, id string) 
 		return true
 	}
 	if res.OK {
-		return res.Session.Assistant
+		return res.Session.Assistant && !s.backgroundSignedOut(cfg, res.Session)
 	}
 	if d, ok := s.device(ctx, cfg.MachineID); !ok || !d.Online || !d.Reachable {
 		return true
@@ -244,11 +258,21 @@ func (s *Service) backgroundThere(ctx context.Context, cfg Settings, id string) 
 	listed := false // the node listed since this manager started: an assistant conversation is in its list
 	for _, c := range list {
 		if c.SessionID == id {
-			return c.Assistant
+			return c.Assistant && !s.backgroundSignedOut(cfg, c)
 		}
 		listed = listed || c.Assistant
 	}
 	return !listed
+}
+
+// backgroundSignedOut: background supervisor c, started before this manager, ended its last turn "Not logged in". It was
+// made in a new private profile with no login, as every conversation the hub started was until #6015, and a conversation
+// cannot move to another profile: it counts as gone, so one that starts signed in replaces it (ensureBackground) and what
+// waited for it moves on. One this manager started is already in the signed-in profile (startConversation): replacing it
+// would not sign it in, only make a new conversation at every signal.
+func (s *Service) backgroundSignedOut(cfg Settings, c proto.Session) bool {
+	at := cfg.BackgroundSupervisorAt
+	return signedOut(c) && c.SessionID == cfg.BackgroundSupervisor && at != nil && at.Before(s.born)
 }
 
 // backgroundFresh: conversation id is the background supervisor, started within backgroundGrace.
@@ -264,6 +288,7 @@ func (s *Service) backgroundFresh(cfg Settings, id string) bool {
 func (s *Service) startBackground(ctx context.Context) (string, error) {
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Second)
 	defer cancel()
+	sctx = context.WithValue(sctx, supervisionStartup{}, true)
 	c, err := s.startConversation(sctx, startParams{Text: prompts.RenderSupervisorStart(prompts.SupervisorStart{Owner: s.owner(ctx)}),
 		Purpose: purposeSupervise, Origin: OriginTask, Source: &proto.MessageSource{Kind: proto.SourceSupervision}})
 	if err != nil {

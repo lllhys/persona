@@ -1,0 +1,66 @@
+[
+  {
+    "name": "machines_concern_projection",
+    "description": "Anonymous machine wire data for Android concern-grid presentation tests.",
+    "source": [
+      "android/feature/machines/src/main/kotlin/persona/feature/machines/MachineConcern.kt",
+      "apple/Persona/Views/Machines/MachinesView.swift"
+    ],
+    "derived": true,
+    "decoder": "machines",
+    "input": {
+      "machines": [
+        {
+          "id": "pending",
+          "name": "Pending computer",
+          "online": true,
+          "trust": "pending"
+        },
+        {
+          "id": "offline",
+          "last_seen": "2026-01-02T03:04:05Z",
+          "name": "Offline computer",
+          "online": false
+        },
+        {
+          "id": "critical",
+          "name": "Critical computer",
+          "online": true
+        },
+        {
+          "id": "warning",
+          "name": "Warning computer",
+          "online": true
+        },
+        {
+          "id": "needs-you",
+          "name": "Waiting agents computer",
+          "online": true
+        },
+        {
+          "deploy_phase": "transferring",
+          "deploying": true,
+          "id": "mismatch",
+          "name": "Deploying computer",
+          "online": true
+        },
+        {
+          "id": "normal",
+          "name": "Normal computer",
+          "node_version": "fixture-version",
+          "online": true
+        }
+      ]
+    },
+    "expected": {
+      "accepted": true,
+      "fields": {
+        "/machines/0/trust": "pending",
+        "/machines/1/online": false,
+        "/machines/5/deploy_phase": "transferring",
+        "/machines/5/deploying": true,
+        "/machines/6/online": true
+      }
+    }
+  }
+]

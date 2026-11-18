@@ -1,6 +1,6 @@
 # 设计 token
 
-这里保存两端共用的设计值。iOS 本轮只读，现有 `Theme.swift` 和 `StatusPalette.swift` 继续生效。生成器只输出 Kotlin、CSS 和 Markdown，不生成 `Tokens.swift`，也不自动改动任何客户端文件。
+Design values shared across clients and documented platform-specific differences live here. iOS remains read-only in this phase: the existing `Theme.swift` and `StatusPalette.swift` stay in effect. The generator emits Kotlin, CSS and Markdown only; it does not emit `Tokens.swift` or modify client files automatically.
 
 **当前严格检查会失败。** 保留 iOS 原值后，有些配色达不到文档要求；系统动态色也需要跨端回退。下文列出差异，检查器不会为它们降低阈值或默默放行。接入阻断式 pre-commit 前，需要协调者决定修色方案。
 
@@ -10,12 +10,15 @@
 
 | 文件 | 命名空间 | 来源 |
 | --- | --- | --- |
-| `color.semantic.json` | `semantic.<style>.<mode>` | `ios/Shared/Theme.swift` 的 `accent(_:)`、`userBubble(_:)`、`userBubbleText`、`pageBackground(_:)`、`card(_:)`、`cardStroke`；原生风格取 `prototypes/android/style.css` |
+| `color.semantic.json` | `semantic.<style>.<mode>` | `ios/Shared/Theme.swift` 的 `accent(_:)`、`userBubble(_:)`、`userBubbleText`、`pageBackground(_:)`、`card(_:)`、`cardStroke`；原生风格取自旧 Android HTML 原型的 `style.css`（#9030 已删除，见 git 历史） |
 | 同上 | `common.<mode>` | `Theme.brand/danger/positive/caution/cautionText/ai/loop/countBadge`、代码和终端色、`Theme.Diff`、`Theme.Hue`、`Theme.Fill` |
 | 同上 | `system.<mode>` | `Theme.systemPage/systemCard`、SwiftUI 的 `Color.primary/secondary`、UIKit 系统 fill 的显式回退值；见下文限制 |
 | `color.status.json` | `status.<mode>.<state>` | `ios/Shared/StatusPalette.swift`；待唤醒和已屏蔽的映射取 `ios/Persona/Views/Chats/ChatsView.swift` 的分组表 |
-| `dimension.json` | `radius`、`space`、`watch` | `Theme.Radius`、`Theme.Space`、`Theme.Watch`；触控区取 `docs/archive/redesign/README.md` D7，胶囊按短边的一半 |
+| `color.metric.json` | `metric.<mode>.<series>` | `apple/Persona/Views/Machines/MetricCharts.swift` `MetricColor`; Android's additional disk series uses its own neutral slate |
+| `dimension.json` | `radius`、`space`、`size`、`watch` | `Theme.Radius`、`Theme.Space`、`Theme.Size`、`Theme.Watch`；触控区取 `docs/archive/redesign/README.md` D7，胶囊按短边的一半。共享 `size.*` 必须与 iOS 同名同值 |
+| `dimension-android.json` | `android.size` | Android 专用布局尺寸，不冒充 iOS 的 `Theme.Size`；由生成器输出 `Tokens.Android.Size`，与共享尺寸分开校验 |
 | `type.json` | `type.<level>` | `Theme.Font` 的九个层级（display、title、heading、body、secondary、caption、sectionHeader、label、code）：文本样式、字重，以及 `Theme.Level` 的 iPhone 字号和行高倍数 |
+| `type-glass.json` | `typeGlass.<level>` | Android Glass reading sizes only (#5780): body 16sp and secondary 14sp; an intentional platform difference that leaves the shared `type.*` values and iOS checks unchanged |
 | `motion.json` | `motion` | `Theme.Motion` 的共享动效：state、layout、expand、drawer、springBack 是弹簧（时长和弹性，Compose 取阻尼比 `1 - bounce`、刚度 `(2π / 时长)²`），reveal、conceal 是时长和曲线，keyboard 是系统键盘的刚度和阻尼，needsYouBreath 是“需要你”呼吸环；减少动态效果时所有时长为零。它们是配置值，不是运行耗时的实测数据 |
 | `surface.json` | `surface.<style>` | `ios/Persona/Views/Styling.swift` 的 `Surface`：材质、阴影颜色与偏移、描边；原生回退使用无阴影实心表面 |
 | `rules.json` | `$extensions.persona` | `docs/apple/ios.md` 可读性底线、`docs/archive/redesign/ux.md` 第 7、8 节，以及 WCAG AA |
@@ -70,7 +73,7 @@
 - 文件内的对象层级组成 token 路径，文件名不参与路径。多个文件可以补充同一分组，不能重复定义 token。
 - 叶子必须且只能包含 `$type`、`$value`、`$description`；分组可带 `$description`。名称使用小写开头的英文字母、数字和驼峰写法。
 - 支持 `color`、`dimension`、`duration`、`fontWeight`、`number`，以及仓库扩展类型 `string`。颜色只接受 sRGB，RGB 与 alpha 都在 0…1 内。
-- `dimension` 使用 `{ "value": 14, "unit": "px" }`。这是设计基准单位：生成 Kotlin 时，`type.*` 转成 `sp`，其他尺寸转成 `dp`；CSS 字体尺寸除以 16 转成 `rem`，其他尺寸保持 `px`。屏幕逻辑单位的映射由此固定，不是把 iOS 的物理像素搬到 Android。
+- `dimension` uses `{ "value": 14, "unit": "px" }`. This is the design-space unit: Kotlin generation converts `type.*` and `typeGlass.*` to `sp` and other dimensions to `dp`; CSS divides font sizes by 16 to produce `rem` and keeps other values in `px`. This fixed mapping of logical units does not copy physical iOS pixels to Android.
 - `duration` 接受 `ms` 或 `s`，必须能表示为整数毫秒；Kotlin 输出 `Int` 毫秒。`fontWeight` 输出 Compose `FontWeight`。
 - 引用只能占据整个 `$value`，须与目标类型相同；不支持字符串插值、分量引用、隐式类型继承和组继承。缺失引用、循环引用、重复 JSON 键、非有限数值、生成名称冲突都会报错。
 - 源文件按文件名和键排序后计算摘要。所有产物都带同一摘要，因此改了说明、规则或任何 token，也会要求重新生成。JSON 缩进和对象键顺序不影响产物。
@@ -79,7 +82,7 @@
 
 iOS 的系统背景、文字与 fill 随系统环境变化，源码没有唯一 RGB。JSON 明确保存普通对比度下的跨端回退：主文字为黑白，次要文字为浅色 `#3C3C43 / 0.6`、深色 `#EBEBF5 / 0.6`；其余值在 `system` 分组中逐项说明。**这些值没有在 iOS 设备上采样，不能据此保证系统灰色与 iOS 渲染逐像素一致。** 固定写在 Swift 中的状态 RGB 和 opacity 则由测试直接对照源码。
 
-字体的 weight 和 `iosTextStyle` 来自 `Theme.Font`，size 和 lineHeight 来自 `Theme.Level`（iPhone 分支），由 `scripts/assets/test_gen_tokens.py` 对照检查。lineHeight 是字号的倍数，iOS 只给正文类内容加这段行距；Android 的 Glass 风格目前不读它，行高交给平台；组件应允许换行和高度增长。`family` 是角色提示，由平台选系统字体或等宽字体，黏土风格另选圆体。不要用固定容器裁掉字体缩放后的文字。
+Font weight and `iosTextStyle` come from `Theme.Font`; size and lineHeight come from the iPhone branch of `Theme.Level`, checked by `scripts/assets/test_gen_tokens.py`. lineHeight is a multiple of size, and iOS adds it only to content text. Android Glass leaves line height to the platform; components must allow wrapping and growth. `family` is a role hint: the platform selects a system or monospaced face, while Clay uses its rounded face. Fixed-height containers must not clip text after system font scaling. Glass long-form roles use the Android-specific 16sp / 14sp values in `typeGlass` (#5780); the other Glass roles keep their shared `type` mappings, and Brief / Board read neither group.
 
 `Theme.Radius` 的五档圆角用于实际界面。`AppStyle.corner` 中的 20、24、26、10 只供设置预览，源码已说明它们不是实际卡片圆角，因此没有用它们覆盖 `radius.card`。胶囊输出 `shape.capsulePercent = 50`，Compose 用百分比圆角；圆形用平台 `CircleShape`。
 
@@ -137,7 +140,7 @@ CSS 在 `:root` 暴露全路径变量，例如 `--semantic-native-light-accent`�
 
 底线为按钮字与主色 3.5、主色链接与页面 3、用户气泡正文 4.5。其余正文、次要文字、状态字、计数、diff 符号与终端文字按 4.5；大字按 3，但达到大字尺寸和字重条件前仍按正文要求。状态标签还检查 `text / tint / pageBackground` 的透明度合成结果。点色与发丝描边不作为文字对比度规则；实际控件的非文字边界与焦点可见性仍需组件验收。
 
-当前 339 个 token，29 条规则展开为 348 个组合，77 个不达标（底线 1 项，已列入已知例外；建议项 76 项）。按风格归类如下，同一公共色在不同风格中分别计数。
+当前 351 个 token，29 条规则展开为 348 个组合，77 个不达标（底线 1 项，已列入已知例外；建议项 76 项）。按风格归类如下，同一公共色在不同风格中分别计数。
 
 | 风格 | 浅色不达标 | 深色不达标 |
 | --- | --- | --- |

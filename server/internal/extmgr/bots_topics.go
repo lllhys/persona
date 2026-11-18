@@ -364,12 +364,12 @@ func (h *Manager) botOpenID(api *feishubot.Client) string {
 // useAISourceReply counts a reply under the source (at most botSourceReplies) before it is made: false when it has had
 // them all (or is gone), and then nothing is sent. A reply that fails still counts: the bot does not keep writing under
 // a message in a group it is not in charge of.
-func (h *Manager) useAISourceReply(messageID string) bool {
+func (h *Manager) useAISourceReply(messageID string, fullReply bool) bool {
 	b := &h.bots
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	src := b.set.aiSource(messageID, b.clock().UTC())
-	if b.set.Owner == nil || src == nil || src.Replies >= botSourceReplies {
+	if b.set.Owner == nil || src == nil || src.Replies >= botSourceReplies || fullReply && !b.set.SourceReportFullReply {
 		return false
 	}
 	src.Replies++
@@ -397,19 +397,20 @@ func (h *Manager) takeAISource(chatID, messageID string) {
 }
 
 // errBotSourceReply: a reply under a message taken through /ai that the bot may not write.
-var errBotSourceReply = &rpc.Error{Code: assistantwire.CodeChatDenied, Message: "feishu: under a message taken through /ai the bot may write one short text reply, in that chat"}
+var errBotSourceReply = &rpc.Error{Code: assistantwire.CodeChatDenied, Message: "feishu: the bot may only reply to the original /ai message in its chat using the configured reply format"}
 
 // aiSourceReply says whether a feishu.text is a reply to a message the hub took as the owner's "/ai" in a group that is
 // not on the list, and so may go there: found is false when replyTo is no such message (the usual rules decide). For one
-// that is, the reply must name no chat but its message's, stay short, and it is never turned into a message of the chat
-// if the original is gone (the caller sends it with no_detour). This is all that is open in such a group: a send into
+// that is, the reply must name no chat but its message's, respect the owner's full answer preference, and never detour
+// into the group if the original is gone. This is all that is open in such a group: a send into
 // it, a card, a reply to any other message, or a reply with a chat of its own is refused as ever.
-func aiSourceReply(set FeishuBotSettings, chatID, replyTo, text string, now time.Time) (chat string, found bool, err error) {
+func aiSourceReply(set FeishuBotSettings, chatID, replyTo, text string, now time.Time, fullReply bool) (chat string, found bool, err error) {
 	src := set.aiSource(replyTo, now)
 	if src == nil || set.Owner == nil {
 		return "", false, nil
 	}
-	if chatID != "" && chatID != src.ChatID || utf8.RuneCountInString(text) > botSourceTextMax {
+	if chatID != "" && chatID != src.ChatID || !fullReply && utf8.RuneCountInString(text) > botSourceTextMax ||
+		fullReply && !set.SourceReportFullReply {
 		return "", true, errBotSourceReply
 	}
 	return src.ChatID, true, nil

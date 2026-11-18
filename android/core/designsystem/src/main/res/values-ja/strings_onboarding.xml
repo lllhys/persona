@@ -40,7 +40,7 @@
     <string name="designsystem_readiness_help_install_body">%1$s でターミナルを開き、次の行を貼り付けて Return を押してください：</string>
     <string name="designsystem_readiness_help_install_after">インストールが終わったらここに戻ってください。しばらくすると更新されます。</string>
     <string name="designsystem_readiness_help_login_title">Claude Code にログイン</string>
-    <string name="designsystem_readiness_help_login_body">%1$s でターミナルを開き、次の単語を入力して Return を押し、ブラウザで一度ログインしてください：</string>
+    <string name="designsystem_readiness_help_login_body">Persona は %1$s の Claude Code CLI を使い、Claude デスクトップアプリのログインはこれに含まれません。そのコンピュータでターミナルを開き、次のコマンドを実行して、ブラウザで一度ログインしてください：</string>
     <string name="designsystem_readiness_help_login_after">ログインしたらここに戻って、メッセージを送ってみてください。</string>
     <string name="designsystem_readiness_help_what_title">Persona にできること</string>
     <string name="designsystem_readiness_help_what_body">Persona はあなた専用のアシスタントです。パソコンとモデルをつなぐと、次のことができます：</string>

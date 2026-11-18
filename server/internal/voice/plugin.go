@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"github.com/nwverse/persona/server/internal/extwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // Plugin serves the voice plugin's HTTP API on the hub's socket.
@@ -107,6 +107,7 @@ func (pl *Plugin) Handler() http.Handler {
 		role, lang := r.Header.Get(extwire.HeaderRole), i18n.Resolve(r.Header.Get(extwire.HeaderLang))
 		pl.converse(context.WithoutCancel(r.Context()), c, role, lang)
 	})
+	pl.transcriptionRoutes(mux) // meeting transcription (transcribe.go)
 	return mux
 }
 
@@ -133,7 +134,7 @@ func Run(ctx context.Context) error {
 	}
 	pl := New(cfg, hubURL, identity.Getenv("PERSONA_HUB_TOKEN"), logger)
 	_ = os.Remove(socket)
-	ln, err := net.Listen("unix", socket)
+	ln, err := osproc.Listen("unix", socket)
 	if err != nil {
 		return err
 	}

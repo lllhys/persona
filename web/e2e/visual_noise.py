@@ -125,8 +125,8 @@ def run(args):
                     for status in ("completed", "stalled", "running"):
                         expect(page.locator(f'[data-workflow-status="{status}"]').first).to_be_visible()
                 elif name == "success":
-                    expect(page.locator('[data-receipt]')).to_be_visible()
-                    expect(page.locator('[data-receipt]').get_by_text("All synthetic demo checks completed successfully.")).to_be_visible()
+                    # a task's receipt is its row in the trays, not a card in the chat (#8237)
+                    expect(page.locator('[data-receipt]')).to_have_count(0)
                 elif name == "attention":
                     expect(page.locator('[data-testid="chat-attention"]')).to_be_visible()
                 else:

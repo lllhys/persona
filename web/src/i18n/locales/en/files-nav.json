@@ -1,0 +1,21 @@
+{
+  "back": "Back",
+  "forward": "Forward",
+  "home": "Home folder",
+  "session": "Session",
+  "read_only": "Read only",
+  "session_folder": "Back to session folder",
+  "find_in": "Find in “{name}”",
+  "finding": "Listing the files…",
+  "find_failed": "Can't search this folder",
+  "found_one": "In “{name}” and its folders · {count} found",
+  "found_other": "In “{name}” and its folders · {count} found",
+  "find_truncated": "This folder has too many files to search them all",
+  "link": "Link",
+  "broken_link": "Broken link",
+  "link_to": "Link → {target}",
+  "link_broken": "Link broken · {target} isn’t there",
+  "show_in_files": "Show in Files",
+  "open_terminal": "Open terminal here",
+  "terminal_failed": "Couldn’t open a terminal: {error}"
+}

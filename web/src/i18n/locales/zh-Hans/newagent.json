@@ -20,6 +20,7 @@
   "open_folder": "打开 {name}",
   "permission_mode": "权限模式",
   "permission_mode_hint": "权限模式在对话里也能随时改，完全访问只能在新开时选。",
+  "provider_mode_hint": "不选完全访问时，这个 Agent 按它自己的审批设置来。之后也能在对话里切换。",
   "no_computer_title": "还没有电脑",
   "no_computer_body": "Agent 要在你的一台电脑上运行，这里才有电脑可选。先添加一台。",
   "worktree": "在新 worktree 里",
@@ -50,5 +51,9 @@
   "follow_row": "跟随模型配置",
   "carry_dropped": "{computer} 上用不了 {name}，已换回这台电脑的默认设置。",
   "preset_picked": "预设 {name} · {what}",
-  "typed_now": "这次手输的模型 ID"
+  "typed_now": "这次手输的模型 ID",
+  "temporary_session": "临时会话",
+  "runs": "运行次数",
+  "runs_hint": "把这个任务启动 {count} 次，每次在单独的 worktree 里，再对比结果。",
+  "start_runs": "启动 {count} 次"
 }

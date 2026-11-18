@@ -16,6 +16,9 @@ const val BuiltinPresetsFeature = "builtin_presets"
  */
 const val LauncherScopeFeature = "launcher_scope"
 
+/** The hub reads pasted provider configurations and the alias import takes one alias (docs/integrations/launchers.md). */
+const val LauncherImportParseFeature = "launcher_import_parse"
+
 /** The categories a provider added from the wizard takes over while they are still at their default (docs/assistant/onboarding.md 5.4). */
 val AssignPurposes = listOf("assistant", "agent.new")
 
@@ -26,6 +29,9 @@ val AssignPurposes = listOf("assistant", "agent.new")
 interface ProviderSetup {
     /** Pin the wizard and its follow-up requests to the assistant that opened it. */
     fun forManager(manager: String): ProviderSetup = ManagerProviderSetup(this, manager)
+
+    /** Whether a merged computer list entry belongs to this setup's hub group; plain setups own every entry they receive. */
+    fun ownsMachine(id: String): Boolean = true
 
     /** `GET /api/v1/launchers/presets`: the providers the hub's extensions offer; none from a hub without them (404). */
     suspend fun presets(): List<ProviderPreset>
@@ -41,6 +47,9 @@ interface ProviderSetup {
 
     /** Whether the selected hub takes a provider's device scope ([LauncherScopeFeature]); false from older hubs. */
     val launcherScope: Flow<Boolean> get() = flowOf(false)
+
+    /** Whether the selected hub reads pasted configurations and imports one alias ([LauncherImportParseFeature]). */
+    val launcherImportParse: Flow<Boolean> get() = flowOf(false)
 
     /** `POST /api/v1/launchers` with the hub's answer: the name it gave and, with `assign`, what now runs on it. */
     suspend fun create(provider: NewProvider): ProviderAdded {
@@ -79,10 +88,13 @@ interface ProviderSetup {
     suspend fun check(name: String, machine: String?): LauncherCheckAnswer = throw UnsupportedOperationException()
 
     /** `GET /api/v1/launchers/import?machine=`: what the machine's claude aliases come to, merged by gateway and key. */
-    suspend fun importPreview(machine: String): List<ImportedProvider> = throw UnsupportedOperationException()
+    suspend fun importPreview(machine: String, alias: String? = null): List<ImportedProvider> = throw UnsupportedOperationException()
 
     /** `POST /api/v1/launchers/import`: the ticked [providers]; the hub reads the keys on the machine again itself. */
-    suspend fun import(machine: String, providers: List<String>): LauncherImportResult = throw UnsupportedOperationException()
+    suspend fun import(machine: String, providers: List<String>, alias: String? = null): LauncherImportResult = throw UnsupportedOperationException()
+
+    /** `POST /api/v1/launchers/import/parse`: drafts from a pasted configuration; nothing is read on a computer or saved. */
+    suspend fun parse(text: String): ProviderPasteResult = throw UnsupportedOperationException()
 }
 
 /** One provider of Settings › Model providers (the hub's `LauncherView`): never its key, headers or environment, only whether it has them. */
@@ -173,6 +185,80 @@ data class LauncherCheck(
     @SerialName("answer") val answer: String? = null,
     @SerialName("millis") val millis: Int = 0,
     @SerialName("error") val error: String? = null,
+)
+
+/** A pasted configuration read by the hub: drafts, and everything it did not use, by line or name and never by value. */
+@Serializable
+data class ProviderPasteResult(
+    @SerialName("format") val format: String = "",
+    @SerialName("drafts") val drafts: List<ProviderPasteDraft> = emptyList(),
+    @SerialName("notes") val notes: List<ProviderPasteNote> = emptyList(),
+)
+
+@Serializable
+data class ProviderPasteNote(
+    @SerialName("code") val code: String,
+    @SerialName("line") val line: Int? = null,
+    @SerialName("name") val name: String? = null,
+)
+
+@Serializable
+data class ProviderPasteDraft(
+    @SerialName("label") val label: String? = null,
+    @SerialName("aliases") val aliases: List<String> = emptyList(),
+    @SerialName("provider") val provider: PastedProvider,
+    @SerialName("env_names") val envNames: List<String> = emptyList(),
+    @SerialName("skipped_env") val skippedEnv: List<ProviderPasteSkipped> = emptyList(),
+    @SerialName("skipped_headers") val skippedHeaders: List<ProviderPasteSkipped> = emptyList(),
+    @SerialName("matches") val matches: List<ProviderPasteMatch> = emptyList(),
+    @SerialName("notes") val notes: List<ProviderPasteNote> = emptyList(),
+)
+
+@Serializable
+data class ProviderPasteSkipped(
+    @SerialName("name") val name: String,
+    @SerialName("reason") val reason: String = "",
+)
+
+@Serializable
+data class ProviderPasteMatch(
+    @SerialName("name") val name: String,
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("same_key") val sameKey: Boolean = false,
+)
+
+/** A draft's `POST /api/v1/launchers` fields. The pasted key is the only secret the parse route returns. */
+@Serializable
+data class PastedProvider(
+    @SerialName("name") val name: String = "",
+    @SerialName("display_name") val displayName: String? = null,
+    @SerialName("kind") val kind: String = "launcher",
+    @SerialName("agent") val agent: String? = null,
+    @SerialName("api") val api: String? = null,
+    @SerialName("base_url") val baseUrl: String = "",
+    @SerialName("auth") val auth: String? = null,
+    @SerialName("api_key") val apiKey: String? = null,
+    @SerialName("model") val model: String? = null,
+    @SerialName("small_model") val smallModel: String? = null,
+    @SerialName("subagent_model") val subagentModel: String? = null,
+    @SerialName("args") val args: List<String> = emptyList(),
+    @SerialName("custom_model") val customModel: String? = null,
+    @SerialName("custom_model_name") val customModelName: String? = null,
+    @SerialName("custom_model_description") val customModelDescription: String? = null,
+    @SerialName("models") val models: List<PresetModel> = emptyList(),
+    @SerialName("opus_model") val opusModel: String? = null,
+    @SerialName("sonnet_model") val sonnetModel: String? = null,
+    @SerialName("haiku_model") val haikuModel: String? = null,
+    @SerialName("fable_model") val fableModel: String? = null,
+    @SerialName("subagent_force") val subagentForce: Boolean = false,
+    @SerialName("headers") val headers: String? = null,
+    @SerialName("env") val env: String? = null,
+    @SerialName("proxy") val proxy: String? = null,
+    @SerialName("no_proxy") val noProxy: String? = null,
+    @SerialName("timeout_ms") val timeoutMs: Int = 0,
+    @SerialName("compact_window") val compactWindow: Int = 0,
+    @SerialName("max_context") val maxContext: Int = 0,
+    @SerialName("effort") val effort: String? = null,
 )
 
 /** One provider "Import from ~/.zshrc" found: merged from [aliases]; [existing] is the stored one it would add models to. */

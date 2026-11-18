@@ -134,8 +134,8 @@
   "elsewhere_not_ready": "The Lark bot isn't ready. Turn it on and pair it first.",
   "elsewhere_root": "From another group chat: {text}",
   "elsewhere_root_quote": "Replying to: {quote}",
-  "elsewhere_root_hint": "When the to-do is done or accepted, a short outcome is posted under that message, after a notice here. Send /noreply in this topic to stop that.",
-  "elsewhere_root_hint_chat": "When the to-do is done or accepted, a short outcome is posted under that message, after a notice here. Reply to this message with /noreply to stop that.",
+  "elsewhere_root_hint": "When the to-do is done or accepted, the result is posted under that message. If there is a preview, it appears here. Send /noreply in this topic to stop the reply before it goes out.",
+  "elsewhere_root_hint_chat": "When the to-do is done or accepted, the result is posted under that message. If there is a preview, it appears here. Reply to this message with /noreply to stop the reply before it goes out.",
   "elsewhere_no_topic": "Couldn't open a topic in the home group chat: the message posted there is not in a topic. Is it a topic-style group chat? Send /topics home in the one you want.",
   "elsewhere_needs_text": "Say what you want after /ai, for example: /ai check the release notes.",
   "elsewhere_failed": "Couldn't open a to-do for this: {error}",
@@ -150,5 +150,10 @@
   "source_report_unreachable": "Couldn't post the outcome where it was asked: {error}",
   "source_report_notice": "Will be posted under the original message in {minutes} minutes: {text} (send /noreply to cancel)",
   "source_report_notice_chat": "Will be posted under the original message in {minutes} minutes: {text} (reply to this with /noreply to cancel)",
-  "answer_below": "Answered below"
+  "answer_below": "Answered below",
+  "source_report_full_notice": "This answer will go under the original message in {minutes} minutes. Send /noreply here to cancel.\n\n{text}",
+  "source_report_full_notice_chat": "This answer will go under the original message in {minutes} minutes. Reply with /noreply to cancel.\n\n{text}",
+  "source_report_file_notice": "The attached answer will go under the original message in {minutes} minutes. Send /noreply here to cancel.",
+  "source_report_file_notice_chat": "The attached answer will go under the original message in {minutes} minutes. Reply to this with /noreply to cancel.",
+  "source_report_no_final": "The task is complete. Its final answer was unavailable."
 }

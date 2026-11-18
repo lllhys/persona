@@ -79,6 +79,13 @@ type SessionRef struct {
 	SessionID string `json:"session_id"`
 }
 
+// UserSpokeParams carries text only when the hub authenticated a person's own app.
+// Keep it out of SessionRef: session references are also used as map keys.
+type UserSpokeParams struct {
+	SessionRef
+	Text string `json:"text,omitempty"`
+}
+
 // ContextParams is assistant.context's params. MachineID is the asking node's machine: the hub sets it from the
 // node's connection, never from the node's params. With Ack the call only confirms that a message carrying those
 // view errors (ContextResult.ViewErrors) was delivered, and answers nothing.

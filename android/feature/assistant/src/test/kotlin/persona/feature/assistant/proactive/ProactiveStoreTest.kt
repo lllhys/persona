@@ -53,6 +53,7 @@ private class FakeHub(
             lastSessionId = hub?.lastSessionId, lastStatus = hub?.lastStatus, lastError = hub?.lastError,
             runMachineId = hub?.runMachineId, runSessionId = hub?.runSessionId, machineId = hub?.machineId,
             sessionId = task.sessionId?.takeIf { it.isNotBlank() && hub?.sessionId == it },
+            inbox = task.inbox ?: hub?.inbox,
             nextRun = if (task.enabled) "2026-11-03T01:00:00Z" else null)
         table = if (hub == null) table + saved else table.map { if (it.id == saved.id) saved else it }
         if (loseAnswer) throw IOException("connection reset")
@@ -300,6 +301,66 @@ class ProactiveStoreTest {
         assertTrue(store.save(TaskChange.Edit("fu_review", opened, opened.copy(continues = false))).isSuccess)
         assertNull(hub.writes.single().sessionId)
         assertEquals("", hub.writes.single().editable()["session_id"].toString().trim('"'))
+    }
+
+    @Test fun inboxValuesRoundTripWithoutChangingPush() {
+        for (mode in listOf("", "worthy", "every")) {
+            val task = review.copy(push = ScheduledTask.PUSH_ASKED, inbox = mode)
+            val opened = task.draft()
+            assertEquals(mode, opened.inbox)
+            val saved = task.applying(opened)
+            assertEquals(mode, saved.editable()["inbox"].toString().trim('"'))
+            assertEquals(ScheduledTask.PUSH_ASKED, saved.push)
+        }
+    }
+
+    @Test fun inboxChangesArePatchedAndCanBeTurnedOff() {
+        val opened = morning.draft()
+        val changed = morning.patched(opened, opened.copy(inbox = "worthy"))
+        assertEquals("worthy", changed.inbox)
+        assertEquals(morning.push, changed.push)
+        assertEquals(morning.sessionId, changed.sessionId)
+        val turnedOff = changed.patched(changed.draft(), changed.draft().copy(inbox = ""))
+        assertEquals("", turnedOff.editable()["inbox"].toString().trim('"'))
+    }
+
+    @Test fun aSwitchLeavesAnUnchangedInboxOutOfThePut() = runTest {
+        val task = morning.copy(inbox = "every")
+        val hub = FakeHub(listOf(task))
+        val store = ProactiveStore(hub, this, say)
+        store.refresh()
+        store.toggle("morning", false)
+        advanceUntilIdle()
+        val written = hub.writes.single()
+        assertNull(written.inbox)
+        assertFalse(written.editable().containsKey("inbox"))
+        assertEquals("every", hub.table.single().inbox)
+        assertEquals("every", store.state.value.task("morning")?.inbox)
+    }
+
+    @Test fun inboxStaysUnsetForAnOldHubAndKeepsANewerSettingDuringAnotherEdit() {
+        val opened = morning.draft()
+        val untouched = morning.patched(opened, opened.copy(prompt = "Changed"))
+        assertNull(untouched.inbox)
+        assertFalse(untouched.editable().containsKey("inbox"))
+        val changedMeanwhile = morning.copy(inbox = "every")
+        val saved = changedMeanwhile.patched(opened, opened.copy(prompt = "Changed again"))
+        assertNull(saved.inbox)
+        assertFalse(saved.editable().containsKey("inbox"))
+        assertEquals("Changed again", saved.prompt)
+    }
+
+    @Test fun unchangedInboxStillCountsAsSavedWhenTheAnswerIsLost() = runTest {
+        val task = morning.copy(inbox = "every")
+        val hub = FakeHub(listOf(task))
+        val store = ProactiveStore(hub, this, say)
+        store.refresh()
+        val opened = task.draft()
+        hub.loseAnswer = true
+        assertTrue(store.save(TaskChange.Edit("morning", opened, opened.copy(prompt = "Changed"))).isSuccess)
+        assertNull(hub.writes.single().inbox)
+        assertFalse(hub.writes.single().editable().containsKey("inbox"))
+        assertEquals("every", store.state.value.task("morning")?.inbox)
     }
 
     /** "Only when it alerts" is written, leaves "Continue the original chat" (the hub runs it in its own conversation), and can be turned back. */

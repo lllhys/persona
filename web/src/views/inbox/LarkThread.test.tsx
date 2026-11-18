@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { nextLarkPosition, type LarkMessage } from "../../lib/inbox";
+import { type LarkMessage } from "../../lib/inbox";
+import { nextLarkPosition } from "../../lib/inbox-page";
 
 describe("LarkThread 交互与发信逻辑", () => {
   it("nextLarkPosition 正确递增消息位置以保持列表顺序", () => {

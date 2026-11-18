@@ -15,8 +15,9 @@ import (
 // business reported for its latest turn while it is still stopped on it, what it shows while it works or asks.
 
 // decorateWork puts on sess (decorated but for its work) where it stands in its work, and the state that follows.
-// asking is the machine's pending interactions by session (an agent's own before the manager's card).
-func (s *Service) decorateWork(mid string, sess *proto.Session, asking map[string]proto.Interaction) {
+// asking is the machine's pending interactions by session (an agent's own before the manager's card); a done turn
+// nobody has seen that ended after finishedSince is Just finished (#9751).
+func (s *Service) decorateWork(mid string, sess *proto.Session, asking map[string]proto.Interaction, finishedSince time.Time) {
 	r := &s.fleet.rep
 	r.mu.RLock()
 	on := r.workOn
@@ -30,7 +31,77 @@ func (s *Service) decorateWork(mid string, sess *proto.Session, asking map[strin
 		e = &reported
 	}
 	sess.Work = workOf(s.lang(context.Background()), *sess, e, asking)
+	unread := sess.State == proto.StateUnread
 	sess.State = workState(sess.State, sess.Work)
+	if unread && justFinished(*sess, finishedSince) {
+		sess.Work.JustFinished = true // workOf's copy: the report keeps none
+	}
+}
+
+// justFinished: the triage found sess's turn done while nobody had seen it (workState took it out of Unread), and the
+// turn ended after since. The apps list it as Just finished till the window passes (docs/protocol/agent-states.md
+// "Just finished", #9751). One a /loop wakes again is Waiting instead.
+func justFinished(sess proto.Session, since time.Time) bool {
+	w := sess.Work
+	return sess.State == proto.StateIdle && w != nil && w.Phase == proto.WorkDone && sess.Loop == nil && endedAt(sess).After(since)
+}
+
+// endedAt is when the turn sess's work is about ended: the triage's own record of it, else the session's update time
+// (when the turn finished, agentState).
+func endedAt(sess proto.Session) time.Time {
+	if sess.Work != nil && !sess.Work.TurnAt.IsZero() {
+		return sess.Work.TurnAt
+	}
+	return sess.UpdatedAt
+}
+
+// finishedDue is when the first of list's Just finished rows runs out of its window, zero when none is.
+func finishedDue(list []proto.Session, window time.Duration) time.Time {
+	var due time.Time
+	for _, sess := range list {
+		if sess.Work == nil || !sess.Work.JustFinished {
+			continue
+		}
+		if at := endedAt(sess).Add(window); due.IsZero() || at.Before(due) {
+			due = at
+		}
+	}
+	return due
+}
+
+// noteFinishedDue keeps when machine's list, as decorated to be told, has its first Just finished row run out (zero:
+// none has one).
+func (s *Service) noteFinishedDue(machine string, due time.Time) {
+	f := &s.fleet
+	f.shownMu.Lock()
+	defer f.shownMu.Unlock()
+	if due.IsZero() {
+		delete(f.finishedDue, machine)
+		return
+	}
+	if f.finishedDue == nil {
+		f.finishedDue = map[string]time.Time{}
+	}
+	f.finishedDue[machine] = due
+}
+
+// republishFinished tells the hub again each machine's list whose first Just finished row ran out of its window by
+// now: nothing else tells a list again when only time passes, and the apps would keep listing the row as Just
+// finished (#9751). The list told notes the machine's next one; a machine gone notes none.
+func (s *Service) republishFinished(now time.Time) {
+	f := &s.fleet
+	f.shownMu.Lock()
+	var due []string
+	for m, at := range f.finishedDue {
+		if !now.Before(at) {
+			due = append(due, m)
+			delete(f.finishedDue, m)
+		}
+	}
+	f.shownMu.Unlock()
+	for _, m := range due {
+		s.publishSessions(m)
+	}
 }
 
 // workOf is sess's work state for the lists: reported is what the Agents business reported for its latest turn (nil:

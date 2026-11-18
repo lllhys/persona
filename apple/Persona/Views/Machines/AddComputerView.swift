@@ -50,6 +50,12 @@ extension AppModel {
     var canAddComputer: Bool { hubFeatures.contains(APIClient.machinesAddFeature) }
     /// The group's hub takes It's Mine / Not Mine (`machine_trust`).
     func canConfirmComputer(_ group: String) -> Bool { features(group).contains(APIClient.machineTrustFeature) }
+    /// The current assistant of `group`'s hub, for a computer added there: only the hub-level group's (the one whose assistants
+    /// the switcher lists) has one; nil for another, whose request names none.
+    func addingAssistant(in group: String) -> AddAssistant? {
+        AddComputerText.assistant(in: group, hubGroup: hub?.group, roster: managerRosters[group], pick: assistantPicks[group],
+                                  settled: managerRosterUnsupported.contains(group))
+    }
     /// Add Computer over the whole app (nothing on a hub without `machines_add`).
     func openAddComputer() { if canAddComputer { addComputer = .add } }
     /// Confirm Computer for one computer; nil: the one the hub most likely means (`pendingToConfirm`), else the form.
@@ -67,13 +73,26 @@ struct AddComputerFailure: Equatable {
     var code: String?
 }
 
+/// What the app knows of the assistant of the hub a computer is added to: that hub's roster (nil from a hub without one, or until
+/// it is read) and the pick this device kept for it (nil: the default).
+nonisolated struct AddAssistant: Equatable, Sendable {
+    var roster: ManagerRoster?
+    var pick: String?
+    /// The hub has answered, in this run, that it has no roster (`AppModel.managerRosterUnsupported`); a roster it has is `roster`.
+    var settled = true
+
+    /// Nothing says which assistant is current yet: no roster, no pick, and the hub hasn't answered. A hub without a
+    /// roster is settled by its 404, so it is never kept waiting.
+    var unknown: Bool { roster == nil && (pick ?? "").isEmpty && !settled }
+}
+
 /// The words, kept apart from the view to test.
 enum AddComputerText {
     static let maxName = 40
     /// How to build and install Persona Link on a Mac until there is a download (docs/assistant/onboarding.md 6.3, decision 1).
-    static let macInstallDoc = URL(string: "https://github.com/nwverse/persona/blob/master/docs/operations/persona-link-install.md")!
+    static let macInstallDoc = URL(string: "https://github.com/nwverse/persona/blob/main/docs/operations/persona-link-install.md")!
     /// How to install it on a Linux without the hub's install script (docs/operations/link.md「Linux（headless）」).
-    static let linuxInstallDoc = URL(string: "https://github.com/nwverse/persona/blob/master/docs/operations/link.md#linuxheadless")!
+    static let linuxInstallDoc = URL(string: "https://github.com/nwverse/persona/blob/main/docs/operations/link.md#linux-headless")!
 
     /// The name as sent: trimmed; nil when empty or too long.
     /// `AppModel.pendingToConfirm`: `preferred` while it waits, else the first one waiting that is online, else the first.
@@ -103,6 +122,10 @@ enum AddComputerText {
         case "not_found": message = String(localized: "This computer is no longer there.")
         case "invalid_name": message = String(localized: "Give it a name of up to 40 characters.")
         case "invalid_os": message = String(localized: "Pick a system: Mac, Linux or Windows.")
+        // add.manager's own refusals: the hub says which assistant and why, in the request's language. The generic words for the
+        // status (or for assistant_offline) would hide that.
+        case "no_manager", "installing", "assistant_offline", "owners_unknown":
+            message = theirs.isEmpty ? (error.shown ?? error.localizedDescription) : theirs
         default: message = error.shown ?? error.localizedDescription
         }
         return AddComputerFailure(message: message, code: code)
@@ -166,6 +189,43 @@ enum AddComputerText {
         return left > 0 && left <= 600 ? code.expiresAt : now.addingTimeInterval(600)
     }
 
+    /// The assistant a new computer is added to, as `AddComputerModel` asks for it: the roster's id for the current one (the default's
+    /// real id too, also with one assistant), else, before a roster is read or from a hub without one, the pick this device kept
+    /// for that hub; nil when neither names one, and the request is as it was before `add.manager`.
+    static func manager(for assistant: AddAssistant?) -> String? {
+        guard let assistant else { return nil }
+        if let roster = assistant.roster { return roster.isMulti ? roster.owner(assistant.pick) : roster.defaultID }
+        return assistant.pick.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// What is known of the current assistant for a computer added to `group`: only the hub-level group's hub (`hubGroup`) has one;
+    /// any other group's request names none.
+    static func assistant(in group: String, hubGroup: String?, roster: ManagerRoster?, pick: String?, settled: Bool) -> AddAssistant? {
+        guard let hubGroup, hubGroup == group else { return nil }
+        return AddAssistant(roster: roster, pick: pick, settled: settled)
+    }
+
+    /// The current assistant when a computer can't be added to it: it is offline. Only with several assistants (one is never told
+    /// apart), and never when the roster is not known (an unknown one is not an offline one).
+    static func offline(_ assistant: AddAssistant?) -> HubManager? {
+        guard let roster = assistant?.roster, roster.isMulti else { return nil }
+        let id = roster.owner(assistant?.pick)
+        return roster.installed.first { $0.id == id && !$0.online }
+    }
+
+    /// The name of the assistant the new computer is under, when that is not the one it was asked for (docs/protocol/protocol.md
+    /// "Computer pairing codes"): the reply's `manager`; a hub from before the field leaves it out and puts a computer it added
+    /// under its own assistant, while one it reused stays where it was (`listed`: the manager the machines list has it under).
+    /// nil when it is where it was asked for, when none was asked for, and with one assistant.
+    static func addedUnder(asked: String?, code: APIClient.ComputerCode, listed: String?, roster: ManagerRoster?) -> String? {
+        guard let asked, !asked.isEmpty, let roster, roster.isMulti else { return nil }
+        let reported = code.manager.flatMap { $0.isEmpty ? nil : $0 }
+        let listedManager = listed.flatMap { $0.isEmpty ? nil : $0 }
+        let owner = reported ?? ((code.added ?? false) ? ManagerRoster.assistant : (listedManager ?? ManagerRoster.assistant))
+        guard owner != asked else { return nil }
+        return roster.managers.first { $0.id == owner }?.name ?? owner
+    }
+
     static func namePlaceholder(_ os: ComputerOS) -> String {
         switch os {
         case .mac: String(localized: "e.g. My MacBook")
@@ -188,12 +248,17 @@ enum AddComputerText {
         /// The system a computer was added as, by machine id (the hub does not keep it).
         var rememberOS: (String, ComputerOS) -> Void = { _, _ in }
         var rememberedOS: (String) -> ComputerOS? = { _ in nil }
+        /// The current assistant of a group's hub; nil for any other group's (a computer added there names no assistant here).
+        var assistant: (String) -> AddAssistant? = { _ in nil }
+        /// The computers the app lists, whichever assistant's: where a reused computer is.
+        var machines: () -> [Machine] = { [] }
 
         static var live: Deps {
             .init(api: { AppModel.shared.api($0) }, canConfirm: { AppModel.shared.canConfirmComputer($0) },
                   refreshed: { await AppModel.shared.refresh() },
                   rememberOS: { id, os in UserDefaults.standard.set(os.rawValue, forKey: "addComputer.os." + id) },
-                  rememberedOS: { id in UserDefaults.standard.string(forKey: "addComputer.os." + id).flatMap(ComputerOS.init(rawValue:)) })
+                  rememberedOS: { id in UserDefaults.standard.string(forKey: "addComputer.os." + id).flatMap(ComputerOS.init(rawValue:)) },
+                  assistant: { AppModel.shared.addingAssistant(in: $0) }, machines: { AppModel.shared.machines })
         }
     }
 
@@ -228,6 +293,10 @@ enum AddComputerText {
     private(set) var now: Date
     private(set) var expiresAt: Date?
     let group: String
+    /// The assistant the new computer was asked for (`add.manager`) and the roster then, to name the one the hub put it under;
+    /// nil when none was named. A new code for the same computer keeps them.
+    private(set) var asked: String?
+    @ObservationIgnored private var askedRoster: ManagerRoster?
     @ObservationIgnored private let deps: Deps
     /// The list has had it since the code was made: missing later means it is gone.
     @ObservationIgnored private var seen = false
@@ -256,8 +325,22 @@ enum AddComputerText {
     /// sleeping computer has).
     var canReissue: Bool { machine.map { $0.isPending && !$0.online && $0.neverConnected } ?? false }
 
+    /// The current assistant while it is offline: nothing is added to it now. Only on the form.
+    var assistantOffline: HubManager? { stage == .form ? AddComputerText.offline(deps.assistant(group)) : nil }
+
+    /// The assistant the computer was added under when that is not the one asked for, by name: said while it waits.
+    var addedUnder: String? {
+        guard let code else { return nil }
+        let listed = machine?.manager ?? deps.machines().first { $0.ref == MachineRef(group: group, id: code.machine) }?.manager
+        return AddComputerText.addedUnder(asked: asked, code: code, listed: listed, roster: deps.assistant(group)?.roster ?? askedRoster)
+    }
+
+    /// How long Next waits for a roster that isn't known yet (a few seconds in all).
+    static let rosterWait: [Duration] = Array(repeating: .milliseconds(250), count: 20)
+
     /// Next: adds the computer and shows its code.
     func submit() async {
+        if assistantOffline != nil { return }
         guard let n = validName else {
             failure = AddComputerFailure(message: String(localized: "Give it a name of up to 40 characters."), code: "invalid_name")
             return
@@ -265,9 +348,21 @@ enum AddComputerText {
         guard let api = deps.api(group) else { failure = Self.disconnected; return }
         stage = .working
         failure = nil
+        // After a launch with no kept roster the first answer may be moments away: a computer added before it would go to
+        // the hub's own assistant, whichever is the default. A hub that never answers gets the plain request.
+        var waited = 0
+        while deps.assistant(group)?.unknown == true, waited < Self.rosterWait.count {
+            try? await Task.sleep(for: Self.rosterWait[waited])
+            waited += 1
+        }
+        let assistant = deps.assistant(group)
+        if AddComputerText.offline(assistant) != nil { stage = .form; return }
+        let manager = AddComputerText.manager(for: assistant)
         do {
-            let c = try await api.computerCode(addNamed: n, os: os.rawValue, icon: os.icon)
+            let c = try await api.computerCode(addNamed: n, os: os.rawValue, icon: os.icon, manager: manager)
             deps.rememberOS(c.machine, os)
+            asked = manager
+            askedRoster = assistant?.roster
             show(c)
         } catch {
             stage = .form
@@ -442,7 +537,7 @@ struct AddComputerSheet: View {
     private let confirming: Bool
 
     init(request: AddComputerRequest, group: String? = nil) {
-        _page = State(initialValue: AddComputerModel(request, group: group ?? AppModel.shared.hubGroup))
+        _page = State(initialValue: AddComputerModel(request, group: group ?? AppModel.shared.hub?.group ?? AppModel.shared.hubGroup))
         if case .confirm = request { confirming = true } else { confirming = false }
     }
 
@@ -475,29 +570,28 @@ struct AddComputerSheet: View {
     }
 
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        // ✕ at the leading corner at every stage (#9653); Next while the form is up.
+        SheetClose(id: "addComputer.close") { dismiss() }
         if page.stage == .form || page.stage == .working {
-            ToolbarItem(placement: .cancellationAction) { Button { dismiss() } label: { Text("Cancel").lineLimit(1) } }
             ToolbarItem(placement: .confirmationAction) {
                 Button { Task { await page.submit() } } label: { Text("Next [Inbox Line acfc4e]").lineLimit(1) }
-                    .disabled(page.validName == nil || page.stage == .working)
+                    .disabled(page.validName == nil || page.stage == .working || page.assistantOffline != nil)
                     .accessibilityIdentifier("addComputer.next")
-            }
-        } else {
-            ToolbarItem(placement: .confirmationAction) {
-                Button { dismiss() } label: { (isEnd ? Text("Done [Extension System Presentation c0b3fb]") : Text("Close")).lineLimit(1) }
-                    .accessibilityIdentifier("addComputer.done")
             }
         }
     }
 
-    private var isEnd: Bool { [.confirmed, .rejected, .gone].contains(page.stage) }
-
     @ViewBuilder private var content: some View {
         if let f = page.failure { failure(f) }
         switch page.stage {
-        case .form, .working: form
-        case .waiting: waiting
-        case .joined: joined
+        case .form, .working:
+            if let offline = page.assistantOffline { assistantOffline(offline) } else { form }
+        case .waiting:
+            addedUnder
+            waiting
+        case .joined:
+            addedUnder
+            joined
         case .offline: offline
         case .confirmed: outcome(symbol: Theme.Icon.successFilled, tone: Theme.positive, title: String(localized: "Added: \(page.computerName)"),
                                  hint: String(localized: "It appears in the machine list, and you can pick it when you start a new agent."), id: "addComputer.confirmed")
@@ -513,6 +607,35 @@ struct AddComputerSheet: View {
             Label(f.message, systemImage: Theme.Icon.errorFilled)
                 .font(Theme.Font.secondary).foregroundStyle(Theme.danger)
                 .accessibilityIdentifier("addComputer.error")
+        }
+    }
+
+    // MARK: The current assistant is offline
+
+    private func assistantOffline(_ manager: HubManager) -> some View {
+        Section {
+            VStack(spacing: Theme.Space.s) {
+                ThemedIcon(Theme.Icon.machine).font(Theme.Font.display).foregroundStyle(.secondary)
+                Text("\(manager.name) is offline, so a computer can't be added to it right now.")
+                    .font(Theme.Font.secondary).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Theme.Space.l)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("addComputer.assistantOffline")
+        }
+    }
+
+    // MARK: Under another assistant
+
+    /// The computer went to another assistant than the one asked for (or the hub didn't say where: one from before `add.manager`).
+    @ViewBuilder private var addedUnder: some View {
+        if let name = page.addedUnder {
+            Section {
+                Label("This computer was added under \(name).", systemImage: Theme.Icon.info)
+                    .font(Theme.Font.secondary)
+                    .accessibilityIdentifier("addComputer.addedUnder")
+            }
         }
     }
 

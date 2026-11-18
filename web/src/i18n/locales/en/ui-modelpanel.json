@@ -40,5 +40,11 @@
   "presets": "Presets",
   "how_to_fix": "How to fix",
   "engine_via": "Runs through {provider}",
-  "effort_unset": "Model default"
+  "effort_unset": "Model default",
+  "show_all": "Show all {count} models",
+  "older": "Earlier versions · {count}",
+  "older_of": "{family}: show {count} earlier versions",
+  "hide_older": "Hide earlier",
+  "hide_older_of": "{family}: hide earlier versions",
+  "latest": "Latest"
 }

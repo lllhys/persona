@@ -127,6 +127,37 @@ struct PushRegistrarTests {
         #expect(fake.registrations == 2)
     }
 
+    /// Settings › Notifications reads the hub's route for this device again (#1859): the one Settings › Devices shows,
+    /// not the one kept since launch.
+    @Test func theRouteIsReadAgainFromTheHub() async {
+        let fake = FakeSystem()
+        let (r, health) = registrar(fake)
+        health.update { $0.routes["g"] = APIClient.PushRoute(route: "relay") } // what the launch's registration said
+        let failing = APIClient.PushRoute(route: "relay", reason: "push_failed", detail: "503 push relay not configured")
+        func tokens(_ push: [String: APIClient.PushRoute]?) -> APIClient.DeviceTokens {
+            APIClient.DeviceTokens(tokens: [], current: "me", push: push)
+        }
+
+        await r.refreshRoute(group: "g") { tokens(["me": failing, "watch": APIClient.PushRoute(route: "relay")]) }
+        #expect(health.health.routes["g"] == failing)
+        #expect(health.health.status(group: "g", allowed: true).level == .lastFailed)
+
+        // An older hub sends no routes: what is known stays.
+        await r.refreshRoute(group: "g") { tokens(nil) }
+        #expect(health.health.routes["g"] == failing)
+
+        // Unreachable: unchecked, not the route from before; a cancelled read is no answer either way.
+        await r.refreshRoute(group: "g") { throw URLError(.timedOut) }
+        #expect(health.health.unchecked?["g"] == URLError(.timedOut).localizedDescription)
+        #expect(health.health.status(group: "g", allowed: true).level == .unknown)
+        await r.refreshRoute(group: "g") { throw CancellationError() }
+        #expect(health.health.unchecked?["g"] == URLError(.timedOut).localizedDescription)
+
+        // Back, with no registration from this device at that hub.
+        await r.refreshRoute(group: "g") { tokens(["watch": APIClient.PushRoute(route: "relay")]) }
+        #expect(health.health.routes["g"] == nil && health.health.unchecked == nil)
+    }
+
     @Test func theSystemsSwitch() {
         #expect(UNAuthorizationStatus.notDetermined.allowsNotifications == nil)
         #expect(UNAuthorizationStatus.denied.allowsNotifications == false)

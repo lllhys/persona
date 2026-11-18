@@ -34,6 +34,7 @@
 | 批量标已读只取筛选结果中当前 unread 的会话，不包含 kept 中已经看过的会话。 | ChatsView 的 `unreadShown` | `unread_keeps_seen_rows` |
 | 折叠只改变可见行，保留分组成员及计数；按状态的「已看」默认折叠，打开后 folded 里记 `!state/idle`。 | ChatsView 的 `spaceSection`、`stateSections`、`machineSections` | `folded_space_keeps_counts`、`folded_state_and_expanded_idle`、`folded_machine_hides_rows` |
 | 细列表不改变排序和计数，搜索会展开空闲行，显式折叠仍优先。 | ChatsView 的 `slotRow`、`foldedRows`、`spaceSection` | `compact_expands_idle_without_reordering`、`search_expands_idle`、`folded_state_and_expanded_idle` |
+| 打开时为完成未看的会话在离开前保持 held：安静后仍归完成未看分段，不进入行级空闲折叠；所在空间不收进空闲空间。 | `AgentListOrder` 的 `held`、`stays(_:)`、`rank(_:)`、`isQuiet(_:)`；`AppModel.visibleSession`、`markSeen` | `held_quiet_row_keeps_unread_state_section`、`held_quiet_space_stays_active`、`held_row_stays_out_of_quiet_idle_fold` |
 
 ## JSON 结构
 
@@ -43,7 +44,7 @@
 | --- | --- | --- |
 | `session_state` | `session_state.json` | 输入 `sessions` 是 iOS Session 的 JSON；输出每条的完整 id、state、is_live、is_quiet、is_waiting、sort_date。 |
 | `hub_state` | `hub_state.json` | 输入 `session` 是 Go proto.Session，`seen_at` 是 hub 的独立已看记录；输出统一 state。 |
-| `agents_list` | `filters.json`、`ordering.json`、`grouping.json`、`folding.json` | 输入会话及列表设置；输出筛选标签计数、有序分组、当前未读集合。 |
+| `agents_list` | `filters.json`、`ordering.json`、`grouping.json`、`folding.json`、`held.json` | 输入会话及列表设置；输出筛选标签计数、有序分组、当前未读集合。 |
 
 时间统一为 UTC RFC 3339 字符串。缺失可选字段或 null 表示没有值，`sort_date: null` 表示 iOS 的 distantPast，不要求 Kotlin 模拟 Apple 的具体远古时间。字段的数值类型和必填项沿用对应 iOS 解码器。
 
@@ -58,6 +59,7 @@
 - `folded` 使用 `state/needs` 等状态段 id（`!state/idle` 表示默认折叠的「已看」已打开）、`machine/机器标识` 或 `机器标识/空间标识`。
 - `expanded_idle` 使用活跃空间 id 或 `machine-机器标识`；`expanded_quiet` 使用空闲空间 id；二者和显式 folded 分开。
 - `compact` 只表示行样式，不参与行为输出。
+- `settings.held` 是打开时为完成未看、尚未离开的完整会话 id；离开后的下一帧应省略它，而非保留一个已失效的持有状态。
 
 `agents_list.expected`：
 
@@ -77,13 +79,13 @@
 - 文档写有「最近（未运行）」；当前 ChatsView 普通分组过滤 offline，没有最近段，置顶 offline 则仍显示。
 - 已看文档按严格时间比较，hub 实现带 2 秒容差；这是状态规则常量，不是性能实测值。
 - 快速筛选保留的是成员资格，没有冻结原位置；状态分组仍按当前 rank 分段，状态或时间变化仍可能移动行；这里不补造冻结位置功能。
-- 当前 ordered 的最后一项比较是 session_id；跨机器复用相同 session_id 且前面的排序键全相等时，iOS 没有完整 id 比较；`cross_machine_same_session_id` 及其反向输入用例因此标记 `compatibility: "id_tiebreak_extension"`，expected 在原排序键之后追加完整 id 比较，ios_expected 保留当前实现对给定输入的结果；这项补充需要以后 iOS 跟进。
+- ordered 在 session_id 之后再比完整 id（hub 分组、机器、会话）：跨机器复用相同 session_id 且前面的排序键全相等时，次序由完整 id 决定，与输入次序无关。`cross_machine_same_session_id` 及其反向输入用例按这条规则写 expected；iOS（`AgentListOrder.ordered`）与 Rust core 都已这样比较，原先的 `compatibility: "id_tiebreak_extension"` 和 ios_expected 已随 iOS 跟进删除（#9064）。
 
 以上冲突集中记录在本领域 README，未改设计总纲或 iOS。
 
 ## 对照验证
 
-本目录有 43 个用例，其中客户端 32 个、hub 11 个；连同收件箱共 71 个用例。没有仅依赖人工阅读单测断言而未执行对照的客户端用例，但 `from_test` 只标明迁移的原始断言，扩展的分组输出仍通过下面的实现对照。
+本目录有 46 个用例，其中客户端 35 个、hub 11 个；连同收件箱共 74 个用例。`held.json` 的 3 个 held 用例按当前 `apple/Persona/Views/Chats/AgentListOrder.swift` 与 `AppModel.swift` 手工推导，不是由 Rust 或 Kotlin 生成。没有仅依赖人工阅读单测断言而未执行对照的客户端用例，但 `from_test` 只标明迁移的原始断言，扩展的分组输出仍通过下面的实现对照。
 
 Swift 验证没有启动 App，也没有执行 SwiftUI 布局。`JSONValue.swift` 作为原文件传给 swiftc；其余需要的声明与方法按平衡花括号从只读源码原文提取到 `/tmp`，不改方法体。探针把 SwiftUI 的分段条件翻成数组输出，测试的是列表数据投影。原始源文件没有任何修改。
 
@@ -100,7 +102,7 @@ SPEC_SORT_FIXTURES="$PWD/spec/fixtures" go -C server test \
 
 | 探针组成 | 从哪里提取，如何调用 |
 | --- | --- |
-| Swift 解码与状态 | 从 Models 提取 SessionStatus、Session、Subagent、LoopInfo、BackgroundTask、AgentState、SessionKey、MailAddress，以及含 isQuiet 的 Session 扩展；编译时直接加上 `apple/Shared/JSONValue.swift`；用 `JSON.decoder` 解 input.sessions。 |
+| Swift 解码与状态 | 从 Models 提取 SessionStatus、Session、Subagent、LoopInfo、BackgroundTask、AgentState、SessionKey、MailAddress，以及含 isQuiet 的 Session 扩展；编译时直接加上 `apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift`；用 `JSON.decoder` 解 input.sessions。 |
 | Swift 空间和筛选 | 从 ChatsView 提取 SpaceGroup、AgentFilter、isWaiting 扩展、`StateCounts.spoken`；从 Theme 的 AgentState 扩展提取 label。 |
 | Swift 偏好 | 从 APIClient 提取 Pins；以输入数组充当 AppModel 的数据，原文提取 pinKey、isPinned、isMuted、spaceKey 方法。 |
 | Swift 列表 | 原文提取 ChatsView 的 base、counts、stays、rank、ordered，以及 body 中从 `let base = base` 到 `SplitNavigation` 之前的数据计算块；用 settings 填充同名属性。 |
@@ -108,7 +110,7 @@ SPEC_SORT_FIXTURES="$PWD/spec/fixtures" go -C server test \
 | Go 状态 | 在 `/tmp` 建 `package hub` 的 `TestSpecSortFixtures`，循环读取 hub_state.json，把 session 解码为 proto.Session，seen_at 缺失时使用 time.Time 零值，直接断言 `agentState(session, seen) == expected.state`。 |
 | Go 虚拟测试文件 | overlay.json 的 Replace 将仓库中不存在的 `server/internal/hub/spec_sort_fixture_test.go` 绝对路径映射到 `/tmp` 的测试源码，真实目录不写文件。 |
 
-编译形式为 `swiftc -parse-as-library -module-cache-path /tmp/spec-sort-check/module-cache apple/Shared/JSONValue.swift /tmp/spec-sort-check/Reference.swift -o /tmp/spec-sort-check/check`。驱动遍历 JSON 的 cases，只比较结构化输出，不生成 expected；两个跨机器同标识用例对照 ios_expected，并另外核对 expected 的完整 id 排序和反向输入不变性；编译用 Python `subprocess.run(timeout=120)`，运行用 `timeout=60`，Go 自带 `-timeout 120s`。收件箱适配契约见[收件箱 README](../inbox/README.md)。这些时间是验证脚本的超时设置，不是性能结果。
+编译形式为 `swiftc -parse-as-library -module-cache-path /tmp/spec-sort-check/module-cache apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift /tmp/spec-sort-check/Reference.swift -o /tmp/spec-sort-check/check`。驱动遍历 JSON 的 cases，只比较结构化输出，不生成 expected；两个跨机器同标识用例与其他用例一样对照 expected，并另外核对反向输入不变性；编译用 Python `subprocess.run(timeout=120)`，运行用 `timeout=60`，Go 自带 `-timeout 120s`。收件箱适配契约见[收件箱 README](../inbox/README.md)。这些时间是验证脚本的超时设置，不是性能结果。
 
 本次 Swift 编译和客户端对照通过；Go overlay 直接调用真实 hub 实现，全部通过。仓库服务端的 build、vet、全量 test 也通过；沙箱中默认 build 无法读取 VCS 状态，因此复跑使用 `GOFLAGS=-buildvcs=false`，未改仓库构建设置。
 

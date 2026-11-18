@@ -260,6 +260,54 @@ func TestMarketClientGitHubProxy(t *testing.T) {
 	check("127.0.0.1:7897") // one in the environment: the others take it, GitHub's still github.proxy
 }
 
+// extension_market.proxy is independent of the GitHub connector and covers every marketplace host, including mirrors.
+func TestMarketClientHTTPAndSOCKS5Proxy(t *testing.T) {
+	for _, raw := range []string{"http://proxy.example:3128", "socks5://proxy.example:1080"} {
+		t.Run(raw, func(t *testing.T) {
+			h, _, _ := marketHub(t)
+			h.cfg.GitHub = &github.Config{Egress: connector.Egress{Proxy: "http://127.0.0.1:3128"}}
+			h.cfg.ExtensionMarket.Proxy = raw
+			h.extensions.markets.client = nil
+			prev := envProxy
+			t.Cleanup(func() { envProxy = prev })
+			envProxy = func(*http.Request) (*url.URL, error) {
+				t.Error("the explicit marketplace proxy fell back to the environment")
+				return nil, nil
+			}
+			tr := h.marketClient().Transport.(*http.Transport)
+			for _, host := range []string{"api.github.com", "objects.githubusercontent.com", "ghcr.io", "market.example.com", "registry-mirror.example.com"} {
+				req, _ := http.NewRequest("GET", "https://"+host+"/x", nil)
+				u, err := tr.Proxy(req)
+				if err != nil || u == nil || u.String() != raw {
+					t.Errorf("%s: proxy %v, %v; want %s", host, u, err, raw)
+				}
+			}
+			mk := &extension.Market{}
+			if err := h.configureMarket(mk); err != nil {
+				t.Fatal(err)
+			}
+			if mk.UpstreamProxy == nil || mk.UpstreamProxy.String() != raw {
+				t.Fatalf("git marketplace proxy: %v", mk.UpstreamProxy)
+			}
+		})
+	}
+}
+
+// An invalid explicit proxy fails instead of bypassing it for a direct connection.
+func TestMarketClientInvalidProxyDoesNotFallBack(t *testing.T) {
+	h, _, _ := marketHub(t)
+	h.cfg.ExtensionMarket.Proxy = "https://proxy.example:3128"
+	h.extensions.markets.client = nil
+	tr := h.marketClient().Transport.(*http.Transport)
+	req, _ := http.NewRequest("GET", "https://api.github.com/x", nil)
+	if u, err := tr.Proxy(req); err == nil || u != nil {
+		t.Fatalf("invalid proxy fell back: %v, %v", u, err)
+	}
+	if err := h.configureMarket(&extension.Market{}); err == nil {
+		t.Fatal("an invalid proxy reached the marketplace")
+	}
+}
+
 // failedOp puts a failed operation whose retry counts its calls and answers with next (or err) into h's list.
 func failedOp(h *Manager, calls *atomic.Int32, next func() *extOp, err error) *extOp {
 	now := time.Now()

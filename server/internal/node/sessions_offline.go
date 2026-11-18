@@ -14,6 +14,7 @@ import (
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/transcript"
 )
 
 const offlineWindow = 7 * 24 * time.Hour
@@ -23,6 +24,12 @@ var offlineCache struct {
 	at   time.Time
 	home string // whose scan it is: another node's (tests run many in one process) scans its own
 	list []proto.Session
+	// parents: the desktop app's side sessions and the sessions that started them, read with the scan
+	// (claudeDesktopIndex.parents, linkSideSessions); replaced whole, never changed in place.
+	parents map[string]string
+	// origins: the folders the desktop app's sessions were started in (claudeDesktopIndex.origins, placeClaudeDesktop),
+	// read and replaced the same way.
+	origins map[string]string
 }
 
 // appendOffline appends to dst the recent transcripts without a live agent, straight into the caller's list (sessionList's);
@@ -32,6 +39,8 @@ func (n *Node) appendOffline(dst []proto.Session, live map[string]bool) []proto.
 	defer offlineCache.Unlock()
 	if time.Since(offlineCache.at) > 20*time.Second || offlineCache.home != n.offlineCacheKey() {
 		offlineCache.list = n.scanOffline()
+		desktop := readClaudeDesktopIndex(n.home) // its files were just read: unchanged ones are not parsed again
+		offlineCache.parents, offlineCache.origins = desktop.parents, desktop.origins
 		offlineCache.at, offlineCache.home = time.Now(), n.offlineCacheKey()
 	}
 	for i := range offlineCache.list {
@@ -54,6 +63,17 @@ func (n *Node) setKept(ids []string) {
 	n.kept = m
 	n.mu.Unlock()
 	forgetOfflineScan()
+}
+
+// offlineDesktop is what the last offline scan of this node's home read of the desktop app's index: the side sessions'
+// parents and the sessions' start folders (offlineCache.parents, .origins); nil when another home's scan is cached.
+func (n *Node) offlineDesktop() (parents, origins map[string]string) {
+	offlineCache.Lock()
+	defer offlineCache.Unlock()
+	if offlineCache.home != n.offlineCacheKey() {
+		return nil, nil
+	}
+	return offlineCache.parents, offlineCache.origins
 }
 
 // forgetOfflineScan drops the cached scan of offline transcripts: the next list scans again.
@@ -155,6 +175,9 @@ func (n *Node) scanOffline() []proto.Session {
 		m := n.meta(c.path, c.st)
 		if isLauncherCheckRun(c.path, m) {
 			continue // a launcher health check's run, a hundred a day on each computer: no session of the user's (#2959)
+		}
+		if m.surface == transcript.SurfaceDesktop && !keep[id] && !forked[id] && desktop.gone(id, c.st.ModTime()) {
+			continue // a session deleted in the desktop app: its entry is gone, its transcript stays (claudedesktop.go, #8314)
 		}
 		// Where the session is: an assistant conversation's start directory, before the filters look at it. A desktop
 		// app's session whose transcript says nothing yet (it just began, or went on in a new transcript) has the

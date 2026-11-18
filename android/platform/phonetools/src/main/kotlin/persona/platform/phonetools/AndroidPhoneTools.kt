@@ -12,9 +12,30 @@ import java.util.Locale
 
 class AndroidPhoneTools(context: Context, private val foreground: () -> Boolean) {
     private val context = context.applicationContext
+
+    /** Reads and freezes the target before a before → after card is shown; all provider IO stays on IO. */
+    suspend fun prepareConfirmation(name: String, args: JsonObject): PhonePreparedConfirmation = withContext(Dispatchers.IO) {
+        when (name) {
+            "phone_contacts_update" -> {
+                val prepared = ContactsTool(context).prepareUpdate(args)
+                PhonePreparedConfirmation(prepared.text) { withContext(Dispatchers.IO) { ContactsTool(context).update(prepared) } }
+            }
+            "phone_calendar_update_event" -> {
+                val prepared = CalendarTools(context).prepareUpdate(args)
+                PhonePreparedConfirmation(prepared.text) { withContext(Dispatchers.IO) { CalendarTools(context).update(prepared) } }
+            }
+            "phone_calendar_delete_event" -> {
+                val prepared = CalendarTools(context).prepareDelete(args)
+                PhonePreparedConfirmation(prepared.text) { withContext(Dispatchers.IO) { CalendarTools(context).delete(prepared) } }
+            }
+            else -> error("Tool $name does not need confirmation preparation")
+        }
+    }
+
     suspend fun execute(name: String, args: JsonObject): PhoneToolResult = withContext(Dispatchers.IO) {
         when (name) {
             "phone_contacts_search" -> ContactsTool(context).search(args)
+            "phone_contacts_create" -> ContactsTool(context).create(args)
             "phone_calendar_events" -> CalendarTools(context).events(args)
             "phone_calendar_create_event" -> CalendarTools(context).create(args)
             "phone_photos_recent" -> PhotosTool(context).recent(args)
@@ -23,6 +44,8 @@ class AndroidPhoneTools(context: Context, private val foreground: () -> Boolean)
                 if (!foreground()) PhoneToolText.needsForeground() else LocationTool(context).current()
             }
             "phone_health_summary" -> Health.summary(context, args)
+            "phone_workouts_recent" -> Workouts.recent(context, args)
+            "phone_workout_detail" -> Workouts.detail(context, args)
             "phone_device_info" -> device()
             "phone_clipboard_get", "phone_clipboard_set" -> withContext(Dispatchers.Main.immediate) {
                 if (!foreground()) return@withContext PhoneToolText.needsForeground()
@@ -45,6 +68,15 @@ class AndroidPhoneTools(context: Context, private val foreground: () -> Boolean)
             "phone_notifications_list" -> PhoneNotifications(context).list(args.int("limit", 50, 1, 100))
             else -> PhoneToolText.unknownTool(name, emptyList())
         }
+    }
+
+    /**
+     * Undo from the assistant's conversation (iOS `CalendarTool.remove`): the event it just added comes off the phone
+     * directly, without the before → after card `phone_calendar_delete_event` asks for, because the user is taking back
+     * the assistant's own write. Provider work stays on IO; a refusal throws.
+     */
+    suspend fun removeCalendarEvent(id: Long): PhoneToolResult = withContext(Dispatchers.IO) {
+        CalendarTools(context).remove(id)
     }
 
     /** iOS DeviceTool's keys (app_version, app_build, app_channel too); android_version and sdk stand where iOS has ios_version. */

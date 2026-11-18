@@ -62,10 +62,7 @@ struct VNCPiPDiagnostics: View {
             .navigationTitle("Picture in Picture Diagnostics")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { ThemedIcon(Theme.Icon.close) }
-                        .accessibilityLabel("Close")
-                }
+                SheetClose { dismiss() }
             }
         }
         .accessibilityIdentifier("vnc-pip-diagnostics")

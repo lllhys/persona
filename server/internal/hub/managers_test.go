@@ -159,6 +159,107 @@ func TestManagersRosterAndInstall(t *testing.T) {
 	}
 }
 
+// The built-in assistant is kept out of the switcher while it is not used (#9055): hidden only while the choice is
+// on, it is not the default and it owns no machine; a machine that falls back to it shows it again by itself.
+func TestManagersHideTheBuiltinWhileUnused(t *testing.T) {
+	h, srv, store := managersHub(t)
+	t.Cleanup(func() { _ = store.PutSetting(context.Background(), managerBuiltinHideKey, nil) })
+	busToken(t, h, assistantwire.AssistantID, "助手")
+	busToken(t, h, "m-abc123", "家")
+	builtin := func() managerInfo {
+		t.Helper()
+		var list managersReply
+		managersDo(t, h, srv, "GET", "/api/v1/managers", nil, &list)
+		m, ok := list.find(assistantwire.AssistantID)
+		if !ok || !m.Builtin {
+			t.Fatalf("no built-in manager: %+v", list)
+		}
+		return m
+	}
+	hide := func(id string, on bool) int {
+		t.Helper()
+		return managersDo(t, h, srv, "PATCH", "/api/v1/managers/"+id, map[string]any{"hide": on}, nil)
+	}
+	machine := func(on bool) { // a hub.json computer no manager was given: the carrier's, the built-in one's
+		t.Helper()
+		d := &h.devices
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		list := &h.cfg.Machines
+		if d.started {
+			list = &d.entries
+		}
+		if on {
+			*list = append(*list, MachineConfig{ID: "box9055", Kind: "local"})
+		} else {
+			*list = slices.DeleteFunc(*list, func(mc MachineConfig) bool { return mc.ID == "box9055" })
+		}
+	}
+
+	if code := hide(assistantwire.AssistantID, true); code != 409 {
+		t.Fatalf("hiding the default: %d", code)
+	}
+	if code := hide("m-abc123", true); code != 400 {
+		t.Fatalf("hiding another manager: %d", code)
+	}
+	managersDo(t, h, srv, "PATCH", "/api/v1/managers/m-abc123", map[string]any{"default": true}, nil)
+	if m := builtin(); m.Hide || m.Hidden {
+		t.Fatalf("not asked yet: %+v", m)
+	}
+	if code := hide(assistantwire.AssistantID, true); code != 200 {
+		t.Fatalf("hide: %d", code)
+	}
+	if m := builtin(); !m.Hide || !m.Hidden {
+		t.Fatalf("hidden: %+v", m)
+	}
+
+	// A machine falls back to it: shown, the choice kept; hiding is refused while it has one.
+	machine(true)
+	if m := builtin(); !m.Hide || m.Hidden {
+		t.Fatalf("with a machine: %+v", m)
+	}
+	if code := hide(assistantwire.AssistantID, true); code != 409 {
+		t.Fatalf("hiding it with a machine: %d", code)
+	}
+	machine(false)
+	if m := builtin(); !m.Hidden {
+		t.Fatalf("the machine gone: %+v", m)
+	}
+
+	// Something in its inbox needs the user: shown until it is handled (the apps would mark it waiting otherwise).
+	r := dialRawBus(t, srv, busToken(t, h, assistantwire.AssistantID, "助手"))
+	if err := r.call(assistantwire.MethodHello, map[string]any{"id": assistantwire.AssistantID}, nil); err != nil {
+		t.Fatal(err)
+	}
+	say := func(n int) {
+		t.Helper()
+		if err := r.peer.Notify(assistantwire.EventInboxNeedsYou, assistantwire.InboxNeedsYou{Count: n}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	say(2)
+	eventually(t, 5*time.Second, "shown while its inbox needs the user", func() bool { m := builtin(); return m.Hide && !m.Hidden })
+	say(0)
+	eventually(t, 5*time.Second, "hidden again once nothing waits", func() bool { return builtin().Hidden })
+
+	// Made the default: shown; asking for both at once is refused.
+	if code := managersDo(t, h, srv, "PATCH", "/api/v1/managers/"+assistantwire.AssistantID, map[string]any{"default": true, "hide": true}, nil); code != 409 {
+		t.Fatalf("default and hide at once: %d", code)
+	}
+	managersDo(t, h, srv, "PATCH", "/api/v1/managers/"+assistantwire.AssistantID, map[string]any{"default": true}, nil)
+	if m := builtin(); !m.Hide || m.Hidden {
+		t.Fatalf("the default: %+v", m)
+	}
+
+	// Shown again on request, whatever it is.
+	if code := hide(assistantwire.AssistantID, false); code != 200 {
+		t.Fatalf("show: %d", code)
+	}
+	if m := builtin(); m.Hide || m.Hidden {
+		t.Fatalf("shown: %+v", m)
+	}
+}
+
 // Rename, make default, revoke: the default and the hub's own cannot be removed; a revoked token is hung up and
 // opens nothing.
 func TestManagersPatchAndRevoke(t *testing.T) {

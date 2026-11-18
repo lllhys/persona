@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/pgdocker"
 )
 
@@ -55,7 +56,7 @@ func askTerminal(question string) (bool, bool) {
 }
 
 func tcpPortFree(port int) bool {
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(port))
+	ln, err := osproc.Listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
 		return false
 	}

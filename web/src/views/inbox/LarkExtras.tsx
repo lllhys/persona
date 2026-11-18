@@ -4,7 +4,8 @@
 // LarkReactionPicker / LarkProfileSheet).
 import { useEffect, useRef, useState } from "react";
 import { errorText } from "../../lib/api";
-import { emojiLabel, withToken, type LarkPart } from "../../lib/inbox";
+import { withToken, type LarkPart } from "../../lib/inbox";
+import { emojiLabel } from "../../lib/inbox-page";
 import { useItemManager, withManager } from "../../lib/manager-choice";
 import {
   cardIconName, directChat, duration, emojiCatalog, fileSize, pressCardAction, profile, profileRows, quickBar, quickReactions,

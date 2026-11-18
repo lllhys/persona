@@ -6,8 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
-	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
@@ -16,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/netaddr"
 )
 
@@ -171,15 +170,15 @@ func NormalizeListen(raw string) (string, error) {
 	}
 	host, port, err := net.SplitHostPort(raw)
 	if err != nil {
-		return "", fmt.Errorf("监听地址 %q 不对：写成 :18663 或 地址:端口", raw)
+		return "", newTextError("link-errors.listen_invalid", nil, i18n.Args{"address": strconv.Quote(raw)})
 	}
 	if _, ok := portNumber(port); !ok {
-		return "", fmt.Errorf("监听地址 %q 的端口不对", raw)
+		return "", newTextError("link-errors.listen_port_invalid", nil, i18n.Args{"address": strconv.Quote(raw)})
 	}
 	if host != "" {
 		ip, err := netip.ParseAddr(host)
 		if err != nil || ip.Zone() != "" {
-			return "", fmt.Errorf("监听地址 %q 要用本机的 IP（或者只写端口，监听所有地址）", raw)
+			return "", newTextError("link-errors.listen_host_invalid", nil, i18n.Args{"address": strconv.Quote(raw)})
 		}
 		host = ip.String()
 	}
@@ -273,14 +272,14 @@ func normalizeAddr(raw, listen string) (string, error) {
 		_, port, _ = net.SplitHostPort(listen)
 	}
 	if !ValidPort(port) {
-		return "", fmt.Errorf("地址 %q 要带端口（监听的端口不确定）", raw)
+		return "", newTextError("link-errors.address_port_required", nil, i18n.Args{"address": strconv.Quote(raw)})
 	}
 	if host == "" || strings.ContainsAny(host, "/?#@ ") {
-		return "", fmt.Errorf("地址 %q 不对：写成 域名、IP 或 地址:端口", raw)
+		return "", newTextError("link-errors.address_invalid", nil, i18n.Args{"address": strconv.Quote(raw)})
 	}
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if ip.Zone() != "" {
-			return "", fmt.Errorf("地址 %q 带了网卡（%%…）：别的电脑用不了", raw)
+			return "", newTextError("link-errors.address_zone", nil, i18n.Args{"address": strconv.Quote(raw)})
 		}
 		host = ip.String()
 	}
@@ -288,7 +287,7 @@ func normalizeAddr(raw, listen string) (string, error) {
 }
 
 // ErrNoAddress: no address of this computer to put in a pairing link.
-var ErrNoAddress = errors.New("找不到 hub 能连的本机地址（只有回环、隧道或临时地址）：用 --addr 指定，比如 --addr 这台的域名")
+var ErrNoAddress = newTextError("link-errors.no_local_address", nil)
 
 // PairInvite is what `persona-link pair --listen` hands the person: the link for the hub's admin page and what is in it.
 type PairInvite struct {
@@ -329,7 +328,7 @@ func PairListen(path, listen string, addrs []string, now time.Time) (*PairInvite
 	if len(out) == 0 {
 		found, err := ListenCandidates(listen)
 		if err != nil {
-			return nil, fmt.Errorf("列不出本机的地址：%w", err)
+			return nil, newTextError("link-errors.local_addresses_failed", err)
 		}
 		if len(found) == 0 {
 			return nil, ErrNoAddress
@@ -338,7 +337,7 @@ func PairListen(path, listen string, addrs []string, now time.Time) (*PairInvite
 	}
 	fp, err := Identity(TLSDir(path))
 	if err != nil {
-		return nil, fmt.Errorf("连接器的 TLS 身份：%w", err)
+		return nil, newTextError("link-errors.tls_identity", err)
 	}
 	code := newCode()
 	expires := now.Add(PairCodeLife)
@@ -373,7 +372,7 @@ func ConnectorLink(addrs []string, fp, code string) string {
 func ParseConnectorLink(raw string) (addrs []string, fp, code string, err error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || !pairScheme(u.Scheme) || u.Host != "connector" {
-		return nil, "", "", errors.New("这不是 persona-link pair --listen 给的链接（persona://connector?…）")
+		return nil, "", "", newTextError("link-errors.connector_link_invalid", nil)
 	}
 	q := u.Query()
 	fp, code = q.Get("fp"), q.Get("code")
@@ -383,7 +382,7 @@ func ParseConnectorLink(raw string) (addrs []string, fp, code string, err error)
 		}
 	}
 	if fp == "" || code == "" || len(addrs) == 0 {
-		return nil, "", "", errors.New("链接不完整：要有 addr、fp 和 code")
+		return nil, "", "", newTextError("link-errors.connector_link_incomplete", nil)
 	}
 	return addrs, fp, code, nil
 }
@@ -393,7 +392,7 @@ func ParseConnectorLink(raw string) (addrs []string, fp, code string, err error)
 // second or two.
 func SetMode(path, mode, listen string) (*Config, error) {
 	if mode != ModeActive && mode != ModePassive {
-		return nil, fmt.Errorf("模式只有 %s（我去连 hub）和 %s（让 hub 来连）", ModeActive, ModePassive)
+		return nil, newTextError("link-errors.mode_invalid", nil, i18n.Args{"active": ModeActive, "passive": ModePassive})
 	}
 	if listen != "" {
 		l, err := NormalizeListen(listen)

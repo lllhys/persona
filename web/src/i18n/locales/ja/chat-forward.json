@@ -8,5 +8,6 @@
   "remove": "転送を解除",
   "open_original": "元のメッセージを開く",
   "show_all": "すべて表示",
-  "collapse": "折りたたむ"
+  "collapse": "折りたたむ",
+  "group_heading": "転送された{count}件のメッセージ"
 }

@@ -112,6 +112,7 @@
   "sandbox_go_admin": "Allow in Admin Page",
   "tool_title": "Command-line tools",
   "configuration_title": "Extension configuration",
+  "fields_title": "Settings",
   "no_configuration": "No configuration required",
   "danger_title": "Danger zone",
   "externally_managed": "This extension is managed at its source. Change its settings there.",

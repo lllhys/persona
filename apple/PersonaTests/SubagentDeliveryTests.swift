@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor
 struct SubagentDeliveryTests {
@@ -98,8 +99,12 @@ struct SubagentDeliveryTests {
         let reply = Item(id: "final-answer", seq: 6, role: "assistant", kind: .text, text: "The review passed.")
         let items = [question, use(), delivery(3, status: "running"), first, wake, reply]
         let built = ChatStore.rebuild(items, settled: nil)
-        guard let block = built.blocks.first, case .turn(let turn) = block else { Issue.record("expected the parent exchange"); return }
-        #expect(turn.wakes.map(\.id) == [wake.id])
+        // The report that woke the parent starts an exchange of its own (#9140): the parent's earlier words stay its answer.
+        guard built.blocks.count == 2, case .turn(let asked) = built.blocks[0], case .turn(let turn) = built.blocks[1] else {
+            Issue.record("expected the parent exchange and the woken one"); return
+        }
+        #expect(asked.answer?.id == first.id && asked.wakes.isEmpty)
+        #expect(turn.wakes.map(\.id) == [wake.id] && turn.users.isEmpty)
         #expect(turn.answer?.id == reply.id)
         let lines = ChatLines(openWork: [], openAll: true).build(built.blocks, live: nil)
         #expect(!lines.contains { line in

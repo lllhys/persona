@@ -82,7 +82,6 @@ describe("助手在看的问题卡", () => {
     expect(host.querySelector("[data-delegating]")?.textContent).toContain("助手在看");
     expect(host.textContent).toContain("助手正在判断能不能替你答");
     await click(choice("lib/pq"));
-    await click(host.querySelector(`button[aria-label="${t("chat-interactions.send_answer")}"]`));
     expect(resolved).toEqual([{ path: "/interactions/ix1/resolve", body: { answers: { [Q]: "lib/pq" } } }]);
   });
 

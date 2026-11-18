@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
 )
 
@@ -41,6 +42,33 @@ func TestNextRun(t *testing.T) {
 	}
 	if got := (Task{Repeat: repeatOnce, At: at}).next(before, loc); !got.IsZero() {
 		t.Fatalf("a task that is off has no next run, got %v", got)
+	}
+}
+
+func TestNextRunAcrossClockChanges(t *testing.T) {
+	daily := Task{Repeat: repeatDaily, Time: "02:30", Enabled: true}
+	for _, tc := range []struct {
+		name, zone   string
+		after, first time.Time
+		following    time.Time
+	}{
+		{name: "spring gap", zone: "America/New_York",
+			after: time.Date(2026, 3, 8, 5, 0, 0, 0, time.UTC),
+			first: time.Date(2026, 3, 8, 7, 30, 0, 0, time.UTC), following: time.Date(2026, 3, 9, 6, 30, 0, 0, time.UTC)},
+		{name: "fall repeated hour", zone: "Europe/Berlin",
+			after: time.Date(2026, 10, 24, 22, 0, 0, 0, time.UTC),
+			first: time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC), following: time.Date(2026, 10, 26, 1, 30, 0, 0, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			loc := mustZone(t, tc.zone)
+			first := nextRun(daily, tc.after, loc)
+			if !first.Equal(tc.first) {
+				t.Fatalf("first run = %v (%v), want %v", first, first.In(loc), tc.first)
+			}
+			if following := nextRun(daily, first, loc); !following.Equal(tc.following) {
+				t.Fatalf("following run = %v (%v), want %v", following, following.In(loc), tc.following)
+			}
+		})
 	}
 }
 
@@ -348,6 +376,58 @@ func TestARunOfADeletedTaskDoesNotBringItBack(t *testing.T) {
 	}
 }
 
+// A run that cancels its own repeating task and, in the same turn, schedules it again (the same title, to change its rule
+// or prompt) gets a new task: the conversation deleted it, the user did not (#9090). Deleted in the app or by another
+// conversation's tool while the run was going, it stays deleted (#4792).
+func TestARunThatCancelsItsOwnTaskCanScheduleItAgain(t *testing.T) {
+	ctx := context.Background()
+	const title = "Midday check"
+	args, _ := json.Marshal(map[string]any{"cron": "30 12 * * 1-5", "title": title, "prompt": "Look at how today's work is going."})
+	for _, tc := range []struct {
+		name, by string // by: "app", or the session whose cancel_followup deletes it
+		again    bool
+		told     string
+	}{
+		{"its own conversation", "run-1", true, ""},
+		{"the app", "app", false, "assistant-schedule.deleted_not_again"},
+		{"another conversation", "run-2", false, "assistant-schedule.deleted_elsewhere_not_again"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeHub()
+			f.settings = &Settings{Timezone: "Asia/Shanghai"}
+			h := newStorelessService(t, f)
+			setTasks(h, Task{ID: "fu_1", Title: title, Prompt: "Look at how the work is going.", Repeat: repeatCron, Cron: "30 12 * * *",
+				Enabled: true, LastRun: time.Now().Add(-27 * time.Minute), MachineID: "server", SessionID: "run-1"})
+			h.recordRun(ScheduleRun{Kind: "routine", RefID: "fu_1", Title: title, At: time.Now().Add(-27 * time.Minute), Status: runOK,
+				MachineID: "server", SessionID: "run-1"})
+			if tc.by == "app" {
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/api/v1/assistant/tasks/fu_1", nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("delete in the app: %d %s", rec.Code, rec.Body)
+				}
+			} else if out, err := h.runTool(ctx, "server", tc.by, "cancel_followup", json.RawMessage(`{"id":"fu_1"}`)); err != nil || out != "Cancelled." {
+				t.Fatalf("cancel: %q %v", out, err)
+			}
+			out, err := h.toolScheduleFollowup(ctx, "server", "run-1", args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tasks := h.tasksView(ctx, nil)
+			if !tc.again {
+				if want := i18n.T(h.lang(ctx), tc.told, i18n.Args{"id": "fu_1", "name": title}); out != want || len(tasks) != 0 {
+					t.Fatalf("stays deleted, told so: %q (want %q), %+v", out, want, tasks)
+				}
+				return
+			}
+			if len(tasks) != 1 || tasks[0].ID == "fu_1" || tasks[0].Title != title || tasks[0].Cron != "30 12 * * 1-5" ||
+				!strings.Contains(out, "Scheduled "+tasks[0].ID) {
+				t.Fatalf("scheduled again as a new task: %q, %+v", out, tasks)
+			}
+		})
+	}
+}
+
 func TestScheduleFollowupEvery(t *testing.T) {
 	h := newStorelessService(t, newFakeHub())
 	m := "server"
@@ -427,7 +507,8 @@ func TestCheckTask(t *testing.T) {
 		{Repeat: repeatDaily, Title: "早报", Prompt: "x", Time: "09:00", Weekdays: []int{5, 1, 1}},
 		{Repeat: repeatInterval, Prompt: "x", EveryMinutes: 30, PermissionMode: "bypassPermissions", Effort: "high", Launcher: "claude-fast"},
 		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), Enabled: true, PermissionMode: "acceptEdits"},
-		{Repeat: repeatOnce, Prompt: "x", At: now.Add(-time.Hour)}, // off: a past time is fine
+		{Repeat: repeatOnce, Prompt: "x", At: now.Add(-time.Hour)},                                    // off: a past time is fine
+		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), Launcher: "codex", Effort: "ultra"}, // #6181: a codex task takes its launcher's own levels
 	}
 	for _, task := range ok {
 		if err := checkTask(&task, now); err != nil {
@@ -446,6 +527,8 @@ func TestCheckTask(t *testing.T) {
 		{Repeat: repeatOnce, Prompt: "x", At: now.Add(-time.Hour), Enabled: true},
 		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), PermissionMode: "yolo"},
 		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), Effort: "huge"},
+		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), Launcher: "claude", Effort: "ultra"}, // ultra is Codex-only
+		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), Launcher: "codex", Effort: "huge"},
 		{Repeat: repeatOnce, Prompt: "x", At: now.Add(time.Hour), Launcher: "rm -rf"},
 		{Repeat: "weekly", Prompt: "x"},
 		{Repeat: repeatOnce, At: now.Add(time.Hour)},
@@ -535,7 +618,7 @@ func TestScheduleRoutineTool(t *testing.T) {
 	f := newFakeHub()
 	f.settings = &Settings{Timezone: "Asia/Shanghai"}
 	h := newStorelessService(t, f)
-	out, err := h.toolScheduleRoutine(context.Background(), "", json.RawMessage(`{"title":"周报","prompt":"起草周报","time":"17:00","weekdays":[5]}`))
+	out, err := h.toolScheduleRoutine(context.Background(), "", "", json.RawMessage(`{"title":"周报","prompt":"起草周报","time":"17:00","weekdays":[5]}`))
 	if err != nil || !strings.Contains(out, "周五 17:00") {
 		t.Fatalf("create: %q, %v", out, err)
 	}
@@ -544,16 +627,16 @@ func TestScheduleRoutineTool(t *testing.T) {
 	if r.CreatedBy != "assistant" || !r.Enabled || r.Title != "周报" || r.Repeat != repeatDaily {
 		t.Fatalf("routine %+v", r)
 	}
-	if _, err := h.toolScheduleRoutine(context.Background(), "", json.RawMessage(`{"id":"`+r.ID+`","enabled":false,"weekdays":[1,2,3,4,5,6,7]}`)); err != nil {
+	if _, err := h.toolScheduleRoutine(context.Background(), "", "", json.RawMessage(`{"id":"`+r.ID+`","enabled":false,"weekdays":[1,2,3,4,5,6,7]}`)); err != nil {
 		t.Fatal(err)
 	}
 	if r2 := sc.tasks[len(sc.tasks)-1]; r2.Enabled || r2.Weekdays != nil || r2.Prompt != "起草周报" {
 		t.Fatalf("an update changes only the fields given: %+v", r2)
 	}
-	if _, err := h.toolScheduleRoutine(context.Background(), "", json.RawMessage(`{"title":"x","prompt":"y","time":"9am"}`)); err == nil {
+	if _, err := h.toolScheduleRoutine(context.Background(), "", "", json.RawMessage(`{"title":"x","prompt":"y","time":"9am"}`)); err == nil {
 		t.Fatal("a bad time is refused")
 	}
-	if _, err := h.toolScheduleRoutine(context.Background(), "", json.RawMessage(`{"title":"x","prompt":"y","time":"09:00","weekdays":[0]}`)); err == nil {
+	if _, err := h.toolScheduleRoutine(context.Background(), "", "", json.RawMessage(`{"title":"x","prompt":"y","time":"09:00","weekdays":[0]}`)); err == nil {
 		t.Fatal("weekday 0 is refused")
 	}
 	if !strings.Contains(h.describeSchedule(context.Background(), ""), r.ID) {
@@ -832,7 +915,7 @@ func TestScheduleReadFailureNeverOverwrites(t *testing.T) {
 	h := newServiceOn(t, newFakeHub(), store)
 	m := "server"
 
-	if _, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"title":"x","prompt":"y","time":"09:00"}`)); !errors.Is(err, errScheduleUnavailable) {
+	if _, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"title":"x","prompt":"y","time":"09:00"}`)); !errors.Is(err, errScheduleUnavailable) {
 		t.Fatalf("schedule_routine while unreadable: %v", err)
 	}
 	if _, err := h.toolScheduleFollowup(ctx, m, "s1", json.RawMessage(`{"at":"30m","prompt":"y"}`)); !errors.Is(err, errScheduleUnavailable) {

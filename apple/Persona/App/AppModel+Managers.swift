@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 // Several managers on one hub (docs/assistant/managers.md "Clients"), as the app reads them outside Settings › Assistants:
 // each group's roster, read when its hub says hello and on each of its `managers` pushes. Pages that group a list read
@@ -63,9 +64,10 @@ extension AppModel {
             assistantByGroup[group] = roster.flatMap { assistantByManager[Self.managerKey(group, $0.defaultID)] }
         }
         managerRosters[group] = roster
-        // A pick of a manager that left the roster goes with it: back to the default, also should it come back. A hub
-        // without a roster leaves the pick alone: it names nothing there.
-        if let roster, let pick = assistantPicks[group], !roster.installed.contains(where: { $0.id == pick }) {
+        // A pick of a manager that left the roster goes with it: back to the default, also should it come back. So does
+        // one the hub now keeps out of the switcher (the built-in assistant hidden, #9055). A hub without a roster leaves
+        // the pick alone: it names nothing there.
+        if let roster, let pick = assistantPicks[group], !roster.canPick(pick) {
             assistantPicks[group] = nil
         }
         saveSnapshot()
@@ -114,6 +116,11 @@ extension AppModel {
         let id = roster.owner(assistantPicks[group])
         return roster.installed.first { $0.id == id }
     }
+
+    /// Whether the shared sidebar header shows the assistant switcher. This display gate includes a single installed
+    /// assistant; no roster or no installed current assistant keeps the old Persona header. Behavior gates (filtering,
+    /// badges, extra requests, and manager request parameters) remain controlled by `ManagerRoster.isMulti`.
+    var showsAssistantSwitcher: Bool { managerRoster != nil && currentAssistant != nil }
 
     /// `assistantManagerID` for group's Persona page.
     func assistantPick(in group: String) -> String? {
@@ -168,10 +175,11 @@ extension AppModel {
 
     /// Manager `id` is the current assistant from now on, on this device (nil: the hub's default again, whichever that
     /// becomes): the Persona page's settings, conversations and readiness are that manager's. The pick is the manager
-    /// itself, so it stays when another one becomes the default. Nothing for one the roster hasn't installed.
+    /// itself, so it stays when another one becomes the default. Nothing for one the roster hasn't installed, or keeps
+    /// out of the switcher.
     func selectAssistantManager(_ id: String?) {
         guard let group = hub?.group, let roster = managerRosters[group] else { return }
-        if let id, !roster.installed.contains(where: { $0.id == id }) { return }
+        if let id, !roster.canPick(id) { return }
         let was = assistantManagerID
         assistantPicks[group] = id
         if assistantManagerID != was { assistantManagerChanged() }
@@ -221,7 +229,7 @@ extension AppModel {
     /// and naming the default is harmless. The Rules and Muted lists name their stamp too.
     func itemManager(_ manager: String?) -> String? { managerRoster.map { $0.naming(manager) } ?? manager }
 
-    /// The manager the requests of a Persona conversation name (its feed, a reply draft's Send and Do Not Handle, a plan's
+    /// The manager the requests of a Persona conversation name (its feed, a reply draft's Send and Don't handle, a plan's
     /// Start or Don't Start, a briefing question's Handled): the conversation's own, none for the default's. Some of those
     /// routes name no conversation, so the hub would take them to the default manager whichever assistant the conversation
     /// is. By its listing, else by what it was opened for (`assistantItemManagers`), else the current assistant, on whose
@@ -299,6 +307,12 @@ extension ManagerRoster {
     static func pushed(by manager: String?, defaultID: String?) -> String? {
         let id = manager ?? assistant
         return id == (defaultID ?? assistant) ? nil : id
+    }
+
+    /// The manager for a storage key. Unlike a raw push, storage's nil already means the default assistant, not the
+    /// hub's own assistant, so name that default before applying the push rule.
+    static func stored(_ manager: String?, defaultID: String?) -> String? {
+        pushed(by: manager ?? defaultID, defaultID: defaultID)
     }
 
     /// The installed manager a thing stamped `manager` belongs to, when it is offline on a hub with several managers;

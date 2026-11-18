@@ -28,6 +28,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -171,5 +172,12 @@ class MessageMenuTest {
         assertNull(suggestionFor(idle.copy(status = "working"), typed = false))
         assertNull(suggestionFor(idle.copy(suggestion = " "), typed = false))
         assertNull(suggestionFor(null, typed = false))
+
+        val send: (String) -> Unit = {}
+        assertSame("a safe suggestion keeps the caller's sender", send, suggestionDirectSend(idle, send))
+        assertSame(send, suggestionDirectSend(idle.copy(suggestionRisky = false), send))
+        assertNull("a risky suggestion never gets a direct sender", suggestionDirectSend(idle.copy(suggestionRisky = true), send))
+        assertNull("no sender stays fill-only", suggestionDirectSend(idle, null))
+        assertNull(suggestionDirectSend(null, send))
     }
 }

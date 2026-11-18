@@ -61,8 +61,8 @@ data class AgentRowParts(
     /** The agent's mark before the title, where the leading column doesn't hold it (B, C). */
     val markBesideTitle: Boolean,
     /**
-     * Lines of its latest words under the title: none in Compact List. Avatar's take one line on Android, as its row did
-     * before the styles came; iOS gives them two.
+     * Lines of its latest words under the title: none in Compact List. Avatar's take two, as iOS's (`lineLimit(2)`; its
+     * dense row in a regular-width sidebar takes one, which Android has no row for), State Cards' two, Two Lines' one.
      */
     val wordLines: Int,
     /** Where it runs on a line of its own: the source, the place, the model, the to-do, the bell (A, C). */
@@ -77,7 +77,7 @@ data class AgentRowParts(
 
 /** The parts each display draws, from iOS's rows. */
 val AgentListDisplay.rowParts: AgentRowParts get() = when (this) {
-    AgentListDisplay.Avatar -> AgentRowParts(AgentRowLeading.Well, markBesideTitle = false, wordLines = 1, placeLine = true,
+    AgentListDisplay.Avatar -> AgentRowParts(AgentRowLeading.Well, markBesideTitle = false, wordLines = 2, placeLine = true,
         sourceAfterWords = false, stateAtFoot = false, card = false)
     AgentListDisplay.TwoLines -> AgentRowParts(AgentRowLeading.Dot, markBesideTitle = true, wordLines = 1, placeLine = false,
         sourceAfterWords = true, stateAtFoot = false, card = false)
@@ -88,19 +88,32 @@ val AgentListDisplay.rowParts: AgentRowParts get() = when (this) {
 }
 
 /**
- * State Cards' word at the card's foot (iOS `cardRow`): its state spelled out, Awaiting reply and Waiting in the background
- * included; none for a Seen one or a muted one. Offline and unknown have no word on Android yet: the bar's color says them.
+ * The state in words, plain (iOS `Session.stateLabel`): Waiting in the background, Working (Background) while a workflow runs
+ * ([isBackgroundWorking]), else the state's own name: Needs you, Working, Unread, Seen, Not running (offline) or Unknown.
+ * Never Awaiting reply, which needs to know whether the agent is muted ([stateWord]). A chat's header says it too.
  */
-fun AgentSession.cardStateWord(muted: Boolean): CoreText? = when {
-    muted -> null
-    asksYou -> CoreText.of(Key.StateAwaitingReply)
-    state == AgentState.Idle -> null
-    waitsInBackground -> CoreText.of(Key.StateBackgroundWaiting)
-    state == AgentState.NeedsYou -> CoreText.of(Key.StateNeedsYou)
-    state == AgentState.Working -> CoreText.of(Key.StateWorking)
-    state == AgentState.Unread -> CoreText.of(Key.StateUnread)
-    else -> null
-}
+val AgentSession.stateLabel: CoreText get() = CoreText.of(when {
+    waitsInBackground -> Key.StateBackgroundWaiting
+    isBackgroundWorking -> Key.StateWorkingBackground
+    else -> when (state) {
+        AgentState.NeedsYou -> Key.StateNeedsYou
+        AgentState.Working -> Key.StateWorking
+        AgentState.Unread -> Key.StateUnread
+        AgentState.Idle -> Key.StateIdle
+        AgentState.Offline -> Key.StateNotRunning
+        AgentState.Unknown -> Key.StateUnknown
+    }
+})
+
+/** [stateLabel], and Awaiting reply for a seen one that asks you (not when [muted]; iOS `Session.stateLabel(muted:)`). */
+fun AgentSession.stateWord(muted: Boolean): CoreText = if (asksYou && !muted) CoreText.of(Key.StateAwaitingReply) else stateLabel
+
+/**
+ * State Cards' word at the card's foot (iOS `cardRow`): its [stateWord], every state but Seen (Awaiting reply, Waiting in
+ * the background, Working (Background), Not running and Unknown included); none for a Seen one or a muted one.
+ */
+fun AgentSession.cardStateWord(muted: Boolean): CoreText? =
+    if (muted || state == AgentState.Idle && !asksYou) null else stateWord(muted)
 
 /**
  * Where the list's display is kept (iOS `AgentListDisplayChoice`): the Agents page's ⋯ › Display and Settings › Interface

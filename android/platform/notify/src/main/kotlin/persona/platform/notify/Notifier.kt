@@ -22,6 +22,8 @@ import persona.core.contracts.NotifyEvent
 import persona.core.contracts.SessionKey
 import persona.core.contracts.api.DeviceNotificationPreferences
 import persona.core.contracts.api.DoneNotification
+import persona.core.contracts.api.ExtensionNotificationActionRecord
+import persona.core.contracts.api.ExtensionNotificationClaim
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import persona.core.contracts.api.SessionsRepository
@@ -255,15 +257,62 @@ class Notifier @Inject constructor(
         if (channel == CH_DONE && settings.done == DoneNotification.Off) return
         if (channel == CH_ALERT && !settings.input) return
         val session = NotificationPolicy.session(event)
-        post(NotificationPolicy.tag(event), EVENT_ID, base(channel).forSession(session)
-            .setContentTitle(event.title.ifBlank { when (channel) { CH_DONE -> context.getString(R.string.notify_title_done); CH_ALERT -> context.getString(R.string.notify_title_alert); else -> "Persona" } })
+        val tag = NotificationPolicy.tag(event)
+        val extension = prepareExtensionNotification(context, event, tag)
+        val title = event.title.ifBlank { when (channel) { CH_DONE -> context.getString(R.string.notify_title_done); CH_ALERT -> context.getString(R.string.notify_title_alert); else -> "Persona" } }
+        post(tag, EVENT_ID, base(channel).forSession(session)
+            .setContentTitle(title)
             .setContentText(event.body.ifBlank { event.subtitle })
             .setSubText(event.subtitle.takeIf { it.isNotBlank() })
             .setStyle(NotificationCompat.BigTextStyle().bigText(event.body.take(2000)))
             // Inside this device's quiet hours (the hub marks reply reminders so): shown, without a sound.
             .setSilent(event.quiet)
             .setAutoCancel(true).apply {
-                if (session != null) setContentIntent(open(session, if (event.kind == "assistant") true else isAssistant(session)))
+                if (extension != null) {
+                    val intents = ExtensionNotificationIntents(context)
+                    setContentIntent(intents.contentIntent(extension.body, title))
+                    extension.buttons.forEach { addAction(intents.action(it)) }
+                } else if (session != null) setContentIntent(open(session, if (event.kind == "assistant") true else isAssistant(session)))
+            }.build())
+    }
+
+    internal fun notifyExtensionReport(report: ExtensionNotificationActionReport) = when (report) {
+        is ExtensionNotificationActionReport.Toast -> extensionNotice(report.record,
+            context.getString(R.string.notify_extension_action_done_title), report.text)
+        is ExtensionNotificationActionReport.Unavailable -> extensionNotice(report.record,
+            context.getString(R.string.notify_extension_action_failed_title), context.getString(R.string.notify_extension_action_unavailable))
+        is ExtensionNotificationActionReport.PageExpired -> extensionNotice(report.record,
+            context.getString(R.string.notify_extension_action_failed_title), context.getString(R.string.notify_extension_action_page_expired))
+        is ExtensionNotificationActionReport.WrongScope -> extensionNotice(report.record,
+            context.getString(R.string.notify_extension_action_failed_title), context.getString(R.string.notify_extension_action_wrong_scope))
+        is ExtensionNotificationActionReport.ActionFailed -> extensionNotice(report.record,
+            context.getString(R.string.notify_extension_action_failed_title), context.getString(R.string.notify_extension_action_failed_detail))
+    }
+
+    internal fun notifyExtensionTimeout(record: ExtensionNotificationActionRecord) = extensionNotice(record,
+        context.getString(R.string.notify_result_unconfirmed_title), context.getString(R.string.notify_extension_action_unconfirmed))
+
+    internal fun notifyExtensionMissing(token: String) = extensionNotice(null,
+        context.getString(R.string.notify_extension_action_expired_title), context.getString(R.string.notify_extension_action_expired_detail), token)
+
+    internal fun notifyExtensionClaimFailure(claim: ExtensionNotificationClaim) = when (claim) {
+        is ExtensionNotificationClaim.WrongScope -> extensionNotice(claim.record,
+            context.getString(R.string.notify_extension_action_failed_title), context.getString(R.string.notify_extension_action_wrong_scope))
+        is ExtensionNotificationClaim.Expired -> extensionNotice(claim.record,
+            context.getString(R.string.notify_extension_action_expired_title), context.getString(R.string.notify_extension_action_expired_detail))
+        is ExtensionNotificationClaim.Invalid -> extensionNotice(claim.record,
+            context.getString(R.string.notify_extension_action_expired_title), context.getString(R.string.notify_extension_action_expired_detail))
+        else -> Unit
+    }
+
+    private fun extensionNotice(record: ExtensionNotificationActionRecord?, title: String, detail: String, token: String? = null) {
+        val identity = record?.token ?: token ?: return
+        post("alert:extension-result:$identity", EVENT_ID, base(CH_ALERT)
+            .setContentTitle(title).setContentText(detail)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail.take(2000)))
+            .setOnlyAlertOnce(true).setAutoCancel(true)
+            .apply {
+                record?.let { setContentIntent(ExtensionNotificationIntents(context).contentIntent(it, it.action?.title ?: it.extension)) }
             }.build())
     }
 

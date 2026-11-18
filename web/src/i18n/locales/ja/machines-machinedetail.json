@@ -18,6 +18,9 @@
   "last_seen": "最終オンライン：{when}",
   "no_agents": "実行中のエージェントはありません",
   "agents_offline": "マシンはオフラインです。接続されるとエージェントが表示されます",
+  "agents_loading": "エージェントを読み込み中…",
+  "agents_failed": "エージェントを読み込めませんでした",
+  "agents_failed_detail": "このコンピューターのエージェントを読み込めませんでした。少ししてからもう一度試します。",
   "engine": "エンジン",
   "monitoring": "監視",
   "range": "期間",
@@ -61,5 +64,7 @@
   "rename_hint": "すべてのアプリとこのコンピュータの Persona Link に表示されます。空欄なら ID を使います。ID は変わりません。",
   "renamed": "「{name}」に変更しました",
   "screen": "画面を見る",
-  "screen_hint": "この Mac の画面をリアルタイムで開く（画面共有）"
+  "screen_hint": "この Mac の画面をリアルタイムで開く（画面共有）",
+  "files": "ファイル",
+  "files_hint": "ホームフォルダからこのコンピュータのファイルを見る"
 }

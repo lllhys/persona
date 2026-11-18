@@ -2,6 +2,7 @@ package persona.android.di
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,6 +22,15 @@ class PairingCleanupTest {
         opened.forEach { File(app.cacheDir, "$it/opened.bin").apply { parentFile!!.mkdirs() }.writeText("hub file") }
         clearUnversionedPairingData(app, disconnect = true)
         opened.forEach { assertFalse("cache/$it should be gone", File(app.cacheDir, it).exists()) }
+    }
+
+    /** The GitHub star prompts are this phone's, not the pairing's (#5761): a re-pairing asks nothing again. */
+    @Test fun disconnectingKeepsTheStarPrompts() {
+        persona.core.designsystem.StarPromptStore(app).run { launched(); starred() }
+        clearUnversionedPairingData(app, disconnect = true)
+        val kept = persona.core.designsystem.StarPromptStore(app).state.value
+        assertTrue(kept.done)
+        assertEquals(1, kept.launches)
     }
 
     @Test fun startingUpKeepsThem() {

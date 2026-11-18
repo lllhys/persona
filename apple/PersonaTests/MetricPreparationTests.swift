@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Testing
 @testable import Persona
+import PersonaWire
 
 struct MetricPreparationTests {
     @Test @MainActor func metricsEndpointPreservesTheRequestedRange() async throws {

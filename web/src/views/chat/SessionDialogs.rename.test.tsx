@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initI18n } from "../../i18n";
 import { setToken } from "../../lib/api";
 import type { Session } from "../../lib/types";
-import { RenameDialog, RenameSpaceDialog } from "./SessionDialogs";
+import { RenameDialog, RenameSpaceDialog } from "./SessionMenuDialogs";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 type Request = { url: string; init: RequestInit; resolve: (value: Response) => void };
@@ -58,6 +58,21 @@ describe("RenameDialog", () => {
     expect(closed).toHaveBeenCalledTimes(1);
   });
 
+  it("renames a runtime's session by its title alone, without the herdr / Claude hint (#6294)", async () => {
+    const runtime = { ...session, source_kind: "runtime", agent: "claude", capabilities: { read: true, send: true, rename: true } } as Session;
+    await act(async () => root.render(<RenameDialog session={runtime} open onClose={closed} />));
+    expect(document.querySelectorAll("[role=dialog] input")).toHaveLength(1);
+    expect(document.querySelector("[role=dialog]")!.textContent).not.toContain("herdr");
+    await type("New name");
+    await enter();
+    expect(JSON.parse(String(posts("/sessions/m/s/rename")[0].init.body))).toEqual({ title: "New name" });
+  });
+
+  it("keeps the hint for an Agent in a terminal", async () => {
+    await act(async () => root.render(<RenameDialog session={session} open onClose={closed} />));
+    expect(document.querySelector("[role=dialog]")!.textContent).toContain("herdr");
+  });
+
   it("sends again once a failed rename has come back", async () => {
     await act(async () => root.render(<RenameDialog session={session} open onClose={closed} />));
     await type("New name");
@@ -79,5 +94,13 @@ describe("RenameSpaceDialog", () => {
     expect(JSON.parse(String(posts("/machines/m/spaces/sp/rename")[0].init.body))).toEqual({ name: "New space" });
     await reply(posts("/machines/m/spaces/sp/rename")[0], 200, {});
     expect(closed).toHaveBeenCalledTimes(1);
+  });
+  it("renames a Paseo space by its project, without herdr's hint", async () => {
+    const paseo = { ...session, source_kind: "runtime", space_kind: "paseo", space_id: "prj_0000000000000001", workspace_id: "wks_0000000000000001" } as Session;
+    await act(async () => root.render(<RenameSpaceDialog session={paseo} open onClose={closed} />));
+    expect(document.querySelector("[role=dialog]")?.textContent).not.toContain("herdr");
+    await type("New project");
+    await enter();
+    expect(posts("/machines/m/spaces/prj_0000000000000001/rename")).toHaveLength(1);
   });
 });

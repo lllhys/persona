@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 // What Persona and a task's agent say to each other in the new conversation layout (#1666, `ChatLayout`): Persona's
 // message to the task (feed `routed` with `from` "assistant", #1542) reads "Persona → @task", the agent's report (feed
@@ -60,37 +61,6 @@ struct UserRoutedExchange: View {
     }
 }
 
-/// A task's agent to Persona (`report`): a question, a block, done, or how far it got.
-struct ReportExchange: View {
-    var item: FeedItem
-    var taskTitle: String
-    var layout: ChatLayout
-    private var store: TasksStore { .shared }
-
-    var body: some View {
-        let kind = item.reportKind ?? ""
-        let attention = ReviewText.reportWantsAttention(kind)
-        VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Button {
-                if let id = item.ref, store.todos[id] != nil { store.detailTask = id }
-            } label: {
-                ExchangeHeader(from: taskTitle, to: ChatNames.persona, icon: Theme.Icon.reported,
-                               tint: attention ? Theme.cautionText : .secondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(item.ref.flatMap { store.todos[$0] } == nil)
-            ExchangeText(text: ReviewText.reportLine(kind: kind, text: ExchangeText.withoutHeadingMarks(item.text ?? ""), step: item.step, steps: item.steps),
-                         shown: layout.shownLines, pinKey: "report-" + item.id)
-                .chatBoxed(Theme.ChatBox.persona)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, Theme.Space.xxl)
-        .chatPinned("report-" + item.id)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("exchange.report")
-    }
-}
-
 /// The names in the headers. Persona is the assistant's role here, whatever its avatar is called (as the web's
 /// "task reported to Persona" line).
 enum ChatNames {
@@ -99,25 +69,41 @@ enum ChatNames {
 
 /// Expand / Collapse under words that are folded: an exchange's (`ExchangeText`) and a long message's (`LineFold`).
 /// prefix: the accessibility identifiers, "<prefix>.expand" and "<prefix>.collapse".
+/// tint: the words' color (nil: the accent); a user bubble's link color in your own long message (`BubbleFold`).
+/// showMore: Show More / Show Less, the web's words for your own long message (#5676), whose row is the bubble's width
+/// and takes taps a space around it (the bubble's bottom padding), as a 44 pt target would.
+/// title: other words for it; a pending card's long command says Show All N Lines, as the chat's tool output does (`CardFold`).
 struct FoldToggle: View {
     var open: Bool
     var prefix: String
+    var tint: Color? = nil
+    var showMore = false
+    var title: String? = nil
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: Theme.Space.xs) {
-                Text(open ? String(localized: "Collapse") : String(localized: "Expand")).lineLimit(1)
+                Text(words).lineLimit(1)
                 ThemedIcon(Theme.Icon.disclosure)
                     .rotationEffect(.degrees(open ? -90 : 90))
                     .accessibilityHidden(true)
             }
             .font(Theme.Font.captionStrong)
-            .foregroundStyle(Theme.accent)
-            .contentShape(.rect)
+            .foregroundStyle(tint ?? Theme.accent)
+            .frame(maxWidth: showMore ? .infinity : nil, alignment: .leading)
+            // A bubble's Show More: the caption line and 16 pt around it, at least `Theme.Size.tapTarget` tall, with
+            // nothing laid out around it (what the bubble looks like stays as it is).
+            .contentShape(Rectangle().inset(by: showMore ? -Theme.Space.l : 0))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(prefix + (open ? ".collapse" : ".expand"))
+    }
+
+    private var words: String {
+        if let title { return title }
+        if showMore { return open ? String(localized: "Show Less [Bubble Fold]") : String(localized: "Show More [Bubble Fold]") }
+        return open ? String(localized: "Collapse") : String(localized: "Expand")
     }
 }
 

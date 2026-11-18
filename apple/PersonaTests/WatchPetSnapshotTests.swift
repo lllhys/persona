@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// #55: the watch face shows what the watch app last saw, and stops standing for the agents once that is old.
 struct WatchPetSnapshotTests {

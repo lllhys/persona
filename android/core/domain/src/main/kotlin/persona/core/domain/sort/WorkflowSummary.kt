@@ -44,11 +44,13 @@ object WorkflowSummary {
 
     /** "Verify 2/2" where the hub knows its place among the phases, else the phase's name alone. */
     fun phase(workflow: Workflow): CoreText? {
-        val index = workflow.currentPhase
         val phases = workflow.phases.orEmpty()
-        val name = workflow.phase?.trim()?.takeIf(String::isNotEmpty) ?: index?.let { phases[it - 1].trim() }?.takeIf(String::isNotEmpty)
+        // a summary row's run has no phases, only how many (`phase_count`, #5888)
+        val count = phases.size.takeIf { it > 0 } ?: workflow.phaseCount ?: 0
+        val index = workflow.phaseIndex?.takeIf { it in 1..count }
+        val name = workflow.phase?.trim()?.takeIf(String::isNotEmpty) ?: index?.let { phases.getOrNull(it - 1)?.trim() }?.takeIf(String::isNotEmpty)
             ?: return null
-        return if (index != null) CoreText.of(Key.WorkflowPhase, name, index, phases.size) else CoreText.plain(name)
+        return if (index != null) CoreText.of(Key.WorkflowPhase, name, index, count) else CoreText.plain(name)
     }
 
     /** How long it ran: until it ended, or until [now] while it runs; null without a start. */

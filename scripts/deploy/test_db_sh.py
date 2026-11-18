@@ -11,13 +11,15 @@ SCRIPTS = Path(__file__).resolve().parent
 # A fake docker. $TEST_CONTAINERS lists the containers there as name=user (the POSTGRES_USER each was made with, what
 # `inspect … .Config.Env` answers), $TEST_VOLUMES the volumes. `inspect` answers a network mode ($TEST_NETWORK) for
 # anything else, and `exec … pg_isready` answers like the real one for a Postgres listening on $TEST_LISTEN_PORT inside
-# the container: ready when the port it asks (PGPORT, else 5432) is that one. Every call is logged to $TEST_LOG.
+# the container: ready when the port it asks (PGPORT, else 5432) is that one. `run` fails when $TEST_RUN_FAILS is set
+# (an image that cannot be pulled, a port taken). Every call is logged to $TEST_LOG.
 FAKE_DOCKER = r'''#!/bin/bash
 printf '%s\n' "$*" >> "$TEST_LOG"
 user_of() { for e in $TEST_CONTAINERS; do [ "${e%%=*}" = "$1" ] && { echo "${e#*=}"; return 0; }; done; return 1; }
 case "$1" in
   ps) for e in $TEST_CONTAINERS; do echo "${e%%=*}"; done ;;
-  start|run) ;;
+  start) ;;
+  run) [ -z "$TEST_RUN_FAILS" ] || exit 125 ;;
   volume)
     case "$2" in
       inspect) for v in $TEST_VOLUMES; do [ "$v" = "$3" ] && exit 0; done; exit 1 ;;
@@ -66,14 +68,14 @@ class DbShTestCase(unittest.TestCase):
             {"database_url": "postgres://persona:pw@127.0.0.1:%d/persona?sslmode=disable" % url_port},
             containers="persona-postgres=persona", network=network, listen_port=listen_port)
 
-    def run_with(self, config, containers="", volumes="", network="bridge", listen_port=5432, test_db="1"):
+    def run_with(self, config, containers="", volumes="", network="bridge", listen_port=5432, test_db="1", run_fails=""):
         """db.sh with hub.json holding config (None: no hub.json) and the containers / volumes given."""
         if config is not None:
             (self.state / "hub.json").write_text(json.dumps(config))
         env = {"PATH": str(self.tools) + os.pathsep + os.defpath, "HOME": str(self.root),
                "_PERSONA_STATE_DIR": str(self.state), "TEST_LOG": str(self.log),
                "TEST_NETWORK": network, "TEST_LISTEN_PORT": str(listen_port), "TEST_CONTAINERS": containers,
-               "TEST_VOLUMES": volumes, "TEST_TEST_DB": test_db}
+               "TEST_VOLUMES": volumes, "TEST_TEST_DB": test_db, "TEST_RUN_FAILS": run_fails}
         return subprocess.run(["bash", str(SCRIPTS / "db.sh")], env=env, capture_output=True, text=True, timeout=30)
 
     def calls(self):
@@ -184,6 +186,17 @@ class DbShTestCase(unittest.TestCase):
         self.assertRegex(url, r"^postgres://persona:[0-9a-f]{48}@127\.0\.0\.1:18661/persona\?sslmode=disable$")
         self.assertEqual((self.state / "hub.json").stat().st_mode & 0o777, 0o600)
         self.assertIn("exec -e PGPORT=5432 persona-postgres pg_isready -U persona -d persona", calls)
+
+
+    def test_a_failed_docker_run_takes_back_what_it_made_so_the_next_run_starts_clean(self):
+        result = self.run_with(None, run_fails="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docker run failed", result.stderr)
+        calls = self.calls()
+        self.assertIn("volume create persona-pgdata", calls)
+        self.assertIn("rm -f persona-postgres", calls)
+        self.assertIn("volume rm persona-pgdata", calls)
+        self.assertFalse((self.state / "hub.json").exists() and "database_url" in (self.state / "hub.json").read_text())
 
 
 

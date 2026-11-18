@@ -1,0 +1,609 @@
+{
+  "source": {
+    "previous_head": "fc534efd464c85a11f0c2fa077af577f18fd91ee",
+    "main": "5474a23c63c7abd61a3d1126f675796987fc7bbe",
+    "branch": "perf/5730-server-test-latency",
+    "merge_head": "d875f617235a466d7a3a20fae3327443e450dc73",
+    "merge_tree": "f4998eeef9ed5f4590a934955153eccbc9bdd171",
+    "conflicts": [
+      "docs/lessons/testing.md"
+    ],
+    "resolution": "Retain both fixture lessons and the upstream shared-counter/background-pass lesson."
+  },
+  "upstream_preservation": {
+    "upstream_fixes": {
+      "5939": "d49d692d914551732e7fccd5023baf7b3847cc3a",
+      "6039": "c981bc7f4626aa889d881a0b9eccba03a491b4eb",
+      "6133": "43f717e430dad832bc844b878e39c6634bd9206f",
+      "6141": "ce5d5011bad97091f33ace95da9f9b1654463908",
+      "6187": "554f5dbc7c3228e5e4b88cd29b548289d1993dc8"
+    },
+    "upstream_test_files_identical": {
+      "server/internal/hub/widget_wake_test.go": "05cc68ddc06c3bc89f2ae533993d8a6ab371c3c808fe2fe53e103757ae0e705c",
+      "server/internal/node/workflows_test.go": "ddd6800fa3faec708fab7b000fc9d3ccaf388db1c58c5e51b5f60550d75078c7",
+      "server/internal/node/codex_rewind_test.go": "d83edc37d300c84d31b560471ba3d9e17c69ad7995a6fbf74d43e3d6b35c01da",
+      "server/internal/assistant/session_reads_test.go": "ba38fe0ea9771a024084dd667e661008bc2b20eb97ed2ee73304e83f713766bf"
+    },
+    "previous_pr_head_is_ancestor": true
+  },
+  "environment": {
+    "go": "go1.27.1 linux/amd64",
+    "database_url": "unset",
+    "outer_budget_s": 600,
+    "fixture": "fresh owned HOME/temp/runtime for each command, shared warm Go caches",
+    "host": "shared; load and allowed CPUs retained in command receipts"
+  },
+  "notes": [
+    "Historical November 12 timings are not measurements of this synchronized source.",
+    "Complete verification uses the existing eight-package partition entrypoint; it includes all five-package roots but is not a new direct five/eight-package command.",
+    "Source synchronization retains unchanged upstream test fixes; no shell/workflow/UI implementation changes relative to the synchronized main."
+  ],
+  "runs": [
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:53:59.583099+00:00",
+      "command_wall_s": 15.312,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.40380859375,
+        0.5078125,
+        0.494140625
+      ],
+      "load_after": [
+        2.97509765625,
+        1.10986328125,
+        0.6943359375
+      ],
+      "label": "sync5474-regressions",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=20",
+        "-run",
+        "^(TestCodexReadyPollFindsOnlyTheMatchingRollout|TestCodexReadyPollKeepsCancellationAndDeadline|TestCodexReadyPollReportsLauncherFailure|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures|TestFakeCodexRequestWakesOnItsReply|TestFirstPromptStillOutlivesItsRequest|TestFixtureShellIsAlreadySettled|TestHerdrFixtureCancelsUnfinishedPromptChecks|TestReadyPollCancellationDoesNotReadTheHost|TestReadyPollFixtureKeepsTheStartDeadline|TestReadyPollKeepsFixtureAndProductionCadence)$",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 15.332,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:54:14.955836+00:00",
+      "command_wall_s": 142.479,
+      "cleanup_wall_s": 0.025,
+      "cpus": 32,
+      "load_before": [
+        2.97509765625,
+        1.10986328125,
+        0.6943359375
+      ],
+      "load_after": [
+        1.69873046875,
+        1.43701171875,
+        0.8935546875
+      ],
+      "label": "sync5474-risk-race",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=3",
+        "-run",
+        "^(TestAssistantAlwaysRechecksHub|TestAssistantBypassCLIControls|TestAssistantBypassCodexUnknownCommand|TestAssistantBypassCommandGate|TestAssistantBypassGateReportsPermissionMode|TestAssistantBypassNewCodexThreadPolicy|TestAssistantBypassOrdinaryCommands|TestAssistantBypassPreservesRuntimeSelection|TestAssistantBypassReadOnlyCompoundCommands|TestAssistantBypassResumePersistsDefault|TestAssistantBypassReviewCommands|TestAssistantBypassShellNames|TestAssistantBypassWrappedCommands|TestAssistantCodexAlwaysStaysAtHub|TestAssistantCodexTurnError|TestAssistantLarkAlwaysRechecksHub|TestAssistantUnselectedModeStartsBypass|TestClaudeQuestionCancelDeniesOnlyQuestionWithoutAnswer|TestCodexApprovalCardIsPlacedInTheConversationsDirectory|TestCodexApprovals|TestCodexArgsAndShell|TestCodexCancelledWaitStillCloses|TestCodexCleanupNeedsFreshProofPaneIsGone|TestCodexGetsRealWritableRoots|TestCodexReadyPoll.*|TestCodexReadyPollFindsOnlyTheMatchingRollout|TestCodexReadyPollKeepsCancellationAndDeadline|TestCodexReadyPollReportsLauncherFailure|TestCodexRetryAfterAbandonedPaneWasRemoved|TestCodexSharesTheAssistantMemory|TestCodexStalled.*|TestCodexStartAndTurns|TestCodexStartAnswersWithTheThread|TestCodexStartBypassLauncherArguments|TestCodexStartPermissionModes|TestCodexStartTrustsTheFolder|TestCodexStartsInSameDirectoryRunConcurrently|TestCodexTurnWithoutEffortOnAuto|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures|TestFakeCodexRequestWakesOnItsReply|TestFirstPromptStillOutlivesItsRequest|TestFixtureShellIsAlreadySettled|TestHealthChecksCountItsSubfolders|TestHerdrFixtureCancelsUnfinishedPromptChecks|TestHookCardsArePlacedInTheConversationsDirectory|TestMetaWithoutAHeadGoesByTheAssistantProject|TestModeFromCodex|TestOfflineAssistantConversationIsListedWhereItStarted|TestOwnedCodexQuestionCancelReturnsNoAnswers|TestQuickMetaFindsAFirstPromptPastLongInstructions|TestQuickMetaKeepsAnAssistantConversationWhereItStarted|TestReadsOnlyMemory|TestReadyPoll.*|TestReadyPollCancellationDoesNotReadTheHost|TestReadyPollFixtureKeepsTheStartDeadline|TestReadyPollKeepsFixtureAndProductionCadence|TestResetAssistantPermissionsKillsUncooperativeChild|TestResetAssistantPermissionsRejectsTerminal|TestResetAssistantPermissionsRuntimeNeedsRestart|TestResetAssistantPermissionsWaitsForExit|TestResolveAssistantKey|TestSharedCodexQuestionCancelIsOneEmptyReplyWithoutInterrupt|TestStartRecordPlacesARowAtRest|TestStoppedAssistantConversationStaysPut|TestTerminalQuestionCancelNeverSendsEscape|TestUnwrapShell)$",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 142.503,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:56:37.498544+00:00",
+      "command_wall_s": 26.677,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        1.69873046875,
+        1.43701171875,
+        0.8935546875
+      ],
+      "load_after": [
+        4.46044921875,
+        2.07177734375,
+        1.11669921875
+      ],
+      "label": "sync5474-upstream-regressions",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=5",
+        "-run",
+        "^(TestWorkflowLongLaunchLine|TestCodexPaginatedHistoryKeepsThePrefixAndAnEmptyConversation|TestIdlePassesReadWhatRuns|TestWidgetWakePace|TestWidgetWakePushes)$",
+        "./internal/node",
+        "./internal/assistant",
+        "./internal/hub"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 26.698,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:57:04.236179+00:00",
+      "command_wall_s": 107.234,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        4.46044921875,
+        2.07177734375,
+        1.11669921875
+      ],
+      "load_after": [
+        7.49658203125,
+        3.998046875,
+        1.92578125
+      ],
+      "label": "sync5474-ci-build",
+      "command": [
+        "bash",
+        "scripts/ci/server.sh",
+        "build"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 107.255,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:58:51.530653+00:00",
+      "command_wall_s": 12.243,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        7.49658203125,
+        3.998046875,
+        1.92578125
+      ],
+      "load_after": [
+        6.65087890625,
+        3.93212890625,
+        1.9267578125
+      ],
+      "label": "sync5474-live-compile",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-tags",
+        "herdrlive",
+        "-o",
+        "<sync evidence>/node-live.test",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 12.264,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:59:03.834347+00:00",
+      "command_wall_s": 3.523,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        6.65087890625,
+        3.93212890625,
+        1.9267578125
+      ],
+      "load_after": [
+        6.5185546875,
+        3.9501953125,
+        1.943359375
+      ],
+      "label": "sync5474-compile-head",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<sync evidence>/head-bins",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 3.543,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:59:08.084180+00:00",
+      "command_wall_s": 28.733,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        6.5185546875,
+        3.9501953125,
+        1.943359375
+      ],
+      "load_after": [
+        4.93505859375,
+        3.810546875,
+        1.9619140625
+      ],
+      "label": "sync5474-compile-main",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<sync evidence>/main-bins",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<sync evidence>/main-export",
+      "sha": "5474a23c63c7abd61a3d1126f675796987fc7bbe",
+      "wall_s": 28.753,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T02:59:38.597099+00:00",
+      "command_wall_s": 299.2,
+      "cleanup_wall_s": 0.026,
+      "cpus": 32,
+      "load_before": [
+        4.93505859375,
+        3.810546875,
+        1.9619140625
+      ],
+      "load_after": [
+        0.77978515625,
+        2.13427734375,
+        1.77734375
+      ],
+      "label": "sync5474-partitioned-head",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<PR checkout>/server",
+      "sha": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "wall_s": 299.227,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T03:04:37.864106+00:00",
+      "command_wall_s": 434.14,
+      "cleanup_wall_s": 0.026,
+      "cpus": 32,
+      "load_before": [
+        0.77978515625,
+        2.13427734375,
+        1.77734375
+      ],
+      "load_after": [
+        0.791015625,
+        1.15966796875,
+        1.46630859375
+      ],
+      "label": "sync5474-partitioned-main",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<sync evidence>/main-export/server",
+      "sha": "5474a23c63c7abd61a3d1126f675796987fc7bbe",
+      "wall_s": 434.166,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    }
+  ],
+  "checks": [
+    {
+      "label": "guards",
+      "command": [
+        "env",
+        "CI_BASE_SHA=5474a23c63c7abd61a3d1126f675796987fc7bbe",
+        "bash",
+        "scripts/ci/guards.sh"
+      ],
+      "wall_s": 24.654,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_paths",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_paths.py"
+      ],
+      "wall_s": 0.665,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_go_paths",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_go_paths.py"
+      ],
+      "wall_s": 0.314,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_sections",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_sections.py"
+      ],
+      "wall_s": 1.216,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_wire",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_wire.py"
+      ],
+      "wall_s": 0.465,
+      "exit": 0
+    },
+    {
+      "label": "test_go_partitions",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_go_partitions.py"
+      ],
+      "wall_s": 0.064,
+      "exit": 0
+    },
+    {
+      "label": "test_go_test_partitioned",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_go_test_partitioned.py"
+      ],
+      "wall_s": 0.264,
+      "exit": 0
+    },
+    {
+      "label": "test_server_test_env",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_server_test_env.py"
+      ],
+      "wall_s": 6.274,
+      "exit": 0
+    }
+  ],
+  "publication_document_checks": [
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_paths.py"
+      ],
+      "wall_s": 0.665,
+      "exit": 0,
+      "label": "test_doc_paths"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_go_paths.py"
+      ],
+      "wall_s": 0.264,
+      "exit": 0,
+      "label": "test_doc_go_paths"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_sections.py"
+      ],
+      "wall_s": 1.216,
+      "exit": 0,
+      "label": "test_doc_sections"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_wire.py"
+      ],
+      "wall_s": 0.465,
+      "exit": 0,
+      "label": "test_doc_wire"
+    }
+  ],
+  "regression_audit": {
+    "root_identities": 13,
+    "all_identities": 25,
+    "terminal_events": 500,
+    "unexpected_counts": {},
+    "nonpass": {}
+  },
+  "race_selected_root_count": 68,
+  "upstream_targeted_results": {
+    "TestWorkflowLongLaunchLine": "5 pass",
+    "TestCodexPaginatedHistoryKeepsThePrefixAndAnEmptyConversation": "5 existing skip: no sqlite3 executable on this Linux environment",
+    "TestIdlePassesReadWhatRuns": "5 pass",
+    "TestWidgetWakePace": "5 pass",
+    "TestWidgetWakePushes": "5 pass"
+  },
+  "suite_audits": {
+    "head": {
+      "root_counts": {
+        "pass": 7060,
+        "skip": 405,
+        "fail": 1
+      },
+      "identity_counts": {
+        "pass": 16830,
+        "skip": 612,
+        "fail": 1
+      },
+      "inventory_roots": 7466,
+      "missing_roots": 0,
+      "unexpected_roots": 0,
+      "duplicate_runs": 0,
+      "duplicate_terminals": 0,
+      "unfinished": 0,
+      "failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "private_manifest_sha256": "8d4a2c697063ffe2c25922eb5f328ff843c7b026bbc7836c59fe2dbc6a988c15",
+      "summed_root_elapsed_s": 932.13
+    },
+    "main": {
+      "root_counts": {
+        "pass": 7047,
+        "skip": 405,
+        "fail": 1
+      },
+      "identity_counts": {
+        "pass": 16805,
+        "skip": 612,
+        "fail": 1
+      },
+      "inventory_roots": 7453,
+      "missing_roots": 0,
+      "unexpected_roots": 0,
+      "duplicate_runs": 0,
+      "duplicate_terminals": 0,
+      "unfinished": 0,
+      "failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "private_manifest_sha256": "6f9aa900eca1a7bd3e543a3d6a613894838048f8a5e3708ec9d91c81ef10cb11",
+      "summed_root_elapsed_s": 1135.27
+    }
+  },
+  "terminal_comparison": {
+    "common_identities": 17418,
+    "removed_identities": 0,
+    "added_identities": 25,
+    "changed_common_states": 0,
+    "changed_root_names": []
+  }
+}

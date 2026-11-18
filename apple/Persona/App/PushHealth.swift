@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonaWire
 
 /// Whether this device gets background pushes, and if not why (#5998). A relay that refused this app, moved or could
 /// not be reached used to leave one log line; on a hub without its own APNs key nothing came, and nothing said so.
@@ -26,6 +27,10 @@ nonisolated struct PushHealth: Codable, Equatable, Sendable {
     var relay: Relay?
     /// Per hub group, the way the hub said it pushes here; missing for an older hub, which does not say.
     var routes: [String: APIClient.PushRoute] = [:]
+    /// Per hub group, why its route could not be read just now (the registration or Settings › Notifications' check
+    /// failed), in the error's words: the page then says it couldn't check, not an older route as if current (#1859).
+    /// The next read clears it.
+    var unchecked: [String: String]?
 
     /// What the hub is told when there is no grant: the relay's words in one line.
     var relayError: String? {
@@ -54,6 +59,11 @@ extension PushHealth {
             return PushStatus(level: .unavailable, title: String(localized: "push.unavailable", defaultValue: "Unavailable"),
                               reason: String(localized: "Notifications for Persona are off in Settings."),
                               action: String(localized: "Allow notifications for Persona in Settings."))
+        }
+        if let why = unchecked?[group] {
+            return PushStatus(level: .unknown, title: String(localized: "push.unknown", defaultValue: "Unknown"),
+                              reason: String(localized: "Couldn't check with the hub (\(why)).", comment: "%@: the network's or the hub's error"),
+                              action: String(localized: "Persona checks again when you open this page."))
         }
         guard let route = routes[group] else { return unknownStatus }
         if route.reaches {
@@ -130,6 +140,22 @@ extension PushHealth {
     }
 }
 
+extension PushHealth {
+    /// The hub answered for group: the way it pushes to this device (nil: none it knows of), nothing left unchecked.
+    mutating func read(_ route: APIClient.PushRoute?, group: String) {
+        routes[group] = route
+        unchecked?[group] = nil
+        if unchecked?.isEmpty == true { unchecked = nil }
+    }
+
+    /// The route at group could not be read: why, in the error's words.
+    mutating func readFailed(_ why: String, group: String) {
+        var all = unchecked ?? [:]
+        all[group] = why
+        unchecked = all
+    }
+}
+
 #if DEBUG
 extension PushHealth {
     /// `-showPushHealth <name>`: what Settings › Notifications shows in each case, for screenshots.
@@ -154,6 +180,10 @@ extension PushHealth {
             h.routes[group] = APIClient.PushRoute(route: "relay", reason: "push_failed", detail: "502 relay: APNs unreachable", failedAt: .now)
         case "unknown":
             h.relay = .registered
+        case "unchecked":
+            h.relay = .registered
+            h.routes[group] = APIClient.PushRoute(route: "relay")
+            h.unchecked = [group: "The request timed out."]
         default:
             h.relay = .refused(status: 403, message: "topic not served")
             h.routes[group] = none("relay_failed", h.relayError)

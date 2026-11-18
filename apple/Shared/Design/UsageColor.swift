@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// The token usage charts' colors (docs/server/machines.md "Token usage", #4973): one per kind, light and dark steps of the
 /// charts' categorical palette, in the stacking order (input, output, cache write, cache read) validated as a set

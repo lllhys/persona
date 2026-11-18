@@ -18,10 +18,12 @@ import (
 // unlistedMax bounds what one runtime may name: more than a week of anyone's archived sessions.
 const unlistedMax = 2000
 
-// unlistedKeep is how long what a runtime named stands once it is gone. A runtime that restarts (its bridge, the
-// program it bridges) is back in seconds and names them again: dropped at once, its archived sessions would leave the
-// list and come back each time. One that stays away takes them with it, as it takes the sessions it lists.
-const unlistedKeep = 10 * time.Minute
+// unlistedKeep is how long what a runtime named stands once it is gone, and the rows it listed whose conversation is a
+// transcript here (runtimeaway.go): as long as the list of sessions not running goes back. A runtime that restarts (its
+// bridge, the program it bridges) is back in seconds and says them again; one that stays away (Paseo not running, the
+// computer switched to another engine) leaves its Claude conversations readable meanwhile, refusing only what needs
+// it. Ten minutes once (#4521): the conversations left the list while Paseo was down, and came back with it (#8131).
+const unlistedKeep = offlineWindow
 
 // unlistedOf is the transcripts a runtime named, and when its last connection left (zero while it is connected).
 type unlistedOf struct {
@@ -102,6 +104,13 @@ func (b *runtimeRegistry) leftUnlisted(id string) {
 	}
 	u.gone = time.Now()
 	b.unlisted[id] = u
+}
+
+// namesUnlisted: runtime rt names transcript id as a session of its own that it does not list (unlistedTranscripts),
+// connected or for unlistedKeep once it left. Callers hold b.mu.
+func (b *runtimeRegistry) namesUnlisted(rt, id string) bool {
+	u, ok := b.unlisted[rt]
+	return ok && u.set[id] && (u.gone.IsZero() || time.Since(u.gone) <= unlistedKeep)
 }
 
 // unlistedTranscripts is every transcript a runtime names as a session of its own that it does not list: the

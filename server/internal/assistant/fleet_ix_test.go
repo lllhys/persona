@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ func TestWaitInteractionResolved(t *testing.T) {
 	}
 	// The hub was told: the card, then its end.
 	if len(ft.toldOf(assistantwire.EventFleetInteraction)) != 1 || len(ft.toldOf(assistantwire.EventFleetResolved)) != 1 {
-		t.Fatalf("told %+v", ft.f.told)
+		t.Fatalf("told %s", ft.toldText())
 	}
 }
 
@@ -153,7 +154,7 @@ func TestScreenInteractionResolveRunsLocally(t *testing.T) {
 	s.fleet.mu.Lock()
 	s.ixMapLocked()["scr_x"] = &pending{
 		ix:    proto.Interaction{ID: "scr_x", MachineID: "mac", SessionID: "s1", Kind: proto.IxScreen},
-		local: func(r proto.Resolution) error { ran <- r; return nil },
+		local: func(_ context.Context, r proto.Resolution) error { ran <- r; return nil },
 	}
 	s.fleet.mu.Unlock()
 	if err := s.resolve("scr_x", proto.Resolution{Keys: []string{"down", "enter"}}); err != nil {
@@ -348,7 +349,7 @@ func TestResumableSurvivesAManagerRestart(t *testing.T) {
 	// The next manager, on the same table.
 	st := &restoreMem{fleetMem: ft.st}
 	f2 := newFakeHub()
-	s2 := New(Options{Hub: f2, Store: func() Store { return st }, Logf: t.Logf, Devices: ft.d})
+	s2 := newRestartedService(t, Options{Hub: f2, Store: func() Store { return st }, Logf: t.Logf, Devices: ft.d})
 	s2.FleetUp(context.Background())
 	var full assistantwire.FleetInteractions
 	for _, tl := range f2.told {
@@ -418,7 +419,7 @@ func TestRestartResolvesTheCardsTheLastManagerLeft(t *testing.T) {
 	// The next manager, on the same table.
 	st := &restoreMem{fleetMem: ft.st}
 	f2 := newFakeHub()
-	s2 := New(Options{Hub: f2, Store: func() Store { return st }, Logf: t.Logf, Devices: ft.d})
+	s2 := newRestartedService(t, Options{Hub: f2, Store: func() Store { return st }, Logf: t.Logf, Devices: ft.d})
 	s2.FleetUp(context.Background())
 	if status, _, _ := st.InteractionOutcome(context.Background(), asked.ID); status != "cancelled" {
 		t.Fatalf("status %q", status)
@@ -593,4 +594,169 @@ func TestResumableAnswerWrittenAsTheGraceEnds(t *testing.T) {
 	if err != nil || r.Allow == nil || !*r.Allow {
 		t.Fatalf("the hook back got %+v %v", r, err)
 	}
+}
+
+// hubCards are the cards the hub holds after what it was told, kept as fleet_link.go keeps them: a card is added by
+// fleet.interaction and taken off by fleet.interaction_resolved, in the order they came.
+func (ft *fleetTest) hubCards() map[string]bool {
+	ft.f.mu.Lock()
+	defer ft.f.mu.Unlock()
+	cards := map[string]bool{}
+	for _, t := range ft.f.told {
+		switch t.event {
+		case assistantwire.EventFleetInteraction:
+			var p assistantwire.FleetInteraction
+			if json.Unmarshal(t.params, &p) == nil {
+				cards[p.Interaction.ID] = true
+			}
+		case assistantwire.EventFleetResolved:
+			var p assistantwire.FleetResolved
+			if json.Unmarshal(t.params, &p) == nil {
+				delete(cards, p.ID)
+			}
+		}
+	}
+	return cards
+}
+
+// A runtime that withdraws its card while the manager is still telling it leaves no card on the hub. OpenCode's TUI in
+// auto accept answers a permission the moment it is asked, and the plugin then cancels the card it was raising: the
+// cancel ends the card before it reached the apps, and the card told afterwards stayed on the hub for good, "needs
+// you" with nothing to answer (410).
+func TestCardCancelledWhileToldLeavesNoCardOnTheHub(t *testing.T) {
+	ft := newFleetTest(t)
+	ft.st.insertGate = make(chan struct{}) // the card is registered; its history row and the apps wait
+	ix := proto.Interaction{ID: "opencode-1", MachineID: "mac", SessionID: "ses_1", Kind: proto.IxPermission,
+		ToolName: "external_directory", Resumable: true, ExpiresAt: time.Now().Add(time.Hour)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _, _ = ft.s.waitInteraction(ctx, ix) }()
+	ft.waitPending(1)
+	ft.event("mac", "interaction.cancel", map[string]any{"id": ix.ID})
+	ft.waitPending(0)
+	close(ft.st.insertGate)
+	waitFor(t, "the card told to the hub", func() bool { return len(ft.toldOf(assistantwire.EventFleetInteraction)) > 0 })
+	waitFor(t, "the hub to hold no card", func() bool { return len(ft.hubCards()) == 0 })
+}
+
+// hookedHub is a fake hub that runs hook (when set) before it takes each tell, so a test can have something happen
+// right before the hub gets a card or its end.
+type hookedHub struct {
+	*fakeHub
+	hook func(event string, params any)
+}
+
+func (h *hookedHub) Tell(event string, params any) error {
+	if h.hook != nil {
+		h.hook(event, params)
+	}
+	return h.fakeHub.Tell(event, params)
+}
+
+// newHookedFleet is newFleetTestNoStore on a hookedHub.
+func newHookedFleet(t *testing.T) (*fleetTest, *hookedHub) {
+	t.Helper()
+	h := &hookedHub{fakeHub: newFakeHub()}
+	d := newFleetDevs()
+	d.add("mac", "Mac")
+	s := New(Options{Hub: h, Logf: testLogf(t), Devices: d})
+	return &fleetTest{t: t, s: s, d: d, f: h.fakeHub}, h
+}
+
+// hold registers card ix as pending, not told yet (as a card the assistant or a supervisor holds).
+func (ft *fleetTest) hold(ix proto.Interaction) {
+	ft.s.fleet.mu.Lock()
+	ft.s.ixMapLocked()[ix.ID] = &pending{ix: ix, done: make(chan proto.Resolution, 1)}
+	ft.s.fleet.mu.Unlock()
+}
+
+// cancelBeforeTold has the node withdraw card id (interaction.cancel) right before the hub is told it: the cancel lands
+// between the caller's own check that the card is pending and its tell.
+func cancelBeforeTold(ft *fleetTest, h *hookedHub, id string) {
+	var once sync.Once
+	h.hook = func(event string, params any) {
+		if p, ok := params.(assistantwire.FleetInteraction); ok && event == assistantwire.EventFleetInteraction && p.Interaction.ID == id {
+			once.Do(func() { ft.event("mac", "interaction.cancel", map[string]any{"id": id}) })
+		}
+	}
+}
+
+// A card the assistant hands back (escalate) and its node withdraws as it is told leaves no card on the hub.
+func TestEscalatedCardCancelledAsItIsToldLeavesNoCardOnTheHub(t *testing.T) {
+	ft, h := newHookedFleet(t)
+	ix := proto.Interaction{ID: "ix_esc", MachineID: "mac", SessionID: "s1", Kind: proto.IxQuestion,
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+	ft.hold(ix)
+	cancelBeforeTold(ft, h, ix.ID)
+	ft.s.escalate(ix)
+	if len(ft.toldOf(assistantwire.EventFleetInteraction)) == 0 || len(ft.s.pendingInteractions()) != 0 {
+		t.Fatalf("the card was not told and withdrawn: told %s", ft.toldText())
+	}
+	if cards := ft.hubCards(); len(cards) != 0 {
+		t.Fatalf("the hub kept the withdrawn card: %v", cards)
+	}
+}
+
+// A card a supervisor passes up (ringAsks) and its node withdraws as it is told leaves no card on the hub.
+func TestRungCardCancelledAsItIsToldLeavesNoCardOnTheHub(t *testing.T) {
+	ft, h := newHookedFleet(t)
+	ix := proto.Interaction{ID: "ix_up", MachineID: "mac", SessionID: "s1", Kind: proto.IxPermission, ToolName: "Bash",
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+	ft.hold(ix)
+	cancelBeforeTold(ft, h, ix.ID)
+	if rung := ft.s.ringAsks("todo_1", []string{ix.ID}, nil, escalation{}); len(rung) != 1 {
+		t.Fatalf("rung %+v", rung)
+	}
+	if len(ft.toldOf(assistantwire.EventFleetInteraction)) == 0 || len(ft.s.pendingInteractions()) != 0 {
+		t.Fatalf("the card was not told and withdrawn: told %s", ft.toldText())
+	}
+	if cards := ft.hubCards(); len(cards) != 0 {
+		t.Fatalf("the hub kept the withdrawn card: %v", cards)
+	}
+}
+
+// The end told again for a card that ended on its way never takes a newer card under the same id off the hub: a newer
+// card shown while that end is being told reaches the hub after it.
+func TestEndToldAgainLeavesANewerCardUnderTheSameID(t *testing.T) {
+	ft, h := newHookedFleet(t)
+	old := proto.Interaction{ID: "ix_same", MachineID: "mac", SessionID: "s1", Kind: proto.IxPermission, ToolName: "Bash",
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour)}
+	newer := old
+	newer.CreatedAt = old.CreatedAt.Add(time.Second)
+	var once sync.Once
+	h.hook = func(event string, params any) {
+		if p, ok := params.(assistantwire.FleetResolved); !ok || event != assistantwire.EventFleetResolved || p.ID != old.ID {
+			return
+		}
+		once.Do(func() {
+			// Right after the old card was found ended, before its end reaches the hub: the newer card is held and
+			// shown.
+			ft.hold(newer)
+			shown := make(chan struct{})
+			go func() {
+				ft.s.show(newer)
+				close(shown)
+			}()
+			select {
+			case <-shown: // without cardTell the newer card reaches the hub first and the old card's end removes it
+			case <-time.After(200 * time.Millisecond): // held behind the old card's end, as it should be
+			}
+		})
+	}
+	ft.s.show(old) // ended before it reached the hub: not held
+	waitFor(t, "the newer card told", func() bool { return len(ft.toldOf(assistantwire.EventFleetInteraction)) == 2 })
+	if cards := ft.hubCards(); !cards[old.ID] {
+		t.Fatalf("the newer card was taken off the hub: told %s", ft.toldText())
+	}
+}
+
+// toldText is what the hub was told, one event per line.
+func (ft *fleetTest) toldText() string {
+	ft.f.mu.Lock()
+	defer ft.f.mu.Unlock()
+	var b strings.Builder
+	for _, t := range ft.f.told {
+		fmt.Fprintf(&b, "\n  %s %s", t.event, t.params)
+	}
+	return b.String()
 }

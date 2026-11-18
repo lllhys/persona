@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
@@ -40,6 +41,9 @@ import persona.core.designsystem.icons.PersonaIcons
 import persona.core.domain.sort.slotLabel
 import persona.core.domain.tasks.TasksStore
 import persona.core.domain.tasks.TodoDecisionsSource
+import persona.core.domain.tasks.TriageSection
+import persona.core.domain.tasks.supersededFailedStarts
+import persona.core.domain.tasks.triage
 import java.time.Instant
 
 /** Where an agent on a to-do came from (iOS TodosLogic.agentSource): with a project, sent by another agent, the same chat. */
@@ -88,7 +92,7 @@ fun TodoDetailScreen(
     }
 
     if (todo == null) {
-        JPage(title = stringResource(R.string.agents_todo_detail), onBack = onBack) {
+        JPage(title = stringResource(R.string.agents_todo_detail), onBack = if (LocalIsSidebarRoot.current) null else onBack) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 JEmptyState(stringResource(R.string.agents_todo_gone), stringResource(R.string.agents_todo_gone_hint))
             }
@@ -107,6 +111,17 @@ fun TodoDetailScreen(
 
     val sessionMap = remember(sessions) { sessions.associateBy { it.key } }
     val sessionLookup: (SessionKey) -> Session? = remember(sessionMap) { { key: SessionKey -> sessionMap[key] } }
+    val hubFeatures = tasks?.features?.collectAsState()
+    val seenOn = hubFeatures?.value?.contains("todo_seen") == true
+    LaunchedEffect(todoId, seenOn) {
+        val store = tasks ?: return@LaunchedEffect
+        if (!seenOn) return@LaunchedEffect
+        val placed = todo.triage(sessionLookup, now.toEpochMilli(), superseded = todo.id in supersededFailedStarts(todos))
+        if (placed.section != TriageSection.JustDone) return@LaunchedEffect
+        try { store.setTodoSeen(todo.id, true, placed.last) }
+        catch (e: CancellationException) { throw e }
+        catch (_: Exception) { } // Opening is silently seen only if the hub accepts it.
+    }
     val state = todo.state(sessionLookup)
 
     if (confirmDelete) {
@@ -154,12 +169,16 @@ fun TodoDetailScreen(
 
     JPage(
         title = stringResource(R.string.agents_todo_detail),
-        onBack = onBack,
+        onBack = if (LocalIsSidebarRoot.current) null else onBack,
         actions = {
             JIconButton(PhIcons.DotsThree, stringResource(R.string.agents_todo_more), { menuOpen = true })
         },
         bottomBar = {
-            JBottomBar {
+            // No wider than a readable page, centered by the page frame, as iOS's row (#9009, #9008): across a tablet or an
+            // unfolded screen the buttons were each about 370dp wide. A phone is narrower than the cap and keeps its width.
+            // The cap grows with the text size, as Android's other width caps do: Japanese "Hand to agent" was cut at 1.3x
+            // in a fixed 560dp, where the uncapped bar showed it whole (iOS stacks the buttons instead).
+            JBottomBar(Modifier.widthIn(max = Tokens.Size.readable * LocalDensity.current.fontScale.coerceAtLeast(1f))) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.xxs),
                     horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)

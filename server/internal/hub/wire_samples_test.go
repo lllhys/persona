@@ -131,6 +131,8 @@ func wireDecodeGo(t *testing.T, c wireSample) {
 		target = &struct {
 			Fleet FleetState `json:"fleet"`
 		}{}
+	case "queue_edit":
+		target = &proto.QueueEdit{}
 	case "inbox":
 		target = &struct {
 			Items []assistant.InboxItem `json:"items"`
@@ -254,6 +256,22 @@ func wireSamples(t *testing.T) map[string][]wireSample {
 	add("machines", "machines_event", "机器事件使用与列表一致的机器类型。", "event", ws(map[string]any{"type": "machines", "machines": machines}),
 		map[string]any{"/type": "machines", "/machines/0/id": "m1", "/machines/1/id": "m2"}, "server/internal/hub/http.go: Hub.serveWS", "apple/Shared/LiveConnection.swift: ServerEvent.decode")
 
+	concernMachines := []map[string]any{
+		{"id": "pending", "name": "Pending computer", "online": true, "trust": "pending"},
+		{"id": "offline", "name": "Offline computer", "online": false, "last_seen": now},
+		{"id": "critical", "name": "Critical computer", "online": true},
+		{"id": "warning", "name": "Warning computer", "online": true},
+		{"id": "needs-you", "name": "Waiting agents computer", "online": true},
+		{"id": "mismatch", "name": "Deploying computer", "online": true, "deploying": true, "deploy_phase": "transferring"},
+		{"id": "normal", "name": "Normal computer", "online": true, "node_version": "fixture-version"},
+	}
+	add("machines-concern", "machines_concern_projection",
+		"Anonymous machine wire data for Android concern-grid presentation tests.", "machines",
+		httpJSON(map[string]any{"machines": concernMachines}),
+		map[string]any{"/machines/0/trust": "pending", "/machines/1/online": false, "/machines/5/deploying": true,
+			"/machines/5/deploy_phase": "transferring", "/machines/6/online": true},
+		"android/feature/machines/src/main/kotlin/persona/feature/machines/MachineConcern.kt",
+		"apple/Persona/Views/Machines/MachinesView.swift")
 	item := func(id string, seq int, role, kind, text string) proto.Item {
 		return proto.Item{ID: id, Seq: seq, TS: now, Role: role, Kind: kind, Text: text}
 	}
@@ -304,6 +322,23 @@ func wireSamples(t *testing.T) map[string][]wireSample {
 	add("items", "items_inline_image", "未启用懒加载时图片保留内联数据。", "items", httpJSON(map[string]any{"items": []proto.Item{img}, "has_more": false}),
 		map[string]any{"/items/0/image/mime": "image/png", "/items/0/image/data": img.Image.Data, "/items/0/image/lazy": nil},
 		"server/internal/proto/item.go: Image", "apple/Shared/Models.swift: ImagePayload")
+	// A Persona chat's queue edit (take back, delete, move): the messages that were queued and, for the composer, their photos.
+	// The hub writes the node's answer as it is (proxyBody), so the sample is the node's encoding of proto.QueueEdit.
+	queueAnswer := func(v proto.QueueEdit) json.RawMessage {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return httpJSON(json.RawMessage(raw))
+	}
+	add("queue", "queue_edit_images", "取回 Persona 对话的排队消息：应答带每条消息的照片，没有照片的那条为 null。", "queue_edit",
+		queueAnswer(proto.QueueEdit{Queue: []string{"请看这张图。", "再检查一遍。"}, Images: [][]proto.Image{{*img.Image}, nil}}),
+		map[string]any{"/queue/0": "请看这张图。", "/queue/1": "再检查一遍。", "/images/0/0/mime": "image/png", "/images/0/0/data": img.Image.Data, "/images/1": nil},
+		"server/internal/proto/session.go: QueueEdit", "server/internal/node/assistant_queue.go: assistantEditQueue", "docs/protocol/protocol.md: POST /api/v1/sessions/{mid}/{sid}/queue")
+	add("queue", "queue_edit_words", "没有一条带照片时，应答省略 images。", "queue_edit",
+		queueAnswer(proto.QueueEdit{Queue: []string{"请补充示例。", "再检查一遍。"}}),
+		map[string]any{"/queue/0": "请补充示例。", "/queue/1": "再检查一遍。"},
+		"server/internal/proto/session.go: QueueEdit", "server/internal/node/assistant_queue.go: assistantEditQueue", "docs/protocol/protocol.md: POST /api/v1/sessions/{mid}/{sid}/queue")
 	monitor := task
 	monitor.ID, monitor.Seq = "entry_monitor#0", 11
 	monitor.Task = &proto.TaskNote{Kind: "monitor", Status: "event", Title: "示例监控", TaskID: "monitor_example", Detail: "示例值 > 0 & < 10"}
@@ -370,6 +405,17 @@ func wireSamples(t *testing.T) map[string][]wireSample {
 		add("interactions", "interaction_"+kind, "交互卡携带对应类型的提问、计划、权限或屏幕信息。", "event", ws(map[string]any{"type": "interaction", "interaction": ix}), fields,
 			"server/internal/proto/interaction.go: Interaction", "server/internal/hub/http.go: Hub.serveWS", "apple/Shared/Models.swift: Interaction, ScreenDialog", "docs/protocol/protocol.md: 终端对话框（screen 交互）")
 	}
+	// The assistant's ask_user keeps its decision on the card (deadline, reversible, each question's recommend): keys the
+	// apps do not model, which they read past.
+	deadline, reversible := now.Add(6*time.Hour), true
+	decision := proto.Interaction{ID: "ix_decision", MachineID: "m1", SessionID: "s1", SessionTitle: "Persona", Kind: proto.IxQuestion,
+		ToolName: "ask_user", CreatedAt: now, ExpiresAt: now.Add(time.Hour), Deadline: &deadline, Reversible: &reversible,
+		Questions: []proto.Question{{Question: "现在合并示例分支吗", Header: "合并", Recommend: "合并",
+			Options: []proto.QuestionOption{{Label: "合并", Description: "推荐"}, {Label: "等一等"}}}}}
+	add("interactions", "interaction_question_decision", "助手的提问卡带截止时间、能否撤回和每题的建议项；客户端不认识这几个键，照常读其余字段。", "event",
+		ws(map[string]any{"type": "interaction", "interaction": decision}),
+		map[string]any{"/type": "interaction", "/interaction/kind": "question", "/interaction/id": "ix_decision", "/interaction/questions/0/options/0/label": "合并"},
+		"server/internal/proto/interaction.go: Interaction.Deadline, Interaction.Reversible, Question.Recommend", "apple/Shared/Models.swift: Interaction")
 	secret := ixs[3]
 	for _, mode := range []string{"form", "url"} {
 		ix := proto.Interaction{ID: "ix_elicitation_" + mode, MachineID: "m1", SessionID: "s1", Kind: proto.IxElicitation,
@@ -638,8 +684,8 @@ func wireCompatibility(t *testing.T, files map[string][]wireSample, add wireAdde
 		add("compatibility", bad.name, bad.desc, "compat_event", ws(bad.body), map[string]any{}, "apple/Shared/LiveConnection.swift: ServerEvent.decode", "apple/Shared/Models.swift: InteractionKind, Session.init(from:)", "docs/archive/redesign/README.md: D5（现状差异）")
 		files["compatibility"][len(files["compatibility"])-1].Expected.Accepted = false
 	}
-	add("compatibility", "session_zero_time", "Go 零时间能解码，但不算有意义的日期。", "compat_session", httpJSON(proto.Session{SessionID: "s1"}), map[string]any{"/updated_at_meaningful": false, "/seen_at_meaningful": false}, "server/internal/proto/session.go: Session", "apple/Shared/JSONValue.swift: JSON.decoder, Date.isMeaningful")
-	add("compatibility", "date_at_cutoff", "当前 iOS 将 2000 年起点本身也判为无意义日期。", "compat_session", httpJSON(map[string]any{"session_id": "s1", "updated_at": "2000-01-01T00:00:00Z"}), map[string]any{"/updated_at_meaningful": false}, "apple/Shared/JSONValue.swift: Date.isMeaningful", "docs/archive/redesign/README.md: D5（现状差异）")
+	add("compatibility", "session_zero_time", "Go 零时间能解码，但不算有意义的日期。", "compat_session", httpJSON(proto.Session{SessionID: "s1"}), map[string]any{"/updated_at_meaningful": false, "/seen_at_meaningful": false}, "server/internal/proto/session.go: Session", "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: JSON.decoder, Date.isMeaningful")
+	add("compatibility", "date_at_cutoff", "当前 iOS 将 2000 年起点本身也判为无意义日期。", "compat_session", httpJSON(map[string]any{"session_id": "s1", "updated_at": "2000-01-01T00:00:00Z"}), map[string]any{"/updated_at_meaningful": false}, "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: Date.isMeaningful", "docs/archive/redesign/README.md: D5（现状差异）")
 	for i := range files["errors"] {
 		if i == 0 {
 			files["errors"][i].HTTPStatus = 401

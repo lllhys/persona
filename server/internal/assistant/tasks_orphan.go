@@ -230,7 +230,7 @@ func (s *Service) orphanWatch(ctx context.Context, now time.Time) {
 	b.now, b.seen = next, seen
 	b.mu.Unlock()
 	if changed {
-		s.event(ctx, map[string]any{"type": "todos"})
+		s.todosPushSoon()
 		s.boardChanged()
 	}
 }

@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"errors"
 	"github.com/nwverse/persona/server/internal/closeout"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
 	"github.com/nwverse/persona/server/internal/textfmt"
 )
 
@@ -47,7 +49,7 @@ type triageOut struct {
 // with no phase (nothing shown, nothing done; the turn is not triaged again).
 // same: the model says the turn still waits on the very step the user approved (#3824), false when there is none.
 func (s *Service) triageTurnModel(ctx context.Context, v *workView, machine string, c proto.Session) (w *proto.WorkState, same bool, err error) {
-	ask, reply := s.lastTurnOf(ctx, machine, c.SessionID)
+	ask, reply := s.triageRead(ctx, machine, c)
 	if reply == "" {
 		reply = strings.TrimSpace(c.LastText)
 	}
@@ -307,16 +309,44 @@ func triageOthers(machine, sid string, list []proto.Session) ([]prompts.AgentTri
 	return out, by
 }
 
-// lastTurnOf is a session's latest turn: what the user asked in it ("" when none) and its last reply ("" when the
-// turn cannot be read).
-func (s *Service) lastTurnOf(ctx context.Context, machine, sid string) (ask, answer string) {
+// triageRead is the latest turn of machine's session c as the triage model is given it: read once per turn. A turn
+// whose model call failed is tried again (backfillWork, every workRetryTriage while it stays unread), and the retry
+// takes what the attempt before read (triedTurn) instead of asking the node again. A turn the session's runtime will
+// not read without starting the agent (not_loaded: Paseo would relaunch the provider of an agent it let go, #8132)
+// counts as read with nothing in it: the row's last words stand in for the reply, and the retries ask nothing either.
+// A read that failed otherwise (the node away) is tried again by the next attempt.
+func (s *Service) triageRead(ctx context.Context, machine string, c proto.Session) (ask, reply string) {
+	k := [2]string{machine, c.SessionID}
+	s.work.mu.Lock()
+	t, ok := s.work.tried[k]
+	s.work.mu.Unlock()
+	if ok && t.read != nil && sameTurn(c, t.turn) {
+		return t.read.ask, t.read.reply
+	}
+	ask, reply, err := s.lastTurnOf(ctx, machine, c.SessionID)
+	var re *rpc.Error
+	if err != nil && !(errors.As(err, &re) && re.Code == proto.CodeNotLoaded) {
+		return "", ""
+	}
+	s.work.mu.Lock()
+	if t, ok := s.work.tried[k]; ok && sameTurn(c, t.turn) {
+		t.read = &turnRead{ask: ask, reply: reply}
+		s.work.tried[k] = t
+	}
+	s.work.mu.Unlock()
+	return ask, reply
+}
+
+// lastTurnOf is a session's latest turn: what the user asked in it ("" when none) and its last reply ("" when none);
+// err when the turn could not be read.
+func (s *Service) lastTurnOf(ctx context.Context, machine, sid string) (ask, answer string, err error) {
 	var res struct {
 		Items []proto.Item `json:"items"`
 	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	if err := s.call(cctx, machine, DeviceSessionItems, map[string]any{"session_id": sid, "turns": 1}, &res); err != nil {
-		return "", ""
+		return "", "", err
 	}
 	for _, it := range res.Items {
 		if it.Kind == proto.KindText && it.Role == "user" && strings.TrimSpace(it.Text) != "" {
@@ -326,10 +356,10 @@ func (s *Service) lastTurnOf(ctx context.Context, machine, sid string) (ask, ans
 	}
 	for i := len(res.Items) - 1; i >= 0; i-- {
 		if it := res.Items[i]; it.Kind == proto.KindText && it.Role == "assistant" && strings.TrimSpace(it.Text) != "" {
-			return ask, strings.TrimSpace(it.Text)
+			return ask, strings.TrimSpace(it.Text), nil
 		}
 	}
-	return ask, ""
+	return ask, "", nil
 }
 
 // clipMiddleRunes keeps a long text's first and last n runes: a last answer says what was done first and what is

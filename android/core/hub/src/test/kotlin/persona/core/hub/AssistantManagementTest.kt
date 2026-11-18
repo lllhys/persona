@@ -113,6 +113,24 @@ class AssistantManagementTest {
         }
     }
 
+    @Test fun conversationTagsReplaceTheWholeSetOnTheHub() = runBlocking {
+        MockWebServer().use { server ->
+            val api = HttpAssistantManagement(server.url("/").toString(), "test-token", OkHttpClient()).forManager("work")
+            server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+            api.setConversationTags(SessionKey("hub", "side-1"), listOf("planning", "trip"))
+            val update = server.takeRequest()
+            assertEquals("PUT", update.method)
+            assertEquals("/api/v1/assistant/conversations/side-1/tags", update.requestUrl?.encodedPath)
+            assertEquals("work", update.requestUrl?.queryParameter(ManagerQuery))
+            assertEquals("work", update.getHeader(ManagerHeader))
+            assertEquals("""{"tags":["planning","trip"]}""", update.body.readUtf8())
+
+            server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+            api.setConversationTags(SessionKey("hub", "side-1"), emptyList())
+            assertEquals("""{"tags":[]}""", server.takeRequest().body.readUtf8())
+        }
+    }
+
     /**
      * #5055: a Persona chat's pick is kept with `PUT …/model` (the launcher, the model unless it is the default entry, the
      * effort, the chat's computer) and dropped with `DELETE`; a refusal keeps the hub's words. The panel's providers come
@@ -254,6 +272,37 @@ class AssistantManagementTest {
         }
     }
 
+    // Clear context (#5100, the hub's #5095): the main conversation on screen as `expect`, the one put away back; a 409 with
+    // a code is the hub's refusal in its words, anything else the failure it is.
+    @Test fun clearMainSendsTheExpectedConversationAndTurnsRefusalsIntoTheHubsWords() = runBlocking {
+        MockWebServer().use { server ->
+            val api = HttpAssistantManagement(server.url("/").toString(), "test-token", OkHttpClient())
+            server.enqueue(MockResponse().setBody("""{"ok":true,"archived":"main-1"}"""))
+            assertEquals("main-1", api.clearMainConversation("main-1"))
+            val cleared = server.takeRequest()
+            assertEquals("POST", cleared.method)
+            assertEquals("/api/v1/assistant/main/clear", cleared.path)
+            assertEquals("""{"expect":"main-1"}""", cleared.body.readUtf8())
+
+            // No main conversation known: no `expect`, and nothing put away.
+            server.enqueue(MockResponse().setBody("""{"ok":true,"archived":""}"""))
+            assertEquals("", api.clearMainConversation(null))
+            assertEquals("{}", server.takeRequest().body.readUtf8())
+
+            server.enqueue(MockResponse().setResponseCode(409).setBody("""{"code":"main_changed","error":"主对话已经在别的设备上换过了"}"""))
+            try { api.clearMainConversation("main-1"); fail("A refusal must throw") }
+            catch (refused: AssistantRefused) {
+                assertEquals("main_changed", refused.code)
+                assertEquals("主对话已经在别的设备上换过了", refused.message)
+            }
+            server.takeRequest()
+
+            server.enqueue(MockResponse().setResponseCode(500).setBody("""{"error":"boom"}"""))
+            try { api.clearMainConversation("main-1"); fail("A failure must throw") }
+            catch (failure: HubFailure) { assertEquals(500, failure.status) }
+        }
+    }
+
     @Test fun skillsReadTheAssistantsMachineAndTurnItsReasonIntoTheHubsWords() = runBlocking {
         MockWebServer().use { server ->
             val api = HttpAssistantManagement(server.url("/").toString(), "test-token", OkHttpClient())
@@ -285,6 +334,41 @@ class AssistantManagementTest {
             server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":"invalid_token","error":"invalid token"}"""))
             try { api.skills(); fail("A failure must throw") }
             catch (failure: HubFailure) { assertEquals(HubError.PairingExpired, failure.kind) }
+        }
+    }
+
+    /** A missing search route is not an answer; a body that is not one fails so the app keeps its local filter; limit stays in 1..50. */
+    @Test fun searchChatsTreats404AsUnsupportedAndABadBodyAsAFailureAndSendsABoundedLimit() = runBlocking {
+        MockWebServer().use { server ->
+            val api = HttpAssistantManagement(server.url("/").toString(), "test-token", OkHttpClient())
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"no such route"}"""))
+            assertNull(api.searchChats("lane"))
+            val missing = server.takeRequest()
+            assertEquals("GET", missing.method)
+            assertTrue(missing.path!!.startsWith("/api/v1/assistant/search?"))
+            assertTrue(missing.path!!.contains("q=lane"))
+
+            server.enqueue(MockResponse().setBody("not json"))
+            try {
+                api.searchChats("lane")
+                fail("a body that is not the search answer must not become one")
+            } catch (failure: HubFailure) {
+                fail("a malformed body is not a missing route")
+            } catch (_: Exception) { }
+            server.takeRequest()
+
+            server.enqueue(MockResponse().setBody("""{"results":[{"session_id":"s","machine_id":"m","title":"Trip"}],"partial":true}"""))
+            val answer = api.searchChats("  lane  ", limit = 0)
+            val low = server.takeRequest()
+            assertTrue(low.path!!.contains("q=lane"))
+            assertTrue(low.path!!.contains("limit=1"))
+            assertEquals("s", answer!!.results.single().sessionId)
+            assertEquals("m", answer.results.single().machineId)
+            assertTrue(answer.partial)
+
+            server.enqueue(MockResponse().setBody("""{"results":[]}"""))
+            assertTrue(api.searchChats("lane", limit = 80)!!.results.isEmpty())
+            assertTrue(server.takeRequest().path!!.contains("limit=50"))
         }
     }
 }

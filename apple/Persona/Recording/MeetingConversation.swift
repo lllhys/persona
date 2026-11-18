@@ -21,6 +21,15 @@ final class MeetingConversation {
         var followup: RecordingUpload.SessionRef?
         /// `asks` of `GET …/live`, oldest first (the thread uses them to tell spoken/typed and to show asks answered from material).
         var asks: [MeetingAskWire.Ask] = []
+        /// `topics` of `GET …/live` (phase 2), in the room's order, and `topics_at`, when they last changed: read only for a
+        /// meeting started with the live view (`RecordingAttendance.liveView`); empty before the room set any.
+        var topics: [MeetingTopic] = []
+        var topicsAt: String?
+        /// `highlights` of `GET …/live` (phase 2b), earliest first, at most `maxHighlights`, and `highlights_at`, when they
+        /// last changed: read only for a meeting started with them (`RecordingAttendance.highlights`); empty before the room
+        /// set any.
+        var highlights: [MeetingHighlight] = []
+        var highlightsAt: String?
         /// The revision of each part read so far (`meeting_live` reads only newer ones); `photos`: the newest one a
         /// `GET …/photos` that began after it was known has applied (`MeetingPhotos`), so a failed read leaves it behind
         /// and the next event or `…/live` read tries again.
@@ -70,12 +79,19 @@ final class MeetingConversation {
         var reupload: (UUID) async -> Bool = { _ in false }
         /// `GET …/photos` of a meeting that takes photos (`MeetingPhotos.refresh`); whether its list was applied.
         var readPhotos: (UUID) async -> Bool = { await MeetingPhotos.shared.refresh($0) }
+        /// `meeting_live` reaches the phone now: the hub-level group's socket is open (the app behind closes it).
+        var streaming: () -> Bool = { false }
+        /// `transcription` and `interim` of a read (#3862 phase 5, `MeetingTranscription.liveRead`), with which of them
+        /// the read asked for (an absent part asked for is the hub's word: none).
+        var transcription: (_ id: UUID, _ view: MeetingTranscriptionView?, _ interim: MeetingInterim?, _ read: Set<String>) -> Void = { _, _, _, _ in }
     }
 
     /// Longest Just me or `…/followup` text (the contract's limit, in characters).
     nonisolated static let maxText = 8000
-    /// The parts of `GET …/live` phase 1 reads; a later phase's (`lines`, `topics`, …) are left to it. `photos` (phase 3)
-    /// is read only for a meeting that takes photos (`partsRead(for:)`), and never as a part: `GET …/photos` holds them.
+    /// The parts of `GET …/live` phase 1 reads. `topics` (phase 2) is read only for a meeting started with the live view,
+    /// `highlights` (phase 2b) only for one started with them and `photos` (phase 3) only for one that takes photos
+    /// (`partsRead(for:)`), the photos never as a part: `GET …/photos` holds them. `lines` is never read: the page shows
+    /// the phone's own lines (other devices read them).
     static let readParts = ["room", "asks", "private", "followup"]
     /// How long after its end a room meeting recorded here still follows `meeting_live` unwatched (the hub's 12 hours).
     static let followsEnded: TimeInterval = 12 * 3600
@@ -94,6 +110,9 @@ final class MeetingConversation {
     @ObservationIgnored private var readAgain: [UUID: Wanted] = [:]
     /// Request ids the hub answered for good (a replay would return the same failure): a retry goes under a new one.
     @ObservationIgnored private var spent: Set<UUID> = []
+    /// The topics read without `meeting_live` (`liveAccepted`): when each meeting's last read began, and a read due later.
+    @ObservationIgnored private var topicsReadAt: [UUID: Date] = [:]
+    @ObservationIgnored private var topicsDue: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var started = false
 
     private enum Wanted: Equatable {
@@ -106,6 +125,11 @@ final class MeetingConversation {
         self.library = library
         self.sync = sync
     }
+
+    #if DEBUG
+    /// A replayed meeting's state (`MeetingReplay`, #9417), as the hub's reads would have left it.
+    func replace(_ id: UUID, _ m: Meeting) { if meetings[id] != m { meetings[id] = m } }
+    #endif
 
     /// From `MeetingRecorder.start`: hears the room of every upload `200` (`RecordingSync.onRoom`).
     func start() {
@@ -199,12 +223,118 @@ final class MeetingConversation {
         }
     }
 
-    /// The parts of a `meeting_live` event the phone follows for `id`: phase 1's, and `photos` for a meeting that started
-    /// with them (`RecordingAttendance.photos`).
-    func partsRead(for id: UUID) -> [String] { takesPhotos(id) ? Self.readParts + ["photos"] : Self.readParts }
+    /// The parts of a `meeting_live` event the phone follows for `id`: phase 1's, `topics` for a meeting started with the
+    /// live view (`RecordingAttendance.liveView`), `highlights` for one started with them (`RecordingAttendance.highlights`),
+    /// `photos` for one that started with them (`RecordingAttendance.photos`) and `transcription` for one that named a
+    /// transcription mode (phase 5, `RecordingAttendance.transcription`). Never `interim`: the caption comes on this phone's
+    /// own audio socket, and reading it at the hub's pace (once a second) would cost a request a second for nothing.
+    func partsRead(for id: UUID) -> [String] {
+        let attendance = library.entry(id)?.attendance
+        var parts = Self.readParts
+        if attendance?.liveView == true { parts.append("topics") }
+        if attendance?.highlights == true { parts.append("highlights") }
+        if attendance?.photos == true { parts.append("photos") }
+        if attendance?.transcription != nil { parts.append("transcription") }
+        return parts
+    }
 
     /// The meeting started while the hub took photos: the page shows them, and the hub's changes to them are read.
     private func takesPhotos(_ id: UUID) -> Bool { library.entry(id)?.attendance?.photos == true }
+
+    /// The meeting started while the hub had the live view: the page shows its topics, and the hub's changes are read.
+    private func showsTopics(_ id: UUID) -> Bool { library.entry(id)?.attendance?.liveView == true }
+
+    /// The topics a read brings into `m` (pure, for the tests): an answer without `topics` (a part not asked for, or a hub
+    /// that lists none) keeps what was read before unless `replace` (a whole read, or `topics` asked for: the hub's word,
+    /// an absent list being none); a meeting without the live view keeps none.
+    nonisolated static func applyTopics(_ m: inout Meeting, topics: [MeetingTopic]?, at: String?, replace: Bool, shown: Bool) {
+        guard shown else {
+            m.topics = []; m.topicsAt = nil
+            return
+        }
+        guard topics != nil || replace else { return }
+        m.topics = Array((topics ?? []).prefix(Self.maxTopics))
+        m.topicsAt = at
+    }
+
+    /// The most topics the hub keeps (the contract's limit): a longer list is cut, not refused.
+    nonisolated static let maxTopics = 20
+
+    /// The meeting started while the hub had the highlights: the page's top card shows them, and the hub's changes are read.
+    private func showsHighlights(_ id: UUID) -> Bool { library.entry(id)?.attendance?.highlights == true }
+
+    /// The highlights a read brings into `m` (pure, for the tests), as `applyTopics` does: an answer without `highlights`
+    /// keeps what was read before unless `replace` (a whole read, or `highlights` asked for: the hub's word, an absent list
+    /// being none); a meeting started without them keeps none. Earliest first (the hub's order; those of the same time
+    /// in the order given), at most `maxHighlights`.
+    nonisolated static func applyHighlights(_ m: inout Meeting, highlights: [MeetingHighlight]?, at: String?, replace: Bool,
+                                            shown: Bool) {
+        guard shown else {
+            m.highlights = []; m.highlightsAt = nil
+            return
+        }
+        guard highlights != nil || replace else { return }
+        let sorted = (highlights ?? []).enumerated().sorted { a, b in
+            a.element.at != b.element.at ? a.element.at < b.element.at : a.offset < b.offset
+        }
+        m.highlights = Array(sorted.map(\.element).prefix(Self.maxHighlights))
+        m.highlightsAt = at
+    }
+
+    /// The most highlights the hub keeps (the contract's limit): a longer list is cut, not refused.
+    nonisolated static let maxHighlights = 4
+
+    // MARK: Topics without the socket
+
+    /// A `POST …/live` the hub took (`MeetingLive`'s report). The app behind closes its socket (`AppModel.suspendLinks`),
+    /// so no `meeting_live` says the room moved on, while the recording goes on and its lines keep going: for a meeting
+    /// with the live view that Persona attends while this phone records it, the topics are read here instead, with
+    /// `?parts=topics` as their event reads them (`refresh`), at most every `topicsEvery`, so the Live Activity's "Now:"
+    /// follows the room (it updates under its own 5-second throttle). A read due later waits for its time rather than
+    /// being dropped: the room sets the topics a little after the batch it read. Nothing while the socket is open (the
+    /// events come), for any other meeting, or once the recording stopped. Only the topics: the Live Activity never shows
+    /// the highlights (phase 2b), and a page back on screen reads them again (`watch`, `reconnected`).
+    func liveAccepted(_ id: UUID) {
+        guard topicsDue[id] == nil else { return }
+        guard let wait = Self.topicsReadWait(follows: followsTopicsBehind(id), lastRead: topicsReadAt[id], now: deps.now()) else {
+            topicsReadAt[id] = nil
+            return
+        }
+        let sleep = deps.wait
+        topicsDue[id] = Task { [weak self] in
+            if wait > 0 { await sleep(.seconds(wait)) }
+            guard let self else { return }
+            self.topicsDue[id] = nil
+            // Looked at again: the recording may have stopped, Persona gone off or the app come back meanwhile.
+            guard self.followsTopicsBehind(id) else { return }
+            self.topicsReadAt[id] = self.deps.now()
+            await self.refresh(id, parts: ["topics"])
+        }
+    }
+
+    private func followsTopicsBehind(_ id: UUID) -> Bool {
+        Self.readsTopicsBehind(library.entry(id), roomMissing: sync.roomMissing.contains(id), streaming: deps.streaming())
+    }
+
+    /// Whether `liveAccepted` reads the topics of `entry` (pure, for the tests): a meeting started with the live view that
+    /// Persona attends while this phone records it, as the activity shows the topic (`MeetingAsk.canAsk`), and only while
+    /// `meeting_live` doesn't reach the phone (`streaming`).
+    nonisolated static func readsTopicsBehind(_ entry: RecordingEntry?, roomMissing: Bool, streaming: Bool) -> Bool {
+        guard !streaming, let entry, entry.attendance?.liveView == true else { return false }
+        return MeetingAsk.canAsk(entry, roomMissing: roomMissing)
+    }
+
+    /// How long after an accepted `POST …/live` the topics are read (pure, for the tests): nil for no read (`follows`:
+    /// `readsTopicsBehind`), 0 for now, else what is left of `topicsEvery` since the last read began.
+    nonisolated static func topicsReadWait(follows: Bool, lastRead: Date?, now: Date) -> TimeInterval? {
+        guard follows else { return nil }
+        guard let lastRead else { return 0 }
+        return max(0, topicsEvery - now.timeIntervalSince(lastRead))
+    }
+
+    /// The topics are read without the socket at most this often: the lines go every 15 seconds or so (15-second
+    /// segments), and a topic lasts minutes, so every other batch at most is enough.
+    nonisolated static let topicsEvery: TimeInterval = 20
 
     /// The photos moved at the hub (added, noted, cited, deleted), as of `rev` when it is known: `GET …/photos` reads
     /// them, and only once that list applied is `rev` kept, so the same event isn't read twice. A read that fails
@@ -411,6 +541,10 @@ final class MeetingConversation {
     // MARK: Reading
 
     private func read(_ id: UUID, _ wanted: Wanted) async {
+        #if DEBUG
+        // A replayed meeting (`MeetingReplay`, #9417) is on no hub: its tape is what the room holds.
+        if MeetingReplay.holds(id) { return }
+        #endif
         guard let api = deps.api() else { return }
         var query: [String: String] = [:]
         if case .parts(let parts) = wanted {
@@ -437,6 +571,8 @@ final class MeetingConversation {
             m.privateRead = true
             m.followup = answer.followup
             m.asks = answer.asks ?? []
+            Self.applyTopics(&m, topics: answer.topics, at: answer.topicsAt, replace: true, shown: showsTopics(id))
+            Self.applyHighlights(&m, highlights: answer.highlights, at: answer.highlightsAt, replace: true, shown: showsHighlights(id))
             m.loaded = true
         case .parts(let parts):
             // A part asked for and absent is one the hub has no value for (`private` not chosen, no follow-up yet).
@@ -447,6 +583,9 @@ final class MeetingConversation {
             }
             if parts.contains("followup") { m.followup = answer.followup }
             if parts.contains("asks") { m.asks = answer.asks ?? [] }
+            Self.applyTopics(&m, topics: answer.topics, at: answer.topicsAt, replace: parts.contains("topics"), shown: showsTopics(id))
+            Self.applyHighlights(&m, highlights: answer.highlights, at: answer.highlightsAt, replace: parts.contains("highlights"),
+                                 shown: showsHighlights(id))
         }
         m.missing = false
         // The photos' revision moves only with a read of the photos that applied: a `…/live` read answered just after a
@@ -456,6 +595,12 @@ final class MeetingConversation {
         if let rev = answer.revs?["photos"], rev > (m.revs["photos"] ?? -1), takesPhotos(id) { photosChanged(id, rev: rev) }
         for (part, rev) in answer.revs ?? [:] where part != "photos" { m.revs[part] = max(rev, m.revs[part] ?? rev) }
         if meetings[id] != m { meetings[id] = m }
+        // Hub transcription's part (phase 5) is the transcription store's.
+        let read: Set<String> = switch wanted {
+        case .all: ["transcription", "interim"]
+        case .parts(let parts): Set(parts).intersection(["transcription", "interim"])
+        }
+        if !read.isEmpty { deps.transcription(id, answer.transcription, answer.interim, read) }
     }
 
     /// A watched recording, or a room meeting recorded here that runs or ended in the last 12 hours.
@@ -705,15 +850,27 @@ final class MeetingConversation {
         enum CodingKeys: String, CodingKey { case privateMark = "private" }
     }
 
-    /// `GET …/live`'s phase-1 parts, each read on its own: a field of another shape is left out, not the whole answer.
-    private nonisolated struct LiveRead: Decodable, Sendable {
+    /// `GET …/live`'s parts the phone reads (phase 1's, phase 2's `topics` / `topics_at` and phase 2b's `highlights` /
+    /// `highlights_at`), each read on its own: a field of another shape is left out, not the whole answer, and a topic or a
+    /// highlight of another shape leaves the list, not the others.
+    nonisolated struct LiveRead: Decodable, Sendable {
         var room: MeetingRoom?
         var privateMark: Bool?
         var followup: RecordingUpload.SessionRef?
         var asks: [MeetingAskWire.Ask]?
+        var topics: [MeetingTopic]?
+        var topicsAt: String?
+        var highlights: [MeetingHighlight]?
+        var highlightsAt: String?
         var revs: [String: Int64]?
+        /// Phase 5: the mode and how far the hub got; the hub's caption now.
+        var transcription: MeetingTranscriptionView?
+        var interim: MeetingInterim?
 
-        enum CodingKeys: String, CodingKey { case room, privateMark = "private", followup, asks, revs }
+        enum CodingKeys: String, CodingKey {
+            case room, privateMark = "private", followup, asks, topics, topicsAt = "topics_at", highlights,
+                 highlightsAt = "highlights_at", revs, transcription, interim
+        }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -721,7 +878,13 @@ final class MeetingConversation {
             privateMark = try? c.decodeIfPresent(Bool.self, forKey: .privateMark)
             followup = try? c.decodeIfPresent(RecordingUpload.SessionRef.self, forKey: .followup)
             asks = (try? c.decodeIfPresent([Lenient<MeetingAskWire.Ask>].self, forKey: .asks))?.compactMap(\.value)
+            topics = (try? c.decodeIfPresent([Lenient<MeetingTopic>].self, forKey: .topics))?.compactMap(\.value)
+            topicsAt = try? c.decodeIfPresent(String.self, forKey: .topicsAt)
+            highlights = (try? c.decodeIfPresent([Lenient<MeetingHighlight>].self, forKey: .highlights))?.compactMap(\.value)
+            highlightsAt = try? c.decodeIfPresent(String.self, forKey: .highlightsAt)
             revs = try? c.decodeIfPresent([String: Int64].self, forKey: .revs)
+            transcription = MeetingTranscriptionView(try? c.decodeIfPresent(JSONValue.self, forKey: .transcription))
+            interim = try? c.decodeIfPresent(MeetingInterim.self, forKey: .interim)
         }
     }
 
@@ -747,7 +910,12 @@ extension MeetingConversation.Deps {
                      if let entry = RecordingLibrary.shared.entry(id), RecordingSync.shared.status(entry) == .synced { return true }
                  }
                  return false
+             },
+             streaming: { AppModel.shared.hub?.live.state == .connected },
+             transcription: { id, view, interim, read in
+                 MeetingTranscription.shared.liveRead(id, transcription: view, interim: interim, read: read)
              })
     }
 }
 #endif
+import PersonaWire

@@ -1,3 +1,4 @@
+import { onConversationDeleted } from "./conversation-deleted";
 // Per-message transport feedback. It never changes session state, list ordering or counts.
 import { useSyncExternalStore } from "react";
 import { credentialOwner, getToken, onCredentialChange, sessionPath } from "./api";
@@ -215,3 +216,14 @@ function handoffAuthority() {
   }
   return changed;
 }
+
+onConversationDeleted((mid, sid) => {
+  for (const [k, flight] of new Map([...flights, ...requests])) {
+    if (flight.mid !== mid || flight.sid !== sid) continue;
+    flight.retired = true;
+    end(flight);
+    flights.delete(k);
+    requests.delete(k);
+  }
+  publish();
+});

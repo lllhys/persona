@@ -3,7 +3,6 @@
   "conversation": "只回退对话",
   "code_and_conversation": "回退代码和对话",
   "confirm_code": "确认回退代码",
-  "block_claude_only": "仅 Claude",
   "hub_unsupported": "这个 hub 还不支持回退，需要更新",
   "needs_full_device": "回退要用完整权限的设备",
   "done_conversation": "已回退对话",
@@ -16,5 +15,6 @@
   "editing_hint": "回车：对话回到这条之前，改发这条 · Esc 取消",
   "cancel_editing": "取消编辑",
   "edit_ended": "上一条消息已经变了，这里不再是编辑：发出去会是一条新消息。",
-  "edit_wait": "现在回退不了对话（{reason}），改好的内容还在输入框里。"
+  "edit_wait": "现在回退不了对话（{reason}），改好的内容还在输入框里。",
+  "unsupported": "不支持回退"
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_composer_drop_target">Drop files to attach them</string>
+    <string name="chat_composer_drop_importing">Copying dropped files…</string>
+    <string name="chat_composer_drop_failed">Can\'t add this drop. Only readable files can be attached.</string>
+</resources>

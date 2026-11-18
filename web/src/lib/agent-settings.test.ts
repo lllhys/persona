@@ -142,6 +142,22 @@ describe("agent settings", () => {
     expect(AGENT_TEXT.codex.path).toBe("codex-settings");
     expect(AGENT_TEXT.claude.footer).toContain("~/.claude/settings.json");
   });
+
+  // #8353: the node sends English titles for Grok's table keys; the page's catalog names every row.
+  it("names Grok's rows in the page's language and says which ones approve every tool call", () => {
+    expect(AGENT_TEXT.grok).toMatchObject({ name: "Grok", path: "grok-settings", file: "~/.grok/config.toml" });
+    expect(AGENT_TEXT.grok.footer).toContain("~/.grok/config.toml");
+    expect(AGENT_TEXT.grok.footer).toContain("Grok");
+    const row = (key: string): AgentSetting => ({ key, title: "English", detail: "English", type: "string" });
+    for (const key of ["models.default", "models.default_reasoning_effort", "ui.permission_mode", "ui.yolo", "ui.compact_mode"]) {
+      expect(settingTitle(row(key)), key).not.toBe("English");
+      expect(settingDetail(row(key)), key).not.toBe("English");
+    }
+    expect(settingTitle(row("ui.permission_mode"))).toBe("权限模式");
+    expect(settingDetail(row("ui.permission_mode"))).toContain("always-approve");
+    expect(settingDetail(row("ui.permission_mode"))).toContain("批准每一次工具调用");
+    expect(settingDetail(row("ui.yolo"))).toContain("一律批准工具调用");
+  });
 });
 
 describe("mail account form", () => {

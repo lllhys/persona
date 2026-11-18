@@ -57,6 +57,33 @@ func outcomeKey(todoID string, doneAt time.Time) string {
 	return "outcome:" + todoID + ":" + doneAt.UTC().Format(time.RFC3339Nano)
 }
 
+// completionOfDecision recognizes only the rows written by outcomeDecisions, not manual or extension outcome notes.
+func completionOfDecision(d db.TodoDecisionRow) (time.Time, bool) {
+	if d.Source != db.DecisionOutcome {
+		return time.Time{}, false
+	}
+	key, ok := strings.CutPrefix(d.SourceMessage, "outcome:"+d.TodoID+":")
+	if !ok {
+		return time.Time{}, false
+	}
+	stamp, _, ok := strings.Cut(key, "#")
+	if !ok {
+		return time.Time{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, stamp)
+	return at, err == nil
+}
+
+func earlierPhase(t Todo, d db.TodoDecisionRow) (time.Time, bool) {
+	at, ok := completionOfDecision(d)
+	return at, ok && (t.DoneAt == nil || !at.Truncate(time.Microsecond).Equal(t.DoneAt.Truncate(time.Microsecond)))
+}
+
+func earlierOutcomeSummary(t Todo, d db.TodoDecisionRow) (time.Time, bool) {
+	at, earlier := earlierPhase(t, d)
+	return at, earlier && strings.HasSuffix(d.SourceMessage, "#o")
+}
+
 // recordTaskOutcome writes what task t came to; doneAt is when it was marked done. t is the todo as it was then, with
 // its agents. Nothing for a todo that is not a task (no origin), or one already recorded for this completion.
 func (s *Service) recordTaskOutcome(t Todo, doneAt time.Time) {
@@ -120,6 +147,9 @@ func (s *Service) goRecordTaskOutcome(t Todo, doneAt time.Time) {
 	s.tasks.outcomeRuns.Add(1)
 	go func() {
 		defer s.tasks.outcomeRuns.Done()
+		if t.Source != nil {
+			s.sourceReportStep(t.ID, true) // a final answer need not wait for the model-written summary
+		}
 		s.recordTaskOutcome(t, doneAt)
 		s.sourceReportNow(t.ID) // the outcome is as written as it will be: tell where the request came from (todo_source.go)
 	}()
@@ -339,44 +369,69 @@ func outcomeLogLine(o taskOutcome) string {
 	return prefix + text + " " + strings.Join(links, " ")
 }
 
-// projectOutcomesMost is how many finished todos' outcomes a new agent for a project is handed.
-const projectOutcomesMost = 5
+// projectOutcomesMost is how many finished todos' outcomes a new agent for a project is handed; projectContextMost
+// how many projects' backgrounds.
+const (
+	projectOutcomesMost = 5
+	projectContextMost  = 2
+)
 
 // projectContext is the <persona-context> a new agent working in dir on machine gets before its first prompt: each of
 // its projects' one line and latest todo outcomes (todo/project); empty when the directory is no project's or the
 // knowledge base is not open (the agent starts without it).
 func (s *Service) projectContext(ctx context.Context, machine, dir string) string {
+	c, _ := s.projectContextSlugs(ctx, machine, dir)
+	return c
+}
+
+// projectContextSlugs is projectContext and the slugs of the projects dir belongs to.
+func (s *Service) projectContextSlugs(ctx context.Context, machine, dir string) (string, []string) {
 	if strings.TrimSpace(dir) == "" || s.isWorkMachine(machine) {
-		return ""
+		return "", nil
 	}
 	e, err := s.kbGet(ctx)
 	if err != nil || e == nil {
-		return ""
+		return "", nil
 	}
+	projects := e.ProjectsForWork(machine, dir)
+	// What extensions wrote for these projects (extension_context.go): asked once for all of them.
+	var slugs []string
+	for _, p := range projects {
+		slugs = append(slugs, p.Slug)
+	}
+	fromExtensions := s.projectExtensionContext(ctx, slugs)
 	var blocks []string
-	for _, p := range e.ProjectsForWork(machine, dir) {
-		d := prompts.TodoProject{Name: contextText(oneLine(p.Name)), OneLine: contextText(oneLine(p.OneLine))}
+	for _, p := range projects {
+		d := prompts.TodoProject{Name: contextText(oneLine(p.Name)), OneLine: contextText(oneLine(p.OneLine)), Extensions: fromExtensions[p.Slug]}
 		for _, o := range e.Store.TodoOutcomes(p.Slug, projectOutcomesMost) {
 			d.Outcomes = append(d.Outcomes, prompts.TodoProjectOutcome{When: o.When, Title: contextText(o.Title), Text: contextText(o.Text)})
 		}
 		if b := prompts.RenderTodoProject(d); b != "" {
 			blocks = append(blocks, b)
 		}
-		if len(blocks) == 2 { // a directory in more projects than that: the first two (slug order) are enough
+		if len(blocks) == projectContextMost { // a directory in more projects than that: the first two (slug order) are enough
 			break
 		}
 	}
-	return strings.Join(blocks, "\n\n")
+	return strings.Join(blocks, "\n\n"), slugs
 }
 
-// withProjectContext puts the project background of dir on machine before a new agent's first prompt; the prompt as
-// it is without any (or when it is empty: nothing to put it before).
-func (s *Service) withProjectContext(ctx context.Context, machine, dir, prompt string) string {
+// withProjectContext puts the project background of dir on machine before a new agent's first prompt, and the notes
+// of the directions the work belongs to (lead: the leader conversation supervising or starting it, "" none;
+// direction_notes.go) before that; the prompt as it is without any (or when it is empty: nothing to put it before).
+func (s *Service) withProjectContext(ctx context.Context, machine, dir, lead, prompt string) string {
 	if strings.TrimSpace(prompt) == "" {
 		return prompt
 	}
-	if c := s.projectContext(ctx, machine, dir); c != "" {
-		return c + "\n\n" + prompt
+	var parts []string
+	c, slugs := s.projectContextSlugs(ctx, machine, dir)
+	if s.isWorkMachine(machine) {
+		lead = "" // a work machine's agent is told nothing of the owner's own directions either
+	} else if d := s.directionContext(ctx, lead, slugs); d != "" {
+		parts = append(parts, d)
 	}
-	return prompt
+	if c != "" {
+		parts = append(parts, c)
+	}
+	return strings.Join(append(parts, prompt), "\n\n")
 }

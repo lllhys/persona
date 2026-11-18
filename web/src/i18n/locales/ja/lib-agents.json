@@ -20,7 +20,6 @@
   "pinned": "ピン留め",
   "remove": "リストから削除",
   "removed_toast": "「{title}」を削除しました。新しいメッセージが届くとリストに戻ります",
-  "restore": "元に戻す",
   "restored_toast": "「{title}」を元に戻しました",
   "undo": "取り消す",
   "hide_failed": "削除できませんでした：{error}",

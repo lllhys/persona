@@ -46,7 +46,10 @@ func TestResumeRefusedWhileOpenElsewhere(t *testing.T) {
 	if _, where, ok := n.claudeOpenElsewhere(closed); ok {
 		t.Fatalf("a dead claude's file counted as open (%s)", where)
 	}
-	if got := whereOpen("cli"); got != "电脑上的一个终端" {
+	if got := whereOpen("cli"); got != whereTerminal {
+		t.Fatal(got)
+	}
+	if got := whereOpen("claude-desktop-3p"); got != whereDesktop {
 		t.Fatal(got)
 	}
 }
@@ -61,6 +64,14 @@ func TestSendRefusedWhileOpenElsewhere(t *testing.T) {
 	_, err := request(t, n, "session.send", map[string]any{"session_id": open, "text": "still there?", "client_msg_id": "m-1"})
 	if !isRefusal(err, openElsewhere) || !strings.Contains(err.Error(), "正在 Claude 桌面版里开着") {
 		t.Fatalf("send to a session open in the desktop app: %v", err)
+	}
+	// The hub says it in the app's language by where it is open (apierr openElsewhereKeys), and the words name no
+	// device: the send may have come from the web or a computer, not the phone.
+	if data := refusalData(t, err); !strings.Contains(data, `"where":"desktop"`) {
+		t.Fatalf("refusal data: %s", data)
+	}
+	if strings.Contains(err.Error(), "手机") {
+		t.Fatalf("the refusal names the phone: %v", err)
 	}
 	for _, c := range f.trace() {
 		if strings.Contains(c, "workspace") || strings.Contains(c, "tab.create") || strings.Contains(c, "pane.") {

@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// What a file tool's permission card asks to change (#4621), read off its `tool_input` the way the chat reads the same
 /// call once it runs (`ToolDetail`): Claude Code's Edit (old and new text), MultiEdit (each edit), Write (the whole new
@@ -64,10 +65,9 @@ struct PermissionDiffView: View {
     var diff: PermissionDiff
     /// The card's id: what each diff's Show All is known by.
     var key: String
-    @Environment(\.dynamicTypeSize) private var typeSize
 
-    /// Rows of each diff before Show All; fewer at the accessibility sizes, where each row is several times as tall.
-    static func maxLines(_ size: DynamicTypeSize) -> Int { size.isAccessibilitySize ? 4 : 8 }
+    /// Rows of each diff before Show All.
+    static let maxLines = 8
 
     var body: some View {
         let contents = diff.changes.map(\.content)
@@ -76,7 +76,7 @@ struct PermissionDiffView: View {
                 DiffFileHeader(path: path, adds: contents.reduce(0) { $0 + $1.adds }, dels: contents.reduce(0) { $0 + $1.dels })
             }
             ForEach(Array(contents.enumerated()), id: \.offset) { n, content in
-                DiffView(content, pinKey: "permission-diff-\(key)-\(n)", maxLines: Self.maxLines(typeSize))
+                DiffView(content, pinKey: "permission-diff-\(key)-\(n)", maxLines: Self.maxLines)
             }
         }
     }

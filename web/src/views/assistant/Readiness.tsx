@@ -4,12 +4,15 @@
 // machines page's own flow (views/machines/AddComputer.tsx) in place where the hub has it (machines_add, machine_trust).
 import { useEffect, useState } from "react";
 import { canAddComputer, canConfirmComputer, pendingToConfirm } from "../../lib/add-computer";
+import { mainConversationMachine } from "../../lib/feed-cache";
+import { requestModelPicker } from "../../lib/model-switch";
 import {
-  actionLabel, ADMIN_MACHINES, blockingStep, knownAction, readinessChanged, refreshReadiness, retryWhileBlocked, runAction, sendLabel, useReadiness, type CodedFailure, type HelpTopic,
-  type Readiness, type ReadinessStep,
+  actionLabel, ADMIN_MACHINES, blockingStep, knownAction, readinessChanged, refreshReadiness, retryWhileBlocked, runAction, sendLabel, stepActions, useReadiness, type CodedFailure,
+  type HelpTopic, type Readiness, type ReadinessStep,
 } from "../../lib/readiness";
 import { navigate } from "../../lib/router";
-import { getState, useStore } from "../../lib/store";
+import { getSession, getState, useStore } from "../../lib/store";
+import { assistantPickerKey } from "../chat/ModelPill";
 import type { PendingComputer } from "../machines/AddComputer";
 import { lazyDialog } from "../LazyOverlay";
 import { Button, copyText, cx, Dialog, IconButton } from "../../ui/atoms";
@@ -38,6 +41,10 @@ export interface ReadinessGate {
   probing: boolean;
   /** The last "Try it" got no answer: why ("" none). It stands in for the try's result. */
   probeError: string;
+  /** Another model was picked for the main chat since its model step said it can't run that one: "Try it" leads (stepActions). */
+  picked?: boolean;
+  /** "Choose another model": opens the main chat's own model panel; false when it has none (runAction then opens Settings › Models). */
+  onPickModel?: () => boolean;
   /** The help dialog and the add / confirm computer flow, to render once beside the card. */
   dialog: React.ReactNode;
 }
@@ -63,16 +70,29 @@ export function useReadinessGate(on = true): ReadinessGate {
     if (m) setComputer({ confirm: { id: m.id, name: m.name } });
     else navigate("/machines");
   };
-  const act = (id: string) => runAction(id, { launcher: step?.launcher, onHelp: help, onConfirm: confirm });
+  // the main chat's own model panel, its pill's (read on the click, as the machine list is)
+  const onPickModel = () => {
+    const a = getState().assistant;
+    return Boolean(a?.main) && requestModelPicker(assistantPickerKey(mainConversationMachine(a)!, a!.main!));
+  };
+  const act = (id: string) => runAction(id, { launcher: step?.launcher, onHelp: help, onConfirm: confirm, onPickModel });
+  // A model the main chat can't run: a pick of another one (here, in its model error's Fix it, in its pill) is what "Try it"
+  // checks next. The pick it had when the step came up, or when its last try ended, is the one already tried.
+  const route = step?.code === "model_route";
+  const pick = useStore((s) => (route && s.assistant?.main ? JSON.stringify(getSession(mainConversationMachine(s.assistant)!, s.assistant.main)?.model_pick) : ""));
+  const [[wasRoute, wasProbing, tried], setTried] = useState([route, probing, pick] as const);
+  if (wasRoute !== route || wasProbing !== probing) setTried([route, probing, probing && wasRoute === route ? tried : pick]);
+  const picked = route && pick !== tried;
+  const [main] = step ? stepActions(step, picked) : [];
   // a step can be done without this page hearing of it: ask again while it holds the button, and at once when the user tries
   const isBlocked = Boolean(step);
   useEffect(() => (isBlocked ? retryWhileBlocked() : undefined), [isBlocked]);
   const blocked = step
     ? {
-        label: sendLabel(step),
+        label: sendLabel(step, main),
         onClick: () => {
           void refreshReadiness({ force: true });
-          if (step.action && knownAction(step.action.id)) act(step.action.id);
+          if (main) act(main);
         },
         onNudge: () => {
           void refreshReadiness({ force: true });
@@ -89,6 +109,8 @@ export function useReadinessGate(on = true): ReadinessGate {
     confirm,
     probing: on && probing,
     probeError: on ? probeError : "",
+    picked,
+    onPickModel,
     dialog: (
       <>
         {topic && <HelpDialog topic={topic} machine={machine} step={step} onClose={() => setTopic(null)} onAction={act} />}
@@ -119,9 +141,8 @@ function stepIcon(step: ReadinessStep): IconName {
 export function ReadinessCard({ gate }: { gate: ReadinessGate }) {
   const step = gate.step;
   if (!step) return null;
-  const act = (id: string) => runAction(id, { launcher: step.launcher, onHelp: gate.help, onConfirm: gate.confirm });
-  const main = step.action && knownAction(step.action.id) ? step.action.id : undefined;
-  const alts = (step.alt_actions ?? []).map((a) => a.id).filter((id) => knownAction(id) && id !== main);
+  const act = (id: string) => runAction(id, { launcher: step.launcher, onHelp: gate.help, onConfirm: gate.confirm, onPickModel: gate.onPickModel });
+  const [main, alts] = stepActions(step, gate.picked);
   const problem = step.state === "problem";
   const probe = gate.readiness?.probe;
   return (
@@ -189,9 +210,9 @@ export function ChatOnlyNote({ gate }: { gate: ReadinessGate }) {
 
 // ── a refused start or send ─────────────────────────────
 
-/** A start or a send that did not go: the hub's words, a button for its code, the original under "Error details" (4.6). */
-/** `onRetry`: a send that did not go and is back in the box (#4270): a "Send again" button that sends the box again. */
-export function FailureCard({ failure, onClose, onHelp, onConfirm, onRetry }: { failure: CodedFailure; onClose: () => void; onHelp: (topic: HelpTopic) => void; onConfirm?: () => void; onRetry?: () => void }) {
+/** A start or a send that did not go: the hub's words, a button for its code, the original under "Error details" (4.6).
+ *  A send's own Retry is its failed bubble's, in the chat above: the card has none, so there is one way to send again. */
+export function FailureCard({ failure, onClose, onHelp, onConfirm }: { failure: CodedFailure; onClose: () => void; onHelp: (topic: HelpTopic) => void; onConfirm?: () => void }) {
   const action = failure.action && knownAction(failure.action) ? failure.action : undefined;
   const raw = [failure.detail, failure.requestId && t("assistant-readiness.request_id", { id: failure.requestId })].filter(Boolean).join("\n");
   // the same error notice as a model error over the composer (#5313): the hub's sentence, its buttons, the original
@@ -204,18 +225,11 @@ export function FailureCard({ failure, onClose, onHelp, onConfirm, onRetry }: { 
       message={failure.error}
       onDismiss={onClose}
       actions={
-        <>
-          {onRetry && (
-            <Button tone={action ? "quiet" : "primary"} size="sm" className="touch-hit" onClick={onRetry}>
-              {t("assistant-readiness.resend")}
-            </Button>
-          )}
-          {action && (
-            <Button tone="primary" size="sm" className="touch-hit" onClick={() => runAction(action, { launcher: failure.launcher, onHelp, onConfirm })}>
-              {actionLabel(action)}
-            </Button>
-          )}
-        </>
+        action && (
+          <Button tone="primary" size="sm" className="touch-hit" onClick={() => runAction(action, { launcher: failure.launcher, onHelp, onConfirm })}>
+            {actionLabel(action)}
+          </Button>
+        )
       }
       details={
         raw ? (
@@ -308,13 +322,14 @@ export function HelpDialog({ topic, machine, step, onClose, onAction }: { topic:
       return (
         <Dialog open onClose={onClose} title={t("assistant-readiness.help_login_title")} footer={footer(useKey)}>
           <P>{t("assistant-readiness.help_login_body", { machine: where })}</P>
-          <Command text="claude" />
+          <Command text="claude auth login" />
           <p className="mt-2 text-[12px] leading-relaxed text-ink-3">{t("assistant-readiness.help_login_after")}</p>
         </Dialog>
       );
-    case "what_can_you_do":
+    case "what_can_you_do": {
+      const [main] = step ? stepActions(step) : [];
       return (
-        <Dialog open onClose={onClose} title={t("assistant-readiness.help_what_title")} footer={footer(step?.action && knownAction(step.action.id) ? <Button tone="primary" onClick={() => then(step.action!.id)}>{actionLabel(step.action.id)}</Button> : undefined)}>
+        <Dialog open onClose={onClose} title={t("assistant-readiness.help_what_title")} footer={footer(main ? <Button tone="primary" onClick={() => then(main)}>{actionLabel(main)}</Button> : undefined)}>
           <div className="flex flex-col gap-2">
             <P>{t("assistant-readiness.help_what_body")}</P>
             <ul className="flex list-disc flex-col gap-1 pl-5 text-[13px] leading-relaxed text-ink-2">
@@ -326,6 +341,7 @@ export function HelpDialog({ topic, machine, step, onClose, onAction }: { topic:
           </div>
         </Dialog>
       );
+    }
     case "how_to_connect_model": {
       // an API key alone does not make the main conversation work: it still runs on a computer (#4480), so with none
       // the first thing to do is add one

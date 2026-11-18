@@ -11,12 +11,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import persona.core.contracts.CoreText
 import persona.core.contracts.Item
 import persona.core.contracts.Machine
-import java.io.File
 import java.time.Instant
-import javax.xml.parsers.DocumentBuilderFactory
 
 /**
  * A tool that operates a Mac in words, and the chat's latest such call for its pill: iOS `ComputerTests`'s cases
@@ -117,6 +114,30 @@ class ComputerStepsTest {
     private val mac = Machine("macbook", "MacBook", online = true)
     private val work = Machine("macbook~g0000beef", "MacBook", online = true)
 
+    /** The Mac a tool's `machine` names, as the user knows it (iOS `ComputerSteps.machineName`, #4339 C9 and C18). */
+    @Test fun aMacIsNamedAsTheUserKnowsIt() {
+        val machines = listOf(mac, work)
+        assertEquals("by id", "MacBook", ComputerSteps.machineName("macbook", machines))
+        assertEquals("by name, whatever the case", "MacBook", ComputerSteps.machineName("MACBOOK", machines))
+        assertEquals("no machine goes by it: as the tool said", "studio", ComputerSteps.machineName("studio", machines))
+        assertEquals("no machines at all", "macbook", ComputerSteps.machineName("macbook", emptyList()))
+        // The chat's own group of hubs first, then any.
+        val renamed = Machine("macbook~g0000beef", "Work MacBook")
+        assertEquals("Work MacBook", ComputerSteps.machineName("macbook", listOf(mac, renamed), "server~g0000beef"))
+        assertEquals("MacBook", ComputerSteps.machineName("macbook", listOf(mac, renamed), "server"))
+        assertEquals("MacBook", ComputerSteps.machineName("macbook", listOf(mac), "server~g0000beef"))
+        // A Mac the hub gave no name goes by what the tool said.
+        assertEquals("macbook", ComputerSteps.machineName("macbook", listOf(Machine("macbook", ""))))
+    }
+
+    @Test fun aRunsRowNamesTheMacByItsName() {
+        val steps = input("machine" to "macbook", "steps" to buildJsonArray { listOf("All Clear", "6").forEach { add(click(it)) } })
+        val machines = listOf(mac)
+        assertEquals("macbook · 点 AC → 6", ComputerSteps.runSubject("mcp__persona__computer_run", steps)?.zh())
+        assertEquals("MacBook · 点 AC → 6", ComputerSteps.runSubject("mcp__persona__computer_run", steps) { ComputerSteps.machineName(it, machines) }?.zh())
+        assertNull(ComputerSteps.runSubject("mcp__persona__computer_run", input("machine" to "macbook")) { ComputerSteps.machineName(it, machines) })
+    }
+
     @Test fun theMacACallOperates() {
         val machines = listOf(mac, work)
         val named = input("machine" to "MacBook")
@@ -175,31 +196,5 @@ class ComputerStepsTest {
             mac.id, listOf(mac)))
         assertFalse(ended.running)
         assertFalse(ended.shown(t0.toEpochMilli()))
-    }
-}
-
-/** [CoreText] in Japanese, from core/designsystem's values-ja/strings_core.xml (as [zh] does for Simplified Chinese). */
-private fun CoreText.ja(): String = when (key) {
-    CoreText.Key.Verbatim -> args.first().toString()
-    CoreText.Key.Joined -> args.drop(1).map { (it as CoreText).ja() }.filter(String::isNotEmpty)
-        .joinToString(args.first().let { if (it is CoreText) it.ja() else it.toString() })
-    else -> {
-        val name = "designsystem_core_" + key.name.replace(Regex("(?<!^)(?=[A-Z])"), "_").lowercase()
-        val text = JaStrings.table[name] ?: error("no ja string $name")
-        val values = args.map { if (it is CoreText) it.ja() else it }.toTypedArray()
-        if (values.isEmpty()) text else String.format(text, *values)
-    }
-}
-
-private object JaStrings {
-    val table: Map<String, String> by lazy {
-        val file = generateSequence(File("").absoluteFile) { it.parentFile }
-            .map { File(it, "core/designsystem/src/main/res/values-ja/strings_core.xml") }.first { it.exists() }
-        val root = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file).documentElement
-        val nodes = root.getElementsByTagName("string")
-        (0 until nodes.length).associate { n ->
-            val node = nodes.item(n) as org.w3c.dom.Element
-            node.getAttribute("name") to node.textContent.replace("\\'", "'")
-        }
     }
 }

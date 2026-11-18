@@ -4,18 +4,21 @@ import SwiftUI
 /// extension's page in Settings › Extensions. Lists the voices of the model the use `plugin.<id>` picks, with the
 /// current one (picked on this device, else the model's default); a pick is kept per group of hubs (`VoiceTimbre`),
 /// where every call reads it, and a call going on with this extension takes it up at once. In a call the same choice
-/// is under ⋯ › Voice.
+/// is under ⋯ › Voice. Under it, for an extension that takes it, Only Send What I Just Said (`VoiceSpeechGateSection`).
 struct VoiceTimbreSection: View {
     let extensionID: String
     let group: String
     @State private var voices: VoiceVoicesLoader
     @State private var chosen: String?
+    /// The extension takes Only Send What I Just Said (its /info; at first what the group's hub said last).
+    @State private var speechGate: Bool
 
     init(extensionID: String, group: String) {
         self.extensionID = extensionID
         self.group = group
         _voices = State(initialValue: VoiceVoicesLoader(extensionID: extensionID, api: { AppModel.shared.api(group) }))
         _chosen = State(initialValue: VoiceTimbre.chosen(group: group, extensionID: extensionID))
+        _speechGate = State(initialValue: VoiceSpeechGateSection.supported(VoiceSupport.shared.probes[group]?.info))
     }
 
     /// Whether an extension's page has it: the voice extension, on and running, on a device with calls, and the
@@ -40,7 +43,17 @@ struct VoiceTimbreSection: View {
             }
             voices.show(model: model)
         }
+        .task {
+            guard let api = AppModel.shared.api(group) else { return }
+            let info = await api.voiceInfo(extensionID)
+            if case .failed = info { return } // not reached: what the hub said last stands
+            let takes = VoiceSpeechGateSection.supported(info)
+            if takes != speechGate { speechGate = takes }
+        }
         .onDisappear { voices.stop() }
+        if speechGate {
+            VoiceSpeechGateSection(extensionID: extensionID, group: group)
+        }
     }
 
     @ViewBuilder private var row: some View {

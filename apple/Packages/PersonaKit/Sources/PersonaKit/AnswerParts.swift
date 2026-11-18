@@ -18,6 +18,8 @@ public nonisolated enum AnswerParts {
         public let text: String
         /// The space MarkdownUI's theme puts between the previous part's last block and this part's first; 0 for the first.
         public let gap: CGFloat
+        /// The answer's line it starts on (counted from 0, as `text.components(separatedBy: "\n")`).
+        public let line: Int
     }
 
     /// Answers smaller than this many UTF-8 bytes or lines stay one row.
@@ -66,12 +68,14 @@ public nonisolated enum AnswerParts {
             size.bytes += chunk.bytes
             guard n + 1 < chunks.count, size.lines >= target || size.bytes >= targetSize,
                   let before = chunk.kind, let after = chunks[n + 1].kind, chunks[n + 1].cuttable else { continue }
-            parts.append(Part(text: Self.text(lines, chunks[start].range.lowerBound..<chunk.range.upperBound) + definitions, gap: gap))
+            parts.append(Part(text: Self.text(lines, chunks[start].range.lowerBound..<chunk.range.upperBound) + definitions, gap: gap,
+                              line: chunks[start].range.lowerBound))
             gap = max(before.bottom, after.top)
             start = n + 1
             size = (0, 0)
         }
-        parts.append(Part(text: Self.text(lines, chunks[start].range.lowerBound..<lines.count) + definitions, gap: gap))
+        parts.append(Part(text: Self.text(lines, chunks[start].range.lowerBound..<lines.count) + definitions, gap: gap,
+                          line: chunks[start].range.lowerBound))
         return parts.count > 1 ? parts : []
     }
 

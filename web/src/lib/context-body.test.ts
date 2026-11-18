@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { contextBody } from "./context-body";
-import { contextXML as inboxContext, handOffMessage, type InboxItem } from "./inbox";
+import { contextXML as inboxContext, type InboxItem } from "./inbox";
+import { handOffMessage } from "./inbox-page";
 import { contextXml as kbContext } from "./kb";
 import { contextXML as linkContext } from "./links";
 import { formatTodoContext } from "./todos";

@@ -101,7 +101,7 @@ func (h *Manager) readMailAccount(ctx context.Context, a mail.MailAccount) (*ass
 	acc := &assistantwire.InboxMailAccount{ID: a.ID, Email: a.Email, Messages: []assistantwire.InboxMailSummary{}}
 	for _, m := range res.Messages {
 		acc.Messages = append(acc.Messages, assistantwire.InboxMailSummary{Mailbox: m.Mailbox, UID: m.UID, MessageID: m.MessageID,
-			Subject: m.Subject, From: mailAddress(m.From), To: mailAddresses(m.To), Date: m.Date, Snippet: m.Snippet, Seen: m.Seen})
+			Subject: m.Subject, From: mailAddress(m.From), To: mailAddresses(m.To), Date: m.Date, Snippet: m.Snippet, Seen: m.Seen, Answered: m.Answered})
 	}
 	return acc, nil
 }
@@ -145,11 +145,23 @@ func mailAddresses(list []mail.Address) []assistantwire.MailAddress {
 
 // readConnectors reads every connector with an inbox: its things and what it can do with them. One the user turned "Add
 // to Inbox" off for, not signed in, or a hub.json plugin's waiting for the triage model is read with nothing (nothing
-// of it waits); one whose Collect failed is left out (it keeps what it had).
+// of it waits); one whose Collect failed is left out (it keeps what it had). One whose Inbox feed was switched to its
+// default subscription is not read at all: the subscription hands its rows under its id (#6265).
 func (h *Manager) readConnectors(ctx context.Context) []assistantwire.InboxSource {
 	out := []assistantwire.InboxSource{}
 	h.reconcileIMessageAI(ctx)
+	migrated := map[string]bool{}
+	if subs := h.subsLive.Load(); subs != nil {
+		var err error
+		if migrated, err = subs.Migrated(ctx); err != nil {
+			h.logf("inbox: migrated sources: %v", err)
+			return out // which built-ins to read is not known: none this round, rather than one twice
+		}
+	}
 	for _, c := range h.connectors.All() {
+		if migrated[c.ID()] {
+			continue
+		}
 		in, ok := connector.As[connector.Inbox](c)
 		if !ok {
 			continue
@@ -174,21 +186,28 @@ func (h *Manager) readConnectors(ctx context.Context) []assistantwire.InboxSourc
 		h.inboxReads.note(c.ID(), time.Now(), "")
 		h.vetThings(c, things)
 		src.Things = things
-		_, src.Group = connector.As[connector.Grouper](c)
-		_, src.Meta = connector.As[connector.EventWriter](c)
-		src.MetaDescription = strings.TrimSpace(c.Manifest().MetaDescription)
-		_, src.Settles = connector.As[connector.InboxSettler](c)
-		for _, kind := range c.Manifest().Kinds {
-			if d, ok := extensionKinds.Load(c.ID() + "/" + kind); ok {
-				if src.Kinds == nil {
-					src.Kinds = map[string]string{}
-				}
-				src.Kinds[kind] = d.(string)
-			}
-		}
+		withAbilities(&src, c)
 		out = append(out, src)
 	}
 	return out
+}
+
+// withAbilities gives a connector's round entry what the Inbox does with its things besides taking them: grouping
+// (group, meta), settling, and its kinds as it describes them. A built-in read through its default subscription
+// gets the same (#6381), so nothing it does is lost at the switch.
+func withAbilities(src *assistantwire.InboxSource, c connector.Connector) {
+	_, src.Group = connector.As[connector.Grouper](c)
+	_, src.Meta = connector.As[connector.EventWriter](c)
+	src.MetaDescription = strings.TrimSpace(c.Manifest().MetaDescription)
+	_, src.Settles = connector.As[connector.InboxSettler](c)
+	for _, kind := range c.Manifest().Kinds {
+		if d, ok := extensionKinds.Load(c.ID() + "/" + kind); ok {
+			if src.Kinds == nil {
+				src.Kinds = map[string]string{}
+			}
+			src.Kinds[kind] = d.(string)
+		}
+	}
 }
 
 // readErrorOf is a failed Collect as a short code: its text may hold an address or a token, the code does not.

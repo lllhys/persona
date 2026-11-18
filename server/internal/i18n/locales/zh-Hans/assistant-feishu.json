@@ -134,8 +134,8 @@
   "elsewhere_not_ready": "飞书机器人还没准备好，请先开启并配对。",
   "elsewhere_root": "来自另一个群：{text}",
   "elsewhere_root_quote": "回复的是：{quote}",
-  "elsewhere_root_hint": "待办做完或验收后，会先在这里预告，再把一句简短的结论回复到那条消息下面。在这个话题里发 /noreply 可以取消。",
-  "elsewhere_root_hint_chat": "待办做完或验收后，会先在这里预告，再把一句简短的结论回复到那条消息下面。回复这条消息并发 /noreply 可以取消。",
+  "elsewhere_root_hint": "待办做完或验收后，会把结论回复到原消息下面。如果开启了预览，会先在这里显示。发送前可以在本话题发 /noreply 取消。",
+  "elsewhere_root_hint_chat": "待办做完或验收后，会把结论回复到原消息下面。如果开启了预览，会先在这里显示。发送前可以回复这条消息并发 /noreply 取消。",
   "elsewhere_no_topic": "没能在主话题群里开新话题：发到那里的消息不在话题里。它是话题群吗？请在想用的群里发 /topics home。",
   "elsewhere_needs_text": "/ai 后面请写上要做什么，例如：/ai 查一下发版说明。",
   "elsewhere_failed": "没能为这件事开待办：{error}",
@@ -150,5 +150,10 @@
   "source_report_unreachable": "结论没能回到提问的地方：{error}",
   "source_report_notice": "将在 {minutes} 分钟后回复到原消息下：{text}（发 /noreply 取消）",
   "source_report_notice_chat": "将在 {minutes} 分钟后回复到原消息下：{text}（回复这条并发 /noreply 取消）",
-  "answer_below": "回复见下方"
+  "answer_below": "回复见下方",
+  "source_report_full_notice": "将在 {minutes} 分钟后把这份答复发到原消息下。在本话题发 /noreply 可以取消。\n\n{text}",
+  "source_report_full_notice_chat": "将在 {minutes} 分钟后把这份答复发到原消息下。回复并发 /noreply 可以取消。\n\n{text}",
+  "source_report_file_notice": "将在 {minutes} 分钟后把附件里的答复发到原消息下。在本话题发 /noreply 可以取消。",
+  "source_report_file_notice_chat": "将在 {minutes} 分钟后把附件里的答复发到原消息下。回复这条消息并发 /noreply 可以取消。",
+  "source_report_no_final": "任务已完成，未找到可回传的最终答复。"
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -47,7 +48,26 @@ type TodoRow struct {
 	Project string `json:"project"`
 	// Kind is "" for a to-do or a task, or KindConcern (#3561). Set when it is made, never changed.
 	Kind string `json:"kind"`
+	// SeenAt is when the owner last looked at it in Just finished (#5707): Got it, or opening it; nil when never, or
+	// after an Undo. Only SeeTodo writes it.
+	SeenAt *time.Time `json:"seen_at"`
+	// InboxItem is the id of the Inbox row it was made from (#6480), "" for any other to-do. Set when it is made.
+	InboxItem string `json:"inbox_item"`
+	// PartOf is the to-do whose request this one is a piece of, "" for none; After the pieces of that request it waits
+	// for, never nil (docs/assistant/todos.md "Requests in pieces"). The manager checks them before they are written.
+	PartOf string   `json:"part_of"`
+	After  []string `json:"after"`
+	// RestoredAt is when the owner last brought it back from Inactive (#10226): activity for its status only, never an
+	// edit (updated_at stays). Nil when never. Only RestoreTodo writes it.
+	RestoredAt *time.Time `json:"restored_at"`
+	// SomedayUntil is when a to-do the owner put off to Someday comes back (#10226), SomedayNoDate for Someday with no
+	// date; nil while it is not put off. SetTodoSomeday writes it; reopening (TodoEdit.Apply) and RetryTodo clear it.
+	SomedayUntil *time.Time `json:"someday_until"`
 }
+
+// SomedayNoDate is the someday_until of a to-do put off to Someday with no date to come back on: a far date, so that
+// "put off until" is the one rule for both (docs/assistant/todos.md "Restores and Someday").
+var SomedayNoDate = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
 
 // KindConcern is a todo for something the owner raised in the main conversation and wants an answer to (#3561,
 // docs/assistant/todos.md "Concerns"): it closes only through ReportConcern, once the main conversation told the owner
@@ -100,12 +120,13 @@ type TodoAgentRow struct {
 }
 
 const todoColumns = `id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by, done_reason, reopened_at, quiet,
-	due_at, due_date, remind_at, reminded_at, priority, project, kind`
+	due_at, due_date, remind_at, reminded_at, priority, project, kind, seen_at, inbox_item, part_of, after_ids, restored_at, someday_until`
 
 // todoDest is where a row of todoColumns is scanned to.
 func todoDest(r *TodoRow) []any {
 	return []any{&r.ID, &r.Title, &r.Notes, &r.DoneAt, &r.CreatedAt, &r.UpdatedAt, &r.Origin, &r.PlanID, &r.StartError, &r.DoneBy,
-		&r.DoneReason, &r.ReopenedAt, &r.Quiet, &r.DueAt, &r.DueDate, &r.RemindAt, &r.RemindedAt, &r.Priority, &r.Project, &r.Kind}
+		&r.DoneReason, &r.ReopenedAt, &r.Quiet, &r.DueAt, &r.DueDate, &r.RemindAt, &r.RemindedAt, &r.Priority, &r.Project, &r.Kind,
+		&r.SeenAt, &r.InboxItem, &r.PartOf, &r.After, &r.RestoredAt, &r.SomedayUntil}
 }
 
 // ListTodos returns all todos ordered by created_at DESC.
@@ -178,11 +199,22 @@ func (d *DB) GetTodo(ctx context.Context, id string) (*TodoRow, error) {
 
 // CreateTodo inserts a new todo.
 func (d *DB) CreateTodo(ctx context.Context, t TodoRow) error {
-	_, err := d.pool.Exec(ctx, `INSERT INTO todos (id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by,
-		done_reason, reopened_at, quiet, due_at, due_date, remind_at, reminded_at, priority, project, kind)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+	return createTodo(ctx, d.pool, t)
+}
+
+// CreateTodoTx inserts a new todo in a caller's transaction.
+func CreateTodoTx(ctx context.Context, tx pgx.Tx, t TodoRow) error {
+	return createTodo(ctx, tx, t)
+}
+
+func createTodo(ctx context.Context, executor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, t TodoRow) error {
+	_, err := executor.Exec(ctx, `INSERT INTO todos (id, title, notes, done_at, created_at, updated_at, origin, plan_id, start_error, done_by,
+		done_reason, reopened_at, quiet, due_at, due_date, remind_at, reminded_at, priority, project, kind, inbox_item, part_of, after_ids)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)`,
 		t.ID, t.Title, t.Notes, t.DoneAt, t.CreatedAt, t.UpdatedAt, t.Origin, t.PlanID, t.StartError, t.DoneBy, t.DoneReason, t.ReopenedAt, t.Quiet,
-		t.DueAt, t.DueDate, t.RemindAt, t.RemindedAt, t.Priority, t.Project, t.Kind)
+		t.DueAt, t.DueDate, t.RemindAt, t.RemindedAt, t.Priority, t.Project, t.Kind, t.InboxItem, t.PartOf, nonNilIDs(t.After))
 	return err
 }
 
@@ -196,6 +228,7 @@ func (d *DB) UpdateTodo(ctx context.Context, id string, title *string, notes *st
 // (#2581); the caller has checked it names one.
 type TodoEdit struct {
 	Title, Notes *string
+	InboxItem    *string
 	Done         *bool
 	SetDue       bool
 	DueAt        *time.Time
@@ -207,6 +240,10 @@ type TodoEdit struct {
 	// Origin: the conversation (or agent) the task belongs to now; a task whose supervisor was handed to another
 	// conversation moves with it (assistant/task_leader.go rehome).
 	Origin *string
+	// PartOf and After: the request it is a piece of ("" none) and the pieces it waits for (empty none); the caller has
+	// checked them (assistant/todo_pieces.go).
+	PartOf *string
+	After  *[]string
 }
 
 // Apply makes the edit to cur at the moment at: done stamps done_at (once), not done reopens it (reopened_at, no
@@ -214,6 +251,9 @@ type TodoEdit struct {
 // it: no longer failed, done now by them (#3713). A reminder at another moment is to be pushed again. The store and the
 // store-less memory both change a todo with it.
 func (e TodoEdit) Apply(cur *TodoRow, at time.Time) {
+	if e.InboxItem != nil {
+		cur.InboxItem = *e.InboxItem
+	}
 	if e.Title != nil {
 		cur.Title = *e.Title
 	}
@@ -234,6 +274,7 @@ func (e TodoEdit) Apply(cur *TodoRow, at time.Time) {
 			cur.DoneAt = nil
 			cur.StartError = "" // reopened: no longer failed
 			cur.DoneBy, cur.DoneReason = "", ""
+			cur.SomedayUntil = nil // reopened: the owner is on it again, not putting it off (#10226)
 		}
 	}
 	if e.SetDue {
@@ -251,7 +292,21 @@ func (e TodoEdit) Apply(cur *TodoRow, at time.Time) {
 	if e.Origin != nil {
 		cur.Origin = *e.Origin
 	}
+	if e.PartOf != nil {
+		cur.PartOf = *e.PartOf
+	}
+	if e.After != nil {
+		cur.After = nonNilIDs(*e.After)
+	}
 	cur.UpdatedAt = at
+}
+
+// nonNilIDs is ids as the after_ids column takes them: pgx sends a nil slice as NULL, which the column refuses.
+func nonNilIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 func sameMoment(a, b *time.Time) bool {
@@ -284,9 +339,11 @@ func (d *DB) EditTodo(ctx context.Context, id string, e TodoEdit, updatedAt time
 		e.Apply(&cur, updatedAt)
 		_, err = tx.Exec(ctx, `UPDATE todos SET title = $2, notes = $3, done_at = $4, updated_at = $5, start_error = $6,
 			done_by = $7, done_reason = $8, reopened_at = $9, due_at = $10, due_date = $11, remind_at = $12, reminded_at = $13,
-			priority = $14, project = $15, origin = $16 WHERE id = $1`,
+			priority = $14, project = $15, origin = $16, part_of = $17, after_ids = $18, inbox_item = $19,
+			someday_until = $20 WHERE id = $1`,
 			cur.ID, cur.Title, cur.Notes, cur.DoneAt, cur.UpdatedAt, cur.StartError, cur.DoneBy, cur.DoneReason, cur.ReopenedAt,
-			cur.DueAt, cur.DueDate, cur.RemindAt, cur.RemindedAt, cur.Priority, cur.Project, cur.Origin)
+			cur.DueAt, cur.DueDate, cur.RemindAt, cur.RemindedAt, cur.Priority, cur.Project, cur.Origin, cur.PartOf, nonNilIDs(cur.After), cur.InboxItem,
+			cur.SomedayUntil)
 		if err != nil {
 			return err
 		}
@@ -297,6 +354,56 @@ func (d *DB) EditTodo(ctx context.Context, id string, e TodoEdit, updatedAt time
 		return nil, err
 	}
 	return &updated, nil
+}
+
+// SeeTodo sets when the owner looked at todo id (#5707, docs/assistant/todo-status-sop.md "Seen"); nil clears it (Undo).
+// It is not an edit: updated_at stays, so being seen never counts as activity.
+func (d *DB) SeeTodo(ctx context.Context, id string, at *time.Time) (*TodoRow, error) {
+	var r TodoRow
+	err := d.pool.QueryRow(ctx, `UPDATE todos SET seen_at = $2 WHERE id = $1 RETURNING `+todoColumns, id, at).
+		Scan(todoDest(&r)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTodoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// RestoreTodo records that the owner brought todo id back from Inactive at at (#10226). Like SeeTodo it is not an edit:
+// updated_at stays; restored_at is activity for the to-do's status only.
+func (d *DB) RestoreTodo(ctx context.Context, id string, at time.Time) (*TodoRow, error) {
+	var r TodoRow
+	err := d.pool.QueryRow(ctx, `UPDATE todos SET restored_at = $2 WHERE id = $1 RETURNING `+todoColumns, id, at).
+		Scan(todoDest(&r)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTodoNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// SetTodoSomeday puts todo id off to Someday until until (SomedayNoDate: no date), or with nil takes it out of Someday
+// (#10226). Only an open to-do is put off: ErrTodoCompleted when it is closed, though not for a failed start, which
+// waits on the owner to retry or close it. Taking it out applies to any. Not an edit: updated_at stays.
+func (d *DB) SetTodoSomeday(ctx context.Context, id string, until *time.Time) (*TodoRow, error) {
+	var r TodoRow
+	err := d.pool.QueryRow(ctx, `UPDATE todos SET someday_until = $2
+		WHERE id = $1 AND ($2::timestamptz IS NULL OR done_at IS NULL OR start_error <> '') RETURNING `+todoColumns, id, until).
+		Scan(todoDest(&r)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, gerr := d.GetTodo(ctx, id); gerr != nil {
+			return nil, gerr
+		}
+		return nil, ErrTodoCompleted
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ClaimTodoReminder marks todo id reminded at now, but only while its reminder is still the one at remindAt, not yet
@@ -347,12 +454,13 @@ func (d *DB) FailTodo(ctx context.Context, id, startError string, at time.Time) 
 	return &r, nil
 }
 
-// RetryTodo reopens a todo whose agent did not start, to start it again (#1396): not done, no error, reopened now.
+// RetryTodo reopens a todo whose agent did not start, to start it again (#1396): not done, no error, reopened now, and
+// out of Someday (the owner is on it again, #10226).
 // False (and no error) when it is not failed any more: a retry that came first already reopened it.
 func (d *DB) RetryTodo(ctx context.Context, id string, at time.Time) (*TodoRow, bool, error) {
 	var r TodoRow
 	err := d.pool.QueryRow(ctx, `UPDATE todos SET done_at = NULL, start_error = '', done_by = '', done_reason = '',
-		reopened_at = $2, updated_at = $2 WHERE id = $1 AND done_at IS NOT NULL AND start_error <> ''
+		reopened_at = $2, updated_at = $2, someday_until = NULL WHERE id = $1 AND done_at IS NOT NULL AND start_error <> ''
 		RETURNING `+todoColumns, id, at).
 		Scan(todoDest(&r)...)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -784,6 +892,30 @@ func (d *DB) linkTodoAgentWithSource(ctx context.Context, todoID, machineID, ses
 		return nil, err
 	}
 	return releasedTodoIDs, nil
+}
+
+// ReleaseTodoAgent lets go of an agent still linked to a todo (released_at only: it stays in the todo's history, unlike
+// UnlinkTodoAgent's dismissal). A link already let go is left as it is. A new agent taking over the todo after this one
+// stopped does it (#6427).
+func (d *DB) ReleaseTodoAgent(ctx context.Context, todoID, machineID, sessionID string, at time.Time) error {
+	conn, err := d.pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := lockTodoAgentMembership(ctx, tx, todoID, machineID, sessionID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `UPDATE todo_agents SET released_at = $4
+			WHERE todo_id = $1 AND machine_id = $2 AND session_id = $3 AND released_at IS NULL`,
+			todoID, machineID, sessionID, at.UTC())
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE todos SET updated_at = $2 WHERE id = $1`, todoID, at.UTC())
+		return err
+	})
 }
 
 // UnlinkTodoAgent marks the agent as released and dismissed on a todo (soft unlink, #762).

@@ -63,6 +63,28 @@ class PagedSessionsMockTests(unittest.TestCase):
         self.assertEqual(counts["total"], page["total"])
         self.assertTrue(all(s["machine_id"] == row["machine_id"] and s["state"] == row["state"] for s in page["sessions"]))
 
+    def test_agents_only_scopes_counts_pages_and_deltas(self):
+        self.assertIn("sessions_agents_only", hub.features())
+        assistant = hub.ASSISTANT[0]
+        agent = hub.SESSIONS[0]
+        health = {**agent, "session_id": "test-health", "cwd": "/home/me/.persona/health-m-123/reports"}
+        with patch.object(hub, "SESSIONS", [*hub.SESSIONS, health]), patch.dict(assistant), patch.dict(agent):
+            base = self.read(agents_only=1, summary=1, limit=200)
+            count = self.read(agents_only=1, counts=1)
+            unscoped = self.read(summary=1, limit=200)
+            self.assertEqual(count["total"], base["total"])
+            self.assertEqual(sum(count["state"].values()), base["total"])
+            for hidden in (assistant, health):
+                self.assertIn(hidden["session_id"], [s["session_id"] for s in unscoped["sessions"]])
+                self.assertNotIn(hidden["session_id"], [s["session_id"] for s in base["sessions"]])
+            assistant["last_text"] = "assistant changed"
+            health["last_text"] = "health changed"
+            agent["assistant"] = True
+            delta = self.read(agents_only=1, since=base["revision"], limit=200)
+            self.assertEqual(delta["sessions"], [])
+            self.assertEqual(delta["remove"], [hub.LIST_TUPLE(agent)])
+            self.assertEqual(delta["total"], base["total"] - 1)
+
     def test_unchanged_revision_has_no_delta_and_stale_revision_rebaselines(self):
         first = self.read(summary=1, limit=2)
         delta = self.read(summary=1, since=first["revision"])
@@ -116,6 +138,15 @@ class PagedSessionsMockTests(unittest.TestCase):
         body, status = hub.paged_sessions({"summary": ["1"], "since": [oldest]})
         self.assertEqual((status, body["code"]), (409, "revision_expired"))
         self.assertLessEqual(len(hub.LIST_JOURNAL), hub.LIST_JOURNAL_SIZE)
+
+    def test_strict_summary_rows_drop_chat_arrays_like_the_hub(self):
+        run = {"task_id": "w", "name": "audit", "running": True, "phases": ["A", "B"], "phase_index": 2, "agents": [{"id": "a"}]}
+        row = hub.summary_row({"session_id": "s", "workflows": [run], "background": [{"id": "w", "kind": "workflow"},
+                                                                               {"id": "b", "kind": "shell"}]})
+        self.assertFalse({"workflows", "background", "subagents"} & set(row))
+        self.assertEqual((row["running_workflows"], row["background_count"], row["background_tasks_count"]), (1, 2, 1))
+        self.assertEqual(row["workflow_progress"], {"task_id": "w", "name": "audit", "running": True, "phase_index": 2, "phase_count": 2})
+        self.assertTrue(row["waiting"])
 
 
 if __name__ == "__main__":

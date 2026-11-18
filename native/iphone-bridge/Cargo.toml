@@ -27,6 +27,7 @@ idevice = { version = "=0.1.68", default-features = false, features = [
     "installation_proxy",
     "dvt",
     "device_info",
+    "amfi",
 ] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["rt", "macros", "io-std", "io-util", "time", "net", "sync", "process"] }

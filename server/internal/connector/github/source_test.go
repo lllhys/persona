@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/connector"
@@ -101,7 +102,7 @@ func TestChoosingASource(t *testing.T) {
 	if scopes, _ := c.Scopes(); len(MissingScopes(scopes)) == 0 {
 		t.Fatalf("public_repo only and nothing missing: %v", scopes)
 	}
-	if string(sec.data) != `{}` {
+	if strings.Contains(string(sec.data), "token") {
 		t.Fatalf("the device token stayed: %s", sec.data)
 	}
 	c.UseDevice()

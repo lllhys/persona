@@ -1,5 +1,6 @@
 import SwiftUI
 import OSLog
+import PersonaWire
 
 /// Message positions are decimal strings that can outgrow Int64 in theory; compare them as numbers.
 nonisolated enum LarkPosition {
@@ -57,6 +58,8 @@ extension AppModel {
 /// Jump to Latest / You Were Mentioned jumps.
 struct LarkChatView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.shell) private var shell
+    @Environment(\.pushInboxChat) private var pushChat
     /// Polled and reported only while its page is in front: a hidden chat reports nothing to Feishu (TabActivity.swift).
     @Environment(\.tabIsActive) private var tabActive
     @Environment(\.scenePhase) private var scenePhase
@@ -234,19 +237,31 @@ struct LarkChatView: View {
         .background(pageBackground)
         .themedPage()
         .navigationTitle(conversation.name)
-        .navigationSubtitle([isTopic ? String(localized: "Lark Topic Group") : String(localized: "Lark [Inbox Event Views 7e4419]"), conversation.accountName].compactMap { $0 }.joined(separator: " · "))
+        .navigationSubtitleWhenSupported([isTopic ? String(localized: "Lark Topic Group") : String(localized: "Lark [Inbox Event Views 7e4419]"), conversation.accountName].compactMap { $0 }.joined(separator: " · "))
         .navigationBarTitleDisplayMode(.inline)
         // Keep the bar's material during push/pop instead of resolving its scroll-edge state after arrival.
         .toolbarBackground(.bar, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .hidesTabBarWhenShown()
         .pageToolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: openPins) { Label("Pinned Messages", systemImage: Theme.Icon.pin) }
-                    .accessibilityIdentifier("lark.pins.open")
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await askPersona() } } label: { Label("Summarize with Persona", systemImage: Theme.Icon.ai) }
+            if shell != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button(action: openPins) { Label("Pinned Messages", systemImage: Theme.Icon.pin) }
+                            .accessibilityIdentifier("lark.pins.open")
+                        Button { Task { await askPersona() } } label: { Label("Summarize with Persona", systemImage: Theme.Icon.ai) }
+                    } label: { ThemedIcon(Theme.Icon.moreMenu) }
+                        .accessibilityLabel("More")
+                        .accessibilityIdentifier("lark.chat.more")
+                }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: openPins) { Label("Pinned Messages", systemImage: Theme.Icon.pin) }
+                        .accessibilityIdentifier("lark.pins.open")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await askPersona() } } label: { Label("Summarize with Persona", systemImage: Theme.Icon.ai) }
+                }
             }
         }
         .task {
@@ -296,9 +311,18 @@ struct LarkChatView: View {
                 askReceiptsAgain()
             }
         }
-        .task {
-            for await _ in LarkSync.shared.changes(of: conversation.key) {
+        // Follows its chat only while its page is in front (a hidden shell page stays mounted, #10337). Back in front it
+        // catches up once; the first appearance's load already fetches the page (`landed` is false until it finished).
+        .tabActiveTask {
+            let changes = LarkSync.shared.changes(of: conversation.key)
+            if landed {
                 await refreshLatest()
+                guard !Task.isCancelled else { return }
+                askReceiptsAgain()
+            }
+            for await _ in changes {
+                await refreshLatest()
+                guard !Task.isCancelled else { return }
                 askReceiptsAgain()
             }
         }
@@ -787,8 +811,9 @@ struct LarkChatView: View {
     /// `untouchedSince`: Jump to Latest took the list to its end with the drag count at this; the finger has not taken it since,
     /// so it is still at the end even when the geometry just after the window changed says otherwise.
     private func refreshLatest(untouchedSince: Int? = nil) async {
-        guard !pager.hasNewer, let api = chatAPI, let r = try? await api.larkMessages(conversation.id, topic: isTopic),
-              !pager.hasNewer else { return } // (the window may have moved away meanwhile)
+        guard !Task.isCancelled, !pager.hasNewer, let api = chatAPI,
+              let r = try? await api.larkMessages(conversation.id, topic: isTopic),
+              !Task.isCancelled, !pager.hasNewer else { return } // (the window may have moved away meanwhile)
         problem = nil // it answers again (the Lark gateway signed in again, the network is back)
         switch pager.latest(r) {
         case .fresh(let fresh):
@@ -1453,6 +1478,16 @@ struct LarkChatView: View {
         }
     }
 
+    /// The new summary goes over an inbox source page when that stack offers the route; elsewhere it opens as before.
+    @MainActor static func openSummary(_ key: SessionKey, owner: String?, model: AppModel,
+                                       push: ((InboxChatRoute) -> Void)? = nil) {
+        if let push {
+            push(InboxChatRoute(key: model.inHub(key), manager: owner))
+        } else {
+            model.openAssistantConversation(key)
+        }
+    }
+
     private func askPersona() async {
         guard let api = chatAPI else { return }
         let prompt = String(localized: "Read the recent messages in my Lark chat “\(conversation.name)” (Lark gateway feedId \(conversation.id)), summarize the key points, list what I need to reply to or handle, and suggest replies.")
@@ -1461,7 +1496,7 @@ struct LarkChatView: View {
                 try await api.showing(nil).startConversation(prompt: prompt, opID: op) // the chat's manager's; the default's names none, whichever page shows
             }
             model.began(s, text: prompt)
-            model.openAssistantConversation(s.key)
+            Self.openSummary(s.key, owner: manager, model: model, push: pushChat)
         } catch {
             model.show(error)
         }

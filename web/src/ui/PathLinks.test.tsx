@@ -24,7 +24,18 @@ const settle = async () => {
 };
 
 // The machine has these (relative paths in /repo).
-const there: Record<string, string> = { "/tmp/persona-tasks/1664-lark-test.md": "file", "src/a.ts": "file", "~/notes/": "dir" };
+const there: Record<string, string> = {
+  "/tmp/persona-tasks/1664-lark-test.md": "file",
+  "src/a.ts": "file",
+  "~/notes/": "dir",
+  "/home/me/report/": "dir",
+  "/home/me/report/报表_2026H2.xlsx": "file",
+  "~/ドキュメント/メモ.txt": "file",
+  "/tmp/report": "file",
+  "/tmp/report.": "file",
+  "~/notes/result..": "file",
+  "/tmp/missing": "file",
+};
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -63,6 +74,39 @@ describe("path presence", () => {
 });
 
 describe("links in messages", () => {
+  it("links exact code filenames with final dots in Markdown and plain message text", async () => {
+    const text = "See `/tmp/report.:12` and `~/notes/result..`";
+    askPaths("mac", "/repo", textPaths(text));
+    await settle();
+    expect(textPaths(text)).toEqual(["/tmp/report.", "~/notes/result.."]);
+    const html = renderToStaticMarkup(<Markdown text={text} mid="mac" cwd="/repo" />);
+    expect(html).toContain('href="/dl/mac?path=%2Ftmp%2Freport."');
+    expect(html).toContain("<code>/tmp/report.:12</code></a>");
+    expect(html).toContain("<code>~/notes/result..</code></a>");
+    const plain = renderToStaticMarkup(<PathText text={text} mid="mac" cwd="/repo" />);
+    expect(plain).toContain(">/tmp/report.:12</a>");
+    expect(plain).toContain(">~/notes/result..</a>");
+  });
+
+  it("does not link a shortened filename when the exact code path is missing", async () => {
+    const text = "See `/tmp/missing.`";
+    askPaths("mac", "/repo", textPaths(text));
+    await settle();
+    expect(textPaths(text)).toEqual(["/tmp/missing."]);
+    expect(renderToStaticMarkup(<PathText text={text} mid="mac" cwd="/repo" />)).not.toContain("<a ");
+    expect(renderToStaticMarkup(<Markdown text={text} mid="mac" cwd="/repo" />)).not.toContain("<a ");
+  });
+
+  it("keeps genuine inner-path fallbacks in a multi-path code span", async () => {
+    const text = "`src/a.ts 和 ~/notes/`";
+    askPaths("mac", "/repo", textPaths(text));
+    await settle();
+    const html = renderToStaticMarkup(<PathText text={text} mid="mac" cwd="/repo" />);
+    expect(html).toContain(">src/a.ts</a>");
+    expect(html).toContain(">~/notes/</a>");
+    expect(html.match(/<a /g)).toHaveLength(2);
+  });
+
   it("links in a user's message only the paths that are there", async () => {
     const text = "读 /tmp/persona-tasks/1664-lark-test.md 并完整执行这个任务，别动 /tmp/other/x.md";
     askPaths("mac", "/repo", ["/tmp/persona-tasks/1664-lark-test.md", "/tmp/other/x.md"]);
@@ -91,6 +135,19 @@ describe("links in messages", () => {
     expect(html.match(/<a /g)).toHaveLength(4); // the three paths and the link
     // without a machine (a file's own Markdown), nothing is asked or linked
     expect(renderToStaticMarkup(<Markdown text="见 src/a.ts:40" />)).not.toContain("<a ");
+  });
+
+  it("links a path whose names are not ASCII whole, and leaves the words glued to it out", async () => {
+    const md = "已保存到 /home/me/report/报表_2026H2.xlsx，摘要在 ~/ドキュメント/メモ.txtにあります。";
+    askPaths("mac", "/repo", textPaths(md));
+    await settle();
+    const html = renderToStaticMarkup(<Markdown text={md} mid="mac" cwd="/repo" />);
+    expect(html).toMatch(/<a [^>]*>\/home\/me\/report\/报表_2026H2.xlsx<\/a>，/);
+    expect(html).toMatch(/<a [^>]*>~\/ドキュメント\/メモ.txt<\/a>にあります。/);
+    expect(html.match(/<a /g)).toHaveLength(2);
+    const bubble = renderToStaticMarkup(<PathText text={md} mid="mac" cwd="/repo" />);
+    expect(bubble).toContain(">/home/me/report/报表_2026H2.xlsx</a>，");
+    expect(bubble.match(/<a /g)).toHaveLength(2);
   });
 
   it("while streaming, leaves out the word still being written", () => {

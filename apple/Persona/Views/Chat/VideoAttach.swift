@@ -3,13 +3,15 @@ import CryptoKit
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+import PersonaWire
 
 // Videos from Photos (docs/protocol/protocol.md「Sending videos」) go as files, never as pictures: read out of the library, compressed
 // to H.264 MP4 only when they would not fit the hub's upload cap, and uploaded to the conversation's machine the way
 // Files is. The composer shows each as a card until the message goes; the message carries it as a `<persona-file>` tag
 // after what was typed: the agent reads the path, the app draws the card from the rest.
 
-/// A file sent with a message: `<persona-file kind="video" path="…" name="…" size="…" duration="…"/>`.
+/// A file sent with a message: `<persona-file kind="video" path="…" name="…" size="…" duration="…"/>`; a file picked in
+/// Files is `kind="file"` (#8361).
 nonisolated struct AttachedFile: Hashable, Sendable {
     var kind = "video"
     /// Where it is on the conversation's machine.
@@ -29,6 +31,9 @@ nonisolated struct AttachedFile: Hashable, Sendable {
         return "<persona-file kind=\"\(esc(kind))\" path=\"\(esc(path))\" name=\"\(esc(name))\" size=\"\(size)\"\(d)/>"
     }
 
+    /// A video or a recording: its card plays it. Anything else opens in the file viewer (#8361).
+    var playable: Bool { kind == "video" || kind == "audio" }
+
     /// "24.1 MB · 0:12".
     var detail: String {
         let size = size.storageText
@@ -39,6 +44,12 @@ nonisolated struct AttachedFile: Hashable, Sendable {
     /// The message to send: what was typed, then a tag per file.
     static func message(_ text: String, files: [AttachedFile]) -> String {
         files.isEmpty ? text : text + "\n\n" + files.map(\.xml).joined(separator: "\n")
+    }
+
+    /// What a message with no words and no photos says about the files it carries: look at the video, or at the files.
+    static func standIn(_ files: [AttachedFile]) -> String {
+        files.allSatisfy(\.playable) ? String(localized: "Please look at the image [Assistant View a3e0a0]")
+            : String(localized: "Please look at the attached files")
     }
 
     private static let tagRe = try! NSRegularExpression(pattern: #"\s*<"# + HubNaming.filePattern + #"\b([^>]*?)/?>(?:\s*</"# + HubNaming.filePattern + #">)?\s*"#)
@@ -163,7 +174,11 @@ nonisolated enum VideoPrep {
                 }
             }
             do {
-                try await session.export(to: out, as: .mp4)
+                if #available(iOS 26.0, *) {
+                    try await session.export(to: out, as: .mp4)
+                } else {
+                    try await exportBeforeIOS26(to: out)
+                }
             } catch {
                 watch.cancel()
                 await watch.value
@@ -172,6 +187,30 @@ nonisolated enum VideoPrep {
             watch.cancel()
             await watch.value
             progress(1)
+        }
+
+        /// Before iOS 26 `export(to:as:)` is a back-deployed copy built into the app, and on iOS 18.6 it crashed the app
+        /// as the export ended, done or failed (`VideoAttachTests`, #6730). There the session's own callback ends the
+        /// wait, once, with the same outcomes and cancellation.
+        private func exportBeforeIOS26(to out: URL) async throws {
+            session.outputURL = out
+            session.outputFileType = .mp4
+            nonisolated(unsafe) let session = self.session
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+                    session.exportAsynchronously {
+                        switch session.status {
+                        case .completed: done.resume()
+                        case .cancelled: done.resume(throwing: CancellationError())
+                        default:
+                            done.resume(throwing: session.error
+                                        ?? APIError(status: 0, message: String(localized: "This video can't be compressed")))
+                        }
+                    }
+                }
+            } onCancel: {
+                session.cancelExport()
+            }
         }
     }
 }

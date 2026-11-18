@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import PersonaWire
 
 /// Colors of the machine charts (docs/server/machines.md「Charts」): one hue per measure, the same on the dashboard and the
 /// detail page; light and dark are separate steps checked against their surfaces, not one color flipped.

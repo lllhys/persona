@@ -1,0 +1,7 @@
+{
+  "label": "Sources",
+  "show_more_one": "Show {count} more source",
+  "show_more_other": "Show {count} more sources",
+  "more": "+{count}",
+  "show_less": "Show less"
+}

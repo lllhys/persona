@@ -51,6 +51,9 @@ describe("voice frames from the extension", () => {
 describe("frames the page sends", () => {
   it("starts with protocol 2, the target and only what it has", () => {
     expect(JSON.parse(startFrame({ target: { machine_id: "m", session_id: "s" } }))).toEqual({ type: "start", protocol: 2, target: { machine_id: "m", session_id: "s" } });
+    // the user-speech gate as the call has it (#5904): said whenever the page says it, on or off
+    expect(JSON.parse(startFrame({ target: { machine_id: "m", session_id: "s" }, speechGate: true })).speech_gate).toBe(true);
+    expect(JSON.parse(startFrame({ target: { machine_id: "m", session_id: "s" }, speechGate: false })).speech_gate).toBe(false);
   });
 
   it("hands back history and the open runs on a resume, started_at unchanged", () => {

@@ -33,14 +33,15 @@ export function useVoiceEntry(o: VoiceOwner & { session: Session | undefined; it
   const [note, setNote] = useState<VoiceUnavailableNote | null>(null);
   const items = useRef(o.items);
   items.current = o.items;
-  // whether it can send is all that matters of the session here: the object changes on every push
+  // whether it can send, and whether it is a meeting's room, is all that matters of the session here: the object changes
+  // on every push
   const sendable = Boolean(o.session) && !o.off;
   const sessionRef = useRef(o.session);
   sessionRef.current = o.session;
   const availability = useMemo(
     () => evaluate({ session: sendable ? sessionRef.current : undefined, extensions: probe.extensions, info: probe.info, browser: browserVoice() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sendable, probe, o.session?.source_kind, o.session?.capabilities?.send],
+    [sendable, probe, o.session?.source_kind, o.session?.capabilities?.send, o.session?.origin],
   );
   const mode = entryMode(availability);
   const extensionID = availability.kind === "available" ? availability.extensionID : "";

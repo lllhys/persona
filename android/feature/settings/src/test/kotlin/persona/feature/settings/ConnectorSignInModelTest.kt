@@ -80,6 +80,20 @@ class ConnectorSignInModelTest {
         assertEquals("phone", model.state.value.bind.prompt?.step)
     }
 
+    @Test fun aFailedStartIsVisibleAndCanBeRetried() = runBlocking {
+        val hub = Hub()
+        val model = ConnectorSignInModel(hub, "github")
+        assertFalse(model.start())
+        assertNotNull(model.state.value.bind.error)
+        assertNull(model.state.value.bind.prompt)
+        assertFalse(model.state.value.bind.sending)
+        hub.queue.add(BindPrompt(step = "device", kind = "device_code", userCode = "ABCD-1234"))
+        assertTrue(model.start())
+        assertNull(model.state.value.bind.error)
+        assertEquals("ABCD-1234", model.state.value.bind.prompt?.userCode)
+        assertEquals(listOf("", ""), hub.steps.map { it.first })
+    }
+
     @Test fun aFailedStepSaysWhyAndKeepsTheStep() = runBlocking {
         val model = ConnectorSignInModel(Hub(BindPrompt(step = "token", fields = listOf(BindField("token", "Token", secret = true)))), "example")
         model.start()

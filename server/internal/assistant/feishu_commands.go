@@ -24,6 +24,7 @@ func botHelp(l i18n.Lang, f FeishuFeatures) string {
 	b.WriteString(i18n.T(l, "assistant-feishu_cards.help_intro"))
 	if f.Main {
 		b.WriteString(i18n.T(l, "assistant-feishu_cards.help_main"))
+		b.WriteString(i18n.T(l, "assistant-feishu_cards.help_models"))
 	}
 	if f.Agents {
 		b.WriteString(i18n.T(l, "assistant-feishu_cards.help_agents"))
@@ -122,6 +123,8 @@ func (s *Service) botCommand(ctx context.Context, f FeishuFeatures, messageID, t
 		}
 		card, fallback := s.statusCard(ctx, t)
 		reply(card, fallback)
+	case "/modellist", "/modelchange":
+		s.botModels(ctx, f, messageID, cmd, rest, root, parent)
 	case "/tasks", "/进展", "/总览": // i18n-ignore: command aliases typed by the user; the catalogs describe them in /help
 		if f.Board && s.standingBoardCommand(ctx) {
 			break
@@ -321,7 +324,7 @@ func (s *Service) stopConversation(ctx context.Context, f FeishuFeatures, t botT
 }
 
 // botCommandNames are the bot's own commands a typo is matched against (the Chinese ones are too short to mistype).
-var botCommandNames = []string{"/help", "/main", "/persona", "/new", "/list", "/agents", "/start", "/stop", "/status", "/tasks"}
+var botCommandNames = []string{"/help", "/main", "/persona", "/new", "/list", "/agents", "/start", "/stop", "/status", "/tasks", "/modellist", "/modelchange"}
 
 // agentCommandNames are Claude Code's and Codex's own commands, and plain words, a slip off one of the bot's: they go
 // on as they are.

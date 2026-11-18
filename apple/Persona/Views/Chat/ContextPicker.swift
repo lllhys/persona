@@ -212,11 +212,11 @@ struct ContextPickerSheet: View {
                 }
             }
             .themedGroupedPage()
-            .searchable(text: $query, prompt: Text("Search"))
+            .pageSearchable(text: $query, prompt: String(localized: "Search"))
             .navigationTitle(model.kind.pageTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                SheetClose { dismiss() }
             }
             .task(id: query) {
                 // The hub searches knowledge: a moment's pause while the words are still being typed.

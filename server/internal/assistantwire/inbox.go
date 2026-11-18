@@ -28,6 +28,7 @@ var InboxRoutes = []string{
 	"POST /api/v1/inbox/{id}/reply",
 	"POST /api/v1/inbox/{id}/suggestion",
 	"POST /api/v1/inbox/{id}/handoff",
+	"POST /api/v1/inbox/{id}/task-link/recheck",
 	"POST /api/v1/inbox/{id}/doc/status",
 	"PUT /api/v1/inbox/{id}/parent",
 	"PUT /api/v1/inbox/{id}/folder",
@@ -37,6 +38,10 @@ var InboxRoutes = []string{
 	"POST /api/v1/inbox/refresh",
 	"POST /api/v1/inbox/done",
 	"POST /api/v1/inbox/bulk",
+	"POST /api/v1/inbox/merge",
+	"POST /api/v1/inbox/merge/undo",
+	"POST /api/v1/inbox/todo",
+	"POST /api/v1/inbox/todo/undo",
 	"GET /api/v1/inbox/mutes",
 	"POST /api/v1/inbox/mutes",
 	"DELETE /api/v1/inbox/mutes/{id}",
@@ -67,6 +72,9 @@ const (
 	MethodInboxMutes = "inbox.mutes"
 	// MethodInboxUnmute: {id} → {}: the user unmuted one on those pages; what it filed stays done.
 	MethodInboxUnmute = "inbox.unmute"
+	// MethodInboxPost: {on?} → {on}: whether the assistant may put its conversations into the Inbox (#6430, the Inbox
+	// Sources page's "Assistant" switch); with on, it is set first.
+	MethodInboxPost = "inbox.post"
 	// MethodInboxTriagePreview: InboxTriagePreview → {verdicts: [InboxTriageVerdict]}: the triage model tries a
 	// subscription's dry-run items as the Inbox would be handed them, one verdict each, at the user's request on the
 	// pages. Nothing is kept: no item, no triage state.
@@ -91,6 +99,9 @@ const (
 	InboxConfigMethod = "inbox.config"
 	// InboxMailBody: InboxMailRef → InboxMailMessage: a mail read in full (peeked: it stays unread).
 	InboxMailBody = "inbox.mail_body"
+	// InboxMailFlags: InboxMailFlagsAsk → InboxMailFlags: which of a mailbox's mails are still there, read or not (a mail
+	// item's mail off the account's latest page, #5993); at most InboxMailFlagsMost UIDs, peeked (nothing is marked).
+	InboxMailFlagsMethod = "inbox.mail_flags"
 	// InboxReplyMail: {account_id, uid, mailbox, text, send_id} → InboxSent: the reply to that mail, sent from the
 	// account that got it.
 	InboxReplyMail = "inbox.reply_mail"
@@ -134,6 +145,30 @@ const (
 	// CodeInboxRefreshFailed: a pull to refresh could not collect the sources (the inbox.collect call failed): nothing
 	// was read now and the list is as it was. POST /api/v1/inbox/refresh answers 502 with it; pulling again is safe.
 	CodeInboxRefreshFailed = "inbox_refresh_failed"
+)
+
+// Why a reply to an inbox item did not go out (#9125): the extension manager's answer to inbox.reply and
+// inbox.reply_mail, and the apps' code on POST /api/v1/inbox/{id}/reply and …/suggestion
+// (docs/assistant/inbox.md "Send failures"). Each means nothing was sent; a send that may have gone out is
+// CodeAssistantInDoubt instead. The message is a fixed sentence: never the source's own output.
+const (
+	// CodeInboxCannotReply: the item has no way to be answered through its source (a read-only document, a thread with
+	// no chat to post to). Reply in the source's own app.
+	CodeInboxCannotReply = "inbox_cannot_reply"
+	// CodeInboxSourceUnavailable: the source's connector is switched off or missing, mail is not set up, or its program
+	// is not installed or too old.
+	CodeInboxSourceUnavailable = "inbox_source_unavailable"
+	// CodeInboxSourceSignedOut: the source's account is not signed in, or its sign-in expired.
+	CodeInboxSourceSignedOut = "inbox_source_signed_out"
+	// CodeInboxSendDenied: the source refused the send: a missing permission, or the chat or message is gone or closed
+	// to the sender.
+	CodeInboxSendDenied = "inbox_send_denied"
+	// CodeInboxSendRateLimited: the source is rate limited; data.retry_after is how many seconds, when it said.
+	CodeInboxSendRateLimited = "inbox_send_rate_limited"
+	// CodeInboxSendFailed: the source answered with another error.
+	CodeInboxSendFailed = "inbox_send_failed"
+	// CodeInboxSendUnrecorded: the once-only send record (sent_messages) could not be written, so nothing was tried.
+	CodeInboxSendUnrecorded = "inbox_send_unrecorded"
 )
 
 // Rounds of InboxRound.Round.
@@ -180,9 +215,18 @@ type InboxSource struct {
 	MetaDescription string `json:"meta_description,omitempty"`
 	// Settles: it closes open items its rules now leave out (InboxSettle).
 	Settles bool `json:"settles,omitempty"`
+	// Counts: its things' extra.count says how many messages a move brings (a subscription's row of several items,
+	// #5671); another connector's is ignored there, and each move counts one.
+	Counts bool `json:"counts,omitempty"`
 	// Kinds are its kinds of things as it describes them, for the models.
-	Kinds  map[string]string          `json:"kinds,omitempty"`
-	Things []connectorwire.InboxThing `json:"things"`
+	Kinds map[string]string `json:"kinds,omitempty"`
+	// Via, ViaSource and Chats are a subscription's (#6222): the connector it reads and that source's name, for the AI
+	// twin; and the knowledge-base chat of each thread it hands while its knowledge base is on, under its archive
+	// (kb.ChatID(ID, chat)).
+	Via       string                     `json:"via,omitempty"`
+	ViaSource string                     `json:"via_source,omitempty"`
+	Chats     map[string]string          `json:"chats,omitempty"`
+	Things    []connectorwire.InboxThing `json:"things"`
 	// ReadError: its Collect failed this round (Things is empty and means nothing; what it had stays): a short code,
 	// never the error's text (ReadTimeout, ReadRateLimited, ReadFailed). The apps say which source is behind.
 	ReadError string `json:"read_error,omitempty"`
@@ -239,6 +283,7 @@ type InboxMailSummary struct {
 	Date      string        `json:"date"` // RFC3339, UTC
 	Snippet   string        `json:"snippet"`
 	Seen      bool          `json:"seen"`
+	Answered  bool          `json:"answered,omitempty"` // replied to from a mail client: IMAP \Answered
 }
 
 // InboxMailRef names one mail. Readable: a mail without a text part has its HTML as readable text (for translation:
@@ -248,6 +293,23 @@ type InboxMailRef struct {
 	UID       uint32 `json:"uid"`
 	Mailbox   string `json:"mailbox"`
 	Readable  bool   `json:"readable,omitempty"`
+}
+
+// InboxMailFlagsMost is the most UIDs one InboxMailFlagsMethod call asks about.
+const InboxMailFlagsMost = 200
+
+// InboxMailFlagsAsk names mails of one account's mailbox by UID.
+type InboxMailFlagsAsk struct {
+	AccountID string   `json:"account_id"`
+	Mailbox   string   `json:"mailbox"`
+	UIDs      []uint32 `json:"uids"`
+}
+
+// InboxMailFlags is what became of the asked mails: those still in the mailbox, read or not; one in neither list is
+// gone from it (moved, archived or deleted).
+type InboxMailFlags struct {
+	Seen   []uint32 `json:"seen"`
+	Unseen []uint32 `json:"unseen"`
 }
 
 // InboxMailMessage is one mail read in full: Text is its text part, else its HTML as text.

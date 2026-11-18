@@ -5,7 +5,7 @@
 // pick changes goes back to its list.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const viewport = vi.hoisted(() => ({ phone: false, lark: false }));
 vi.hoisted(() => {
@@ -22,6 +22,7 @@ vi.mock("./settings/KnowledgeSelection", () => ({ KnowledgeSelection: () => <div
 vi.mock("./settings/TranslationSettings", () => ({ TranslationSettings: () => <div data-page="translation" /> }));
 vi.mock("./settings/AssistantSettings", () => ({ AssistantSettings: () => <div data-page="persona" /> }));
 vi.mock("./settings/SidebarPages", () => ({ SidebarPagesGroup: () => <div data-page="sidebar-pages" /> }));
+vi.mock("./settings/StartPage", () => ({ StartPageGroup: () => <div data-page="start-page" /> }));
 vi.mock("../lib/pwa", async (original) => ({ ...(await original<typeof import("../lib/pwa")>()), useInstall: () => "installed" }));
 vi.mock("./settings/AgentSettings", () => ({ AgentSettings: ({ agent }: { agent: string }) => <div data-page="agent" data-agent={agent} /> }));
 vi.mock("./settings/Extensions", () => ({
@@ -37,6 +38,7 @@ import { t } from "../i18n";
 import { chooseManager, resetManagerChoice } from "../lib/manager-choice";
 import { resetRoster, setRoster, type ManagerList } from "../lib/managers";
 import { Settings } from "./Settings";
+import { loadPages } from "../lib/lazy-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,6 +59,9 @@ let roster: ManagerList | null;
 // the current assistant has no route for the chat connector: its manager answers 404
 const larkAbsent = { on: false };
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+// Extensions and Connectors are chunks of their own (Settings.tsx, lazyPage): in before the pages render
+beforeAll(() => loadPages());
+
 beforeEach(() => {
   viewport.phone = false;
   viewport.lark = false;

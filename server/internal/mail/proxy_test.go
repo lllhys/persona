@@ -99,7 +99,7 @@ func TestGmailThroughProxy(t *testing.T) {
 
 func TestSetGoogleProxyValidates(t *testing.T) {
 	s, _ := newOAuthService(t)
-	for _, bad := range []string{"socks5://127.0.0.1:1080", "127.0.0.1:8080", "http://"} {
+	for _, bad := range []string{"https://127.0.0.1:8080", "127.0.0.1:8080", "http://", "socks5://"} {
 		if err := s.SetGoogleProxy(bad); err == nil {
 			t.Fatalf("%q accepted", bad)
 		}

@@ -54,5 +54,7 @@
   "waiting_pair": "{name} でボットに送信されるのを待っています…",
   "waiting_auth": "承認を待っています…",
   "verifying": "確認中…",
-  "next": "次へ"
+  "next": "次へ",
+  "summary": "{count}件接続済み",
+  "summary_with_errors": "{on}件接続済み · {bad}件エラー"
 }

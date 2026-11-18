@@ -2,6 +2,8 @@
   "failed": "Not sent: {error}",
   "clear_and_send": "Clear and send",
   "retry": "Retry",
+  "check": "Check",
+  "checking": "Checking…",
   "delete": "Delete",
   "deleted": "Message deleted",
   "undo": "Undo"

@@ -324,7 +324,7 @@ func (h *Hub) releaseSums() (string, map[string]string) {
 	h.upd.mu.Lock()
 	r := h.upd.release
 	h.upd.mu.Unlock()
-	if r == nil || r.Manifest == nil || len(r.Manifest.Files) == 0 {
+	if r == nil || r.Development != nil || r.Manifest == nil || len(r.Manifest.Files) == 0 {
 		return "", nil
 	}
 	sums := map[string]string{}

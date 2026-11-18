@@ -102,7 +102,8 @@ private fun Modifier.takesNoTouches(): Modifier = pointerInput(Unit) {
 /**
  * The folded header (iOS `compactChrome`): back, and in the middle a glass capsule with the agent's mark, the state's dot and
  * the [title], or while the hub is out of reach a spinner and [linkText]; a tap on the capsule opens the header again
- * ([onOpen], said as [openLabel]). Nothing on the right: a space as wide as back keeps the capsule in the middle.
+ * ([onOpen], said as [openLabel]). Nothing on the right: a space as wide as back keeps the capsule in the middle. [waiting]:
+ * the agent works only because its background work waits, so the dot is the clock (iOS `StatusDot(waiting:)`).
  */
 @Composable
 fun ChatSlimBar(
@@ -114,13 +115,17 @@ fun ChatSlimBar(
     status: Status? = null,
     agentMark: AgentMarkSpec? = null,
     linkText: String? = null,
+    waiting: Boolean = false,
 ) {
     val palette = PersonaTheme.palette
     Row(modifier.fillMaxWidth().statusBarsPadding().heightIn(min = Tokens.Size.slimBar).padding(horizontal = Tokens.Space.xs),
         verticalAlignment = Alignment.CenterVertically) {
         val side = Modifier.width(Tokens.MinTouch.android)
-        if (onBack != null) JIconButton(persona.core.designsystem.icons.PersonaIcons.back, stringResource(R.string.designsystem_back), onBack, side, raised = false)
-        else Spacer(side)
+        when (val leading = resolveDetailLeading(LocalSplitDetail.current, onBack)) {
+            is DetailLeading.ShowList -> JIconButton(persona.core.designsystem.icons.PersonaIcons.sidebar, stringResource(R.string.designsystem_sidebar), leading.onClick, side, raised = false)
+            is DetailLeading.Back -> JIconButton(persona.core.designsystem.icons.PersonaIcons.back, stringResource(R.string.designsystem_back), leading.onClick, side, raised = false)
+            DetailLeading.Hidden, null -> Spacer(side)
+        }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Row(
                 // The open header's floating glass, as `JLinkPill`: iOS's chip fill sits on its bar's material, and
@@ -137,7 +142,7 @@ fun ChatSlimBar(
                     Text(linkText, style = words, color = palette.ink2, maxLines = 1)
                 } else {
                     agentMark?.let { JAgentMark(it, size = Tokens.Size.markXS) }
-                    status?.let { JStatusDot(it, size = Tokens.Size.dotS) }
+                    status?.let { JStateDot(it, Tokens.Size.dotS, waiting) }
                     Text(title, Modifier.weight(1f, fill = false), style = words, color = palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 // Several hubs on one device (docs/protocol/multi-hub.md, docs/archive/operations/plan-hub-mesh.md 4). Every hub paired is kept with its own
 // credential; hubs that know each other (the `mesh` of their hello) form a group, reached over one connection; groups
@@ -133,6 +134,46 @@ nonisolated struct PairedHub: Codable, Hashable, Sendable, Identifiable {
 nonisolated struct HubAddress: Codable, Hashable, Sendable {
     var url: URL
     var access: HubAccess?
+}
+
+/// What Settings › hub › Addresses makes of the text typed (docs/operations/network.md "Client-added candidates"). Text
+/// without a scheme gets `https://` in front, a bare IP or `localhost` too: `http://` only when typed.
+nonisolated enum HubAddressInput: Equatable, Sendable {
+    /// Nothing typed.
+    case empty
+    /// The address that would be added.
+    case ready(URL)
+    /// A scheme other than http or https, such as `ftp://`.
+    case unsupportedScheme
+    /// Not an address, even with `https://` in front.
+    case invalid
+    /// The hub has this address already, paired or added.
+    case duplicate(URL)
+
+    /// [existing]: the hub's addresses so far, the paired one included.
+    init(_ text: String, existing: [URL]) {
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else { self = .empty; return }
+        guard !typed.contains(where: \.isWhitespace) else { self = .invalid; return }
+        var full = typed.contains("://") ? typed : "https://" + typed
+        if full.hasSuffix("/") { full.removeLast() }
+        guard let parts = URLComponents(string: full), let scheme = parts.scheme?.lowercased() else { self = .invalid; return }
+        guard scheme == "http" || scheme == "https" else { self = .unsupportedScheme; return }
+        guard parts.host?.isEmpty == false, parts.port.map({ (1...65535).contains($0) }) ?? true,
+              let url = URL(string: full), let key = Self.key(url) else { self = .invalid; return }
+        self = existing.contains { Self.key($0) == key } ? .duplicate(url) : .ready(url)
+    }
+
+    /// The same address however it is written: scheme and host in any case, the default port written or not, a
+    /// trailing `/` or none.
+    static func key(_ url: URL) -> String? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), let scheme = parts.scheme?.lowercased(),
+              let host = parts.host?.lowercased(), !host.isEmpty else { return nil }
+        let port = parts.port ?? (scheme == "https" ? 443 : 80)
+        var path = parts.percentEncodedPath
+        while path.hasSuffix("/") { path.removeLast() }
+        return "\(scheme)://\(host):\(port)\(path)"
+    }
 }
 
 /// Every hub paired, in the order they were paired, and the names the user gave the groups. Kept in the keychain

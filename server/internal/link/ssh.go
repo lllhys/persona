@@ -445,7 +445,7 @@ type sshTunnel struct {
 }
 
 func pickLoopbackPort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := osproc.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}
@@ -859,27 +859,4 @@ func TestSSH(ctx context.Context, sshCfg SSH, rawLink string, c *Config, sshBin 
 		return norm, nil
 	}
 	return norm, &SSHError{Code: SSHUnreachable, Server: norm.Server, Target: norm.Target}
-}
-
-// probeDirect checks whether any direct candidate in c answers over TLS (with pin or system-CA verification).
-func probeDirect(ctx context.Context, c *Config) bool {
-	if len(c.Endpoints) == 0 {
-		return false
-	}
-	client := hubClient(c, nil)
-	defer client.CloseIdleConnections()
-	_, _, err := race(ctx, c.Endpoints, func(ctx context.Context, ep Endpoint) (struct{}, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.URL+"/api/v1/health", nil)
-		if err != nil {
-			return struct{}{}, err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return struct{}{}, err
-		}
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
-		return struct{}{}, nil
-	}, func(struct{}) {})
-	return err == nil
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/prompts"
@@ -62,6 +61,10 @@ type BriefRequest struct {
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation,omitempty"`
 	MessageID    string    `json:"message_id,omitempty"`
+	// Via: the conversations that passed it on with conversation_send / conversation_new before the work was handed
+	// out (the first is where the owner wrote it), oldest first; empty when the owner spoke in the conversation that
+	// handed it out (relay_quote.go, #3822). Relayed words are the owner's request, never their approval of a step.
+	Via []string `json:"via,omitempty"`
 }
 
 // BriefEvent is one entry of a brief's log. A scope change (Kind scope): what changed and why, as the supervisor said
@@ -346,6 +349,34 @@ func (tb *taskBrief) view() TaskBrief {
 
 // ---- reading ----
 
+// continuationTodos is the to-do and its actual continues ancestors, oldest first. Only the parent pointer is
+// followed: another to-do on the same brief is not thereby an ancestor. A missing, cross-brief or already visited
+// parent stops the walk, so a damaged link cannot import unrelated work or loop.
+func (s *Service) continuationTodos(id string) []string {
+	b := &s.tbriefs
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.init()
+	out := []string{id}
+	link, ok := b.links[id]
+	if !ok || link.Brief == "" {
+		return out
+	}
+	brief := link.Brief
+	seen := map[string]bool{id: true}
+	for link.Continues != "" {
+		parent := link.Continues
+		link, ok = b.links[parent]
+		if !ok || link.Brief != brief || seen[parent] {
+			break
+		}
+		out = append(out, parent)
+		seen[parent] = true
+	}
+	slices.Reverse(out)
+	return out
+}
+
 // briefOfTodo is the brief to-do id works for, false when it has none.
 func (s *Service) briefOfTodo(id string) (TaskBrief, bool) {
 	b := &s.tbriefs
@@ -407,6 +438,39 @@ func (s *Service) taskLineage(id string) []LineageStep {
 		}
 	}
 	b.mu.Unlock()
+	return s.lineageOf(id, links)
+}
+
+// briefLinks are the brief links read once for a whole list (GET /api/v1/todos): each to-do's brief, and the to-dos on
+// each brief with their links. Reading them for every to-do would read every link n times (#5995).
+type briefLinks struct {
+	of map[string]string                   // brief id by to-do id
+	on map[string]map[string]taskBriefLink // the links on a brief, by brief id and to-do id
+}
+
+func (s *Service) briefLinksNow() briefLinks {
+	b := &s.tbriefs
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.init()
+	out := briefLinks{of: make(map[string]string, len(b.links)), on: map[string]map[string]taskBriefLink{}}
+	for todo, l := range b.links {
+		out.of[todo] = l.Brief
+		if l.Brief == "" {
+			continue
+		}
+		on := out.on[l.Brief]
+		if on == nil {
+			on = map[string]taskBriefLink{}
+			out.on[l.Brief] = on
+		}
+		on[todo] = l
+	}
+	return out
+}
+
+// lineageOf is taskLineage(id) with links the to-dos on id's brief (nil or empty: it has none). It only reads links.
+func (s *Service) lineageOf(id string, links map[string]taskBriefLink) []LineageStep {
 	if len(links) == 0 {
 		return nil
 	}
@@ -431,25 +495,11 @@ func (s *Service) taskLineage(id string) []LineageStep {
 	}
 	out := make([]LineageStep, 0, len(ids))
 	for _, todo := range ids {
-		t, ok := s.todoNow(todo)
+		step, ok := s.lineageStep(todo)
 		if !ok {
 			continue
 		}
-		step := LineageStep{TodoID: todo, Title: t.Title, Started: t.CreatedAt, Continues: links[todo].Continues, Current: todo == id}
-		var latest *TodoAgent
-		for i := range t.Agents {
-			if a := &t.Agents[i]; a.Source != "review" && (latest == nil || a.LinkedAt.After(latest.LinkedAt)) {
-				latest = a
-			}
-		}
-		if latest != nil {
-			step.Agent, step.Machine, step.Session = latest.Agent, latest.MachineID, latest.SessionID
-		}
-		if t.DoneAt != nil {
-			at := *t.DoneAt
-			step.Ended = &at
-			step.Why = firstNonEmpty(t.StartError, t.CancelledReason, t.DoneReason)
-		}
+		step.Continues, step.Current = links[todo].Continues, todo == id
 		if l, ok := superseded[todo]; ok {
 			step.SupersededBy = by[todo]
 			if l.Reason != "" {
@@ -461,11 +511,46 @@ func (s *Service) taskLineage(id string) []LineageStep {
 	return out
 }
 
-// withBrief is to-do t as the apps get it with its brief and lineage (GET /api/v1/todos).
+// lineageStep is to-do id's own part of its step in a lineage: read where it is kept, without copying the whole to-do.
+func (s *Service) lineageStep(id string) (LineageStep, bool) {
+	s.todos.mu.RLock()
+	defer s.todos.mu.RUnlock()
+	t, ok := s.todos.todos[id]
+	if !ok {
+		return LineageStep{}, false
+	}
+	step := LineageStep{TodoID: id, Title: t.Title, Started: t.CreatedAt}
+	var latest *TodoAgent
+	for i := range t.Agents {
+		if a := &t.Agents[i]; a.Source != "review" && (latest == nil || a.LinkedAt.After(latest.LinkedAt)) {
+			latest = a
+		}
+	}
+	if latest != nil {
+		step.Agent, step.Machine, step.Session = latest.Agent, latest.MachineID, latest.SessionID
+	}
+	if t.DoneAt != nil {
+		at := *t.DoneAt
+		step.Ended = &at
+		step.Why = firstNonEmpty(t.StartError, t.CancelledReason, t.DoneReason)
+	}
+	return step, true
+}
+
+// withBrief is to-do t as the apps get it with its brief and lineage (GET /api/v1/todos/{id}).
 func (s *Service) withBrief(t Todo) Todo {
 	if v, ok := s.briefOfTodo(t.ID); ok {
 		t.Brief = &v
 		t.Lineage = s.taskLineage(t.ID)
+	}
+	return t
+}
+
+// withBriefFrom is withBrief for one to-do of a list, its lineage read from links (briefLinksNow).
+func (s *Service) withBriefFrom(t Todo, links briefLinks) Todo {
+	if v, ok := s.briefOfTodo(t.ID); ok {
+		t.Brief = &v
+		t.Lineage = s.lineageOf(t.ID, links.on[links.of[t.ID]])
 	}
 	return t
 }
@@ -658,11 +743,7 @@ func (s *Service) briefOrigin(ctx context.Context, machine, conversation string)
 			if text == "" {
 				continue // only context: not what led to anything
 			}
-			req := &BriefRequest{Text: text, At: it.TS.UTC(), Conversation: conversation, MessageID: it.ID}
-			if utf8.RuneCountInString(text) > briefRequestMax {
-				req.Text, req.Truncated = string([]rune(text)[:briefRequestMax]), true
-			}
-			rec.Request, rec.StartedBy = req, briefByOwner
+			rec.Request, rec.StartedBy = ownerRequest(text, it.TS, conversation, it.ID), briefByOwner
 			return rec
 		}
 		rec.StartedBy = briefByAssistant
@@ -682,6 +763,8 @@ func (s *Service) briefOrigin(ctx context.Context, machine, conversation string)
 			rec.Trigger = "supervision"
 		case src.Kind == proto.SourceConversation:
 			rec.Trigger, rec.TriggerTitle = "conversation", src.Title
+			// The owner's words it carried, as the hub verified them when it was sent (relay_quote.go).
+			rec.Request = s.receivedQuote(ctx, it, src)
 		case src.Kind == proto.SourceMeeting:
 			rec.Trigger, rec.TriggerTitle = "meeting", src.Title
 		default:

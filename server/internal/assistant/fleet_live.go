@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -83,16 +85,25 @@ func (s *Service) liveLoop(ctx context.Context) {
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	sig := s.fleet.live.ch()
+	// Each machine's list as the last round decorated it. While the fleet keeps changing, the next round copies the
+	// rows over them instead of into new arrays: a copy of every machine's list up to ten times a second was half of
+	// what the manager allocated under churn (#3197). The 15 s look takes new arrays and gives these back, so a
+	// fleet gone quiet holds no second copy of its lists.
+	var lists map[string][]proto.Session
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-sig:
 			time.Sleep(100 * time.Millisecond)
+			if lists == nil {
+				lists = map[string][]proto.Session{}
+			}
 		case <-tick.C:
+			lists = nil
 		}
 		l := s.lang(context.Background())
-		agents, ixs, told := s.fleetInputs()
+		agents, ixs, told := s.fleetInputsInto(lists)
 		s.tellLive(buildFleetIn(l, agents, ixs))
 		s.devs.SetAttention(linkAttention(l, agents, ixs, told)) // sent on only when it changed
 	}
@@ -126,12 +137,32 @@ func (s *Service) fleetSnapshot() FleetState {
 // nothing else holds and the fleet only reads: liveLoop builds the fleet up to ten times a second, and a copy of every
 // session per agent (1.5 KB each) was most of what that allocated.
 func (s *Service) fleetInputs() ([]fleetInput, []proto.Interaction, map[string]bool) {
+	return s.fleetInputsInto(nil)
+}
+
+// fleetInputsInto is fleetInputs with each machine's rows copied over the list kept for it in kept (liveLoop's own,
+// from its last round), which then holds this round's lists; nil takes new arrays, as fleetInputs. Every round still
+// copies and decorates every list whole, only into the arrays of the last one. The agents point into kept's lists
+// until the next round: what the fleet makes of them (buildFleetIn, linkAttention) keeps strings and numbers, never a
+// row or a pointer to one.
+func (s *Service) fleetInputsInto(kept map[string][]proto.Session) ([]fleetInput, []proto.Interaction, map[string]bool) {
 	machines := s.fleetMachines()
 	lists := make([][]proto.Session, len(machines))
 	n := 0
 	for i, m := range machines {
-		lists[i] = s.decorated(m.ID)
+		// A machine listed twice would decorate into the same array twice: only its first list is kept.
+		if kept == nil || slices.ContainsFunc(machines[:i], func(o fleetMachine) bool { return o.ID == m.ID }) {
+			lists[i] = s.decorated(m.ID)
+		} else {
+			lists[i] = s.decoratedInto(m.ID, kept[m.ID])
+			keepList(kept, m.ID, lists[i])
+		}
 		n += len(lists[i])
+	}
+	if len(kept) > 0 {
+		maps.DeleteFunc(kept, func(id string, _ []proto.Session) bool { // the machines that went
+			return !slices.ContainsFunc(machines, func(m fleetMachine) bool { return m.ID == id })
+		})
 	}
 	agents := make([]fleetInput, 0, n)
 	turns := s.turnsBook()
@@ -151,6 +182,15 @@ func (s *Service) fleetInputs() ([]fleetInput, []proto.Interaction, map[string]b
 	}
 	ixs, told := s.pendingCards()
 	return agents, ixs, told
+}
+
+// keepList keeps list as the machine's for the next round. A list shorter than the last one is in the same array
+// (it did not outgrow it): the rows it left behind are cleared, so they hold nothing of the node's older lists.
+func keepList(kept map[string][]proto.Session, machine string, list []proto.Session) {
+	if old := kept[machine]; len(list) < len(old) {
+		clear(old[len(list):])
+	}
+	kept[machine] = list
 }
 
 // round2 keeps two significant digits: 12345 → 12000, 987 → 990. The island shows "12k", so finer changes would
@@ -240,8 +280,113 @@ func needsYou(agents []fleetInput, ixs []proto.Interaction, counts func(fleetInp
 }
 
 // liveCounts: the agent is on the Live Activity at all (muted agents and subtasks are not: Codex sub-agents, and a
-// runtime's session another one started, which its parent's row stands for until it needs the user).
+// runtime's session another one started, which its parent's row stands for until it needs the user). A side session
+// folded under its parent is not either: buildFleetIn counts it under that row first (foldSidesIn, #7944).
 func liveCounts(a fleetInput) bool { return !a.Session.IsSubtask() && !a.Muted }
+
+// foldSidesIn counts each side session the Live Activity would count on its own, and each row folded through one
+// (folded_as "side" or folded_side set, fleet_fold.go), under the row it folds under, as the lists do (#7944): that
+// row is counted once, in the state it shows with them (needs you when one of them does or has a card, else working
+// when one works unless the row has an unseen result or awaits the user's reply, else finished unseen when a side is
+// and the row does not work itself, else its own), and the cards of those rows stand for it. A row folded under one the
+// fleet does not have (a quiet task's agent) counts on its own. A muted or subtask row folded through a side counts
+// nowhere, as it did. Agents and ixs are returned as they are when no row folds so; otherwise new slices, the rows
+// counted for others left out and each such parent a copy of its own row in that state.
+func foldSidesIn(agents []fleetInput, ixs []proto.Interaction) ([]fleetInput, []proto.Interaction) {
+	throughSide := func(s *proto.Session) bool {
+		return s.FoldedUnder() != "" && (s.FoldedAs() == proto.FoldedAsSide || s.FoldedSide() != "")
+	}
+	if !slices.ContainsFunc(agents, func(a fleetInput) bool { return throughSide(a.Session) }) {
+		return agents, ixs // most fleets: built ten times a second, so nothing is allocated for them
+	}
+	var into map[agentKey]int // a row folded through a side: the index of the agent it folds under
+	at := make(map[agentKey]int, len(agents))
+	for i, a := range agents {
+		at[keyOf(a.Session)] = i
+	}
+	for _, a := range agents {
+		if s := a.Session; throughSide(s) {
+			if j, ok := at[agentKey{s.MachineID, s.FoldedUnder()}]; ok {
+				if into == nil {
+					into = map[agentKey]int{}
+				}
+				into[keyOf(s)] = j
+			}
+		}
+	}
+	if into == nil {
+		return agents, ixs
+	}
+	type merged struct {
+		needs, working, unread bool
+		since, updated         time.Time // the earliest working row's start, the latest unseen side's update
+	}
+	folded := map[int]*merged{}
+	for i := range agents {
+		a := &agents[i]
+		j, ok := into[keyOf(a.Session)]
+		if !ok || !liveCounts(*a) {
+			continue
+		}
+		m := folded[j]
+		if m == nil {
+			m = &merged{}
+			folded[j] = m
+		}
+		switch s := a.Session; s.State {
+		case proto.StateNeedsYou:
+			m.needs = true
+		case proto.StateWorking:
+			if t := workingSince(a); !m.working || t.Before(m.since) {
+				m.since = t
+			}
+			m.working = true
+		case proto.StateUnread:
+			if s.FoldedAs() == proto.FoldedAsSide {
+				m.unread = true
+				if s.UpdatedAt.After(m.updated) {
+					m.updated = s.UpdatedAt
+				}
+			}
+		}
+	}
+	outIxs := make([]proto.Interaction, len(ixs))
+	for i, ix := range ixs {
+		k := agentKey{ix.MachineID, ix.SessionID}
+		if j, ok := into[k]; ok && liveCounts(agents[at[k]]) {
+			if _, has := folded[j]; !has {
+				folded[j] = &merged{}
+			}
+			p := agents[j].Session
+			ix.MachineID, ix.SessionID = p.MachineID, p.SessionID // it stands for the row it folds under
+		}
+		outIxs[i] = ix
+	}
+	out := make([]fleetInput, 0, len(agents)-len(into))
+	for i, a := range agents {
+		if _, gone := into[keyOf(a.Session)]; gone {
+			continue
+		}
+		if m := folded[i]; m != nil {
+			s := *a.Session // a copy of the row: the list it points into is not the fleet's to change
+			switch {
+			case s.State == proto.StateNeedsYou || m.needs:
+				s.State = proto.StateNeedsYou
+			case m.working && s.State != proto.StateUnread && !(s.State == proto.StateIdle && s.AwaitsReply):
+				if s.State != proto.StateWorking {
+					s.State, a.TurnStart = proto.StateWorking, m.since
+				}
+			case m.unread && s.State != proto.StateWorking:
+				if s.State != proto.StateUnread {
+					s.State, s.UpdatedAt = proto.StateUnread, m.updated
+				}
+			}
+			a.Session = &s
+		}
+		out = append(out, a)
+	}
+	return out, outIxs
+}
 
 // cardStands: the card may stand for its agent (on the Live Activity and in Persona Link's summary). An elicitation
 // does not: the Fleet is shared with legacy clients, whose terminal fallback stays (the agent shows as in a dialog).
@@ -257,6 +402,7 @@ type shownAgent struct {
 // the items shown (fleetMaxItems) are written out: their titles, places and lines are most of what a fleet costs.
 func buildFleetIn(l i18n.Lang, agents []fleetInput, ixs []proto.Interaction) FleetState {
 	var st FleetState
+	agents, ixs = foldSidesIn(agents, ixs)
 	needs := needsYou(agents, ixs, liveCounts, cardStands)
 	asked := make(map[agentKey]bool, len(needs))
 	for _, n := range needs {

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """End-to-end check of answering a waiting card from the keyboard (#1720): the shortcut focuses the first card, digits
-pick its options, Enter runs the card's main action, Esc goes back to the composer without answering, and the key hints
-show only while the card holds keyboard focus. Also saves screenshots of a focused card, light / dark, wide and phone.
+pick options or submit a single-choice question, Enter runs the card's main action, Esc goes back to the composer
+without answering, and the key hints show only while the card holds keyboard focus. Also saves screenshots of a focused
+card, light / dark, wide and phone.
 
 Needs a running web page against the fake hub and Playwright for Python (it drives the installed Chrome):
 
@@ -10,7 +11,7 @@ Needs a running web page against the fake hub and Playwright for Python (it driv
     python3 scripts/test/web_card_keys_e2e.py http://127.0.0.1:5298 [--shots <dir>]
 
 The checks answer the mock hub's cards (a question, a plan, a permission), so each run needs its own hub; the
-screenshot passes only pick, which is local. Runs on Linux / Windows (Mod is Ctrl). Prints one line per check and a
+screenshot passes only focus, which is local. Runs on Linux / Windows (Mod is Ctrl). Prints one line per check and a
 verdict; exits 1 on the first failure.
 """
 import argparse
@@ -50,7 +51,7 @@ def run(browser, base, token, shots):
             page.keyboard.press("Control+Alt+Enter")
         assert page.evaluate(f"document.activeElement?.closest('{CARD}') !== null"), "the shortcut should focus the card"
 
-    # Screenshots first (picking only; the checks below answer the hub's cards away).
+    # Screenshots first (focusing only; a digit submits now, and the checks below answer the hub's cards away).
     for name, path, size, dark, touch in (
         ("question-light", TESTS, (1280, 900), False, False),
         ("question-dark", TESTS, (1280, 900), True, False),
@@ -60,14 +61,13 @@ def run(browser, base, token, shots):
         ctx, page = fresh(path, *size, dark, touch)
         expect(page.locator(HINT)).to_have_count(0)  # at rest: no hints
         shortcut(page)
-        page.keyboard.press("2")
-        expect(page.locator(f"{CARD} button[aria-pressed='true']")).to_have_count(1)
+        expect(page.locator(f"{CARD} [data-key-hint]")).not_to_have_count(0)
         if shots:
             page.screenshot(path=os.path.join(shots, f"card-keys-{name}.png"))
         ctx.close()
-    ok("the shortcut focuses the card at every size, hints show only then, and a digit picks (light and dark)")
+    ok("the shortcut focuses the card at every size, hints show only then (light and dark)")
 
-    # A question card: Esc hands focus back to the composer without answering; digits and Enter answer it.
+    # A question card: Esc hands focus back to the composer without answering; a digit answers on its own.
     ctx, page = fresh(TESTS, 1280, 900, dark=False)
     page.locator("main textarea").first.click()
     assert page.evaluate(f"document.activeElement?.closest('{CARD}')") is None, "nothing should have the card focused yet"
@@ -80,10 +80,8 @@ def run(browser, base, token, shots):
     shortcut(page)
     expect(page.locator(HINT)).to_have_count(1)
     page.keyboard.press("1")
-    expect(page.locator(f"{CARD} button[aria-pressed='true']")).to_have_count(1)
-    page.keyboard.press("Enter")
     page.wait_for_selector("[data-answered]")
-    ok("Esc returns to the composer and answers nothing; a digit picks the option and Enter sends it")
+    ok("Esc returns to the composer and answers nothing; a digit submits the answer")
 
     # A plan card: Enter approves it.
     ctx, page = fresh(PHOTOS, 1280, 900, dark=False)

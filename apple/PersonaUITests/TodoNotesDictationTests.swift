@@ -25,7 +25,7 @@ final class TodoNotesDictationTests: XCTestCase {
         XCTAssertTrue(newMic.isHittable)
         XCTAssertEqual(newMic.label, "听写")
         shot("todo-new-notes-mic")
-        app.buttons["取消"].tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         XCTAssertTrue(newMic.waitForNonExistence(timeout: 10))
 
         // The detail, as the screenshots open it (`-openTodoTitled`).
@@ -52,6 +52,45 @@ final class TodoNotesDictationTests: XCTestCase {
         XCTAssertTrue(field.waitForNonExistence(timeout: 10))
         XCTAssertEqual(done.label, "编辑")
         XCTAssertTrue(mic.exists)
+    }
+
+    /// Held (#9619), the notes' mic opens the editor and dictates while held, as the composer's does: a slide left drops
+    /// what was heard, letting go keeps it. Words come from `-showDictationSample` (nothing is asked of the system).
+    @MainActor func testHoldingTheNotesMicDictatesWhileHeld() throws {
+        guard let hub = ProcessInfo.processInfo.environment["PERSONA_MOCK_HUB"] else {
+            throw XCTSkip("needs scripts/mock/mock_hub.py (PERSONA_MOCK_HUB)")
+        }
+        continueAfterFailure = false
+        let words = "dictated words here"
+        app = XCUIApplication()
+        let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
+        app.launchArguments = ["-pairURL", pair, "-tab", "assistant", "-openShellPage", "todos", "-openTodoTitled", "给 NAS 配自动备份",
+                               "-showDictationSample", words]
+        app.launchPinned()
+        let mic = app.buttons["todo.notes.mic"]
+        XCTAssertTrue(mic.waitForExistence(timeout: 60))
+        let field = app.descendants(matching: .any)["todo.notes.field"]
+        let notes = { (field.value as? String) ?? "" }
+
+        let spot = mic.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        spot.press(forDuration: 2.5, thenDragTo: spot.withOffset(CGVector(dx: -220, dy: 0)))
+        XCTAssertTrue(field.waitForExistence(timeout: 10), "the hold did not open the notes editor")
+        XCTAssertTrue(wait { mic.label == "听写" }, "dictation went on after the slide")
+        XCTAssertFalse(notes().contains(words), "the slide left kept the words: \(notes())")
+
+        mic.press(forDuration: 3)
+        XCTAssertTrue(wait { mic.label == "听写" }, "dictation went on after the finger lifted")
+        XCTAssertTrue(notes().contains(words), "letting go did not keep the words: \(notes())")
+        shot("todo-notes-held")
+    }
+
+    @MainActor private func wait(_ timeout: TimeInterval = 5, _ ok: @escaping () -> Bool) -> Bool {
+        let end = Date.now.addingTimeInterval(timeout)
+        repeat {
+            if ok() { return true }
+            usleep(200_000)
+        } while Date.now < end
+        return false
     }
 
     /// Waits for element, answering the microphone and speech recognition questions with Don't Allow on the way (the

@@ -112,7 +112,8 @@ struct ReadinessSheets: ViewModifier {
             NavigationStack {
                 MachinesView()
                     .navigationDestination(for: MachineDetailRoute.self) { MachineDetailView(ref: $0.ref) }
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { DoneButton { route = nil } } }
+                    .navigationDestination(for: TerminalsRoute.self) { TerminalsView(only: $0.machine) }
+                    .toolbar { SheetClose { route = nil } }
             }
         case .providerWizard:
             ProviderWizard(start: .pick) { model.readinessChanged() }
@@ -121,19 +122,11 @@ struct ReadinessSheets: ViewModifier {
                 Group {
                     if let name, !name.isEmpty { ModelLauncherDetailView(name: name) } else { ModelLaunchersView() }
                 }
-                .toolbar { ToolbarItem(placement: .cancellationAction) { DoneButton { route = nil } } }
+                .toolbar { SheetClose { route = nil } }
             }
         case .link, .addComputer, .confirmComputer:
             EmptyView()
         }
-    }
-}
-
-/// Done on a sheet's own stack.
-private struct DoneButton: View {
-    var action: () -> Void
-    var body: some View {
-        Button(action: action) { Text("Done [Extension System Presentation c0b3fb]").lineLimit(1) }
     }
 }
 
@@ -145,14 +138,23 @@ extension View {
 /// the readiness says is missing, else Try a Message's result. Nothing on a hub without readiness and nothing when all is well.
 struct ReadinessHomeCard: View {
     @Environment(AppModel.self) private var model
+    var key: SessionKey? = nil
     @Binding var route: ReadinessRoute?
 
     private var store: AssistantReadinessModel { model.readiness }
 
+    nonisolated static func scopedDetail(_ step: AssistantReadiness.Step, activeLauncher: String?) -> String? {
+        guard step.code == "rate_limited", let affected = step.launcher, let activeLauncher,
+              !affected.isEmpty, !activeLauncher.isEmpty, affected != activeLauncher else { return step.detail }
+        let scope = String(localized: "This warning is for the default model connection. This conversation uses another model connection.")
+        if let detail = step.detail, !detail.isEmpty { return detail + "\n" + scope }
+        return scope
+    }
+
     var body: some View {
         if let f = store.failure {
             CodedFailureCard(failure: f, route: $route)
-        } else if let step = store.current?.cardStep {
+        } else if let step = store.homeCardStep {
             stepCard(step)
         } else if let probeError = store.probeError {
             ReadinessCard(title: String(localized: "Tried a message, it didn't work"), detail: probeError, tone: .danger)
@@ -167,14 +169,16 @@ struct ReadinessHomeCard: View {
         let alt = step.altActions?.first?.id
         let trying = primary == "test_assistant" || alt == "test_assistant"
         let failed = trying ? store.probeError : nil
+        let activeLauncher = key.map { AssistantCopyText.launcher($0, in: model) }
         return ReadinessCard(title: failed == nil ? step.title ?? String(localized: "One more step") : String(localized: "Tried a message, it didn't work"),
-                             detail: failed ?? step.detail,
+                             detail: failed ?? Self.scopedDetail(step, activeLauncher: activeLauncher),
                              tone: failed != nil || step.state == "problem" ? .danger : .caution,
                              actionTitle: primary.flatMap(ReadinessRoute.title),
                              action: primary.flatMap { a in ReadinessRoute.title(a).map { _ in { run(a, launcher: step.launcher, machine: machineName(step)) } } },
                              altTitle: alt.flatMap(ReadinessRoute.title),
                              alt: alt.flatMap { a in ReadinessRoute.title(a).map { _ in { run(a, launcher: step.launcher, machine: machineName(step)) } } },
-                             busy: store.probing)
+                             busy: store.probing,
+                             dismiss: step.code == "rate_limited" ? { withAnimation(Theme.Motion.state) { store.dismissHomeCard() } } : nil)
     }
 
     private func machineName(_ step: AssistantReadiness.Step) -> String? {
@@ -245,7 +249,7 @@ struct ReadinessHelpView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
-        .toolbar { ToolbarItem(placement: .confirmationAction) { Button { dismiss() } label: { Text("OK [Recordings Section de32e2]").lineLimit(1) } } }
+        .toolbar { SheetClose { dismiss() } }
     }
 
     private var title: String {
@@ -269,8 +273,8 @@ struct ReadinessHelpView: View {
             para(String(localized: "Come back here once it's installed; this updates shortly after."), secondary: true)
             useKey
         case "login_claude":
-            para(String(localized: "On \(name), open Terminal, type this word, press Return, and sign in once in the browser as it asks:"))
-            CommandLine(text: "claude")
+            para(String(localized: "Persona runs the Claude Code CLI on \(name), and the Claude desktop app's sign-in doesn't count for it. Open Terminal there, run this command and sign in once in the browser:"))
+            CommandLine(text: "claude auth login")
             para(String(localized: "Once signed in, come back here and send a message to try it."), secondary: true)
             useKey
         case "how_to_connect_model":

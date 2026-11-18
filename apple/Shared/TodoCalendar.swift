@@ -39,6 +39,13 @@ nonisolated struct CalendarEntry: Identifiable, Sendable, Equatable {
     }
 }
 
+/// Where a to-do dragged on the calendar lands (#2045): due at a moment (`at`), or all day on `day` (its start)
+/// without one.
+nonisolated struct CalendarDrop: Sendable, Equatable {
+    var day: Date
+    var at: Date?
+}
+
 /// Where the calendar's entries come from, asked for the days it shows: a source that reads by date (the hub once its
 /// to-dos are paged, the phone's calendar) fetches only those.
 protocol CalendarEntrySource {
@@ -250,6 +257,71 @@ nonisolated enum TodoCalendar {
         guard entries.count > lines, lines > 0 else { return (entries, 0) }
         let shown = Array(entries.prefix(lines - 1))
         return (shown, entries.count - shown.count)
+    }
+
+    // MARK: Moving one (#2045)
+
+    /// What a block dragged on the axis snaps to, in minutes (the web's `DROP_SNAP`).
+    static let dropSnap = 15
+
+    /// A block dropped with its top edge `minutes` into `day`: due at the nearest quarter hour, within the day.
+    static func dropOnAxis(day: Date, minutes: Double, snap: Int = dropSnap, calendar: Calendar) -> CalendarDrop {
+        let clamped = min(max(minutes, 0), Double(24 * 60 - snap))
+        let snapped = Int((clamped / Double(snap)).rounded()) * snap
+        let start = calendar.startOfDay(for: day)
+        let at = calendar.date(bySettingHour: snapped / 60, minute: snapped % 60, second: 0, of: start)
+        return CalendarDrop(day: start, at: at ?? start.addingTimeInterval(Double(snapped) * 60))
+    }
+
+    /// `entry` dropped on `day` as a whole: at its time of day there (the month), or all day there (the All Day row,
+    /// `allDay`, or one that already was all day).
+    static func dropOnDay(_ entry: CalendarEntry, day: Date, allDay: Bool = false, calendar: Calendar) -> CalendarDrop {
+        let start = calendar.startOfDay(for: day)
+        if allDay || entry.allDay { return CalendarDrop(day: start, at: nil) }
+        let t = calendar.dateComponents([.hour, .minute, .second], from: entry.start)
+        let at = calendar.date(bySettingHour: t.hour ?? 0, minute: t.minute ?? 0, second: t.second ?? 0, of: start)
+        return CalendarDrop(day: start, at: at ?? start)
+    }
+
+    /// Whether `entry` dropped there lands somewhere else: nothing is saved for one put back where it was.
+    static func moves(_ entry: CalendarEntry, to drop: CalendarDrop, calendar: Calendar) -> Bool {
+        if let at = drop.at { return entry.allDay || entry.start != at }
+        return !entry.allDay || !calendar.isDate(entry.start, inSameDayAs: drop.day)
+    }
+
+    /// The due date a drop gives, as `PATCH /api/v1/todos/{id}` takes it: `due_at`, or `due_date`, either replacing
+    /// the other.
+    static func due(_ drop: CalendarDrop, calendar: Calendar) -> APIClient.TodoPlanChange.Due {
+        drop.at.map { .at($0) } ?? .day(TodosLogic.dayKey(drop.day, calendar: calendar))
+    }
+
+    /// The due date `todo` has now: what Undo puts back.
+    static func due(of todo: TodoItem) -> APIClient.TodoPlanChange.Due {
+        if let at = todo.dueAt { return .at(at) }
+        if let day = todo.dueDate { return .day(day) }
+        return .none
+    }
+
+    /// `todo` due as `due` says: drawn there at once, before the hub answers.
+    static func moved(_ todo: TodoItem, to due: APIClient.TodoPlanChange.Due) -> TodoItem {
+        var t = todo
+        switch due {
+        case .none: (t.dueAt, t.dueDate) = (nil, nil)
+        case .at(let at): (t.dueAt, t.dueDate) = (at, nil)
+        case .day(let day): (t.dueAt, t.dueDate) = (nil, day)
+        }
+        return t
+    }
+
+    /// `entry` where it would land, as it would be drawn there while it is dragged: at the moment or on the day,
+    /// overdue or not by then.
+    static func landed(_ entry: CalendarEntry, at drop: CalendarDrop, calendar: Calendar, now: Date) -> CalendarEntry {
+        var e = entry
+        e.start = drop.at ?? drop.day
+        e.allDay = drop.at == nil
+        let by = drop.at ?? calendar.date(byAdding: .day, value: 1, to: drop.day)?.addingTimeInterval(-1) ?? drop.day
+        e.overdue = !entry.done && by < now
+        return e
     }
 
     // MARK: Words

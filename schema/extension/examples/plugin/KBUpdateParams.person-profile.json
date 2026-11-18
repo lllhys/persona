@@ -1,0 +1,20 @@
+{
+  "kind": "people",
+  "id": "example-person",
+  "profile": {
+    "facts": [
+      {"text": "Leads the example project and owns its release schedule", "sources": ["chats/example-dm/messages/2026-11-03.md"]}
+    ],
+    "views": [
+      {"text": "explains things clearly, worth asking first", "sources": ["user"]}
+    ],
+    "inferences": [
+      {"text": "Prefers written updates to calls", "basis": "asked for a written summary after three of the last four calls", "sources": ["chats/example-dm"]}
+    ],
+    "commitments": [
+      {"text": "Send the review notes", "owes": "user", "due": "2026-11-20", "sources": ["chats/example-dm/messages/2026-11-04.md"]},
+      {"text": "Share the updated slides", "owes": "them", "done": true, "sources": ["chats/example-dm/messages/2026-11-05.md"]}
+    ]
+  },
+  "evidence": [{"chat": "example-dm", "day": "2026-11-03", "n": 2, "note": "role stated in the thread"}]
+}

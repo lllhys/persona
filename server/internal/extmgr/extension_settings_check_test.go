@@ -18,7 +18,8 @@ import (
 
 // serveSettingsCheckExtensionForTest answers settings.check as a gateway extension would (#5906): a key with "echo"
 // in it is refused with the key in the words (whole and cut short), "boom" as an RPC error quoting it, "slow" not in
-// time; anything else works.
+// time; anything else works. The check's proxy (#8459) goes to the file CHECK_PROXY_OUT names, when it names one,
+// and a gateway_url with "refuse" in it is refused with the proxy in the words.
 func serveSettingsCheckExtensionForTest() {
 	_ = pserve.Serve(context.Background(), os.Stdin, os.Stdout, pserve.Program{ID: "example-gateway", Version: "1.0.0",
 		Namespaces: map[string]pserve.Handler{
@@ -29,8 +30,15 @@ func serveSettingsCheckExtensionForTest() {
 				var in struct {
 					Config  map[string]any    `json:"config"`
 					Secrets map[string]string `json:"secrets"`
+					Proxy   string            `json:"proxy"`
 				}
 				_ = json.Unmarshal(params, &in)
+				if out := os.Getenv("CHECK_PROXY_OUT"); out != "" {
+					_ = os.WriteFile(out, []byte(in.Proxy), 0o600)
+				}
+				if u, _ := in.Config["gateway_url"].(string); strings.Contains(u, "refuse") {
+					return map[string]any{"ok": false, "error": "unreachable through " + in.Proxy}, nil
+				}
 				key := in.Secrets["key"]
 				switch {
 				case strings.Contains(key, "echo"):

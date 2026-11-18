@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +26,18 @@ func (d *DB) InsertInteraction(ctx context.Context, ix proto.Interaction) error 
 	return err
 }
 
+// MarkInteractionResumable records that pending interaction id outlives a restart from now on (its payload's
+// resumable, which ExpireStaleInteractions reads): an ask_user question that let go of its turn and is now waited on by
+// no call (assistant/ask_release.go, #7392). false when id is not pending.
+func (d *DB) MarkInteractionResumable(ctx context.Context, id string) (bool, error) {
+	tag, err := d.pool.Exec(ctx, `UPDATE interactions SET payload = jsonb_set(payload, '{resumable}', 'true'::jsonb)
+		WHERE id = $1 AND status = 'pending'`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // FinishInteraction records how an interaction ended; only the first outcome counts.
 func (d *DB) FinishInteraction(ctx context.Context, id, status string, res *proto.Resolution) error {
 	var raw []byte
@@ -33,6 +47,35 @@ func (d *DB) FinishInteraction(ctx context.Context, id, status string, res *prot
 	_, err := d.pool.Exec(ctx, `UPDATE interactions SET status = $2, resolution = $3, resolved_at = now()
 		WHERE id = $1 AND status = 'pending'`, id, status, raw)
 	return err
+}
+
+// LateAnswer records on expired card id an answer that came after it expired (proto.Resolution.Late): answers (by
+// question) are added to those recorded late before, and by / reason (proto.Resolution.AnsweredBy, Reason) say who
+// answered. The card stays "expired"; resolved_at becomes when the answer came. A card that did not expire is left as
+// it is (false).
+func (d *DB) LateAnswer(ctx context.Context, id string, answers map[string]string, by, reason string) (bool, error) {
+	add, err := json.Marshal(answers)
+	if err != nil {
+		return false, err
+	}
+	who := map[string]string{}
+	if by != "" {
+		who["answered_by"] = by
+	}
+	if reason != "" {
+		who["reason"] = reason
+	}
+	extra, err := json.Marshal(who)
+	if err != nil {
+		return false, err
+	}
+	tag, err := d.pool.Exec(ctx, `UPDATE interactions SET resolved_at = now(), resolution = jsonb_build_object('late', true,
+			'answers', COALESCE(CASE WHEN resolution->>'late' = 'true' THEN resolution->'answers' END, '{}'::jsonb) || $2::jsonb) || $3::jsonb
+		WHERE id = $1 AND status = 'expired'`, id, add, extra)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // InteractionRecord is a past interaction with its outcome.
@@ -99,6 +142,96 @@ func (d *DB) Interactions(ctx context.Context, machine, session string, limit in
 		}
 		return rec, nil
 	})
+}
+
+// InteractionQuery pages the interaction history by time (GET /api/v1/interactions/history with since, before or
+// kind): newest first, created at or after Since, before the cursor (Before, BeforeID) and of Kind, each when set.
+type InteractionQuery struct {
+	Machine, Session, Kind string
+	Since                  time.Time
+	// Before is the cursor of the page before: rows created before it, or at it with an id before BeforeID.
+	Before   time.Time
+	BeforeID string
+	Limit    int // 1…500; another value is 100
+}
+
+// InteractionPage is a page of the history and, when it was full, the cursor of the next older one.
+type InteractionPage struct {
+	Records      []InteractionRecord
+	NextBefore   *time.Time
+	NextBeforeID string
+}
+
+// InteractionsPage is Interactions with a time range, a kind and a cursor. Its statement is built for the filters
+// given and planned for each call with its values (QueryExecModeExec): the history is read rarely, and a generic plan
+// over optional filters walks every row ever kept (see Interactions). The cursor's created_at bound is written twice,
+// once alone, so the walk down interactions_created starts at it rather than at the newest row.
+func (d *DB) InteractionsPage(ctx context.Context, q InteractionQuery) (InteractionPage, error) {
+	if q.Limit <= 0 || q.Limit > 500 {
+		q.Limit = 100
+	}
+	var where []string
+	args := []any{pgx.QueryExecModeExec}
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args)-1)
+	}
+	if q.Machine != "" {
+		where = append(where, "machine_id = "+arg(q.Machine))
+	}
+	if q.Session != "" {
+		where = append(where, "session_id = "+arg(q.Session))
+	}
+	if q.Kind != "" {
+		where = append(where, "kind = "+arg(q.Kind))
+	}
+	if !q.Since.IsZero() {
+		where = append(where, "created_at >= "+arg(q.Since))
+	}
+	if !q.Before.IsZero() {
+		b := arg(q.Before)
+		if q.BeforeID == "" {
+			where = append(where, "created_at < "+b)
+		} else {
+			where = append(where, "created_at <= "+b, "(created_at, id) < ("+b+", "+arg(q.BeforeID)+")")
+		}
+	}
+	sql := `SELECT payload, status, resolution, resolved_at, created_at, id FROM interactions`
+	if len(where) > 0 {
+		sql += " WHERE " + strings.Join(where, " AND ")
+	}
+	sql += " ORDER BY created_at DESC, id DESC LIMIT " + arg(q.Limit)
+	rows, err := d.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return InteractionPage{}, err
+	}
+	var page InteractionPage
+	var lastAt time.Time
+	var lastID string
+	page.Records, err = pgx.CollectRows(rows, func(r pgx.CollectableRow) (InteractionRecord, error) {
+		var rec InteractionRecord
+		var payload, res []byte
+		if err := r.Scan(&payload, &rec.Status, &res, &rec.ResolvedAt, &lastAt, &lastID); err != nil {
+			return rec, err
+		}
+		if err := json.Unmarshal(payload, &rec.Interaction); err != nil {
+			return rec, err
+		}
+		if len(res) > 0 {
+			rec.Resolution = &proto.Resolution{}
+			if err := json.Unmarshal(res, rec.Resolution); err != nil {
+				return rec, err
+			}
+		}
+		return rec, nil
+	})
+	if err != nil {
+		return InteractionPage{}, err
+	}
+	if len(page.Records) == q.Limit {
+		page.NextBefore, page.NextBeforeID = &lastAt, lastID
+	}
+	return page, nil
 }
 
 // InteractionRecord is one interaction with its outcome; nil when there is no such row.

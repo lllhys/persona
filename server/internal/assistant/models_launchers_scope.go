@@ -38,6 +38,9 @@ const (
 	DeviceLaunchersOwnService = "launchers.own_service"
 	// NodeLaunchersPull is the node's request: {name, own_service?} → {launcher: proto.ManagedLauncher}.
 	NodeLaunchersPull = "launchers.pull"
+	// NodeAgentsDefault is the node's request for Model Settings › Agents as pi can use it there: {} →
+	// {launcher?, model?, effort?} (docs/integrations/pi.md "Persona's model providers").
+	NodeAgentsDefault = "launchers.agents_default"
 )
 
 // machineKey is one computer's own key for a provider, sealed like the provider's.
@@ -262,6 +265,32 @@ func (s *Service) usableOn(ctx context.Context, l storedLauncher, machine string
 		}
 	}
 	return true
+}
+
+// agentsDefault answers a node's launchers.agents_default: the provider and model Model Settings › Agents names, when
+// that is a Persona-managed provider pi can use and machine (the connection's) is in its scope; empty otherwise, and
+// pi keeps its own choice. Names only: the key still goes through launchers.pull.
+func (s *Service) agentsDefault(ctx context.Context, machine string) map[string]any {
+	b, err := s.resolveModel(ctx, "agent.new")
+	if err != nil {
+		return map[string]any{}
+	}
+	name, ok := strings.CutPrefix(b.Provider, "launcher.")
+	if !ok {
+		return map[string]any{}
+	}
+	l, ok := s.managedNamed(ctx, name)
+	if !ok || l.PiAPI() == "" || s.scopeReason(l, machine) != "" {
+		return map[string]any{}
+	}
+	out := map[string]any{"launcher": name}
+	if b.Model != "" && proto.ValidModelID(b.Model) {
+		out["model"] = b.Model
+	}
+	if b.Effort != "" {
+		out["effort"] = b.Effort
+	}
+	return out
 }
 
 // ---- what the nodes get ----

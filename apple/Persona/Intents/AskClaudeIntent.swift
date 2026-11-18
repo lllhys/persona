@@ -11,6 +11,7 @@ struct AskClaudeIntent: AppIntent {
     )
     /// The hub is plain HTTP over an SSH tunnel; the app does not need to come to the foreground. The result still
     /// carries `OpenSessionIntent`, so tapping the dialog's button opens the chat.
+    @available(iOS 26.0, *)
     nonisolated static var supportedModes: IntentModes { .background }
 
     @Parameter(title: "Content", requestValueDialog: "What do you want to say to Claude?")
@@ -69,7 +70,7 @@ struct AskClaudeIntent: AppIntent {
         guard machine.online else { throw IntentFailure.offline(machine.name) }
         if newSession { return try await startSession(api, on: machine, text: text) }
 
-        let sessions = try await api.sessions()
+        let sessions = IntentSupport.folded(try await api.sessions())
         guard let session = IntentPicker.session(sessions, machine: machine.ref.id, group: machine.ref.group) else {
             throw IntentFailure.noSession(machine.name)
         }

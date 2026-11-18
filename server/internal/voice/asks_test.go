@@ -411,7 +411,7 @@ func TestAskUnpromptedAnswerIsRefused(t *testing.T) {
 	pl := testPlugin(t, liveProvider(up), hub.server(t))
 	a := dialApp(t, pl, boundStart("a1", nil))
 	a.until(ofType("ready"))
-	if got := content(up.nextMatch(on("dlg9"))); !strings.Contains(got, "这条不是你说的，我没发") {
+	if got := content(up.nextMatch(on("dlg9"))); !strings.Contains(got, unpromptedWords) {
 		t.Fatalf("told: %s", got)
 	}
 	if res := hub.resolutions(); len(res) != 0 {

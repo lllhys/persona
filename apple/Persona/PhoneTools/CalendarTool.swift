@@ -1,5 +1,6 @@
 import EventKit
 import Foundation
+import PersonaWire
 
 /// Calendar tools: read a time window, and create an event after the user
 /// confirms on the phone.
@@ -219,13 +220,18 @@ enum CalendarTool {
     }
 
     /// Pure formatting half of `createConfirmation`: every field the write uses, in the phone's own date style.
+    /// An explicit UTC offset stays visible as requested instead of being reinterpreted in the phone's zone.
     static func createSummary(_ args: JSONValue, calendar: String?) -> String {
         let title = ToolArgs.string(args, "title") ?? "(untitled)"
         let start = ToolArgs.string(args, "start") ?? "?"
         let end = ToolArgs.string(args, "end") ?? "?"
         let allDay = ToolArgs.bool(args, "all_day") == true
-        let shownStart = (try? ToolDate.parse(start)).map { CardTime.text($0, allDay: allDay) } ?? start
-        let shownEnd = (try? ToolDate.parse(end)).map { CardTime.text($0, allDay: allDay) } ?? end
+        let shownStart = (try? ToolDate.parse(start)).map {
+            CardTime.text($0, allDay: allDay, timeZone: ToolDate.timeZone(in: start))
+        } ?? start
+        let shownEnd = (try? ToolDate.parse(end)).map {
+            CardTime.text($0, allDay: allDay, timeZone: ToolDate.timeZone(in: end))
+        } ?? end
         let location = ToolArgs.string(args, "location")
         var summary = String(localized: "New event “\(title)”\\n\(shownStart) → \(shownEnd)")
         if allDay { summary += String(localized: " (all day)") }

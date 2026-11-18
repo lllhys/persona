@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// New Agent's model: the launcher's list (`LauncherModels`) and what is picked from it. Picking nothing ("") is the
 /// default — what the launcher runs, or Model Settings › New Agent's model when that applies — and sends no model. An ID
@@ -269,9 +270,12 @@ struct LauncherModelPicker: View {
 /// under the field), and the IDs typed before on this computer and launcher under it: tap one to use it, swipe it to
 /// forget it. New Agent's picker lists those itself and only asks for the field.
 struct TypedModelSheet: View {
+    @Environment(AppModel.self) private var app
     /// The computer and launcher whose typed IDs are listed (and can be forgotten); nil: the field alone.
     var machine: MachineRef? = nil
     var launcher: String? = nil
+    /// Assistant chats use the shell launcher even when an Agent runtime has a provider of the same name.
+    var purpose: String? = nil
     var initial = ""
     /// Under the rule: what using it does here.
     var note: String? = nil
@@ -285,6 +289,13 @@ struct TypedModelSheet: View {
     /// Why the field's ID can't be used; nil while empty (the rule is shown instead) or fine.
     private var problem: String? { id.isEmpty ? nil : ModelID.problem(id)?.text }
     private var canUse: Bool { !id.isEmpty && problem == nil && models.list?.locked == nil }
+    private var catalogSource: String {
+        guard let machine, let launcher else { return "" }
+        let api = app.api(machine.group)
+        let manager = purpose == "assistant" ? api?.currentAssistantSettings().managerID : api?.managerID
+        let revision = purpose == "assistant" ? app.assistantLauncherRequestRevision : 0
+        return LauncherModelsModel.key(machine, launcher, purpose: purpose, manager: manager) + "|\(revision)"
+    }
 
     var body: some View {
         NavigationStack {
@@ -332,12 +343,12 @@ struct TypedModelSheet: View {
                             .disabled(models.list?.locked != nil)
                             .accessibilityIdentifier("typedModel.remembered.\(m.id)")
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) { Task { await models.forget(m.id, machine: machine, launcher: launcher) } } label: {
+                                Button(role: .destructive) { Task { await models.forget(m.id, machine: machine, launcher: launcher, purpose: purpose) } } label: {
                                     Label("Forget", systemImage: Theme.Icon.delete)
                                 }
                             }
                             .contextMenu {
-                                Button(role: .destructive) { Task { await models.forget(m.id, machine: machine, launcher: launcher) } } label: {
+                                Button(role: .destructive) { Task { await models.forget(m.id, machine: machine, launcher: launcher, purpose: purpose) } } label: {
                                     Label("Forget", systemImage: Theme.Icon.delete)
                                 }
                             }
@@ -374,8 +385,8 @@ struct TypedModelSheet: View {
             if text.isEmpty { text = initial }
             focused = true
         }
-        .task {
-            if let machine, let launcher { await models.load(machine, launcher: launcher) }
+        .task(id: catalogSource) {
+            if let machine, let launcher { await models.load(machine, launcher: launcher, purpose: purpose) }
         }
     }
 

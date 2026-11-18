@@ -20,6 +20,8 @@ import androidx.compose.ui.res.stringResource
 import persona.core.designsystem.JTextButton
 import persona.core.designsystem.PersonaTheme
 import persona.core.designsystem.Tokens
+import persona.core.designsystem.rememberOpenEdge
+import persona.core.designsystem.unfolding
 import persona.core.designsystem.WorkState
 import persona.core.designsystem.text
 import persona.core.designsystem.WorkStep as TimelineStep
@@ -51,6 +53,9 @@ internal fun TaskNoteLine(item: LineItem, last: Boolean = false, onFullText: ((p
     val openPath = LocalChatRowActions.current?.openPath
     val body = if (item.kind == "tool_result") item.text?.takeIf(String::isNotBlank) ?: note.detail else note.detail
     var open by rememberSaveable(item.id) { mutableStateOf(false) }
+    // The note's detail fades in place (TaskNoteRow.swift:182, ChatPin.swift:707-726).
+    val edge = rememberOpenEdge(item.id)
+    val revealing = edge.revealing(open)
     Column(Modifier.fillMaxWidth()) {
         TimelineStep(taskNoteIcon(note), text.subject,
             detail = listOfNotNull(text.label.text(), text.outcome?.text()).joinToString(" · "),
@@ -61,7 +66,7 @@ internal fun TaskNoteLine(item: LineItem, last: Boolean = false, onFullText: ((p
                 else -> WorkState.Done
             },
             last = last, onClick = { open = !open })
-        if (open) Column(Modifier.fillMaxWidth().padding(start = Tokens.Space.m),
+        if (open) Column(Modifier.unfolding(revealing).fillMaxWidth().padding(start = Tokens.Space.m),
             verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
             when (note.kind) {
                 "shell" -> CodeText("$ " + (note.detail ?: note.title))

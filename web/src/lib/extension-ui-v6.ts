@@ -121,6 +121,15 @@ export interface UITile {
   control?: UIRowControl;
   actions?: UIRowAction[];
   action?: UIAction;
+  /** UI version 9 (#9337): the tile is a ring filled to ratio, its value (and unit) in the centre. */
+  gauge?: UIGauge;
+}
+
+/** A tile's ring (UI version 9): ratio 0 to 1 (held to it where drawn), a short unit under the value, a named color. */
+export interface UIGauge {
+  ratio: number;
+  unit?: unknown;
+  color?: UIColor | string;
 }
 
 /** A control the web can draw (a known kind, a name and an action); undefined otherwise. */
@@ -176,6 +185,9 @@ function readTile(raw: unknown): UITile[] {
   const spark = readSpark(raw.spark);
   if (spark) t.spark = spark;
   else delete t.spark;
+  // a gauge with a finite ratio, or the tile is drawn without one; where it is drawn (lazily) the ratio is held to 0–1,
+  // and a unit or a color that is not a known word is left out, so this first-screen reader stays small
+  if (!isObject(t.gauge) || !Number.isFinite(t.gauge.ratio)) delete t.gauge;
   return [t];
 }
 

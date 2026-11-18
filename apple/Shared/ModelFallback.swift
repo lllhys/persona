@@ -16,16 +16,27 @@ nonisolated struct ModelRefusal: Codable, Hashable, Sendable {
     var explanation: String?
     /// The refusal's own words, shown as they are.
     var text: String?
+    /// The node's own bounded recovery only (#7824): when the configured model is available again, whether every
+    /// model of the chain failed, whether the configured model answered a probe so the next request runs on it, and
+    /// the models tried in order. A runtime-written record never sets them, so they stay nil/false and render as before.
+    var recoveryReset: Date?
+    var recoveryExhausted: Bool
+    var recoveryReturning: Bool
+    var recoveryTried: String?
 
     static let fallbackSubtype = "model_refusal_fallback"
 
     enum CodingKeys: String, CodingKey {
         case subtype, category, scope, explanation, text
         case originalModel = "original_model", fallbackModel = "fallback_model"
+        case recoveryReset = "recovery_reset", recoveryExhausted = "recovery_exhausted",
+             recoveryReturning = "recovery_returning", recoveryTried = "recovery_tried"
     }
 
     init(subtype: String, originalModel: String? = nil, fallbackModel: String? = nil, category: String? = nil,
-         scope: String? = nil, explanation: String? = nil, text: String? = nil) {
+         scope: String? = nil, explanation: String? = nil, text: String? = nil,
+         recoveryReset: Date? = nil, recoveryExhausted: Bool = false, recoveryReturning: Bool = false,
+         recoveryTried: String? = nil) {
         self.subtype = subtype
         self.originalModel = originalModel
         self.fallbackModel = fallbackModel
@@ -33,6 +44,10 @@ nonisolated struct ModelRefusal: Codable, Hashable, Sendable {
         self.scope = scope
         self.explanation = explanation
         self.text = text
+        self.recoveryReset = recoveryReset
+        self.recoveryExhausted = recoveryExhausted
+        self.recoveryReturning = recoveryReturning
+        self.recoveryTried = recoveryTried
     }
 
     init(from decoder: Decoder) {
@@ -49,6 +64,12 @@ nonisolated struct ModelRefusal: Codable, Hashable, Sendable {
         scope = field(.scope)
         explanation = field(.explanation)
         text = field(.text)
+        // A value of an unexpected type is left at its zero value rather than dropping the session.
+        recoveryReset = (try? c?.decodeIfPresent(Date.self, forKey: .recoveryReset)).flatMap { $0 }
+            .flatMap { $0.isMeaningful ? $0 : nil }
+        recoveryExhausted = (try? c?.decodeIfPresent(Bool.self, forKey: .recoveryExhausted)).flatMap { $0 } ?? false
+        recoveryReturning = (try? c?.decodeIfPresent(Bool.self, forKey: .recoveryReturning)).flatMap { $0 } ?? false
+        recoveryTried = field(.recoveryTried)
     }
 
     /// Claude Code switched to another model, and says which.
@@ -58,6 +79,30 @@ nonisolated struct ModelRefusal: Codable, Hashable, Sendable {
     var publicText: String {
         if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
         return explanation ?? subtype
+    }
+
+    /// The node's own recovery category (#7824), one of the values it projects; nil for a runtime-written record or a
+    /// value this build does not know, which then keeps rendering exactly as before.
+    var recoveryCategory: RecoveryCategory? { category.flatMap(RecoveryCategory.init(rawValue:)) }
+
+    /// Why the node's recovery moved or stopped a conversation: the hub's recovery-reason values in plain words.
+    nonisolated enum RecoveryCategory: String, Sendable {
+        case quota = "quota_exhausted"
+        case safeguards = "safeguards_refusal"
+        case rateLimited = "rate_limited"
+        case server = "server_error"
+        case unavailable = "model_unavailable"
+
+        /// A short plain-word phrase that fits the refusal sentence's bracket and the failure card.
+        var phrase: String {
+            switch self {
+            case .quota: String(localized: "quota exhausted")
+            case .safeguards: String(localized: "the model refused")
+            case .rateLimited: String(localized: "rate limited")
+            case .server: String(localized: "service error")
+            case .unavailable: String(localized: "model unavailable")
+            }
+        }
     }
 }
 

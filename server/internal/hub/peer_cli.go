@@ -19,6 +19,7 @@ import (
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/clitext"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/managerconf"
 )
 
 // The mesh from the command line on the hub's machine (docs/server/mesh.md "Admin APIs and CLI"): the same peers API as the admin page,
@@ -287,8 +288,9 @@ type adminCallError struct {
 
 func (e *adminCallError) Error() string { return e.text }
 
-// adminCall calls this machine's hub over loopback with the master token, for at most adminCallLimit. The hub answers
-// in the terminal's language (i18n.Terminal, #5520), not in the user language an app last set.
+// adminCall calls this machine's hub from loopback (managerconf.CLIHubURL, CLIDial) with the master token, for at most
+// adminCallLimit. The hub answers in the terminal's language (i18n.Terminal, #5520), not in the user language an app
+// last set.
 func (c *Config) adminCall(ctx context.Context, method, path string, body, out any) error {
 	l := i18n.Terminal()
 	_, port, err := net.SplitHostPort(c.Listen)
@@ -302,14 +304,14 @@ func (c *Config) adminCall(ctx context.Context, method, path string, body, out a
 		b, _ := json.Marshal(body)
 		rd = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(callCtx, method, "http://"+net.JoinHostPort("127.0.0.1", port)+path, rd)
+	req, err := http.NewRequestWithContext(callCtx, method, managerconf.CLIHubURL(c.Listen)+path, rd)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	req.Header.Set("Content-Type", "application/json") // the admin API takes JSON writes only
 	req.Header.Set("Accept-Language", string(l))
-	transport := &http.Transport{Proxy: nil}
+	transport := &http.Transport{Proxy: nil, DialContext: managerconf.CLIDial}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := client.Do(req)
@@ -318,7 +320,7 @@ func (c *Config) adminCall(ctx context.Context, method, path string, body, out a
 			return ctx.Err() // stopped (Ctrl-C)
 		}
 		if callCtx.Err() != nil {
-			return fmt.Errorf("the hub on 127.0.0.1:%s did not answer within %s: it may be stuck, or another program is listening on hub.json's port", port, adminCallLimit)
+			return fmt.Errorf("the hub at %s did not answer within %s: it may be stuck, or another program is listening on hub.json's port", req.URL.Host, adminCallLimit)
 		}
 		return errors.New(i18n.T(l, "hub-cli.hub_unreachable"))
 	}

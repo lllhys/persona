@@ -36,6 +36,8 @@ type remoteFixture struct {
 	hangup        string // a call to it closes the connection instead of an answer
 	resumeRequest bool
 	ephemeral     string
+	// active: thread/read and thread/resume say a turn runs in the threads (status "active"), as while one does.
+	active bool
 	// models answers model/list; threadModel / threadEffort are the threads' configured model and effort (codex_effort.go).
 	models                    any
 	threadModel, threadEffort string
@@ -44,6 +46,7 @@ type remoteFixture struct {
 	// backgroundReply overrides the versioned inventory fixture's terminal response.
 	backgroundReply map[string]any
 	backgroundPages map[string]map[string]any
+	response        func(string, map[string]any) (any, bool)
 }
 
 func (f *remoteFixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +74,11 @@ func (f *remoteFixture) serve(w http.ResponseWriter, r *http.Request) {
 		models, model, effort, archive := f.models, f.threadModel, f.threadEffort, f.archive
 		background := f.backgroundReply
 		backgroundPages := f.backgroundPages
+		status := map[string]any{"type": "idle"}
+		if f.active {
+			status = map[string]any{"type": "active", "activeFlags": []string{}}
+		}
+		response := f.response
 		f.mu.Unlock()
 		if code == 0 {
 			code = -32600
@@ -105,12 +113,18 @@ func (f *remoteFixture) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(m.Params, &p)
 		var result any = map[string]any{}
 		thread, _ := p["threadId"].(string)
-		d := map[string]any{"id": thread, "name": "合成会话", "cwd": f.home, "status": map[string]any{"type": "idle"}}
+		d := map[string]any{"id": thread, "name": "合成会话", "cwd": f.home, "status": status}
 		if model != "" {
 			d["model"] = model
 		}
 		if effort != "" {
 			d["reasoningEffort"] = effort
+		}
+		if response != nil {
+			if value, handled := response(m.Method, p); handled {
+				f.push(map[string]any{"id": m.ID, "result": value})
+				continue
+			}
 		}
 		switch m.Method {
 		case "initialize":
@@ -298,6 +312,59 @@ func TestCodexRemoteSendAndSteerNeverFallback(t *testing.T) {
 				t.Fatalf("runtime overrides: %s", m.Params)
 			}
 		}
+	}
+}
+
+func TestCodexInterruptFindsTurnAlreadyRunningAtJoin(t *testing.T) {
+	n := remoteTestNode(t)
+	home := t.TempDir()
+	f, _ := connectRemoteFixture(t, n, home, "one", remoteRaw)
+	f.active = true
+	f.response = func(method string, p map[string]any) (any, bool) {
+		if method == "thread/read" && p["includeTurns"] == true {
+			return map[string]any{"thread": map[string]any{
+				"id": remoteRaw, "status": map[string]any{"type": "active", "activeFlags": []string{}},
+				"turns": []map[string]any{{"id": "turn-before-join", "status": "inProgress"}},
+			}}, true
+		}
+		return nil, false
+	}
+	id := n.registerCodex(home, remoteRaw, "")
+	if err := n.interruptCodex(context.Background(), id); err != nil {
+		t.Fatalf("Stop must interrupt the turn that began before the join: %v", err)
+	}
+	if got := f.count("turn/interrupt"); got != 1 {
+		t.Fatalf("turn/interrupt calls = %d, want 1", got)
+	}
+	for _, m := range f.got {
+		if m.Method != "turn/interrupt" {
+			continue
+		}
+		var p map[string]any
+		_ = json.Unmarshal(m.Params, &p)
+		if p["turnId"] != "turn-before-join" {
+			t.Fatalf("interrupted %v, want the pre-existing turn", p)
+		}
+	}
+}
+
+func TestCodexInterruptStillRefusesWhenNoTurnRuns(t *testing.T) {
+	n := remoteTestNode(t)
+	home := t.TempDir()
+	f, _ := connectRemoteFixture(t, n, home, "one", remoteRaw)
+	f.active = true
+	f.response = func(method string, p map[string]any) (any, bool) {
+		if method == "thread/read" && p["includeTurns"] == true {
+			return map[string]any{"thread": map[string]any{"id": remoteRaw, "status": map[string]any{"type": "active", "activeFlags": []string{}}, "turns": []map[string]any{}}}, true
+		}
+		return nil, false
+	}
+	id := n.registerCodex(home, remoteRaw, "")
+	if err := n.interruptCodex(context.Background(), id); err == nil {
+		t.Fatal("a thread with no running turn must not be interrupted")
+	}
+	if got := f.count("turn/interrupt"); got != 0 {
+		t.Fatalf("turn/interrupt calls = %d, want 0", got)
 	}
 }
 

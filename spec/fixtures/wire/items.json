@@ -175,6 +175,10 @@
             "items": 3,
             "tools": 1,
             "thoughts": 1,
+            "errors": 0,
+            "tool_names": [
+              "Read"
+            ],
             "until": "2026-01-02T03:04:05Z",
             "through_seq": 4,
             "through_id": "entry_result#0",
@@ -243,6 +247,10 @@
             "items": 3,
             "tools": 1,
             "thoughts": 1,
+            "errors": 0,
+            "tool_names": [
+              "TodoWrite"
+            ],
             "until": "2026-01-02T03:04:05Z",
             "through_seq": 4,
             "through_id": "entry_result#0",

@@ -195,6 +195,40 @@ class ExtensionUiStateTest {
         assertEquals(1, api.renders.size)
     }
 
+    /** Set Up with … (#5308): `persona://ask` is taken only on the subscription pages, and refused everywhere else. */
+    @Test fun askIsTakenOnlyOnTheSubscriptionPages() = runBlocking {
+        val good = "persona://ask?text=Help%20me"
+        assertEquals("Help me", ExtensionViewText.askText(good))
+        assertEquals("Help me", ExtensionViewText.askFrom(SUBSCRIPTIONS_UI, good))
+        assertEquals("a+b", ExtensionViewText.askText("persona://ask?text=a%2Bb"))
+        assertEquals("a+b", ExtensionViewText.askText("persona://ask?text=a+b"))
+        assertEquals("hello", ExtensionViewText.askText("jarvis://ask?text=hello"))
+        assertEquals("hello", ExtensionViewText.askText("persona://ask/?text=hello"))
+        assertEquals(" hi", ExtensionViewText.askText("persona://ask?text=%20hi"))
+        assertEquals("a".repeat(ExtensionViewText.ASK_MOST), ExtensionViewText.askText("persona://ask?text=" + "a".repeat(ExtensionViewText.ASK_MOST)))
+        listOf(
+            "persona://ask?text=",
+            "persona://ask?text=%20",
+            "persona://ask/x?text=a",
+            "persona://asks?text=a",
+            "https://example.com/ask?text=a",
+            "persona://ask?text=" + "a".repeat(ExtensionViewText.ASK_MOST + 1),
+        ).forEach { assertNull(it, ExtensionViewText.askText(it)) }
+        assertNull(ExtensionViewText.askFrom("example-gateway", good))
+        assertNull(ExtensionViewText.askFrom("", good))
+        val api = FakeUi()
+        val ask = "persona://ask?text=" + java.net.URLEncoder.encode("<persona-context kind=\"context\" title=\"Source\" url=\"\">\nconnector: apps\nHelp me", "UTF-8")
+        api.answer = ExtensionUiResult(openUrl = ask)
+        val elsewhere = ExtensionViewModel(api, "example-gateway", "home")
+        elsewhere.load()
+        assertNull(elsewhere.press(ExtensionViewAction("setup")).openUrl)
+        val pages = ExtensionViewModel(api, SUBSCRIPTIONS_UI, "pages")
+        pages.load()
+        assertEquals(ask, pages.press(ExtensionViewAction("setup")).openUrl)
+        assertEquals(ExtensionViewText.askText(ask), ExtensionViewText.askFrom(SUBSCRIPTIONS_UI, ask))
+        assertNull(ExtensionViewText.askFrom("example-gateway", ask))
+    }
+
     @Test fun failuresSayWhyAndKeepTheView() = runBlocking {
         val api = FakeUi()
         val model = ExtensionViewModel(api, "example-gateway", "home")
@@ -368,6 +402,52 @@ class ExtensionUiStateTest {
         // A day at most.
         assertEquals(1_000L + 86_400_000L, ExtensionViewText.refreshAt(ExtensionViewState(ExtensionView(refreshAfter = 1_000_000), drawnAt = 1_000L)))
         assertNull(ExtensionViewText.refreshAt(ExtensionViewState(ExtensionView(refreshAfter = 0), drawnAt = 1_000L)))
+    }
+
+    // A redraw the user did not ask for (refresh_after, ui.invalidate, back from a page pushed on it) keeps what is being
+    // typed in the view's fields, as on the web and iOS: a field the new view no longer has goes, a new one comes with its value.
+    @Test fun refreshAfterKeepsWhatIsBeingTyped() = runTest {
+        val api = FakeUi()
+        api.view = api.view.copy(refreshAfter = 30)
+        val model = ExtensionViewModel(api, "example-gateway", "home", now = { testScheduler.currentTime })
+        model.load()
+        model.edit("note", "还没发出去的话")
+        model.edit("token", "s3cret")
+        val fresh = launch { model.keepFresh() }
+        advanceTimeBy(30_500); runCurrent()
+        assertEquals(2, api.renders.size)
+        assertEquals("还没发出去的话", model.state.value.values["note"])
+        assertEquals("s3cret", model.state.value.values["token"])
+        fresh.cancel()
+    }
+
+    @Test fun anInvalidateKeepsWhatIsBeingTyped() = runTest {
+        val api = FakeUi()
+        val model = ExtensionViewModel(api, "example-gateway", "home")
+        model.load()
+        model.shown(true)
+        model.edit("note", "还没发出去的话")
+        model.edit("plan", "solo")
+        api.view = api.view.copy(sections = listOf(ExtensionViewSection(items = listOf(
+            ExtensionViewItem("field", name = "note", kind = "text", value = "扩展的新值"),
+            ExtensionViewItem("field", name = "subject", kind = "text", value = "新字段"),
+        ))))
+        model.invalidate()
+        assertEquals(2, api.renders.size)
+        assertEquals(mapOf("note" to "还没发出去的话", "subject" to "新字段"), model.state.value.values)
+    }
+
+    @Test fun comingBackFromAPushedPageKeepsWhatIsBeingTyped() = runTest {
+        val api = FakeUi()
+        val model = ExtensionViewModel(api, "example-gateway", "home")
+        model.load()
+        model.shown(true)
+        model.edit("note", "还没发出去的话")
+        model.covered()
+        model.shown(false)
+        model.shown(true)
+        assertEquals(2, api.renders.size)
+        assertEquals("还没发出去的话", model.state.value.values["note"])
     }
 
     // A machine's section for a machine the hub does not know (another hub's) is hidden, not an error.

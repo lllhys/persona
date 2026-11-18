@@ -17,9 +17,6 @@ import (
 // on and the release is newer and not a build that went back. Each check first brings the Android app the phones
 // update from to the release's (syncAndroid): before, so an install's restart does not cut its download short.
 func (u *updater) loop(ctx context.Context) {
-	if !u.h.selfUpdates() && u.h.build.Channel != update.Docker {
-		return
-	}
 	wait := updateFirstCheck
 	for {
 		select {
@@ -28,7 +25,14 @@ func (u *updater) loop(ctx context.Context) {
 		case <-time.After(wait):
 		}
 		wait = updateCheckEvery
-		u.syncAndroid(ctx)
+		// One scheduler serves both channels. A channel selected after startup is
+		// picked up here too; development updates never fetch mobile artifacts.
+		if !u.selectedDevelopment() {
+			if !u.h.selfUpdates() && u.h.build.Channel != update.Docker {
+				continue
+			}
+			u.syncAndroid(ctx)
+		}
 		if _, err := u.check(ctx); err != nil {
 			continue
 		}
@@ -46,8 +50,15 @@ func (u *updater) wantsAuto() bool {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	r := u.release
-	return (u.loaded || u.h.store == nil) && u.settings.auto() && !u.updateActiveLocked() && r != nil && u.h.build.Newer(r.Manifest.Build) &&
-		!slices.Contains(u.settings.Bad, r.Manifest.Build) && u.h.build.Hold(r.Manifest) == "" && u.blocked == nil
+	if r != nil && r.Development != nil && r.Development.BackupID != "" {
+		return false // Applying a backup is always an explicit manual operation.
+	}
+	hold := ""
+	if r != nil && (r.Development == nil || r.Manifest.Ancestors != "") {
+		hold = u.h.build.Hold(r.Manifest)
+	}
+	return (u.loaded || u.h.store == nil) && u.autoLocked() && !u.updateActiveLocked() && !u.adoptionUnresolved() && u.candidateNewer(r) &&
+		!slices.Contains(u.settings.Bad, r.Manifest.Build) && (r.Development == nil || !slices.Contains(u.settings.DevelopmentBad, r.Development.Commit)) && hold == "" && u.blocked == nil
 }
 
 // noteHeld writes into the history, once per release, that a newer release was not installed by itself because its
@@ -60,7 +71,8 @@ func (u *updater) noteHeld(ctx context.Context) {
 	}
 	u.mu.Lock()
 	r := u.release
-	if !u.settings.auto() || u.updateActiveLocked() || r == nil || !u.h.build.Newer(r.Manifest.Build) || slices.Contains(u.settings.Bad, r.Manifest.Build) {
+	if !u.autoLocked() || u.updateActiveLocked() || u.adoptionUnresolved() || !u.candidateNewer(r) || slices.Contains(u.settings.Bad, r.Manifest.Build) ||
+		(r.Development != nil && (r.Manifest.Ancestors == "" || slices.Contains(u.settings.DevelopmentBad, r.Development.Commit))) {
 		u.mu.Unlock()
 		return
 	}
@@ -79,8 +91,12 @@ func (u *updater) noteHeld(ctx context.Context) {
 	}
 	u.h.logf("update: %s is newer but not installed by itself: %s", r.Manifest.Version, why)
 	now := time.Now()
-	u.record(ctx, updateRecord{FromVersion: u.h.version, ToVersion: r.Manifest.Version, ToBuild: r.Manifest.Build,
-		Started: now, Ended: now, Result: "held", Reason: why, Auto: true})
+	record := updateRecord{FromVersion: u.h.version, ToVersion: r.Manifest.Version, ToBuild: r.Manifest.Build,
+		Started: now, Ended: now, Result: "held", Reason: why, Auto: true}
+	if r.Development != nil {
+		record.Source, record.Commit = "web-dev", r.Development.Commit
+	}
+	u.record(ctx, record)
 }
 
 // check reads the release now (a Docker hub: its image's tags).
@@ -89,17 +105,56 @@ func (u *updater) check(ctx context.Context) (*update.Published, error) {
 		return nil, err
 	}
 	u.recordRolledBack(ctx)
+	u.mu.Lock()
+	if u.checking || (u.developmentLocked() && u.updateActiveLocked()) {
+		r := u.release
+		u.mu.Unlock()
+		return r, nil
+	}
+	u.checking = true
+	dev := u.developmentLocked()
+	u.mu.Unlock()
+	defer func() { u.mu.Lock(); u.checking = false; u.mu.Unlock() }()
+	if dev {
+		u.setCheckState("checking", "")
+		r, err := u.checkDevelopment(ctx)
+		if err != nil {
+			u.setCheckState("failed", i18n.Localize(err, u.h.userLang()))
+			return nil, err
+		}
+		if u.candidateNewer(r) {
+			u.setCheckState("available", "")
+		} else {
+			u.setCheckState("idle", "")
+		}
+		return r, nil
+	}
 	if u.h.build.Channel == update.Docker {
 		return nil, u.checkImage(ctx)
 	}
-	source := u.h.updateURL()
+	src, sourceErr := u.releaseSource()
+	source := src.url
+	if sourceErr != nil {
+		u.setCheckState("failed", sourceErr.Error())
+		return nil, sourceErr
+	}
 	if source == "" {
 		return nil, errNotRelease
 	}
 	u.setCheckState("checking", "")
 	cctx, cancel := context.WithTimeout(ctx, updateRequestLimit)
 	defer cancel()
-	r, err := update.Check(cctx, u.client, source)
+	r, err := update.CheckChannel(cctx, u.client, source, u.selectedChannel())
+	if err == nil && u.selectedBeta() {
+		// A pointer only names the newest prerelease; download its immutable
+		// tag, never the pointer's own placeholder binaries.
+		pinned := update.BetaReleaseBase(source, r.Manifest)
+		if pinned == "" {
+			err = errInvalidBetaVersion
+		} else {
+			r.Source = pinned
+		}
+	}
 	var blocked error
 	if err == nil {
 		blocked = u.unreplaced(r.Manifest)
@@ -114,6 +169,7 @@ func (u *updater) check(ctx context.Context) (*update.Published, error) {
 		u.setCheckState("idle", su(u.h.userLang(), "check_failed", i18n.Args{"error": i18n.Localize(err, u.h.userLang())}))
 		return nil, err
 	}
+	u.noteBehind(src, r.Manifest)
 	if u.h.build.Newer(r.Manifest.Build) {
 		u.setCheckState("available", "")
 	} else {
@@ -122,17 +178,52 @@ func (u *updater) check(ctx context.Context) (*update.Published, error) {
 	return r, nil
 }
 
+// noteBehind logs that the update source looks stopped (Build.Behind, #8108): its newest release is older than the one
+// this hub's code contains, so every check finds nothing newer and the phones no newer Android app. Once per source and
+// release, not at every hourly check; again when either changes. The app shows it too (updateView.SourceBehind).
+func (u *updater) noteBehind(src updateSource, m *update.Manifest) {
+	note := ""
+	if u.h.build.Behind(m) {
+		note = fmt.Sprintf("%s %d", src.url, m.Build)
+	}
+	u.mu.Lock()
+	again := note == u.behindNote
+	u.behindNote = note
+	u.mu.Unlock()
+	if note == "" || again {
+		return
+	}
+	from := "built in"
+	if src.from == updateFromConfig {
+		from = "hub.json update.url"
+	}
+	u.h.logf("update: the update source %s (%s) has nothing newer than %s (build %d), older than this hub's %s: it looks stopped, "+
+		"so neither this hub nor its phones get updates from it; hub.json update.url sets another (docs/operations/hub-update.md \"Update source\")",
+		src.url, from, m.Version, m.Build, u.h.version)
+}
+
 // syncAndroid keeps apps/android, which the phones update from (androidapp.go), at the Android app the release
 // carries (docs/operations/hub-update.md "The Android app"): nothing without an update source, or for a release without
 // one. It logs an APK it took, and a failure once, until what it finds changes (not every hour).
 func (u *updater) syncAndroid(ctx context.Context) {
-	source := u.h.updateURL()
+	source, sourceErr := u.androidSource()
+	if sourceErr != nil {
+		u.mu.Lock()
+		note := "update: beta source: " + sourceErr.Error()
+		again := note == u.androidNote
+		u.androidNote = note
+		u.mu.Unlock()
+		if !again {
+			u.h.logf("%s", note)
+		}
+		return
+	}
 	if source == "" || u.h.cfg == nil {
 		return
 	}
 	cctx, cancel := context.WithTimeout(ctx, androidSyncLimit)
 	defer cancel()
-	result, r, err := update.SyncAndroid(cctx, u.client, source, filepath.Join(u.h.cfg.dir, "apps", "android"))
+	result, r, err := update.SyncAndroid(cctx, u.client, source, filepath.Join(u.h.cfg.dir, "apps", "android", u.androidCacheDir()))
 	note := ""
 	switch {
 	case err != nil && r != nil:
@@ -177,7 +268,15 @@ func (u *updater) freshRelease(ctx context.Context) {
 	if u == nil || u.h.build.Channel == update.Docker {
 		return
 	}
-	source := u.h.updateURL()
+	if err := u.load(ctx); err != nil || u.selectedDevelopment() {
+		return
+	}
+	src, sourceErr := u.releaseSource()
+	source := src.url
+	if sourceErr != nil {
+		u.h.logf("update: beta source: %v", sourceErr)
+		return
+	}
 	if source == "" {
 		return
 	}
@@ -185,6 +284,10 @@ func (u *updater) freshRelease(ctx context.Context) {
 	defer u.refreshing.Unlock()
 	now := time.Now()
 	u.mu.Lock()
+	if u.developmentLocked() {
+		u.mu.Unlock()
+		return
+	}
 	stale := now.Sub(u.releaseRead) >= releaseFreshFor && now.Sub(u.refreshTried) >= releaseRefreshEvery
 	if stale {
 		u.refreshTried = now
@@ -195,19 +298,35 @@ func (u *updater) freshRelease(ctx context.Context) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, releaseRefreshLimit)
 	defer cancel()
-	r, err := update.Check(cctx, u.client, source)
+	r, err := update.CheckChannel(cctx, u.client, source, u.selectedChannel())
+	if err == nil && u.selectedBeta() {
+		r.Source = update.BetaReleaseBase(source, r.Manifest)
+		if r.Source == "" {
+			err = errInvalidBetaVersion
+		}
+	}
 	if err != nil {
 		u.h.logf("update: reading the release for an install script: %v (keeping the one read before)", err)
 		return
 	}
 	blocked := u.unreplaced(r.Manifest)
 	u.mu.Lock()
+	// An install-script request does not reserve the selected channel. Its
+	// release response must not replace a development candidate chosen meanwhile.
+	if u.developmentLocked() {
+		u.mu.Unlock()
+		return
+	}
 	u.lastCheck = time.Now()
 	u.release, u.releaseRead, u.blocked = r, u.lastCheck, blocked
-	available := u.state == "idle" && u.h.build.Newer(r.Manifest.Build)
-	u.mu.Unlock()
+	available := !u.updateActiveLocked() && u.state == "idle" && u.h.build.Newer(r.Manifest.Build)
 	if available {
-		u.setState("available")
+		u.state, u.progress, u.errText = "available", "", ""
+	}
+	u.mu.Unlock()
+	u.noteBehind(src, r.Manifest)
+	if available {
+		u.h.broadcast(map[string]any{"type": "hub_update", "update": u.view()})
 	}
 }
 

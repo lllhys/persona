@@ -27,6 +27,8 @@
   "row_label": "{title}, {rule}, {next}",
   "created_by_persona": "By Persona",
   "push_asked": "Alerts only",
+  "inbox_worthy": "Inbox: if worth a look",
+  "inbox_every": "Inbox: every time",
   "last_failed": "{text}: {error}",
   "turn_off": "Turn off \"{title}\"",
   "turn_on": "Turn on \"{title}\"",

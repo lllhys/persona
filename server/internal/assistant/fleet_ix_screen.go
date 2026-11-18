@@ -141,7 +141,7 @@ func (s *Service) createScreenInteraction(machine string, sess proto.Session) {
 	}
 	back, rang, told := s.screenBackLocked(machine, sess.SessionID, id, d != nil, time.Now())
 	// Back from a detach: its predecessor's ring is carried (announced), and whether it was the user's (told).
-	p := &pending{ix: ix, announced: rang || !back && d != nil, told: told, local: func(r proto.Resolution) error {
+	p := &pending{ix: ix, announced: rang || !back && d != nil, told: told, local: func(_ context.Context, r proto.Resolution) error {
 		if r.Dismiss {
 			return nil
 		}
@@ -176,7 +176,15 @@ func (s *Service) createScreenInteraction(machine string, sess proto.Session) {
 		s.announce(ix)
 	}
 	if d == nil {
-		go s.upgradeScreenCard(machine, sess.SessionID, id, p)
+		s.fleet.mu.Lock()
+		if s.runCtx().Err() == nil {
+			s.fleet.upgrades.Add(1)
+			go func() {
+				defer s.fleet.upgrades.Done()
+				s.upgradeScreenCard(machine, sess.SessionID, id, p)
+			}()
+		}
+		s.fleet.mu.Unlock()
 	}
 }
 
@@ -230,8 +238,16 @@ const screenUpgradeEvery, screenUpgradeFor = 500 * time.Millisecond, 30 * time.S
 func (s *Service) upgradeScreenCard(machine, session, id string, p *pending) {
 	every, span := cmp.Or(s.fleet.upgradeEvery, screenUpgradeEvery), cmp.Or(s.fleet.upgradeFor, screenUpgradeFor)
 	end := time.Now().Add(span)
+	runCtx := s.runCtx()
 	for {
-		time.Sleep(every)
+		timer := time.NewTimer(every)
+		select {
+		case <-runCtx.Done():
+			timer.Stop()
+			s.ringScreenUpgradeIfDue(id, p, end)
+			return
+		case <-timer.C:
+		}
 		cur, ok := s.nodeSession(machine, session)
 		if !ok || cur.Status != proto.StatusBlocked {
 			return
@@ -242,7 +258,7 @@ func (s *Service) upgradeScreenCard(machine, session, id string, p *pending) {
 		if !still {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(runCtx, 5*time.Second)
 		_, d, err := s.screenDialog(ctx, machine, session)
 		cancel()
 		if err == nil && d != nil {
@@ -261,18 +277,26 @@ func (s *Service) upgradeScreenCard(machine, session, id string, p *pending) {
 			}
 			return
 		}
-		if !time.Now().Before(end) {
-			// Window over and unreadable: re-pin (the read took time), then ring once unless it rang already.
-			s.fleet.mu.Lock()
-			ring := s.fleet.interactions[id] == p && !p.announced
-			p.announced = true
-			s.fleet.mu.Unlock()
-			if ring {
-				s.announce(p.ix)
-			}
+		if s.ringScreenUpgradeIfDue(id, p, end) {
 			return
 		}
 	}
+}
+
+// ringScreenUpgradeIfDue finishes an expired polling window, including when cancellation wins the final timer select.
+// It reports whether the window is over; only the still-current card that never rang is announced.
+func (s *Service) ringScreenUpgradeIfDue(id string, p *pending, end time.Time) bool {
+	if time.Now().Before(end) {
+		return false
+	}
+	s.fleet.mu.Lock()
+	ring := s.fleet.interactions[id] == p && !p.announced
+	p.announced = true
+	s.fleet.mu.Unlock()
+	if ring {
+		s.announce(p.ix)
+	}
+	return true
 }
 
 // screenRecheck: how often, and screenRecheckFor how long, the screen is looked at again after a screen card's

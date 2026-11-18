@@ -88,6 +88,19 @@ class InboxItemPagesTest {
         assertFalse(lark.copy(connector = InboxConnectorRef("t1")).isConnector)
     }
 
+    @Test fun anAssistantRowOpensItsOwnDetailRatherThanAnUnreadableConnectorThread() {
+        val row = InboxRecord(InboxItem("assistant:1", kind = "assistant_post", title = "Morning briefing"),
+            sourceLabel = "Assistant", source = "assistant", connector = InboxConnectorRef("server/session-1", label = "Assistant"))
+        assertEquals(InboxItemDetailRoute("assistant:1"), inboxItemPage(row))
+    }
+
+    @Test fun anAssistantRowSkipsTheGenericEventPage() {
+        val row = InboxRecord(InboxItem("assistant:1", kind = "assistant_post", title = "Morning briefing"),
+            sourceLabel = "Assistant", source = "assistant", connector = InboxConnectorRef("server/session-1", label = "Assistant"),
+            event = persona.core.contracts.InboxEventFields(status = "fyi"))
+        assertEquals(InboxItemDetailRoute("assistant:1"), inboxRowPage(row, InboxItemPages()))
+    }
+
     // persona://inbox/<id>/source from an extension's page: that item's own page, as the list opened it before.
     @Test fun theSourceLinkOpensTheItemsOwnPage() {
         val records = listOf(lark, mail, moment)

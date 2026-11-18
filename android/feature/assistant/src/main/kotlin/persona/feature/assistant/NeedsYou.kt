@@ -22,6 +22,7 @@ import persona.core.domain.inbox.InboxItem
 import persona.core.domain.inbox.orderHubInbox
 import persona.core.domain.sort.AgentPreferences
 import persona.core.domain.sort.NeedsYouRow
+import persona.core.domain.sort.sideHome
 
 /** How many things the Persona home lists before it says how many more there are. */
 internal const val NeedsYouShown = 3
@@ -56,6 +57,8 @@ sealed interface NeedsYouLine {
         override val what: String,
         val row: String? = null,
         val terminal: Boolean = false,
+        /** The side session the card is from (#7944): the line opens [session], its parent, with that side shown. */
+        val side: SessionKey? = null,
     ) : NeedsYouLine {
         override val key: String get() = row ?: "agent:$requestId"
     }
@@ -93,13 +96,16 @@ fun needsYou(
     shown: Int = NeedsYouShown,
 ): NeedsYou {
     val bySession = sessions.associateBy { it.key }
-    val agents = requests.distinctBy { it.id }.filter { request ->
-        val session = bySession[request.sessionKey]
+    val foldedHomes = requests.filter { !it.foldedUnder.isNullOrBlank() }.mapTo(HashSet()) { it.homeKey }
+    val agents = requests.distinctBy { if (it.homeKey in foldedHomes) it.homeKey else it.id }.filter { request ->
+        val session = bySession[request.homeKey]
         val space = session?.spaceName?.takeIf { it.isNotBlank() }?.let { "${request.machineId}/$it" }
-        !isAssistant(request.sessionKey) && session?.assistant != true && !mutes.mutes(request.sessionKey.path, space)
+        !isAssistant(request.homeKey) && session?.assistant != true && !mutes.mutes(request.homeKey.path, space)
     }.map { request ->
-        NeedsYouLine.Agent(request.sessionKey, request.id, request.kind, request.toolName,
-            who = agentName(request, bySession[request.sessionKey]), what = oneLine(request.headline.shown))
+        NeedsYouLine.Agent(request.homeKey, request.id, request.kind, request.toolName,
+            who = if (request.homeKey in foldedHomes) agentName(null, null, bySession[request.homeKey])
+                else agentName(request, bySession[request.homeKey]), what = oneLine(request.headline.shown),
+            side = request.sideHome)
     }
     val all: List<NeedsYouLine> = agents + inboxLines(messages)
     return NeedsYou(all.take(shown), (all.size - shown).coerceAtLeast(0))
@@ -118,8 +124,9 @@ fun needsYouBySession(rows: List<NeedsYouRow>, sessions: List<Session>, messages
         val card = row.cards.firstOrNull()
         val session = bySession[row.key]
         NeedsYouLine.Agent(row.key, card?.id.orEmpty(), card?.kind ?: "screen", card?.toolName,
-            who = agentName(card?.sessionTitle, card?.cwd, session), what = card?.let { oneLine(it.headline.shown) }.orEmpty(),
-            row = row.id, terminal = card == null)
+            who = agentName(card?.sessionTitle?.takeIf { card.foldedUnder.isNullOrBlank() }, card?.cwd, session),
+            what = card?.let { oneLine(it.headline.shown) }.orEmpty(),
+            row = row.id, terminal = card == null, side = card?.sideHome)
     }
     return agents + inboxLines(messages)
 }

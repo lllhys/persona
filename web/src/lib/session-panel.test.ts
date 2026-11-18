@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { t } from "../i18n";
 import { ApiError } from "./api";
 import type { LauncherModels } from "./launcher-models";
+import { rowSetup, shownEffort } from "./model-panel";
 import { pendingView, switchRefused, type ModelList } from "./session-models";
 import { pickPlan, sessionPanel, type PanelOptions } from "./session-panel";
 import type { Launcher, Session } from "./types";
@@ -38,6 +39,67 @@ const session = (x: Partial<Session> = {}): Session =>
   ({ machine_id: "mac", session_id: "s1", title: "t", cwd: "/code", status: "idle", state: "idle", agent: "claude", launcher: "claude", model: "claude-opus-5-5", effort: "high", ...x }) as Session;
 const on: PanelOptions = { switching: true };
 const provider = (s: Session, id: string, o: PanelOptions = on) => sessionPanel(s, launchers, listOf, o).providers.find((p) => p.id === id)!;
+
+describe("actual Codex session effort and control availability", () => {
+  const live = session({ agent: "codex", source_kind: "codex_app_server", launcher: "cx", model: "gpt-5.5",
+    capabilities: { send: true }, effort: "max", efforts: ["low", "high", "max"] });
+  const catalog: LauncherModels = { agent: "codex", models: [{ id: "gpt-5.5", name: "GPT 5.5", default_effort: "low", efforts: ["low", "high"] }] };
+  const panelOf = (s: Session) => sessionPanel(s, [{ name: "cx", agent: "codex" }], () => ({ list: catalog }));
+
+  it("keeps session max rather than catalog low, including when changes are unsupported", () => {
+    for (const s of [live, { ...live, source_kind: undefined, efforts: undefined }]) {
+      const { providers, state } = panelOf(s);
+      const model = providers[0].models![0];
+      expect(shownEffort(rowSetup(providers[0], model, state), model)).toBe("max");
+    }
+  });
+
+  it("does not present a launcher's default as a known session value", () => {
+    const { providers, state } = panelOf({ ...live, effort: undefined });
+    const model = providers[0].models![0];
+    expect(shownEffort(rowSetup(providers[0], model, state), model)).toBe("");
+  });
+
+  it("offers supported effort changes while Codex is working and explains next-turn scope", () => {
+    const s = { ...live, state: "working", status: "working" } as Session;
+    const { providers, state } = panelOf(s);
+    expect(state.busy).toBeUndefined();
+    expect(providers[0].models![0].efforts).toEqual(["low", "high", "max"]);
+    expect(providers[0].models![0].effortNote).toBe(t("chat-modelpanel.effort_next_turn"));
+    expect(pickPlan(s, { provider: "cx", model: "gpt-5.5", effort: "high" }, () => catalog)).toEqual([{ effort: "high" }]);
+  });
+
+  it.each([
+    ["terminal", { source_kind: undefined }, "effort_terminal"],
+    ["offline", { state: "offline", status: "offline" }, "effort_offline"],
+    ["parent", { parent_thread_id: "parent" }, "effort_parent"],
+    ["read only", { capabilities: { send: false } }, "effort_read_only"],
+    ["model", {}, "effort_model_fixed"],
+  ] as const)("explains unsupported %s effort instead of advertising a catalog slider", (_, patch, key) => {
+    const { providers } = panelOf({ ...live, efforts: undefined, ...patch } as Session);
+    const model = providers[0].models![0];
+    expect(model.efforts).toEqual([]);
+    expect(model.effortUnavailable).toBe(t(`chat-modelpanel.${key}`));
+  });
+});
+
+describe("a Codex session that names no launcher (#6501)", () => {
+  // the computer runs the Codex App: the node offers its launcher, whose list is empty and locked (the App picks the model)
+  const appList: LauncherModels = { agent: "codex", models: [], locked: "the App picks" };
+  const withApp: Launcher[] = [...launchers, { name: "codex-app", agent: "codex", source: "codex_app" }];
+  const readApp = (name: string): ModelList => (name === "codex-app" ? { list: appList } : listOf(name));
+  const chat = session({ agent: "codex", source_kind: "codex_history", space_kind: "codex_app", agent_surface: "desktop", launcher: undefined,
+    capabilities: { send: true }, model: "gpt-6-astra", effort: "ultra", efforts: ["low", "ultra"] });
+
+  it("is the Codex App's for one of its chats: its own provider, never Claude Code's models", () => {
+    const panel = sessionPanel(chat, withApp, readApp, on);
+    const own = panel.providers.find((p) => p.engine === "codex" && p.id === "codex-app")!;
+    expect(own).toBeDefined();
+    expect(own.models?.some((m) => m.id === "opus" || m.id === "default")).toBeFalsy();
+    // Claude Code's launcher is another engine's, not this chat's own
+    expect(panel.providers.find((p) => p.id === "claude")!.unavailable).toBe(t("chat-modelpanel.other_engine", { from: "Codex", to: "Claude Code" }));
+  });
+});
 
 describe("another launcher of the engine", () => {
   it("is picked like the session's own on a hub that switches, and stays off on an older one", () => {
@@ -126,6 +188,45 @@ describe("a message the switch refused", () => {
     expect(switchRefused(new ApiError(409, "failed", { code: "switch_failed_stopped", delivered: "none" }))).toBe(true);
     expect(switchRefused(new ApiError(409, "draft", { code: "input_draft", delivered: "none" }))).toBe(false);
     expect(switchRefused(new Error("x"))).toBe(false);
+  });
+});
+
+// A session a runtime runs (Paseo, #8142): its Claude Code switches its model there and never its launcher or engine
+// (the node refuses both, `switch_unsupported`), and each of its other providers is named by the provider, never by the
+// engine's id "paseo".
+describe("a session on Paseo", () => {
+  const engine: PanelOptions = { switching: true, engineSwitch: true };
+  const grokList: LauncherModels = { agent: "paseo", models: [{ id: "grok-4", name: "Grok 4", default: true }] };
+  const kimiList: LauncherModels = { agent: "paseo", models: [{ id: "kimi-k2", name: "Kimi K2", default: true }] };
+  const paseoLaunchers: Launcher[] = [
+    { name: "my-claude", source: "paseo" }, { name: "my-claude-2", source: "paseo" }, { name: "my-codex", agent: "codex", source: "paseo" },
+    { name: "grok", agent: "paseo", source: "paseo" }, { name: "kimi", agent: "paseo", source: "paseo" },
+  ];
+  const paseoRead: Record<string, ModelList> = { "my-claude": { list: claudeList }, "my-claude-2": { list: workList }, "my-codex": { list: codexList }, grok: { list: grokList }, kimi: { list: kimiList } };
+  const paseoRaw = (name: string) => paseoRead[name]?.list;
+  const onPaseo = (x: Partial<Session>) => session({ source_kind: "runtime", source_instance_id: "paseo", host: "paseo", capabilities: { read: true, send: true, model: true, modes: true }, ...x });
+  const claude = onPaseo({ launcher: "my-claude" });
+  const grok = onPaseo({ agent: "paseo", agent_label: "Grok", launcher: "grok", model: "grok-4", effort: undefined });
+  const providers = (s: Session) => sessionPanel(s, paseoLaunchers, (name) => paseoRead[name] ?? {}, engine).providers;
+  const of = (s: Session, id: string) => providers(s).find((p) => p.id === id)!;
+
+  it("offers its Claude Code no other launcher or engine, on a hub that switches them for terminal Agents", () => {
+    expect(of(claude, "my-claude").unavailable).toBeUndefined();
+    expect(of(claude, "my-claude-2").unavailable).toBe(t("chat-modelpanel.other_provider"));
+    expect(of(claude, "my-codex").unavailable).toBe(t("chat-modelpanel.other_engine", { from: "Claude Code", to: "Codex" }));
+    expect(pickPlan(claude, { provider: "my-claude-2", model: "glm-5.3" }, paseoRaw, engine)).toBeNull();
+    expect(pickPlan(claude, { provider: "my-codex", model: "gpt-5.5" }, paseoRaw, engine)).toBeNull();
+    // its own model still switches at once
+    expect(pickPlan(claude, { provider: "my-claude", model: "haiku" }, paseoRaw, engine)).toEqual([{ model: "haiku" }]);
+  });
+
+  it("names each provider by the provider, its own by its label", () => {
+    const own = of(grok, "grok");
+    expect([own.engine, own.engineLabel, own.unavailable]).toEqual(["grok", "Grok", undefined]);
+    expect(of(grok, "kimi").engine).toBe("kimi");
+    expect(of(grok, "kimi").unavailable).toBe(t("chat-modelpanel.other_engine", { from: "Grok", to: "kimi" }));
+    expect(of(grok, "my-claude").unavailable).toBe(t("chat-modelpanel.other_engine", { from: "Grok", to: "Claude Code" }));
+    for (const p of providers(grok)) expect(`${p.engine} ${p.unavailable ?? ""}`).not.toMatch(/paseo/i);
   });
 });
 

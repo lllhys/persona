@@ -1,14 +1,17 @@
 // Forwarding a message (#3899, the web's side of #3807; iOS Forward.swift; docs/protocol/protocol.md "Forwarded messages"):
-// a message's actions › Forward › a target, and that chat opens with the message over its box as a card. What goes out
+// a message's actions › Forward › a target, and that chat opens with the message over its box as a card. Several at once
+// (#3838): Forward to's Select messages… picks more in the chat (lib/message-pick.ts), one block each, in the chat's order;
+// which make one card and their words are lib/forward-group.ts, which only their own chunk loads. What goes out
 // is the user's own message there: a `<persona-context kind="forward">` block (the original and where it came from)
 // before the note typed under it, sent with the chat's usual send (lib/links.ts withContexts). Nothing is written back
 // to the original chat. The picker is views/chat/ForwardDialog.tsx, its lists lib/forward-targets.ts; this file is what
-// the chat itself needs: the block's card words, the picked message as a forward, and the event that opens the picker;
+// the chat itself needs: the block's card words and the event that opens the picker (the picked message as a forward is
+// lib/forward-draft.ts, which only the chunks that forward load);
 // writing the block is lib/forward-block.ts, which only the picker loads. No DOM here.
 import { t } from "../i18n";
 import { isAppLink } from "./compatibility";
-import { clock, tabLabel } from "./format";
-import { agentLabel } from "./mentions";
+import { clock } from "./format";
+import type { MessagePick } from "./message-pick";
 import type { Item, Session } from "./types";
 
 export const FORWARD_KIND = "forward";
@@ -123,49 +126,28 @@ export interface ForwardChat {
   machine?: string;
 }
 
-/** The picked message as a forward (iOS ChatView.forwardDraft): who wrote it and where, its text as this chat holds it
- *  (the transcript's, quotes and all; the whole of it read when it goes, if cut) and your own message's pictures. */
-export function forwardDraftOf(c: ForwardChat, p: ForwardPick): ForwardDraft {
-  const s = c.session;
-  const role: ForwardRole = p.isUser ? "user" : p.from ? "other" : c.assistant ? "persona" : "agent";
-  const author = p.from ?? (role === "persona" ? "Persona" : s ? agentLabel(s) : "Claude");
-  const project = c.assistant || !s ? "" : [s.space_name, tabLabel(s)].filter(Boolean).join(" › ");
-  // a message of yours is its transcript line's text blocks (with the images that came with them); a reply its item
-  const entry = p.itemId.split("#")[0];
-  const texts = p.isUser
-    ? c.items.filter((i) => i.role === "user" && i.kind === "text" && (i.id === p.itemId || i.id.split("#")[0] === entry))
-    : c.items.filter((i) => i.id === p.itemId);
-  const raw = texts.map((i) => i.text ?? "").join("\n") || p.text;
-  const cut = texts.length === 1 && texts[0].full_size ? texts[0].id : undefined;
-  const source: ForwardSource = {
-    mid: c.mid,
-    sid: c.sid,
-    item: p.itemId,
-    role,
-    author,
-    chat: c.title,
-    ...(project ? { project } : {}),
-    ...(!c.assistant && c.machine ? { machine: c.machine } : {}),
-    ...(p.ts ?? texts[0]?.ts ? { time: p.ts ?? texts[0]?.ts } : {}),
-  };
-  return {
-    source,
-    raw,
-    ...(cut ? { cut } : {}),
-    ...(p.isUser && p.images?.length ? { images: p.images } : {}),
-    ...(p.isUser && p.photos?.length ? { photos: p.photos } : {}),
-    ...(s?.cwd ? { cwd: s.cwd } : {}),
-  };
+/** What Forward to opens with: the messages, in the chat's order (one from a message's Forward, or up to 30 picked
+ *  with Select messages…). `select`: the chat can pick more (#3838), so Forward to offers Select messages…, which closes
+ *  it, makes the picks with `first` picked (lib/message-pick.ts, a chunk that comes with Forward to) and hands them to
+ *  `start`; `sent`: called once they went to a target. */
+export interface ForwardBatch {
+  drafts?: ForwardDraft[];
+  /** Or the picks and their chat: Forward to's chunk makes the drafts (lib/forward-draft.ts, kept off the first screen). */
+  from?: { chat: ForwardChat; picks: ForwardPick[] };
+  select?: { first: ForwardPick; start: (pick: MessagePick) => void };
+  /** The message menu's Select messages (#9469): start picking at once, without the picker. */
+  now?: boolean;
+  sent?: () => void;
 }
 
-const openers = new Set<(d: ForwardDraft) => void>();
+const openers = new Set<(b: ForwardBatch) => void>();
 
-/** Opens the picker for `draft` (the app shell's ForwardHost listens). */
-export function openForward(draft: ForwardDraft) {
-  openers.forEach((l) => l(draft));
+/** Opens the picker for `batch` (the app shell's ForwardHost listens). */
+export function openForward(batch: ForwardBatch) {
+  openers.forEach((l) => l(batch));
 }
 
-export function onOpenForward(l: (d: ForwardDraft) => void): () => void {
+export function onOpenForward(l: (b: ForwardBatch) => void): () => void {
   openers.add(l);
   return () => void openers.delete(l);
 }

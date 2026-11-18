@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The GitHub star prompts on the Agents list (#5761, docs/design/DESIGN_SYSTEM.md "GitHub star prompts"). -->
+<resources>
+    <string name="agents_star_on_github">去 GitHub 点 Star</string>
+    <string name="agents_star_hide">隐藏</string>
+    <string name="agents_star_later">以后再说</string>
+    <string name="agents_star_card">喜欢 Persona 吗？它是开源的，在 GitHub 上点个 Star 能帮更多人发现它。</string>
+</resources>

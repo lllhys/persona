@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The GitHub star prompts on the Agents list (#5761, docs/design/DESIGN_SYSTEM.md "GitHub star prompts"). -->
+<resources>
+    <string name="agents_star_on_github">Star on GitHub</string>
+    <string name="agents_star_hide">Hide</string>
+    <string name="agents_star_later">Later</string>
+    <string name="agents_star_card">Enjoying Persona? It\'s open source, and a star on GitHub helps others find it.</string>
+</resources>

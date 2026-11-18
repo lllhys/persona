@@ -196,6 +196,7 @@ class NewAgentRecentTest {
             // A tab in an existing space is kept too, with the space's folder (as on iOS, the Mac and the web).
             model.startIn(AgentSpacePreset("first", "w1", "/code/space", "space"))
             advanceUntilIdle()
+            model.prompt("Review the space")
             model.submit()
             advanceUntilIdle()
             val space = store.recents.first()

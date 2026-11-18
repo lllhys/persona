@@ -10,5 +10,5 @@
   "retry": "重试",
   "tooMany": "文件太多，只列出了前 2000 个",
   "gitIgnored": "{path}（Git 已忽略）",
-  "copyPath": "拷贝路径"
+  "copyPath": "复制路径"
 }

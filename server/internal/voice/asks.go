@@ -445,10 +445,12 @@ func (k *asker) quiet() {
 
 // reask asks the question asked again, to a new upstream session (the last one heard it). Not when it was told to this
 // one already: what asks it waited in the queue for it (a card that woke a paused upstream, suspend.go), and the
-// tracker came to this after.
+// tracker came to this after. Nor when it waits in the queue to be asked again already: a session before this one
+// came up and went before it was said to it (it came up on hold, #9290, or dropped at once), and that one is said
+// to this session.
 func (k *asker) reask() {
-	if k.cur == nil || !k.t.c.toldBefore(k.cur.ix.ID) {
-		return // not told yet (what asks it is still queued), or told to this session
+	if k.cur == nil || !k.t.c.toldBefore(k.cur.ix.ID) || k.t.c.asksQueued(k.cur.ix.ID) {
+		return // not told yet (what asks it is still queued), told to this session, or about to be
 	}
 	k.say(k.question(false), k.cur.ix.ID, true)
 }
@@ -629,6 +631,13 @@ func (c *conversation) toldBefore(card string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return card != "" && c.askingCardLocked() == card && c.askGen != c.gen
+}
+
+// asksQueued: what asks card waits in the queue to be said.
+func (c *conversation) asksQueued(card string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.ContainsFunc(c.queue, func(s *sentWords) bool { return s.card == card && s.delegation == "" })
 }
 
 func (c *conversation) askingCardLocked() string {

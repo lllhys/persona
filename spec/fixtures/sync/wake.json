@@ -2,18 +2,19 @@
   "version": 1,
   "cases": [
     {
-      "name": "wake_reply_latest_is_answer",
-      "description": "After a background task wakes the agent, its newest words are the turn's answer even when they are shorter than an earlier reply, while streaming and after the line lands.",
+      "name": "wake_reply_follows_the_answer_before_it",
+      "description": "A background task wakes the agent after its turn ended: the words that ended that turn stay on screen while the woken turn streams and after its line lands, and the woken turn's reply follows as the answer of its own turn.",
       "source": {
-        "rule": "After a wake, the latest run's words are the answer (chosen 2026-11-06)",
+        "rule": "A wake starts a turn of its own: the turn before it keeps its answer (#9140; until then the woken reply took its place, chosen 2026-11-06)",
         "issues": [
           "#636",
-          "#638"
+          "#638",
+          "#9140"
         ],
         "code": {
           "web": "web/src/lib/turns.ts buildBlocks",
-          "ios": "Turn.pickAnswerAcrossWakes",
-          "android": "RawTurn.finish"
+          "ios": "ChatBlock.build",
+          "android": "buildBlocks"
         }
       },
       "chat": {
@@ -309,6 +310,10 @@
                   "from": "user",
                   "text": "Will it rain this weekend?",
                   "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "The forecast check is running in the background; I will look at Saturday's and Sunday's hourly rain chances and the wind at the trailhead, and tell you whether to swap the days."
                 }
               ]
             }
@@ -399,6 +404,10 @@
                 },
                 {
                   "from": "agent",
+                  "text": "The forecast check is running in the background; I will look at Saturday's and Sunday's hourly rain chances and the wind at the trailhead, and tell you whether to swap the days."
+                },
+                {
+                  "from": "agent",
                   "text": "No rain; keep the plan."
                 }
               ]
@@ -425,7 +434,701 @@
             },
             {
               "from": "agent",
+              "text": "The forecast check is running in the background; I will look at Saturday's and Sunday's hourly rain chances and the wind at the trailhead, and tell you whether to swap the days."
+            },
+            {
+              "from": "agent",
               "text": "No rain; keep the plan."
+            }
+          ],
+          "cards": {},
+          "live": null
+        }
+      }
+    },
+    {
+      "name": "answer_stays_when_a_background_task_reports_after_it",
+      "description": "A background check for one question is still running when the user asks another, which is answered in full. The check's notifications then wake the agent three times: the answer to the second question stays on screen, and each woken turn's last words are an answer of their own after it.",
+      "source": {
+        "rule": "A turn a background-task notification starts is its own turn: it never folds the answer that ended the turn before it into its work",
+        "issues": [
+          "#9140"
+        ],
+        "code": {
+          "web": "web/src/lib/turns.ts buildBlocks",
+          "ios": "ChatBlock.build",
+          "android": "buildBlocks"
+        }
+      },
+      "chat": {
+        "machine_id": "m1",
+        "session_id": "s1",
+        "assistant": true
+      },
+      "devices": [
+        "a"
+      ],
+      "start": {
+        "hub": {
+          "history": "h1",
+          "lines": [
+            {
+              "id": "l1#0",
+              "seq": 1,
+              "ts": "2026-01-02T03:04:05Z",
+              "role": "user",
+              "kind": "text",
+              "text": "Check which trains run on Saturday."
+            },
+            {
+              "id": "l2#0",
+              "seq": 2,
+              "ts": "2026-01-02T03:04:05Z",
+              "role": "assistant",
+              "kind": "tool_use",
+              "tool_use_id": "call2",
+              "tool_name": "Bash",
+              "tool_input": {
+                "command": "ls"
+              }
+            },
+            {
+              "id": "l3#0",
+              "seq": 3,
+              "ts": "2026-01-02T03:04:05Z",
+              "role": "assistant",
+              "kind": "text",
+              "text": "The timetable check is running in the background."
+            }
+          ],
+          "to_seq": 5,
+          "interactions": [],
+          "session": {
+            "state": "idle"
+          },
+          "event_stream": "ev1",
+          "event_seq": 10
+        }
+      },
+      "steps": [
+        {
+          "hub": {
+            "append": [
+              {
+                "id": "l6#0",
+                "seq": 6,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "user",
+                "kind": "text",
+                "text": "What should I pack for two days?"
+              },
+              {
+                "id": "l7#0",
+                "seq": 7,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "assistant",
+                "kind": "text",
+                "text": "Pack a rain jacket, two shirts and walking shoes."
+              }
+            ],
+            "to_seq": 8,
+            "session": {
+              "state": "idle"
+            }
+          }
+        },
+        {
+          "frames": {
+            "a": [
+              {
+                "type": "items",
+                "machine_id": "m1",
+                "session_id": "s1",
+                "history": "h1",
+                "items": [
+                  {
+                    "id": "l6#0",
+                    "seq": 6,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "user",
+                    "kind": "text",
+                    "text": "What should I pack for two days?"
+                  },
+                  {
+                    "id": "l7#0",
+                    "seq": 7,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "assistant",
+                    "kind": "text",
+                    "text": "Pack a rain jacket, two shirts and walking shoes."
+                  }
+                ],
+                "to_seq": 8,
+                "from_seq": 5
+              },
+              {
+                "type": "sessions_delta",
+                "machine_id": "m1",
+                "upsert": [
+                  {
+                    "machine_id": "m1",
+                    "session_id": "s1",
+                    "title": "Weekend trains",
+                    "cwd": "/home/user/project",
+                    "status": "idle",
+                    "assistant": true,
+                    "state": "idle",
+                    "updated_at": "2026-01-02T03:04:05Z",
+                    "rev": 100
+                  }
+                ],
+                "remove": []
+              }
+            ]
+          },
+          "expect": {
+            "a": {
+              "messages": [
+                {
+                  "from": "user",
+                  "text": "Check which trains run on Saturday.",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "The timetable check is running in the background."
+                },
+                {
+                  "from": "user",
+                  "text": "What should I pack for two days?",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "Pack a rain jacket, two shirts and walking shoes."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "wait": 180000
+        },
+        {
+          "hub": {
+            "append": [
+              {
+                "id": "l9#0",
+                "seq": 9,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "system",
+                "kind": "notice",
+                "text": "Timetable check",
+                "wake": true,
+                "task": {
+                  "kind": "shell",
+                  "status": "completed",
+                  "title": "Timetable check"
+                }
+              },
+              {
+                "id": "l10#0",
+                "seq": 10,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "assistant",
+                "kind": "tool_use",
+                "tool_use_id": "call10",
+                "tool_name": "Bash",
+                "tool_input": {
+                  "command": "ls"
+                }
+              }
+            ],
+            "to_seq": 11,
+            "session": {
+              "state": "working"
+            }
+          }
+        },
+        {
+          "frames": {
+            "a": [
+              {
+                "type": "items",
+                "machine_id": "m1",
+                "session_id": "s1",
+                "history": "h1",
+                "items": [
+                  {
+                    "id": "l9#0",
+                    "seq": 9,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "system",
+                    "kind": "notice",
+                    "text": "Timetable check",
+                    "wake": true,
+                    "task": {
+                      "kind": "shell",
+                      "status": "completed",
+                      "title": "Timetable check"
+                    }
+                  },
+                  {
+                    "id": "l10#0",
+                    "seq": 10,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "assistant",
+                    "kind": "tool_use",
+                    "tool_use_id": "call10",
+                    "tool_name": "Bash",
+                    "tool_input": {
+                      "command": "ls"
+                    }
+                  }
+                ],
+                "to_seq": 11,
+                "from_seq": 8
+              },
+              {
+                "type": "sessions_delta",
+                "machine_id": "m1",
+                "upsert": [
+                  {
+                    "machine_id": "m1",
+                    "session_id": "s1",
+                    "title": "Weekend trains",
+                    "cwd": "/home/user/project",
+                    "status": "working",
+                    "assistant": true,
+                    "state": "working",
+                    "updated_at": "2026-01-02T03:04:05Z",
+                    "rev": 100
+                  }
+                ],
+                "remove": []
+              }
+            ]
+          },
+          "expect": {
+            "a": {
+              "messages": [
+                {
+                  "from": "user",
+                  "text": "Check which trains run on Saturday.",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "The timetable check is running in the background."
+                },
+                {
+                  "from": "user",
+                  "text": "What should I pack for two days?",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "Pack a rain jacket, two shirts and walking shoes."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "hub": {
+            "append": [
+              {
+                "id": "l12#0",
+                "seq": 12,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "assistant",
+                "kind": "text",
+                "text": "First result: the 08:10 runs on Saturday."
+              }
+            ],
+            "to_seq": 13,
+            "session": {
+              "state": "idle"
+            }
+          }
+        },
+        {
+          "frames": {
+            "a": [
+              {
+                "type": "items",
+                "machine_id": "m1",
+                "session_id": "s1",
+                "history": "h1",
+                "items": [
+                  {
+                    "id": "l12#0",
+                    "seq": 12,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "assistant",
+                    "kind": "text",
+                    "text": "First result: the 08:10 runs on Saturday."
+                  }
+                ],
+                "to_seq": 13,
+                "from_seq": 11
+              },
+              {
+                "type": "sessions_delta",
+                "machine_id": "m1",
+                "upsert": [
+                  {
+                    "machine_id": "m1",
+                    "session_id": "s1",
+                    "title": "Weekend trains",
+                    "cwd": "/home/user/project",
+                    "status": "idle",
+                    "assistant": true,
+                    "state": "idle",
+                    "updated_at": "2026-01-02T03:04:05Z",
+                    "rev": 100
+                  }
+                ],
+                "remove": []
+              }
+            ]
+          },
+          "expect": {
+            "a": {
+              "messages": [
+                {
+                  "from": "user",
+                  "text": "Check which trains run on Saturday.",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "The timetable check is running in the background."
+                },
+                {
+                  "from": "user",
+                  "text": "What should I pack for two days?",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "Pack a rain jacket, two shirts and walking shoes."
+                },
+                {
+                  "from": "agent",
+                  "text": "First result: the 08:10 runs on Saturday."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "wait": 300000
+        },
+        {
+          "hub": {
+            "append": [
+              {
+                "id": "l14#0",
+                "seq": 14,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "system",
+                "kind": "notice",
+                "text": "Timetable check",
+                "wake": true,
+                "task": {
+                  "kind": "shell",
+                  "status": "completed",
+                  "title": "Timetable check"
+                }
+              },
+              {
+                "id": "l15#0",
+                "seq": 15,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "assistant",
+                "kind": "text",
+                "text": "Second result: the 10:40 runs too."
+              }
+            ],
+            "to_seq": 16,
+            "session": {
+              "state": "idle"
+            }
+          }
+        },
+        {
+          "frames": {
+            "a": [
+              {
+                "type": "items",
+                "machine_id": "m1",
+                "session_id": "s1",
+                "history": "h1",
+                "items": [
+                  {
+                    "id": "l14#0",
+                    "seq": 14,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "system",
+                    "kind": "notice",
+                    "text": "Timetable check",
+                    "wake": true,
+                    "task": {
+                      "kind": "shell",
+                      "status": "completed",
+                      "title": "Timetable check"
+                    }
+                  },
+                  {
+                    "id": "l15#0",
+                    "seq": 15,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "assistant",
+                    "kind": "text",
+                    "text": "Second result: the 10:40 runs too."
+                  }
+                ],
+                "to_seq": 16,
+                "from_seq": 13
+              },
+              {
+                "type": "sessions_delta",
+                "machine_id": "m1",
+                "upsert": [
+                  {
+                    "machine_id": "m1",
+                    "session_id": "s1",
+                    "title": "Weekend trains",
+                    "cwd": "/home/user/project",
+                    "status": "idle",
+                    "assistant": true,
+                    "state": "idle",
+                    "updated_at": "2026-01-02T03:04:05Z",
+                    "rev": 100
+                  }
+                ],
+                "remove": []
+              }
+            ]
+          },
+          "expect": {
+            "a": {
+              "messages": [
+                {
+                  "from": "user",
+                  "text": "Check which trains run on Saturday.",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "The timetable check is running in the background."
+                },
+                {
+                  "from": "user",
+                  "text": "What should I pack for two days?",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "Pack a rain jacket, two shirts and walking shoes."
+                },
+                {
+                  "from": "agent",
+                  "text": "First result: the 08:10 runs on Saturday."
+                },
+                {
+                  "from": "agent",
+                  "text": "Second result: the 10:40 runs too."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "wait": 540000
+        },
+        {
+          "hub": {
+            "append": [
+              {
+                "id": "l17#0",
+                "seq": 17,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "system",
+                "kind": "notice",
+                "text": "Timetable check",
+                "wake": true,
+                "task": {
+                  "kind": "shell",
+                  "status": "completed",
+                  "title": "Timetable check"
+                }
+              },
+              {
+                "id": "l18#0",
+                "seq": 18,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "assistant",
+                "kind": "tool_use",
+                "tool_use_id": "call18",
+                "tool_name": "Bash",
+                "tool_input": {
+                  "command": "ls"
+                }
+              },
+              {
+                "id": "l19#0",
+                "seq": 19,
+                "ts": "2026-01-02T03:04:05Z",
+                "role": "assistant",
+                "kind": "text",
+                "text": "All done: three trains run on Saturday."
+              }
+            ],
+            "to_seq": 20,
+            "session": {
+              "state": "idle"
+            }
+          }
+        },
+        {
+          "frames": {
+            "a": [
+              {
+                "type": "items",
+                "machine_id": "m1",
+                "session_id": "s1",
+                "history": "h1",
+                "items": [
+                  {
+                    "id": "l17#0",
+                    "seq": 17,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "system",
+                    "kind": "notice",
+                    "text": "Timetable check",
+                    "wake": true,
+                    "task": {
+                      "kind": "shell",
+                      "status": "completed",
+                      "title": "Timetable check"
+                    }
+                  },
+                  {
+                    "id": "l18#0",
+                    "seq": 18,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "assistant",
+                    "kind": "tool_use",
+                    "tool_use_id": "call18",
+                    "tool_name": "Bash",
+                    "tool_input": {
+                      "command": "ls"
+                    }
+                  },
+                  {
+                    "id": "l19#0",
+                    "seq": 19,
+                    "ts": "2026-01-02T03:04:05Z",
+                    "role": "assistant",
+                    "kind": "text",
+                    "text": "All done: three trains run on Saturday."
+                  }
+                ],
+                "to_seq": 20,
+                "from_seq": 16
+              },
+              {
+                "type": "sessions_delta",
+                "machine_id": "m1",
+                "upsert": [
+                  {
+                    "machine_id": "m1",
+                    "session_id": "s1",
+                    "title": "Weekend trains",
+                    "cwd": "/home/user/project",
+                    "status": "idle",
+                    "assistant": true,
+                    "state": "idle",
+                    "updated_at": "2026-01-02T03:04:05Z",
+                    "rev": 100
+                  }
+                ],
+                "remove": []
+              }
+            ]
+          },
+          "expect": {
+            "a": {
+              "messages": [
+                {
+                  "from": "user",
+                  "text": "Check which trains run on Saturday.",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "The timetable check is running in the background."
+                },
+                {
+                  "from": "user",
+                  "text": "What should I pack for two days?",
+                  "state": "shown"
+                },
+                {
+                  "from": "agent",
+                  "text": "Pack a rain jacket, two shirts and walking shoes."
+                },
+                {
+                  "from": "agent",
+                  "text": "First result: the 08:10 runs on Saturday."
+                },
+                {
+                  "from": "agent",
+                  "text": "Second result: the 10:40 runs too."
+                },
+                {
+                  "from": "agent",
+                  "text": "All done: three trains run on Saturday."
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "end": {
+        "a": {
+          "messages": [
+            {
+              "from": "user",
+              "text": "Check which trains run on Saturday.",
+              "state": "shown"
+            },
+            {
+              "from": "agent",
+              "text": "The timetable check is running in the background."
+            },
+            {
+              "from": "user",
+              "text": "What should I pack for two days?",
+              "state": "shown"
+            },
+            {
+              "from": "agent",
+              "text": "Pack a rain jacket, two shirts and walking shoes."
+            },
+            {
+              "from": "agent",
+              "text": "First result: the 08:10 runs on Saturday."
+            },
+            {
+              "from": "agent",
+              "text": "Second result: the 10:40 runs too."
+            },
+            {
+              "from": "agent",
+              "text": "All done: three trains run on Saturday."
             }
           ],
           "cards": {},

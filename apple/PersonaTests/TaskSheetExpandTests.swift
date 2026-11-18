@@ -106,3 +106,16 @@ struct TaskSheetExpandTests {
         #expect(tasks.fullAgent == nil)
     }
 }
+
+/// The task sheet's edge swipe (#5603): only a mostly horizontal, long enough swipe from the leading edge closes it.
+struct TaskSheetEdgeSwipeTests {
+    @Test func rightSwipeFromTheEdgeCloses() {
+        #expect(TaskDetailSheet.edgeSwipeCloses(start: CGPoint(x: 5, y: 300), translation: CGSize(width: 120, height: 10)))
+    }
+    @Test func otherDragsDoNot() {
+        #expect(!TaskDetailSheet.edgeSwipeCloses(start: CGPoint(x: 100, y: 300), translation: CGSize(width: 200, height: 0)))
+        #expect(!TaskDetailSheet.edgeSwipeCloses(start: CGPoint(x: 5, y: 300), translation: CGSize(width: 30, height: 0)))
+        #expect(!TaskDetailSheet.edgeSwipeCloses(start: CGPoint(x: 5, y: 300), translation: CGSize(width: 120, height: 200)))
+        #expect(!TaskDetailSheet.edgeSwipeCloses(start: CGPoint(x: 5, y: 300), translation: CGSize(width: -120, height: 0)))
+    }
+}

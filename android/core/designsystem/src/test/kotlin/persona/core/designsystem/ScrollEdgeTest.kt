@@ -162,6 +162,43 @@ class ScrollEdgeTest {
         assertEquals(android.graphics.Color.BLUE, bitmap.getPixel(10, 122))
     }
 
+    /**
+     * The blurred top edge reaches 28 dp below the bar, over whatever a page keeps still there (the to-dos view toggles,
+     * #6159). A page that says nothing is under the bar leaves that band clear, and gets the edge back once content
+     * scrolls under it; a page that says nothing keeps it.
+     */
+    @Test fun blurredTopEdgeDropsWhileNothingIsUnderTheBar() {
+        val underTop = mutableStateOf<Boolean?>(false)
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true, style = AppStyle.Glass) {
+                CompositionLocalProvider(LocalChromeInsets provides ChromeInsets(handlesNavigationBar = true)) {
+                    Box(Modifier.size(120.dp, 320.dp).testTag("page")) {
+                        val under = underTop.value
+                        JPage("todos",
+                            topBar = { Spacer(Modifier.fillMaxWidth().height(80.dp)) },
+                            underTop = remember(under == null) { if (under == null) null else { { underTop.value == true } } },
+                        ) { Box(Modifier.fillMaxSize().background(Content)) }
+                    }
+                }
+            }
+        }
+
+        // y = 40 under the bar, 82 just below it, 100 well inside the 28 dp the blurred edge reaches past the bar
+        val samples = listOf(40, 82, 100)
+        fun pixels() = rule.onNodeWithTag("page").captureToImage().asAndroidBitmap().let { b -> samples.map { b.getPixel(10, it) } }
+
+        assertEquals(samples.map { android.graphics.Color.BLUE }, pixels())
+
+        rule.runOnIdle { underTop.value = true }
+        rule.waitForIdle()
+        val scrolled = pixels()
+        samples.zip(scrolled).forEach { (y, pixel) -> assertTrue("y=$y is washed once content is under the bar", android.graphics.Color.red(pixel) > 0) }
+
+        rule.runOnIdle { underTop.value = null }
+        rule.waitForIdle()
+        assertEquals("the default keeps the edge on", scrolled, pixels())
+    }
+
     private companion object {
         val Content = Color.Blue
     }

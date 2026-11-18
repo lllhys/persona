@@ -86,7 +86,7 @@ struct DesktopPresenceSheet: View {
             .navigationTitle(model.desktops.contains(where: \.isLink) ? String(localized: "Computers in Use") : String(localized: "Signed-In Macs"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1) }
+                SheetClose { dismiss() }
             }
             .confirmationDialog(signingOut.map { String(localized: "Sign out Persona on “\($0.name)”?") } ?? "",
                                 isPresented: Binding(get: { signingOut != nil }, set: { if !$0 { signingOut = nil } }),

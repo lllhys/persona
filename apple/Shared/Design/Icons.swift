@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 extension Theme {
     /// SF Symbols by meaning: one meaning, one symbol. Views write `Image(systemName: Theme.Icon.copy)`, not the name.
@@ -19,6 +20,8 @@ extension Theme {
         static let success = "checkmark.circle"
         static let successFilled = "checkmark.circle.fill"
         static let done = "checkmark"
+        /// Got It on a Just finished to-do: seen, filed under Done (#5707). Not `done`, which beside it closes one.
+        static let seen = success
         /// Every open item in view set aside at once (Inbox › Clear All).
         static let cleanUpAll = "rectangle.stack.badge.minus"
         static let info = "info.circle"
@@ -50,6 +53,10 @@ extension Theme {
         /// Some of a group picked (the inbox's Select, #2059).
         static let partlyChecked = "minus.circle.fill"
         static let uncheckedBox = "square"
+        /// A box ticked: a file marked viewed in a code review (`TickBoxToggleStyle`), a done to-do in a document.
+        static let checkedBox = "checkmark.square.fill"
+        /// A box part of which is ticked: a file partly staged in a session's Git tab (`TickBox`, #7013).
+        static let partlyCheckedBox = "minus.square.fill"
         static let todo = "checklist"
         /// Recent, or waiting to come back (reconnecting, last used).
         static let recent = "clock.arrow.circlepath"
@@ -104,6 +111,9 @@ extension Theme {
         static let permissions = "lock.shield"
         /// The two little arrows after a value that opens a menu of choices.
         static let choices = "chevron.up.chevron.down"
+        /// The small chevron after an action's words that opens a menu of how far it goes (a pull-down, as UIKit draws
+        /// one): a group title's Mark All Seen in the Inbox (#10422). A value's menu of choices is `choices`.
+        static let pullDown = expand
         static let effort = "gauge.with.dots.needle.50percent"
         /// The effort level left to the model (its own default, Thinking Effort › Auto).
         static let effortAuto = "gauge.with.dots.needle.bottom.50percent"
@@ -175,6 +185,8 @@ extension Theme {
         static let gitPull = "arrow.down.to.line.compact"
         static let gitPush = "arrow.up.to.line.compact"
         static let gitFetch = "icloud.and.arrow.down"
+        /// Stashes in a session's Git tab (#7015): uncommitted changes put away for later.
+        static let gitStash = "cabinet"
         /// Split a terminal pane to the right / below (the node menu's Split Pane).
         static let splitRight = "rectangle.split.2x1"
         static let splitDown = "rectangle.split.1x2"
@@ -190,8 +202,12 @@ extension Theme {
         static let undo = "arrow.uturn.backward"
         static let redo = "arrow.uturn.forward"
         static let interrupt = "stop.fill"
+        /// The dictation bar's stop: the words go into the draft, nothing is sent (`DictationBar`).
+        static let stopDictating = interrupt
         static let stopLoop = "stop.circle"
         static let run = "play.fill"
+        /// Resume a stopped Agent in a terminal on its computer (#5521): the web's Resume shows the same play mark.
+        static let resume = run
         static let add = "plus"
         static let send = "arrow.up"
         /// Move up, the up-arrow key: the same arrow as `send`.
@@ -210,7 +226,8 @@ extension Theme {
         static let avatar = "person.crop.artframe"
         /// Settings › Appearance › Avatar › New from Photo: make an avatar from an image of your own (#2405).
         static let newAvatar = "photo.badge.plus"
-        /// Zoom in and out of a picture with a slider beside it (the avatar crop on the Mac).
+        /// Zoom in and out of a picture: with a slider beside it (the avatar crop on the Mac), and VNC's ⋯ › Zoom In and
+        /// Zoom to Fit (#6196).
         static let zoomIn = "plus.magnifyingglass"
         static let zoomOut = "minus.magnifyingglass"
         /// Settings › Appearance › Interface Style.
@@ -246,6 +263,8 @@ extension Theme {
         /// The queued messages given to the agent now, ahead of its next tool boundary (#6088).
         static let sendNow = "forward.end.fill"
         static let select = "selection.pin.in.out"
+        /// Select Messages… (#3838): pick several messages in a chat to forward together.
+        static let pickMessages = success
         static let insert = "text.cursor"
         static let view = "eye"
         /// Hide from a list (it stays where it is, out of sight).
@@ -256,6 +275,8 @@ extension Theme {
         /// A list filter menu: off, and on (something filtered).
         static let filter = "line.3.horizontal.decrease.circle"
         static let filterActive = "line.3.horizontal.decrease.circle.fill"
+        /// Grouping at the fixed end of the Agents filter capsule, without a second circle.
+        static let capsuleGrouping = "line.3.horizontal.decrease"
         /// A plain list layout.
         static let listView = "list.bullet"
         /// A calendar layout (the to-dos' Calendar, beside `listView`, #2029).
@@ -293,6 +314,8 @@ extension Theme {
         static let keyboard = "keyboard"
         /// Puts the keyboard away (the chat's composer, beside the mode chips).
         static let dismissKeyboard = "keyboard.chevron.compact.down"
+        /// Indent: the text editor's key that inserts the file's indentation (#5829).
+        static let indent = "increase.indent"
 
         // MARK: Voice conversation (CarPlay)
 
@@ -319,9 +342,10 @@ extension Theme {
         static let forward = "chevron.forward"
         static let expand = "chevron.down"
         static let collapse = "chevron.up"
-        /// Holding the mic: slide this way to drop what was heard, or up to keep dictating hands-free (`DictationHold`).
+        /// All of the lines hidden between a diff's hunks shown at once (UI version 5's `context`, #827): arrows out of a line.
+        static let unfoldLines = "arrow.up.and.line.horizontal.and.arrow.down"
+        /// Holding the mic: slide this way to drop what was heard (`DictationHold`).
         static let slideToCancel = back
-        static let slideToLock = collapse
         /// Clears an agent's context (/clear), in the 「+」 menu and panel.
         static let clearContext = "eraser"
 
@@ -341,6 +365,9 @@ extension Theme {
         static let ai = "sparkles"
         /// The composer's glow while a reply is generating (Settings › Appearance › Glow While Replying).
         static let composerGlow = "wand.and.rays"
+        /// A chat's screenshot with the assistant's banner at its top (Settings › Appearance › Persona Banner in
+        /// Screenshots, #9508).
+        static let screenshotBanner = "menubar.rectangle"
         /// The Agents tab and what stands for it.
         static let agents = "chevron.left.forwardslash.chevron.right"
         /// An agent run from its command line, not its desktop app: the badge on its mark (`AgentMark`, #6390).
@@ -377,16 +404,22 @@ extension Theme {
         /// A Moments (Feishu Moments) post in the inbox: the company's public feed.
         static let moments = "newspaper"
         static let folder = "folder"
-        /// Home: Back to Main Chat (the main conversation), and a repository's main checkout in the Agents list's By Repository (as Orca
-        /// and the web mark it).
+        /// Home: Back to Main Chat (the main conversation), a repository's main checkout in the Agents list's By Repository (as Orca
+        /// and the web mark it), and the computer's home folder in the file page's path bar.
         static let home = "house"
         /// Home accessories and scenes (HomeKit, #2285).
         static let homeAccessories = home
         static let folderFilled = "folder.fill"
-        /// Up one folder (the new chat's directory browser, Parent Folder).
+        /// Up one folder (the new chat's directory browser, Parent Folder; the file page's Up).
         static let parentFolder = "arrow.turn.left.up"
+        /// A symlink in the file page: the badge on its icon (#5827).
+        static let symlink = "arrow.turn.up.right"
+        /// Between two folders in the file page's path bar.
+        static let pathSeparator = "chevron.compact.right"
         /// A folder that is a git repository (the new chat's directory browser).
         static let gitRepository = "folder.badge.gearshape"
+        /// A temporary session: one in Claude's desktop app's scratch folder (New Agent, #5480).
+        static let temporarySession = "tray"
         static let photo = "photo"
         static let photos = "photo.on.rectangle"
         static let camera = "camera"
@@ -408,6 +441,10 @@ extension Theme {
         static let screen = "display"
         /// Which of a Mac's displays its VNC shows, when it has more than one (#80).
         static let displays = "display.2"
+        /// Phone Screen (#9314): one of the Mac's windows on a portrait display of its own, the live screen's third mode.
+        static let phoneScreen = "rectangle.portrait"
+        /// The Mac's windows to put on Phone Screen's display (#9314).
+        static let macWindows = "macwindow.on.rectangle"
         /// The Mac's pointer drawn over its screen in the app's VNC (#1343), when the Mac sends none of its own.
         static let pointer = "cursorarrow"
         /// VNC in a small window over everything (picture in picture).
@@ -419,6 +456,10 @@ extension Theme {
         static let trackpad = "rectangle.and.hand.point.up.left"
         /// Center Pointer: the pointer back to the middle.
         static let pointerCenter = "scope"
+        /// The live screen's rotate button on an iPhone (#6196): the page on its side, and back upright. Each shows where
+        /// the tap turns it.
+        static let rotateToLandscape = "rectangle.landscape.rotate"
+        static let rotateToPortrait = "rectangle.portrait.rotate"
         /// The Mac's clipboard and the phone's, both ways.
         static let clipboard = "clipboard"
         /// Send Clipboard: the phone's clipboard to a computer (#3064).
@@ -485,6 +526,42 @@ extension Theme {
         static let pluginCalendar = calendarView
         static let pluginMoney = "creditcard"
         static let pluginStar = "star"
+        /// UI version 6's icons for homes and markets (docs/extensions/extensions.md "UI version 6", #827), one meaning
+        /// each. Meanings the app already has (home, lock, camera, play…) draw the app's own (`ExtensionUIStyle.icon`).
+        /// Unlock and bolt are not `lock.open` and `bolt`: the app draws those for other things (a session's permissions,
+        /// the terminal's quick commands).
+        static let pluginSofa = "sofa"
+        static let pluginLight = "lightbulb"
+        static let pluginPower = "power"
+        static let pluginFan = "fan"
+        static let pluginThermometer = "thermometer.medium"
+        static let pluginDroplet = "drop"
+        static let pluginUnlock = "lock.open.fill"
+        static let pluginDoor = "door.left.hand.closed"
+        static let pluginWindow = "window.vertical.closed"
+        static let pluginTV = "tv"
+        static let pluginPlug = "poweroutlet.type.b"
+        static let pluginBattery = "battery.75percent"
+        static let pluginBolt = "bolt.circle"
+        static let pluginCloud = "cloud.fill"
+        static let pluginRain = "cloud.rain"
+        static let pluginSnow = "snowflake"
+        static let pluginWind = "wind"
+        static let pluginLeaf = "leaf"
+        static let pluginCar = "car"
+        static let pluginRobot = "robotic.vacuum"
+        static let pluginWifi = "wifi"
+        static let pluginTrendUp = "chart.line.uptrend.xyaxis.circle"
+        static let pluginTrendDown = "chart.line.downtrend.xyaxis.circle"
+        static let pluginWallet = "wallet.bifold"
+        static let pluginBank = "building.columns"
+        static let pluginMinus = notChecked
+        /// A commit (UI version 4's code hosting).
+        static let pluginCommit = "circle.and.line.horizontal"
+        /// A picture that could not be loaded (an extension's `image`, its alt text beside it).
+        static let brokenImage = "photo.badge.exclamationmark"
+        /// Asking for a GitHub star for Persona (#5761): the empty Agents pill, the milestone card, the onboarding toast.
+        static let gitHubStar = pluginStar
         static let phone = "iphone"
         /// The assistant operating an iPhone through a Mac (the extension iphone): its section, its tools.
         static let phoneControl = "iphone.radiowaves.left.and.right"
@@ -528,8 +605,10 @@ extension Theme {
         static let chatBot = "message.badge.waveform"
         /// Settings › Channels: the ways of talking to Persona (docs/extensions/channels.md).
         static let channels = "ellipsis.bubble"
-        /// A voice channel (talking to Persona out loud), and a chat's way into a voice conversation (Voice Chat).
-        static let voiceChannel = "waveform.and.mic"
+        /// A voice channel (talking to Persona out loud), and a chat's way into a voice conversation (Voice Chat): a
+        /// handset, since it is a call with Persona and sits beside dictation's microphone (#8730). Filled, apart from
+        /// `phoneCall` (the phone's own calls).
+        static let voiceChannel = "phone.fill"
         /// The voice conversation's bar (docs/assistant/voice.md「UI」). Mute: turns the call's microphone off; muted, the button
         /// shows `voiceUnmute` (Unmute), the same mic filled like a toggle that is on, as the iOS Phone app's Mute. The muted
         /// orb wears `voiceMute`.
@@ -541,6 +620,20 @@ extension Theme {
         static let voiceCaptions = "captions.bubble"
         /// Voice: the voice Persona speaks in.
         static let voiceTimbre = "person.wave.2"
+        /// Call Persona (#9290): a phone call to Persona through the system's call UI, from the main conversation's +.
+        /// An outgoing handset, apart from Voice Chat's `voiceChannel` beside it (the chat's own voice, in the app).
+        static let callPersona = "phone.arrow.up.right"
+        /// The call screen's Speaker: the call's sound on the loudspeaker, a toggle (its round control fills when on), the
+        /// Phone app's glyph for it. Not `voiceSpeaking` (Persona speaking) nor `answersAloud` (the meeting room's answers
+        /// said out loud).
+        static let callSpeaker = "speaker.wave.3"
+        /// The call screen's Audio: picks where the call's sound goes (the system's route picker) when Bluetooth, a car
+        /// or headphones are there; the system's own glyph for it.
+        static let callAudioRoute = "airplay.audio"
+        /// The call screen's Minimize: down to the bar that returns to the call (the call goes on).
+        static let callMinimise = expand
+        /// The voice bar's way back to a system call's full screen (the call screen).
+        static let callExpand = enlarge
         /// Pairing a device or a bot with a one-time code.
         static let pairing = "link.badge.plus"
         /// Settings › Connectors: the data sources Persona reads and acts in (this device, mail, Lark).
@@ -568,6 +661,14 @@ extension Theme {
         static let addedReminder = "checklist.checked"
         /// Kinds of tasks that start without asking first (Start These Directly).
         static let taskTrust = "bolt.shield"
+        /// A go-ahead the owner gave for future tasks on one computer and folder (Standing Authorizations, #7002).
+        static let standingAuthorization = "shield.lefthalf.filled.badge.checkmark"
+        /// Taking such a go-ahead back (Revoke).
+        static let revoke = "xmark.shield"
+        /// An idle Agent Persona started is stopped after a while, its terminal kept (Agent Follow-Up, #7005).
+        static let stopIdle = "powersleep"
+        /// Persona fixes unhelpful session names (Agent Follow-Up, #7005).
+        static let autoName = "character.textbox"
         /// A plan the assistant handed the user (the plan card).
         static let taskPlan = "list.clipboard"
         /// Saying something straight to a task (Message, and Message “xx”).
@@ -576,6 +677,11 @@ extension Theme {
         static let forwardMessage = routeToTask
         /// A pull request a task opened.
         static let pullRequest = "arrow.triangle.pull"
+        /// An agent's closeout (#3612): the record it ends a turn with, and the switch that asks for one.
+        static let closeout = "list.bullet.rectangle.portrait"
+        /// What a closeout names besides a pull request, a branch, a document or a link (#3612): a commit, a build.
+        static let commit = "dot.circle"
+        static let build = "hammer"
         /// GitHub's thread page: a merged pull request, an open issue, a review asking for changes, a check skipped
         /// or cancelled, a label.
         static let merged = "arrow.triangle.merge"
@@ -611,6 +717,10 @@ extension Theme {
         static let search = "magnifyingglass"
         /// The knowledge base (~/.persona/data).
         static let knowledge = "books.vertical"
+        /// A knowledge-base topic (#7251): what Persona learned on one subject.
+        static let topic = "lightbulb.2"
+        /// The knowledge map (#7251): topics and projects as one outline.
+        static let knowledgeMap = "map"
         /// Health: the health space (docs/assistant/health.md), its entry and its conversations' mark.
         static let health = "heart"
         static let healthFilled = "heart.fill"
@@ -631,6 +741,10 @@ extension Theme {
         /// A file edited in place (the Edit tools; Auto-Edit mode).
         static let editFile = "pencil.line"
         static let newFile = "doc.badge.plus"
+        /// New Folder in the file page's ＋ (#5828): the folder with a plus, as a new group.
+        static let newFolder = newGroup
+        /// Duplicate in the file page (#5830): a copy beside the original.
+        static let duplicate = "plus.square.on.square"
         /// Files looked up by name or listed (Glob, LS).
         static let findFiles = "folder.badge.questionmark"
         /// Text searched for inside files (Grep).
@@ -640,12 +754,32 @@ extension Theme {
         /// A subagent the agent started (the Agent / Task tool, a session's subagents); one at work.
         static let subagent = "person.2"
         static let subagentWorking = "person.2.badge.gearshape"
+        /// A session's side sessions (a Claude desktop app's side chats), kept in its chat behind one button (#7944).
+        static let sideSessions = "rectangle.portrait.on.rectangle.portrait"
         /// A conversation with an agent (an Agents chat, a session quoted as context, the chats in Storage).
         static let agentChat = "bubble.left.and.text.bubble.right"
-        /// A meeting (a scheduled task's meeting prep, the suggestion to prepare one, a meeting recording).
+        /// A meeting (a scheduled task's meeting prep, the suggestion to prepare one, a meeting recording, the drawer's
+        /// Meetings, #8731).
         static let meeting = "person.2.wave.2"
+        /// Invite someone into a meeting (#8731: Persona, on the Meetings home and in the meeting room).
+        static let invite = "person.badge.plus"
+        /// Leave the meeting room for the rest of the app while the meeting records (#8731: the room's collapse).
+        static let minimizeRoom = "chevron.compact.down"
+        /// Persona says its answers out loud in the meeting / only on screen (#8731: the meeting room's speaker).
+        static let answersAloud = "speaker.wave.2"
+        static let answersOnScreen = "speaker.slash"
         /// Persona stops attending the meeting being recorded (#2981: the recording Live Activity's Turn Off).
         static let attendanceOff = "waveform.slash"
+        /// Talk to Persona in the meeting (#3862 phase 4): held on the meeting page, a talk window from the Live Activity.
+        static let talk = "mic.circle"
+        /// How a meeting is transcribed (#3862 phase 5: on this iPhone or on the hub): speech written as text, as captions.
+        static let meetingTranscription = voiceCaptions
+        /// The names and words the hub's transcription should spell right (#3862 phase 5, the meeting glossary).
+        static let glossary = "character.book.closed"
+        /// Hub transcription on Wi-Fi only (#3862 phase 5): Wi-Fi.
+        static let wifiOnly = pluginWifi
+        /// Mobile data (#6396): the live screen's picture on cellular or a personal hotspot.
+        static let mobileData = "cellularbars"
         /// The calendar event a meeting recording is named after (docs/apple/recording.md).
         static let calendarEvent = "calendar.day.timeline.left"
         /// A meeting's minutes (#2710): a key point, a decision, a question left open (action items are `todo`).
@@ -654,6 +788,24 @@ extension Theme {
         static let openQuestion = "questionmark.circle.dashed"
         /// A meeting's minutes as a whole (the watch's Meeting Minutes).
         static let minutes = "note.text"
+        /// The minutes' summary card (#6563): the Core Conclusions box's lightbulb, and a decision's mark in a topic card,
+        /// where a point has a dot.
+        static let conclusions = "lightbulb.max"
+        static let decided = "checkmark.seal.fill"
+        /// A topic card's icon by the hub's `icon` (`RecordingMinutesCards.symbol`); `general` for any other value.
+        static let topicProgress = "chart.bar.xaxis.ascending"
+        static let topicSchedule = "calendar.badge.checkmark"
+        static let topicRelease = "shippingbox"
+        static let topicPerformance = "speedometer"
+        static let topicMetrics = "chart.dots.scatter"
+        static let topicTooling = "screwdriver"
+        static let topicQuality = "ladybug"
+        static let topicDesign = "paintbrush.pointed"
+        static let topicPeople = people
+        static let topicCustomer = "person.bubble"
+        static let topicBudget = "banknote"
+        static let topicRisk = "flame"
+        static let topicGeneral = "circle.grid.2x2"
         /// A meeting's private mark (#3862, Private Meeting): its minutes are never used when Persona answers in later
         /// meetings. What stays private, as Health's note says it.
         static let privateMeeting = privacy

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../i18n";
 import { api } from "../../lib/api";
+import { loadPages } from "../../lib/lazy-page";
 import { SessionList, type ListCounts } from "../../lib/session-list";
 import { STATE_LABEL } from "../../lib/state-labels";
 import type { AgentState } from "../../lib/types";
@@ -20,6 +21,7 @@ vi.mock("../../lib/store", () => ({
   },
 }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
 type Row = { id: string };
 const identity = (row: Row) => row.id;
@@ -47,6 +49,7 @@ const expected = (state: Record<string, number>) => [t("paged-agents.all"), ...O
 
 beforeEach(() => {
   vi.useFakeTimers();
+  localStorage.clear(); // the chosen Browse by is kept in this browser
   rootCounts.mockReset().mockResolvedValue(counts());
   scopedCounts.mockReset().mockResolvedValue(counts());
   vi.mocked(api).mockImplementation((path) => {
@@ -78,7 +81,8 @@ async function hint() {
   await act(async () => {
     for (const entry of [...hub.handlers]) if (entry.event === "sessions_list") entry.fn();
     await list.load();
-    await vi.advanceTimersByTimeAsync(0);
+    // past the invalidation throttle window (lib/session-list.ts): the refreshes' trailing reads have gone out
+    await vi.advanceTimersByTimeAsync(2_100);
   });
 }
 
@@ -90,6 +94,8 @@ async function search() {
   });
   await act(async () => { await vi.advanceTimersByTimeAsync(SESSION_LIST_METRICS.searchDelay); });
 }
+
+beforeAll(() => loadPages(), 60_000);
 
 describe("paged state chips during count refreshes", () => {
   it("retains every chip and count while a new scope loads, then applies its successful counts", async () => {
@@ -189,25 +195,6 @@ describe("paged state chips during count refreshes", () => {
   });
 });
 
-describe("the By repo entry in the paged list", () => {
-  it("offers By repo only when the caller has the full tree, and choosing it switches views instead of filtering", async () => {
-    const segments = () => [...host.querySelectorAll<HTMLButtonElement>(`[aria-label="${t("paged-agents.group_by")}"] [role="radio"]`)];
-    const repo = () => segments().find((b) => b.textContent === t("lib-agent-groups.seg_repo"));
-    await act(async () => root.render(<PagedSessionList root={list} path="/sessions" identity={identity} compare={compare} event="sessions_list" renderRow={(row: Row) => <span>{row.id}</span>} />));
-    expect(repo()).toBeUndefined();
-
-    const onRepo = vi.fn();
-    await act(async () => root.render(<PagedSessionList root={list} path="/sessions" identity={identity} compare={compare} event="sessions_list" renderRow={(row: Row) => <span>{row.id}</span>} onRepo={onRepo} />));
-    expect(repo()).toBeDefined();
-
-    await act(async () => repo()!.click());
-    expect(onRepo).toHaveBeenCalledTimes(1);
-    // it did not become a paged filter: the list still shows the unfiltered, recently updated projection
-    expect(segments()[0].getAttribute("aria-checked")).toBe("true");
-    expect(repo()!.getAttribute("aria-checked")).toBe("false");
-  });
-});
-
 describe("paged grouping controls", () => {
   it("browses by project through a segmented control and the design system's menu, with no native select", async () => {
     rootCounts.mockResolvedValue({ ...counts(), project: { "/work/alpha": 2, "/work/beta": 5 } });
@@ -215,8 +202,16 @@ describe("paged grouping controls", () => {
     expect(host.querySelector("select, datalist")).toBeNull();
     const project = [...host.querySelectorAll<HTMLButtonElement>(`[aria-label="${t("paged-agents.group_by")}"] [role="radio"]`)]
       .find((b) => b.textContent === t("paged-agents.project"))!;
+    vi.mocked(api).mockClear();
     await act(async () => project.click());
     expect(project.getAttribute("aria-checked")).toBe("true");
+    // the list is drawn by project at once, each under its folder's name. The counts it already has name the groups:
+    // what is read is the groups' sessions that need the user (one does) and a page for each open section
+    expect([...host.querySelectorAll<HTMLElement>("[data-session-group]")].map((g) => g.dataset.sessionGroup)).toEqual(["/work/beta", "/work/alpha"]);
+    expect(host.querySelector("[data-virtual-sessions]")).toBeNull();
+    expect(vi.mocked(api).mock.calls.map(([path]) => path).sort()).toEqual([
+      "/sessions?counts=1&state=needs_you", "/sessions?project=%2Fwork%2Falpha&summary=1&limit=50", "/sessions?project=%2Fwork%2Fbeta&summary=1&limit=50",
+    ]);
 
     const pick = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("paged-agents.group_filter")}"]`)!;
     expect(pick.textContent).toBe(t("paged-agents.all_projects"));
@@ -229,5 +224,30 @@ describe("paged grouping controls", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(vi.mocked(api).mock.calls.some(([path]) => new URL(path as string, "https://example.com").searchParams.get("project") === "/work/beta")).toBe(true);
     expect(host.querySelector<HTMLButtonElement>(`button[aria-label="${t("paged-agents.group_filter")}"]`)!.textContent).toBe("beta");
+    // one project picked: its sessions are the one list again
+    expect(host.querySelector("[data-session-group]")).toBeNull();
+    expect(host.querySelector("[data-virtual-sessions]")).not.toBeNull();
+  });
+
+  it("opens a value menu as wide as its pill, and never narrower than a menu is elsewhere", async () => {
+    rootCounts.mockResolvedValue({ ...counts(), project: { "/work/alpha": 2 } });
+    await show();
+    const project = [...host.querySelectorAll<HTMLButtonElement>(`[aria-label="${t("paged-agents.group_by")}"] [role="radio"]`)]
+      .find((b) => b.textContent === t("paged-agents.project"))!;
+    await act(async () => project.click());
+    const pick = host.querySelector<HTMLButtonElement>(`button[aria-label="${t("paged-agents.group_filter")}"]`)!;
+    const measured = (width: number) => ({ width, height: 24, left: 8, right: 8 + width, top: 100, bottom: 124, x: 8, y: 100, toJSON: () => ({}) }) as DOMRect;
+    const menuWidth = () => document.querySelector<HTMLElement>('[role="menu"]')!.style.width;
+
+    // the sidebar as the user dragged it: the menu takes the pill's width
+    pick.getBoundingClientRect = () => measured(372);
+    await act(async () => pick.click());
+    expect(menuWidth()).toBe("372px");
+    await act(async () => pick.click());
+
+    // a pill narrower than any menu keeps the menu readable
+    pick.getBoundingClientRect = () => measured(96);
+    await act(async () => pick.click());
+    expect(menuWidth()).toBe(`${SESSION_LIST_METRICS.pickMenuMin}px`);
   });
 });

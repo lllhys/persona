@@ -15,6 +15,9 @@ nonisolated enum RecordingTimeline {
         var segment: Int
         var start: Double
         var text: String
+        /// A line of the hub's live log (#3862 phase 5, hub mode): its position there, never renumbered, which is its
+        /// row's id; nil for the phone's own sentences.
+        var line: Int? = nil
     }
 
     /// A question asked of Persona, at its time on the recording's clock. The row looks the exchange up by `id`.
@@ -29,6 +32,8 @@ nonisolated enum RecordingTimeline {
         nonisolated enum ID: Hashable, Sendable {
             /// `occurrence`: the nth sentence with the same segment and start (0 for the first), so two never share an id.
             case sentence(segment: Int, millis: Int, occurrence: Int = 0)
+            /// A line of the hub's live log, by its position (#3862 phase 5).
+            case line(Int)
             case bookmark(Int)
             case exchange(UUID)
             case gap
@@ -55,6 +60,10 @@ nonisolated enum RecordingTimeline {
         items.reserveCapacity(sentences.count + marks.count + asks.count + 1)
         var seen: [SentenceKey: Int] = [:]
         for s in sentences {
+            if let n = s.line {
+                items.append(Item(id: .line(n), at: s.start, kind: .sentence(s.text)))
+                continue
+            }
             let key = SentenceKey(segment: s.segment, millis: millis(s.start))
             let occurrence = seen[key, default: 0]
             seen[key] = occurrence + 1
@@ -82,14 +91,23 @@ nonisolated enum RecordingTimeline {
 
     private struct SentenceKey: Hashable { var segment: Int; var millis: Int }
 
-    /// The sentences of `segments` in order, each with the segment it came from; a line Persona's own voice put on the
-    /// recording (`RecordingAttendance.spokenBy`) is left out, as everywhere else.
+    /// The sentences of `segments` in order, each with the segment it came from; Persona's echo
+    /// (`RecordingAttendance.echo`) is left out, as everywhere the transcript is shown.
     static func sentences(of entry: RecordingEntry) -> [Sentence] {
         entry.segments.sorted { $0.index < $1.index }.flatMap { segment in
             (segment.sentences ?? []).compactMap { line -> Sentence? in
-                if let attendance = entry.attendance, !attendance.spoken.isEmpty, attendance.spokenBy(line) { return nil }
+                if let attendance = entry.attendance, !attendance.spoken.isEmpty, attendance.echo(line) { return nil }
                 return Sentence(segment: segment.index, start: line.start, text: line.text)
             }
+        }
+    }
+
+    /// The hub's lines in place of the phone's sentences (#3862 phase 5: the meeting's transcript while the page shows the
+    /// hub's, `MeetingTranscription.shown`), in the live log's order; a placeholder position (no words) is skipped, as
+    /// every client skips it.
+    static func sentences(hub lines: [MeetingHubLine]) -> [Sentence] {
+        lines.sorted { $0.n < $1.n }.compactMap { line in
+            line.text.isEmpty ? nil : Sentence(segment: 0, start: line.start, text: line.text, line: line.n)
         }
     }
 
@@ -104,6 +122,27 @@ nonisolated enum RecordingTimeline {
         let wait = Int(max(0, now - transcribedUntil))
         guard wait >= Theme.Recording.gapMinimum else { return nil }
         return wait / Theme.Recording.gapStep * Theme.Recording.gapStep
+    }
+
+    /// Where the transcript opens at a highlight's minute (#3862 phase 2b): the row to scroll to and the rows to light.
+    nonisolated struct Focus: Equatable, Sendable {
+        var scroll: Item.ID
+        var lit: Set<Item.ID>
+    }
+
+    /// The transcript at a highlight's minute, `at` to `end` (pure, for the tests): every sentence of `items` that starts
+    /// in it, lit, the first of them scrolled to; with none there (the hub's lines aren't the phone's, phase 5), the one
+    /// `RecordingMinutes.sentenceIndex` picks for `at`. Nil without a sentence. Compared in milliseconds, as the rows' ids
+    /// are, so a time that went through the hub and back still finds its line.
+    static func focus(at: Double, end: Double, in items: [Item]) -> Focus? {
+        guard at.isFinite else { return nil }
+        let sentences = items.filter { if case .sentence = $0.kind { true } else { false } }
+        let from = millis(at), to = millis(end.isFinite ? max(at, end) : at)
+        let inside = sentences.filter { (from...to).contains(millis($0.at)) }
+        if let first = inside.first { return Focus(scroll: first.id, lit: Set(inside.map(\.id))) }
+        let starts = sentences.map { RecordingSentence(start: $0.at, end: $0.at, text: "") }
+        guard let index = RecordingMinutes.sentenceIndex(at: at, in: starts) else { return nil }
+        return Focus(scroll: sentences[index].id, lit: [sentences[index].id])
     }
 
     static func millis(_ seconds: Double) -> Int {

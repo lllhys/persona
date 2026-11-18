@@ -2,6 +2,14 @@
 <!-- Share as a picture, videos and pasted pictures in the composer (iOS MessageShareSheet, VideoAttachments, PasteImageChip). -->
 <resources>
     <string name="chat_composer_videos_only">Please look at the video</string>
+    <string name="chat_composer_files_only">Please look at the attached files</string>
+    <string name="chat_composer_file_limit">Up to 10 files in one message</string>
+    <string name="chat_attach_waiting">Waiting</string>
+    <plurals name="chat_files_more">
+        <item quantity="one">%1$d more file</item>
+        <item quantity="other">%1$d more files</item>
+    </plurals>
+    <string name="chat_files_show_less">Show less</string>
     <string name="chat_composer_video_placeholder">[Video]</string>
     <string name="chat_paste_image">Paste</string>
     <string name="chat_paste_dont">Don\'t paste</string>

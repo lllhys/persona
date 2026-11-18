@@ -284,6 +284,9 @@ func (e *edge) unhold() {
 func (e *edge) setActive(p *proc) {
 	e.mu.Lock()
 	e.active = p
+	if p != nil {
+		e.served = p.name
+	}
 	e.mu.Unlock()
 	if p != nil {
 		e.unhold()

@@ -3,6 +3,7 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+import PersonaWire
 
 /// How wide each column of a Markdown table is drawn. MarkdownUI lays a table out as a Grid, every column as wide as
 /// its widest cell; in a reply that ran a long Chinese column off the screen with nothing saying it scrolls. Columns
@@ -282,7 +283,11 @@ struct FittedTable: View {
             Self.drawn(config.label)
                 .environment(\.tableColumnWidths, plan?.widths ?? [])
                 .environment(\.tableColumnAlignments, measure.alignments)
+                .liftTableSize() // its room in the text view over a lifted copy's words
         }
+        // As tall as its rows, whatever height it is offered, as the theme's paragraphs are: a sideways scroll view takes
+        // less when offered less, and the table was cut under a row while the paragraph after it was drawn whole (#10012).
+        .fixedSize(horizontal: false, vertical: true)
         .scrollDisabled(plan?.scrolls != true)
         // What shows of it, not offset + container: on an iPad the chat's scroll views run on under the sidebar, inset
         // by it, and the container leaves that out, so the fade stayed at the end (#5737).

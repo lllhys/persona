@@ -11,6 +11,7 @@ import persona.core.contracts.api.LauncherCheckAnswer
 import persona.core.contracts.api.LauncherImportResult
 import persona.core.contracts.api.KeptPurpose
 import persona.core.contracts.api.ProviderAdded
+import persona.core.contracts.api.ProviderPasteResult
 import persona.core.contracts.api.ProviderDiscovery
 import persona.core.contracts.api.ProviderProbe
 import persona.core.contracts.api.ProviderTest
@@ -71,6 +72,11 @@ class HttpProviderSetup internal constructor(
     override suspend fun discover(probe: ProviderProbe): ProviderDiscovery =
         JsonCodec.decodeFromString(ProviderDiscovery.serializer(), call("/api/v1/launchers/discover", "POST", probe.copy(model = null).body(), PROBE_READ_TIMEOUT_SECONDS))
 
+    override suspend fun parse(text: String): ProviderPasteResult {
+        val body = buildJsonObject { put("text", text) }.toString().toRequestBody(json)
+        return JsonCodec.decodeFromString(ProviderPasteResult.serializer(), call("/api/v1/launchers/import/parse", "POST", body, IMPORT_READ_TIMEOUT_SECONDS))
+    }
+
     private fun ProviderProbe.body(): RequestBody {
         fun String?.kept() = this?.trim()?.takeIf { it.isNotEmpty() }
         // Headers go as typed, "" too: it means none for this request over the stored ones.
@@ -106,17 +112,18 @@ class HttpProviderSetup internal constructor(
             JsonCodec.decodeFromJsonElement(LauncherCheck.serializer(), check))
     }
 
-    override suspend fun importPreview(machine: String): List<ImportedProvider> {
+    override suspend fun importPreview(machine: String, alias: String?): List<ImportedProvider> {
         val url = HttpUrl.Builder().scheme("https").host("example.com").addPathSegments("api/v1/launchers/import")
-            .addQueryParameter("machine", machine).build()
+            .addQueryParameter("machine", machine).apply { alias?.takeIf { it.isNotBlank() }?.let { addQueryParameter("alias", it) } }.build()
         val list = JsonCodec.parseToJsonElement(call("${url.encodedPath}?${url.encodedQuery}", "GET", timeout = IMPORT_READ_TIMEOUT_SECONDS)).jsonObject["providers"] as? JsonArray
         return list?.let { JsonCodec.decodeFromJsonElement(ListSerializer(ImportedProvider.serializer()), it) }.orEmpty()
     }
 
-    override suspend fun import(machine: String, providers: List<String>): LauncherImportResult {
+    override suspend fun import(machine: String, providers: List<String>, alias: String?): LauncherImportResult {
         val body = buildJsonObject {
             put("machine", machine)
             put("providers", JsonArray(providers.map(::JsonPrimitive)))
+            alias?.takeIf { it.isNotBlank() }?.let { put("alias", it) }
         }
         return JsonCodec.decodeFromString(LauncherImportResult.serializer(), call("/api/v1/launchers/import", "POST", body.toString().toRequestBody(json), IMPORT_READ_TIMEOUT_SECONDS))
     }

@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/link"
 )
 
 // logMax is how big the log may grow before it is moved to <log>.1 and started over: about the menu bar app's
@@ -89,7 +92,7 @@ func logs(e *env, args []string) error {
 			return errUsage
 		}
 		if n, err = strconv.Atoi(v); err != nil || n < 0 {
-			return fmt.Errorf("-n %q 不是行数", v)
+			return link.NewTextError("link-cli.log_lines_invalid", nil, i18n.Args{"value": strconv.Quote(v)})
 		}
 		i = next
 	}
@@ -102,7 +105,7 @@ func logs(e *env, args []string) error {
 			}
 			return e.passthrough("journalctl", args...)
 		}
-		fmt.Fprintf(e.stdout, "还没有日志（%s 不存在）。\n", path)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.log_missing", i18n.Args{"path": path}))
 		return nil
 	}
 	ctx, stop := e.interruptible()

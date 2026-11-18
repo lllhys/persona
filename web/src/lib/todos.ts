@@ -2,6 +2,8 @@ import { formatDate, t } from "../i18n";
 import { currentHeaders, noteItemManager } from "./manager-choice";
 import { acceptanceStands, reviewState, type Supervision } from "./supervision";
 import type { LineageStep, TaskBrief } from "./brief";
+import type { RuleSuggestion } from "./rule-suggestion";
+import type { TodoSummary } from "./todo-view-wire";
 import { api, ApiError, enc } from "./api";
 import { contextBody } from "./context-body";
 import { parseAPIError, retryable } from "./api-errors";
@@ -36,6 +38,9 @@ export interface TodoSpace {
   linked_at: string;
 }
 
+/** What the hub last read of a PR on GitHub (pr_status.go). */
+export interface PRFacts { url: string; state: "open" | "merged" | "closed"; draft: boolean; review: "required" | "approved" | "changes_requested" | "pending"; checks: "failure" | "pending" | "success" | "none"; conflicts: boolean; checked_at: string }
+
 export interface Todo {
   id: string;
   title: string;
@@ -53,6 +58,10 @@ export interface Todo {
   priority?: string;
   /** The slug of the knowledge-base project it belongs to (#2581, docs/assistant/todos.md "Project"); unset for none. */
   project?: string;
+  /** The to-do whose request this one is a piece of, and the pieces it waits for (docs/assistant/todos.md "Requests in
+   *  pieces"); unset for a to-do that is no piece and from hubs without them. */
+  part_of?: string;
+  after?: string[];
   done_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -61,11 +70,18 @@ export interface Todo {
   /** The assistant conversation that opened it as a task, and the plan (docs/assistant/unified-entry.md); unset for a todo made by hand. */
   origin?: string;
   plan_id?: string;
+  /** The Inbox item this task was explicitly dispatched for. */
+  inbox_item?: string;
+  /** "concern" records a question the owner wants answered (docs/assistant/todos.md "Concerns"); unset for other to-dos and older hubs. */
+  kind?: string;
   /** "auto" when the hub marked the task done because its work was judged finished, with why (docs/assistant/todos.md "Automatic completion"). */
   done_by?: string;
   done_reason?: string;
   /** When the user last reopened it after it was done. */
   reopened_at?: string | null;
+  /** When the owner last looked at it in Just finished: Got it, or opening it (#5707, lib/todo-seen.ts); a to-do seen
+   *  since it got there is filed under Done (lib/todo-triage.ts). Unset when never seen, and from hubs before it. */
+  seen_at?: string | null;
   /** Opened from the main conversation while "notify tasks the main chat dispatched only in the main chat" was on (#1731). */
   quiet?: boolean;
   /** The task's agent did not start, and why: the hub ended it there (done_at is set too, #1077). */
@@ -79,6 +95,10 @@ export interface Todo {
   stage_kind?: string;
   /** The pull or merge request the work is in, when the hub knows one. */
   pr_url?: string;
+  /** Fresh, observational pull request facts; these do not change the task lifecycle. */
+  pr_status?: PRFacts;
+  /** Facts of its earlier PRs, newest first (#7935): work spanning several PRs waits for merge while any is open. */
+  other_prs?: PRFacts[];
   /** How far its finished work went out; short of live, where it is held and who can unhold it (docs/assistant/todos.md "Delivery"). */
   delivery?: TodoDelivery;
   /** The hub's latest automatic completion check of its work, while still current (#3180, docs/assistant/todos.md
@@ -99,6 +119,13 @@ export interface Todo {
    *  docs/assistant/unified-entry.md "Briefs"); unset for a to-do that is no task, and from hubs before briefs. */
   brief?: TaskBrief;
   lineage?: LineageStep[];
+  /** The owner's latest restore of it, and until when they put it off (Someday; a far date means no date), as the hub
+   *  keeps them (docs/assistant/todos.md "Restores and Someday"); unset when never, and from hubs before them. */
+  restored_at?: string | null;
+  someday_until?: string | null;
+  /** The hub's view of the row (#10226, docs/assistant/todo-status-sop.md "The hub's view"): read only behind
+   *  Developing Persona's switches for now (features/todos/model). Unset from managers without `todo_view`. */
+  view?: TodoSummary;
 }
 
 /** "Nobody is working on this" and why ("closed after an error"), for an open to-do the hub found orphaned; undefined
@@ -140,6 +167,12 @@ export interface TodoAsk {
   /** The fixed answer already given while the decision still waits (`explain_first`: Persona is to ask again with the
    *  background; the options stay answerable meanwhile). */
   response?: string;
+  /** `true` while a decision that can wait is held for the next briefing: nothing was pushed for it (#4930, #5803;
+   *  views/assistant/BriefingMark). Absent otherwise, and from an older hub. */
+  for_briefing?: boolean;
+  /** The rule the hub suggests once the owner gave this go-ahead for this directory three times (#4929,
+   *  lib/rule-suggestion.ts). Absent otherwise. */
+  suggestion?: RuleSuggestion;
 }
 
 /** One option of a decision: its label, which is the answer, and what choosing it leads to. */
@@ -293,9 +326,10 @@ export function isReviewDone(todo: Todo): boolean {
 }
 
 /** An open task its supervisor accepted, reopened by the hub when its agent got more work, with nothing of it running
- *  or asking now: it reads as accepted, not "Follow up" (#3156, docs/assistant/todo-status-sop.md "Accepted tasks"). */
+ *  or asking now: it reads as accepted, not "Follow up" (#3156, docs/assistant/todo-status-sop.md "Accepted tasks").
+ *  An open concern still waits for its report, so neither an accepted verdict nor its done styling applies (#3582). */
 export function acceptedAtRest(todo: Todo, status: TodoStatus): boolean {
-  return !todo.done_at && acceptanceStands(todo) && (status === "follow_up" || status === "unread" || status === "not_started" || status === "usage_limit");
+  return todo.kind !== "concern" && !todo.done_at && acceptanceStands(todo) && (status === "follow_up" || status === "unread" || status === "not_started" || status === "usage_limit");
 }
 
 /** The status a row draws its tone and mark from: Done for an accepted task at rest, else its own. */
@@ -547,16 +581,11 @@ function sessionRank(s: Session, mutes: AgentMutes): number {
   return 5;
 }
 
-/** An agent opened by hand in herdr: not started by Persona (nor spawned through it). */
-function isManualHerdr(s: Session) {
-  return s.space_kind === "herdr" && !s.started_by_persona;
-}
-
 /**
  * Pure function for the Agents sidebar's "By to-do" grouping:
  * - one segment per unfinished todo with attached agents; the header is the todo's title and status, clicking it opens the todo
- * - agents on no todo opened by hand in herdr get one "Opened by hand" segment (#2608)
- * - the other agents on no todo go last in one "Unassigned" segment, folded by default (#1836)
+ * - the agents on no todo go last in one "Unassigned" segment, folded by default (#1836); the ones opened by hand in a
+ *   terminal too, their row's source mark saying so (#6591; a group of their own before, #2608)
  * - pin, mute and "Recent (not running)" follow the same rules as "By status"
  */
 export function buildTodoAgentGroups(
@@ -623,18 +652,8 @@ export function buildTodoAgentGroups(
     if (rA !== rB) return rA - rB;
     return byDate(a, b);
   };
-  const rest = live.filter((s) => !assignedSessionKeys.has(`${s.machine_id}/${s.session_id}`));
-
-  // agents opened by hand in herdr and on no todo get their own "Opened by hand" segment, before "Unassigned", open (#2608):
-  // no auto-attach rule recognizes them (not spawned, their space is on no todo either)
-  const manual = rest.filter(isManualHerdr);
-  if (manual.length > 0) {
-    manual.sort(byRank);
-    groups.push({ key: "todo:manual", name: t("lib-todos.manual"), hint: t("lib-todos.manual_hint"), sessions: manual });
-  }
-
-  // agents on no todo go last in one "Unassigned" segment, folded by default
-  const unassigned = rest.filter((s) => !isManualHerdr(s));
+  // agents on no todo go last in one "Unassigned" segment, folded by default; opened by hand in a terminal or not (#6591)
+  const unassigned = live.filter((s) => !assignedSessionKeys.has(`${s.machine_id}/${s.session_id}`));
   if (unassigned.length > 0) {
     unassigned.sort(byRank);
     groups.push({
@@ -681,6 +700,8 @@ export interface TodoDecision {
   /** The newest decision that replaces this one; empty while it is in effect. */
   superseded_by: string;
   created_at: string;
+  /** Completion time for an outcome written by Persona, which may be recorded later. */
+  phase_completed_at?: string;
 }
 
 /** Where a decision came from, as the detail page says it: the agent that asked, by its title when known. */
@@ -695,6 +716,18 @@ export function decisionSourceLabel(d: TodoDecision, todo: Todo, lookup: ReturnT
   // A session's title is often its first message: keep the label to a glance.
   const short = [...title.trim()].length > 24 ? `${[...title.trim()].slice(0, 24).join("")}…` : title.trim();
   return t("lib-todos.decision_in_question", { title: short });
+}
+
+/** How a to-do's Decisions list is shown (#6447, docs/assistant/todos.md "Decision records"): the first few, the
+ *  default each time a to-do opens; every one; or none, folded under its title. */
+export type DecisionsView = "first" | "all" | "folded";
+/** How many decisions the list shows before Show all. */
+export const DECISIONS_FIRST = 5;
+
+/** What `view` shows of `list` (the current decisions, or the full history), in its order. */
+export function shownDecisions<T>(list: readonly T[], view: DecisionsView): T[] {
+  if (view === "folded") return [];
+  return view === "first" ? list.slice(0, DECISIONS_FIRST) : [...list];
 }
 
 /** The decisions d may be marked as replacing: earlier ones (list order) that are in effect, not d itself. */
@@ -908,7 +941,6 @@ export function formatAgentSource(
 
   return undefined;
 }
-
 
 /** An agent going on ("Needs you" / "Working") that the main conversation's dock shows after its tasks (#1113, iOS DockAgent). */
 export interface DockAgent {

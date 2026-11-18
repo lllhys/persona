@@ -120,6 +120,9 @@ func (s *meshStore) SaveLiveActivity(context.Context, db.LiveActivity) error   {
 func (s *meshStore) ClaimLiveActivityStart(context.Context, string, string, time.Time, time.Duration, time.Duration) (time.Time, bool, error) {
 	return time.Time{}, false, nil // no persisted activity in this non-push fixture
 }
+func (s *meshStore) HoldLiveActivityStart(context.Context, string, time.Time, time.Duration) (bool, error) {
+	return false, nil
+}
 
 func (s *meshStore) InsertInteraction(_ context.Context, ix proto.Interaction) error {
 	s.mu.Lock()

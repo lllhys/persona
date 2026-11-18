@@ -45,6 +45,7 @@ class HubPairingClientTest {
             MessageDigest.getInstance("SHA-256").digest(certificate.certificate.publicKey.encoded))
         val apk = "test apk".toByteArray()
         val checksum = MessageDigest.getInstance("SHA-256").digest(apk).joinToString("") { "%02x".format(it) }
+        var published = true
         MockWebServer().use { server ->
             server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
             server.start(InetAddress.getLoopbackAddress(), 0)
@@ -63,8 +64,8 @@ class HubPairingClientTest {
                         assertEquals("Bearer device-token", (request.getHeader("Authorization")).zhAny())
                         MockResponse().setBody("""{"machines":[]}""")
                     }
-                    "/api/v1/app/android/latest" -> MockResponse().setBody(
-                        """{"version_code":2,"version_name":"test","sha256":"$checksum","download_url":"/api/v1/app/android/apk?sha256=$checksum"}""")
+                    "/api/v1/app/android/latest" -> if (!published) MockResponse().setResponseCode(404) else MockResponse().setBody(
+                        """{"version_code":2,"version_name":"test","sha256":"$checksum","download_url":"/api/v1/app/android/apk?sha256=$checksum","package_name":"app.example","certificate_sha256":"${"c".repeat(64)}"}""")
                     "/api/v1/app/android/apk?sha256=$checksum" -> {
                         assertEquals("Bearer device-token", (request.getHeader("Authorization")).zhAny())
                         MockResponse().setBody(String(apk))
@@ -82,6 +83,8 @@ class HubPairingClientTest {
                 assertTrue(stages.indexOf(PairingStage.VerifyIdentity) < stages.indexOf(PairingStage.ExchangeCredentials))
                 assertTrue(client.diagnostics(paired.token, paired.deviceId).candidates.any { it.result.zh() == "已通过身份校验" })
                 val update = requireNotNull(client.checkUpdate(paired.token))
+                assertEquals("app.example", update.packageName)
+                assertEquals("c".repeat(64), update.certificateSha256)
                 val destination = ByteArrayOutputStream()
                 client.download(paired.token, update, destination)
                 assertArrayEquals(apk, destination.toByteArray())
@@ -96,6 +99,8 @@ class HubPairingClientTest {
                     client.download(paired.token, update.copy(downloadUrl = "https://example.com/apk"), ByteArrayOutputStream())
                     fail("Cross-origin download must fail")
                 } catch (_: IllegalArgumentException) { }
+                published = false
+                assertEquals(AppUpdateLookup.NotPublished, client.lookupUpdate(paired.token))
             }
             val requestsBeforeMismatch = server.requestCount
             HubPairingClient("test-hub", "A".repeat(43), listOf(address), "test").use { client ->

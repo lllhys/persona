@@ -366,6 +366,7 @@ func TestAnswerRoleAnswersCardsWithoutTyping(t *testing.T) {
 		{`{"keys":["0"]}`, http.StatusForbidden},
 		{`{"keys":["1","enter"]}`, http.StatusForbidden},
 		{`{"allow":true,"always":true}`, http.StatusForbidden},
+		{`{"allow":true,"edited_text":"changed"}`, http.StatusForbidden},
 		{`{"allow":true,"values":{"k":"v"}}`, http.StatusForbidden},
 		{`{"allow":false,"message":"m"}`, http.StatusForbidden},
 		{`{"action":"accept"}`, http.StatusForbidden},

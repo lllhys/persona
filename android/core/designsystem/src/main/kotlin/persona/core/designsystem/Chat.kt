@@ -3,9 +3,13 @@ package persona.core.designsystem
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,7 +21,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentWithReceiverOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -31,9 +37,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -60,6 +68,11 @@ fun ChatTopBar(
     onTitleClick: (() -> Unit)? = null,
     /** Which agent runs here, and in which client (#6390): its mark before the status line's dot. */
     agentMark: AgentMarkSpec? = null,
+    /**
+     * It works only because the background work it started waits (iOS `Session.waitsInBackground`): Glass draws the clock
+     * for its dot and says its words in that state's lighter tone (`stateTone`); Brief and Board keep the dot and the tone.
+     */
+    waiting: Boolean = false,
     /** What a tap on the title does, as the screen reader says it ("View session info"); null: just a button. */
     titleClickLabel: String? = null,
     actions: @Composable RowScope.() -> Unit = {},
@@ -67,7 +80,8 @@ fun ChatTopBar(
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
     val style = PersonaTheme.style
-    val tone = status?.let { palette.status(it) }
+    val lighter = waiting && style == AppStyle.Glass
+    val tone = status?.let { if (lighter) palette.backgroundWaiting else palette.status(it) }
     val titleBlock: @Composable RowScope.() -> Unit = {
         Column(Modifier.weight(1f).padding(horizontal = 4.dp.dense).then(if (onTitleClick != null) Modifier.clickable(role = Role.Button, onClickLabel = titleClickLabel, onClick = onTitleClick) else Modifier)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -84,7 +98,7 @@ fun ChatTopBar(
                     // A quiet state says nothing in words (iOS): its dot alone, which TalkBack reads by its name.
                     val spoken = stringResource(status.labelRes)
                     if (statusText != null && style == AppStyle.Brief && status == Status.Working) JSpinner(Modifier.size(11.dp), stroke = 1.6.dp)
-                    else Box(if (statusText == null) Modifier.semantics { contentDescription = spoken } else Modifier) { JStatusDot(status, size = 7.dp) }
+                    else Box(if (statusText == null) Modifier.semantics { contentDescription = spoken } else Modifier) { JStateDot(status, Tokens.Size.dotS, waiting) }
                     statusText?.let {
                         Spacer(Modifier.width(afterDot))
                         Text(it, style = type.caption, color = if (style == AppStyle.Brief) palette.ink else tone!!.text, maxLines = 1)
@@ -102,7 +116,15 @@ fun ChatTopBar(
             }
         }
     }
-    val back: @Composable () -> Unit = { onBack?.let { JIconButton(if (style == AppStyle.Glass) PhIcons.CaretLeft else PhIcons.ArrowLeft, stringResource(R.string.designsystem_back), it) } }
+    val leading = resolveDetailLeading(LocalSplitDetail.current, onBack)
+    val back: @Composable () -> Unit = {
+        when (leading) {
+            is DetailLeading.ShowList -> JIconButton(persona.core.designsystem.icons.PersonaIcons.sidebar, stringResource(R.string.designsystem_sidebar), leading.onClick)
+            is DetailLeading.Back -> JIconButton(if (style == AppStyle.Glass) PhIcons.CaretLeft else PhIcons.ArrowLeft, stringResource(R.string.designsystem_back), leading.onClick)
+            DetailLeading.Hidden -> Spacer(Modifier.width(if (style == AppStyle.Brief) Tokens.Space.s else Tokens.Space.sm))
+            null -> Unit
+        }
+    }
     when (style) {
         AppStyle.Glass -> Box(modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 10.dp.dense, vertical = 6.dp.dense)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 60.dp.row).floatingSurface(RoundedCornerShape(30.dp.corner)).padding(horizontal = 6.dp.dense), verticalAlignment = Alignment.CenterVertically) {
@@ -132,9 +154,9 @@ fun UserBubbleFrame(modifier: Modifier = Modifier, footer: (@Composable () -> Un
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
     val shape = when (style) {
-        AppStyle.Glass -> RoundedCornerShape(Tokens.Radius.bubble)
-        AppStyle.Brief -> RoundedCornerShape(22.dp.corner, 22.dp.corner, 6.dp.corner, 22.dp.corner)
-        AppStyle.Board -> RoundedCornerShape(10.dp.corner)
+        AppStyle.Glass -> RoundedCornerShape(Tokens.Radius.Standard.bubble.bubbleCorner)
+        AppStyle.Brief -> RoundedCornerShape(22.dp.bubbleCorner, 22.dp.bubbleCorner, 6.dp.bubbleCorner, 22.dp.bubbleCorner)
+        AppStyle.Board -> RoundedCornerShape(10.dp.bubbleCorner)
     }
     val chrome = LocalHomeChrome.current
     val bubble = { frame: Modifier ->
@@ -187,7 +209,13 @@ fun WorkGroup(
     terminalLabel: String = "",
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val body: @Composable ColumnScope.() -> Unit = { if (expanded) content() else peek?.invoke(this) }
+    // Content under the header fades over the space it takes (iOS ToolGroupView ForEach.unfolding, ToolViews.swift:342,
+    // via toggleInPlace, ChatPin.swift:707-726). Folding removes it at once. Sibling chat-list steps are not this slot.
+    val edge = rememberOpenEdge()
+    val revealing = edge.revealing(expanded)
+    val body: @Composable ColumnScope.() -> Unit = {
+        if (expanded) Column(Modifier.unfolding(revealing)) { content() } else peek?.invoke(this)
+    }
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
     val spoken = stringResource(R.string.designsystem_with_state, summary,
@@ -232,13 +260,13 @@ fun WorkGroup(
         }
     }
     when (PersonaTheme.style) {
-        AppStyle.Glass -> Column(modifier.fillMaxWidth().animateContentSize(PersonaTheme.motion.size())) { glassHeader(); body() }
-        AppStyle.Brief -> Column(modifier.fillMaxWidth().padding(vertical = Tokens.Space.sm).animateContentSize(PersonaTheme.motion.size())) {
+        AppStyle.Glass -> Column(modifier.fillMaxWidth()) { glassHeader(); body() }
+        AppStyle.Brief -> Column(modifier.fillMaxWidth().padding(vertical = Tokens.Space.sm)) {
             header(); if (expanded || peek != null) { Spacer(Modifier.height(4.dp.dense)); body() }
         }
         AppStyle.Board -> Column(
             modifier.fillMaxWidth().padding(vertical = Tokens.Space.sm).clip(RoundedCornerShape(10.dp.corner)).background(palette.surface)
-                .border(1.dp, palette.line, RoundedCornerShape(10.dp.corner)).animateContentSize(PersonaTheme.motion.size()),
+                .border(1.dp, palette.line, RoundedCornerShape(10.dp.corner)),
         ) { header(); body() }
     }
 }
@@ -470,8 +498,13 @@ fun ComposerFrame(
     val palette = PersonaTheme.palette
     val blankTap by rememberUpdatedState(onBlankTap)
     val keepsKeyboard = Modifier.keepsKeyboardOnTap { blankTap?.invoke() }
+    // Glass moves the trailing content from the field's row to the second row as the composer grows. Movable, it keeps its
+    // state across the move: a swap of send and stop under way ([ComposerActionSlot]) goes on in the other row, instead of
+    // being cut off or ending there at once (#4210 T3). Brief and Board draw it in one place and invoke it directly.
+    val trailingNow by rememberUpdatedState(trailing)
+    val movableTrailing = remember { movableContentWithReceiverOf<RowScope> { trailingNow?.invoke(this) } }
     if (PersonaTheme.style == AppStyle.Glass && LocalHomeChrome.current != null) {
-        val shape = RoundedCornerShape(HomeTokens.composerRadius)
+        val shape = RoundedCornerShape(HomeTokens.composerRadius.bubbleCorner)
         val fill = if (PersonaTheme.darkTheme) HomeTokens.composerDark else HomeTokens.composerLight
         val stroke = if (PersonaTheme.darkTheme) HomeTokens.composerStrokeDark else HomeTokens.composerStrokeLight
         Column(modifier.fillMaxWidth().padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s)
@@ -485,30 +518,30 @@ fun ComposerFrame(
                 if (!expanded) leading?.invoke(this)
                 Box(Modifier.weight(1f).heightIn(min = Tokens.MinTouch.android).padding(horizontal = Tokens.Space.s, vertical = Tokens.Space.m),
                     contentAlignment = Alignment.CenterStart, content = field)
-                if (!expanded) trailing?.invoke(this)
+                if (!expanded && trailing != null) movableTrailing(this)
             }
             if (expanded) Row(verticalAlignment = Alignment.CenterVertically) {
                 leading?.invoke(this)
                 Spacer(Modifier.weight(1f))
-                trailing?.invoke(this)
+                if (trailing != null) movableTrailing(this)
             }
         }
         return
     }
     when (PersonaTheme.style) {
         AppStyle.Glass -> Column(modifier.fillMaxWidth().padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s)
-            .floatingSurface(RoundedCornerShape(HomeTokens.composerRadius)).then(keepsKeyboard).padding(Tokens.Space.s)) {
+            .floatingSurface(RoundedCornerShape(HomeTokens.composerRadius.bubbleCorner)).then(keepsKeyboard).padding(Tokens.Space.s)) {
             accessory?.let { Column(Modifier.padding(horizontal = Tokens.Space.s, vertical = Tokens.Space.xs), content = it) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!expanded) leading?.invoke(this)
                 Box(Modifier.weight(1f).heightIn(min = Tokens.MinTouch.ios).padding(horizontal = Tokens.Space.s, vertical = Tokens.Space.m),
                     contentAlignment = Alignment.CenterStart, content = field)
-                if (!expanded) trailing?.invoke(this)
+                if (!expanded && trailing != null) movableTrailing(this)
             }
             if (expanded) Row(verticalAlignment = Alignment.CenterVertically) {
                 leading?.invoke(this)
                 Spacer(Modifier.weight(1f))
-                trailing?.invoke(this)
+                if (trailing != null) movableTrailing(this)
             }
         }
         AppStyle.Brief -> Column(modifier.fillMaxWidth().background(palette.background).then(keepsKeyboard).padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s)) {
@@ -563,7 +596,7 @@ fun ComposerTextField(
 ) {
     val palette = PersonaTheme.palette
     BasicTextField(
-        value, onValueChange, modifier.fillMaxWidth(), enabled = enabled, maxLines = maxLines, keyboardOptions = keyboardOptions,
+        value, onValueChange, modifier.fillMaxWidth().hardwareShortcutTextInput(), enabled = enabled, maxLines = maxLines, keyboardOptions = keyboardOptions,
         textStyle = PersonaTheme.type.body.copy(color = palette.ink), cursorBrush = SolidColor(if (PersonaTheme.style == AppStyle.Brief) palette.ink else palette.accent),
         decorationBox = { inner ->
             Box {
@@ -576,7 +609,6 @@ fun ComposerTextField(
 
 enum class SendKind { Send, Stop }
 
-/** The send (or stop) button of a composer: a filled circle, or a square on the board. */
 /**
  * The send button while nothing can be sent yet ("Connect a model first", "Add a computer first": docs/assistant/onboarding.md 4.4): a one-line pill in the
  * send button's place, centred on the same 48 dp row, that opens the missing step.
@@ -588,8 +620,23 @@ fun BlockedSendButton(label: String, onClick: () -> Unit, modifier: Modifier = M
     }
 }
 
+/**
+ * The send (or stop) button of a composer: a filled circle, or a square on the board. With [pressScales] it shrinks under the
+ * finger, slowly, and comes back quicker when let go, on Glass and not with the system's animations off, as iOS's `pressScales`
+ * does for the shell composer's send (`ComposerRoundButton`, `Theme.Motion.composerPress`); the other composers' send keeps the
+ * plain press, as on iOS. A composer that swaps send and stop draws them through [ComposerActionSlot].
+ */
 @Composable
-fun SendButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, kind: SendKind = SendKind.Send, loading: Boolean = false) {
+fun SendButton(
+    onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, kind: SendKind = SendKind.Send, loading: Boolean = false,
+    pressScales: Boolean = false,
+) = SendButtonBody(onClick, modifier, enabled, kind, loading, pressScales, inert = false)
+
+/** [SendButton], and [inert] for one on its way out of the slot: it looks as it did but takes no touch and is not read out. */
+@Composable
+internal fun SendButtonBody(
+    onClick: () -> Unit, modifier: Modifier, enabled: Boolean, kind: SendKind, loading: Boolean, pressScales: Boolean, inert: Boolean,
+) {
     val palette = PersonaTheme.palette
     val board = PersonaTheme.style == AppStyle.Board
     val shape = if (board) RoundedCornerShape(8.dp.corner) else CircleShape
@@ -598,12 +645,23 @@ fun SendButton(onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Bool
     val spoken = stringResource(if (kind == SendKind.Stop) R.string.designsystem_send_stop else R.string.designsystem_send)
     // Send and Stop are felt, as on iOS (DESIGN_SYSTEM.md 4.3).
     val haptics = rememberHaptics()
+    // Shrinks while pressed, on Glass (the style aligned with iOS, decision 8 of #4194; Brief and Board keep the plain press),
+    // and not when the system's animations are off. Only the circle shrinks; the 48 dp that takes the touch stays put.
+    val shrinks = pressScales && PersonaTheme.style == AppStyle.Glass && !PersonaTheme.reduceMotion
+    val press = remember { MutableInteractionSource() }
+    val pressed by press.collectIsPressedAsState()
+    val pressScale = animateFloatAsState(
+        if (pressed) Tokens.Motion.ComposerPress.scale else 1f,
+        if (pressed) ComposerMotion.pressIn() else ComposerMotion.pressOut(), label = "send-press",
+    )
     Box(
-        modifier.size(48.dp).clickable(enabled = enabled && !loading, role = Role.Button, onClick = haptics.tapped(onClick))
-            .semantics { contentDescription = spoken },
+        modifier.size(48.dp).clickable(press, LocalIndication.current, enabled = enabled && !loading && !inert, role = Role.Button, onClick = haptics.tapped(onClick))
+            .semantics { contentDescription = spoken; if (inert) hideFromAccessibility() },
         contentAlignment = Alignment.Center,
     ) {
-        Box(Modifier.size(if (board) 40.dp else 38.dp).clip(shape).background(fill), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(if (board) 40.dp else 38.dp)
+            .then(if (shrinks) Modifier.graphicsLayer { scaleX = pressScale.value; scaleY = pressScale.value } else Modifier)
+            .clip(shape).background(fill), contentAlignment = Alignment.Center) {
             when {
                 loading -> JSpinner(Modifier.size(16.dp), color = ink, stroke = 2.dp)
                 kind == SendKind.Stop -> JIcon(PhIcons.Stop, null, size = 16.dp, tint = ink, selected = true)
@@ -711,9 +769,9 @@ fun IncomingBubbleFrame(
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
     val shape = when (style) {
-        AppStyle.Glass -> RoundedCornerShape(24.dp.corner, 24.dp.corner, 24.dp.corner, 8.dp.corner)
-        AppStyle.Brief -> RoundedCornerShape(22.dp.corner, 22.dp.corner, 22.dp.corner, 6.dp.corner)
-        AppStyle.Board -> RoundedCornerShape(10.dp.corner)
+        AppStyle.Glass -> RoundedCornerShape(24.dp.bubbleCorner, 24.dp.bubbleCorner, 24.dp.bubbleCorner, 8.dp.bubbleCorner)
+        AppStyle.Brief -> RoundedCornerShape(22.dp.bubbleCorner, 22.dp.bubbleCorner, 22.dp.bubbleCorner, 6.dp.bubbleCorner)
+        AppStyle.Board -> RoundedCornerShape(10.dp.bubbleCorner)
     }
     Row(modifier.fillMaxWidth().padding(vertical = Tokens.Space.sm), verticalAlignment = Alignment.Top) {
         avatar?.let { it(); Spacer(Modifier.width(10.dp.dense)) }

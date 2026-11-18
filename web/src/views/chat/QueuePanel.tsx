@@ -1,19 +1,22 @@
 // The queued messages (Session.queued) at the top of the composer's card, as cindy's pending queue (#5327; the owner
 // asked this part of the chat to follow cindy): rows in send order, the top one next, no numbers (the labels carry
 // them). A row is one line, the marks of what it carries before its words; on hover or focus it shows a drag handle
-// and round buttons: Send now (where the agent takes queued messages now; it hands over the whole queue, so it is
-// confirmed and says so), Edit (pulled back into the box below) and Delete. Dragging the handle, or ↑ ↓ Home End on
-// it, re-queues them all in the new order. Four rows or fewer show in full; five or more show three and "N more".
-// Messages from other conversations come last and are only shown. Every change goes through the hub (POST …/queue
-// {keep}, …/queue/send-now) and the rows follow its next push; a reorder keeps its new order on screen until then.
-// Its own chunk: drawn only while something is queued (QueueStrip.tsx loads it).
+// and round buttons: Send now (where the agent takes queued messages now; it hands over the whole queue at one press,
+// its tooltip saying so and what happens), Edit (pulled back into the box below) and Delete. Dragging the handle, or
+// ↑ ↓ Home End on it, re-queues them all in the new order. Four rows or fewer show in full; five or more show three
+// and "N more".
+// Messages from other conversations come last and are only shown; since #6394 they collapse into one line
+// ("N messages from other conversations are waiting"), opened on demand, so a backlog no longer spreads over the
+// composer. Every change goes through the hub (POST …/queue {keep}, …/queue/send-now) and the rows follow its next
+// push; a reorder keeps its new order on screen until then. Its own chunk: drawn only while something is queued
+// (QueueStrip.tsx loads it).
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, sessionPath } from "../../lib/api";
 import { agentLabel } from "../../lib/mentions";
 import { keepAllBut, moved, movedTo, parseQueued, queuedMarks } from "../../lib/queue";
 import type { Session } from "../../lib/types";
 import { hasFinePointer } from "../../lib/viewport";
-import { Button, Collapse, cx, Dialog, Spinner, toast } from "../../ui/atoms";
+import { Collapse, cx, Spinner, toast } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { t } from "../../i18n";
 import { restoreQueued, type QueuedImage } from "./QueueStrip";
@@ -62,10 +65,15 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
   // the user's own come first; the rest came from other conversations and are only shown (#4342)
   const own = queued.length - Math.min(Math.max(session.queued_relayed ?? 0, 0), queued.length);
   const agent = persona ?? agentLabel(session);
+  // A runtime's Agent (Paseo's) keeps its queue to itself: the node refuses to edit, reorder or send it now, so its
+  // rows are only shown, as the other conversations' are (#8142).
+  const runtime = persona === undefined && session.source_kind === "runtime";
+  const editable = canEdit && !runtime;
   // a Claude takes queued messages at its next step, and can be given them now (#6088); so does a Persona chat's (#4342)
-  const takesNow = session.agent === "claude" || (persona !== undefined && own > 0);
+  const takesNow = !runtime && (session.agent === "claude" || (persona !== undefined && own > 0));
   const path = sessionPath(session.machine_id, session.session_id);
   const listId = useId();
+  const explainId = useId();
   const region = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const rowEls = useRef(new Map<string, HTMLElement>());
@@ -73,8 +81,9 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
 
   const [busy, setBusy] = useState<string | null>(null);
   const inFlight = useRef(false);
-  const [confirming, setConfirming] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // relayed messages from other conversations are one collapsed line until the owner asks to inspect them (#6394)
+  const [relayedOpen, setRelayedOpen] = useState(false);
   // compact: the rows under its one line, opened
   const [open, setOpen] = useState(false);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -100,10 +109,13 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
 
   const identity = Array.from({ length: own }, (_, i) => i);
   const order = drag ? (movedTo(own, drag.from, drag.to) ?? identity) : (holdOrder ?? identity);
-  const shown = [...order.map((i) => rows[i]), ...rows.slice(own)];
+  // Only the owner's own rows reorder and fold; the relayed ones live behind their own collapsed line (#6394).
+  const ownRows = rows.filter((r) => r.own);
+  const relayedRows = rows.filter((r) => !r.own);
+  const shown = order.map((i) => ownRows[i]).filter(Boolean);
   const folds = shown.length > FOLD_OVER;
   const visible = folds && !expanded ? shown.slice(0, FOLDED_ROWS) : shown;
-  const shownOwn = Math.min(own, visible.length);
+  const shownOwn = visible.length;
 
   useLayoutEffect(() => {
     const back = refocus.current;
@@ -157,14 +169,15 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
       else setTimeout(() => setHeld((h) => (h === mine ? null : h)), HOLD_MS);
     });
   };
-  const sendNow = () => {
-    const id = confirming;
-    setConfirming(null);
-    if (id !== null) void run(id, async () => {
+  // at one press, with no dialog: it loses nothing (the messages go now rather than at the next step), and Stop, which
+  // cuts the whole turn, and Delete beside it act at one press too (DESIGN_SYSTEM.md 4.4)
+  const sendNow = (row: Row) =>
+    void run(row.id, async () => {
       await api(`${path}/queue/send-now`, { method: "POST", json: {} });
       toast(t("chat-queuepanel.sent_now", { agent }), "ok");
-    });
-  };
+    }).then((ok) => ok && toBox(false));
+  // what the dialog used to say, now the button's tooltip and description
+  const explain = t(persona !== undefined ? "chat-queuepanel.send_now_body_persona" : "chat-queuepanel.send_now_body", { agent });
 
   const keyMove = (e: React.KeyboardEvent, row: Row) => {
     const to = e.key === "ArrowUp" ? row.i - 1 : e.key === "ArrowDown" ? row.i + 1 : e.key === "Home" ? 0 : e.key === "End" ? own - 1 : null;
@@ -217,31 +230,61 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
 
   if (!queued.length) return null;
   const hidden = shown.length - visible.length;
+  const rowFor = (row: Row, pos: number) => (
+    <QueueRow
+      key={row.id}
+      row={row}
+      n={pos + 1}
+      photos={row.own ? (photosOf?.(row.raw) ?? 0) : 0}
+      editable={editable && row.own}
+      movable={editable && row.own && own > 1}
+      takesNow={takesNow}
+      agent={agent}
+      explain={explain}
+      explainId={explainId}
+      busy={busy === row.id}
+      locked={locked}
+      dragging={drag?.id === row.id}
+      rowRef={(el) => {
+        if (el) rowEls.current.set(row.id, el);
+        else rowEls.current.delete(row.id);
+      }}
+      handleRef={(el) => {
+        if (el) handles.current.set(row.id, el);
+        else handles.current.delete(row.id);
+      }}
+      onKey={(e) => keyMove(e, row)}
+      onPointerDown={(e) => startDrag(e, row)}
+      onSendNow={() => sendNow(row)}
+      onEdit={() => act(row, false)}
+      onDelete={() => act(row, true)}
+    />
+  );
+  // The messages other conversations sent in: one line while collapsed, their read-only rows when opened (#6394).
+  const relayedLine = relayedRows.length > 0 && (
+    <div className="border-t border-line">
+      <button
+        type="button"
+        aria-expanded={relayedOpen}
+        data-queue-relayed-summary
+        onClick={() => setRelayedOpen((o) => !o)}
+        className="touch-hit flex h-8 w-full items-center gap-1.5 px-2 text-label leading-none whitespace-nowrap text-ink-3 transition-colors hover:bg-hover hover:text-ink"
+      >
+        <Icon name="send" size={13} stroke={2} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate text-left">{t("chat-queuepanel.relayed_summary", { count: relayedRows.length })}</span>
+        <Icon name="chevron" size={13} className={cx("shrink-0 transition-transform duration-200", relayedOpen && "rotate-180")} />
+      </button>
+      {relayedOpen && (
+        <div role="list" data-queue-relayed-list>
+          {relayedRows.map((row, pos) => rowFor(row, own + pos))}
+        </div>
+      )}
+    </div>
+  );
   const rowsAndFold = (
     <>
       <div ref={list} id={listId} role="list" className="flex max-h-[196px] flex-col overflow-y-auto overscroll-contain px-1 pt-1.5 pb-0.5">
-        {visible.map((row, pos) => (
-          <QueueRow
-            key={row.id}
-            row={row}
-            n={pos + 1}
-            photos={row.own ? (photosOf?.(row.raw) ?? 0) : 0}
-            editable={canEdit && row.own}
-            movable={canEdit && row.own && own > 1}
-            takesNow={takesNow}
-            agent={agent}
-            busy={busy === row.id}
-            locked={locked}
-            dragging={drag?.id === row.id}
-            rowRef={(el) => void (el ? rowEls.current.set(row.id, el) : rowEls.current.delete(row.id))}
-            handleRef={(el) => void (el ? handles.current.set(row.id, el) : handles.current.delete(row.id))}
-            onKey={(e) => keyMove(e, row)}
-            onPointerDown={(e) => startDrag(e, row)}
-            onSendNow={() => setConfirming(row.id)}
-            onEdit={() => act(row, false)}
-            onDelete={() => act(row, true)}
-          />
-        ))}
+        {visible.map((row, pos) => rowFor(row, pos))}
       </div>
       {folds && (
         <div className="flex items-center justify-center border-t border-line px-2 py-1.5 text-[12px] leading-none">
@@ -258,6 +301,7 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
           </button>
         </div>
       )}
+      {relayedLine}
     </>
   );
   return (
@@ -289,21 +333,11 @@ export function QueuePanel({ session, draftKey, canEdit, persona, onWithdrawn, p
       ) : (
         rowsAndFold
       )}
-      <Dialog
-        open={confirming !== null}
-        onClose={() => setConfirming(null)}
-        title={t("chat-queuepanel.send_now_title", { count: own })}
-        footer={
-          <>
-            <Button onClick={() => setConfirming(null)}>{t("common.cancel")}</Button>
-            <Button tone="primary" icon="send" onClick={sendNow}>{t("chat-queuepanel.send_now")}</Button>
-          </>
-        }
-      >
-        <p className="text-[13px] leading-5 text-ink-2" data-send-now-body>
-          {t(persona !== undefined ? "chat-queuepanel.send_now_body_persona" : "chat-queuepanel.send_now_body", { agent })}
-        </p>
-      </Dialog>
+      {takesNow && (
+        <span id={explainId} hidden data-queue-explain>
+          {explain}
+        </span>
+      )}
     </div>
   );
 }
@@ -325,7 +359,7 @@ const ROUND = "touch-hit flex size-5 shrink-0 items-center justify-center rounde
 const ON_ACTIVE = "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100";
 
 /** One queued message. `photos`: ones it went with beside its words (a Persona chat's, when this browser sent it). */
-function QueueRow({ row, n, photos, editable, movable, takesNow, agent, busy, locked, dragging, rowRef, handleRef, onKey, onPointerDown, onSendNow, onEdit, onDelete }: {
+function QueueRow({ row, n, photos, editable, movable, takesNow, agent, explain, explainId, busy, locked, dragging, rowRef, handleRef, onKey, onPointerDown, onSendNow, onEdit, onDelete }: {
   row: Row;
   n: number;
   photos: number;
@@ -333,6 +367,9 @@ function QueueRow({ row, n, photos, editable, movable, takesNow, agent, busy, lo
   movable: boolean;
   takesNow: boolean;
   agent: string;
+  /** What sending now does, as Send now's tooltip and description. */
+  explain: string;
+  explainId: string;
   busy: boolean;
   locked: boolean;
   dragging: boolean;
@@ -359,6 +396,7 @@ function QueueRow({ row, n, photos, editable, movable, takesNow, agent, busy, lo
     else el.removeAttribute("title");
   };
   const buttons = editable ? (takesNow ? 3 : 2) : 0;
+  const tip = t("chat-queuepanel.send_now_tip", { agent });
   return (
     <div
       ref={rowRef}
@@ -419,7 +457,16 @@ function QueueRow({ row, n, photos, editable, movable, takesNow, agent, busy, lo
         ) : (
           <div data-queue-actions className={cx("flex shrink-0 items-center gap-1", ON_ACTIVE)}>
             {takesNow && (
-              <button type="button" data-send-now disabled={locked} onClick={onSendNow} aria-label={t("chat-queuepanel.send_now_tip", { agent })} title={t("chat-queuepanel.send_now_tip", { agent })} className={ROUND}>
+              <button
+                type="button"
+                data-send-now
+                disabled={locked}
+                onClick={onSendNow}
+                aria-label={tip}
+                aria-describedby={explainId}
+                title={`${tip}\n${explain}`}
+                className={ROUND}
+              >
                 <Icon name="arrowUp" size={12} stroke={2.25} />
               </button>
             )}

@@ -1,0 +1,79 @@
+package node
+
+// The worktree.* methods (Node.handle, #8089); see handle_file.go.
+const (
+	methodWorktreePrepare  = "worktree.prepare"
+	methodWorktreeCreate   = "worktree.create"
+	methodWorktreeSource   = "worktree.source"
+	methodWorktreePreset   = "worktree.preset"
+	methodWorktreeDelete   = "worktree.delete"
+	methodWorktreeAdd      = "worktree.add"
+	methodWorktreeStatus   = "worktree.status"
+	methodWorktreeRemove   = "worktree.remove"
+	methodWorktreeSnapshot = "worktree.snapshot"
+	methodWorktreeRename   = "worktree.rename"
+)
+
+// worktreePrepareParams is worktree.prepare's request (worktree.go): Composer asks for the composer's variant.
+type worktreePrepareParams struct {
+	Composer    bool   `json:"composer"`
+	Kind        string `json:"kind"`
+	WorkspaceID string `json:"workspace_id"`
+	Cwd         string `json:"cwd"`
+	Branch      string `json:"branch"`
+}
+
+// worktreeCreateParams is worktree.create's request (worktree.go): Composer asks for the composer's variant, AutoName for
+// a host-generated branch and path, ParentWorkspaceID is independent of the Git source.
+type worktreeCreateParams struct {
+	Composer          bool   `json:"composer"`
+	Kind              string `json:"kind"`
+	WorkspaceID       string `json:"workspace_id"`
+	Cwd               string `json:"cwd"`
+	Branch            string `json:"branch"`
+	Path              string `json:"path"`
+	ParentWorkspaceID string `json:"parent_workspace_id"`
+	AutoName          bool   `json:"auto_name"`
+}
+
+// worktreeSourceParams is the request of worktree.source, .preset and .delete: which workspace (their handlers read the rest of the request themselves).
+type worktreeSourceParams struct {
+	Kind        string `json:"kind"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+// worktreeAddParams is worktree.add's request (agentworktree.go, #6115).
+type worktreeAddParams struct {
+	Kind     string `json:"kind"`
+	Cwd      string `json:"cwd"`
+	Branch   string `json:"branch"`
+	NameHint string `json:"name_hint"`
+}
+
+// worktreeStatusParams is worktree.status's request.
+type worktreeStatusParams struct {
+	Kind string `json:"kind"`
+	Cwd  string `json:"cwd"`
+}
+
+// worktreeRemoveParams is worktree.remove's request.
+type worktreeRemoveParams struct {
+	Kind         string `json:"kind"`
+	Path         string `json:"path"`
+	DeleteBranch bool   `json:"delete_branch"`
+	Force        bool   `json:"force"`
+}
+
+// worktreeSnapshotParams is worktree.snapshot's request (reviewsnapshot.go, #2173).
+type worktreeSnapshotParams struct {
+	Kind     string `json:"kind"`
+	Cwd      string `json:"cwd"`
+	NameHint string `json:"name_hint"`
+}
+
+// worktreeRenameParams is worktree.rename's request.
+type worktreeRenameParams struct {
+	Kind        string `json:"kind"`
+	WorkspaceID string `json:"workspace_id"`
+	Name        string `json:"name"`
+}

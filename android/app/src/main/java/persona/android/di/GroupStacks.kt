@@ -12,6 +12,7 @@ import persona.core.data.ChatDataRepositories
 import persona.core.data.ScopedHubData
 import persona.core.hub.*
 import persona.feature.chat.ChatAppBindings
+import persona.platform.phonetools.AndroidPhoneTools
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.*
@@ -40,6 +41,8 @@ class GroupStack internal constructor(
     internal val mergedTerminal: TerminalTransport by lazy { terminal.inGroup(names) }
     internal val files: SessionFiles by lazy { HubSessionFiles(connection).inGroup(names) }
     internal val actions: ChatActions by lazy { HttpChatActions(connection).inGroup(names) }
+    /** Successful manager snapshots follow this pairing across refreshed HTTP routes. */
+    internal val metricSnapshots = HttpMachineMetricsApi.Cache()
     val current: Boolean get() = group.data === data && group.active
 }
 
@@ -83,9 +86,10 @@ class GroupStacks @Inject constructor(application: Application, private val runt
         fun current() = group.data === data && group.active
         val repositories = withContext(Dispatchers.IO) {
             ChatDataRepositories(data, HubChatTransport(connection), connection, foreground,
-                HttpHubPreferencesTransport(connection) { current() })
+                HttpHubPreferencesTransport(connection) { current() }, continuityFactory = app.continuityFactory)
         }
         val names = GroupNames(group.namespace)
+        group.adoptSession = { previous, session -> if (current()) repositories.sessions.adoptThread(previous, session) }
         val view = object : HubConnection {
             override val state = group.state
             override val resumed get() = connection.resumed
@@ -93,7 +97,11 @@ class GroupStacks @Inject constructor(application: Application, private val runt
             override fun reconnect() = group.reconnect()
             override fun send(message: JsonObject) = connection.send(message)
         }
-        val plain = createChatWiring(data, repositories, connection, view, ::current)
+        val plain = createChatWiring(data, repositories, connection, view, ::current,
+            // The conversation's Undo of the assistant's calendar write (iOS `CalendarTool.remove`): this phone's own
+            // delete, so it is not a tool call that would ask the user to confirm again. The current group's phone is the
+            // only phone these cards can undo on: a card made on another phone has no event here and says so.
+            quickResults = persona.core.contracts.api.PhoneQuickResults { id -> AndroidPhoneTools(app) { true }.removeCalendarEvent(id) })
         return GroupStack(group, data, connection, repositories, plain.inGroup(names), plain)
     }
 

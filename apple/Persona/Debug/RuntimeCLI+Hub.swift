@@ -37,3 +37,4 @@ extension RuntimeCLI {
     }
 }
 #endif
+import PersonaWire

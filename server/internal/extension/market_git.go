@@ -66,7 +66,7 @@ func (m *Market) git(ctx context.Context, dir string, args ...string) error {
 	}
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false")
+	cmd.Env = m.gitEnvironment()
 	if m.Token != "" {
 		u, err := url.Parse(m.Spec.URL)
 		if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(m.Token, "\r\n") {
@@ -97,12 +97,34 @@ func (m *Market) git(ctx context.Context, dir string, args ...string) error {
 		if ctx.Err() != nil {
 			msg = i18n.T(i18n.Default, "extension-status.git_timeout")
 		}
+		if m.UpstreamProxy != nil {
+			msg = strings.ReplaceAll(msg, m.UpstreamProxy.String(), m.UpstreamProxy.Redacted())
+			if m.UpstreamProxy.User != nil {
+				if password, ok := m.UpstreamProxy.User.Password(); ok && password != "" {
+					msg = strings.ReplaceAll(msg, password, "xxxxx")
+				}
+			}
+		}
 		if i := strings.LastIndex(msg, "\n"); i >= 0 {
 			msg = strings.TrimSpace(msg[i+1:])
 		}
 		return fmt.Errorf("git %s：%s", args[0], msg)
 	}
 	return nil
+}
+
+// gitEnvironment carries an explicit marketplace proxy to an HTTPS clone without changing the manager's own
+// environment. NO_PROXY is cleared so an explicit proxy cannot silently turn into a direct connection.
+func (m *Market) gitEnvironment() []string {
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=/bin/false")
+	if m.UpstreamProxy == nil || !strings.HasPrefix(m.Spec.URL, "https://") {
+		return env
+	}
+	proxy := m.UpstreamProxy.String()
+	return append(env,
+		"HTTP_PROXY="+proxy, "http_proxy="+proxy,
+		"HTTPS_PROXY="+proxy, "https_proxy="+proxy,
+		"NO_PROXY=", "no_proxy=")
 }
 
 // gitVersion reads "git version 2.30.2" (also "… (Apple Git-146)", "….windows.1").

@@ -1,0 +1,8 @@
++-o product  <class IOPlatformDevice, id 0x10000019d, registered, matched, active, busy 0 (0 ms), retain 16>
+    {
+      "compatible" = <"Mac13,2">
+      "product-name" = <"Mac Studio (2022)">
+      "product-description" = <"Mac Studio (2022)">
+      "coverglass-serial-number" = <"XXXXXXXXXX">
+      "name" = <"product">
+    }

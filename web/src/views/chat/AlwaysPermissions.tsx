@@ -51,26 +51,26 @@ export function AlwaysPermissions({ session }: { session: string }) {
   };
 
   return (
-    <section aria-label={t("chat-sessiondialogs.always_title")}>
-      <h3 className="mb-1 text-[11.5px] font-medium text-ink-3">{t("chat-sessiondialogs.always_title")}</h3>
-      <p className="mb-2 text-[12px] leading-relaxed text-ink-3">{t("chat-sessiondialogs.always_hint")}</p>
-      {restart && <p role="status" className="mb-2 text-[12px] text-attention">{t("chat-sessiondialogs.always_restart")}</p>}
+    <section aria-label={t("chat-sessioninfo.always_title")}>
+      <h3 className="mb-1 text-[11.5px] font-medium text-ink-3">{t("chat-sessioninfo.always_title")}</h3>
+      <p className="mb-2 text-[12px] leading-relaxed text-ink-3">{t("chat-sessioninfo.always_hint")}</p>
+      {restart && <p role="status" className="mb-2 text-[12px] text-attention">{t("chat-sessioninfo.always_restart")}</p>}
       {error && <p role="alert" className="mb-2 text-[12px] text-red">{error}</p>}
       {!grants && !error && <Loading />}
-      {!grants && error && <Button tone="secondary" onClick={() => setRevision((n) => n + 1)}>{t("chat-sessiondialogs.always_retry")}</Button>}
-      {grants?.length === 0 && <p className="text-[12.5px] text-ink-2">{t("chat-sessiondialogs.always_empty")}</p>}
+      {!grants && error && <Button tone="secondary" onClick={() => setRevision((n) => n + 1)}>{t("chat-sessioninfo.always_retry")}</Button>}
+      {grants?.length === 0 && <p className="text-[12.5px] text-ink-2">{t("chat-sessioninfo.always_empty")}</p>}
       {!!grants?.length && (
         <>
-          <p className="mb-2 text-[12px] leading-relaxed text-ink-3">{t("chat-sessiondialogs.always_revoke_hint")}</p>
+          <p className="mb-2 text-[12px] leading-relaxed text-ink-3">{t("chat-sessioninfo.always_revoke_hint")}</p>
           <div className="divide-y divide-line overflow-hidden rounded-[10px] bg-inset shadow-hairline">
             {grants.map((grant) => (
               <div key={grant.key_hash} className="flex items-center gap-3 px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12.5px] text-ink" title={grant.tool_name}>{grant.tool_name || t("chat-sessiondialogs.always_unknown")}</p>
+                  <p className="truncate text-[12.5px] text-ink" title={grant.tool_name}>{grant.tool_name || t("chat-sessioninfo.always_unknown")}</p>
                   <p className="text-[11.5px] text-ink-3">{ago(grant.created_at)}</p>
                 </div>
                 <Button tone="quiet" busy={pending === grant.key_hash} disabled={!!pending} onClick={() => void revoke(grant.key_hash)}>
-                  {t("chat-sessiondialogs.always_revoke")}
+                  {t("chat-sessioninfo.always_revoke")}
                 </Button>
               </div>
             ))}

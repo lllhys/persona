@@ -1,0 +1,168 @@
+{
+  "id": "shared-sidebar-fold",
+  "manifestId": "android-large-window-shared-sidebar-fold",
+  "description": "Open an Inbox item beside the shared sidebar on a foldable, then change posture and window size (book, compact, regular) in one process and Back to the Inbox list. The Inbox shows its item in the page itself, so the stack route stays inbox and the item is checked on the screenshots.",
+  "requires": {
+    "stackProbe": true,
+    "fields": [
+      "pid",
+      "route",
+      "selectedKey"
+    ]
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "page": "inbox",
+      "probePage": "Inbox"
+    },
+    {
+      "step": "wm-size",
+      "size": "900x1200",
+      "density": 160,
+      "widthDp": 900,
+      "heightDp": 1200
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "equals": "inbox"
+        },
+        "window.widthDp": {
+          "equals": 900
+        }
+      },
+      "requires": {
+        "page": "Inbox",
+        "fields": [
+          "firstVisibleKey",
+          "firstVisibleOffsetPx"
+        ]
+      }
+    },
+    {
+      "step": "capture",
+      "name": "01-sidebar-inbox-list"
+    },
+    {
+      "step": "tap",
+      "text": "Direct",
+      "index": 0
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "equals": "inbox"
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "02-item-beside-sidebar"
+    },
+    {
+      "step": "posture",
+      "value": 2
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "equals": "inbox"
+        },
+        "deviceState": {
+          "equals": "HALF_OPENED"
+        },
+        "postureEvidenceType": {
+          "equals": "folding-feature"
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-item-book-posture"
+    },
+    {
+      "step": "posture",
+      "value": 3
+    },
+    {
+      "step": "wm-size",
+      "size": "480x800",
+      "density": 160,
+      "widthDp": 480,
+      "heightDp": 800
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "equals": "inbox"
+        },
+        "window.widthDp": {
+          "equals": 480
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "04-item-compact"
+    },
+    {
+      "step": "wm-size",
+      "size": "900x1200",
+      "density": 160,
+      "widthDp": 900,
+      "heightDp": 1200
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "equals": "inbox"
+        },
+        "window.widthDp": {
+          "equals": 900
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "05-item-regular-again"
+    },
+    {
+      "step": "key",
+      "key": "BACK"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "equals": "inbox"
+        },
+        "selectedKey": {
+          "equals": null
+        }
+      },
+      "requires": {
+        "page": "Inbox",
+        "fields": [
+          "firstVisibleKey",
+          "firstVisibleOffsetPx"
+        ]
+      }
+    },
+    {
+      "step": "capture",
+      "name": "06-back-restored-inbox-list"
+    }
+  ]
+}

@@ -45,6 +45,9 @@ import { MediaPlayer } from "../../../ui/Media";
 import { NotebookView } from "./NotebookView";
 import { OfficeView } from "./OfficeView";
 import { SheetView } from "./SheetView";
+import { editProblem, FileEdit } from "./FileEdit";
+import { FILE_WRITE_FEATURE } from "../../../lib/file-ops";
+import { hubHas, useStore } from "../../../lib/store";
 import { formatNumber, t } from "../../../i18n";
 
 const LH = 20; // px per code line
@@ -243,6 +246,7 @@ export function FileView({
   onBack,
   onClose,
   onOpenPath,
+  onShowInFolder,
 }: {
   mid: string;
   /** The session whose message box takes the comments made on this file's lines (else the box last used). */
@@ -255,12 +259,17 @@ export function FileView({
   onBack?: () => void;
   onClose: () => void;
   onOpenPath: (path: string) => void;
+  /** Show in Files (#5827): the Files panel at the file's folder with the file marked. */
+  onShowInFolder?: (path: string) => void;
 }) {
   const doc = useFileDoc(mid, path, cwd);
   const f = doc.file;
   const kind = f ? viewKind(f) : null;
   const [mode, setMode] = useState<Mode>(line ? "source" : "rendered");
   const [saving, setSaving] = useState(false);
+  // Edit (#5829): text files up to 1 MB read whole, where the hub writes files
+  const canWrite = hubHas(useStore((s) => s.features), FILE_WRITE_FEATURE);
+  const [editing, setEditing] = useState(false);
 
   // JSON is indented from the whole text: read the rest first (as the app does), up to a cap.
   const cap = kind === "notebook" ? MAX_NOTEBOOK : kind === "html" ? MAX_HTML : MAX_JSON;
@@ -338,6 +347,15 @@ export function FileView({
       {kind === "html" && <Segmented label={t("session-files-fileview.view_mode")} value={mode} onChange={setMode} options={[["rendered", t("session-files-fileview.mode_preview")], ["source", t("session-files-fileview.mode_source")]]} />}
       {kind === "notebook" && notebook?.nb && <Segmented label={t("session-files-fileview.view_mode")} value={mode} onChange={setMode} options={[["rendered", t("session-files-fileview.mode_notebook")], ["source", t("session-files-fileview.mode_source_file")]]} />}
       {kind === "sheet" && typeof f?.text === "string" && <Segmented label={t("session-files-fileview.view_mode")} value={mode} onChange={setMode} options={[["rendered", t("session-files-fileview.mode_sheet")], ["source", t("session-files-fileview.mode_source_file")]]} />}
+      {canWrite && kind !== "directory" && kind !== "image" && f && (
+        <IconButton
+          icon="pencil"
+          label={editProblem(f, doc.next === 0) ?? t("files-editor.edit")}
+          onClick={() => setEditing(true)}
+          disabled={editProblem(f, doc.next === 0) !== null || doc.changed}
+        />
+      )}
+      {onShowInFolder && kind !== "directory" && <IconButton icon="folder" label={t("files-nav.show_in_files")} onClick={() => onShowInFolder(f?.path || path)} />}
       <IconButton icon="copy" label={t("session-files-fileview.copy_path")} onClick={() => copyText(f?.path || path)} />
       {kind !== "directory" && <IconButton icon="arrowDown" label={saving ? t("session-files-fileview.downloading") : t("session-files-fileview.download")} onClick={download} disabled={!f || saving || doc.changed} />}
     </>
@@ -429,6 +447,21 @@ export function FileView({
               ? t("session-files-fileview.invalid_json", { error: json.error })
               : "";
     body = <CodeView doc={doc} file={f} text={shown} line={line} lineTo={lineTo} note={note} where={{ mid, sid, cwd }} />;
+  }
+
+  if (editing && f) {
+    return (
+      <FileEdit
+        mid={mid}
+        cwd={cwd}
+        file={f}
+        text={doc.text}
+        onDone={(changed) => {
+          setEditing(false);
+          if (changed) doc.reload();
+        }}
+      />
+    );
   }
 
   return (
@@ -611,7 +644,7 @@ function machineImage(mid: string, path: string): Promise<string | null> {
   if (!p) {
     if (images.size > 64) images.clear();
     p = api<FileContent>(fileURL(mid, path))
-      .then((f) => (typeof f.data === "string" && f.mime?.startsWith("image/") ? `data:${f.mime};base64,${f.data}` : null))
+      .then((f) => (f.mime?.startsWith("image/") ? inlineSrc(mid, f) : null))
       .catch(() => null);
     images.set(key, p);
   }

@@ -2,6 +2,13 @@
 <!-- Share as a picture, videos and pasted pictures in the composer (iOS MessageShareSheet, VideoAttachments, PasteImageChip). -->
 <resources>
     <string name="chat_composer_videos_only">動画を見てください</string>
+    <string name="chat_composer_files_only">添付ファイルを見てください</string>
+    <string name="chat_composer_file_limit">1件のメッセージに添付できるファイルは10個までです</string>
+    <string name="chat_attach_waiting">待機中</string>
+    <plurals name="chat_files_more">
+        <item quantity="other">ほか%1$d個のファイル</item>
+    </plurals>
+    <string name="chat_files_show_less">閉じる</string>
     <string name="chat_composer_video_placeholder">[動画]</string>
     <string name="chat_paste_image">ペースト</string>
     <string name="chat_paste_dont">ペーストしない</string>

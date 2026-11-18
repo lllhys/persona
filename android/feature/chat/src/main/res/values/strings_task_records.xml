@@ -11,8 +11,8 @@
     <string name="chat_report_step_of">Step %1$d/%2$d · %3$s</string>
     <string name="chat_report_step">Step %1$d · %2$s</string>
     <!-- A quiet supervision round folded into one line (iOS SupervisionRecordLine). -->
-    <string name="chat_supervision_record">Supervision record</string>
-    <string name="chat_supervision_record_live">Supervision record · running</string>
+    <string name="chat_supervision_record">Handled in the background</string>
+    <string name="chat_supervision_record_live">Handling in the background…</string>
     <!-- A message card on Glass (iOS MessageCard): Edit opens the drafted reply for typing, Done closes it. -->
     <string name="chat_tasks_message_edit">Edit</string>
     <string name="chat_tasks_message_edit_done">Done</string>

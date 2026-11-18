@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Answers health probes at addresses.invalid as hub "H" would, and at old.invalid as a server without a hub_id.
 private final class HealthProtocol: URLProtocol, @unchecked Sendable {
@@ -104,5 +105,62 @@ struct HubAddressesTests {
         let old = ServerConfig(url: URL(string: "https://old.invalid")!, token: "device")
         #expect(await !HubRoute.healthProbe(.init(config: old, hub: "h", address: 1, hubID: "H")))
         #expect(await HubRoute.healthProbe(.init(config: old, hub: "h", address: 1))) // hub_id not known yet
+    }
+}
+
+/// What the Addresses page makes of the text typed: `https://` in front of an address without a scheme, and a reason
+/// when there is nothing to add (docs/operations/network.md "Client-added candidates").
+struct HubAddressInputTests {
+    private let existing = [URL(string: "http://a.invalid:8080")!, URL(string: "https://b.invalid")!]
+
+    private func input(_ text: String) -> HubAddressInput { HubAddressInput(text, existing: existing) }
+    private func ready(_ url: String) -> HubAddressInput { .ready(URL(string: url)!) }
+
+    @Test func nothingTypedSaysNothing() {
+        #expect(input("") == .empty)
+        #expect(input("   \n") == .empty)
+    }
+
+    @Test func aBareHostGetsHTTPS() {
+        #expect(input("hub.example.com") == ready("https://hub.example.com"))
+        #expect(input("  hub.example.com/ ") == ready("https://hub.example.com"))
+        #expect(input("hub.example.com:8443") == ready("https://hub.example.com:8443"))
+        #expect(input("hub.example.com/persona") == ready("https://hub.example.com/persona"))
+    }
+
+    /// No guessing http for a local-looking address: whoever wants http writes it.
+    @Test func aBareIPOrLocalhostGetsHTTPSToo() {
+        #expect(input("192.0.2.10:18660") == ready("https://192.0.2.10:18660"))
+        #expect(input("localhost:18660") == ready("https://localhost:18660"))
+        #expect(input("[fd00::1]:18662") == ready("https://[fd00::1]:18662"))
+    }
+
+    @Test func aTypedSchemeIsKept() {
+        #expect(input("http://192.0.2.10:18660") == ready("http://192.0.2.10:18660"))
+        #expect(input("https://hub.example.com") == ready("https://hub.example.com"))
+        #expect(input("HTTPS://hub.example.com") == ready("HTTPS://hub.example.com"))
+    }
+
+    @Test func otherSchemesAreRefused() {
+        #expect(input("ftp://hub.example.com") == .unsupportedScheme)
+        #expect(input("wss://hub.example.com") == .unsupportedScheme)
+    }
+
+    @Test func whatIsNoAddressSaysSo() {
+        #expect(input("https://") == .invalid)
+        #expect(input("hub example.com") == .invalid)
+        #expect(input("hub.example.com:99999") == .invalid)
+        #expect(input("hub.example.com:port") == .invalid)
+        #expect(input("://hub.example.com") == .invalid)
+    }
+
+    /// The same address written another way is still the one the hub has.
+    @Test func anAddressTheHubHasIsADuplicate() {
+        #expect(input("b.invalid") == .duplicate(URL(string: "https://b.invalid")!))
+        #expect(input("https://B.invalid:443/") == .duplicate(URL(string: "https://B.invalid:443")!))
+        #expect(input("http://a.invalid:8080") == .duplicate(URL(string: "http://a.invalid:8080")!))
+        // Another scheme or port is another address.
+        #expect(input("a.invalid:8080") == ready("https://a.invalid:8080"))
+        #expect(input("http://b.invalid") == ready("http://b.invalid"))
     }
 }

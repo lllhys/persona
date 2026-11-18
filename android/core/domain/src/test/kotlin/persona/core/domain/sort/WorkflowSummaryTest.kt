@@ -6,6 +6,7 @@ import org.junit.Test
 import persona.core.contracts.BackgroundTask
 import persona.core.contracts.Session
 import persona.core.contracts.Workflow
+import persona.core.domain.models.keepingDetails
 import persona.core.domain.zh
 import java.time.Instant
 
@@ -28,6 +29,31 @@ class WorkflowSummaryTest {
         val s = base.copy(workflows = listOf(audit, audit.copy(taskId = "t2", name = null, summary = "second"), audit.copy(taskId = "t3"),
             audit.copy(taskId = "t4", status = "completed", running = false)))
         assertEquals("后台 workflow「parity-audit」 · Verify 2/2 · 169/185+ · 14 分 · 等 2 个", WorkflowSummary.line(s, now)?.zh())
+    }
+
+    @Test fun aSummaryRowReadsItsWorkflowProgress() {
+        // summary=1 rows (#5888): no workflows, the newest running run without its agents and phases
+        val s = base.copy(waiting = true, runningWorkflowsCount = 1, workflowProgress = audit.copy(phases = null, phaseCount = 2))
+        assertEquals("后台 workflow「parity-audit」 · Verify 2/2 · 169/185+ · 14 分", WorkflowSummary.line(s, now)?.zh())
+        assertEquals(true, AgentSession(s).isBackgroundWorking)
+        // a count without progress (an older runtime's background entry) still reads as background work
+        assertEquals(true, AgentSession(base.copy(waiting = true, runningWorkflowsCount = 1)).isBackgroundWorking)
+        // a complete row reads its workflows
+        assertNull(WorkflowSummary.line(base.copy(workflows = emptyList()), now))
+        assertEquals(false, AgentSession(base.copy(workflows = emptyList())).isBackgroundWorking)
+    }
+
+    @Test fun aSummaryOverAnOpenedChatReadsItsOwnCounts() {
+        // keepingDetails keeps an older complete row's workflows; the summary's own counts still win (#3588)
+        val started = base.copy(waiting = true, runningWorkflowsCount = 1, workflowProgress = audit)
+            .keepingDetails(base.copy(workflows = emptyList()))
+        assertEquals(emptyList<Workflow>(), started.workflows)
+        assertEquals("后台 workflow「parity-audit」 · Verify 2/2 · 169/185+ · 14 分", WorkflowSummary.line(started, now)?.zh())
+        assertEquals(true, AgentSession(started).isBackgroundWorking)
+        val ended = base.copy(waiting = false).keepingDetails(base.copy(workflows = listOf(audit)))
+        assertEquals(1, ended.workflows?.size)
+        assertNull(WorkflowSummary.line(ended, now))
+        assertEquals(false, AgentSession(ended).isBackgroundWorking)
     }
 
     @Test fun nothingRunningOrAnOlderHub() {

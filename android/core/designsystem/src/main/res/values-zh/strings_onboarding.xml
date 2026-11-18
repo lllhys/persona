@@ -40,7 +40,7 @@
     <string name="designsystem_readiness_help_install_body">在%1$s上打开终端，粘贴下面这行，回车：</string>
     <string name="designsystem_readiness_help_install_after">装好以后回到这里，过一会儿就会变好。</string>
     <string name="designsystem_readiness_help_login_title">登录 Claude Code</string>
-    <string name="designsystem_readiness_help_login_body">在%1$s上打开终端，输入下面这个词，回车，按提示在浏览器里登录一次：</string>
+    <string name="designsystem_readiness_help_login_body">Persona 用的是%1$s上的 Claude Code 命令行，Claude 桌面版登录了也不算。在那台电脑上打开终端，运行下面这条命令，按提示在浏览器里登录一次：</string>
     <string name="designsystem_readiness_help_login_after">登录好以后回到这里，发一句试试。</string>
     <string name="designsystem_readiness_help_what_title">Persona 能做什么</string>
     <string name="designsystem_readiness_help_what_body">Persona 是你的私人助手。接好电脑和模型以后，它能：</string>

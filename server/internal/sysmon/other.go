@@ -23,3 +23,6 @@ func (noCollector) Sample(now time.Time) proto.MetricSample { return proto.Metri
 func (noCollector) Close()                                  {}
 
 func loadAverageOS() *float64 { return nil }
+
+// Volumes: a diagnosis does not list volumes on this system.
+func Volumes() []proto.DiskVolume { return nil }

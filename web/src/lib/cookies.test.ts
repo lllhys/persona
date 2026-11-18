@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCookies, picked, siteOf, sitesOf } from "./cookies";
+import { parseCookies, picked, siteExpired, siteList, siteOf, sitesOf, siteSummary, SITES_IN_PLACE } from "./cookies";
 
 describe("parseCookies", () => {
   it("reads Netscape cookies.txt, with #HttpOnly_ lines", () => {
@@ -66,5 +66,35 @@ describe("sites", () => {
       ["example.org", 1, 0, 1_950_000_000],
     ]);
     expect(picked(sites, new Set(["example.org"])).map((c) => c.name)).toEqual(["c"]);
+  });
+});
+
+describe("the sites on a computer's page (#5821)", () => {
+  const now = Date.parse("2026-11-12T08:00:00Z");
+  const sites = [
+    { domain: "maple.example", count: 2, expires: "2027-01-01T00:00:00Z" },
+    { domain: "aspen.example", count: 1 },
+    { domain: "cedar.example", count: 4, expires: "2026-11-01T00:00:00Z" },
+    { domain: "birch.example", count: 3, expires: "2026-12-01T00:00:00Z" },
+  ];
+
+  it("lists by name, or the soonest to expire first with the expired on top and browser-only ones last", () => {
+    expect(siteList(sites, "", "name").map((s) => s.domain)).toEqual(["aspen.example", "birch.example", "cedar.example", "maple.example"]);
+    expect(siteList(sites, "", "expiry").map((s) => s.domain)).toEqual(["cedar.example", "birch.example", "maple.example", "aspen.example"]);
+    expect(sites[0]!.domain).toBe("maple.example"); // the input is left as it was
+  });
+
+  it("filters by domain in any case, ignoring the spaces around the query", () => {
+    expect(siteList(sites, " AR ", "name").map((s) => s.domain)).toEqual(["cedar.example"]);
+    expect(siteList(sites, "example", "name")).toHaveLength(4);
+    expect(siteList(sites, "nothing", "name")).toEqual([]);
+  });
+
+  it("sums up the count, the first expiry still to come and how many have expired", () => {
+    expect(siteSummary(sites, now)).toEqual({ count: 4, first: Date.parse("2026-12-01T00:00:00Z"), expired: 1 });
+    expect(siteSummary([{ domain: "a.example", count: 1 }], now)).toEqual({ count: 1, first: undefined, expired: 0 });
+    expect(siteExpired(sites[2]!, now)).toBe(true);
+    expect(siteExpired(sites[1]!, now)).toBe(false);
+    expect(SITES_IN_PLACE).toBe(3);
   });
 });

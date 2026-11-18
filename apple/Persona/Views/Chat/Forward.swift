@@ -11,6 +11,13 @@ nonisolated enum ForwardMessage {
     static let kind = "forward"
     /// The most of the original a forward carries; a longer one is cut with a note saying so.
     static let limit = 20_000
+    /// Several forwarded at once (#3838) share this many characters between them: each is cut at `limit(count:)`.
+    static let total = 60_000
+    /// The most messages one forward takes (spec/fixtures/forward/several.json `budget`).
+    static let most = 30
+
+    /// Where each of `count` messages forwarded together is cut: the smaller of `limit` and their share of `total`.
+    static func limit(count: Int) -> Int { min(limit, total / max(count, 1)) }
 
     /// Whose message it was: the user's own, Persona's, an Agent's, or another source's (a relay, a patrol).
     enum Role: String, Sendable {
@@ -34,12 +41,12 @@ nonisolated enum ForwardMessage {
     }
 
     /// The block for a message whose text, as the transcript has it, is `raw`.
-    static func ref(_ raw: String, from s: Source) -> ContextRef {
+    static func ref(_ raw: String, from s: Source, limit: Int = ForwardMessage.limit) -> ContextRef {
         var extra = ["role": s.role.rawValue, "author": author(s), "chat": s.chat]
         if let p = s.project, !p.isEmpty { extra["project"] = p }
         if let m = s.machine, !m.isEmpty { extra["machine"] = m }
         if let t = s.time { extra["time"] = timeFormat.string(from: t) }
-        var ref = ContextRef(kind: kind, title: "", url: url(s.key, item: s.item), text: body(raw, machine: s.machine),
+        var ref = ContextRef(kind: kind, title: "", url: url(s.key, item: s.item), text: body(raw, machine: s.machine, limit: limit),
                              msg: s.item, extra: extra)
         ref.title = heading(ref)
         return ref
@@ -53,7 +60,7 @@ nonisolated enum ForwardMessage {
     /// What of `raw` a forward carries: the words as the chat shows them, without the hub's metadata and transport blocks;
     /// the quotes and forwards it opened with as `> ` lines led by their heading; files on its computer by name; cut at
     /// `limit`.
-    static func body(_ raw: String, machine: String? = nil) -> String {
+    static func body(_ raw: String, machine: String? = nil, limit: Int = ForwardMessage.limit) -> String {
         let parsed = ContextRef.parse(MessageSource.strippingMetadata(raw))
         var parts: [String] = []
         for r in parsed.refs where r.isQuote {
@@ -80,6 +87,45 @@ nonisolated enum ForwardMessage {
         if !item.isEmpty { c.queryItems = [URLQueryItem(name: "at", value: item)] }
         // `#` in a Claude item id is a fragment to URLComponents' query encoder: write it escaped.
         return (c.string ?? "").replacingOccurrences(of: "#", with: "%23")
+    }
+
+    /// `refs` in the runs they are shown in, as indices: forwards next to each other whose `url` names the same session
+    /// make one run (one card); every other block is a run of its own.
+    static func runs(_ refs: [ContextRef]) -> [[Int]] {
+        var out: [[Int]] = []
+        for i in refs.indices {
+            if i > 0, together(refs[i - 1], refs[i]) { out[out.count - 1].append(i) } else { out.append([i]) }
+        }
+        return out
+    }
+
+    /// The forwards that read as one card, as indices of `refs` (several.json `groups`): another session's forward or
+    /// any other block ends a group.
+    static func groups(_ refs: [ContextRef]) -> [[Int]] {
+        runs(refs).filter { refs[$0[0]].isForward && origin(refs[$0[0]]) != nil }
+    }
+
+    private static func together(_ a: ContextRef, _ b: ContextRef) -> Bool {
+        guard a.isForward, b.isForward, let x = origin(a), let y = origin(b) else { return false }
+        return x.machine == y.machine && x.session == y.session
+    }
+
+    /// Several forwarded together, as their card's first line: "3 Forwarded Messages · Network tests".
+    static func groupHeading(_ refs: [ContextRef]) -> String {
+        let chat = refs.first?.extra?["chat"] ?? ""
+        return chat.isEmpty ? String(localized: "\(refs.count) Forwarded Messages")
+            : String(localized: "\(refs.count) Forwarded Messages · \(chat)")
+    }
+
+    /// One of several over the box, on a line: "Claude: the words".
+    static func line(_ r: ContextRef) -> String {
+        String(localized: "\(shownAuthor(r)): \(r.quoteSummary) [Forwarded Line]")
+    }
+
+    /// One of several in a sent card, over its words: who wrote it and when ("Claude · 10:24").
+    static func byline(_ r: ContextRef, now: Date = .now) -> String {
+        let when = r.extra?["time"].flatMap { timeFormat.date(from: $0) }.map { shortTime($0, now: now) }
+        return [shownAuthor(r), when].compactMap { $0 }.joined(separator: " · ")
     }
 
     /// The session and item a forward's `url` names; nil when it names none.
@@ -265,21 +311,25 @@ struct ForwardMemory {
 extension AppModel {
     /// Puts the forward over `target`'s box (with the pictures it carries) and opens that chat, focused, ready for a
     /// note. Persona with no main conversation yet: the new conversation's box. A new Agent is New Chat's, opened by
-    /// the chat (`ForwardSheet`).
-    func forward(_ ref: ContextRef, images: [UIImage], to target: ForwardTarget, group: String) {
+    /// the chat (`ForwardSheet`). Several forwarded together (#3838) go over the box in the chat's order, as one bar.
+    func forward(_ refs: [ContextRef], images: [UIImage], to target: ForwardTarget, group: String) {
+        guard let first = refs.first else { return }
         ForwardMemory(group: group).remember(target)
+        let from = first.extra?["machine"]
         switch target {
         case .newAgent:
             return
         case .persona:
             if let main = assistantMain, main.group == group {
-                place(ref, images: images, on: main, route: ForwardMessage.route(from: ref.extra?["machine"], to: nil))
+                place(refs, images: images, on: main, route: ForwardMessage.route(from: from, to: nil))
                 openAssistantConversation(main) // `open` takes a conversation it has not listed for an Agent's
             } else {
-                var r = ref
-                r.route = ForwardMessage.route(from: ref.extra?["machine"], to: nil)
                 let draft = starterDraft("")
-                draft.quotes = (ContextRef.adding(r, to: draft.quotes) ?? draft.quotes)
+                for ref in refs {
+                    var r = ref
+                    r.route = ForwardMessage.route(from: from, to: nil)
+                    draft.quotes = (ContextRef.adding(r, to: draft.quotes) ?? draft.quotes)
+                }
                 for img in images.prefix(MessagePhotos.limit) {
                     if let p = MessagePhotos.payload(img) { draft.held.images.append(p) }
                 }
@@ -299,16 +349,19 @@ extension AppModel {
             let s = session(key)
             let to: (agent: String, machine: String?)? = s?.assistant == true ? nil
                 : (s?.agentLabel ?? "Claude", machine(key.machineRef)?.name)
-            place(ref, images: images, on: key, route: ForwardMessage.route(from: ref.extra?["machine"], to: to))
+            place(refs, images: images, on: key, route: ForwardMessage.route(from: from, to: to))
             if s?.assistant == true { openAssistantConversation(key) } else { open(key) }
         }
     }
 
-    private func place(_ ref: ContextRef, images: [UIImage], on key: SessionKey, route: String) {
-        var r = ref
-        r.route = route
-        let now = composerContexts[key] ?? []
-        composerContexts[key] = ContextRef.adding(r, to: now) ?? now
+    private func place(_ refs: [ContextRef], images: [UIImage], on key: SessionKey, route: String) {
+        var now = composerContexts[key] ?? []
+        for ref in refs {
+            var r = ref
+            r.route = route
+            now = ContextRef.adding(r, to: now) ?? now
+        }
+        composerContexts[key] = now
         if !images.isEmpty { composerInbox[key, default: []].append(contentsOf: images.prefix(MessagePhotos.limit)) }
         composerFocus = key
     }
@@ -318,40 +371,76 @@ extension AppModel {
 /// chat holds it, how to read the whole of it when the chat holds it cut, its pictures, and the same message as a share
 /// card (Share as Image, at the top of the picker).
 struct ForwardDraft: Identifiable {
+    /// One message of the forward: where it is and who wrote it, its text as the chat holds it, how to read the whole
+    /// of it when the chat holds it cut, and its pictures (your own message's) as paths on its computer.
+    struct Piece {
+        var source: ForwardMessage.Source
+        var raw: String
+        var full: (() async throws -> String)?
+        var images: [String] = []
+    }
+
     let id = UUID()
-    var source: ForwardMessage.Source
-    var raw: String
-    /// Reads the whole text when the chat holds it cut (`Item.fullSize`); nil: `raw` is all of it.
-    var full: (() async throws -> String)?
-    /// The pictures sent with it (your own message's), as paths on its computer.
-    var images: [String] = []
+    /// The messages, in the chat's order: one, or several picked with Select Messages (#3838).
+    var pieces: [Piece]
     var loadImage: (String) async -> UIImage? = { _ in nil }
-    var share: ShareMessage
+    /// The same message as a share card (Share as Image); nil for several.
+    var share: ShareMessage?
+    /// Forward To offers Select Messages… to pick more in its chat.
+    var selects = false
+
+    init(source: ForwardMessage.Source, raw: String, full: (() async throws -> String)? = nil, images: [String] = [],
+         loadImage: @escaping (String) async -> UIImage? = { _ in nil }, share: ShareMessage?, selects: Bool = false) {
+        self.init(pieces: [Piece(source: source, raw: raw, full: full, images: images)], loadImage: loadImage, share: share,
+                  selects: selects)
+    }
+
+    init(pieces: [Piece], loadImage: @escaping (String) async -> UIImage? = { _ in nil }, share: ShareMessage? = nil,
+         selects: Bool = false) {
+        self.pieces = pieces
+        self.loadImage = loadImage
+        self.share = share
+        self.selects = selects
+    }
+
+    /// The first message's source: the chat it is forwarded from.
+    var source: ForwardMessage.Source { pieces[0].source }
 
     /// The forward as the chat has it now: the picker's preview (the whole text is read when it goes).
-    var preview: ContextRef { ForwardMessage.ref(raw, from: source) }
+    var previews: [ContextRef] {
+        let limit = ForwardMessage.limit(count: pieces.count)
+        return pieces.map { ForwardMessage.ref($0.raw, from: $0.source, limit: limit) }
+    }
 
-    /// The forward with the whole text and its pictures, as it goes.
-    func complete() async throws -> (ref: ContextRef, images: [UIImage]) {
-        let text = try await full?() ?? raw
+    /// The forward with the whole text and its pictures, as it goes: several share `ForwardMessage.total`, and their
+    /// pictures the box's limit, the earlier messages' first.
+    func complete() async throws -> (refs: [ContextRef], images: [UIImage]) {
+        let limit = ForwardMessage.limit(count: pieces.count)
+        var refs: [ContextRef] = []
         var pictures: [UIImage] = []
-        for path in images.prefix(MessagePhotos.limit) {
-            if let img = await loadImage(path) { pictures.append(img) }
+        for p in pieces {
+            let text = try await p.full?() ?? p.raw
+            refs.append(ForwardMessage.ref(text, from: p.source, limit: limit))
+            for path in p.images where pictures.count < MessagePhotos.limit {
+                if let img = await loadImage(path) { pictures.append(img) }
+            }
         }
-        return (ForwardMessage.ref(text, from: source), pictures)
+        return (refs, pictures)
     }
 }
 
 /// What the picker leaves for the chat to do once it has gone: the chat opens the next sheet or the target.
 enum ForwardOutcome {
     case share(ShareMessage)
-    case newAgent(ContextRef, [UIImage])
-    case target(ContextRef, [UIImage], ForwardTarget)
+    /// Select Messages…: the chat starts selecting with this message picked (#3838).
+    case select(String)
+    case newAgent([ContextRef], [UIImage])
+    case target([ContextRef], [UIImage], ForwardTarget)
 }
 
 /// A forward on its way to a new Agent (New Chat with it over the first message).
 struct ForwardNewAgent: Identifiable {
     let id = UUID()
-    var ref: ContextRef
+    var refs: [ContextRef]
     var images: [UIImage]
 }

@@ -3,6 +3,7 @@
 package persona.core.contracts
 
 import persona.core.contracts.stream.NativeStreamSchema
+import persona.core.contracts.generated.ExtensionNotification
 import persona.core.contracts.generated.ExtensionUIStreamServerEnvelope
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
@@ -207,6 +208,8 @@ data class NotifyEvent(
     val id: String? = null,
     /** This device is inside its quiet hours (the prefs' `quiet`): shown, but without a sound. */
     val quiet: Boolean = false,
+    /** An extension's page and declared notification buttons; absent on older hubs and ordinary alerts. */
+    @SerialName("extension_notification") val extensionNotification: ExtensionNotification? = null,
 ) : ServerEvent
 
 /**
@@ -243,6 +246,11 @@ data class SubscriptionEvent(val id: String, val connector: String? = null, val 
 @KeepGeneratedSerializer
 @Serializable(with = HubUpdateEventSerializer::class)
 data class HubUpdateEvent(val update: persona.core.contracts.api.HubUpdateStatus) : ServerEvent
+
+/** A manager's knowledge-selection document was saved; its editor reads the whole document again. */
+@KeepGeneratedSerializer
+@Serializable(with = KnowledgeSelectionEventSerializer::class)
+data class KnowledgeSelectionEvent(val manager: String? = null) : ServerEvent
 
 /**
  * An extension's install, upgrade or uninstall moved on (docs/protocol/protocol.md "Extension install, upgrade and uninstall progress"): only to a client
@@ -282,6 +290,20 @@ data object ManagersEvent : ServerEvent
 
 data object UnknownEvent : ServerEvent
 
+/** A malformed optional extension payload degrades to the ordinary alert instead of dropping the whole event. */
+private fun decodeNotifyEvent(json: Json, obj: JsonObject): NotifyEvent {
+    val extension = try {
+        when (val element = obj["extension_notification"]) {
+            null, JsonNull -> null
+            else -> Json(from = json) { coerceInputValues = false }.decodeFromJsonElement<ExtensionNotification>(element)
+        }
+    } catch (_: Exception) {
+        null
+    }
+    return json.decodeFromJsonElement<NotifyEvent>(JsonObject(obj.filterKeys { it != "extension_notification" }))
+        .copy(extensionNotification = extension)
+}
+
 object ServerEventSerializer : KSerializer<ServerEvent> {
     override val descriptor = buildClassSerialDescriptor("persona.core.contracts.ServerEvent")
     override fun deserialize(decoder: Decoder): ServerEvent {
@@ -313,12 +335,13 @@ object ServerEventSerializer : KSerializer<ServerEvent> {
             "endpoints" -> input.json.decodeFromJsonElement<EndpointsEvent>(obj)
             "client_hello_ack" -> input.json.decodeFromJsonElement<ClientHelloAck>(obj)
             "pong" -> input.json.decodeFromJsonElement<Pong>(obj)
-            "notify" -> input.json.decodeFromJsonElement<NotifyEvent>(obj)
+            "notify" -> decodeNotifyEvent(input.json, obj)
             "extension_ui", "plugin_ui" -> input.json.decodeFromJsonElement<ExtensionUiEvent>(obj).also {
                 require(it.invalidate || !it.id.isNullOrEmpty()) { "A badge names its UI" }
             }
             "extension_ui_stream" -> ExtensionUiStreamEvent(NativeStreamSchema.parse(obj.toString(), "UIStreamServerEnvelope"))
             "hub_update" -> input.json.decodeFromJsonElement<HubUpdateEvent>(obj)
+            "kb_selection" -> input.json.decodeFromJsonElement<KnowledgeSelectionEvent>(obj)
             "managers" -> ManagersEvent
             "subscription" -> input.json.decodeFromJsonElement<SubscriptionEvent>(obj)
             "extension_operation" -> input.json.decodeFromJsonElement<ExtensionOperationEvent>(obj).also {
@@ -382,6 +405,7 @@ object ServerEventSerializer : KSerializer<ServerEvent> {
             is ExtensionUiStreamEvent -> "extension_ui_stream" to value.raw
             is ExtensionUiEvent -> "extension_ui" to output.json.encodeToJsonElement(value)
             is HubUpdateEvent -> "hub_update" to output.json.encodeToJsonElement(value)
+            is KnowledgeSelectionEvent -> "kb_selection" to output.json.encodeToJsonElement(value)
             ManagersEvent -> "managers" to JsonObject(emptyMap())
             is SubscriptionEvent -> "subscription" to output.json.encodeToJsonElement(value)
             is ExtensionOperationEvent -> "extension_operation" to output.json.encodeToJsonElement(value)
@@ -430,6 +454,7 @@ object PongSerializer : WireSerializer<Pong>(Pong.generatedSerializer())
 object NotifyEventSerializer : WireSerializer<NotifyEvent>(NotifyEvent.generatedSerializer())
 object ExtensionUiEventSerializer : WireSerializer<ExtensionUiEvent>(ExtensionUiEvent.generatedSerializer())
 object HubUpdateEventSerializer : WireSerializer<HubUpdateEvent>(HubUpdateEvent.generatedSerializer())
+object KnowledgeSelectionEventSerializer : WireSerializer<KnowledgeSelectionEvent>(KnowledgeSelectionEvent.generatedSerializer())
 object SubscriptionEventSerializer : WireSerializer<SubscriptionEvent>(SubscriptionEvent.generatedSerializer())
 object ExtensionOperationEventSerializer : WireSerializer<ExtensionOperationEvent>(ExtensionOperationEvent.generatedSerializer())
 object ExtensionAuthEventSerializer : WireSerializer<ExtensionAuthEvent>(ExtensionAuthEvent.generatedSerializer())

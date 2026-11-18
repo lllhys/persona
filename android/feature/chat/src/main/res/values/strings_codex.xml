@@ -1,0 +1,9 @@
+<resources>
+    <string name="chat_codex_waiting">Codex is open on %1$s. Send its first message below, or type it in its terminal.</string>
+    <string name="chat_codex_computer">your computer</string>
+    <string name="chat_codex_first_message">First message to Codex</string>
+    <string name="chat_delivery_codex_not_ready">Codex is not ready for its first message. Check its terminal, then try again.</string>
+    <string name="chat_delivery_codex_first_text">Send text only as the first message to Codex. Add images and files after it starts.</string>
+    <string name="chat_delivery_codex_waiting">Send the first message before changing modes, queueing or branching.</string>
+    <string name="chat_delivery_codex_first_unconfirmed">The first message is not confirmed. Check the terminal before sending again.</string>
+</resources>

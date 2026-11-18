@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ChatActionsContext, liveValue, type ChatActions } from "./chat-actions";
-import { MessageActions, moreActions, rewindActions } from "./MessageActions";
+import { t } from "../../i18n";
+import { MessageActions, moreActions, rewindActions, savePromptActions } from "./MessageActions";
 
 const base: ChatActions = { draftKey: "m/s", canCompose: true, speaker: "Persona", title: "Persona", images: () => [] };
 
@@ -44,6 +45,15 @@ describe("moreActions", () => {
     expect(moreActions("line12#0", () => {})).toEqual([]);
     expect(moreActions("u1", () => {})).toEqual([]);
     expect(moreActions(undefined, () => {})).toEqual([]);
+  });
+});
+
+// "Save as Prompt…" (#7329): on your messages with words.
+describe("savePromptActions", () => {
+  it("is there on a message with words", () => {
+    expect(savePromptActions("  ")).toEqual([]);
+    const [save] = savePromptActions("Review this diff.");
+    expect(save).toMatchObject({ key: "save-prompt", label: t("chat-messageactions.save_as_prompt"), icon: "book" });
   });
 });
 
@@ -100,4 +110,10 @@ describe("MessageActions on your own message", () => {
     expect(mine(base, "u1#0")).not.toContain('aria-label="更多"');
     expect(mine({ ...base, rewind: { block: liveValue(""), run: async () => {} } })).not.toContain('aria-label="更多"');
   });
+});
+
+
+it("offers only conversation rewind when native file restoration is unavailable", () => {
+  const [action] = rewindActions("example#0", "Example", { block: "", code: false, run: async () => {} });
+  expect((action.children as { key: string }[]).map((item) => item.key)).toEqual(["rewind-conversation"]);
 });

@@ -29,6 +29,8 @@ struct ConnectorDeps {
     private(set) var qrImage: UIImage?
     var values: [String: String] = [:]
     private(set) var busy = false
+    /// A failed sign-in stays beside its action, including timeouts that global reporting suppresses.
+    private(set) var signInError: String?
     /// What the last delete removed, said for people.
     private(set) var deleted: String?
     /// What the last Delete Saved Knowledge removed, said for people.
@@ -77,6 +79,7 @@ struct ConnectorDeps {
     }
 
     func cancel() {
+        signInError = nil
         prompt = nil
         qrImage = nil
         values = [:]
@@ -85,7 +88,8 @@ struct ConnectorDeps {
     /// True when signing in is done (the page reloads the connector).
     @discardableResult
     private func send(step: String, values: [String: String]) async -> Bool {
-        guard let api else { return false }
+        guard !busy, let api else { return false }
+        signInError = nil
         busy = true
         defer { busy = false }
         do {
@@ -102,7 +106,10 @@ struct ConnectorDeps {
             }
             prompt = p
         } catch {
-            deps.report(error)
+            if !error.isCancellation {
+                // The connector already scrubs its errors. Keep its actionable reason even for HTTP 502.
+                signInError = (error as? APIError)?.message ?? error.localizedDescription
+            }
         }
         return false
     }
@@ -373,7 +380,7 @@ struct ConnectorSignInSteps: View {
                     Text(hint).font(Theme.Font.secondary).foregroundStyle(.secondary)
                 }
                 // Above the fields: below them the keyboard covers it (the field keeps the focus).
-                if let e = p.error, !e.isEmpty {
+                if let e = model.signInError ?? p.error, !e.isEmpty {
                     Text(e).font(Theme.Font.label).foregroundStyle(Theme.danger)
                         .accessibilityIdentifier("connector.signInError")
                 }
@@ -472,11 +479,18 @@ struct ConnectorSignInSteps: View {
             }
         } else {
             Section {
+                if let error = model.signInError {
+                    Text(error).font(Theme.Font.label).foregroundStyle(Theme.danger)
+                        .accessibilityIdentifier("connector.signInError")
+                }
                 FormAction {
                     Button {
                         Task { await model.start() }
                     } label: {
-                        Text(start ?? String(localized: "Sign In to \(name)")).lineLimit(1).formActionWidth()
+                        HStack(spacing: Theme.Space.s) {
+                            if model.busy { ProgressView() }
+                            Text(model.signInError == nil ? (start ?? String(localized: "Sign In to \(name)")) : String(localized: "Retry")).lineLimit(1)
+                        }.formActionWidth()
                     }
                     .formButton(prominent: true)
                     .disabled(model.busy)

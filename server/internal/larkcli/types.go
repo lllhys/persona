@@ -113,25 +113,26 @@ type Sender struct {
 // Content is retained as JSON because the CLI returns either a JSON string or a
 // structured value depending on msg_type.
 type Message struct {
-	MessageID      string          `json:"message_id"`
-	MessageAppLink string          `json:"message_app_link,omitempty"`
-	MsgType        string          `json:"msg_type,omitempty"`
-	CreateTime     string          `json:"create_time,omitempty"`
-	UpdateTime     string          `json:"update_time,omitempty"`
-	Sender         Sender          `json:"sender,omitempty"`
-	Content        json.RawMessage `json:"content,omitempty"`
-	ChatID         string          `json:"chat_id,omitempty"`
-	ChatName       string          `json:"chat_name,omitempty"`
-	ChatType       string          `json:"chat_type,omitempty"`
-	ChatMode       string          `json:"chat_mode,omitempty"`
-	ChatPartner    json.RawMessage `json:"chat_partner,omitempty"`
-	Deleted        bool            `json:"deleted,omitempty"`
-	Updated        bool            `json:"updated,omitempty"`
-	Mentions       []Mention       `json:"mentions,omitempty"`
-	ThreadID       string          `json:"thread_id,omitempty"`
-	ParentID       string          `json:"parent_id,omitempty"`
-	RootID         string          `json:"root_id,omitempty"`
-	Reactions      json.RawMessage `json:"reactions,omitempty"`
+	MessageID       string          `json:"message_id"`
+	MessagePosition string          `json:"message_position,omitempty"`
+	MessageAppLink  string          `json:"message_app_link,omitempty"`
+	MsgType         string          `json:"msg_type,omitempty"`
+	CreateTime      string          `json:"create_time,omitempty"`
+	UpdateTime      string          `json:"update_time,omitempty"`
+	Sender          Sender          `json:"sender,omitempty"`
+	Content         json.RawMessage `json:"content,omitempty"`
+	ChatID          string          `json:"chat_id,omitempty"`
+	ChatName        string          `json:"chat_name,omitempty"`
+	ChatType        string          `json:"chat_type,omitempty"`
+	ChatMode        string          `json:"chat_mode,omitempty"`
+	ChatPartner     json.RawMessage `json:"chat_partner,omitempty"`
+	Deleted         bool            `json:"deleted,omitempty"`
+	Updated         bool            `json:"updated,omitempty"`
+	Mentions        []Mention       `json:"mentions,omitempty"`
+	ThreadID        string          `json:"thread_id,omitempty"`
+	ParentID        string          `json:"parent_id,omitempty"`
+	RootID          string          `json:"root_id,omitempty"`
+	Reactions       json.RawMessage `json:"reactions,omitempty"`
 }
 
 // MessagePage is the normalized paginated result of a message shortcut.

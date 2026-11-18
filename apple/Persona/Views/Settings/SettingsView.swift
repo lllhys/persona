@@ -2,6 +2,7 @@ import BeautifulUI
 import AuthenticationServices
 import SwiftUI
 import VisionKit
+import PersonaWire
 
 struct SettingsView: View {
     @Environment(\.shell) private var shell
@@ -27,7 +28,14 @@ struct SettingsView: View {
         return s.version
     }
 
-    nonisolated private struct SlotsKey: Hashable, Sendable { var source: ExtensionSlots.Source; var depth: Int; var revision: Int }
+    /// What the Extensions row's count and the slots are read again for; the current assistant too, as a switch from
+    /// Settings' own heading leaves the path as it is.
+    nonisolated private struct SlotsKey: Hashable, Sendable {
+        var source: ExtensionSlots.Source
+        var depth: Int
+        var revision: Int
+        var manager: String?
+    }
 
     /// Translation's row value: off, or the target language.
     private var translationSummary: String { translating ? TranslationPrefs.name(of: translateTarget) : String(localized: "state.off", defaultValue: "Off") }
@@ -68,9 +76,9 @@ struct SettingsView: View {
             #endif
             .themedPage()
             #if os(macOS)
-            .searchable(text: $search, prompt: Text("Search Settings"))
+            .pageSearchable(text: $search, prompt: String(localized: "Search Settings"))
             #else
-            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: Text("Search Settings"))
+            .pageSearchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: String(localized: "Search Settings"))
             #endif
             .onChange(of: search) { searchResults = SettingsCatalog.search(search) }
             .onChange(of: model.assistantManagerID) {
@@ -82,14 +90,10 @@ struct SettingsView: View {
                 plugins = nil
             }
             .pageToolbar {
-                    // As a sheet over the shell (docs/apple/ios.md「New shell」): ChatGPT's × to close it.
+                    // As a sheet over the shell (docs/apple/ios.md「New shell」): ✕ at the leading corner, as every presented
+                    // page (#9653); Esc closes it too: a phone's full-screen cover has no swipe down.
                     if shell != nil || inSheet {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button { model.shellSettings = false } label: { Label("Close", systemImage: Theme.Icon.close) }
-                                .foregroundStyle(Color.primary)
-                                .keyboardShortcut(.cancelAction) // Esc closes it too: a phone's full-screen cover has no swipe down
-                                .accessibilityIdentifier("settings-close")
-                        }
+                        SheetClose(id: "settings-close") { model.shellSettings = false }
                     }
                 }
                 .navigationTitle("Settings")
@@ -119,7 +123,7 @@ struct SettingsView: View {
             #endif
             #if os(macOS) && DEBUG
             // `-tab settings -openPairSheet YES` (Demo Mode, or paired: Pair Again): the Connect Hub sheet, for screenshots
-            // (scripts/app/mac_shot.sh; with `-openPairSSH YES` its SSH Tunnel sheet over it).
+            // (scripts/app/sim.sh; with `-openPairSSH YES` its SSH Tunnel sheet over it).
             .onAppear { if UserDefaults.standard.bool(forKey: "openPairSheet") { showPair = true } }
             #endif
         } empty: {
@@ -150,9 +154,9 @@ struct SettingsView: View {
                 }
                 #if os(iOS)
                 settingsLink(.knowledgeSelection, "Knowledge Selection", Theme.Icon.knowledge, id: "settings-knowledge-selection")
-                if MeetingAttendees.offered(model) {
-                    settingsLink(.meetings, "Meetings", Theme.Icon.meeting, id: "settings-meetings", value: MeetingAttendees.defaultRole(model).title)
-                }
+                // Every iPhone: the calendar reminder is the phone's (#8731 G2); the role shows where the hub offers one.
+                settingsLink(.meetings, "Meetings", Theme.Icon.meeting, id: "settings-meetings",
+                             value: MeetingAttendees.offered(model) ? MeetingAttendees.defaultRole(model).title : "")
                 #endif
                 settingsLink(.agents, "Agent", Theme.Icon.options, id: "settings-agents")
                 NavigationLink(value: MachineListRoute()) { MachinesSettingsRow() }
@@ -160,11 +164,14 @@ struct SettingsView: View {
                     .accessibilityIdentifier("settings-machines")
             }
             .bareListRow()
-        } header: { SettingsAssistantHeading() }
+        } header: { SettingsAssistantHeading() } footer: {
+            SettingsAssistantFooter()
+        }
         .task(id: model.hubFeatures.contains(AssistantReadiness.feature)) {
             if !model.isDemo { await model.refreshReadiness(force: false) }
         }
-        .task(id: SlotsKey(source: ExtensionSlots.source(model), depth: model.settingsPath.count, revision: model.managersRevision)) {
+        .task(id: SlotsKey(source: ExtensionSlots.source(model), depth: model.settingsPath.count, revision: model.managersRevision,
+                           manager: model.assistantManagerID)) {
             guard let api = model.api else { return }
             let context = api.currentAssistantSettings()
             let loaded = try? await context.plugins()
@@ -183,6 +190,9 @@ struct SettingsView: View {
                 settingsLink(.appearance, "Appearance & Display", Theme.Icon.style, id: "settings-appearance")
                 settingsLink(.language, "Language & Dictation", Theme.Icon.language, id: "settings-language", value: AppLanguage.settingsSummary)
                 settingsLink(.notifications, "Notifications", Theme.Icon.notifications, id: "settings-notifications")
+                #if os(iOS)
+                LiveScreenSettingsRow()
+                #endif
                 settingsLink(.translation, "Translation", Theme.Icon.translate, id: "settings-translation", value: translationSummary)
                 settingsLink(.storage, "Storage", Theme.Icon.storage, id: "settings-storage", value: storage?.storageText ?? "")
                 #if os(iOS)
@@ -199,8 +209,6 @@ struct SettingsView: View {
         } header: {
             SettingsHeading(String(localized: "This Device [Settings Scope]"))
                 .accessibilityIdentifier("settings-group-device")
-        } footer: {
-            Text("These settings stay the same when you switch assistants.")
         }
     }
 
@@ -230,7 +238,7 @@ struct SettingsView: View {
             SettingsHeading(String(localized: "Hub"))
                 .accessibilityIdentifier("settings-group-hub")
         } footer: {
-            Text("These settings stay the same when you switch assistants.")
+            Text(SettingsAssistantHeading.commonGroupsFooter)
         }
     }
 
@@ -308,6 +316,7 @@ struct SettingsView: View {
         else if d.bool(forKey: "openConnectors") { p.append(SettingsPage.connectors) }
         else if d.bool(forKey: "openSkills") { p.append(SettingsPage.skills) }
         else if d.bool(forKey: "openInboxSources") { p.append(SettingsPage.inboxSources) } // Settings › Inbox Sources (#5278)
+        else if d.bool(forKey: "openSourcesGraph") { p.append(SettingsPage.inboxSources); p.append(SettingsPage.sourcesGraph) } // › Source Relationships (#5741)
         else if let scope = str("openSubscriptions") { // the source subscription pages: `all`, or their first state (#2041)
             p.append(SettingsPage.subscriptions(state: scope == "all" ? nil : scope))
         }
@@ -336,7 +345,7 @@ struct SettingsView: View {
         else if d.bool(forKey: "openCodexSettings") { p.append(SettingsPage.codex) }
         else if d.bool(forKey: "openClaudeSettings") { p.append(SettingsPage.claude) } // with its Blocked Config Folders
         else if d.bool(forKey: "openConnectorMail") || d.bool(forKey: "addMail") { p.append(SettingsPage.mail) }
-        else if d.bool(forKey: "openConnectorFeishu") { p.append(SettingsPage.feishu) }
+        else if d.bool(forKey: "openConnectorFeishu") { p.append(SettingsPage.feishu()) }
         else if d.bool(forKey: "openConnectorGitHub") { p.append(SettingsPage.connector("github")) }
         else if d.bool(forKey: "openConnectorTelegram") { p.append(SettingsPage.connector("telegram")) }
         else if let id = d.string(forKey: "openConnectorPlugin") { p.append(SettingsPage.connector(id)) } // a plugin's connector by its id
@@ -347,15 +356,26 @@ struct SettingsView: View {
         }
         else if d.bool(forKey: "openConnectorBot") { p.append(SettingsPage.feishuBot) }
         else if d.bool(forKey: "openConnectorDevice") { p.append(SettingsPage.phoneData) }
+        else if d.bool(forKey: "openIPhoneSetup") { p = SettingsPage.iphoneSetupPath } // the guided setup (#8199)
         else if d.bool(forKey: "openTranslationSettings") { p.append(SettingsPage.translation) }
+        else if d.bool(forKey: "openLiveScreenSettings") { // Settings › Live Screen (#6396)
+            #if os(iOS)
+            p.append(SettingsPage.liveScreen)
+            #endif
+        }
         else if d.bool(forKey: "openMeetingSettings") { // Settings › Meetings (#2981)
             #if os(iOS)
             p.append(SettingsPage.meetings)
             #endif
         }
         else if d.bool(forKey: "openTriageSettings") { p.append(SettingsPage.triage) }
+        else if let a = d.string(forKey: "openAbout") { // About (YES), or its Export Diagnostics (export, #9460)
+            p.append(SettingsPage.about)
+            if a == "export" { p.append(SettingsPage.devExport) }
+        }
         else if d.string(forKey: "openKnowledgeSelection") != nil { p.append(SettingsPage.knowledgeSelection) } // (rule | chat | doc: with that sheet)
         else if d.string(forKey: "openAppearance") == "layout" { p.append(SettingsPage.layout) } // Layout (#2530)
+        else if d.string(forKey: "openAppearance") == "navigation" { p.append(SettingsPage.navigation) } // Navigation (#6332)
         else if d.string(forKey: "openAppearance") == "language" { p.append(SettingsPage.language) } // Language and dictation (#5005)
         else if let a = d.string(forKey: "openAppearance"), a != "chat" { // persona (or YES, or icon: the icon is the Avatar's) | color | style | scheme
             p.append(a == "color" ? SettingsPage.themeColor : a == "style" ? SettingsPage.style
@@ -388,13 +408,28 @@ enum SettingsPage: Hashable {
     case health
     /// Settings › Meetings (#2981): Persona's default role in a recorded meeting.
     case meetings
+    /// Settings › Live Screen (#6396, #6398): the live screen's route and its quality on mobile data.
+    case liveScreen
     #endif
-    case persona, themeColor, style, colorScheme, language, assistant, claude, codex, devices, phoneData, mail, feishu, feishuBot, notifications, storage, translation, modelConfiguration
+    case persona, themeColor, style, colorScheme, language, assistant, claude, codex, devices, phoneData, mail, feishuBot, notifications, storage, translation, modelConfiguration
+    /// Settings › Connectors › This iPhone › iPhone Control: the guided setup (#8199).
+    case iphoneSetup
+    /// Settings › Connectors › the chat connector; `manager`: whose (Messages' Settings names the default's, whose
+    /// account its chats follow; nil: the current assistant's).
+    case feishu(manager: String? = nil)
     case models, agents, appearance, about, pairing, computers
+    /// Settings › About › Export Diagnostics (Developing Persona, #9460).
+    case devExport
     /// Settings › Session Triage (docs/assistant/agent-work.md「开关」).
     case triage
+    /// Assistant Profile › Standing Authorizations (#7002): the go-aheads Persona answers for the owner, each revocable.
+    case standingAuthorizations
+    /// Assistant Profile › Agent Follow-Up (#7005): how Persona starts and follows up the work it hands out.
+    case agentFollowUp
     /// Settings › Appearance › Layout (#2530): how the Agents list draws its agents.
     case layout
+    /// Settings › Appearance › Navigation (#6332): Separate or Sidebar (`NavigationLayout`).
+    case navigation
     /// Settings › Knowledge Selection (docs/assistant/knowledge.md "Selection"): what the knowledge base reads and keeps.
     case knowledgeSelection
     /// Settings › hub: the hubs paired, by group (docs/protocol/multi-hub.md).
@@ -411,11 +446,14 @@ enum SettingsPage: Hashable {
     /// otherwise; `manager`: the plugin's (nil: the default's).
     case pluginPage(plugin: String, ui: String, title: String, manager: String? = nil)
     /// The source subscription pages (#2041, docs/extensions/subscriptions.md "Pages"), drawn by the manager; `state` opens them on
-    /// one extension's or one connector's (`SubscriptionsUI.state`), nil on every subscription.
-    case subscriptions(state: String? = nil)
+    /// one extension's or one connector's (`SubscriptionsUI.state`), nil on every subscription. `manager`: whose (a page's
+    /// of its own manager's things; nil: the current assistant's).
+    case subscriptions(state: String? = nil, manager: String? = nil)
     /// Settings › Inbox Sources (#5278): the same pages unnarrowed, every source of the Inbox, once the manager reports
     /// `inbox_sources`.
     case inboxSources
+    /// Inbox Sources' relationship view (#5741), pushed from its Source Relationships row.
+    case sourcesGraph
     /// Settings › Extensions › Extension Market, one plugin of a market, and the markets (docs/extensions/extensions.md「Extension marketplace」).
     case pluginMarket
     case marketExtension(market: String, id: String)
@@ -442,6 +480,8 @@ enum SettingsPage: Hashable {
 
     /// One canonical path for current callers and legacy Sent destinations.
     static var sentPath: NavigationPath { NavigationPath([SettingsPage.connectors, .sent]) }
+    /// This iPhone's guided setup, under Settings › This iPhone (`persona://iphone/setup`).
+    static var iphoneSetupPath: NavigationPath { NavigationPath([SettingsPage.phoneData, .iphoneSetup]) }
 
 }
 
@@ -458,6 +498,7 @@ private struct SettingsDestinations: ViewModifier {
             .navigationDestination(for: ModelPurposeRoute.self) { r in ModelPurposeEditorView(purposeID: r.id).splitDetailPage() }
             .navigationDestination(for: ModelLauncherRoute.self) { r in ModelLauncherDetailView(name: r.name).splitDetailPage() }
             .navigationDestination(for: MachineDetailRoute.self) { r in MachineDetailView(ref: r.ref).splitDetailPage() }
+            .navigationDestination(for: TerminalsRoute.self) { r in TerminalsView(only: r.machine).splitDetailPage() }
             .navigationDestination(for: MessagesChatsRoute.self) { r in MessagesChatListView(manager: r.manager).splitDetailPage() }
             .navigationDestination(for: MessagesThreadRoute.self) { r in MessagesThreadView(id: r.id, name: r.name, manager: r.manager).splitDetailPage() }
             .navigationDestination(for: SessionKey.self) { key in ChatView(key: key).id(key).splitDetailPage(ownsBack: true) }
@@ -465,7 +506,7 @@ private struct SettingsDestinations: ViewModifier {
     }
 
     @ViewBuilder private func destination(_ page: SettingsPage) -> some View {
-        if page.belongsToCurrentAssistant, let manager = model.assistantManagerOffline {
+        if page.belongsToCurrentAssistant(in: model), let manager = model.assistantManagerOffline {
             SettingsForm {
                 Section { ManagerOfflineNote(manager: manager) }
             }
@@ -482,6 +523,7 @@ private struct SettingsDestinations: ViewModifier {
         case .agents: SettingsAgentView()
         case .appearance: AppearanceSettingsPage()
         case .about: SettingsAboutPage()
+        case .devExport: DevExportPage()
         case .pairing: SettingsPairingPage()
         case .computers: MachinesView(settingsScope: true)
         case .persona: PersonaSettingsPage()
@@ -490,9 +532,11 @@ private struct SettingsDestinations: ViewModifier {
         case .language: LanguageSettingsPage()
         #if os(iOS)
         case .layout: LayoutSettingsPage()
+        case .navigation: NavigationSettingsPage()
         case .knowledgeSelection: KnowledgeSelectionView()
         #else
         case .layout: EmptyView()
+        case .navigation: EmptyView()
         case .knowledgeSelection: EmptyView()
         #endif
         #if os(iOS) || os(visionOS)
@@ -505,19 +549,28 @@ private struct SettingsDestinations: ViewModifier {
         case .codex: ClaudeSettingsView(agent: .codex)
         case .devices: DevicesView()
         case .phoneData: PhoneDataView()
+        case .iphoneSetup:
+            #if os(iOS)
+            IPhoneSetupView()
+            #else
+            EmptyView()
+            #endif
         case .mail: MailAccountsView(inSheet: false)
-        case .feishu: FeishuConnectorView()
+        case .feishu(let manager): FeishuConnectorView(manager: manager)
         case .connector(let id, let manager):
             if id == "imessage" { MessagesConnectorView(manager: manager ?? model.assistantManagerID) } else { HubConnectorView(id: id, manager: manager) }
         case .feishuBot: FeishuBotView()
         #if os(iOS)
         case .health: WorkoutReportSettingsView()
         case .meetings: MeetingSettingsView()
+        case .liveScreen: LiveScreenSettingsView()
         #endif
         case .notifications: NotificationSettingsView()
         case .storage: StorageView()
         case .translation: TranslationSettingsView()
         case .triage: TriageSettingsView()
+        case .standingAuthorizations: StandingAuthorizationsView()
+        case .agentFollowUp: AgentFollowUpView()
         case .modelConfiguration: ModelConfigurationView()
         case .hubs: HubsView()
         case .sshTunnel(let id): HubSSHTunnelPage(hubID: id)
@@ -534,10 +587,12 @@ private struct SettingsDestinations: ViewModifier {
         case .plugins: ExtensionsView()
         case .plugin(let id, let manager): ExtensionDetailView(id: id, manager: manager)
         case .pluginPage(let plugin, let ui, let title, let manager): ExtensionPageView(plugin: plugin, ui: ui, title: title, manager: manager ?? model.assistantManagerID)
-        case .subscriptions(let state):
-            ExtensionPageView(plugin: SubscriptionsUI.id, ui: SubscriptionsUI.page, title: String(localized: "Subscriptions [Source Subscriptions]"), state: state, manager: model.assistantManagerID)
+        case .subscriptions(let state, let manager):
+            ExtensionPageView(plugin: SubscriptionsUI.id, ui: SubscriptionsUI.page, title: String(localized: "Subscriptions [Source Subscriptions]"), state: state,
+                              manager: manager ?? model.assistantManagerID)
         case .inboxSources:
             ExtensionPageView(plugin: SubscriptionsUI.id, ui: SubscriptionsUI.page, title: String(localized: "Inbox Sources"), manager: model.assistantManagerID)
+        case .sourcesGraph: SourcesGraphView(manager: model.assistantManagerID)
         case .pluginMarket: ExtensionMarketView()
         case .marketExtension(let market, let id): MarketExtensionDetailView(market: market, id: id)
         case .pluginMarkets: ExtensionMarketsView()
@@ -599,8 +654,9 @@ private struct DemoSection: View {
 }
 
 /// Settings › Connectors › This iPhone: which of the device's data Claude may use (phone_* tools). One switch per source, and
-/// the switch is the whole state: on = turned on and allowed (2026-11-01, no Allowed / Tap to Allow labels). Turning one on
-/// asks for the permission; refused (or refused before) it stays off and Settings opens where it can be allowed.
+/// the switch is the whole state: on = what the hub is offered (2026-11-01, no Allowed / Tap to Allow labels), that is turned
+/// on and allowed, or turned on and not asked yet for a source whose first use asks (`PhoneDataSource.asksWhenUsed`, #7659).
+/// Turning one on asks for the permission; refused (or refused before) it stays off and Settings opens where it can be allowed.
 struct PhoneDataView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var phase
@@ -608,12 +664,14 @@ struct PhoneDataView: View {
     @State private var enabled: [PhoneDataSource: Bool] = [:]
     @State private var asking: PhoneDataSource?
     @StoredValue(ClipboardOffer.enabledKey) private var offerClipboard = false
-    #if os(iOS)
-    @State private var iphoneConsent = IPhoneConsentModel()
-    #endif
 
     var body: some View {
         List {
+            #if os(iOS)
+            // Being operated by the assistant through a computer (docs/extensions/iphone.md): the guided setup, first,
+            // always offered on an iPhone (#8199).
+            IPhoneSetupEntry()
+            #endif
             Section {
                 ForEach(PhoneDataSource.onThisDevice) { s in
                     HStack(spacing: Theme.Space.m) {
@@ -633,12 +691,13 @@ struct PhoneDataView: View {
                     .padding(.vertical, Theme.Space.xxs)
                 }
             } footer: {
+                #if os(iOS)
+                Text("Claude can read the data you turn on through phone_* tools; writes such as new events or reminders ask you on the phone first. iOS asks for permission the first time Claude uses one, or when you turn it on here; Health asks only here. If you denied it before, you'll go to Settings. The hub can reach the phone only while Persona is in the foreground (or just moved to the background). iOS doesn't expose Messages, Notes, or third-party app data.")
+                #else
                 Text("Claude can read the data you turn on through phone_* tools; writes such as new events or reminders ask you on the phone first. Turning one on requests system permission; if you denied it before, you'll go to Settings. The hub can reach the phone only while Persona is in the foreground (or just moved to the background). iOS doesn't expose Messages, Notes, or third-party app data.")
+                #endif
             }
             #if os(iOS)
-            // Being operated by the assistant through a paired Mac (docs/extensions/iphone.md): only while the hub's
-            // extension iphone is on.
-            IPhoneConsentSection(consent: iphoneConsent)
             // Sending the phone's clipboard to a computer (#3064): offered when the app comes back after copying.
             Section {
                 Toggle(isOn: $offerClipboard) {
@@ -650,21 +709,24 @@ struct PhoneDataView: View {
             } footer: {
                 Text("When you come back to Persona after copying something, offers to send it to a computer that shares its clipboard. The clipboard is read only when you tap Send.")
             }
+            // Reminders imported as to-dos (#4009): only while Persona may read Reminders (not while it is on but not asked yet).
+            if isOn(.reminders) && status(.reminders).isUsable { RemindersImportSection() }
             #endif
         }
         .themedPage()
         .navigationTitle(ConnectorText.device)
         .navigationBarTitleDisplayMode(.inline) // like the other connectors' pages
         .task { refresh() }
-        #if os(iOS)
-        .task(id: model.config) { await iphoneConsent.load() } // again once the app has its hub (pairing, switching)
-        #endif
         // Back from the system's Settings, where a permission may have been given or taken away.
         .onChange(of: phase) { _, p in if p == .active { refresh() } }
     }
 
     private func isOn(_ s: PhoneDataSource) -> Bool {
-        (enabled[s] ?? s.isEnabled) && (statuses[s] ?? PhoneAuthorization.status(s)).isUsable
+        (enabled[s] ?? s.isEnabled) && s.offered(status(s))
+    }
+
+    private func status(_ s: PhoneDataSource) -> PhoneAuthStatus {
+        statuses[s] ?? PhoneAuthorization.status(s)
     }
 
     private func refresh() {
@@ -698,6 +760,53 @@ struct PhoneDataView: View {
         }
     }
 }
+
+#if os(iOS)
+/// Settings › Phone Data › Reminders: import the reminders of the lists picked as to-dos, one way (#4009,
+/// `RemindersImport`). Off by default; every list until the user turns some off.
+private struct RemindersImportSection: View {
+    @Environment(AppModel.self) private var model
+    @StoredValue(RemindersImport.enabledKey) private var importOn = false
+    @State private var lists: [RemindersImport.ReminderList] = []
+    /// nil: every list. Read with the lists in `.task`, not as the initial value (P3).
+    @State private var picked: Set<String>?
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(get: { importOn }, set: { on in
+                importOn = on
+                RemindersImporter.shared.activate(model, force: on)
+            })) {
+                Text("Import into To-dos") // a switch's title: wraps at large sizes
+            }
+            .accessibilityIdentifier("reminders-import")
+            if importOn {
+                ForEach(lists) { list in
+                    Toggle(isOn: Binding(get: { picked?.contains(list.id) ?? true }, set: { on in choose(list.id, on) })) {
+                        Text(list.title)
+                    }
+                }
+            }
+        } header: {
+            Text("Reminders")
+        } footer: {
+            Text("Incomplete reminders in the lists you choose become to-dos, and later changes to their title, notes or due date follow. Nothing is written back to Reminders; completing or deleting a reminder leaves its to-do as it is. Imports happen while Persona is open.")
+        }
+        .task {
+            picked = RemindersImport.lists // before the rows, which only show once the lists are read
+            lists = await RemindersImport.availableLists()
+        }
+    }
+
+    private func choose(_ id: String, _ on: Bool) {
+        var now = picked ?? Set(lists.map(\.id))
+        if on { now.insert(id) } else { now.remove(id) }
+        picked = now
+        UserDefaults.standard.set(Array(now).sorted(), forKey: RemindersImport.listsKey)
+        RemindersImporter.shared.sync(model, force: true)
+    }
+}
+#endif
 
 /// A data source's icon: the iPhone app it comes from, else its symbol on a tile of the same size and shape.
 private struct SourceIcon: View {
@@ -848,7 +957,7 @@ struct WelcomeView: View {
         .sheet(item: $guide) { LinkSheet(target: $0) }
         .onAppear { withAnimation(.spring(duration: 0.8, bounce: 0.35)) { appear = true } }
         #if DEBUG
-        // `-openPairSheet YES` (or `other`): the pairing sheet, for screenshots (scripts/app/mac_shot.sh).
+        // `-openPairSheet YES` (or `other`): the pairing sheet, for screenshots (scripts/app/sim.sh).
         .onAppear {
             switch UserDefaults.standard.string(forKey: "openPairSheet") {
             case "other": pair = .other
@@ -922,6 +1031,9 @@ struct PairView: View {
     /// The code was refused as expired or used (401 invalid_token): say so, and offer to scan again.
     @State private var expired = false
     @State private var showOther = false
+    /// A scanned pairing link waiting for the user's Connect (#9929): a code read off a screen asks first, as a link
+    /// from outside the app does.
+    @State private var confirming: PairConfirmation?
 
     private var other: Bool { start == .other || showOther }
 
@@ -965,7 +1077,7 @@ struct PairView: View {
                                 token = cfg.token
                                 passwordMode = false
                                 scanning = false
-                                Task { await connect() }
+                                confirming = PairConfirmation(cfg, paired: model.registry.hubs.map(\.config))
                             }
                         }
                         #if os(iOS) || os(visionOS)
@@ -996,6 +1108,7 @@ struct PairView: View {
                 if let error { Section { Text(error).foregroundStyle(Theme.danger).font(Theme.Font.caption) } }
             }
             .themedPage()
+            .pairConfirmation($confirming) { _ in Task { await connect() } }
             #if DEBUG
             // `-showPairAccess YES`: Cloudflare Access opened (screenshots), its fields from `-seedCloudflareAccess id:secret`;
             // `-showPairAccess <pairing link>` also pairs with it at once (the Access error, MOCK_CF_ACCESS).
@@ -1123,7 +1236,7 @@ private struct PairSheetChrome: ViewModifier {
             .navigationTitle("Connect Hub")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                SheetClose { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { Task { await connect() } } label: { if connecting { ProgressView() } else { Text("Connect [V N C Page a55741]") } }
                         .disabled(connecting || (!passwordMode && token.isEmpty) || url.isEmpty)
@@ -1370,7 +1483,7 @@ extension View {
     /// so the list adds no inset above and below it on top (77.7 pt rows instead of the 52.3 pt the other styles have).
     /// Apply it to the rows (a `Group` of them), not the `Section`: on the section it takes the header's padding too, and
     /// not on a row inside a `NavigationLink`'s label (it does not reach the list there). Other styles keep the list's insets.
-    func bareListRow() -> some View { listRowInsets(.vertical, AppStyle.current.usesBeautifulUI ? 0 : nil) }
+    func bareListRow() -> some View { listRowVerticalInsets(AppStyle.current.usesBeautifulUI ? 0 : nil) }
 
     /// A row of Settings' list that opens `value`: on the Mac it stays selected while that page is open beside the list
     /// (`MacSettingsRowSelection`, #2318). Nothing elsewhere.

@@ -159,8 +159,8 @@ class PairingFlowTest {
             }
         }
         val cases = listOf<Pair<() -> Unit, () -> Unit>>(
-            // Welcome › Connect hub, back: the welcome page again.
-            { tap(R.string.settings_pairing_welcome_connect) } to {
+            // Welcome › Other ways, back: the welcome page again.
+            { tap(R.string.settings_pairing_other_ways) } to {
                 rule.onNodeWithText(text(R.string.settings_pairing_welcome_title)).assertExists()
             },
             // Manual entry › Confirm › failure, back: the form with the address still in it; back again: the connect choices.

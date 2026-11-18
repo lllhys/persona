@@ -23,15 +23,16 @@ internal fun InboxAiActions(
     modifier: Modifier = Modifier,
     primaryAction: JAction? = null,
     draftEnabled: Boolean = true,
+    showHandOff: Boolean = true,
 ) {
     if (primaryAction == null) Row(
         modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s),
     ) {
         JChip(stringResource(R.string.inbox_ai_draft), icon = PhIcons.Sparkle, onClick = { if (draftEnabled) onDraft() })
-        JChip(stringResource(R.string.inbox_hand_to_ai), icon = PhIcons.Robot, onClick = onHandOff)
+        if (showHandOff) JChip(stringResource(R.string.inbox_hand_to_ai), icon = PhIcons.Robot, onClick = onHandOff)
     } else DecisionButtons(primary = primaryAction, modifier = modifier,
-        secondary = JAction(stringResource(R.string.inbox_hand_to_ai), PhIcons.Robot, onClick = onHandOff),
+        secondary = if (showHandOff) JAction(stringResource(R.string.inbox_hand_to_ai), PhIcons.Robot, onClick = onHandOff) else null,
         more = listOf(JAction(stringResource(R.string.inbox_ai_draft), PhIcons.Sparkle, enabled = draftEnabled, onClick = onDraft)))
 }
 

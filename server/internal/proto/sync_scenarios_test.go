@@ -673,12 +673,15 @@ func applyHubChange(t *testing.T, where string, c syncCase, h *syncTruth, ch *sy
 		h.note(h.lines)
 	}
 	if len(ch.Append) > 0 {
-		last := h.toSeq
+		last, lastLine := h.toSeq, ""
 		for _, it := range ch.Append {
-			if it.Seq <= last {
+			// The blocks of one transcript line share its seq (a message with a picture: "#1" image, "#2" text).
+			line, _, _ := strings.Cut(it.ID, "#")
+			sameLine := lastLine != "" && line == lastLine && it.Seq == last
+			if it.Seq <= last && !sameLine {
 				t.Fatalf("%s: appended line %q at seq %d, the hub had read up to %d", where, it.ID, it.Seq, h.toSeq)
 			}
-			last = it.Seq
+			last, lastLine = it.Seq, line
 		}
 		h.lines = append(h.lines, ch.Append...)
 		if last > h.toSeq {
@@ -984,7 +987,8 @@ func checkView(t *testing.T, where string, d *syncDeviceState, v syncView, end b
 
 // truthMessages is what a device shows once everything settled: each turn's user message and its answer (the agent's
 // last words in it), the device's failed sends where they were sent, and its accepted sends the transcript does not
-// have yet at the bottom.
+// have yet at the bottom. A background task's notice that woke the idle agent starts a turn as a message does
+// (Item.Wake): the turn before it keeps its answer (#9140).
 func truthMessages(h *syncTruth, d *syncDeviceState) []syncMessage {
 	type entry struct {
 		at  int
@@ -996,6 +1000,8 @@ func truthMessages(h *syncTruth, d *syncDeviceState) []syncMessage {
 		switch {
 		case it.Role == "user" && it.Kind == "text" && it.Injected == nil && it.From == "":
 			out = append(out, entry{it.Seq, syncMessage{From: "user", Text: it.Text, State: "shown"}})
+			answer = -1
+		case it.Wake:
 			answer = -1
 		case it.Role == "assistant" && it.Kind == "text":
 			if answer >= 0 {

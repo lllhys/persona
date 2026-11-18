@@ -1,4 +1,5 @@
 - 现在：YYYY-MM-DD 周X HH:MM（Asia/Shanghai）
+- 开放待办：共 0 件（完整列表用 todo_list）
 - 模型档位：未设置（model_profiles_list 查看，model_profile_switch 切换）
 - 在线的电脑：服务器（server）、笔记本（laptop）；离线：台式机（desk）
 - Agents：需要你 1 个，完成未看 1 个，工作中 10 个（详情用 agents_list）

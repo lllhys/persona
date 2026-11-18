@@ -50,6 +50,26 @@ func (d *DB) PutInboxItems(ctx context.Context, rows []InboxRow) error {
 	return tx.Commit(ctx)
 }
 
+// PutConversationInboxItems commits an assistant post only while its source
+// conversation is available. The ledger's shared lock and the Inbox write use
+// the same transaction and connection, including across overlapping managers.
+// Previously committed derived rows are retained when their source is deleted.
+func (d *DB) PutConversationInboxItems(ctx context.Context, machine, session string, rows []InboxRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	return pgx.BeginFunc(ctx, d.pool, func(tx pgx.Tx) error {
+		if err := conversationAvailableTx(ctx, tx, machine, session); err != nil {
+			return err
+		}
+		var batch pgx.Batch
+		for _, row := range rows {
+			batch.Queue(putInboxItemSQL, row.ID, row.Data, row.UpdatedAt, row.DoneAt)
+		}
+		return tx.SendBatch(ctx, &batch).Close()
+	})
+}
+
 // deleteInboxSourceSQL finds a source's rows through inbox_items_source: source is the item's, kept by Postgres (0471),
 // so the delete reads no document. data->>'source' read every row's JSON (the done ones kept as history included).
 const deleteInboxSourceSQL = `DELETE FROM inbox_items WHERE id = ANY($1) OR source = $2 RETURNING id`

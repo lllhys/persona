@@ -3,12 +3,23 @@ import Observation
 #if canImport(UIKit)
 import UIKit
 #endif
+import PersonaWire
 
 /// The hub's side of a recording (docs/protocol/protocol.md「Recording sync」, #3235): what `PUT /api/v1/recordings/{id}` takes.
 /// Text only: the audio never leaves the device.
 nonisolated struct RecordingUpload: Encodable, Sendable {
     struct Bookmark: Encodable, Sendable { var at: Double; var label = "" }
-    struct Segment: Encodable, Sendable { var start: Double; var end: Double; var text: String }
+    struct Segment: Encodable, Sendable {
+        var start: Double; var end: Double; var text: String
+        /// Persona's echo (#5905, `RecordingAttendance.echo`): `true` only, and only to a hub that lists `meeting_echo`.
+        var echo: Bool? = nil
+    }
+    /// A stretch Persona spoke in and what it said (`RecordingSpan`): the hub marks the echo by them too. No `text` for a
+    /// stretch saved before #5905 (the hub keeps the time rule for it).
+    struct Spoken: Encodable, Sendable {
+        var start: Double; var end: Double; var text: String?
+        init(_ span: RecordingSpan) { start = span.start; end = span.end; text = span.text }
+    }
     /// The calendar event the device matched (docs/assistant/meeting-minutes.md「Field contract」): a hint for the hub, which
     /// prefers its own `meetings` / `events`. No event id: the hub can't see this calendar.
     struct CalendarHint: Encodable, Sendable {
@@ -48,13 +59,30 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
     var room: RoomUpload?
     /// A room meeting's private mark as it started (the hub takes it only while it has none).
     var privateMark: Bool?
+    /// Where Persona spoke in the meeting (#5905, docs/assistant/meeting-minutes.md「Persona's echo」): only to a hub that
+    /// lists `meeting_echo`, and only when it spoke, so every other upload is exactly as before.
+    var spoken: [Spoken]?
+    /// The transcription mode the meeting asked for as it started (#3862 phase 5, docs/assistant/meeting-minutes.md
+    /// 「Choosing the mode」): only on the uploads of a meeting started while the hub listed `meeting_transcription`, so
+    /// every other upload is exactly as before. The hub takes the first upload's and ignores the rest: sent on each, so
+    /// an upload lost on its way changes nothing.
+    var transcription: String?
+    /// In hub mode, the meeting's role changes and the stretches Persona spoke in (`MeetingTimeline`), whole, on every
+    /// upload, the `complete: true` one included.
+    var timeline: MeetingTimeline?
+    /// The hub takes echo lines marked (`meeting_echo`): they go with `echo: true`; else they are left out, as before.
+    private let marksEcho: Bool
 
     enum CodingKeys: String, CodingKey {
-        case revision, duration, language, device, title, bookmarks, segments, complete, kind, calendar, attendance, room
+        case revision, duration, language, device, title, bookmarks, segments, complete, kind, calendar, attendance, room, spoken
+        case transcription, timeline
         case startedAt = "started_at", endedAt = "ended_at", attendingSession = "attending_session", privateMark = "private"
     }
 
-    init(_ entry: RecordingEntry) {
+    /// `hubEcho`: the hub lists `meeting_echo` (`RecordingSync` reads it from the hub's `hello`; by default the last one
+    /// kept, `MeetingAttendanceDefaults.hubEcho`).
+    init(_ entry: RecordingEntry, hubEcho: Bool = MeetingAttendanceDefaults.hubEcho()) {
+        marksEcho = hubEcho
         revision = entry.revision
         startedAt = entry.createdAt
         endedAt = entry.active ? nil : entry.createdAt.addingTimeInterval(entry.duration)
@@ -63,10 +91,13 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
         device = entry.source.rawValue
         title = entry.title
         bookmarks = entry.marks.map { Bookmark(at: $0) }
-        segments = entry.sentences.compactMap { s in
+        // Persona's echo goes marked to a hub that keeps it out of the minutes itself, and not at all to one that doesn't.
+        segments = entry.markedSentences.compactMap { s, echo in
             let text = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return text.isEmpty ? nil : Segment(start: s.start, end: s.end, text: text)
+            guard !text.isEmpty, !echo || hubEcho else { return nil }
+            return Segment(start: s.start, end: s.end, text: text, echo: echo ? true : nil)
         }
+        if hubEcho, let spans = entry.attendance?.spoken, !spans.isEmpty { spoken = spans.map(Spoken.init) }
         complete = entry.transcribedAll
         kind = entry.isMeeting ? "meeting" : "note"
         if let meeting = entry.meeting, meeting.eventID != nil || meeting.title != nil {
@@ -77,6 +108,10 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
             if a.room {
                 room = RoomUpload(attendance: a.role.rawValue)
                 privateMark = a.privateMark ?? false
+                if let mode = a.transcription {
+                    transcription = mode.rawValue
+                    if mode == .hub { timeline = MeetingTimeline(a) }
+                }
             } else {
                 // Never an attending role without an explicit target (#3862, the owner's rule after a real meeting): the hub
                 // reads `attending_session` left out as the main chat, so with no session named and the main chat not
@@ -87,6 +122,19 @@ nonisolated struct RecordingUpload: Encodable, Sendable {
                 if role.attends, let key = a.key { attendingSession = SessionRef(machineID: key.machineID, sessionID: key.sessionID) }
             }
         }
+    }
+
+    /// Persona is saying an answer now (`MeetingSpeaker.openSpan`, or the meeting call's voice: `MeetingCall.openSpan`):
+    /// the lines its stretch so far echoes are marked (left out, to a hub without `meeting_echo`), and the stretch goes
+    /// with the others.
+    mutating func speaking(_ open: RecordingSpan) {
+        let echoes = { (s: Segment) in s.echo != true && open.echoes(RecordingSentence(start: s.start, end: s.end, text: s.text)) }
+        guard marksEcho else {
+            segments.removeAll(where: echoes)
+            return
+        }
+        for i in segments.indices where echoes(segments[i]) { segments[i].echo = true }
+        spoken = (spoken ?? []) + [Spoken(open)]
     }
 
     /// The attendance an upload of `entry` carries: a phone meeting's, once Persona was asked to attend it.
@@ -160,8 +208,15 @@ final class RecordingSync {
     @ObservationIgnored var onAttendanceStored: ((UUID) -> Void)?
     /// The `room` (and `private`, when there) of every upload `200` of a room meeting (`MeetingConversation.start`).
     @ObservationIgnored var onRoom: ((UUID, MeetingRoom, Bool?) -> Void)?
+    /// The `transcription` (and `transcription_problem`) of every upload `200` of a meeting that named a mode (#3862 phase
+    /// 5, `MeetingTranscription.start`), before the attendance it carried counts as stored: in hub mode no live line goes.
+    @ObservationIgnored var onTranscription: ((RecordingEntry, MeetingTranscriptionRule.Answer) -> Void)?
     /// Every save of a recording, after this sync's own reaction to it (the live log of a meeting Persona attends).
     @ObservationIgnored var onChange: ((UUID) -> Void)?
+    /// What a recording may send changed: a save (its role, Meeting / Note, the phone stopping attending: `stopped`) or
+    /// `roomMissing`. The segment length of the one being recorded follows it (`MeetingRecorder.followSegments`, #3862
+    /// phase 2: 15-second segments only while its lines go to the room).
+    @ObservationIgnored var onSegments: ((UUID) -> Void)?
     /// Uploaded first, without the save debounce: a recording whose attendance the hub doesn't have yet.
     @ObservationIgnored private var urgent: Set<UUID> = []
     /// Configuration refusals need a foreground/manual retry, not a timer or another transcript save.
@@ -175,6 +230,8 @@ final class RecordingSync {
 
     @ObservationIgnored private let library: RecordingLibrary
     @ObservationIgnored private let api: () -> APIClient?
+    /// The connected hub's `hello.features` (empty while there is none).
+    @ObservationIgnored private let hubFeatures: () -> Set<String>
     @ObservationIgnored private let file: URL
     @ObservationIgnored private let now: () -> Date
     /// All-day recordings go their own way (`RecordingDaySync`): this hands them over.
@@ -193,8 +250,9 @@ final class RecordingSync {
 
     init(library: RecordingLibrary = .shared, api: @escaping () -> APIClient? = { AppModel.shared.api },
          now: @escaping () -> Date = { .now }, daySync: @escaping () -> RecordingDaySync = { RecordingDaySync.shared },
-         recordingDaysChanged: @escaping (Int) -> Void = { RecordingDayPhoneCapabilities.shared.recordingDaysChanged($0) }) {
-        self.library = library; self.api = api; self.now = now; self.daySync = daySync
+         recordingDaysChanged: @escaping (Int) -> Void = { RecordingDayPhoneCapabilities.shared.recordingDaysChanged($0) },
+         hubFeatures: @escaping () -> Set<String> = { AppModel.shared.hubFeatures }) {
+        self.library = library; self.api = api; self.now = now; self.daySync = daySync; self.hubFeatures = hubFeatures
         self.recordingDaysChanged = recordingDaysChanged
         file = library.root.appendingPathComponent("sync.json")
         store = (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(Store.self, from: $0) } ?? Store()
@@ -212,6 +270,7 @@ final class RecordingSync {
             } else {
                 self.kick()
             }
+            self.onSegments?(id)
             self.onChange?(id)
         }
         #if canImport(UIKit) && !os(watchOS)
@@ -226,11 +285,23 @@ final class RecordingSync {
     func status(_ entry: RecordingEntry) -> Status {
         // An all-day recording's text isn't in its entry (`RecordingDaySummaries` has its state): nothing here to send.
         if entry.isDay { return .waiting }
+        #if DEBUG && os(iOS)
+        // A replayed meeting (`MeetingReplay`, #9417) never goes to a hub.
+        if MeetingReplay.holds(entry.id) { return .waiting }
+        #endif
         if isExpired(entry) { return .expired }
         if uploading == entry.id { return .uploading }
         if let have = store.synced[entry.id], have >= entry.revision { return .synced }
         if store.rejected[entry.id] == entry.revision { return .rejected }
         return Self.uploadable(entry) ? .pending : .waiting
+    }
+
+    /// The hub this upload goes to takes Persona's echo marked (`meeting_echo`, #5905), by its own `hello` only. Before
+    /// that hello (an upload at launch, another hub just picked) nothing says so, and a "yes" kept from the last hub heard
+    /// may be another hub's: the echo lines are left out, as for an older hub. That loses only Persona's own words on the
+    /// hub's copy, never the meeting's, and an older hub never gets them into its minutes.
+    private func hubEcho() -> Bool {
+        hubFeatures().contains(MeetingAttendanceDefaults.echoFeature)
     }
 
     /// Text worth sending: at least one sentence (an empty transcript is noise in the knowledge base). A meeting Persona
@@ -387,6 +458,11 @@ final class RecordingSync {
                                   uniquingKeysWith: max)
             // The hub's word replaces ours: one it lost (a new hub) goes again, one it has newer is not resent.
             store.synced = have.filter { library.entry($0.key) != nil && library.entry($0.key)?.isDay != true }
+            // What the hub calls each now (#8873): the summary's or the minutes' title arrives after the last upload.
+            for row in rows where row.kind != "day" {
+                guard let id = UUID(uuidString: row.id) else { continue }
+                hubNamed(id, name: row.name, source: row.nameSource)
+            }
             handDays(rows, deleted: (answer.deleted ?? []).compactMap(UUID.init(uuidString:)))
             for id in (answer.deleted ?? []).compactMap(UUID.init(uuidString:)) where library.entry(id).map({ !$0.isDay }) == true {
                 deletedOnHub(id)
@@ -397,6 +473,17 @@ final class RecordingSync {
         } catch {
             note(error)
             return false
+        }
+    }
+
+    /// What the hub calls a recording now (#8873, #8877): a name the owner gave on the web becomes its own title (uploaded
+    /// with its next revision, which settles the hub's copy into it), unless a change of this phone's is still to go up;
+    /// any other name is kept beside it (`RecordingTitle.naming`).
+    func hubNamed(_ id: UUID, name: String?, source: String?) {
+        guard let entry = library.entry(id), !entry.isDay else { return }
+        switch RecordingTitle.naming(entry, name: name, source: source, pending: status(entry) == .pending) {
+        case .adopt(let title): library.rename(id, to: title)
+        case .keep(let name): library.noteHubName(id, name)
         }
     }
 
@@ -412,10 +499,14 @@ final class RecordingSync {
             var recapState: String?
             var recapFinal: Bool?
             var recapFinalAt: String?
+            // What the hub calls it and why (#8873).
+            var name: String?
+            var nameSource: String?
 
             private nonisolated enum CodingKeys: String, CodingKey {
-                case id, revision, kind, part, next, base
+                case id, revision, kind, part, next, base, name
                 case recapState = "recap_state", recapFinal = "recap_final", recapFinalAt = "recap_final_at"
+                case nameSource = "name_source"
             }
 
             init(from decoder: Decoder) throws {
@@ -430,6 +521,8 @@ final class RecordingSync {
                 recapState = try? c.decodeIfPresent(String.self, forKey: .recapState)
                 recapFinal = try? c.decodeIfPresent(Bool.self, forKey: .recapFinal)
                 recapFinalAt = try? c.decodeIfPresent(String.self, forKey: .recapFinalAt)
+                name = try? c.decodeIfPresent(String.self, forKey: .name)
+                nameSource = try? c.decodeIfPresent(String.self, forKey: .nameSource)
             }
         }
 
@@ -488,13 +581,34 @@ final class RecordingSync {
                 privateMark = try? c.decodeIfPresent(Bool.self, forKey: .privateMark)
             }
         }
+        /// What the hub calls it and why (#8873), read on its own: a field of another shape reads as absent.
+        struct NameAnswer: Decodable {
+            var name: String?; var source: String?
+            enum CodingKeys: String, CodingKey { case name, source = "name_source" }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                name = try? c.decodeIfPresent(String.self, forKey: .name)
+                source = try? c.decodeIfPresent(String.self, forKey: .source)
+            }
+        }
+        /// The mode in effect (#3862 phase 5), read on its own: a field of another shape reads as absent.
+        struct TranscriptionAnswer: Decodable {
+            var transcription: String?; var problem: String?
+            enum CodingKeys: String, CodingKey { case transcription, problem = "transcription_problem" }
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                transcription = try? c.decodeIfPresent(String.self, forKey: .transcription)
+                problem = try? c.decodeIfPresent(String.self, forKey: .problem)
+            }
+        }
         uploading = entry.id
         defer { uploading = nil }
-        var body = RecordingUpload(entry)
+        var body = RecordingUpload(entry, hubEcho: hubEcho())
         #if os(iOS)
         // Persona is saying an answer in this meeting right now: what the microphone hears of it isn't the meeting's.
-        if let open = MeetingSpeaker.shared.openSpan(for: entry.id) {
-            body.segments.removeAll { open.holds(RecordingSentence(start: $0.start, end: $0.end, text: $0.text)) }
+        // The meeting call's voice (#3862 phase 4) as well: each open stretch, with what it is saying, marks its echo.
+        for open in [MeetingSpeaker.shared.openSpan(for: entry.id), MeetingCall.shared.openSpan(for: entry.id)].compactMap({ $0 }) {
+            body.speaking(open)
         }
         #endif
         do {
@@ -511,7 +625,17 @@ final class RecordingSync {
             }
             store.rejected[entry.id] = nil
             save()
+            if answer?.status != "expired" { // what the hub calls it now (#8873); none from an older manager
+                let named = try? JSON.decoder.decode(NameAnswer.self, from: data)
+                hubNamed(entry.id, name: named?.name, source: named?.source)
+            }
             if body.endedAt != nil, !endedStored.contains(entry.id) { endedStored.insert(entry.id) }
+            if body.transcription != nil {
+                // Absent from the answer (or no answer to read): an older manager, which transcribes nothing.
+                let mode = try? JSON.decoder.decode(TranscriptionAnswer.self, from: data)
+                onTranscription?(library.entry(entry.id) ?? entry,
+                                 MeetingTranscriptionRule.Answer(mode: mode?.transcription, problem: mode?.problem))
+            }
             if body.room != nil {
                 let room = try? JSON.decoder.decode(RoomAnswer.self, from: data)
                 roomAnswered(entry, sent: body, answer?.attendance, problem: answer?.attendanceProblem, room: room?.room,
@@ -563,11 +687,17 @@ final class RecordingSync {
     private func roomAnswered(_ entry: RecordingEntry, sent body: RecordingUpload, _ took: String?, problem: String?,
                               room: MeetingRoom?, privateMark: Bool?) {
         guard let room else {
-            if !roomMissing.contains(entry.id) { roomMissing.insert(entry.id) }
+            if !roomMissing.contains(entry.id) {
+                roomMissing.insert(entry.id)
+                onSegments?(entry.id)
+            }
             attendanceStored[entry.id] = nil
             return
         }
-        if roomMissing.contains(entry.id) { roomMissing.remove(entry.id) }
+        if roomMissing.contains(entry.id) {
+            roomMissing.remove(entry.id)
+            onSegments?(entry.id)
+        }
         attendanceProblem[entry.id] = problem
         onRoom?(entry.id, room, privateMark)
         guard let mark = RecordingUpload.attendanceMark(entry), let sent = body.room?.attendance else { return }

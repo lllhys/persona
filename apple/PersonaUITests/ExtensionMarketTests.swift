@@ -137,7 +137,7 @@ final class ExtensionMarketTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["新版本多要的"].waitForExistence(timeout: 10), "no added permissions:\n\(app.debugDescription)")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "status.example.com")).firstMatch.exists)
         shot(app, "upgrade")
-        app.buttons["取消"].firstMatch.tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         XCTAssertTrue(upgrade.waitForExistence(timeout: 5))
     }
 
@@ -278,8 +278,8 @@ final class ExtensionMarketTests: XCTestCase {
             XCTAssertTrue(app.staticTexts["新版本多要的"].exists, "round \(round): what it asks for more is not shown")
             if round == 1 {
                 shot(app, longPage ? "update-sheet-long" : "update-sheet")
-                app.navigationBars.buttons["取消"].firstMatch.tap()
-                XCTAssertTrue(update.waitForNonExistence(timeout: 5), "Cancel did not close the sheet")
+                app.navigationBars.buttons["sheet-close"].firstMatch.tap()
+                XCTAssertTrue(update.waitForNonExistence(timeout: 5), "✕ did not close the sheet")
                 XCTAssertTrue(review.waitForExistence(timeout: 5) && review.isHittable,
                               "not back on the extension's page in Settings:\n\(app.debugDescription)")
             } else {

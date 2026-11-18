@@ -62,7 +62,7 @@ final class MessageCardStateUITests: XCTestCase {
         default:
             XCTAssertTrue(app.staticTexts["按任务进度起草的回复"].exists, app.debugDescription)
             XCTAssertTrue(send.exists, "an open card has no Send")
-            XCTAssertTrue(app.buttons["messageCard.dismiss"].exists, "an open draft has no Do not handle")
+            XCTAssertTrue(app.buttons["messageCard.dismiss"].exists, "an open draft has no Don't handle")
             XCTAssertFalse(filedLine.exists)
         }
         try shot(app, message.isEmpty ? "open" : message)
@@ -111,6 +111,7 @@ final class MessageCardStateUITests: XCTestCase {
         needs.tap()
         let tray = app.otherElements["action-tray.needs-you"].firstMatch
         XCTAssertTrue(tray.waitForExistence(timeout: 5), app.debugDescription)
+        app.expandTrayRows() // the reply draft's row is folded to a line (#5569)
         let dismiss = tray.buttons["messageCard.dismiss"].firstMatch
         XCTAssertTrue(dismiss.waitForExistence(timeout: 10), app.debugDescription)
         reveal(dismiss, in: tray)
@@ -142,9 +143,11 @@ final class MessageCardStateUITests: XCTestCase {
         let reopenedNeeds = reopened.buttons["action-bar.needs-you"]
         XCTAssertTrue(reopenedNeeds.waitForExistence(timeout: 20))
         reopenedNeeds.tap()
+        reopened.expandTrayRows(timeout: 2)
         XCTAssertFalse(reopened.otherElements["action-tray.needs-you"].buttons["messageCard.dismiss"].exists,
                        "a dismissed card returned after relaunch")
         _ = try await fixture("progress")
+        reopened.expandTrayRows()
         XCTAssertTrue(reopened.otherElements["action-tray.needs-you"].buttons["messageCard.dismiss"].firstMatch.waitForExistence(timeout: 10),
                       "a new same-reference draft should still need attention")
         let evidence = try await fixture("evidence", method: "GET")

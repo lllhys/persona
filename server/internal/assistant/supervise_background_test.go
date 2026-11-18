@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -99,7 +102,7 @@ func TestBackgroundSupervisorFollowsUpTheMainConversationsTasks(t *testing.T) {
 	listBackground(t, s, f, bg)
 	waitFor(t, "the background supervisor's message", func() bool { return len(f.noticesTo(bg)) == 1 })
 	n := f.noticesTo(bg)[0]
-	for _, want := range []string{"📋 督办：你派出去的任务有 1 个要你处理", "这是 Persona 的督办消息", "你是后台督办对话", "hub 判断做完了，等你验收", "pull/7"} {
+	for _, want := range []string{"📋 督办：你派出去的任务有 1 个要你处理", "这是 Persona 的督办消息", "你是后台督办对话", "signal=review", "hub 判断做完了，等你验收", "pull/7"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the background supervisor's message lacks %q:\n%s", want, n)
 		}
@@ -120,7 +123,11 @@ func TestBackgroundSupervisorFollowsUpTheMainConversationsTasks(t *testing.T) {
 	}
 
 	review := func(self, verdict, note string) (string, error) {
-		return runJSON(t, s, self, "task_review", map[string]any{"todo_id": todo.ID, "verdict": verdict, "note": note})
+		args := map[string]any{"todo_id": todo.ID, "verdict": verdict, "note": note}
+		if verdict == reviewAccepted {
+			args["checks"] = completeReviewChecks(todoNow(s, todo.ID))
+		}
+		return runJSON(t, s, self, "task_review", args)
 	}
 	if _, err := review("conv2", "rework", "x"); err == nil {
 		t.Fatal("another side conversation reviewed the task")
@@ -193,7 +200,7 @@ func TestBackgroundSupervisorEscalatesAndStaysBuiltIn(t *testing.T) {
 	}
 	waitFor(t, "the main conversation's message", func() bool { return len(f.noticesTo("conv1")) == 1 })
 	n := f.noticesTo("conv1")[0]
-	for _, want := range []string{"跟进它的后台督办对话判断要用户决定", "要不要顺手改 iPhone 横屏", "后台督办对话推荐：先只修 iPad", "后台督办对话或 leader 升级上来的"} {
+	for _, want := range []string{"signal=escalated", "跟进它的后台督办对话判断要用户决定", "要不要顺手改 iPhone 横屏", "后台督办对话推荐：先只修 iPad"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the main conversation's message lacks %q:\n%s", want, n)
 		}
@@ -203,10 +210,10 @@ func TestBackgroundSupervisorEscalatesAndStaysBuiltIn(t *testing.T) {
 			t.Errorf("the main conversation's message names a leader (%q):\n%s", not, n)
 		}
 	}
+
 	if strings.Contains(n, "你是后台督办对话") {
 		t.Fatalf("the main conversation is told it is the background supervisor:\n%s", n)
 	}
-
 	if _, err := s.setArchived(ctx, "server", bg, true, titleByUser); !errors.Is(err, errArchiveBackground) {
 		t.Fatalf("archiving the background supervisor: %v", err)
 	}
@@ -309,7 +316,8 @@ func TestMainSupervisesOwnTasksSetting(t *testing.T) {
 		t.Fatalf("the task changed with the setting: %+v %+v", cur, cur.Supervision)
 	}
 	// What the background supervisor was sent before the switch it may still finish.
-	if _, err := runJSON(t, s, bg, "task_review", map[string]any{"todo_id": todo.ID, "verdict": "accepted", "note": "好了"}); err != nil {
+	if _, err := runJSON(t, s, bg, "task_review", map[string]any{"todo_id": todo.ID, "verdict": "accepted", "note": "好了",
+		"checks": completeReviewChecks(todoNow(s, todo.ID))}); err != nil {
 		t.Fatalf("the background supervisor finishing what it was sent: %v", err)
 	}
 }
@@ -506,7 +514,7 @@ func TestAsksOfUnledTasksGoToTheBackgroundSupervisor(t *testing.T) {
 
 	e.raise(askPermission("ix1", "worker-1"))
 	n := e.noticeWith("bg1", "interaction_id=ix1")
-	for _, want := range []string{"你是后台督办对话", "先交给你处理，用户还没收到", "主对话也会知道", "自动上交给用户"} {
+	for _, want := range []string{"signal=ask", "interaction_id=ix1", "machine=Mac", "session_id=worker-1"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the background supervisor's message lacks %q:\n%s", want, n)
 		}
@@ -598,8 +606,126 @@ func TestBackgroundSupervisorModelPurpose(t *testing.T) {
 	if again, _ := s.resolveModel(ctx, "assistant"); again != main {
 		t.Fatalf("the main chat's model moved with it: %+v", again)
 	}
-	if slices.Contains(modelConfigIDs, purposeSupervise) {
-		t.Fatal("the apps' catalog lists a purpose they do not know yet")
+	// The catalog lists it once, after the other built-in uses but the two meeting purposes (#5806, #7980), as the one
+	// read by its own id: an app that still asks for it apart finds it listed and draws one row.
+	var catalog struct {
+		Purposes []ModelPurpose `json:"purposes"`
+	}
+	if r := modelRequest(s, "GET", "", ""); r.Code != 200 || json.Unmarshal(r.Body.Bytes(), &catalog) != nil {
+		t.Fatalf("catalog: %d %s", r.Code, r.Body.String())
+	}
+	listed := slices.DeleteFunc(slices.Clone(catalog.Purposes), func(p ModelPurpose) bool { return p.ID != purposeSupervise })
+	if len(listed) != 1 || catalog.Purposes[len(catalog.Purposes)-3].ID != purposeSupervise || catalog.Purposes[len(catalog.Purposes)-2].ID != purposeMeetingRoom {
+		t.Fatalf("the catalog's rows for it: %+v", listed)
+	}
+	if own := purposeOf(t, s, purposeSupervise); !reflect.DeepEqual(listed[0], own) || own.Description == "" || own.Launch != "headless" {
+		t.Fatalf("listed %+v, by its id %+v", listed[0], own)
+	}
+}
+
+// A Persona-managed provider only the background supervisor runs on is not deleted underneath it: 409 with the
+// "still used" error naming the use, in the request's language, and nothing changed (#5806).
+func TestProviderOfBackgroundSupervisorIsNotDeleted(t *testing.T) {
+	s, _, _ := modelService(t)
+	ctx := context.Background()
+	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "supervise-only"}}, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "unused"}})
+	if uses, err := s.providerModelUses(ctx, "launcher.supervise-only"); err != nil || len(uses) != 0 {
+		t.Fatalf("before it is chosen: %v %v", uses, err)
+	}
+	if r := modelRequest(s, "PATCH", purposeSupervise, `{"revision":0,"provider":"launcher.supervise-only","model":"small-model"}`); r.Code != 200 {
+		t.Fatalf("giving it its own provider: %d %s", r.Code, r.Body.String())
+	}
+	if main, err := s.resolveModel(ctx, "assistant"); err != nil || main.Provider == "launcher.supervise-only" {
+		t.Fatalf("the main chat runs on it too: %+v %v", main, err)
+	}
+	before, err := s.readStoredLaunchers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja} {
+		name := purposeName(l, purposeSupervise)
+		res, err := serveHTTP(ctx, s, assistantwire.HTTPRequest{
+			Method: "DELETE", Path: "/api/v1/launchers/supervise-only", Header: map[string][]string{"Accept-Language": {string(l)}},
+		}, s.lang)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(res.Body, &body)
+		want := i18n.T(l, "assistant-models_launchers.err_in_use", i18n.Args{"uses": name})
+		if res.Status != 409 || body.Error != want || name == "" || strings.HasPrefix(name, "assistant-models.") {
+			t.Fatalf("%s delete: %d %s; want 409 %q", l, res.Status, res.Body, want)
+		}
+	}
+	if after, err := s.readStoredLaunchers(ctx); err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("the refused deletion changed the providers: %+v %v", after, err)
+	}
+	// One nothing runs on still goes, and so does this one once the background supervisor follows the main chat again.
+	if r := request(s, "DELETE", "/api/v1/launchers/unused", ""); r.Code != 200 {
+		t.Fatalf("an unused provider: %d %s", r.Code, r.Body.String())
+	}
+	rev := purposeOf(t, s, purposeSupervise).Revision
+	if r := modelRequest(s, "PATCH", purposeSupervise, fmt.Sprintf(`{"revision":%d,"provider":null,"model":null}`, rev)); r.Code != 200 {
+		t.Fatalf("following the main chat again: %d %s", r.Code, r.Body.String())
+	}
+	if r := request(s, "DELETE", "/api/v1/launchers/supervise-only", ""); r.Code != 200 {
+		t.Fatalf("once nothing runs on it: %d %s", r.Code, r.Body.String())
+	}
+}
+
+// While it follows the main chat, the main chat's provider is the background supervisor's too: the refused deletion
+// names both, and so does what an import, or hiding the alias, reads before it takes the alias out (#5806). With a
+// provider of its own it is named alone.
+func TestProviderUsesNameTheBackgroundSupervisor(t *testing.T) {
+	s, _, _ := modelService(t)
+	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "shared"}}, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "supervise-only"}})
+	l := s.requestCtxLang(context.Background())
+	main, own, room := purposeName(l, "assistant"), purposeName(l, purposeSupervise), purposeName(l, purposeMeetingRoom)
+	uses := func(name string) []string {
+		t.Helper()
+		r := request(s, "GET", "/api/v1/launchers/"+name+"/uses", "")
+		var body struct {
+			Uses []string `json:"uses"`
+		}
+		if err := json.Unmarshal(r.Body.Bytes(), &body); r.Code != 200 || err != nil {
+			t.Fatalf("uses of %s: %d %s %v", name, r.Code, r.Body.String(), err)
+		}
+		return body.Uses
+	}
+	rev := purposeOf(t, s, "assistant").Revision
+	if r := modelRequest(s, "PATCH", "assistant", fmt.Sprintf(`{"revision":%d,"provider":"launcher.shared","model":"big-model"}`, rev)); r.Code != 200 {
+		t.Fatalf("the main chat's provider: %d %s", r.Code, r.Body.String())
+	}
+	if p := purposeOf(t, s, purposeSupervise); p.Override.Provider != "" || p.Effective.Provider != "launcher.shared" {
+		t.Fatalf("it does not follow the main chat: %+v", p)
+	}
+	// The In-meeting conversation follows the main chat as well (#7980).
+	if got := uses("shared"); !reflect.DeepEqual(got, []string{main, own, room}) || main == own {
+		t.Fatalf("uses while it follows the main chat: %v; want %q, %q and %q", got, main, own, room)
+	}
+	r := request(s, "DELETE", "/api/v1/launchers/shared", "")
+	sep := i18n.T(l, "assistant-models_launchers.list_sep")
+	want := i18n.T(l, "assistant-models_launchers.err_in_use", i18n.Args{"uses": main + sep + own + sep + room})
+	var refused struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(r.Body.Bytes(), &refused)
+	if r.Code != 409 || refused.Error != want {
+		t.Fatalf("deleting the provider both run on: %d %s; want 409 %q", r.Code, r.Body.String(), want)
+	}
+	if got := uses("supervise-only"); len(got) != 0 {
+		t.Fatalf("uses before it is chosen: %v", got)
+	}
+	if r := modelRequest(s, "PATCH", purposeSupervise, `{"revision":0,"provider":"launcher.supervise-only","model":"small-model"}`); r.Code != 200 {
+		t.Fatalf("giving it its own provider: %d %s", r.Code, r.Body.String())
+	}
+	if got := uses("supervise-only"); !reflect.DeepEqual(got, []string{own}) {
+		t.Fatalf("uses of its own provider: %v; want %q", got, own)
+	}
+	if got := uses("shared"); !reflect.DeepEqual(got, []string{main, room}) {
+		t.Fatalf("uses of the main chat's provider once it has its own: %v; want %q and %q", got, main, room)
 	}
 }
 
@@ -625,11 +751,10 @@ func TestGoldenBackgroundSupervisor(t *testing.T) {
 	s.noBackground = false
 	on := s.claudeMD(context.Background(), "server", false)
 	golden(t, "assistant_claude_md.background", on)
-	if !strings.Contains(off, "主对话派出去的任务由你督办") || strings.Contains(off, "后台督办") {
-		t.Fatal("with the background supervisor off the CLAUDE.md changed")
-	}
-	if strings.Contains(on, "主对话派出去的任务由你督办") || !strings.Contains(on, "主对话派出去的任务由后台督办对话跟进") {
-		t.Fatal("with the background supervisor on the CLAUDE.md still says the main conversation reviews its tasks")
+	for _, common := range []string{off, on} {
+		if strings.Contains(common, "cost_of_waiting") || strings.Contains(common, "visibility: \"silent\"") {
+			t.Fatal("shared CLAUDE.md still contains detailed supervision handling")
+		}
 	}
 	yes := true
 	setSettings(t, s, func(v *Settings) { v.MainSupervisesOwnTasks = &yes })
@@ -713,6 +838,7 @@ func TestBackgroundSupervisorGoneAfterRestartKeepsItsQueuedMessage(t *testing.T)
 // are quiet.
 func TestOwnerPresenceAndTheBackgroundSupervisorsQueue(t *testing.T) {
 	presenceTimes(t, 400*time.Millisecond, time.Hour)
+	ownerTurnTimes(t, 400*time.Millisecond, time.Hour)
 	s, f, _ := newBackgroundService(t)
 	stopHolds(t, s)
 	ctx := context.Background()
@@ -721,7 +847,8 @@ func TestOwnerPresenceAndTheBackgroundSupervisorsQueue(t *testing.T) {
 	agentTurn(s, f, proto.StatusDone, "做完了", 0)
 	bg := backgroundID(t, s)
 	listBackground(t, s, f, bg)
-	waitFor(t, "the background supervisor's message", func() bool { return len(f.noticesTo(bg)) == 1 })
+	// Until its drain is over, the delivered message is still at the head of the queue.
+	waitFor(t, "the background supervisor's message", func() bool { return len(f.noticesTo(bg)) == 1 && !drainingNow(s, bg) })
 	if _, present := s.ownersPresent(time.Now())[bg]; present {
 		t.Fatal("the owner counts as present in the background supervisor without having written there")
 	}
@@ -736,7 +863,9 @@ func TestOwnerPresenceAndTheBackgroundSupervisorsQueue(t *testing.T) {
 		t.Fatalf("while the owner writes there: %d queued, %d sent", n, f.sentTo(bg))
 	}
 	// Quiet again: one goes in per turn, and the one that waits on a decision goes before the one that came first.
-	waitFor(t, "the first held message once the owner is quiet", func() bool { return f.sentTo(bg) == 2 })
+	waitFor(t, "the first held message once the owner is quiet", func() bool {
+		return f.sentTo(bg) == 2 && s.queuedFor(bg) == 1 && !drainingNow(s, bg)
+	})
 	b := &s.relays
 	b.mu.Lock()
 	left := slices.Clone(b.st.Queue[bg])

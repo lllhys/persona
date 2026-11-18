@@ -78,3 +78,46 @@ func TestScriptName(t *testing.T) {
 		}
 	}
 }
+
+// A launch result whose call was not read (the node's background scan skips the call's line when an inline script
+// makes it longer than 64 KiB) still starts the run: the result names the task, the run and the script (#6003).
+func TestWorkflowLaunchWithoutItsCall(t *testing.T) {
+	result := func(id, text string, isError bool) []byte {
+		b, _ := json.Marshal(map[string]any{"type": "user", "uuid": "u-" + id, "timestamp": "2026-11-05T13:46:57Z", "message": map[string]any{
+			"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": id, "content": text, "is_error": isError}}}})
+		return b
+	}
+	launch := "Workflow launched in background. Task ID: wdp5zxh37\nSummary: Audit parity per domain\n" +
+		"Transcript dir: /home/u/.claude/projects/p/s1/subagents/workflows/wf_c1d9daf8-cd2\n" +
+		"Script file: /home/u/.claude/projects/p/s1/workflows/scripts/parity-audit-wf_c1d9daf8-cd2.js\n" +
+		"(Edit this file …)\nRun ID: wf_c1d9daf8-cd2\n\nYou will be notified when it completes."
+	meta := &Meta{}
+	ParseLine(1, result("tu1", launch, false), meta)
+	if len(meta.Workflows) != 1 || len(meta.Background) != 1 {
+		t.Fatalf("workflows %+v background %+v", meta.Workflows, meta.Background)
+	}
+	w, bg := meta.Workflows[0], meta.Background[0]
+	if w.TaskID != "wdp5zxh37" || w.RunID != "wf_c1d9daf8-cd2" || w.Name != "parity-audit" || w.Summary != "Audit parity per domain" ||
+		!w.Running || w.ToolUseID != "tu1" || !w.StartedAt.Equal(time.Date(2026, 11, 5, 13, 46, 57, 0, time.UTC)) {
+		t.Fatalf("run: %+v", w)
+	}
+	if bg.ID != "wdp5zxh37" || bg.Kind != "workflow" || bg.RunID != "wf_c1d9daf8-cd2" || bg.Description != "parity-audit" {
+		t.Fatalf("task: %+v", bg)
+	}
+	if meta.WorkflowScripts["wf_c1d9daf8-cd2"] == "" {
+		t.Fatalf("scripts: %v", meta.WorkflowScripts)
+	}
+
+	// Not a launch: an error, the words quoted inside other output, or no run named.
+	for name, line := range map[string][]byte{
+		"error":     result("tu2", launch, true),
+		"quoted":    result("tu3", "notes.txt:1:"+launch, false),
+		"no run id": result("tu4", "Workflow launched in background. Task ID: wq1\nSummary: s", false),
+	} {
+		m := &Meta{}
+		ParseLine(1, line, m)
+		if len(m.Workflows) != 0 || len(m.Background) != 0 {
+			t.Errorf("%s: workflows %+v background %+v", name, m.Workflows, m.Background)
+		}
+	}
+}

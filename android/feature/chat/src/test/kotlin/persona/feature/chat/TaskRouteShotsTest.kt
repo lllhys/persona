@@ -30,6 +30,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,6 +41,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.serialization.json.JsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -70,6 +73,7 @@ import persona.core.designsystem.AppStyle
 import persona.core.designsystem.PersonaTheme
 import persona.core.domain.tasks.TasksStore
 import java.io.File
+import java.io.IOException
 
 /**
  * Where a message goes in Persona's conversation (#4339 C15), on the real page: the route chip above the composer while
@@ -98,6 +102,8 @@ class TaskRouteShotsTest {
         Todo("task-old", "Rotate the signing keys", origin = "main", createdAt = "2026-11-11T09:00:00Z", doneAt = "2026-11-11T10:00:00Z"),
     )
 
+    private val routed = mutableListOf<Triple<String, String, String>>()
+    private var routeHandler: suspend (String, String, String) -> FeedItem = { _, _, _ -> error("not used") }
     private val api = object : TasksApi {
         override suspend fun todos() = todos
         override suspend fun feed(conversation: String, since: String?) = FeedResponse(emptyList())
@@ -105,7 +111,10 @@ class TaskRouteShotsTest {
         override suspend fun dismissPlan(id: String): TaskPlan = error("not used")
         override suspend fun retryTask(todoId: String): Todo = error("not used")
         override suspend fun removeTask(todoId: String) = Unit
-        override suspend fun route(conversation: String, todoId: String, text: String): FeedItem = error("not used")
+        override suspend fun route(conversation: String, todoId: String, text: String): FeedItem {
+            routed += Triple(conversation, todoId, text)
+            return routeHandler(conversation, todoId, text)
+        }
         override suspend fun today(conversation: String): FeedItem = error("not used")
         override suspend fun mainConversation() = "main"
         override suspend fun inboxReply(itemId: String, text: String, card: String?) = Unit
@@ -135,9 +144,12 @@ class TaskRouteShotsTest {
         override suspend fun loadOlder(session: SessionKey) = Unit
         override suspend fun expandFold(session: SessionKey, fromSeq: Int, toSeq: Int) = emptyList<Item>()
     }
+    private val ordinarySends = mutableListOf<String>()
     private val sender = object : MessageSender {
         override val outbox = MutableStateFlow(emptyList<OutboxMessage>())
-        override suspend fun send(session: SessionKey, text: String, clientMessageId: String, clearDraft: String?) = Unit
+        override suspend fun send(session: SessionKey, text: String, clientMessageId: String, clearDraft: String?) {
+            ordinarySends += text
+        }
     }
 
     private fun settle() {
@@ -151,6 +163,56 @@ class TaskRouteShotsTest {
         val image = rule.onNodeWithTag("task-route-shot").captureToImage().asAndroidBitmap()
         val output = File("build/task-route-shots").also { it.mkdirs() }
         File(output, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
+    @Test fun aDisconnectedRoutedSendKeepsTheDraftAndRouteForRetry() {
+        val tasks = TasksStore(api, connection, scope).also { it.reloadTodos() }
+        tasks.setRoute("main", "task-release")
+        val text = "Keep this draft until the task accepts it"
+        val composer = ChatComposerState().apply { value = TextFieldValue(text, TextRange(4)) }
+        val editing = composer.value
+        val observed = mutableListOf<ChatComposerDraft>()
+        val disconnected = CompletableDeferred<FeedItem>()
+        routeHandler = { _, _, _ -> disconnected.await() }
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true, style = AppStyle.Glass) {
+                ChatScreen(main, chats, sender, interactions, sessions, {},
+                    chrome = ChatChromeBindings(tasks = tasks, onOpenSession = {}),
+                    renderStyle = ChatRenderStyle.Assistant, composerState = composer,
+                    onDraftChanged = { observed += it }, embedded = true, showTopBar = false)
+            }
+        }
+        settle()
+
+        rule.onNodeWithContentDescription("Send").performClick()
+        rule.waitUntil(10_000) { routed.size == 1 }
+        // Launching the request is not acceptance: neither editing state nor its route is consumed while it is pending.
+        rule.runOnIdle {
+            assertEquals(editing, composer.value)
+            assertEquals(mapOf("main" to "task-release"), tasks.routes.value)
+            assertFalse(observed.any { it.text.isEmpty() })
+        }
+
+        disconnected.completeExceptionally(IOException("Disconnected"))
+        settle()
+        // The ordinary Send button is the retry: the same draft and route remain, with no outbox fallback or empty draft.
+        rule.runOnIdle {
+            assertEquals(editing, composer.value)
+            assertEquals(mapOf("main" to "task-release"), tasks.routes.value)
+            assertEquals(text, observed.last().text)
+            assertTrue(ordinarySends.isEmpty())
+        }
+
+        routeHandler = { conversation, _, _ ->
+            FeedItem("routed", conversation, "2026-11-12T09:41:00Z", "routed", "example:1", JsonObject(emptyMap()))
+        }
+        rule.onNodeWithContentDescription("Send").performClick()
+        rule.waitUntil(10_000) { routed.size == 2 && composer.value.text.isEmpty() }
+        settle()
+        assertEquals(listOf(Triple("main", "task-release", text), Triple("main", "task-release", text)), routed)
+        assertEquals(emptyMap<String, String>(), tasks.routes.value)
+        assertEquals("", observed.last().text)
+        assertTrue(ordinarySends.isEmpty())
     }
 
     @Test fun theRouteChipAndTheTaskListInEveryStyle() {

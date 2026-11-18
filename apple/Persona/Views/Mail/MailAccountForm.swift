@@ -54,7 +54,7 @@ struct MailAccountForm: Equatable {
         return req
     }
 
-    /// Where a QQ / NetEase address typed under Other IMAP makes its authorization code; nil for any other address,
+    /// Where a QQ / NetEase / Gmail / iCloud address typed under Other IMAP makes its authorization code or app password; nil for any other address,
     /// and once servers are typed (they may not be the provider's).
     var codeGuide: CodeGuide? {
         guard kind == .imap, imapHost.isEmpty, smtpHost.isEmpty, let at = email.lastIndex(of: "@") else { return nil }
@@ -62,12 +62,12 @@ struct MailAccountForm: Equatable {
     }
 }
 
-/// A mail provider whose clients sign in with an authorization code made in its web mail, not the account's password. The hub
+/// A mail provider whose clients sign in with an authorization code or app password made on its website, not the account's password. The hub
 /// says the same steps for the same domains (`server/internal/mail/preset.go`, `Guide`): change them together.
 struct CodeGuide: Equatable {
-    enum Provider: Equatable { case qq, netease }
+    enum Provider: Equatable { case qq, netease, gmail, icloud }
     let provider: Provider
-    /// The web mail whose settings make the code.
+    /// The page that makes the code (the web mail's settings, Google's App passwords, Apple Account).
     let webMail: URL
 
     init?(domain: String) {
@@ -77,9 +77,14 @@ struct CodeGuide: Equatable {
         case "163.com", "126.com", "yeah.net": provider = .netease; site = "mail." + domain
         case "vip.163.com", "vip.126.com": provider = .netease; site = domain
         case "188.com": provider = .netease; site = "www.188.com"
+        case "gmail.com", "googlemail.com": provider = .gmail; site = "myaccount.google.com/apppasswords"
+        case "icloud.com", "me.com": provider = .icloud; site = "account.apple.com"
         default: return nil
         }
         guard let url = URL(string: "https://" + site) else { return nil }
         webMail = url
     }
+
+    /// Gmail added with an app password whatever the address's domain is (Google Workspace has its own).
+    static let gmailAppPassword = CodeGuide(domain: "gmail.com")!
 }

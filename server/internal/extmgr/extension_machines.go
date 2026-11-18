@@ -29,7 +29,7 @@ func (h *Manager) machineIDFor(typed string) string {
 		host := m.info.Hostname
 		m.mu.Unlock()
 		k := machineKey(typed)
-		for _, name := range []string{m.cfg.ID, m.cfg.Name, m.cfg.SSHHost, host} {
+		for _, name := range []string{m.cfg.ID, m.name(), m.sshHost(), host} {
 			if name != "" && machineKey(name) == k {
 				if found != "" && found != m.cfg.ID {
 					return "" // more than one: not this one's to guess

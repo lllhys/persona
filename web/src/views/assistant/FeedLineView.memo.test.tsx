@@ -15,10 +15,17 @@ vi.mock("../../lib/store", async (orig) => ({
     return () => {};
   },
 }));
-const todos = vi.hoisted(() => ({ list: [] as unknown[], machines: [] as unknown[] }));
+const todos = vi.hoisted(() => ({ list: [] as unknown[], machines: [] as unknown[], posts: [] as string[] }));
 vi.mock("../../lib/api", async (orig) => ({
   ...(await orig<typeof import("../../lib/api")>()),
-  api: async (path: string) => (path === "/todos" ? { todos: todos.list } : path === "/machines" ? { machines: todos.machines } : {}),
+  api: async (path: string, init?: { method?: string }) => {
+    if (init?.method === "POST") {
+      todos.posts.push(path);
+      const m = /^\/task-plans\/([^/]+)\/dismiss$/.exec(path);
+      if (m) return { plan: { id: m[1], conversation: "c1", state: "dismissed", tasks: [{ title: "x", prompt: "", machine: "box", cwd: "/w" }] } };
+    }
+    return path === "/todos" ? { todos: todos.list } : path === "/machines" ? { machines: todos.machines } : {};
+  },
 }));
 // A live card stands in for a line's subtree: each FeedLineView render of a view item renders it once.
 const liveRenders = vi.hoisted(() => ({ n: 0 }));
@@ -30,7 +37,7 @@ vi.mock("../../ui/AssistantCard", async (orig) => ({
   },
 }));
 
-import { applyMachine, refresh, refreshTodos } from "../../lib/store";
+import { refreshTodos } from "../../lib/store";
 import { FeedLineView } from "./Tasks";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -46,7 +53,7 @@ function Chat({ items }: { items: FeedItem[] }) {
   return (
     <div data-n={n}>
       {items.map((it) => (
-        <FeedLineView key={it.id} item={it} />
+        <FeedLineView key={it.id} item={it} simplified />
       ))}
     </div>
   );
@@ -87,14 +94,44 @@ describe("FeedLineView in the main chat", () => {
   it("follows the plan it shows", () => {
     emit("task_plan", { plan: plan("补测试") });
     act(() => root.render(<Chat items={[item({ id: "f2", kind: "plan", ref: "p1" })]} />));
+    // an open plan is its card where it was made, with Start / Edit / Dismiss, as on iOS (#8193)
     expect(host.textContent).toContain("补测试");
+    expect(host.querySelector("[data-plan-actions]")?.querySelectorAll("button").length).toBe(3);
     act(() => bump());
     emit("task_plan", { plan: plan("补测试", "started") });
-    expect(host.textContent).not.toContain("补测试");
-    expect(host.textContent).toContain("开了 1 个任务");
+    expect(host.textContent).toContain("补测试"); // started: the hand-off card of its task
   });
 
-  it("follows the todo its task card shows", async () => {
+  it("draws an open plan from the item's own body when the store has none (#8193)", () => {
+    const body = { plan: { ...plan("整理周报"), id: "p9" } };
+    act(() => root.render(<Chat items={[item({ id: "f4", kind: "plan", ref: "p9", body })]} />));
+    expect(host.textContent).toContain("整理周报");
+    expect(host.querySelector("[data-plan-actions]")).not.toBeNull();
+  });
+
+  it("ignores a body plan that is not the item's own", () => {
+    const body = { plan: { ...plan("别的计划"), id: "other" } };
+    act(() => root.render(<Chat items={[item({ id: "f5", kind: "plan", ref: "p8", body })]} />));
+    expect(host.textContent).toBe("");
+  });
+
+  it("draws a dismissed plan as its one-line outcome, without actions", () => {
+    emit("task_plan", { plan: { ...plan("不做了", "dismissed"), id: "p7" } });
+    act(() => root.render(<Chat items={[item({ id: "f6", kind: "plan", ref: "p7" })]} />));
+    expect(host.querySelector("[data-plan-actions]")).toBeNull();
+    expect(host.textContent).not.toBe("");
+  });
+
+  it("acts on the plan from the chat's card: Dismiss goes to the hub and the card becomes its outcome", async () => {
+    emit("task_plan", { plan: { ...plan("清理旧分支"), id: "p6" } });
+    act(() => root.render(<Chat items={[item({ id: "f7", kind: "plan", ref: "p6" })]} />));
+    const buttons = [...(host.querySelector("[data-plan-actions]")?.querySelectorAll("button") ?? [])];
+    await act(async () => buttons.at(-1)!.click());
+    expect(todos.posts).toContain("/task-plans/p6/dismiss");
+    expect(host.querySelector("[data-plan-actions]")).toBeNull();
+  });
+
+  it("follows the todo its hand-off card shows", async () => {
     todos.list = [todo("修登录")];
     await act(() => refreshTodos());
     act(() => root.render(<Chat items={[item({ id: "f3", kind: "task", ref: "t1" })]} />));
@@ -103,21 +140,5 @@ describe("FeedLineView in the main chat", () => {
     todos.list = [todo("修登录和注册")];
     await act(() => refreshTodos());
     expect(host.textContent).toContain("修登录和注册");
-  });
-
-  it("follows the name of the machine its task card shows", async () => {
-    const agent = { machine_id: "m1", session_id: "s1", linked_at: now, cwd: "/w/app" };
-    todos.list = [{ ...todo("修登录"), agents: [agent] }];
-    todos.machines = [];
-    await act(() => refresh());
-    act(() => root.render(<Chat items={[item({ id: "f4", kind: "task", ref: "t1" })]} />));
-    expect(host.textContent).toContain("m1 · app");
-    act(() => bump());
-    // the machine list arrives after the card first drew; then the machine is renamed
-    todos.machines = [{ id: "m1", name: "Mac mini", online: true }];
-    await act(() => refresh());
-    expect(host.textContent).toContain("Mac mini · app");
-    act(() => applyMachine({ id: "m1", name: "Studio", online: true }));
-    expect(host.textContent).toContain("Studio · app");
   });
 });

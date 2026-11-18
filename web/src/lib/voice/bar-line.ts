@@ -39,6 +39,9 @@ export type BarAction =
   | { kind: "resend"; run: string }
   /** Clear and Send: the computer's unsent line cleared first (`run.clearable`), then the instruction. */
   | { kind: "clearAndSend"; run: string }
+  /** Send Anyway: an instruction the user-speech gate held back (`unprompted`: no fresh request was heard) sent under
+   *  its id, the click the user's confirmation (#5904). */
+  | { kind: "sendAnyway"; run: string }
   /** Send Back as Feedback: the plan card answered with the refused words as its feedback (the page's own resolve). */
   | { kind: "returnPlan"; card: string; feedback: string; run: string }
   /** Never Mind: the line about it goes away. */
@@ -66,7 +69,7 @@ export interface BarLineInput {
   label: string;
   /** Refusals put away with Never Mind. */
   dismissed?: readonly string[];
-  /** The refused runs the connection up now still knows (`VoiceConversation.canResend`). */
+  /** The refused runs the connection up now still knows and can send again (`VoiceConversation.canResend`). */
   resendable?: readonly string[];
 }
 
@@ -130,8 +133,14 @@ function notSent(run: VoiceRun, cards: readonly Pick<Interaction, "id" | "kind">
       if (plan) return line(t("voice.not_sent_plan", { name: label }), [{ kind: "returnPlan", card: plan.id, feedback: run.task, run: run.id }]);
       return line(t("voice.not_sent_card", { name: label }));
     }
-    case "unprompted":
-      return line(t("voice.not_sent_unprompted"));
+    case "unprompted": {
+      // the gate heard no fresh request (docs/assistant/voice.md 4.4): never worded as if someone else said it. What was
+      // held back is quoted, as a draft is: Send anyway confirms words the user can see (last, so a long one only loses
+      // its end to the line's ellipsis)
+      const task = run.task.trim();
+      if (!task) return line(t("voice.not_sent_unprompted"));
+      return line(t("voice.not_sent_unprompted_quoted", { task }), resendable ? [{ kind: "sendAnyway", run: run.id }] : []);
+    }
     case "on_screen":
       return line(t("voice.not_sent_on_screen"));
     case "empty":

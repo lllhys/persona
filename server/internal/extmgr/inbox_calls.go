@@ -3,6 +3,7 @@ package extmgr
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -111,6 +112,11 @@ func (h *Manager) inboxAppCall(ctx context.Context, p assistantwire.AppCall) (js
 		if err = json.Unmarshal(p.Params, &ref); err == nil {
 			out, err = h.inboxMailBody(ctx, ref)
 		}
+	case assistantwire.AppInbox + " " + assistantwire.InboxMailFlagsMethod:
+		var ask assistantwire.InboxMailFlagsAsk
+		if err = json.Unmarshal(p.Params, &ask); err == nil {
+			out, err = h.inboxMailFlags(ctx, ask)
+		}
 	case assistantwire.AppInbox + " " + assistantwire.InboxReplyMail:
 		var a struct {
 			assistantwire.InboxMailRef
@@ -130,8 +136,20 @@ func (h *Manager) inboxAppCall(ctx context.Context, p assistantwire.AppCall) (js
 		}
 		if err = json.Unmarshal(p.Params, &a); err == nil {
 			in, ok := connector.As[connector.Inbox](h.connectorOf(a.Source))
+			if !ok && h.subs != nil {
+				// A subscription's row (#6198): its connector answers, by the thread it knows the row's item by. A row it
+				// cannot answer is refused as such (inbox_cannot_reply), not as a source that is not here (#9194).
+				target, thread, err := h.subs.ReplyTarget(ctx, a.Source, a.Reply.Thread, a.Reply.Last)
+				switch {
+				case err == nil:
+					in, ok, a.Reply.Thread = target, true, thread
+				case errors.Is(err, connector.ErrCannotReply):
+					return nil, true, h.inboxSendFailure(a.SendID, a.Source, "", err)
+				}
+			}
 			if !ok {
-				return nil, true, errCannotReply // its connector is not here (the plugin switched off)
+				h.logf("inbox: reply %s through %s not sent: %s (no connector)", a.SendID, a.Source, assistantwire.CodeInboxSourceUnavailable)
+				return nil, true, inboxSendRefusal(errCannotReply) // its connector is not here (the plugin switched off)
 			}
 			var sent assistantwire.InboxSent
 			sent.Already, err = h.sendInboxOnce(ctx, a.SendID, a.Source, func(ctx context.Context) error { return in.Reply(ctx, a.Reply) })
@@ -275,6 +293,33 @@ func (h *Manager) inboxConfigView(ctx context.Context) assistantwire.InboxConfig
 		out.Translate = h.mailTargets(ctx)
 	}
 	return out
+}
+
+// inboxMailFlags is which of the asked mails are still in their mailbox, read or not (at most
+// InboxMailFlagsMost of them; more is refused rather than read in part, which would look like mail gone).
+func (h *Manager) inboxMailFlags(ctx context.Context, ask assistantwire.InboxMailFlagsAsk) (assistantwire.InboxMailFlags, error) {
+	out := assistantwire.InboxMailFlags{Seen: []uint32{}, Unseen: []uint32{}}
+	if h.mail == nil {
+		return out, i18n.ErrEnglish("inbox-errors.mail_unconfigured")
+	}
+	if len(ask.UIDs) > assistantwire.InboxMailFlagsMost {
+		return out, fmt.Errorf("inbox.mail_flags: %d UIDs, at most %d", len(ask.UIDs), assistantwire.InboxMailFlagsMost)
+	}
+	flags, err := h.mail.SeenFlags(ctx, ask.AccountID, ask.Mailbox, ask.UIDs)
+	if err != nil {
+		return out, err
+	}
+	for _, uid := range ask.UIDs {
+		seen, there := flags[uid]
+		switch {
+		case !there:
+		case seen:
+			out.Seen = append(out.Seen, uid)
+		default:
+			out.Unseen = append(out.Unseen, uid)
+		}
+	}
+	return out, nil
 }
 
 // inboxMailBody is one mail read in full, peeking (it stays unread): its text part, else its HTML as plain text

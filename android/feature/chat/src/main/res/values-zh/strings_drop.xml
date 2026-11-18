@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_composer_drop_target">把文件拖到这里添加为附件</string>
+    <string name="chat_composer_drop_importing">正在复制拖入的文件…</string>
+    <string name="chat_composer_drop_failed">无法添加拖入的内容，只能附加可读文件。</string>
+</resources>

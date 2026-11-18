@@ -1,0 +1,19 @@
+• Ran go test ./...
+  └ ok  	example.com/app	0.012s
+
+• Edited 1 file (+1 -0)
+  └ app/main.go (+1 -0)
+    12 +  "example",
+
+    + Show details
+
+
+  Approaching rate limits
+  Switch to gpt-5.1-codex-mini for lower credit usage?
+
+
+› 1. Switch to gpt-5.1-codex-mini                   Fast and affordable model for easier tasks.
+  2. Keep current model
+  3. Keep current model (never show again)  Hide future rate limit reminders about switching models
+
+  enter select · esc back

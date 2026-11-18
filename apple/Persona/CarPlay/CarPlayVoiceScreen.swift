@@ -1,3 +1,6 @@
+#if os(iOS)
+import AVFoundation
+#endif
 import Foundation
 
 /// The buttons a CarPlay voice state can show. The template takes at most `CPVoiceControlState.maximumActionButtonCount`.
@@ -40,12 +43,20 @@ nonisolated enum CarPlayTalk: Equatable, Sendable {
     case notConnected
     case notOnScreen
 
-    static func decide(connected: Bool, foreground: Bool) -> CarPlayTalk {
-        guard connected else { return .notConnected }
+    /// `connected` / `foreground`: Persona's own CarPlay scene. `carOnRoute`: the phone's sound goes to a car (CarPlay),
+    /// which also holds with no scene of Persona's: it has one only once opened on the car's screen since it launched,
+    /// and only with its CarPlay entitlement. A car without Persona's scene is not "no car".
+    static func decide(connected: Bool, foreground: Bool, carOnRoute: Bool = false) -> CarPlayTalk {
+        guard connected else { return carOnRoute ? .notOnScreen : .notConnected }
         return foreground ? .start : .notOnScreen
     }
 
-    /// What Siri says back.
+    /// No car: on the phone it is a call to Persona instead (#9290). Not with CarPlay connected and Persona elsewhere
+    /// on the car's screen (or not opened there yet): that still says to open it there, since the call would need the
+    /// phone unlocked.
+    var callsOnThePhone: Bool { self == .notConnected }
+
+    /// What Siri says back (on the phone `.notConnected` calls instead; the Vision app says it).
     var sentence: String {
         switch self {
         case .start: String(localized: "OK, let's keep talking on CarPlay")
@@ -62,8 +73,28 @@ nonisolated enum CarPlayTalk: Equatable, Sendable {
     /// The CarPlay scene is in the foreground (between entering the foreground and entering the background).
     static var isForeground = false
 
+    /// Persona's scene alone: enough to know the voice screen is the one in the car (`.start`), not that no car is there.
     static var talk: CarPlayTalk { CarPlayTalk.decide(connected: isConnected, foreground: isForeground) }
 }
+
+#if os(iOS)
+extension CarPlayVoicePresence {
+    /// What Talk to Persona does now (#9290). Without Persona's scene, whether a car is there is the audio route's answer,
+    /// read off the main actor (a system service): CarPlay showing Maps, or Persona not yet opened on the car's screen
+    /// since this launch (Siri may have just launched the app), is a car, not a call on the phone.
+    @concurrent nonisolated static func talkNow(car: @Sendable () -> Bool = soundGoesToACar) async -> CarPlayTalk {
+        let (connected, foreground) = await MainActor.run { (isConnected, isForeground) }
+        return CarPlayTalk.decide(connected: connected, foreground: foreground, carOnRoute: !connected && car())
+    }
+
+    /// The phone's sound goes to a car through CarPlay (its audio route), whichever app the car shows.
+    nonisolated static func soundGoesToACar() -> Bool {
+        isCar(AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType))
+    }
+
+    nonisolated static func isCar(_ outputs: [AVAudioSession.Port]) -> Bool { outputs.contains(.carAudio) }
+}
+#endif
 
 /// The CarPlay voice screen as data: its states, which state a phase shows, and the wording of its buttons.
 /// Pure (no CarPlay import), so it is testable on any platform.
@@ -142,6 +173,7 @@ nonisolated enum CarPlayVoiceScreen {
         case .replaced: String(localized: "Switched to another voice chat")
         case .interrupted: String(localized: "A call or another app took the audio, so the chat stopped")
         case .microphoneTaken: String(localized: "The microphone is recording or dictating. Stop that first, then talk")
+        case .urgentCall: String(localized: "Ended for Persona's urgent call")
         case .microphoneBusy: String(localized: "The microphone is recording or dictating. Stop that first, then talk")
         case .permissionDenied: CarPlayMicGate.denied
         case .audioFailed: String(localized: "Couldn't open the microphone, so the chat stopped")

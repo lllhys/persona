@@ -8,5 +8,13 @@
   "agent_profile_refused": "sandbox-exec refused the rules for this start: {err}",
   "agent_too_many_args": "The Linux agent command has {count} bwrap arguments; the limit is {limit}. Reduce top-level data-directory entries or explicit aliases",
   "agent_unsupported": "The agent sandbox supports macOS and Linux; it is not supported on this system ({os})",
-  "probe_tmp": "The sandbox probe could not create a temporary directory: {err}"
+  "probe_tmp": "The sandbox probe could not create a temporary directory: {err}",
+  "allow_empty": "Enter an address to allow.",
+  "allow_wildcard": "Only a specific address can be allowed, not *.",
+  "allow_form": "Write a host name or IP address, with a port if needed: rss.example.org or rss.example.org:8443.",
+  "allow_port": "The port is a number from 1 to 65535.",
+  "allow_loopback": "This machine's own services aren't allowed here: the extension reaches them as {name}, which its manifest asks for.",
+  "allow_unreachable": "This address can't be allowed: it is link-local, multicast or a cloud metadata address.",
+  "allow_too_many_one": "An extension can have at most {count} allowed address.",
+  "allow_too_many_other": "An extension can have at most {count} allowed addresses."
 }

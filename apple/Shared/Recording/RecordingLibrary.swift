@@ -120,6 +120,26 @@ final class RecordingLibrary {
     /// `isDeleted` from any thread: the phone's day store asks before and after it writes a chunk.
     nonisolated func isDeletedSnapshot(_ id: UUID) -> Bool { tombstones.withLock { $0.contains(id) } }
 
+    /// The hub's name for a recording (#8873, `RecordingEntry.hubName`), kept without moving `updatedAt` and without
+    /// `didChange`: it is the hub's word, never uploaded, so it must not make the recording look changed and upload it
+    /// again.
+    func noteHubName(_ id: UUID, _ name: String?) {
+        guard let index = entries.firstIndex(where: { $0.id == id }), entries[index].hubName != name, !deleted.contains(id) else { return }
+        var entry = entries[index]
+        entry.hubName = name
+        guard (try? JSONEncoder().encode(entry).write(to: folder(id).appendingPathComponent(Self.entryFileName), options: .atomic)) != nil
+        else { return }
+        entries[index] = entry
+    }
+
+    /// The owner's own title (#8873): from now on it comes before every name the hub gives, and goes to the hub with the
+    /// next upload; an empty one gives the name back to the calendar or the hub.
+    func rename(_ id: UUID, to title: String) {
+        let title = RecordingTitle.cleaned(title)
+        guard let entry = entry(id), entry.title != title else { return }
+        change(id) { $0.title = title }
+    }
+
     func change(_ id: UUID, _ edit: (inout RecordingEntry) -> Void) {
         guard var entry = entry(id) else { return }
         edit(&entry)
@@ -391,7 +411,7 @@ extension RecordingLibrary {
         let files = FileManager.default
         for folder in folders {
             guard !files.fileExists(atPath: folder.appendingPathComponent(entryFileName).path),
-                  let names = try? files.contentsOfDirectory(atPath: folder.path), // perf-ok: nonisolated, from init's Task.detached
+                  let names = try? files.contentsOfDirectory(atPath: folder.path),
                   names.contains(where: { seqMark(fileName: $0) != nil }) else { continue }
             try? files.removeItem(at: folder)
         }

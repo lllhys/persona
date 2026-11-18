@@ -3,7 +3,7 @@
 // opens the terminal too, where the resumed Agent shows up). Resume's progress and error are shared with the terminal's
 // own Resume (lib/agent-resume.ts).
 import { t } from "../../i18n";
-import { resumeAgent, useResume } from "../../lib/agent-resume";
+import { resumeInTerminal, useResume } from "../../lib/agent-resume";
 import { Button } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 
@@ -19,10 +19,7 @@ export function StoppedAgentLine({ mid, sid, onTerminal }: { mid: string; sid: s
           tone="secondary"
           icon="play"
           busy={resume.phase === "resuming"}
-          onClick={() => {
-            onTerminal();
-            void resumeAgent(mid, sid);
-          }}
+          onClick={() => void resumeInTerminal(mid, sid, onTerminal)}
         >
           {t("chat-chatview.resume")}
         </Button>

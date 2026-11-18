@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/compat"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lazyre"
 )
 
@@ -206,6 +207,11 @@ func (a launchAgent) staleLoad() bool {
 }
 
 const (
+	launchdFixHintKey       = "node-doctor.launchd_fix_hint"
+	launchdFixHintInsideKey = "node-doctor.launchd_fix_hint_inside"
+
+	// Legacy test and display callers compare these default strings. Keep them as constants: translating them here
+	// would load every zh-Hans catalog during package initialization, before nodecmd knows whether it needs a report.
 	launchdFixHint = "在这台 Mac 上运行 personad node doctor --fix：写上 ProcessType=Interactive 并重新加载（常驻 node 会重启，进行中的助手对话会中断）"
 	// launchdFixHintInside is the hint inside the node (the web page's self-check, a claude the node started): the
 	// same command, from a terminal of the Mac's own.
@@ -216,46 +222,48 @@ const (
 // checkLaunchAgent says what a is. Inside the node --fix leaves the agent alone (RunDoctor), so the hint sends the
 // user to a terminal, and a --fix there says it did nothing to it.
 func checkLaunchAgent(a launchAgent, opts DoctorOptions) DoctorCheck {
-	c := checkLaunchAgentFile(a, opts.LaunchAgent)
-	if opts.InsideNode && c.Hint == launchdFixHint {
-		c.Hint = launchdFixHintInside
+	c := checkLaunchAgentFile(a, opts.LaunchAgent, opts.Lang)
+	if opts.InsideNode && c.Hint == i18n.T(opts.Lang, launchdFixHintKey) {
+		c.Hint = i18n.T(opts.Lang, launchdFixHintInsideKey)
 		if opts.Fix {
-			c.Detail += "；这次修复没动它：在常驻 node 启动的进程里重新加载，会把 node 连同这次检查一起停掉"
+			c.Detail = i18n.T(opts.Lang, "node-doctor.launchd_inside_fix_detail", i18n.Args{"detail": c.Detail})
 		}
 	}
 	return c
 }
 
-func checkLaunchAgentFile(a launchAgent, path string) DoctorCheck {
+func checkLaunchAgentFile(a launchAgent, path string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: launchdCheck, Items: []string{}}
 	switch {
 	case !a.exists:
-		c.Status, c.Detail = DoctorOK, "没有常驻 node 的 LaunchAgent（node 经 ssh 启动，或者没装）"
+		c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.launchd_missing")
 		return c
 	case a.readErr != nil:
-		c.Status, c.Detail = DoctorWarn, "读不了常驻 node 的 LaunchAgent（"+shorten(a.readErr.Error(), 80)+"）"
+		c.Status = DoctorWarn
+		c.Detail = i18n.T(lang, "node-doctor.launchd_unreadable", i18n.Args{"error": shorten(a.readErr.Error(), 80)})
 	case errors.Is(a.parseErr, errBinaryPlist):
-		c.Status, c.Detail = DoctorWarn, "常驻 node 的 LaunchAgent 是二进制格式的 plist，看不了"
-		c.Hint = "先运行 plutil -convert xml1 " + shellQuote(path) + "，再检查一次"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.launchd_binary")
+		c.Hint = i18n.T(lang, "node-doctor.launchd_binary_hint", i18n.Args{"path": shellQuote(path)})
 	case a.parseErr != nil:
-		c.Status, c.Detail = DoctorWarn, "常驻 node 的 LaunchAgent 不是能读懂的 plist（"+shorten(a.parseErr.Error(), 80)+"）"
-		c.Hint = "重新安装常驻 node 的服务：scripts/deploy/node-launchd.sh install"
+		c.Status = DoctorWarn
+		c.Detail = i18n.T(lang, "node-doctor.launchd_invalid", i18n.Args{"error": shorten(a.parseErr.Error(), 80)})
+		c.Hint = i18n.T(lang, "node-doctor.launchd_invalid_hint")
 	case a.processType == "":
 		c.Status = DoctorWarn
-		c.Detail = "常驻 node 的 LaunchAgent 没写 ProcessType：launchd 按后台任务限制 node 和它启动的 Claude 的 CPU 和 IO，Claude 可能来不及启动"
-		c.Hint = launchdFixHint
+		c.Detail = i18n.T(lang, "node-doctor.launchd_no_process_type")
+		c.Hint = i18n.T(lang, launchdFixHintKey)
 	case a.processType != processInteractive:
 		c.Status = DoctorWarn
-		c.Detail = "常驻 node 的 LaunchAgent 的 ProcessType 是 " + a.processType + "，不是 Interactive：launchd 会限制 node 和它启动的 Claude 的 CPU 和 IO"
-		c.Hint = launchdFixHint
+		c.Detail = i18n.T(lang, "node-doctor.launchd_other_process_type", i18n.Args{"process_type": a.processType})
+		c.Hint = i18n.T(lang, launchdFixHintKey)
 	case a.staleLoad():
 		c.Status = DoctorWarn
-		c.Detail = "LaunchAgent 写了 ProcessType=Interactive，但 launchd 还按加载时的旧设置运行常驻 node（spawn type = " + a.spawnType + "）"
-		c.Hint = launchdFixHint
+		c.Detail = i18n.T(lang, "node-doctor.launchd_stale_load", i18n.Args{"spawn": a.spawnType})
+		c.Hint = i18n.T(lang, launchdFixHintKey)
 	default:
 		c.Status, c.Detail = DoctorOK, "ProcessType=Interactive"
 		if a.loaded && a.spawnType != "" {
-			c.Detail += "，launchd 按 " + a.spawnType + " 运行"
+			c.Detail = i18n.T(lang, "node-doctor.launchd_interactive_running", i18n.Args{"spawn": a.spawnType})
 		}
 		return c
 	}
@@ -270,6 +278,19 @@ const (
 	launchdRetryEvery = 300 * time.Millisecond
 )
 
+type doctorWrappedError struct {
+	text  string
+	cause error
+}
+
+func (e *doctorWrappedError) Error() string { return e.text }
+func (e *doctorWrappedError) Unwrap() error { return e.cause }
+
+func wrapDoctorError(lang i18n.Lang, key string, args i18n.Args, cause error) error {
+	args["error"] = cause.Error()
+	return &doctorWrappedError{text: i18n.T(lang, key, args), cause: cause}
+}
+
 // fixLaunchAgent writes ProcessType=Interactive into the agent's plist (nothing else in it changes) and, when launchd
 // has the agent loaded, loads it again so that the running node gets it. An agent that is not loaded stays unloaded:
 // launchd reads the new plist at the next login. wrote and reloaded say what it did; a reload that failed is err
@@ -283,10 +304,10 @@ func fixLaunchAgent(ctx context.Context, opts DoctorOptions, a launchAgent) (wro
 	if rewrite {
 		b, err := withProcessType(a.plist)
 		if err != nil {
-			return false, false, fmt.Errorf("改写 %s 失败：%w", opts.LaunchAgent, err)
+			return false, false, wrapDoctorError(opts.Lang, "node-doctor.launchd_rewrite_failed", i18n.Args{"path": opts.LaunchAgent}, err)
 		}
 		if err := replaceFile(opts.LaunchAgent, b); err != nil {
-			return false, false, fmt.Errorf("改写 %s 失败：%w", opts.LaunchAgent, err)
+			return false, false, wrapDoctorError(opts.Lang, "node-doctor.launchd_rewrite_failed", i18n.Args{"path": opts.LaunchAgent}, err)
 		}
 		wrote = true
 	}
@@ -306,8 +327,12 @@ const nodeRestartWait = 15 * time.Second
 
 // restartSockets are the checks of what the resident node serves, which a reload takes away until the new node is up.
 var restartSockets = map[string]func(context.Context, DoctorOptions) DoctorCheck{
-	"node.sock":    func(ctx context.Context, o DoctorOptions) DoctorCheck { return checkNodeSocket(ctx, o.NodeSock) },
-	"runtime.sock": func(ctx context.Context, o DoctorOptions) DoctorCheck { return checkRuntimeSocket(ctx, o.RuntimeSock) },
+	"node.sock": func(ctx context.Context, o DoctorOptions) DoctorCheck {
+		return checkNodeSocketIn(ctx, o.NodeSock, o.Lang)
+	},
+	"runtime.sock": func(ctx context.Context, o DoctorOptions) DoctorCheck {
+		return checkRuntimeSocketIn(ctx, o.RuntimeSock, o.Lang)
+	},
 }
 
 // waitForRestart waits, at most opts.RestartWait (nodeRestartWait when 0), for the sockets that answered before the
@@ -341,7 +366,7 @@ func waitForRestart(ctx context.Context, opts DoctorOptions, before DoctorReport
 
 // notBackYet marks the checks of the sockets the reloaded node did not bring back in time (waitForRestart): still
 // failing, but said to be right after a restart, with where the node says why.
-func notBackYet(rep *DoctorReport, names []string, wait time.Duration, logPath string) {
+func notBackYet(rep *DoctorReport, names []string, wait time.Duration, logPath string, lang i18n.Lang) {
 	if wait <= 0 {
 		wait = nodeRestartWait
 	}
@@ -350,10 +375,11 @@ func notBackYet(rep *DoctorReport, names []string, wait time.Duration, logPath s
 		if c.Status == DoctorOK || !slices.Contains(names, c.Name) {
 			continue
 		}
-		c.Detail += fmt.Sprintf("（常驻 node 刚重新加载过，%s 内还没有应答）", wait)
-		c.Hint = "等一会儿再运行 personad node doctor；一直这样就是常驻 node 没起来"
-		if logPath != "" {
-			c.Hint += "，原因看它的日志 " + logPath
+		c.Detail = i18n.T(lang, "node-doctor.launchd_not_back_detail", i18n.Args{"detail": c.Detail, "wait": wait})
+		if logPath == "" {
+			c.Hint = i18n.T(lang, "node-doctor.launchd_not_back_hint")
+		} else {
+			c.Hint = i18n.T(lang, "node-doctor.launchd_not_back_log_hint", i18n.Args{"path": logPath})
 		}
 	}
 }
@@ -384,11 +410,12 @@ func reloadLaunchAgent(ctx context.Context, opts DoctorOptions) error {
 	}
 	if bootErr != nil {
 		if s := firstLine(bootOut); s != "" {
-			last += "；bootout：" + s
+			last = i18n.T(opts.Lang, "node-doctor.launchd_bootout_detail", i18n.Args{"detail": last, "output": s})
 		}
 	}
-	return fmt.Errorf("launchctl bootstrap 失败（%s）：常驻 node 现在可能没在运行，运行 launchctl bootstrap %s %s 把它加载回来",
-		last, domain, shellQuote(opts.LaunchAgent))
+	return errors.New(i18n.T(opts.Lang, "node-doctor.launchd_bootstrap_failed", i18n.Args{
+		"detail": last, "domain": domain, "path": shellQuote(opts.LaunchAgent),
+	}))
 }
 
 // replaceFile writes b over path in one step, keeping its permissions; through a symlink, the file it points to.

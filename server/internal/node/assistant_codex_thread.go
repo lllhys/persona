@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantskills"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -45,7 +46,7 @@ func (c *codexConn) start(ctx context.Context, id, cwd string, resume bool, star
 		params["model"] = c.p.model.Model
 	}
 	// The same on every start of the thread, apart from the memory index: the live snapshot goes with each message.
-	params["developerInstructions"] = prompts.RenderCodexInstructions(codexMemoryPrompt(c.memDir))
+	params["developerInstructions"] = prompts.RenderCodexInstructions(codexMemoryPrompt(c.memDir), c.p.model.SupervisionInstructions)
 	var res struct {
 		Model       string          `json:"model"`
 		ServiceTier json.RawMessage `json:"serviceTier"`
@@ -140,9 +141,12 @@ func codexSandboxPolicy(mode, memDir string) map[string]any {
 
 // deliver hands a user message to the thread: a new turn when idle, steered into the running turn otherwise. live is
 // the <persona-context> block it starts with ("" for none; assistant_context.go).
-func (c *codexConn) deliver(ctx context.Context, live, text string, images []proto.Image) error {
+func (c *codexConn) deliver(ctx context.Context, live, text string, images []proto.Image, skills ...assistantskills.Entry) error {
 	n := c.p.ownerOr(c.n)
 	input := []map[string]any{}
+	for _, skill := range skills {
+		input = append(input, map[string]any{"type": "skill", "name": skill.Name, "path": skill.Path})
+	}
 	if live != "" {
 		input = append(input, map[string]any{"type": "text", "text": live, "text_elements": []any{}})
 	}
@@ -238,6 +242,7 @@ func (c *codexConn) compacted() {
 	manual := c.p.manual
 	c.p.manual, c.p.compacting = false, false
 	c.p.mu.Unlock()
+	c.compactedInTurn(manual) // whether it made room, the next request says (assistant_codex_compaction_loop.go)
 	if manual {
 		c.p.ownerOr(c.n).compactionEnded(c.p.id, "")
 	}

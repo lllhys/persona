@@ -11,8 +11,9 @@
 //   (cd web && PERSONA_HUB_URL=http://127.0.0.1:18931 npx vite --port 51931 --strictPort &)
 //   node web/e2e/closeout.mjs http://127.0.0.1:51931 [--shots <dir>] [--executable <chromium>]
 //
-// Runs wide (1280) and phone width (390), light and dark, in English; --shots saves each state. Prints one line per check
-// and a verdict; exits 1 on a failure and after four minutes.
+// Runs wide (1280) and phone width (390), light and dark, in English; the three command states also run with the app's
+// largest text in every theme and width, and the card runs in Chinese and Japanese. --shots saves each state. Prints one
+// line per check and a verdict; exits 1 on a failure and after four minutes.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
@@ -51,15 +52,16 @@ const NOT_DONE = "a9c00000-0000-4000-8000-000000000004";
 const sessions = (await hub("/sessions")).sessions ?? [];
 if (!sessions.some((s) => s.session_id === DONE && s.work?.closeout)) fail("the fake hub has no closeout sessions (start it with MOCK_CLOSEOUT=1)");
 
-async function open(browser, theme, width, language = "en") {
+async function open(browser, theme, width, language = "en", large = false) {
   const ctx = await browser.newContext({ viewport: { width, height: width > 600 ? 820 : 844 }, deviceScaleFactor: 2, colorScheme: theme, locale: "en-US", hasTouch: width <= 600 });
   const page = await ctx.newPage();
   await page.goto(`${base}/?token=mock`);
   await page.waitForFunction(() => localStorage.getItem("persona.token"), null, { timeout: 15000 });
-  await page.evaluate(([t, l]) => {
+  await page.evaluate(([t, l, largeText]) => {
     localStorage.setItem("persona.theme", t);
     localStorage.setItem("persona.language", l);
-  }, [theme, language]);
+    if (largeText) localStorage.setItem("persona.text-size", "large");
+  }, [theme, language, large]);
   return { ctx, page };
 }
 const shot = async (page, name) => {
@@ -76,6 +78,11 @@ async function card(page, sid) {
   return el;
 }
 const claim = (el, what) => el.locator(`[data-closeout-claim="${what}"]`).getAttribute("data-state", { timeout: 2000 }).catch(() => null);
+async function commandEvidence(el, state, sid) {
+  const line = el.locator(`[data-closeout-command-evidence="${state}"]`);
+  await line.waitFor({ state: "visible", timeout: 15000 }).catch(() => fail(`${sid}: no ${state} command evidence`));
+  return line;
+}
 const transcript = (page) => page.locator("[data-chat-content]").first().innerText();
 
 const browser = await chromium.launch(executable ? { executablePath: executable } : { channel: "chrome" });
@@ -90,6 +97,9 @@ try {
       if ((await el.getAttribute("data-closeout")) !== "done") fail(`${where}: the done card is not marked done`);
       if ((await claim(el, "merged")) !== "confirmed" || (await claim(el, "deployed")) !== "confirmed") fail(`${where}: done: merged and deployed are not both confirmed`);
       if (await el.getAttribute("data-closeout-contradicted")) fail(`${where}: done: marked contradicted`);
+      const passed = await commandEvidence(el, "exit", DONE);
+      const passedText = await passed.innerText();
+      for (const want of ["go test ./export/...", "Exit code 0", "is_error: false"]) if (!passedText.includes(want)) fail(`${where}: done command evidence lacks "${want}": ${passedText}`);
       const doneText = await el.innerText();
       for (const want of ["The agent's own report", "What changed", "PR #31", "4f2a91c", "Hub confirmed", "Verified"]) if (!doneText.includes(want)) fail(`${where}: done card lacks "${want}": ${doneText}`);
       if ((await el.locator('a[href*="/pull/31"]').count()) !== 1) fail(`${where}: the pull request is not a link`);
@@ -108,6 +118,9 @@ try {
       if ((await claim(el, "merged")) !== "contradicted") fail(`${where}: a merged claim the hub disproved is not contradicted`);
       if ((await claim(el, "deployed")) !== "unchecked") fail(`${where}: an unchecked deployed claim is not "unchecked"`);
       if (!(await el.getAttribute("data-closeout-contradicted"))) fail(`${where}: the card of a disproved claim is not marked`);
+      const failedRun = await commandEvidence(el, "exit", DISPROVED);
+      const failedText = await failedRun.innerText();
+      for (const want of ["cd app; npm test", "Exit code 1", "is_error: true"]) if (!failedText.includes(want)) fail(`${where}: failed command evidence lacks "${want}": ${failedText}`);
       const found = el.locator('[data-closeout-claim="merged"] span').filter({ hasText: "Hub found it isn't merged" }).last();
       if (!(await found.count())) fail(`${where}: the contradicted claim does not say what the hub found`);
       const tone = await found.evaluate((n) => [getComputedStyle(n).color, getComputedStyle(n).backgroundColor, getComputedStyle(document.documentElement).getPropertyValue("--orange").trim()]);
@@ -119,6 +132,9 @@ try {
 
       el = await card(page, BLOCKED);
       if ((await el.getAttribute("data-closeout")) !== "blocked") fail(`${where}: the blocked card is not marked blocked`);
+      const missing = await commandEvidence(el, "not_found", BLOCKED);
+      const missingText = await missing.innerText();
+      for (const want of ["./scripts/migrate.sh --env staging", "No matching command in this closeout's work record"]) if (!missingText.includes(want)) fail(`${where}: not-found evidence lacks "${want}": ${missingText}`);
       const blockedText = await el.innerText();
       if (!blockedText.includes("Blocked on: DBA")) fail(`${where}: the blocked card does not say what it waits for: ${blockedText}`);
       if ((await claim(el, "merged")) !== "unchecked" || (await claim(el, "deployed")) !== null) fail(`${where}: blocked: merged should be unchecked and deployed absent`);
@@ -238,6 +254,24 @@ try {
     ok(`${language}: the contradicted card fits at 390px`);
     await shot(p2, `contradicted-narrow-light-${language}`);
     await c2.close();
+  }
+
+  // The app's largest text, not a browser zoom: every evidence state stays readable in both themes and widths.
+  for (const theme of ["light", "dark"]) {
+    for (const width of [1280, 390]) {
+      const { ctx, page } = await open(browser, theme, width, "en", true);
+      const size = width > 600 ? "wide" : "narrow";
+      for (const [sid, name, state] of [[DONE, "done", "exit"], [DISPROVED, "contradicted", "exit"], [BLOCKED, "blocked", "not_found"]]) {
+        const el = await card(page, sid);
+        if (await page.locator("html").getAttribute("data-text-size") !== "large") fail(`${theme} ${width}px: the app's largest text is not active`);
+        const line = await commandEvidence(el, state, sid);
+        await line.scrollIntoViewIfNeeded();
+        if (await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)) fail(`${theme} ${width}px largest text: the page scrolls sideways`);
+        await shot(page, `${name}-${size}-${theme}-large-text`);
+        ok(`${theme} ${width}px largest text: ${name} command evidence fits`);
+      }
+      await ctx.close();
+    }
   }
 } finally {
   await browser.close();

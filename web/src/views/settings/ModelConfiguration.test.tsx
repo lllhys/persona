@@ -8,10 +8,11 @@ vi.hoisted(() => {
 });
 vi.mock("./ConfigurationManager", () => ({ ConfigurationManager: ({ children }: { children: (id: string) => unknown }) => children("assistant") }));
 vi.mock("./ModelProfiles", () => ({ ModelProfiles: () => null }));
-vi.mock("../../lib/store", () => ({ useStore: (select: (s: { machines: [] }) => unknown) => select({ machines: [] }) }));
 vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
 import { initI18n, t } from "../../i18n";
 import type { ModelBinding, ModelProvider, ModelPurpose } from "../../lib/model-config";
+import { getState, reset } from "../../lib/store";
+import type { Session } from "../../lib/types";
 import { ModelConfiguration } from "./ModelConfiguration";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,10 +26,14 @@ const agents: ModelPurpose = {
 const providers: ModelProvider[] = [
   { id: "launcher.default", name: "Default launcher", kind: "launcher" },
   { id: "launcher.custom", name: "Custom launcher", kind: "launcher" },
-  { id: "api.messages", name: "Messages provider", kind: "api", api: "messages", model: "api-default" },
+  { id: "launcher.messages", name: "Messages provider", kind: "api", api: "messages", model: "api-default" },
   { id: "launcher.codex", name: "Codex", kind: "launcher", agent: "codex" },
-  { id: "api.responses", name: "Responses provider", kind: "api", api: "responses" },
+  { id: "launcher.responses", name: "Responses provider", kind: "api", api: "responses" },
 ];
+const main: ModelPurpose = {
+  ...agents, id: "assistant", name: "主对话", launch: "headless", runtimes: ["cli", "agentsdk"],
+  provider_ids: providers.map((p) => p.id),
+};
 // The uses of Agents the hub lets the user set apart; each runs the same editor tests.
 const LARK = { id: "lark.agent", name: "Lark /agent" };
 const TWIN = { id: "inbox.agent", name: "AI twin runs" };
@@ -37,12 +42,12 @@ const child = (override: ModelBinding = {}, revision = 7): ModelPurpose => ({
   id: use.id, name: use.name, group: "Agents", kind: "launcher", launch: "headless", parent: "agent.new", category_id: "agent.new",
   override, effective: { ...agents.effective, ...override }, revision,
   inherited_from: Object.keys(override).length ? undefined : "agent.new",
-  fields: ["provider", "model", "effort"], provider_ids: providers.filter((p) => p.id !== "api.responses").map((p) => p.id),
+  fields: ["provider", "model", "effort"], provider_ids: providers.filter((p) => p.id !== "launcher.responses").map((p) => p.id),
 });
 const triage = (override: ModelBinding = {}, revision = 7): ModelPurpose => ({
   id: "inbox.triage", category_id: "inbox.triage", name: "Information screening", group: "Default models", kind: "api", revision,
-  override, effective: { provider: "api.messages", model: "api-default", ...override },
-  fields: ["provider", "model", "effort"], provider_ids: ["api.messages", "api.responses"],
+  override, effective: { provider: "launcher.messages", model: "api-default", ...override },
+  fields: ["provider", "model", "effort"], provider_ids: ["launcher.messages", "launcher.responses"],
 });
 let current: ModelPurpose;
 let readonly: ModelPurpose;
@@ -66,14 +71,17 @@ const hub = async (input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     return json({ purpose: current, providers });
   }
   if (path.endsWith("/model-config")) return json({ purposes: [
-    { ...agents, id: "assistant", name: "主对话", launch: "headless", runtimes: ["cli", "agentsdk"] },
-    agents, current, readonly,
-    { ...agents, id: "kb", name: "信息处理", kind: "api", effective: { provider: "api.messages" } },
-    { ...agents, id: "extension.example", name: "Example extension", kind: "api", effective: { provider: "api.responses" } },
+    main, agents, current, readonly,
+    { ...agents, id: "kb", name: "信息处理", kind: "api", effective: { provider: "launcher.messages" } },
+    { ...agents, id: "extension.example", name: "Example extension", kind: "api", effective: { provider: "launcher.responses" } },
   ], providers });
   if (path.endsWith("/purposes/assistant.supervise")) return json({ error: "not found" }, 404); // a hub without the background supervisor's purpose (#5082)
+  if (path.endsWith("/purposes/assistant")) return json({ purpose: main, providers });
   if (path.endsWith(`/purposes/${current.id}`)) return json({ purpose: current, providers });
   if (path.endsWith(`/purposes/${readonly.id}`)) return json({ purpose: readonly, providers });
+  if (path.endsWith("/launchers/discover")) return json({ models: [
+    { id: "api-model", efforts: ["off", "low", "high"] },
+  ] });
   if (path.endsWith("/models")) return listFails ? json({ error: "unavailable" }, 404) : json({
     agent: "claude", models: [
       { id: "default-model", name: "Default model", default: true, efforts: ["low", "medium", "high"] },
@@ -117,6 +125,8 @@ async function render() {
 }
 beforeEach(async () => {
   await initI18n("zh-Hans");
+  reset();
+  Object.assign(getState(), { features: [], machines: [], sessions: {}, assistant: undefined });
   writes = [];
   conflict = false;
   listFails = false;
@@ -129,6 +139,7 @@ afterEach(async () => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  reset();
   await initI18n("zh-Hans");
 });
 
@@ -185,7 +196,7 @@ describe.each([
     await render();
     await open();
     expect(dialog().querySelector('[data-execution-preview]')?.textContent).toBe("后台进程 · claude -p");
-    expect([...dialog().querySelectorAll("select option")].map((o) => o.getAttribute("value"))).not.toContain("api.responses");
+    expect([...dialog().querySelectorAll("select option")].map((o) => o.getAttribute("value"))).not.toContain("launcher.responses");
     await choose("launcher.codex");
     expect(dialog().querySelector('[data-execution-preview]')?.textContent).toBe("后台进程 · codex app-server");
     await act(async () => button(t("common.save"), dialog()).click());
@@ -236,23 +247,27 @@ describe.each([
   it("allows an agent-capable Messages provider with a model and effort", async () => {
     await render();
     await open();
-    await choose("api.messages");
+    await choose("launcher.messages");
     type(dialog().querySelector<HTMLInputElement>(`input[aria-label="${t("settings-modelconfiguration.specific_model")}"]`)!, "api-model");
     type(effort(), "low");
     await act(async () => button(t("common.save"), dialog()).click());
-    expect(writes[0].body).toEqual({ revision: 7, provider: "api.messages", model: "api-model", effort: "low" });
+    expect(writes[0].body).toEqual({ revision: 7, provider: "launcher.messages", model: "api-model", effort: "low" });
   });
 
   it("allows setting effort on a Messages direct-API purpose", async () => {
-    current = triage({ provider: "api.messages", model: "api-model", effort: "off" });
+    current = triage({ provider: "launcher.messages", model: "api-model", effort: "off" });
     await render();
     await open();
-    expect(effort()).not.toBeNull();
-    expect([...dialog().querySelectorAll<HTMLOptionElement>("datalist#model-efforts option")].map((o) => o.value)).toContain("off");
-    type(effort(), "low");
+    const select = [...dialog().querySelectorAll<HTMLSelectElement>("select")].find((input) => input.closest("label")?.textContent?.includes(t("settings-modelconfiguration.effort")))!;
+    expect(select).not.toBeNull();
+    expect([...select.options].map((option) => option.value)).toContain("off");
+    await act(async () => {
+      select.value = "low";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await act(async () => button(t("common.save"), dialog()).click());
     expect(writes[0]).toEqual({ path: "/api/v1/model-config/purposes/inbox.triage", method: "PATCH",
-      body: { revision: 7, provider: "api.messages", model: "api-model", effort: "low" } });
+      body: { revision: 7, provider: "launcher.messages", model: "api-model", effort: "low" } });
   });
 
   it("restores following by clearing all three fields using the child's revision", async () => {
@@ -268,6 +283,18 @@ describe.each([
     expect(dialog().textContent).toContain(t("settings-modelconfiguration.inherited_from", { name: "Agents" }));
     expect(dialog().querySelector("select")!.value).toBe("");
     expect(effort().value).toBe("");
+  });
+
+  it("cleared back to following, lists Agents' launcher's models, not those of the launcher it is leaving", async () => {
+    current = child({ provider: "launcher.custom", model: "custom-model" }, 12);
+    await render();
+    await open();
+    const lists = () => vi.mocked(fetch).mock.calls.map(([input]) => String(input).split("?")[0]).filter((p) => p.endsWith("/models"));
+    expect(lists()).toEqual(["/api/v1/model-config/providers/launcher.custom/models"]);
+    await choose("");
+    expect(lists().at(-1)).toBe("/api/v1/model-config/providers/launcher.default/models");
+    // and its Default is Agents' model
+    expect(dialog().querySelector<HTMLButtonElement>("button[aria-expanded]")!.textContent).toContain("default-model");
   });
 
   it("keeps conflicting edits and blocks save/reset until reloading the latest child revision", async () => {
@@ -302,6 +329,36 @@ describe.each([
     expect(button(t("common.save"), dialog()).disabled).toBe(true);
     expect(button(t("settings-modelconfiguration.restore"), dialog()).disabled).toBe(true);
     expect(writes).toEqual([]);
+  });
+});
+
+describe("the Main chat editor's agent-kind mismatch", () => {
+  beforeEach(() => {
+    use = LARK;
+    current = child();
+    readonly = { ...child(), ...TWIN, fields: [] };
+  });
+
+  it("explains a default of another agent kind and clears the note for the current kind", async () => {
+    const running = {
+      machine_id: "hub", session_id: "main", title: "", cwd: "/", assistant: true, status: "idle", state: "idle",
+      agent: "codex", launcher: "codex", model: "gpt-5.5",
+    } as Session;
+    Object.assign(getState(), {
+      features: ["assistant_model_pick"],
+      sessions: { hub: [running] },
+      assistant: { machine_id: "hub", main: "main", launcher: "launcher.default", conversations: [running] },
+    });
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-model-purpose="assistant"] button')!.click());
+    await flush();
+    const note = () => document.querySelector<HTMLElement>("[data-main-chat-agent-setting]");
+    expect(note()).not.toBeNull();
+    expect(note()!.textContent).toBe(t("settings-modelconfiguration.main_other_kind", { configured: "Default launcher", actual: "Codex" }));
+    await choose("launcher.codex");
+    expect(note()).toBeNull();
+    await choose("launcher.default");
+    expect(note()).not.toBeNull();
   });
 });
 

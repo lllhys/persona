@@ -209,7 +209,7 @@ func (s *Service) setStandingAuthorizations(ctx context.Context, value json.RawM
 	}
 	oldJSON, _ := json.MarshalIndent(before, "", "  ")
 	newJSON, _ := json.MarshalIndent(after, "", "  ")
-	return &ownChange{cardText: func(l i18n.Lang) string {
+	return &ownChange{applyChecksProposal: true, cardText: func(l i18n.Lang) string {
 		return i18n.T(l, "assistant-standing_authorizations.change", i18n.Args{"before": string(oldJSON), "after": string(newJSON)})
 	}, apply: func(ctx context.Context) (string, error) {
 		s.standingMu.Lock()

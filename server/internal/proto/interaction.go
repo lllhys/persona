@@ -19,6 +19,11 @@ const (
 // AnsweredByAssistant marks a resolution the assistant gave for the user (Resolution.AnsweredBy).
 const AnsweredByAssistant = "assistant"
 
+// AnsweredByDefault marks a resolution nobody gave: the question's deadline passed unanswered and, as going ahead can
+// be undone, its recommended options were taken by default (Resolution.AnsweredBy; docs/protocol/protocol.md "Who
+// answered a card"). Only the history carries it, on a card that expired first (Resolution.Late).
+const AnsweredByDefault = "default"
+
 // DismissedInChat is the Reason of a Dismiss for an assistant question taken back because the user wrote in the
 // conversation instead of answering it (#9): channels say "replied in the chat" on its card, not "dismissed".
 const DismissedInChat = "replied_in_chat"
@@ -48,6 +53,9 @@ type Question struct {
 	Header      string           `json:"header,omitempty"`
 	MultiSelect bool             `json:"multi_select"`
 	Options     []QuestionOption `json:"options"`
+	// Recommend is the label of the option the asker recommends (the assistant's ask_user recommend, always one of
+	// Options' labels); absent when it recommended none.
+	Recommend string `json:"recommend,omitempty"`
 }
 
 type Interaction struct {
@@ -55,30 +63,36 @@ type Interaction struct {
 	Manager string `json:"manager,omitempty"`
 	// Private: a Just me turn raised it (docs/assistant/meeting-minutes.md "Just me"): its push and the Fleet Live
 	// Activity say nothing of what it asks, as a health conversation's card, and it never goes to Lark or a channel.
-	Private         bool            `json:"private,omitempty"`
-	ID              string          `json:"id"`
-	MachineID       string          `json:"machine_id"`
-	SessionID       string          `json:"session_id"`
-	SessionTitle    string          `json:"session_title,omitempty"`
-	TaskTitle       string          `json:"task_title,omitempty"` // the task its agent works for (docs/assistant/unified-entry.md), set when sent to clients
-	Cwd             string          `json:"cwd,omitempty"`
-	Kind            string          `json:"kind"`
-	CreatedAt       time.Time       `json:"created_at"`
-	ExpiresAt       time.Time       `json:"expires_at"`
-	ToolName        string          `json:"tool_name,omitempty"`
-	ToolUseID       string          `json:"tool_use_id,omitempty"`
-	Questions       []Question      `json:"questions,omitempty"`
-	Plan            string          `json:"plan,omitempty"`
-	ToolInput       json.RawMessage `json:"tool_input,omitempty"`
-	Summary         string          `json:"summary,omitempty"`
-	Screen          string          `json:"screen,omitempty"`
-	AgentID         string          `json:"agent_id,omitempty"`
-	AgentType       string          `json:"agent_type,omitempty"`
-	MCPServerName   string          `json:"mcp_server_name,omitempty"`
-	MCPConfigSource string          `json:"mcp_config_source,omitempty"`
-	Elicitation     *Elicitation    `json:"elicitation,omitempty"`
+	Private      bool            `json:"private,omitempty"`
+	ID           string          `json:"id"`
+	MachineID    string          `json:"machine_id"`
+	SessionID    string          `json:"session_id"`
+	SessionTitle string          `json:"session_title,omitempty"`
+	TaskTitle    string          `json:"task_title,omitempty"` // the task its agent works for (docs/assistant/unified-entry.md), set when sent to clients
+	Cwd          string          `json:"cwd,omitempty"`
+	Kind         string          `json:"kind"`
+	CreatedAt    time.Time       `json:"created_at"`
+	ExpiresAt    time.Time       `json:"expires_at"`
+	ToolName     string          `json:"tool_name,omitempty"`
+	ToolUseID    string          `json:"tool_use_id,omitempty"`
+	Questions    []Question      `json:"questions,omitempty"`
+	Plan         string          `json:"plan,omitempty"`
+	ToolInput    json.RawMessage `json:"tool_input,omitempty"`
+	// EditableText is the outgoing body text a Claude Code Lark send/reply approval card may let the user edit before
+	// allowing. It is set only by that command gate; runtimes and other cards cannot declare it.
+	EditableText    string       `json:"editable_text,omitempty"`
+	Summary         string       `json:"summary,omitempty"`
+	Screen          string       `json:"screen,omitempty"`
+	AgentID         string       `json:"agent_id,omitempty"`
+	AgentType       string       `json:"agent_type,omitempty"`
+	MCPServerName   string       `json:"mcp_server_name,omitempty"`
+	MCPConfigSource string       `json:"mcp_config_source,omitempty"`
+	Elicitation     *Elicitation `json:"elicitation,omitempty"`
 	// CanCancel is advertised only by runtimes supporting question-only cancellation.
 	CanCancel bool `json:"can_cancel,omitempty"`
+	// CanClarify advertises an assistant-owned prepared approval whose owner may ask a question without resolving it.
+	// Only the authoritative creation path sets it; older clients ignore it and keep their existing Allow/Deny behavior.
+	CanClarify bool `json:"can_clarify,omitempty"`
 	// Dialog is the screen's dialog read on the hub (screen interactions); answers name an option and are checked
 	// against Dialog.Rev before any key is pressed. Absent when the screen shows no dialog it could read.
 	Dialog *dialogwire.Dialog `json:"dialog,omitempty"`
@@ -139,8 +153,18 @@ type Interaction struct {
 	// session is a child folded under it (docs/protocol/protocol.md "Session hierarchy"). Set when sent to clients.
 	FoldedUnder string `json:"folded_under,omitempty"`
 	// FoldedAs is its session's Session.FoldedAs: "worker" when the asking session is a tab's worker folded under its
-	// lead (#5180). Set beside FoldedUnder when sent to clients.
+	// lead (#5180), "side" when it is a side session (#7944). Set beside FoldedUnder when sent to clients.
 	FoldedAs string `json:"folded_as,omitempty"`
+	// FoldedSide is its session's Session.FoldedSide: the side session whose chat the card is in when the asking
+	// session folds through one and is not that side (#7944). Set beside FoldedUnder when sent to clients.
+	FoldedSide string `json:"folded_side,omitempty"`
+	// Deadline is when an ask_user's questions take their recommended options by default (when Reversible) or are
+	// reminded again (when not); absent without one. Reversible is whether the asker said going ahead can be undone;
+	// absent when it did not say. Both are the asker's own words, kept on the card for the history
+	// (docs/protocol/protocol.md "Decision fields").
+	Deadline *time.Time `json:"deadline,omitempty"`
+	// Reversible: see Deadline.
+	Reversible *bool `json:"reversible,omitempty"`
 }
 
 // Delegate is the assistant's context on a question it left to the user (Interaction.Delegate): it is a red line or
@@ -184,11 +208,18 @@ type Resolution struct {
 	Allow    *bool             `json:"allow,omitempty"`
 	Always   bool              `json:"always,omitempty"`
 	Message  string            `json:"message,omitempty"`
-	Keys     []string          `json:"keys,omitempty"`
-	Text     string            `json:"text,omitempty"`
+	// EditedText is the replacement body text on a plain Allow of an editable_text card, and nothing else in the
+	// answer: no route, target, recipients, tool or other arguments can be changed from the card.
+	EditedText string   `json:"edited_text,omitempty"`
+	Keys       []string `json:"keys,omitempty"`
+	Text       string   `json:"text,omitempty"`
 	// AnsweredBy is who answered when it was not the user in the app: AnsweredByAssistant for a question the
-	// assistant answered on their behalf (docs/assistant/assistant.md). Absent when the app answered.
+	// assistant answered on their behalf (docs/assistant/assistant.md), AnsweredByDefault for recommended options taken
+	// at a deadline. Absent when the user answered.
 	AnsweredBy string `json:"answered_by,omitempty"`
+	// Late: the history's record of an answer that came after the card expired: the user's own answer on the to-do the
+	// question became, or its recommendation taken at its deadline (AnsweredByDefault). The card stays "expired".
+	Late bool `json:"late,omitempty"`
 	// Reason is why the assistant answered so (AnsweredByAssistant): the Y of "Answered by the assistant: X, because Y".
 	// With Dismiss and no AnsweredBy it is why the card was dismissed (DismissedInChat).
 	Reason string `json:"reason,omitempty"`

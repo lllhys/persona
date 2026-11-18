@@ -42,6 +42,10 @@ type userLangs struct {
 	userLoaded bool                    // user_locale was read (or there is no store)
 	loaded     bool                    // byDevice was read from the store
 	byDevice   map[string]deviceLocale // deviceLangKey -> its last locale
+	pendingMu  sync.Mutex
+	pending    []userLangUpdate
+	flushing   bool
+	changed    chan struct{}
 }
 
 func (h *Hub) loadUserLang(ctx context.Context) {
@@ -50,43 +54,49 @@ func (h *Hub) loadUserLang(ctx context.Context) {
 	h.loadUserLangLocked(ctx)
 }
 
-func (h *Hub) loadUserLangLocked(ctx context.Context) {
+func (h *Hub) loadUserLangLocked(ctx context.Context) bool {
 	if h.store == nil {
 		h.langs.userLoaded = true
-		return
+		return true
 	}
 	var s string
 	if _, err := h.store.Setting(ctx, userLocaleSetting, &s); err != nil {
 		h.logf("load %s: %v", userLocaleSetting, err)
-		return // read again at the next hello, before any decides it
+		return false // read again at the next hello, before any decides it
 	}
 	h.langs.userLoaded = true
 	if l := i18n.Lang(s); i18n.Valid(l) {
 		h.userLocale.Store(l)
 	}
+	return true
 }
 
-func (h *Hub) loadDeviceLocalesLocked(ctx context.Context) {
+func (h *Hub) loadDeviceLocalesLocked(ctx context.Context) bool {
 	g := &h.langs
 	if g.loaded {
-		return
+		return true
 	}
-	g.byDevice = map[string]deviceLocale{}
 	if h.store == nil {
+		if g.byDevice == nil {
+			g.byDevice = map[string]deviceLocale{}
+		}
 		g.loaded = true
-		return
+		return true
 	}
 	var stored map[string]deviceLocale
 	if _, err := h.store.Setting(ctx, deviceLocalesSetting, &stored); err != nil {
 		h.logf("load %s: %v", deviceLocalesSetting, err)
-		return // read again at the next hello; until then no device is known, so none changes the user's language
+		return false // read again at the next hello, without treating an error as no known devices
 	}
+	byDevice := make(map[string]deviceLocale, len(stored))
 	for k, v := range stored {
 		if i18n.Valid(v.Locale) {
-			g.byDevice[k] = v
+			byDevice[k] = v
 		}
 	}
+	g.byDevice = byDevice
 	g.loaded = true
+	return true
 }
 
 // userLang is the user's language; until a device says one, the language the hub was installed in (hub.json
@@ -101,59 +111,104 @@ func (h *Hub) userLang() i18n.Lang {
 	return i18n.Default
 }
 
-// noteUserLang takes the language l a full-role client said in client_hello from the device key (deviceLangKey). The
-// user's language becomes l when that device said another language before (the user changed it in that app, or the
+// noteUserLang records the language l a full-role client said in client_hello from the device key (deviceLangKey).
+// The user's language becomes l when that device said another language before (the user changed it in that app, or the
 // system's changed under Match System), or when there is no user language yet (the first device's is taken); a
 // device saying one for the first time, or again the same, only has it remembered. A key of "" (a client that names
 // no device) can only give the first language.
+// The consumer applies reports in their hub-wide message order and saves at most one snapshot per locale setting.
+// The connection's own c.meta.Locale was already updated, so its replies never wait for this persistence (#6889).
 func (h *Hub) noteUserLang(key string, l i18n.Lang) {
 	if !i18n.Valid(l) {
 		return
 	}
+	update := userLangUpdate{key: key, lang: l, at: time.Now().UTC().Truncate(time.Second)}
+	if h.store == nil {
+		h.writeUserLangs([]userLangUpdate{update})
+		return
+	}
+	g := &h.langs
+	h.startHelloWriters()
+	if !h.admitHelloReport(h.helloWrites.langsSlot, helloStoreTimeout, &h.helloWrites.langsDrop, deviceLocalesSetting) {
+		return
+	}
+	g.pendingMu.Lock()
+	g.pending = append(g.pending, update)
+	g.pendingMu.Unlock()
+	wakeHelloWriter(h.helloWrites.langsWake)
+}
+
+// writeUserLangs applies batch in order. Both required settings must load before any report is applied: in particular,
+// an absent user locale plus a failed device-locale read must not save a first device's language over what is stored.
+func (h *Hub) writeUserLangs(batch []userLangUpdate) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if !h.prepareUserLangs(ctx, batch) {
+		return
+	}
+	h.writeUserLangsLoaded(ctx, batch)
+}
+
+func (h *Hub) prepareUserLangs(ctx context.Context, batch []userLangUpdate) bool {
 	g := &h.langs
 	g.mu.Lock()
-	if !g.userLoaded {
-		h.loadUserLangLocked(ctx)
+	defer g.mu.Unlock()
+	if !g.userLoaded && !h.loadUserLangLocked(ctx) {
+		return false
 	}
-	if !g.userLoaded {
-		g.mu.Unlock()
-		return // without the saved language, a device's report must not replace it
+	needDevices := false
+	for _, update := range batch {
+		needDevices = needDevices || update.key != ""
 	}
-	cur, set := h.userLocale.Load().(i18n.Lang)
-	if key != "" {
-		h.loadDeviceLocalesLocked(ctx)
-	}
-	known, same := false, false
-	if key != "" && g.loaded {
-		var prev deviceLocale
-		prev, known = g.byDevice[key]
-		same = known && prev.Locale == l
-		if !same {
-			g.byDevice[key] = deviceLocale{Locale: l, At: time.Now().UTC().Truncate(time.Second)}
-			pruneDeviceLocales(g.byDevice)
-			if h.store != nil {
-				if err := h.store.PutSetting(ctx, deviceLocalesSetting, g.byDevice); err != nil {
-					h.logf("save %s: %v", deviceLocalesSetting, err)
-				}
+	return !needDevices || h.loadDeviceLocalesLocked(ctx)
+}
+
+func (h *Hub) writeUserLangsLoaded(ctx context.Context, batch []userLangUpdate) {
+	g := &h.langs
+	g.mu.Lock()
+	deviceDirty, userDirty := false, false
+	var userSnapshot i18n.Lang
+	for _, update := range batch {
+		key, l := update.key, update.lang
+		cur, set := h.userLocale.Load().(i18n.Lang)
+		known, same := false, false
+		if key != "" {
+			var prev deviceLocale
+			prev, known = g.byDevice[key]
+			same = known && prev.Locale == l
+			if !same {
+				g.byDevice[key] = deviceLocale{Locale: l, At: update.at}
+				pruneDeviceLocales(g.byDevice)
+				deviceDirty = true
 			}
 		}
-	}
-	// The first language is taken, and saved even when it is the default so the next device does not take its
-	// place; after that only a device that said another one before moves it.
-	changed := (!set || known && !same) && !(set && cur == l)
-	if changed {
-		h.userLocale.Store(l)
-		if h.store != nil {
-			if err := h.store.PutSetting(ctx, userLocaleSetting, string(l)); err != nil {
-				h.logf("save %s: %v", userLocaleSetting, err)
-			}
+		// The first language is taken, and saved even when it is the default so the next device does not take its
+		// place; after that only a device that said another one before moves it.
+		changed := (!set || known && !same) && !(set && cur == l)
+		if changed {
+			h.userLocale.Store(l)
+			userSnapshot, userDirty = l, true
 		}
+	}
+	store := h.store
+	var deviceSnapshot map[string]deviceLocale
+	if deviceDirty {
+		deviceSnapshot = maps.Clone(g.byDevice)
 	}
 	g.mu.Unlock()
-	if changed {
-		h.logf("user language: %s", l)
+
+	if deviceDirty && store != nil {
+		if err := store.PutSetting(ctx, deviceLocalesSetting, deviceSnapshot); err != nil {
+			h.logf("save %s: %v", deviceLocalesSetting, err)
+		}
+	}
+	if userDirty && store != nil {
+		if err := store.PutSetting(ctx, userLocaleSetting, string(userSnapshot)); err != nil {
+			h.logf("save %s: %v", userLocaleSetting, err)
+		}
+	}
+	if userDirty {
+		h.logf("user language: %s", userSnapshot)
 		h.assistantUpdated() // its CLAUDE.md asks it to answer in this language
 	}
 }

@@ -62,6 +62,7 @@ func (s *Service) chansNow() time.Time {
 }
 
 func (f feishuSink) progress(ctx context.Context, r *channel.Run, took time.Duration, steps []string, live string) {
+	ctx = feishuSendAs(ctx, "progress", r.MachineID, r.SessionID)
 	s := f.s
 	if f.cotProgressNow(ctx, r) {
 		return
@@ -178,6 +179,7 @@ func (f feishuSink) recalled(ctx context.Context, m channel.Folded) {
 // wait, posts it as a card of its own under a key (so a retry lands once) — so the chat never stays on "Working" and
 // is never left silent.
 func (f feishuSink) answer(ctx context.Context, r *channel.Run, answer, note string, took time.Duration, final, quiet bool, end channel.End) error {
+	ctx = feishuSendAs(ctx, "answer", r.MachineID, r.SessionID)
 	s := f.s
 	l := s.botLang(ctx)
 	all := f.s.runSteps(r.ID)

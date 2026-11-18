@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,6 +62,11 @@ func TestAssistantSendSaysTheCommandIsMissing(t *testing.T) {
 	shortStartRetries(t, 100*time.Millisecond)
 	if err := os.Remove(filepath.Join(os.Getenv("HOME"), "bin", "claude")); err != nil {
 		t.Fatal(err)
+	}
+	// The launcher's shell keeps /usr/bin and /bin (fakeClaudeHome), where a system-wide install (npm install -g with
+	// the distribution's node) puts claude: there nothing is missing, and the send would run the real one (#6257).
+	if p, err := exec.LookPath("claude"); err == nil {
+		t.Skipf("this machine's own claude is on the launcher's PATH: %s", p)
 	}
 	n := codexTestNode(t)
 	withFakeHub(t, n)

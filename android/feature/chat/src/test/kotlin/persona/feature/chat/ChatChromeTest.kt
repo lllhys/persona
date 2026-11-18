@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import persona.core.contracts.Session
+import persona.core.contracts.SessionCapabilities
 import persona.core.contracts.api.ConnectionState
 import org.junit.Assert.*
 import org.junit.Test
@@ -66,6 +67,15 @@ class ChatChromeTest {
         assertFalse(state.busy)
         assertNotNull(state.notice)
         assertNotEquals("已重命名", state.notice)
+    }
+
+    // #6294: the rename dialog's note speaks of the terminal's tab and Claude's /rename; a runtime's session has neither.
+    @Test fun onlyASessionWithATerminalGetsTheRenameNote() {
+        assertEquals(R.string.chat_chrome_rename_text, chatRenameNote(Session("m", "s", paneId = "w1:p1")))
+        assertEquals(R.string.chat_chrome_rename_text_tern, chatRenameNote(Session("m", "s", paneId = "tern:1")))
+        assertEquals(R.string.chat_chrome_rename_text, chatRenameNote(null))
+        assertNull(chatRenameNote(Session("m", "s", agent = "claude", sourceKind = "runtime",
+            capabilities = SessionCapabilities(read = true, send = true, rename = true))))
     }
 
     @Test fun companionsListATabsAgentsTogetherWithTheLauncherFirst() {

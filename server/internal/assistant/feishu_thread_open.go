@@ -180,6 +180,9 @@ func (s *Service) openTodoIn(ctx context.Context, ev feishubot.MessageEvent, st 
 		}
 	}
 	if err == nil && src != nil {
+		if src.Anchor == "" {
+			src.Handoff = msg.MessageID
+		}
 		if err = s.setTodoSource(ctx, todo.ID, *src); err == nil {
 			s.todosChanged(ctx)
 		}

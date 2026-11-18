@@ -30,7 +30,8 @@ import androidx.compose.ui.semantics.semantics
  * finger first, and anything that handles it (a link, a button, a card, a text field, a long press, a scroll) consumes
  * it, which leaves the keyboard up. Nothing here consumes an event, so no click below is lost.
  */
-fun Modifier.dismissKeyboardOnBlankTap(): Modifier = this then DismissKeyboardElement
+fun Modifier.dismissKeyboardOnBlankTap(onClearFocus: () -> Unit = {}): Modifier =
+    this then DismissKeyboardElement(onClearFocus)
 
 /**
  * Keeps taps on a composer's padding from reaching a page behind it or a surrounding page's dismiss listener.
@@ -83,13 +84,13 @@ fun ReleaseTextInputOnChange(key: Any) {
     }
 }
 
-private data object DismissKeyboardElement : ModifierNodeElement<DismissKeyboardNode>() {
-    override fun create() = DismissKeyboardNode()
-    override fun update(node: DismissKeyboardNode) = Unit
+private data class DismissKeyboardElement(val onClearFocus: () -> Unit) : ModifierNodeElement<DismissKeyboardNode>() {
+    override fun create() = DismissKeyboardNode(onClearFocus)
+    override fun update(node: DismissKeyboardNode) { node.onClearFocus = onClearFocus }
     override fun InspectorInfo.inspectableProperties() { name = "dismissKeyboardOnBlankTap" }
 }
 
-private class DismissKeyboardNode : DelegatingNode(), CompositionLocalConsumerModifierNode {
+private class DismissKeyboardNode(var onClearFocus: () -> Unit) : DelegatingNode(), CompositionLocalConsumerModifierNode {
     init {
         delegate(SuspendingPointerInputModifierNode {
             awaitEachGesture {
@@ -98,6 +99,7 @@ private class DismissKeyboardNode : DelegatingNode(), CompositionLocalConsumerMo
                 // Null when the gesture was consumed (a drag that scrolled, a long press) or left the area.
                 val up = waitForUpOrCancellation(PointerEventPass.Final) ?: return@awaitEachGesture
                 if (!up.isConsumed) {
+                    onClearFocus()
                     currentValueOf(LocalFocusManager).clearFocus()
                     currentValueOf(LocalSoftwareKeyboardController)?.hide()
                 }

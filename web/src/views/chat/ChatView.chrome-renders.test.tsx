@@ -4,7 +4,7 @@
 // the composer's context chips, the composer's permission picker).
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 vi.hoisted(() => {
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
   globalThis.IntersectionObserver ??= class { observe() {} unobserve() {} disconnect() {} takeRecords() { return []; } } as unknown as typeof IntersectionObserver;
@@ -18,7 +18,8 @@ vi.mock("./SessionDialogs", async (load) => {
   const { createElement } = await import("react");
   return {
     ...real,
-    SessionInfoDialog: (p: Parameters<typeof real.SessionInfoDialog>[0]) => (renders.info++, createElement(real.SessionInfoDialog, p)),
+    // a lazy dialog now (its chunk loads on its first open): still drawn by the header on each of its renders
+    SessionInfoDialog: (p: ComponentProps<typeof real.SessionInfoDialog>) => (renders.info++, createElement(real.SessionInfoDialog, p)),
   };
 });
 vi.mock("./PermissionPicker", async (load) => {
@@ -55,7 +56,7 @@ vi.mock("./chat-actions", async (load) => {
 vi.mock("../../lib/panel", async (load) => ({ ...(await load<typeof import("../../lib/panel")>()), usePanel: () => null }));
 vi.mock("../assistant/Persona", () => ({ usePersona: () => ({ name: "Persona" }) }));
 
-import { applyCompleteSessions, reset, type ItemsEvent } from "../../lib/store";
+import { applyCompleteSessions, getState, reset, type ItemsEvent } from "../../lib/store";
 import { whenComposer } from "../../lib/links";
 import type { Item, Session } from "../../lib/types";
 import { t } from "../../i18n";
@@ -75,6 +76,13 @@ const zero = () => Object.assign(renders, { info: 0, chips: 0, modes: 0 });
 let host: HTMLDivElement;
 let root: Root;
 let fetcher: ReturnType<typeof vi.fn>;
+// An agent's header loads its compare menu lazily (ChatView: import("../../lib/compare-runs")) and draws again when it
+// is in. Loaded here first, it is in before a test counts renders: cold, under a full parallel run, it came in during the
+// pushes and counted as one of their renders.
+beforeAll(async () => {
+  await import("../../lib/compare-runs");
+});
+
 beforeEach(() => {
   localStorage.clear();
   // the first page has one reply already, so the assistant's face starts from what the pushes keep showing
@@ -104,6 +112,40 @@ async function open(view: React.ReactElement, session = row()) {
   zero();
 }
 const posted = (path: string) => fetcher.mock.calls.filter(([url, init]) => String(url).endsWith(path) && (init as RequestInit | undefined)?.method === "POST");
+
+it("a completed task remains a labelled, clickable owner, not a prompt to link it again", async () => {
+  const router = await import("../../lib/router");
+  const navigate = vi.spyOn(router, "navigate").mockImplementation(() => {});
+  try {
+    await open(<ChatView mid="mac" sid="s1" inPage />, row({
+      status: "idle", state: "idle", completed_todo: { id: "done-task", title: "Completed example task" },
+    }));
+    act(() => host.querySelector<HTMLButtonElement>(`button[aria-label="${t("chat-chatview.more_actions")}"]`)!.click());
+    await settle();
+    const menu = document.querySelector('[role="menu"]')!;
+    const label = t("chat-chatview.todo_completed_label", { title: "Completed example task" });
+    expect(menu.textContent).toContain(label);
+    expect(menu.textContent).not.toContain(t("chat-chatview.link_todo"));
+    expect(menu.textContent).not.toContain(t("chat-chatview.relink_todo"));
+    const item = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes(label))!;
+    act(() => item.click());
+    expect(navigate).toHaveBeenCalledWith("/todos?id=done-task");
+  } finally {
+    navigate.mockRestore();
+  }
+});
+
+// Rename…, Rename space… and Delete… open dialogs from a chunk of their own (#10382): the ⋯ menu starts it as it opens, so
+// the click draws the dialog in its own render, with no wait for the chunk and no empty frame.
+it("the ⋯ menu starts the Rename and Delete dialogs' chunk, so Rename… draws its dialog on the click", async () => {
+  await open(<ChatView mid="mac" sid="s1" inPage />);
+  act(() => host.querySelector<HTMLButtonElement>(`button[aria-label="${t("chat-chatview.more_actions")}"]`)!.click());
+  await import("./SessionMenuDialogs"); // the chunk the menu asked for, in
+  await settle();
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((i) => i.textContent?.includes(t("chat-chatview.rename")))!;
+  act(() => item.click());
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(t("chat-sessiondialogs.session_name"));
+});
 
 it("an agent's page: pushed items leave its header and composer alone, a session change still reaches them", async () => {
   await open(<ChatView mid="mac" sid="s1" inPage />);
@@ -167,11 +209,20 @@ it("the assistant: the header draws again only when what its face reads changes"
   expect(renders.chips).toBe(0);
 });
 
-it("a Persona conversation's composer has the model pill, an Agent's too (#5032, #5033)", async () => {
+it("the main conversation's composer has the model pill, without an effort chip (#5032, #5033)", async () => {
+  getState().assistant = { machine_id: "mac", launcher: "claude", main: "s1", conversations: [] };
   await open(<ChatView mid="mac" sid="s1" assistant />);
   expect(host.querySelector("button[data-model-pill]")).not.toBeNull();
-  expect(host.querySelector(`button[title="${t("chat-sessiondialogs.effort")}"]`)).toBeNull(); // no effort chip
-  act(() => root.render(<></>));
+  expect(host.querySelector(`button[title="${t("chat-sessioninfo.effort")}"]`)).toBeNull(); // no effort chip
+});
+
+it("a Persona conversation that is not the main one has the model pill too, as the hub keeps its pick (#9248)", async () => {
+  getState().assistant = { machine_id: "mac", launcher: "claude", main: "other", conversations: [] };
+  await open(<ChatView mid="mac" sid="s1" assistant />);
+  expect(host.querySelector("button[data-model-pill]")).not.toBeNull();
+});
+
+it("an Agent's session has its own model pill", async () => {
   await open(<ChatView mid="mac" sid="s1" inPage />);
   expect(host.querySelector("[data-model-pill]")).not.toBeNull();
 });
@@ -287,6 +338,30 @@ it("after the pushes, sending and stopping still go out", async () => {
   act(() => applyCompleteSessions([row({ status: "idle", state: "idle" })]));
   await settle();
   expect(pressed()).toBeNull();
+});
+
+it("toggles the session overview and leaves it open while using the chat", async () => {
+  await open(<ChatView mid="mac" sid="s1" inPage />);
+  const trigger = host.querySelector<HTMLButtonElement>("[data-session-overview-trigger]")!;
+  const composer = host.querySelector<HTMLTextAreaElement>("textarea")!;
+  expect(trigger.getAttribute("aria-pressed")).toBe("false");
+  await act(async () => {
+    trigger.click();
+    await import("./SessionOverview");
+  });
+  const overview = document.getElementById(trigger.getAttribute("aria-controls")!);
+  expect(overview?.tagName).toBe("ASIDE");
+  expect(overview?.textContent).toContain(t("chat-sessionoverview.environment"));
+  expect(trigger.getAttribute("aria-pressed")).toBe("true");
+  act(() => composer.click());
+  expect(overview?.isConnected).toBe(true);
+  act(() => overview!.querySelector("button")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(posted("/sessions/mac/s1/interrupt")).toHaveLength(0);
+  expect(overview?.isConnected).toBe(true);
+  act(() => trigger.click());
+  expect(trigger.getAttribute("aria-pressed")).toBe("false");
+  expect(overview?.isConnected).toBe(false);
+  expect(host.querySelector("textarea")).toBe(composer);
 });
 
 it("a stop the hub lost track of is not reported as done, and can be pressed again", async () => {

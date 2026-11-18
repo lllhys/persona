@@ -142,11 +142,11 @@ class TaskRecordsShotsTest {
             val mode = if (night) "dark" else "light"
             rule.onNodeWithText("Persona → @Fix the login crash").assertIsDisplayed()
             rule.onNodeWithText("Me → @Fix the login crash").assertIsDisplayed()
-            rule.onNodeWithText("Fix the login crash → @Persona").assertIsDisplayed()
-            rule.onNodeWithText("Asked Persona: Which key should the test use?").assertIsDisplayed()
-            rule.onNodeWithText("Rework round 1", substring = true).assertIsDisplayed()
-            rule.onNodeWithText("Fix the login crash is done").assertIsDisplayed()
-            rule.onNodeWithText("PR #42").assertIsDisplayed()
+            rule.onNodeWithText("Fix the login crash → @Persona").assertDoesNotExist()
+            rule.onNodeWithText("Asked Persona: Which key should the test use?").assertDoesNotExist()
+            rule.onNodeWithText("Rework round 1", substring = true).assertDoesNotExist()
+            rule.onNodeWithText("Fix the login crash is done").assertDoesNotExist()
+            rule.onNodeWithText("PR #42").assertDoesNotExist()
             rule.onNodeWithText("Your computer is connected again; the morning brief runs as planned.").assertIsDisplayed()
             // the hand-off is four lines: three show, with Expand; the short report has no button
             rule.onAllNodesWithTag("exchange-toggle", useUnmergedTree = true).assertCountEquals(1)

@@ -46,7 +46,8 @@ func (c *Connector) MachineID() string {
 func (c *Connector) UseMachine(ctx context.Context, id, name string, fetch TokenSource) {
 	_ = c.forgetDevice(ctx)
 	c.mu.Lock()
-	c.source, c.machineID, c.machine, c.fetch, c.token = SourceMachine, id, name, fetch, ""
+	c.source, c.machineID, c.machine, c.fetch = SourceMachine, id, name, fetch
+	c.newCredential("")
 	c.scopes, c.scopesKnown = nil, false
 	c.status = statusWaiting("正在读取 " + name + " 上的 gh 登录…")
 	c.mu.Unlock()
@@ -57,7 +58,8 @@ func (c *Connector) UseMachine(ctx context.Context, id, name string, fetch Token
 func (c *Connector) UseDevice() {
 	c.mu.Lock()
 	changed := c.source != SourceDevice
-	c.source, c.token = SourceDevice, ""
+	c.source = SourceDevice
+	c.newCredential("")
 	if changed {
 		c.scopes, c.scopesKnown = nil, false
 		c.status = statusWaiting(notSignedIn)

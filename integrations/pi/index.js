@@ -3,7 +3,11 @@
 // (~/.persona/runtime.sock, docs/integrations/runtimes.md). It does nothing visible until a node listens.
 //
 // Configuration (optional): <agent dir>/persona.json — { "approve": ["bash"], "askUser": true, "answerFirst": "auto",
-// "autoUpdate": true }.
+// "autoUpdate": true, "providers": true }.
+//
+// Model providers (docs/integrations/pi.md "Persona's model providers"): Persona's providers this computer is in scope for
+// are registered in pi (keys in memory only), so a computer without a models.json can still run pi; the user's own
+// configuration wins.
 //
 // Updates (docs/integrations/pi.md "Automatic updates"): installed from a store (pi's settings name <store>/current/pi), this extension takes
 // the version the node carries — installs it as current and, once its sessions are idle, has each of them reload
@@ -19,6 +23,7 @@ import { envValue } from '../runtime-sdk/lib/identity.js'
 import { selfPackage } from '../runtime-sdk/index.js'
 import { piConfigPath, sharedPiGlobals } from './lib/compat.js'
 import { createPiHost, herdrPaneOf, piWebOf } from './lib/pi.js'
+import { usePersonaProviders } from './lib/providers.js'
 
 const SELF = selfPackage(import.meta.url, 'persona-pi-runtime')
 
@@ -69,7 +74,11 @@ function host() {
   return slot.host
 }
 
-export default function persona(pi) {
+export default async function persona(pi) {
+  // Before anything else, one-shot runs too: they need a model as much as a session does.
+  if (config().providers !== false) {
+    await usePersonaProviders(pi, { log: (m) => { if (envValue('PERSONA_PI_DEBUG')) console.error(m) } })
+  }
   // Not for one-shot runs (pi -p, --mode json): nothing to drive from the phone, outside pi-web's server.
   if (!piWebOf() && process.argv.some((a) => a === '-p' || a === '--print' || a === 'json')) return
   host().register(pi, globalThis.__personaPiAskUser ? { Type } : undefined)

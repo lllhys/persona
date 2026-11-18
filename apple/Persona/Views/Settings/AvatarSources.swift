@@ -40,7 +40,7 @@ struct AvatarSources: ViewModifier {
     private func open(_ result: Result<URL, any Error>) async {
         do {
             let url = try result.get()
-            let data = try await Task.detached(priority: .userInitiated) { try AvatarImage.read(url) }.value
+            let data = try await Task.detached(priority: .userInitiated) { try AvatarImage.readPickedFile(url) }.value
             cropping = await uploads.picked(data)
         } catch let e as CocoaError where e.code == .userCancelled {
             return

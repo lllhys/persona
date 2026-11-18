@@ -6,7 +6,7 @@ import { formatList, t } from "../../i18n";
 import { isAbort } from "../../lib/api";
 import { ago } from "../../lib/format";
 import {
-  deleteBlocked, deleteManager, listManagers, makeDefault, managerError, NAME_MAX, renameManager, renewCode, statusLine,
+  deleteBlocked, deleteManager, hideManager, listManagers, makeDefault, managerError, NAME_MAX, renameManager, renewCode, statusLine,
   unsupported, validName, whereText, type BotConflict, type InstallCode, type Manager, type Tone,
 } from "../../lib/managers";
 import { loadNotifyPrefs, managerMuted, saveManagerPush, useNotifyPrefs, useNotifyPrefsGeneration } from "../../lib/notify";
@@ -148,6 +148,34 @@ function PushSwitch({ id }: { id: string }) {
   );
 }
 
+/** The built-in assistant's place in the switcher (#9055): off keeps it out while it is not used. The hub refuses to
+ *  hide it while it is the default or has a computer, so the switch cannot turn off then; it can always turn on. */
+function SwitcherSwitch({ m, ownMachines, onChanged }: { m: Manager; ownMachines: number; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const inUse = !!m.default || ownMachines > 0;
+  const on = !m.hide;
+  const save = (next: boolean) => {
+    setBusy(true);
+    hideManager(m.id, !next)
+      .then(onChanged, (e) => {
+        if (!isAbort(e)) toast(t("settings-managers.in_switcher_failed", { error: managerError(e) }), "error");
+      })
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="overflow-hidden rounded-card bg-inset shadow-hairline">
+        <Row label={t("settings-managers.in_switcher")}>
+          <Switch on={on} label={t("settings-managers.in_switcher")} disabled={busy || (on && inUse)} onChange={save} />
+        </Row>
+      </div>
+      <p className="px-1 text-submeta leading-snug text-ink-3">
+        {t(inUse ? "settings-managers.in_switcher_in_use" : "settings-managers.in_switcher_note")}
+      </p>
+    </div>
+  );
+}
+
 type Step = "view" | "rename" | "move" | "delete";
 
 function ManagerDetail({ m, onClose, onChanged, onCode }: { m: Manager | null; onClose: () => void; onChanged: () => void; onCode: (c: InstallCode, id?: string) => void }) {
@@ -256,6 +284,7 @@ function ManagerDetail({ m, onClose, onChanged, onCode }: { m: Manager | null; o
         </div>
         {shownM.needs_update && <p className="-mt-2 px-1 text-[11.5px] leading-snug text-ink-3">{t("settings-managers.needs_update_note")}</p>}
         {!installing && <PushSwitch id={shownM.id} />}
+        {shownM.builtin && !installing && <SwitcherSwitch m={shownM} ownMachines={ownMachines} onChanged={onChanged} />}
         <div className="flex flex-wrap gap-2">
           {!installing && (
             <Button icon="pencil" disabled={busy} onClick={() => (setName(shownM.name), setStep("rename"))}>{t("settings-managers.rename")}</Button>

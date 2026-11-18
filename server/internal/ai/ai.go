@@ -13,12 +13,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/aiwire"
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/prompts"
 )
 
@@ -33,9 +35,11 @@ var errNotConfigured = errors.New("还没有能直接调用的模型：在 设�
 func IsNotConfigured(err error) bool { return errors.Is(err, errNotConfigured) }
 
 type Client struct {
-	cfg     Config
-	http    *http.Client
-	resolve func(context.Context) (*Client, error)
+	cfg      Config
+	http     *http.Client
+	resolve  func(context.Context) (*Client, error)
+	run      func(context.Context, Request) (Reply, error)
+	onResult func(Reply, error)
 }
 
 // NewResolved resolves the execution configuration at the start of every request.
@@ -46,13 +50,62 @@ func NewResolved(resolve func(context.Context) (*Client, error)) *Client {
 // Config returns the immutable connection configuration, never an API response.
 func (c *Client) Config() Config { return c.cfg }
 
+// WithResult returns a client that reports each completed Chat call.
+func (c *Client) WithResult(report func(Reply, error)) *Client {
+	copied := *c
+	copied.onResult = report
+	return &copied
+}
+
 func New(cfg Config) *Client {
 	return NewWith(cfg, nil)
 }
 
 // NewWith is New sending its requests through transport (nil: this machine's network).
 func NewWith(cfg Config, transport http.RoundTripper) *Client {
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 60 * time.Second, Transport: transport}}
+	return &Client{cfg: cfg, http: &http.Client{Timeout: 60 * time.Second, Transport: transport, CheckRedirect: checkRedirect}}
+}
+
+// net/http copies headers from the first request on every redirect, so check the entire chain before retaining its
+// potentially private User-Agent. Once a chain leaves its original origin, all later hops use Persona's identity.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	origin := via[0].URL
+	if !sameOrigin(origin, req.URL) {
+		req.Header.Set("User-Agent", modelhttp.UserAgent())
+		return nil
+	}
+	for _, previous := range via[1:] {
+		if !sameOrigin(origin, previous.URL) {
+			req.Header.Set("User-Agent", modelhttp.UserAgent())
+			break
+		}
+	}
+	return nil
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	port := func(u *url.URL) string {
+		if p := u.Port(); p != "" {
+			return p
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http":
+			return "80"
+		case "https":
+			return "443"
+		}
+		return ""
+	}
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) && port(a) == port(b)
+}
+
+// NewRun is a client whose requests run answers instead of an HTTP API: no gate, no key (a launcher's CLI on a
+// computer, cfg.RunLauncher).
+func NewRun(cfg Config, run func(context.Context, Request) (Reply, error)) *Client {
+	return &Client{cfg: cfg, run: run}
 }
 
 func (c *Client) key() (string, error) {
@@ -106,19 +159,7 @@ type Request struct {
 	BoundOutput bool
 }
 
-// Usage is what one request spent, as the upstream counted it (zero where it did not say).
-type Usage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-}
-
-// Add is u and v together (a call made of several requests).
-func (u Usage) Add(v Usage) Usage {
-	return Usage{InputTokens: u.InputTokens + v.InputTokens, OutputTokens: u.OutputTokens + v.OutputTokens,
-		CacheReadInputTokens: u.CacheReadInputTokens + v.CacheReadInputTokens, CacheCreationInputTokens: u.CacheCreationInputTokens + v.CacheCreationInputTokens}
-}
+type Usage = aiwire.Usage
 
 // Reply is the model's answer: its text, whether it stopped at MaxTokens, the model the upstream says answered
 // (the one asked for when it does not say) and what it spent.
@@ -132,12 +173,25 @@ type Reply struct {
 // Chat sends a conversation and returns the reply. A context with a deadline bounds the request by it instead of the
 // client's 60 seconds (a long answer).
 func (c *Client) Chat(ctx context.Context, r Request) (Reply, error) {
+	reply, err := c.chat(ctx, r)
+	if c.onResult != nil {
+		c.onResult(reply, err)
+	}
+	return reply, err
+}
+
+func (c *Client) chat(ctx context.Context, r Request) (Reply, error) {
 	if c.resolve != nil {
 		resolved, err := c.resolve(ctx)
 		if err != nil {
 			return Reply{}, err
 		}
 		return resolved.Chat(ctx, r)
+	}
+	if c.run != nil {
+		reply, err := c.run(ctx, r)
+		reply.Model = cmp.Or(reply.Model, c.cfg.Model)
+		return reply, err
 	}
 	if !c.cfg.Configured() {
 		return Reply{}, errNotConfigured
@@ -149,7 +203,7 @@ func (c *Client) Chat(ctx context.Context, r Request) (Reply, error) {
 	// Every client of one address and key goes through the same gate, which holds requests back while the upstream
 	// is out of quota or busy (limit.go).
 	g := gateFor(c.cfg.BaseURL, key)
-	probe, err := g.admit(ctx)
+	t, err := g.admit(ctx)
 	if err != nil {
 		return Reply{}, err
 	}
@@ -159,6 +213,25 @@ func (c *Client) Chat(ctx context.Context, r Request) (Reply, error) {
 		copied.Timeout = 0
 		hc = &copied
 	}
+	var found *probeAnswer // this request finds out whether a pause is over: the gate goes at its 200 (limit.go)
+	if t.probe && hc != nil {
+		found = &probeAnswer{next: hc.Transport, g: g}
+		copied := *hc
+		copied.Transport = found
+		hc = &copied
+	}
+	finding := func() bool { return t.probe && !(found != nil && found.let.Load()) } // still the one finding out
+	// The turn goes back however the exchange ends, a panic included. One that unwound through here used to skip
+	// done, and where its caller recovers and carries on (the knowledge base loop's kbRun, its job pool) the gate
+	// kept counting the request as out for good: under a cap its slot was never free again, and as the request
+	// finding out nobody found out after it. Every later request on the connection was then put off as busy with
+	// nothing sent, until the process restarted (#6698). It is told as a failure that says nothing of the upstream.
+	returned := false
+	defer func() {
+		if !returned {
+			_ = g.done(t, finding(), false, errUnwound)
+		}
+	}()
 	var reply Reply
 	var answered bool
 	switch c.cfg.API {
@@ -169,11 +242,15 @@ func (c *Client) Chat(ctx context.Context, r Request) (Reply, error) {
 	default:
 		reply, answered, err = c.messages(ctx, hc, key, r)
 	}
+	returned = true
 	if reply.Model == "" {
 		reply.Model = c.cfg.Model
 	}
-	return reply, g.done(probe, answered, err)
+	return reply, g.done(t, finding(), answered, err)
 }
+
+// errUnwound is what the gate is told of a request a panic unwound through: it ended, with no answer to read.
+var errUnwound = errors.New("ai: the request did not return")
 
 // apiEndpoint preserves deployment prefixes and accepts bases with or without /v1.
 func apiEndpoint(base, path string) string {
@@ -182,6 +259,14 @@ func apiEndpoint(base, path string) string {
 		base += "/v1"
 	}
 	return base + "/" + path
+}
+
+// setUserAgent gives an explicit connection value precedence over Persona's default.
+func (c *Client) setUserAgent(req *http.Request) {
+	if c.cfg.UserAgent != nil {
+		req.Header.Set("User-Agent", *c.cfg.UserAgent)
+	}
+	modelhttp.SetDefaultUserAgent(req.Header)
 }
 
 // messages calls the Messages API; answered is whether the upstream said 200, Truncated whether the reply stopped at
@@ -194,24 +279,7 @@ func (c *Client) messages(ctx context.Context, hc *http.Client, key string, r Re
 		turns = append(turns, map[string]any{"role": m.Role, "content": m.Content})
 	}
 	bodyMap := map[string]any{"model": c.cfg.Model, "max_tokens": r.MaxTokens, "system": r.System, "messages": turns, "stream": true}
-	if c.cfg.ReasoningEffort != "" {
-		switch strings.ToLower(strings.TrimSpace(c.cfg.ReasoningEffort)) {
-		case "off", "none", "disabled":
-			switch {
-			case strings.Contains(strings.ToLower(c.cfg.Model), "sonnet-5-5"):
-				// Sonnet 5.5 disables up-front thinking with between_tools; low also limits any between-tool work.
-				bodyMap["thinking"] = map[string]any{"type": "between_tools"}
-				bodyMap["output_config"] = map[string]any{"effort": "low"}
-			case messagesThinkingDisabledUnsupported(c.cfg.Model):
-				// These models reject thinking.disabled; the issue's off-or-lowest contract uses low effort instead.
-				bodyMap["output_config"] = map[string]any{"effort": "low"}
-			default:
-				bodyMap["thinking"] = map[string]any{"type": "disabled"}
-			}
-		case "low", "medium", "high", "xhigh", "max":
-			bodyMap["output_config"] = map[string]any{"effort": c.cfg.ReasoningEffort}
-		}
-	}
+	ApplyReasoningEffort(bodyMap, "messages", c.cfg.Model, c.cfg.ReasoningEffort)
 	body, _ := json.Marshal(bodyMap)
 	req, err := http.NewRequestWithContext(ctx, "POST", apiEndpoint(c.cfg.BaseURL, "messages"), bytes.NewReader(body))
 	if err != nil {
@@ -225,6 +293,7 @@ func (c *Client) messages(ctx context.Context, hc *http.Client, key string, r Re
 		req.Header.Set("x-api-key", key)
 	}
 	req.Header.Set("anthropic-version", "2023-06-01")
+	c.setUserAgent(req)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return reply, false, fmt.Errorf("ai: %w", err)
@@ -284,34 +353,45 @@ func (u *messageUsage) into(to *Usage) {
 	}
 }
 
-// errorOf reads a Messages error: an object with its type and message (type falling back to a code), or only a
-// message string. ok is false when raw holds no error at all.
-func errorOf(raw json.RawMessage) (kind, msg string, ok bool) {
+// errorOf reads a Messages error: an object with its type, code and message, or only a message string. kind retains
+// the established display/type behavior; code stays separate so new code semantics never mistake type for it.
+func errorOf(raw json.RawMessage) (kind, code, msg string, ok bool) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return "", "", false
+		return "", "", "", false
 	}
 	if json.Unmarshal(raw, &msg) == nil {
-		return "error", msg, true
+		return "error", "", msg, true
 	}
-	var o struct {
-		Type    string `json:"type"`
-		Code    string `json:"code"`
-		Message string `json:"message"`
+	code, msg, kind, ok = gatewayErrorDetailsWithType(raw)
+	if !ok {
+		return "", "", "", false
 	}
-	if json.Unmarshal(raw, &o) != nil {
-		return "", "", false
-	}
-	return cmp.Or(o.Type, o.Code, "error"), o.Message, true
+	return cmp.Or(kind, code, "error"), code, msg, true
 }
 
 // messageFailure is the error a Messages error reported after the 200 stands for, and whether it counts as an
-// answer: a limit (overloaded_error, rate_limit_error) holds the gate like HTTP 529 / 429 and is no answer; any
-// other is a streamFailure, Transient as its type's HTTP status would be (api_error 500, timeout_error 504).
-func messageFailure(kind, msg string) (bool, error) {
-	if limit := streamLimitFor("error", kind, msg); limit != nil {
+// answer: a limit (overloaded_error, rate_limit_error, or an explicit limit code) holds the gate and is no answer;
+// any other is a streamFailure, Transient as its type's HTTP status would be (api_error 500, timeout_error 504).
+func messageFailure(kind, code, msg string) (bool, error) {
+	kind = cmp.Or(kind, code, "error")
+	if limit := streamLimitFor("error", code, msg); limit != nil {
 		return false, limit
 	}
-	return true, &streamFailure{status: messageErrorStatus[strings.ToLower(kind)], kind: kind, msg: msg}
+	status := messageErrorStatus[strings.ToLower(kind)]
+	failureStatus := status
+	if failureStatus == 0 { // a generic stream error has no HTTP type; wording fallback uses bad-request semantics
+		failureStatus = http.StatusBadRequest
+	}
+	// An unknown code retains the established type-based limit behavior. A recognized non-limit code (a missing model,
+	// excess context or an unsupported endpoint) is not replaced by a contradictory type.
+	_, recognizedNonLimit := failureKindForCode(code)
+	if !recognizedNonLimit {
+		if limit := streamLimitFor("error", kind, msg); limit != nil {
+			return false, limit
+		}
+	}
+	failure := &streamFailure{status: status, kind: kind, code: code, msg: msg}
+	return true, withFailureKind(failure, failureKindFor(failureStatus, code, msg, kind))
 }
 
 // streamCut is the error of a stream that ended before its end event: the connection was cut, and whatever text
@@ -330,8 +410,10 @@ func readMessage(body io.Reader) (Reply, bool, error) {
 		return Reply{}, true, fmt.Errorf("ai: read response: %w", err)
 	}
 	var out struct {
-		Type    string `json:"type"`
-		Model   string `json:"model"`
+		Type    json.RawMessage `json:"type"`
+		Code    json.RawMessage `json:"code"`
+		Message json.RawMessage `json:"message"`
+		Model   string          `json:"model"`
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -344,8 +426,9 @@ func readMessage(body io.Reader) (Reply, bool, error) {
 		return Reply{}, true, fmt.Errorf("ai: decode: %w", err)
 	}
 	// An error body sent with 200 (a gateway that ignored "stream" and failed) is the failure it reports.
-	if kind, msg, ok := errorOf(out.Error); out.Type == "error" || (out.Type == "" && ok && len(out.Content) == 0) {
-		answered, err := messageFailure(cmp.Or(kind, "error"), msg)
+	typ := decodeErrorString(out.Type)
+	if kind, code, msg, ok := errorOf(out.Error); typ == "error" || (typ == "" && ok && len(out.Content) == 0) {
+		answered, err := messageFailure(kind, cmp.Or(code, decodeErrorCode(out.Code)), cmp.Or(msg, decodeErrorString(out.Message)))
 		return Reply{}, answered, err
 	}
 	var b strings.Builder
@@ -382,7 +465,8 @@ func readMessageStream(body io.Reader) (Reply, bool, error) {
 	)
 	err := SSEEvents(body, func(data string) bool {
 		var ev struct {
-			Type string `json:"type"`
+			Type json.RawMessage `json:"type"`
+			Code json.RawMessage `json:"code"`
 			// Message is message_start's message, or an error's text where a relay puts it at the top.
 			Message      json.RawMessage `json:"message"`
 			ContentBlock struct {
@@ -400,11 +484,13 @@ func readMessageStream(body io.Reader) (Reply, bool, error) {
 		if json.Unmarshal([]byte(data), &ev) != nil {
 			return false
 		}
-		kind, msg, isError := errorOf(ev.Error)
-		if ev.Type == "" && isError { // an error event without its type: the error is what it carries
-			ev.Type = "error"
+		kind, code, msg, isError := errorOf(ev.Error)
+		code = cmp.Or(code, decodeErrorCode(ev.Code))
+		eventType := decodeErrorString(ev.Type)
+		if eventType == "" && isError { // an error event without its type: the error is what it carries
+			eventType = "error"
 		}
-		switch ev.Type {
+		switch eventType {
 		case "message_start":
 			var m struct {
 				Model string        `json:"model"`
@@ -432,7 +518,7 @@ func readMessageStream(body io.Reader) (Reply, bool, error) {
 			if msg == "" {
 				_ = json.Unmarshal(ev.Message, &msg) // a relay's {"type":"error","message":"..."}
 			}
-			failedAnswered, failed = messageFailure(cmp.Or(kind, "error"), msg)
+			failedAnswered, failed = messageFailure(kind, code, msg)
 			return true
 		}
 		return false
@@ -461,6 +547,45 @@ func messagesThinkingDisabledUnsupported(model string) bool {
 	return false
 }
 
+// ApplyReasoningEffort keeps connection probes and runtime calls on the same wire format.
+// False means this protocol cannot express the requested effort; Chat and Responses validate model-specific levels upstream.
+func ApplyReasoningEffort(body map[string]any, api, model, effort string) bool {
+	if effort == "" {
+		return true
+	}
+	normalized := strings.ToLower(strings.TrimSpace(effort))
+	switch api {
+	case "chat":
+		if normalized == "off" || normalized == "none" || normalized == "disabled" {
+			effort = "none"
+		}
+		body["reasoning_effort"] = effort
+	case "responses":
+		if normalized == "off" || normalized == "none" || normalized == "disabled" {
+			effort = "none"
+		}
+		body["reasoning"] = map[string]any{"effort": effort}
+	default:
+		switch normalized {
+		case "off", "none", "disabled":
+			switch {
+			case strings.Contains(strings.ToLower(model), "sonnet-5-5"):
+				body["thinking"] = map[string]any{"type": "between_tools"}
+				body["output_config"] = map[string]any{"effort": "low"}
+			case messagesThinkingDisabledUnsupported(model):
+				body["output_config"] = map[string]any{"effort": "low"}
+			default:
+				body["thinking"] = map[string]any{"type": "disabled"}
+			}
+		case "low", "medium", "high", "xhigh", "max":
+			body["output_config"] = map[string]any{"effort": effort}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // respond calls the Responses API. It always streams: some compatible endpoints (Codex-backed relays) reject
 // stream=false, and the text is just the concatenated output_text deltas. The system prompt goes in as a developer
 // message rather than `instructions`, which those relays replace with their own. Events are framed as SSE
@@ -475,14 +600,7 @@ func (c *Client) respond(ctx context.Context, hc *http.Client, key string, r Req
 	if r.BoundOutput && r.MaxTokens > 0 {
 		req["max_output_tokens"] = r.MaxTokens
 	}
-	if c.cfg.ReasoningEffort != "" {
-		effort := c.cfg.ReasoningEffort
-		switch strings.ToLower(strings.TrimSpace(effort)) {
-		case "off", "none", "disabled":
-			effort = "none"
-		}
-		req["reasoning"] = map[string]any{"effort": effort}
-	}
+	ApplyReasoningEffort(req, "responses", c.cfg.Model, c.cfg.ReasoningEffort)
 	body, _ := json.Marshal(req)
 	hreq, err := http.NewRequestWithContext(ctx, "POST", apiEndpoint(c.cfg.BaseURL, "responses"), bytes.NewReader(body))
 	if err != nil {
@@ -491,6 +609,7 @@ func (c *Client) respond(ctx context.Context, hc *http.Client, key string, r Req
 	hreq.Header.Set("content-type", "application/json")
 	hreq.Header.Set("accept", "text/event-stream")
 	hreq.Header.Set("authorization", "Bearer "+key)
+	c.setUserAgent(hreq)
 	resp, err := hc.Do(hreq)
 	if err != nil {
 		return reply, false, fmt.Errorf("ai: %w", err)
@@ -510,20 +629,18 @@ func (c *Client) respond(ctx context.Context, hc *http.Client, key string, r Req
 	}
 	event := func(data string) (reply Reply, done bool, err error) {
 		var ev struct {
-			Type    string `json:"type"`
-			Delta   string `json:"delta"`
-			Message string `json:"message"`
-			Code    string `json:"code"` // an error event's
+			Type    json.RawMessage `json:"type"`
+			Delta   string          `json:"delta"`
+			Message json.RawMessage `json:"message"`
+			Code    json.RawMessage `json:"code"` // an error event's
+			Error   json.RawMessage `json:"error"`
 			// Part is the content part of response.content_part.added/done: type output_text or refusal.
 			Part struct {
 				Type string `json:"type"`
 			} `json:"part"`
 			Response struct {
-				Model string `json:"model"`
-				Error *struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
+				Model             string          `json:"model"`
+				Error             json.RawMessage `json:"error"`
 				IncompleteDetails *struct {
 					Reason string `json:"reason"`
 				} `json:"incomplete_details"`
@@ -547,7 +664,18 @@ func (c *Client) respond(ctx context.Context, hc *http.Client, key string, r Req
 			}
 			return r
 		}
-		switch ev.Type {
+		failureDetails := func() (code, msg string) {
+			code, msg = decodeErrorCode(ev.Code), decodeErrorString(ev.Message)
+			if _, nestedCode, nestedMsg, ok := errorOf(ev.Error); ok {
+				code, msg = cmp.Or(nestedCode, code), cmp.Or(nestedMsg, msg)
+			}
+			if _, responseCode, responseMsg, ok := errorOf(ev.Response.Error); ok { // response.error is most specific
+				code, msg = cmp.Or(responseCode, code), cmp.Or(responseMsg, msg)
+			}
+			return code, msg
+		}
+		eventType := decodeErrorString(ev.Type)
+		switch eventType {
 		case "response.output_text.delta":
 			b.WriteString(ev.Delta)
 		case "response.refusal.delta", "response.refusal.done":
@@ -574,20 +702,11 @@ func (c *Client) respond(ctx context.Context, hc *http.Client, key string, r Req
 				reply = finished()
 				return Reply{Model: reply.Model, Usage: reply.Usage}, true, &RefusalError{StopReason: reason}
 			}
-			msg := ev.Message
-			if ev.Response.Error != nil {
-				msg = ev.Response.Error.Message
-			}
-			return reply, true, fmt.Errorf("ai: %s: %s", ev.Type, msg)
+			code, msg := failureDetails()
+			return reply, true, streamFailureError(eventType, code, msg)
 		case "response.failed", "error":
-			msg, code := ev.Message, ev.Code
-			if e := ev.Response.Error; e != nil {
-				msg, code = e.Message, cmp.Or(e.Code, code)
-			}
-			if limit := streamLimitFor(ev.Type, code, msg); limit != nil { // a limit told after the 200 holds the gate too
-				return reply, true, limit
-			}
-			return reply, true, fmt.Errorf("ai: %s: %s", ev.Type, msg)
+			code, msg := failureDetails()
+			return reply, true, streamFailureError(eventType, code, msg)
 		}
 		return reply, false, nil
 	}

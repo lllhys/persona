@@ -3,7 +3,7 @@
 // rows as the Lark card, with an Accept button for each task to verify and a Handled button for each question that can wait
 // (docs/extensions/bots.md "Morning and evening briefings").
 import { openTask } from "../../lib/handoff";
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { errorText } from "../../lib/api";
 import { putTodo, refreshTodos } from "../../lib/store";
 import { updateTodo } from "../../lib/todos";
@@ -31,7 +31,7 @@ function Section({ icon, tint, title, children }: { icon: IconName; tint: string
 }
 
 function More({ n, text = "assistant-brief.more" }: { n: number; text?: string }) {
-  return n > 0 ? <div className="py-1 text-[12px] text-ink-2">{t(text, { n })}</div> : null;
+  return n > 0 ? <div className="py-1 text-label text-ink-2">{t(text, { n })}</div> : null;
 }
 
 /** A link the hub gave, if it is a web address: anything else is not drawn as one. */
@@ -48,22 +48,25 @@ function meta(row: BriefRow): string {
 
 function WaitingRow({ row }: { row: BriefRow }) {
   return (
-    <div className="flex items-center gap-3 py-1.5" data-brief-row="waiting">
-      <div className="min-w-0 flex-1">
-        <div className="text-[13.5px] font-medium [overflow-wrap:anywhere]">{row.title}</div>
-        <div className="text-[12px] text-ink-2">{meta(row)}</div>
+    <div className="@container" data-brief-row="waiting">
+      {/* Narrow: the words take the whole width and the link drops under them, as in the Accept row (#5569) */}
+      <div className="flex items-center gap-3 py-1.5 @max-md:flex-wrap @max-md:gap-y-2">
+        <div className="min-w-0 flex-1 @max-md:w-full @max-md:flex-none">
+          <div className="text-[13.5px] font-medium [overflow-wrap:anywhere]">{row.title}</div>
+          <div className="text-label text-ink-2">{meta(row)}</div>
+        </div>
+        {webLink(row.link) && (
+          <Button href={webLink(row.link)} title={t("assistant-brief.open_row", { title: row.title })}>
+            {t("assistant-brief.open")}
+          </Button>
+        )}
       </div>
-      {webLink(row.link) && (
-        <Button href={webLink(row.link)} title={t("assistant-brief.open_row", { title: row.title })}>
-          {t("assistant-brief.open")}
-        </Button>
-      )}
     </div>
   );
 }
 
 /** What the Accept button of a task says: it asked, the hub took it, or the round is already over. */
-type Accepting = "idle" | "busy" | "finishing" | "finished" | "accepted" | "handled";
+type Accepting = "idle" | "busy" | "finishing" | "finished" | "accepted" | "recorded" | "handled";
 
 /** What the button of a row to verify says: Accept a deployed task, Got it a conclusion, Take recommendation a decision. */
 function acceptLabel(row: BriefRow): { label: string; title: string } {
@@ -72,14 +75,16 @@ function acceptLabel(row: BriefRow): { label: string; title: string } {
   return { label: t("assistant-brief.accept"), title: t("assistant-brief.accept_row", { title: row.title }) };
 }
 
-export function AcceptRow({ row, stacked = false, admission, onBusyChange, blocked = false }: { row: BriefRow; stacked?: boolean; admission?: { current: boolean }; onBusyChange?: (busy: boolean) => void; blocked?: boolean }) {
+export function AcceptRow({ row, stacked = false, admission, onBusyChange, blocked = false, secondary, hideTitle = false }: { row: BriefRow; stacked?: boolean; admission?: { current: boolean }; onBusyChange?: (busy: boolean) => void; blocked?: boolean; secondary?: ReactNode; hideTitle?: boolean }) {
   const [state, setState] = useState<Accepting>("idle");
   // Admit either action synchronously, before React disables the other button.
   const ownAdmission = useRef(false);
   const admitted = admission ?? ownAdmission;
   const button = acceptLabel(row);
+  // the primary button (and the settled word) on its own full-width line while the row is narrow
+  const full = stacked ? "w-full" : "@max-md:w-full";
   const deciding = row.outcome === "decide";
-  const settled = state === "accepted" || state === "handled" || state === "finished";
+  const settled = state === "accepted" || state === "recorded" || state === "handled" || state === "finished";
   // A decision with nothing recommended can still be finished, but has nothing to take.
   const takes = !deciding || !!row.recommend;
   const accept = () => {
@@ -120,17 +125,22 @@ export function AcceptRow({ row, stacked = false, admission, onBusyChange, block
     );
   };
   return (
-    <div className={stacked ? "flex flex-wrap items-center gap-x-3 gap-y-2 py-1.5" : "flex items-center gap-3 py-1.5"} data-brief-row="accept">
-      <div className={stacked ? "w-full min-w-0" : "min-w-0 flex-1"}>
-        <div className="text-[13.5px] font-medium [overflow-wrap:anywhere]">{row.title}</div>
+    <div className="@container" data-brief-row="accept">
+    {/* Narrow (the tray, a phone's chat column; `stacked` always): the words take the whole width, the secondary buttons
+        one row under them and the primary its own full-width line, so the words are never a four-letter column (#5569). */}
+    <div className={cx("flex items-center", stacked ? "flex-wrap gap-x-2 gap-y-3 py-0.5" : "gap-3 py-1.5 @max-md:flex-wrap @max-md:gap-y-2")}>
+      {/* stacked, top to bottom: the task, what is asked, what is recommended, how long it has waited; the buttons
+          follow after a larger gap, so the words and the actions read as two groups */}
+      <div className={cx("min-w-0", stacked ? "flex w-full flex-col gap-1.5" : "flex-1 @max-md:w-full @max-md:flex-none")}>
+        {!hideTitle && <div className={cx("font-medium [overflow-wrap:anywhere]", stacked ? "text-sm font-semibold" : "text-[13.5px]")}>{row.title}</div>}
         {row.verdict && (
-          <div className="text-[12.5px] [overflow-wrap:anywhere]" data-brief-verdict={row.outcome ?? "deployed"}>
+          <div className={cx("[overflow-wrap:anywhere]", stacked ? "text-sm leading-relaxed" : "text-[12.5px]")} data-brief-verdict={row.outcome ?? "deployed"}>
             {row.verdict}
           </div>
         )}
-        {row.detail && <div className="text-[12px] text-ink-2 [overflow-wrap:anywhere]">{row.detail}</div>}
-        {row.recommend && <div className="text-[12px] text-ink-2 [overflow-wrap:anywhere]">{t("assistant-brief.recommend", { option: row.recommend })}</div>}
-        <div className="text-[12px] text-ink-2">{meta(row)}</div>
+        {row.detail && <div className="text-label text-ink-2 [overflow-wrap:anywhere]">{row.detail}</div>}
+        {row.recommend && <div className="text-label text-ink-2 [overflow-wrap:anywhere]" data-brief-recommend>{t("assistant-brief.recommend", { option: row.recommend })}</div>}
+        <div className={cx("text-label", stacked ? "text-ink-3" : "text-ink-2")} data-brief-meta>{meta(row)}</div>
       </div>
       <Button title={t("assistant-brief.open_row", { title: row.title })} onClick={() => openTask(row.id)}>
         {t("assistant-brief.open")}
@@ -141,15 +151,17 @@ export function AcceptRow({ row, stacked = false, admission, onBusyChange, block
           {t("assistant-brief.finish")}
         </Button>
       )}
+      {!settled && secondary}
       {settled ? (
-        <span className="shrink-0 text-[12.5px] text-ink-2" data-brief-accepted={state}>
-          {t(state === "finished" ? "assistant-brief.finished" : state === "handled" ? "assistant-brief.handled" : deciding ? "assistant-brief.taken" : row.outcome ? "assistant-brief.noted" : "assistant-brief.accepted")}
+        <span className={cx("shrink-0 text-[12.5px] text-ink-2", full)} data-brief-accepted={state}>
+          {t(state === "finished" ? "assistant-brief.finished" : state === "handled" ? "assistant-brief.handled" : state === "recorded" ? "assistant-brief.recorded_not_delivered" : deciding ? "assistant-brief.taken" : row.outcome ? "assistant-brief.noted" : "assistant-brief.accepted")}
         </span>
       ) : takes ? (
-        <Button tone="primary" busy={state === "busy"} disabled={blocked || !row.asked_at || state === "finishing"} title={button.title} onClick={accept}>
+        <Button tone="primary" className={full} busy={state === "busy"} disabled={blocked || !row.asked_at || state === "finishing"} title={button.title} onClick={accept}>
           {button.label}
         </Button>
       ) : null}
+    </div>
     </div>
   );
 }
@@ -174,7 +186,7 @@ function LaterRow({ row, conversation }: { row: BriefRow; conversation: string }
     <div className="flex items-center gap-3 py-1.5" data-brief-row="later">
       <div className="min-w-0 flex-1">
         <div className="text-[13.5px] font-medium [overflow-wrap:anywhere]">{row.title}</div>
-        <div className="text-[12px] text-ink-2">{meta(row)}</div>
+        <div className="text-label text-ink-2">{meta(row)}</div>
       </div>
       {webLink(row.link) && (
         <Button href={webLink(row.link)} title={t("assistant-brief.open_row", { title: row.title })}>
@@ -204,18 +216,18 @@ export function BriefCard({ item }: { item: FeedItem }) {
   const past = body.failed.length + body.done.length;
   return (
     <div className="flex flex-col rounded-card bg-surface p-4 shadow-card" data-testid="brief-card">
-      <div className="mb-2 flex items-center gap-1.5 text-[12px] font-medium text-ink-2">
+      <div className="mb-2 flex items-center gap-1.5 text-label font-medium text-ink-2">
         <Icon name="sun" size={13} />
         {body.title || t("assistant-brief.title")}
       </div>
 
       {body.waiting_unknown ? (
         <Section icon="hand" tint="bg-field text-attention" title={t("assistant-brief.waiting_head", { n: "?" })}>
-          <div className="py-1 text-[13px] text-ink-2">{t("assistant-brief.waiting_unknown")}</div>
+          <div className="py-1 text-meta text-ink-2">{t("assistant-brief.waiting_unknown")}</div>
         </Section>
       ) : (
         <Section icon="hand" tint="bg-field text-attention" title={t("assistant-brief.waiting_head", { n: body.waiting.length })}>
-          {body.waiting.length === 0 && <div className="py-1 text-[13px] text-ink-2">{t("assistant-brief.none")}</div>}
+          {body.waiting.length === 0 && <div className="py-1 text-meta text-ink-2">{t("assistant-brief.none")}</div>}
           {body.waiting.map((r) => (
             <WaitingRow key={r.id} row={r} />
           ))}
@@ -223,9 +235,9 @@ export function BriefCard({ item }: { item: FeedItem }) {
       )}
 
       <Section icon="clock" tint="bg-accent-tint text-accent" title={t("assistant-brief.past_head", { hours: body.hours, done: body.done_total, failed: body.failed_total })}>
-        {past === 0 && <div className="py-1 text-[13px] text-ink-2">{t("assistant-brief.none")}</div>}
+        {past === 0 && <div className="py-1 text-meta text-ink-2">{t("assistant-brief.none")}</div>}
         {body.failed.map((x) => (
-          <div key={`${x.kind}-${x.id}-${x.at}`} className="flex items-start gap-2 py-1 text-[13px]" data-brief-row="failed">
+          <div key={`${x.kind}-${x.id}-${x.at}`} className="flex items-start gap-2 py-1 text-meta" data-brief-row="failed">
             <Icon name="stop" size={11} className="mt-1.5 shrink-0 text-attention" />
             <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
               <span className="font-medium">{x.title}</span> · {t(failedKey(x), { time: clock(x.at) })}
@@ -234,7 +246,7 @@ export function BriefCard({ item }: { item: FeedItem }) {
           </div>
         ))}
         {body.done.map((x) => (
-          <div key={x.id} className="flex items-start gap-2 py-1 text-[13px]" data-brief-row="done">
+          <div key={x.id} className="flex items-start gap-2 py-1 text-meta" data-brief-row="done">
             <Icon name="check" size={12} className="mt-1 shrink-0 text-green" />
             <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
               <span className="font-medium">{x.title}</span> · {clock(x.at)}
@@ -245,7 +257,7 @@ export function BriefCard({ item }: { item: FeedItem }) {
       </Section>
 
       <Section icon="check" tint="bg-green-tint text-green" title={t("assistant-brief.accept_head", { n: body.accept.length })}>
-        {body.accept.length === 0 && <div className="py-1 text-[13px] text-ink-2">{t("assistant-brief.none")}</div>}
+        {body.accept.length === 0 && <div className="py-1 text-meta text-ink-2">{t("assistant-brief.none")}</div>}
         {body.accept.map((r) => (
           <AcceptRow key={r.id + (r.asked_at ?? "")} row={r} />
         ))}
@@ -276,12 +288,12 @@ export function BriefCard({ item }: { item: FeedItem }) {
           page is all a row does: nothing is turned on from here. */}
       {body.setup.length > 0 && (
         <Section icon="spark" tint="bg-field text-ink-2" title={t("assistant-brief.setup_head")}>
-          <div className="py-1 text-[12px] text-ink-2">{t("assistant-brief.setup_intro")}</div>
+          <div className="py-1 text-label text-ink-2">{t("assistant-brief.setup_intro")}</div>
           {body.setup.map((x) => {
             const page = briefSetupPage(x.id);
             return (
               <div key={x.id} className="flex items-center gap-3 py-1.5" data-brief-row="setup">
-                <div className="min-w-0 flex-1 text-[13px] [overflow-wrap:anywhere]">{x.text}</div>
+                <div className="min-w-0 flex-1 text-meta [overflow-wrap:anywhere]">{x.text}</div>
                 {page && <Button onClick={() => navigate(page)}>{t("assistant-brief.setup_open")}</Button>}
               </div>
             );

@@ -76,7 +76,9 @@ final class InboxScrollEdgeTests: XCTestCase {
             app.terminate()
         }
         app.launchArguments = ["-pairURL", pair, "-ui.scheme", look, "-ui.style", style, "-tab", "mail", "-inbox.kind", "",
-                               "-inbox.source", "", "-inbox.grouping", "time"]
+                               "-inbox.source", "", "-inbox.grouping", "time",
+                               // every section with Done's title at the end (the section bar's All, #9053)
+                               "-showInboxSection", "all"]
         app.launchPersona()
         acceptIconAlert(timeout: 2)
     }

@@ -12,11 +12,19 @@ import (
 )
 
 // presenceTimes sets how long the owner counts as present and the longest a decision waits, for a test.
-func presenceTimes(t *testing.T, present, decision time.Duration) {
+func presenceTimes(t testing.TB, present, decision time.Duration) {
 	t.Helper()
 	oldPresent, oldDecision := ownerPresentFor, relayDecisionMax
 	ownerPresentFor, relayDecisionMax = present, decision
 	t.Cleanup(func() { ownerPresentFor, relayDecisionMax = oldPresent, oldDecision })
+}
+
+// ownerTurnTimes sets the owner-turn gate's safety limits for a test (#6394).
+func ownerTurnTimes(t *testing.T, startWait, max time.Duration) {
+	t.Helper()
+	oldStart, oldMax := ownerTurnStartWait, ownerTurnMax
+	ownerTurnStartWait, ownerTurnMax = startWait, max
+	t.Cleanup(func() { ownerTurnStartWait, ownerTurnMax = oldStart, oldMax })
 }
 
 // stopHolds stops the timers a test's held queues left.
@@ -153,6 +161,7 @@ func TestSupervisionMessageWithADecisionIsQueuedUrgent(t *testing.T) {
 // when the hold ends.
 func TestConversationSendWaitsForTheOwner(t *testing.T) {
 	presenceTimes(t, 300*time.Millisecond, time.Hour)
+	ownerTurnTimes(t, 300*time.Millisecond, time.Hour)
 	s, f := newQuietService(t)
 	stopHolds(t, s)
 	ctx := context.Background()
@@ -309,6 +318,7 @@ func TestQueuedRelaysGoOutByRank(t *testing.T) {
 // when the hold ends it goes in on its own, with no change of the machine's list.
 func TestSystemMessagesWaitWhileTheOwnerTalks(t *testing.T) {
 	presenceTimes(t, 300*time.Millisecond, time.Hour)
+	ownerTurnTimes(t, 300*time.Millisecond, time.Hour)
 	s, f := newQuietService(t)
 	stopHolds(t, s)
 	ctx := context.Background()
@@ -338,6 +348,7 @@ func TestSystemMessagesWaitWhileTheOwnerTalks(t *testing.T) {
 // queued, shown waiting, and goes in when the hold ends.
 func TestTaskMessageToAnIdleConversationWaitsForTheOwner(t *testing.T) {
 	presenceTimes(t, 400*time.Millisecond, time.Hour)
+	ownerTurnTimes(t, 400*time.Millisecond, time.Hour)
 	s, f := newQuietService(t)
 	stopHolds(t, s)
 	f.judge = `{"verdict":"done","reason":"done"}`
@@ -380,6 +391,36 @@ func TestDecisionWaitingMessagesAreHeldAtMost(t *testing.T) {
 	b := &relayBook{st: relayState{Queue: map[string][]relayMsg{}}}
 	now := time.Now()
 	b.ownerSpokeLocked("conv1", now.Add(-30*time.Second))
+	// While the owner's round is on, the gate holds every rank alike until its safety limit; the owner's own answer
+	// and another conversation are not held (#6394).
+	gateWait := ownerTurnStartWait - 30*time.Second
+	for _, tc := range []struct {
+		name string
+		msg  relayMsg
+		want time.Duration
+	}{
+		{"an ordinary message waits out the owner's round", relayMsg{Tool: "conversation_send", At: now.Add(-10 * time.Minute)}, gateWait},
+		{"a fresh decision waits just as long", relayMsg{Tool: superviseTool, Urgent: true, At: now}, gateWait},
+		{"a decision past the old five-minute cap still waits", relayMsg{Tool: askAnswerTool, At: now.Add(-5 * time.Minute)}, gateWait},
+		{"the owner's own answer is not held", relayMsg{Tool: askAnswerTool, Owner: true, At: now}, 0},
+	} {
+		if got := b.holdLocked("conv1", tc.msg, now); got != tc.want {
+			t.Errorf("%s: held %s, want %s", tc.name, got, tc.want)
+		}
+	}
+	if got := b.holdLocked("other", relayMsg{Tool: "conversation_send", At: now}, now); got != 0 {
+		t.Fatalf("a conversation the owner did not speak in is held %s", got)
+	}
+	// A round seen working moves the gate to its hard cap; a list showing it stopped releases the gate.
+	b.ownerRoundsSeenLocked([]proto.Session{{SessionID: "conv1", Status: proto.StatusWorking}}, now)
+	if got := b.holdLocked("conv1", relayMsg{Tool: "conversation_send"}, now); got != ownerTurnMax-30*time.Second {
+		t.Fatalf("the working round is held %s, want the hard cap", got)
+	}
+	b.ownerRoundsSeenLocked([]proto.Session{{SessionID: "conv1", Status: proto.StatusIdle}}, now)
+	if got := b.holdLocked("conv1", relayMsg{Tool: "conversation_send"}, now); got != 90*time.Second {
+		t.Fatalf("after the round the presence window holds %s, want 90s", got)
+	}
+	// With the gate gone, the ranks and the decision cap decide as before.
 	for _, tc := range []struct {
 		name string
 		msg  relayMsg
@@ -421,19 +462,45 @@ func TestDecisionWaitingMessagesAreHeldAtMost(t *testing.T) {
 	}
 }
 
-// End to end: the owner keeps talking, a decision that has waited its time goes in and the ordinary message does not.
+// End to end: while the owner's round runs, even a decision that has waited its time stays queued; once the round is
+// seen over, the decision goes in first by rank and the ordinary message waits (#6394).
 func TestDecisionGoesInWhileTheOwnerKeepsTalking(t *testing.T) {
 	presenceTimes(t, time.Hour, 150*time.Millisecond)
+	ownerTurnTimes(t, time.Hour, time.Hour)
 	s, f := newQuietService(t)
 	stopHolds(t, s)
 	ctx := context.Background()
+	session := func(status string) proto.Session {
+		return proto.Session{SessionID: "conv1", MachineID: "server", Assistant: true, Status: status}
+	}
 	s.UserSpoke(ctx, SessionRef{MachineID: "server", SessionID: "conv1"})
 	s.relayOrQueue(ctx, "conv1", relayMsg{From: "c2", FromTitle: "Research", Tool: "conversation_send", Text: "ordinary", At: time.Now().UTC()})
 	s.relayOrQueue(ctx, "conv1", relayMsg{From: "t1", Tool: askAnswerTool, Text: "the late answer", At: time.Now().UTC()})
 	if q, sent := s.queuedFor("conv1"), f.sentTo("conv1"); q != 2 || sent != 0 {
 		t.Fatalf("at first: %d queued, %d sent", q, sent)
 	}
-	waitFor(t, "the decision after its longest hold", func() bool {
+	// Move the queued messages past the old 150 ms decision cap, without a wall-clock sleep. The owner's round must
+	// hold both until its own round is seen over.
+	s.relays.mu.Lock()
+	for i := range s.relays.st.Queue["conv1"] {
+		m := &s.relays.st.Queue["conv1"][i]
+		m.At = m.At.Add(-time.Second)
+		m.QueuedAt = m.QueuedAt.Add(-time.Second)
+	}
+	s.relays.mu.Unlock()
+	s.drainRelays("server", []proto.Session{session(proto.StatusIdle)})
+	if sent := f.sentTo("conv1"); sent != 0 {
+		t.Fatalf("the gate let %d message(s) in while the owner's round ran", sent)
+	}
+	// The round runs, then ends: the next drain takes the decision first.
+	s.setSessions("server", []proto.Session{session(proto.StatusWorking)})
+	waitFor(t, "the round shown working", func() bool {
+		s.relays.mu.Lock()
+		defer s.relays.mu.Unlock()
+		return s.relays.ownerTurns["conv1"].working
+	})
+	s.setSessions("server", []proto.Session{session(proto.StatusIdle)})
+	waitFor(t, "the decision after the round", func() bool {
 		return len(f.notices()) == 1 && s.queuedFor("conv1") == 1
 	})
 	if n := f.notices(); len(n) != 1 || !strings.Contains(n[0], "the late answer") || s.queuedFor("conv1") != 1 {
@@ -484,9 +551,11 @@ func TestReplacedQueuedMessageKeepsItsWait(t *testing.T) {
 	if since := q[2].decisionSince(); since.Before(before.Add(-time.Second)) || since.After(time.Now()) {
 		t.Fatalf("a message that only now waits on a decision counts from %s, want now", since)
 	}
-	// The owner keeps talking: the two that waited 4 minutes have one more, the new decision its full hold.
+	// The owner keeps talking: the two that waited 4 minutes have one more, the new decision its full hold. The
+	// owner-turn gate is released here on purpose: these assertions cover the presence-window math underneath it.
 	now := time.Now()
 	b.ownerSpokeLocked("conv1", now)
+	delete(b.ownerTurns, "conv1")
 	if h := b.holdLocked("conv1", q[1], now); h <= 0 || h > time.Minute {
 		t.Fatalf("the replaced decision is held %s, want at most a minute", h)
 	}
@@ -503,6 +572,7 @@ func TestReplacedQueuedMessageKeepsItsWait(t *testing.T) {
 // queued to when it went in.
 func TestQueueWaitOfAHeldMessage(t *testing.T) {
 	presenceTimes(t, 300*time.Millisecond, time.Hour)
+	ownerTurnTimes(t, 300*time.Millisecond, time.Hour)
 	s, f := newQuietService(t)
 	stopHolds(t, s)
 	ctx := context.Background()

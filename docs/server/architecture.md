@@ -73,11 +73,15 @@ A single binary `personad`, four modes:
 
 The hub only handles communication: app and other clients ↔ managers, hub ↔ hub (linked hubs), connections (WebSocket, node / connector links), pairing and auth, the admin UI, push delivery, and various relays.
 Business logic lives in the managers (`server/internal/assistant`, `devices`, `extmgr`; see `docs/server/machines.md`, `docs/extensions/extensions.md` ("Who owns what"), `docs/assistant/assistant.md`):
-the data for the assistant, Inbox, to-dos, usage limits, board, extensions and devices, plus model calls (triage, titles, summaries, judgments). The hub forwards these endpoints to the managers as-is (`assistantwire.Routes`, `devicewire.Routes`, `extwire.Routes`).
+the data for the assistant, Inbox, to-dos, usage limits, board, extensions and devices, plus model calls (triage, titles, summaries, judgments). The hub forwards these endpoints to the managers as-is (`assistantwire.Routes`, `devicewire.Routes`, `extwire.Routes`), except the merged lists, which it joins, adding up the to-dos' `counts` and joining their places over the JSON as the managers send it (`server/internal/hub/ownership_lists.go`, `server/internal/hub/todo_view.go`); it never works out a to-do's phase.
+An ordinary route goes as one `http.request` on the bus, its body read whole (a body of 1 MiB or more goes on a relay stream of its own beside the bus, `http.request_streamed`, so the bus is not held up behind it: `docs/protocol/protocol.md` "Forwarding App requests"); a route that upgrades to a WebSocket cannot, so the extensions' routes and the assistant's
+WebSocket routes (`assistantwire.SocketRoutes`: a meeting's audio socket, `docs/assistant/meeting-minutes.md` "Audio from the phone") go over a relay stream instead
+(`extwire.MethodAccept`): the manager dials the relay and serves the request there, and later ones while the hub keeps the stream open (`docs/extensions/extensions.md` ("Who owns what")), and the manager's extensions layer hands the assistant's to it
+(`extmgr.Options.AssistantSocket`). Who asked goes in the hub's headers, the caller's credential stays at the hub, and revoking the device ends the socket.
 
 `server/internal/hub/architecture_guard_test.go` pins down what the hub looks like now and fails if it grows in the wrong direction:
 
-- **Routes the hub answers itself** = `testdata/hub_routes_allowed.txt` (registered with literals in the hub package and not in the three forwarding tables above). New business endpoints go in a manager,
+- **Routes the hub answers itself** = `testdata/hub_routes_allowed.txt` (registered in the hub package with a string literal, or a loop over a literal string list, and not in the forwarding tables: the three above, plus `assistantwire.InboxRoutes`, `assistantwire.SocketRoutes`, `devicewire.ShareRoutes`, `devicewire.MetricsRoutes`, `devicewire.TransferRoutes`, `devicewire.UsageRoutes` and `devicewire.AdminUsageRoutes`). A loop over any other name fails the guard. New business endpoints go in a manager,
   and the route is added to the matching forwarding table; only routes that truly belong to the hub (connections, pairing / auth, admin, push delivery, relays) get a line added to the list by hand. Removing a route means removing its line too (extra lines fail as well).
   While a piece of business logic is being moved into a manager, its line can be marked `# moving to the manager` at the end, and the line is removed once the move is done (usage windows `docs/server/usage-windows.md` ("Who owns this") and the workspace board `docs/web/workspace-board.md` ("Who owns the board") have both been moved).
 - **Dependencies**: the hub's dependencies must not include manager packages (`assistant`, `assistantskills`, `devices`, `extmgr`, `extension/host`, `agents`, `mail`, `office`, `feishubot`, `wechat`, `node`, `mcpserver`),
@@ -93,7 +97,7 @@ The parts (the hub, the managers, the node on each computer, extensions) talk on
 
 | Package | What it carries |
 | --- | --- |
-| `assistantwire`, `devicewire`, `extwire` | The bus between the hub and a manager: methods, events, routes the hub relays, extension scopes and manifest types the bus carries |
+| `assistantwire`, `devicewire`, `extwire` | The bus between the hub and a manager: methods, events, routes the hub relays, extension scopes and manifest types the bus carries; in `assistantwire` also the To-dos view, counts and places, generated from `schema/wire/todo-view.schema.json` (`server/internal/assistantwire/todo_view_gen.go`, never edited by hand) |
 | `kbwire` | Knowledge-base entities, identity hints, updates and chat context as they cross the bus and the connector protocol |
 | `connectorwire` | Inbox things and replies, conversation batches, posts and snapshots from connectors (`docs/protocol/connector-protocol.md`) |
 | `aiwire` | A model setting (`aiwire.Config`) |
@@ -138,3 +142,9 @@ When no iPhone is connected, the hub wakes the newest iOS registration that offe
 ### Runtime list origin projection
 
 `internal/sessionorigin` classifies the runtime DTO's pane/host metadata using the host registry, matching the clients' desktop-first origin rule (`docs/protocol/protocol.md`, "Pane/host origins"). The hub's existing list adapter adds this scalar to bounded rows and passes it to `internal/sessionlist`; the generic index only stores and matches it. State, preferences and Agents membership remain with their existing owners.
+
+### Runtime list catalog
+
+`catalog=1` on the paged runtime list (`docs/protocol/protocol.md`, "Projects and spaces"; `server/internal/hub/sessions_catalog.go`) names the filtered list's projects and spaces. The index counts the rows by machine and project and by machine and group (`sessionlist.PlaceCounts`, a scan at request time); the hub's adapter turns each directory into a project. What repository a directory holds is not on the row: the adapter asks the directory's computer (`git.status` with `identity_only`), remembers the answer in memory for 30 minutes, and falls back to the folder's name. `place` and `space` are the matching filters, sets of machine and project (or group) pairs.
+
+Why not a field on the row: `proto.Session` has no word left in its size class and `sessionlist.Item` none in a 150-row batch (`docs/lessons/server.md`, "A field that pushes a row past its size class"), and a repository's remote is a fact about a directory, the same for every row in it. Asked per directory when a client opens the view, it costs nothing on a list update, a push or a page, works with the nodes already deployed, and is lost with nothing else when the hub restarts.

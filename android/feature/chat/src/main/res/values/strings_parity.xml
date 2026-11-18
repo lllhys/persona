@@ -12,6 +12,7 @@
     <string name="chat_rewind_confirm_code">Confirm code rewind</string>
     <string name="chat_rewind_confirm_code_note">Files changed after this message go back too.</string>
     <string name="chat_rewind_block_claude_only">Claude only</string>
+    <string name="chat_rewind_block_unsupported">Unavailable</string>
     <string name="chat_rewind_block_working">Working</string>
     <string name="chat_rewind_block_needs_you">Needs reply</string>
     <string name="chat_rewind_block_offline">Not running</string>

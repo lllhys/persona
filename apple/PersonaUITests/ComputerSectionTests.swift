@@ -16,6 +16,12 @@ final class ComputerSectionTests: XCTestCase {
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=" + UITestToken.device
         app.launchArguments = ["-pairURL", pair, "-tab", "settings", "-openMachines", "YES", "-openMachineDetail", "macbook", "-openScreenFresh", "YES"]
+        // TEST_RUNNER_PERSONA_SCHEME=light|dark draws in it, for the shots.
+        if let scheme = ProcessInfo.processInfo.environment["PERSONA_SCHEME"] { app.launchArguments += ["-ui.scheme", scheme] }
+        // TEST_RUNNER_PERSONA_TEXT_SIZE=XXXL (a UIContentSizeCategory suffix) draws at that text size.
+        if let size = ProcessInfo.processInfo.environment["PERSONA_TEXT_SIZE"] {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategory\(size)"]
+        }
         app.launchPinned()
         let toggle = app.switches["computer-switch"].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 30), "no 操控电脑 switch:\n\(app.debugDescription)")
@@ -134,6 +140,55 @@ final class ComputerSectionTests: XCTestCase {
         shot(app, "computer-no-lock-on")
         flip()
         XCTAssertTrue(waitValue(noLock, "0"), "off")
+        XCTAssertFalse(turnOn.exists, "turning it off does not ask")
+    }
+
+    /// x264 for the live screen (#8859): shown only on a Mac whose node found ffmpeg with libx264 (MOCK_SCREEN_X264=1,
+    /// TEST_RUNNER_PERSONA_SCREEN_X264=1), off by default; turning it on asks first and says it is GPL software Persona
+    /// doesn't include, turning it off does not ask. Light and dark shots with TEST_RUNNER_PERSONA_SCHEME. MOCK_COMPUTER=ready.
+    @MainActor func testX264AsksFirst() throws {
+        guard state == "ready" else { throw XCTSkip("MOCK_COMPUTER=ready") }
+        guard ProcessInfo.processInfo.environment["PERSONA_SCREEN_X264"] == "1" else {
+            throw XCTSkip("needs MOCK_SCREEN_X264=1 and TEST_RUNNER_PERSONA_SCREEN_X264=1")
+        }
+        let (app, _, status) = try open()
+        for source in [app, XCUIApplication(bundleIdentifier: "com.apple.springboard")] { // the icon follows the look
+            let alert = source.alerts.containing(NSPredicate(format: "label CONTAINS[c] 'icon' OR label CONTAINS '图标'")).firstMatch
+            if alert.exists, alert.buttons.firstMatch.exists { alert.buttons.firstMatch.tap() }
+        }
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        let x264 = app.switches["computer-x264"].firstMatch
+        XCTAssertTrue(x264.waitForExistence(timeout: 10), "the switch:\n\(app.debugDescription)")
+        // Short drags until the row sits in the middle of the screen: a whole swipe carries the page past it.
+        let height = app.frame.height
+        for _ in 0..<12 where x264.frame.minY < height * 0.25 || x264.frame.maxY > height * 0.7 {
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: x264.frame.maxY > height * 0.7 ? 0.4 : 0.8))
+            from.press(forDuration: 0.05, thenDragTo: to)
+            usleep(500_000)
+        }
+        usleep(800_000)
+        XCTAssertEqual(x264.value as? String, "0", "off by default")
+        let flip = { x264.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap() }
+        let turnOn = app.buttons["打开"].firstMatch
+        let env = ProcessInfo.processInfo.environment
+        let scheme = (env["PERSONA_SCHEME"].map { "-" + $0 } ?? "") + (env["PERSONA_TEXT_SIZE"].map { "-" + $0.lowercased() } ?? "")
+        shot(app, "computer-x264-off\(scheme)")
+        flip()
+        XCTAssertTrue(turnOn.waitForExistence(timeout: 5), "asked first:\n\(app.debugDescription)")
+        let warning = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Persona 不带它")).firstMatch
+        XCTAssertTrue(warning.exists, "what it means:\n\(app.debugDescription)")
+        shot(app, "computer-x264-ask\(scheme)")
+        cancelDialog(app)
+        XCTAssertTrue(waitGone(turnOn))
+        XCTAssertEqual(x264.value as? String, "0", "取消: still off")
+        flip()
+        XCTAssertTrue(turnOn.waitForExistence(timeout: 5))
+        turnOn.tap()
+        XCTAssertTrue(waitValue(x264, "1"), "on")
+        shot(app, "computer-x264-on\(scheme)")
+        flip()
+        XCTAssertTrue(waitValue(x264, "0"), "off")
         XCTAssertFalse(turnOn.exists, "turning it off does not ask")
     }
 

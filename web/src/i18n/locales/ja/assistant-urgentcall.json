@@ -1,0 +1,14 @@
+{
+  "call": "緊急コール：{title}",
+  "answered": "応答済み",
+  "answered_for": "応答済み · {duration}",
+  "missed": "不在着信",
+  "missed_twice": "不在着信（2 回）",
+  "declined": "拒否",
+  "cancelled": "ほかで対応済み",
+  "ringing": "呼び出し中",
+  "you_asked": "あなたが電話を頼んだ件",
+  "why": "電話した理由",
+  "outcome": "結果",
+  "transcript": "通話の内容"
+}

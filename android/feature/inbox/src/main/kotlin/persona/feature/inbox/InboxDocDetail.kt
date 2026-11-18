@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import persona.core.designsystem.*
+import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcon
 import persona.core.designsystem.icons.PhIcons
 import persona.core.navigation.InboxItemUiRoute
@@ -107,7 +108,22 @@ internal fun docKindLabel(res: Resources, doc: InboxDocRef?): String =
 @Composable
 fun InboxItemDetailScreen(repository: InboxRepository, route: InboxItemDetailRoute, navigator: Navigator) {
     val inbox by repository.snapshot.collectAsStateWithLifecycle()
-    val record = inbox.records.inboxRecord(route.itemId)
+    val listedRecord = inbox.records.inboxRecord(route.itemId)
+    var lookup by remember(route.itemId) { mutableStateOf<InboxItemLookupResult?>(null) }
+    var lookupAttempt by remember(route.itemId) { mutableIntStateOf(0) }
+    LaunchedEffect(repository, route.itemId, listedRecord, lookupAttempt) {
+        if (listedRecord == null) {
+            lookup = null
+            lookup = readInboxItem(repository, route.itemId)
+        } else lookup = null
+    }
+    val record = listedRecord ?: (lookup as? InboxItemLookupResult.Found)?.record
+    var contextRevision by remember { mutableIntStateOf(0) }
+    var assistantContext by remember(record?.item, contextRevision) { mutableStateOf<String?>(null) }
+    LaunchedEffect(repository, record?.item, contextRevision) {
+        val current = record ?: return@LaunchedEffect
+        assistantContext = if (current.isAssistantRow) repository.personaContext(current.item.id) else null
+    }
     val open = LocalLarkLinkOpener.current
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
@@ -116,18 +132,66 @@ fun InboxItemDetailScreen(repository: InboxRepository, route: InboxItemDetailRou
         onRefresh = {
             scope.launch {
                 refreshing = true
-                try { repository.refreshNow() } catch (e: CancellationException) { throw e } catch (_: Exception) { } finally { refreshing = false }
+                try {
+                    repository.refreshNow()
+                    if (record == null) lookupAttempt++
+                } catch (e: CancellationException) { throw e } catch (_: Exception) { } finally {
+                    refreshing = false
+                    contextRevision++
+                }
             }
         }) {
         item("item-extension-notice") { InboxExtensionNotice(route.itemId, route) }
-        if (record == null) item("item-missing") { StatusText(stringResource(R.string.inbox_item_missing)) }
-        else inboxItemBody(record) { url -> open?.invoke(url, inbox.contentSource) }
+        if (record == null) {
+            when (val result = lookup) {
+                null -> item("item-loading") { JLoading(text = stringResource(R.string.inbox_loading)) }
+                is InboxItemLookupResult.Failed -> item("item-failed") {
+                    JNotice(stringResource(R.string.inbox_refresh_failed), actionLabel = stringResource(R.string.inbox_retry),
+                        onAction = { lookupAttempt++ })
+                }
+                InboxItemLookupResult.Missing -> item("item-missing") { StatusText(stringResource(R.string.inbox_item_missing)) }
+                is InboxItemLookupResult.Found -> Unit
+            }
+        } else inboxItemBody(record, assistantContext) { url -> open?.invoke(url, inbox.contentSource) }
     }
 }
 
-internal fun LazyListScope.inboxItemBody(record: InboxRecord, onOpen: (String) -> Unit) {
+private fun InboxRecord.additionalAssistantText(text: String, loadedContext: Boolean): String {
+    val summary = item.summary?.trim()?.takeIf { it.isNotEmpty() } ?: return text
+    val trimmed = text.trim()
+    fun String.afterSummary() = if (startsWith(summary) && getOrNull(summary.length)?.isWhitespace() != false)
+        substring(summary.length).trimStart() else null
+    val title = item.title.trim()
+    if (loadedContext && title.isNotEmpty() && trimmed.startsWith(title) && trimmed.getOrNull(title.length)?.isWhitespace() != false) {
+        val content = trimmed.substring(title.length).trimStart().afterSummary()
+        if (content != null) return content
+        if (title != summary) return text
+    }
+    return trimmed.afterSummary() ?: text
+}
+
+internal fun LazyListScope.inboxItemBody(record: InboxRecord, context: String? = null, onOpen: (String) -> Unit) {
     val doc = record.doc
     if (doc == null) {
+        if (record.isAssistantRow) {
+            record.connector?.url?.takeIf { it.isNotBlank() }?.let { url ->
+                item("assistant-open-chat") {
+                    JButton(stringResource(R.string.inbox_open_chat), { onOpen(url) }, kind = JButtonKind.Secondary,
+                        size = JButtonSize.Medium, icon = PersonaIcons.openExternal)
+                }
+            }
+            if (!record.onlyTitleAndSummary(context)) {
+                val loadedContext = context?.takeIf { it.isNotBlank() }
+                (loadedContext ?: record.item.preview).takeIf { it.isNotBlank() }?.let { text ->
+                    val content = record.additionalAssistantText(text, loadedContext != null)
+                    if (content.isNotBlank()) {
+                        item("assistant-content-header") { JSectionHeader(stringResource(R.string.inbox_content)) }
+                        item("item-preview") { Text(content, style = PersonaTheme.type.body, color = PersonaTheme.palette.ink) }
+                    }
+                }
+            }
+            return
+        }
         record.item.preview.takeIf { it.isNotBlank() }?.let { text ->
             item("item-preview") { Text(text, style = PersonaTheme.type.body, color = PersonaTheme.palette.ink) }
         }

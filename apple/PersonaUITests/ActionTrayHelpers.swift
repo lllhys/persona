@@ -13,6 +13,19 @@ extension XCUIApplication {
         return button
     }
 
+    /// Needs You's plan, reply-draft and to-verify rows are folded to a line (#5569): taps each folded row open, so the card
+    /// under it (its buttons) can be reached. A row already open is left as it is.
+    @MainActor func expandTrayRows(timeout: TimeInterval = 5) {
+        let folded = buttons.matching(identifier: "action-tray.row")
+        _ = folded.firstMatch.waitForExistence(timeout: timeout)
+        var taps = 0
+        while folded.count > 0 && taps < 12 {
+            folded.element(boundBy: 0).tap()
+            taps += 1
+            usleep(300_000)
+        }
+    }
+
     /// The task rows of the open tray.
     var trayTasks: XCUIElementQuery { buttons.matching(identifier: "action-tray.task") }
     /// The agent rows of the open tray.

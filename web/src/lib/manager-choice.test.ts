@@ -30,6 +30,11 @@ describe("the manager the assistant page shows", () => {
     expect(managerHeaderFor("/assistant/conversations")).toBe("m-1");
     expect(managerHeaderFor("/assistant?archived=1")).toBe("m-1");
     expect(managerHeaderFor("/assistant/tasks/t1/run")).toBe("m-1");
+    // the new-chat page's token calendar is the current assistant's computers' (#9506); the island's totals are not
+    expect(managerHeaderFor("/usage/days?days=280")).toBe("m-1");
+    expect(managerHeaderFor("/usage/hours")).toBe("m-1");
+    expect(managerHeaderFor("/usage")).toBeUndefined();
+    expect(managerHeaderFor("/usage/windows")).toBeUndefined();
     // the health page has no switcher; others go by ownership
     expect(managerHeaderFor("/assistant?space=health")).toBeUndefined();
     expect(managerHeaderFor("/assistant/memory?space=health")).toBeUndefined();

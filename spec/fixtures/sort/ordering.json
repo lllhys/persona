@@ -1071,7 +1071,6 @@
         "CLAUDE.md: 同一时间再按 id"
       ],
       "derived": true,
-      "compatibility": "id_tiebreak_extension",
       "input": {
         "sessions": [
           {
@@ -1142,29 +1141,6 @@
             "visible_rows": [
               "machine-a/shared-session",
               "machine-b/shared-session"
-            ],
-            "folded": false
-          }
-        ],
-        "unread_shown": []
-      },
-      "ios_expected": {
-        "counts": {
-          "needsYou": 0,
-          "unread": 0,
-          "working": 2
-        },
-        "groups": [
-          {
-            "id": "state/working",
-            "title": "工作中",
-            "rows": [
-              "machine-b/shared-session",
-              "machine-a/shared-session"
-            ],
-            "visible_rows": [
-              "machine-b/shared-session",
-              "machine-a/shared-session"
             ],
             "folded": false
           }
@@ -1180,7 +1156,6 @@
         "CLAUDE.md: 同一时间再按 id"
       ],
       "derived": true,
-      "compatibility": "id_tiebreak_extension",
       "input": {
         "sessions": [
           {
@@ -1239,29 +1214,6 @@
           "unread": 0,
           "working": 2,
           "backgroundWaiting": 0
-        },
-        "groups": [
-          {
-            "id": "state/working",
-            "title": "工作中",
-            "rows": [
-              "machine-a/shared-session",
-              "machine-b/shared-session"
-            ],
-            "visible_rows": [
-              "machine-a/shared-session",
-              "machine-b/shared-session"
-            ],
-            "folded": false
-          }
-        ],
-        "unread_shown": []
-      },
-      "ios_expected": {
-        "counts": {
-          "needsYou": 0,
-          "unread": 0,
-          "working": 2
         },
         "groups": [
           {

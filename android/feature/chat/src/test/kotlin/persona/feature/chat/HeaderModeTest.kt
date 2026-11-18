@@ -11,9 +11,12 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.Session
+import persona.core.contracts.SessionCapabilities
 import persona.core.designsystem.ModeTone
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.sort.canChangeModes
+import persona.core.domain.sort.canSwitchListedModes
+import persona.core.domain.sort.listedModes
 
 /**
  * The Agent header's permission mode (#3957), the rules of iOS `SessionModes` (#3719, HeaderModeTests): each mode's tone
@@ -75,6 +78,61 @@ class HeaderModeTest {
         assertNull(SessionModes.confirmation(claude("plan"), "plan"))
         // an assistant conversation switches without asking
         assertNull(SessionModes.confirmation(claude("default").copy(assistant = true), "bypassPermissions"))
+    }
+
+    /** A Paseo provider that is not Claude Code (#8261): its row lists the modes it takes, and Claude Code's chips stay off. */
+    private fun grok(mode: String?, modes: List<String>? = listOf("default", "bypassPermissions"), status: String = "idle") =
+        Session(machineId = "m", sessionId = "paseo-agent-1", agent = "paseo", agentLabelHint = "Grok", launcher = "grok", status = status,
+            permissionMode = mode, sourceKind = "runtime", capabilities = SessionCapabilities(read = true, send = true, interrupt = true,
+                approve = true, modes = false, model = true, permissionModes = modes))
+
+    @Test fun aProviderThatListsItsModesSwitchesBetweenThemBothWays() {
+        val own = grok(null)
+        assertEquals(listOf("default", "bypassPermissions"), own.listedModes)
+        assertTrue(own.canSwitchListedModes)
+        assertFalse(own.canChangeModes)
+        // Its own approval in its own words, never Ask First; Allow Everything saying it can be switched back.
+        val rows = SessionModes.switchable(own)
+        assertEquals(listOf("default", "bypassPermissions"), rows.map { it.id })
+        assertEquals(listOf(R.string.chat_modes_launcher_default, R.string.chat_modes_bypass), rows.map { it.titleRes })
+        assertEquals(R.string.chat_modes_bypass_listed_detail, rows[1].detailRes)
+        assertNull(SessionModes.bypassUnavailable(own))
+        // No mode reported is its own approval: shown, under the plain shield in no tone.
+        assertEquals("default", SessionModes.current(own))
+        assertTrue(SessionModes.showsInHeader(own))
+        assertEquals(ModeTone.Unknown, SessionModes.headerTone(own))
+        assertEquals(PhIcons.Shield, SessionModes.headerIcon(own))
+        val all = grok("bypassPermissions")
+        assertEquals(ModeTone.AllowsAll, SessionModes.headerTone(all))
+        assertEquals(PhIcons.ShieldWarning, SessionModes.headerIcon(all))
+        // Into Allow Everything asks first; out of it does not, since it can be turned on again; the current one asks nothing.
+        assertEquals(SessionModes.Confirmation.AllowEverything, SessionModes.confirmation(own, "bypassPermissions"))
+        assertNull(SessionModes.confirmation(all, "default"))
+        assertNull(SessionModes.confirmation(own, "default"))
+    }
+
+    @Test fun onlyTwoListedModesWhereClaudeCodesDoNotStandMakeASwitch() {
+        // Its own approval alone, an older node's row without the list: nothing to switch, nothing shown.
+        for (modes in listOf(listOf("default"), null)) {
+            assertNull(grok(null, modes).listedModes)
+            assertFalse(SessionModes.showsInHeader(grok(null, modes)))
+        }
+        // A Persona conversation, and a row where Claude Code's chips stand, keep their own.
+        assertNull(grok(null).copy(assistant = true).listedModes)
+        assertNull(grok("default").copy(agent = "claude", capabilities = grok("default").capabilities?.copy(modes = true)).listedModes)
+        // Not running: still shown with the mode it ran in, nothing to pick.
+        val stopped = grok("bypassPermissions", status = "offline")
+        assertTrue(SessionModes.showsInHeader(stopped))
+        assertFalse(stopped.canSwitchListedModes)
+    }
+
+    @Test fun theListIsReadOffTheRowsCapabilities() {
+        val json = """{"machine_id":"m","session_id":"s","agent":"paseo","capabilities":{"read":true,"send":true,"modes":false,"permission_modes":["default","bypassPermissions"]}}"""
+        assertEquals(listOf("default", "bypassPermissions"), JsonCodec.decodeFromString<Session>(json).capabilities?.permissionModes)
+        // Not a list of words: left out, the row kept.
+        val odd = """{"machine_id":"m","session_id":"s","capabilities":{"read":true,"permission_modes":"default"}}"""
+        assertNull(JsonCodec.decodeFromString<Session>(odd).capabilities?.permissionModes)
+        assertTrue(JsonCodec.decodeFromString<Session>(odd).capabilities?.read == true)
     }
 
     @Test fun bypassAvailableIsReadOffTheSession() {

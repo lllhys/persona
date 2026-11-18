@@ -1,0 +1,17 @@
+{
+  "open_in_inbox": "Open in Inbox",
+  "summary": "Summary",
+  "sent": "Replied as you",
+  "self_replied": "You replied at the source",
+  "filed_not_sent": "Handled; this reply wasn't sent",
+  "conclusion_filed": "Conclusion · handled",
+  "replaced": "No longer current; nothing was sent",
+  "reply_as_you": "Reply to {title} as you",
+  "conclusion": "Conclusion",
+  "later_line": "Waiting in your Inbox: {title}",
+  "wrap_up": "Wrap up: {title}",
+  "wrap_up_ask": "Let's wrap this up: write the final summary and reply back to this Inbox item.",
+  "wrap_up_failed": "Couldn't ask to wrap up: {error}",
+  "wrap_up_to_send": "To send",
+  "wrap_up_to_confirm": "To confirm"
+}

@@ -1,0 +1,7 @@
+# Methods over the 10,000 code units ART compiles (scripts/release/check_android_shrink.py).
+# One full signature per line, `Class.method(descriptor) size`, so an overload is a line of its own.
+# A listed method may only shrink: it warns while it is over the limit and fails once it grows past the size below.
+# A method now at or under the limit, or gone from the dex, is only noted, so delete its line then.
+# Do not add a method here to get a release through; split it, or keep it only if it is a library's.
+# zxing's generated table, present in every release: it is the library's, so it stays interpreted.
+com.google.zxing.pdf417.PDF417Common.<clinit>()V 11178

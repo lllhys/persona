@@ -23,6 +23,7 @@
   "gone": "This extension is no longer in this marketplace",
   "preview_failed": "Couldn't preview: {error}",
   "reload": "Reload",
+  "updating": "Updating results…",
   "reading": "Loading…",
   "uninstall": "Uninstall",
   "upgrade_to": "Update to {version}",

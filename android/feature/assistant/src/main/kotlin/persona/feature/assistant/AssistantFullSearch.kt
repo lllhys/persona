@@ -1,0 +1,253 @@
+package persona.feature.assistant
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import persona.core.contracts.Session
+import persona.core.contracts.SessionKey
+import persona.core.contracts.api.AssistantManagement
+import persona.core.contracts.api.AssistantSearchAnswer
+import persona.core.designsystem.JEmptyState
+import persona.core.designsystem.JFullScreen
+import persona.core.designsystem.JIcon
+import persona.core.designsystem.JIconButton
+import persona.core.designsystem.JRow
+import persona.core.designsystem.JSearchField
+import persona.core.designsystem.JSectionHeader
+import persona.core.designsystem.PersonaTheme
+import persona.core.designsystem.Tokens
+import persona.core.designsystem.rowPadding
+import persona.core.designsystem.rowTitleStart
+import persona.core.designsystem.icons.PersonaIcons
+import persona.core.navigation.MessageJumps
+import java.time.Instant
+
+/**
+ * Persona's chats for the full-window search, latest first. Archived chats stay out of local results, and a blank
+ * query lists all non-archived chats; otherwise title, last message and a direction's name match (the same local
+ * filter the sidebar uses).
+ */
+internal fun filterChatsForFullSearch(
+    chats: List<Session>,
+    query: String,
+    words: ConversationWords,
+    names: Map<String, String> = emptyMap(),
+    backgroundId: String? = null,
+    activeTag: String? = null,
+): List<Session> {
+    val ordered = chats.distinctBy { it.key }
+        .filter { !it.archived }
+        .withConversationTag(activeTag)
+        .map { it to it.updated }
+        .sortedWith(compareByDescending<Pair<Session, Instant?>> { it.second }.thenBy { it.first.key.path })
+        .map { it.first }
+    val q = query.trim()
+    if (q.isEmpty()) return ordered
+    return ordered.filter {
+        it.conversationTitle(words).contains(q, ignoreCase = true) ||
+            it.lastText.orEmpty().contains(q, ignoreCase = true) ||
+            names[it.sessionId].orEmpty().contains(q, ignoreCase = true) ||
+            (it.sessionId == backgroundId && words.background.contains(q, ignoreCase = true))
+    }
+}
+
+/**
+ * Rows the full-window search lists: local matches at once (latest first), and when the hub lists assistant search the
+ * manager's answer merges in the same way as the sidebar ([mergeAssistantSearch]).
+ */
+internal fun fullSearchRows(
+    query: String,
+    chats: List<Session>,
+    known: List<Session>,
+    enabled: Boolean,
+    answer: AssistantSearchAnswer?,
+    words: ConversationWords,
+    names: Map<String, String> = emptyMap(),
+    backgroundId: String? = null,
+    activeTag: String? = null,
+): List<FoundChat> {
+    val local = filterChatsForFullSearch(chats, query, words, names, backgroundId, activeTag)
+    if (!enabled || query.trim().isEmpty()) return local.map { FoundChat(it, null) }
+    return mergeAssistantSearch(local, answer, known)
+        .filter { activeTag.isNullOrEmpty() || it.session.tags?.contains(activeTag) == true }
+}
+
+/**
+ * Search over the whole window on a regular window (#9171), as the open iPhone Duo's chats-only full search: the field
+ * at the foot above the keyboard, a close button beside it, Persona's chats above (latest first), filtered as typed,
+ * including the manager search when the hub lists it. A row opens its chat and dismisses; Back and Close dismiss too.
+ */
+@Composable
+internal fun AssistantFullSearch(
+    chats: List<Session>,
+    known: List<Session>,
+    searchOn: Boolean,
+    management: AssistantManagement?,
+    hubKey: String,
+    words: ConversationWords,
+    names: Map<String, String> = emptyMap(),
+    backgroundId: String? = null,
+    activeTag: String? = null,
+    mainName: String? = null,
+    mainKey: SessionKey? = null,
+    onOpen: (SessionKey) -> Unit,
+    onDismiss: () -> Unit,
+    /** Seeded for JVM shots; production leaves it blank. */
+    initialQuery: String = "",
+    /** False draws the page in place (JVM shots); production keeps the full-screen dialog. */
+    overlay: Boolean = true,
+) {
+    var query by rememberSaveable { mutableStateOf(initialQuery) }
+    val search = rememberAssistantSearch(query, searchOn, management, hubKey)
+    val answer = search.current(query)
+    val partial = answer?.partial == true
+    val rows = remember(query, chats, known, searchOn, answer, words, names, backgroundId, activeTag) {
+        fullSearchRows(query, chats, known, searchOn, answer, words, names, backgroundId, activeTag)
+    }
+    val focus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    var focusedOnce by remember { mutableStateOf(false) }
+    LaunchedEffect(windowFocused) {
+        if (focusedOnce || !windowFocused) return@LaunchedEffect
+        focusedOnce = true
+        withFrameNanos { }
+        runCatching { focus.requestFocus() }
+        keyboard?.show()
+    }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        if (!focusedOnce) {
+            runCatching { focus.requestFocus() }
+            keyboard?.show()
+        }
+    }
+    val body: @Composable () -> Unit = {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(PersonaTheme.palette.background)
+                .then(if (overlay) Modifier.statusBarsPadding().imePadding() else Modifier)
+                .testTag("full-search"),
+        ) {
+            val heading = if (query.isBlank()) {
+                stringResource(R.string.assistant_recent)
+            } else {
+                pluralStringResource(R.plurals.assistant_full_search_chats, rows.size, rows.size)
+            }
+            LazyColumn(
+                Modifier.weight(1f).fillMaxWidth().testTag("full-search-list"),
+                contentPadding = PaddingValues(
+                    start = Tokens.Space.page, end = Tokens.Space.page, bottom = Tokens.Space.m,
+                ),
+            ) {
+                item { JSectionHeader(heading) }
+                if (partial) item {
+                    Text(
+                        stringResource(R.string.assistant_search_partial),
+                        Modifier.padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s),
+                        style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2,
+                    )
+                }
+                items(rows, key = { it.session.key.path }) { row ->
+                    FullSearchRow(
+                        row = row,
+                        title = when {
+                            mainKey != null && row.session.key == mainKey && !mainName.isNullOrBlank() -> mainName
+                            else -> names[row.session.sessionId] ?: row.session.conversationTitle(words)
+                        },
+                        onOpen = {
+                            row.hit?.let { MessageJumps.request(row.session.machineId, row.session.sessionId, it.itemId) }
+                            onOpen(row.session.key)
+                        },
+                    )
+                }
+                if (rows.isEmpty() && query.isNotBlank()) item {
+                    JEmptyState(
+                        stringResource(R.string.assistant_full_search_no_results, query),
+                        stringResource(R.string.assistant_no_match_detail),
+                        icon = PersonaIcons.search,
+                    )
+                }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .then(if (overlay) Modifier.navigationBarsPadding() else Modifier)
+                    .padding(horizontal = Tokens.Space.l, vertical = Tokens.Space.s),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                JSearchField(
+                    query, { query = it }, stringResource(R.string.assistant_search_chats),
+                    Modifier.weight(1f).focusRequester(focus).testTag("full-search-field"),
+                )
+                Spacer(Modifier.width(Tokens.Space.m))
+                JIconButton(
+                    PersonaIcons.close, stringResource(persona.core.designsystem.R.string.designsystem_close),
+                    onDismiss, raised = true, modifier = Modifier.testTag("full-search-close"),
+                )
+            }
+        }
+    }
+    if (overlay) JFullScreen(onDismiss, body) else body()
+}
+
+@Composable
+private fun FullSearchRow(row: FoundChat, title: String, onOpen: () -> Unit) {
+    val said = row.hit?.let(::markedSnippet)
+    val preview = row.session.lastText?.replace("\n", " ")?.takeIf { it.isNotBlank() }
+    androidx.compose.foundation.layout.Column {
+        JRow(
+            title,
+            onClick = onOpen,
+            subtitle = if (said == null) preview else null,
+            subtitleMark = said,
+            chevron = false,
+            leading = {
+                Box(
+                    Modifier
+                        .size(Tokens.MinTouch.android)
+                        .clip(RoundedCornerShape(Tokens.Radius.control))
+                        .background(PersonaTheme.palette.surfaceStrong),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    JIcon(PersonaIcons.conversation, null, size = Tokens.Size.iconXS, tint = PersonaTheme.palette.ink2)
+                }
+            },
+        )
+        ConversationTagLabels(row.session, Modifier.padding(start = rowTitleStart, end = rowPadding, bottom = Tokens.Space.xs))
+    }
+}

@@ -1,6 +1,6 @@
 {
   "more": "更多",
-  "copy_link": "拷贝链接",
+  "copy_link": "复制链接",
   "reload": "重新载入",
   "context_whole": "作为上下文（整篇）",
   "comments_open_one": "评论（{count} 条未解决）",
@@ -29,7 +29,7 @@
   "web_title": "网页在浏览器的新标签页里打开",
   "other_title": "这个链接在网页里打不开",
   "web_detail": "多数网站不允许被嵌进别的页面，嵌进来只会是一片空白。",
-  "other_detail": "它要交给别的 App 处理，可以拷贝下来。",
+  "other_detail": "它要交给别的 App 处理，可以复制下来。",
   "selection": "选中的文字",
   "as_context": "作为上下文",
   "as_context_hint": "随下一条消息发给{target}",

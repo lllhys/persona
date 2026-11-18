@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/nwverse/persona/server/internal/proto"
 )
 
 func ageTranscript(t *testing.T, profile, id string) {
@@ -32,35 +30,31 @@ func putSessionState(t *testing.T, n *Node, id string, fields map[string]any) {
 // older copy of the conversation and a separate ~/.claude a newer one, moving to ~/.claude would conflict with the
 // wrapper and refuse every message; the conversation resumes from the copy the wrapper can open instead (#4553).
 func TestAssistantResumeStaysInAWrapperProfileWithAnOlderCopy(t *testing.T) {
-	for _, runtime := range []string{"", proto.AssistantRuntimeAgentSDK} {
-		t.Run("runtime="+runtime, func(t *testing.T) {
-			f := sdkTest(t)
-			n := f.n
-			n.home = os.Getenv("HOME")
-			n.dir = filepath.Join(n.home, ".persona")
-			n.cdirs = newClaudeDirs()
-			n.cdirs.scan = func() map[int]procEnv { return nil }
-			t.Setenv("CLAUDE_CONFIG_DIR", "")
-			os.Unsetenv("CLAUDE_CONFIG_DIR")
-			profile := filepath.Join(n.home, ".config", "claude-code", "profiles", "work")
-			writeFile(t, filepath.Join(n.home, ".zshrc"), `function work { CLAUDE_CONFIG_DIR=`+shellQuote(profile)+` command claude "$@"; }`+"\n")
-			cwd := filepath.Join(n.dir, "assistant")
-			id := "a5500000-0000-4000-8000-000000000301"
-			writeProfileTranscript(t, profile, cwd, id)
-			ageTranscript(t, profile, id)
-			writeProfileTranscript(t, filepath.Join(n.home, ".claude"), cwd, id)
-			putSessionState(t, n, id, map[string]any{"launcher": "work", "cwd": cwd, "config_dir": profile})
-			params := map[string]any{"launcher": "work", "cwd": cwd, "text": "hello", "session_id": id, "runtime": runtime, "model_fingerprint": "wrapper-older-copy"}
-			if _, err := nodeCall(t, n, "assistant.send", params); err != nil {
-				t.Fatalf("resume refused: %v", err)
-			}
-			if got := envValue(f.proc(id).cmd.Environ(), "CLAUDE_CONFIG_DIR"); got != profile {
-				t.Fatalf("process profile %q, want %q", got, profile)
-			}
-			if st, _ := n.state.get(id); st.ConfigDir != profile {
-				t.Fatalf("recorded profile %q, want %q", st.ConfigDir, profile)
-			}
-		})
+	f := cliTest(t)
+	n := f.n
+	n.home = os.Getenv("HOME")
+	n.dir = filepath.Join(n.home, ".persona")
+	n.cdirs = newClaudeDirs()
+	n.cdirs.scan = func() map[int]procEnv { return nil }
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	os.Unsetenv("CLAUDE_CONFIG_DIR")
+	profile := filepath.Join(n.home, ".config", "claude-code", "profiles", "work")
+	writeFile(t, filepath.Join(n.home, ".zshrc"), `function work { CLAUDE_CONFIG_DIR=`+shellQuote(profile)+` command claude "$@"; }`+"\n")
+	cwd := filepath.Join(n.dir, "assistant")
+	id := "a5500000-0000-4000-8000-000000000301"
+	writeProfileTranscript(t, profile, cwd, id)
+	ageTranscript(t, profile, id)
+	writeProfileTranscript(t, filepath.Join(n.home, ".claude"), cwd, id)
+	putSessionState(t, n, id, map[string]any{"launcher": "work", "cwd": cwd, "config_dir": profile})
+	params := map[string]any{"launcher": "work", "cwd": cwd, "text": "hello", "session_id": id, "model_fingerprint": "wrapper-older-copy"}
+	if _, err := nodeCall(t, n, "assistant.send", params); err != nil {
+		t.Fatalf("resume refused: %v", err)
+	}
+	if got := envValue(f.proc(id).cmd.Environ(), "CLAUDE_CONFIG_DIR"); got != profile {
+		t.Fatalf("process profile %q, want %q", got, profile)
+	}
+	if st, _ := n.state.get(id); st.ConfigDir != profile {
+		t.Fatalf("recorded profile %q, want %q", st.ConfigDir, profile)
 	}
 }
 

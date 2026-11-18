@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -307,6 +308,31 @@ func TestWritableDirCustomDataDir(t *testing.T) {
 	for _, dir := range []string{"~", "~/proj"} {
 		if _, _, err := n.writableDir(dir, ""); err != nil {
 			t.Errorf("PERSONA_HOME=~: %s: %v", dir, err)
+		}
+	}
+}
+
+// node.info's home_real (#8095): the home with its links followed when that is another path, else nothing.
+func TestRealHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(base, "data", "home", "me")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "home-me")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for home, want := range map[string]string{link: real, link + "/": real, real: "", "": "", "relative/home": "",
+		filepath.Join(base, "missing"): ""} {
+		if got := realHome(home); got != want {
+			t.Errorf("realHome(%q) = %q, want %q", home, got, want)
 		}
 	}
 }

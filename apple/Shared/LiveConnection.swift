@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import os
+import PersonaWire
 
 /// One message of a terminal stream (docs/protocol/protocol.md「Terminal stream」).
 nonisolated enum TerminalEvent: Sendable {
@@ -24,8 +26,9 @@ nonisolated enum ServerEvent: Sendable {
     /// What changed in a machine's list since the last (a hub that has `sessions_delta`, asked for on connect): the
     /// sessions new or different, whole, and the ids gone (docs/protocol/protocol.md「Session deltas」).
     case sessionsDelta(machineID: String, upsert: [Session], remove: [String])
-    /// A lightweight hint, never an authoritative row checkpoint.
-    case sessionsList(revision: String)
+    /// A lightweight hint, never an authoritative row checkpoint. `changes`: which rows changed since which revision,
+    /// when the hub can say (`SessionListChanges`).
+    case sessionsList(revision: String, changes: SessionListChanges? = nil)
     /// hasMore is nil when the event cannot know (a catch-up after since_seq): only pages from the end tell. moreAfter:
     /// the hub capped a catch-up, more came after these.
     case items(SessionKey, [Item], backlog: Bool, hasMore: Bool?, span: ItemSpan, moreAfter: Bool)
@@ -94,6 +97,9 @@ nonisolated enum ServerEvent: Sendable {
     /// A meeting's conversation changed (#3862, docs/assistant/meeting-minutes.md「The `meeting_live` event」): content-free,
     /// only the parts that changed (an open set) and their revisions; the app reads the newer parts with `GET …/live?parts=`.
     case meetingLive(recordingID: String, changed: [String], revs: [String: Int64])
+    /// An urgent call moved on (docs/assistant/urgent-call.md): a phone still ringing for one answered or settled
+    /// elsewhere stops.
+    case urgentCall(id: String, state: String)
     case error(SessionKey?, String)
 
     private struct EventType: Decodable { var type: String }
@@ -187,14 +193,16 @@ nonisolated enum ServerEvent: Sendable {
         var manager: JSONValue?
         /// meeting_live's.
         var recordingID: String?
-        /// meeting_live's list of parts; raw, since other messages use `changed` for other shapes.
+        /// meeting_live's list of parts, and the ids a `sessions_list` hint names; raw, since the shapes differ.
         var changed: JSONValue?
+        /// A `sessions_list` hint's starting revision; raw, so another message's `since` of another shape cannot break it.
+        var since: JSONValue?
 
         enum CodingKeys: String, CodingKey {
             case type, machines, sessions, upsert, remove, revision, items, backlog, text, status, interaction, id, name, args, event, message, error, revs, fleet, history
             case features, epoch, seq, full, cols, rows, data, unsupported, state, desktops, mesh, channel, build, update, item, view, action, key, conversation, plan
             case plugin, badge, invalidate, cwd, dirs, git, operation, auth, source, conversations, account, reason, answers, resolution, manager
-            case effective, changed
+            case effective, changed, since
             case answeredBy = "answered_by", recordingID = "recording_id"
             case extensionID = "extension"
             case hubID = "hub_id", hubName = "hub_name", protocolVersion = "protocol", minAppBuild = "min_app_build", publicURL = "public_url"
@@ -240,7 +248,7 @@ nonisolated enum ServerEvent: Sendable {
         case "sessions":
             guard let m = e.machineID else { return nil }
             return .sessions(machineID: m, (e.sessions ?? []).map { var s = $0; s.machineID = m; return s })
-        case "sessions_list": return e.revision.map { .sessionsList(revision: $0) }
+        case "sessions_list": return e.revision.map { .sessionsList(revision: $0, changes: SessionListChanges(since: e.since, changed: e.changed)) }
         case "sessions_delta":
             guard let m = e.machineID else { return nil }
             return .sessionsDelta(machineID: m, upsert: (e.upsert ?? []).map { var s = $0; s.machineID = m; return s }, remove: e.remove ?? [])
@@ -324,6 +332,9 @@ nonisolated enum ServerEvent: Sendable {
         case "terminal_control":
             guard let key, let state = e.state else { return nil }
             return .terminal(key, .control(state: state, cols: e.cols, rows: e.rows, why: e.error))
+        case "urgent_call":
+            guard let id = e.id, !id.isEmpty, let state = e.state else { return nil }
+            return .urgentCall(id: id, state: state)
         case "meeting_live":
             guard let id = e.recordingID, !id.isEmpty else { return nil }
             let changed = (e.changed?.array ?? []).compactMap { part -> String? in
@@ -358,7 +369,7 @@ nonisolated extension ServerEvent {
             return .sessionsDelta(machineID: machine, upsert: upsert.map { var s = $0; s.group = group; return s }, remove: remove)
         case .sessionsList, .hello, .interactionResolved, .interactionReanswered, .toolCall, .revs, .lark, .messaging, .agents, .inbox, .fleet, .hubUpdate, .desktops, .todos,
              .personas, .look, .managers, .directions, .assistantFeed, .assistantView, .assistantViewAction, .assistantViewBlock, .taskPlan, .pluginBadge,
-             .extensionInvalidate, .fsChanged, .extensionOperation, .extensionAuth, .meetingLive: return self
+             .extensionInvalidate, .fsChanged, .extensionOperation, .extensionAuth, .meetingLive, .urgentCall: return self
         }
     }
 }
@@ -656,7 +667,7 @@ final class LiveConnection {
     /// docs/assistant/managers.md), Persona Link entries in the `desktops` event (`desktops_link`, `DesktopDevice`), and
     /// where to resume the broadcasts from once a hello gave a stream.
     static func queryItems(_ cursor: EventCursor, sessionList: Bool = false, extensionStream: Bool = false) -> [URLQueryItem] {
-        [URLQueryItem(name: "features", value: (extensionStream ? "extension_ui_stream_v1," : "") + (sessionList ? "sessions_list," : "") + "sessions_delta,extension_operations,managers,desktops_link," + HubNaming.feature)] + cursor.queryItems
+        [URLQueryItem(name: "features", value: (extensionStream ? "extension_ui_stream_v1," : "") + (sessionList ? "sessions_list," + SessionListChanges.feature + "," : "") + "sessions_delta,extension_operations,managers,desktops_link," + HubNaming.feature)] + cursor.queryItems
     }
 
     private func heartbeat(_ t: URLSessionWebSocketTask, _ gen: Int) {
@@ -697,6 +708,25 @@ final class LiveConnection {
         }
     }
 
+    /// One ping on this connection for the live screen's Connection Stats (#6558): the round trip to the hub, or nil
+    /// without a connection or without a pong within 5 s. The heartbeat's kind of ping; it changes none of its state.
+    func roundTrip() async -> TimeInterval? {
+        guard state == .connected, let t = task else { return nil }
+        let sent = Date.now
+        return await withCheckedContinuation { (c: CheckedContinuation<TimeInterval?, Never>) in
+            let done = OSAllocatedUnfairLock(initialState: false)
+            let finish: @Sendable (TimeInterval?) -> Void = { v in
+                let first = done.withLock { was -> Bool in
+                    defer { was = true }
+                    return !was
+                }
+                if first { c.resume(returning: v) }
+            }
+            t.sendPing { @Sendable error in finish(error == nil ? Date.now.timeIntervalSince(sent) : nil) }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 5) { finish(nil) }
+        }
+    }
+
     private func receive(_ t: URLSessionWebSocketTask, _ gen: Int) {
         let prepare = prepareEvent
         t.receive { [weak self, prepare] result in
@@ -709,6 +739,7 @@ final class LiveConnection {
             }
             let event = data.flatMap(ServerEvent.decode)
             let meta = data.map(FrameMeta.read) ?? FrameMeta()
+            if let data { DevProbe.frame(type: meta.type, bytes: data.count) }
             if let event { prepare?(event) }
             Task { @MainActor in
                 guard let self, gen == self.generation else { return }
@@ -720,6 +751,7 @@ final class LiveConnection {
                     if meta.type != "extension_ui_stream" { self.note(meta) } // private sessions have no broadcast cursor
                     if case .hello(let hello)? = event { self.personaContracts = hello.features.contains(HubNaming.feature) }
                     if first {
+                        DevProbe.socket(.connected)
                         self.state = .connected
                         self.sayHello()
                         self.backoff = 1
@@ -731,6 +763,7 @@ final class LiveConnection {
                     if let event { self.onEvent?(event) }
                     self.receive(t, gen)
                 case .failure(let err):
+                    DevProbe.socket(.dropped)
                     self.personaContracts = false
                     let planned = self.restartNotice || (!self.closedQuiet && t.closeCode == .goingAway)
                     self.dropped(restart: planned)
@@ -873,9 +906,19 @@ final class LiveConnection {
     /// device for the assistant (`AppVersion`). Older hubs ignore unknown fields and keep their existing defaults.
     private func sayHello() {
         let client = RequestClientMetadata.current
-        send(["type": "client_hello", "locale": LanguageStore.shared.launched, "features": Self.helloFeatures(client),
+        send(["type": "client_hello", "locale": LanguageStore.shared.launched,
+              "features": Self.helloFeatures(client) + (followsMessaging ? [Self.larkViaMessagingFeature] : []),
               "platform": client.platform, "version": client.version, "os": AppVersion.helloOS])
     }
+
+    /// The app's Feishu screens follow the hub's `messaging` events (a messaging source, #2138), so the legacy `lark`
+    /// event, which `AppModel.handle` drops then, need not come: said in `client_hello` (`lark_via_messaging`), and
+    /// said again in a new one when it changes (#9591). A busy Feishu account sent 40–50 of them a minute.
+    var followsMessaging = false {
+        didSet { if followsMessaging != oldValue, state == .connected { sayHello() } }
+    }
+
+    nonisolated static let larkViaMessagingFeature = "lark_via_messaging"
 
     /// `elicitation` (MCP forms and links, `ElicitationForm`) from the iOS app alone: the frozen Mac app and visionOS
     /// don't declare it, so the hub hands those cards to the terminal when they are the only apps open.

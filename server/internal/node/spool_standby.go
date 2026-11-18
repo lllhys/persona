@@ -13,6 +13,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/acceptloop"
 	"github.com/nwverse/persona/server/internal/nodeclient"
+	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -174,13 +175,13 @@ func (s *standby) tryListen() {
 	} else if now != nil {
 		_ = os.Remove(path)
 	}
-	ln, err := net.Listen("unix", path)
+	ln, err := osproc.Listen("unix", path)
 	if err != nil {
 		s.logf("standby: %v", err)
 		return
 	}
 	// Never unlink on close: the next Node listens on the same path, maybe before this one is closed.
-	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	ln.(*osproc.UnixListener).SetUnlinkOnClose(false)
 	_ = os.Chmod(path, 0o600)
 	fi, err := os.Stat(path)
 	if err != nil {

@@ -55,12 +55,18 @@ type Env struct {
 	// Assistant is the name the app shows for the assistant ("Ask {name}…"), for Set Up with it; "" names it the
 	// assistant.
 	Assistant string
+	// Ask: the app opens Set Up with …'s persona://ask (it sent context.assistant, a name or ""). Only then do the pages
+	// draw it: an app that can't (iOS before #5278's part, Android before #5308) would drop the link and the row would
+	// do nothing (#5661).
+	Ask bool
 	// Triage has the triage model try a preview's items (#5278): one verdict each, nothing kept; nil: not offered.
 	Triage func(ctx context.Context, tp subscriptions.TriagePreview) ([]Verdict, error)
 	// UIVersion is the UI version the app draws (6 when 0): an older app gets icons it knows.
 	UIVersion int
 	// Platform is the asking app's (the UI context's): only "ios" offers to add its own Shortcuts source (#3848).
 	Platform string
+	// Graph: the app has its own relationship view (#5741), which the list's Source Relationships row opens (GraphURL).
+	Graph bool
 }
 
 // Request is the page's state and, when something was pressed, the action and its values.
@@ -73,8 +79,25 @@ type Request struct {
 // ErrReadOnly answers an action from a device that may only look.
 var ErrReadOnly = errors.New("read_only_device")
 
+// looks are the actions that only show something, which a device that may only look may press too: the relationship
+// view's row (#5741).
+var looks = map[string]bool{"graph": true}
+
 // Handle draws the page the state names, or does the action and answers what the app shows next.
 func Handle(ctx context.Context, svc Service, env Env, req Request) (wire.ActionResult, error) {
+	p := &pages{ctx: ctx, svc: svc, env: prepared(env), st: parseState(req.State)}
+	if req.Action != "" {
+		if !env.CanEdit && !looks[req.Action] {
+			return wire.ActionResult{}, ErrReadOnly
+		}
+		return p.act(req.Action, req.Values)
+	}
+	v := p.draw()
+	return wire.ActionResult{View: &v}, nil
+}
+
+// prepared is env with what the manager left out filled in.
+func prepared(env Env) Env {
 	if env.Loc == nil {
 		env.Loc = time.UTC // the manager passes the user's; never the machine's
 	}
@@ -90,15 +113,7 @@ func Handle(ctx context.Context, svc Service, env Env, req Request) (wire.Action
 	if env.Native == nil {
 		env.Native = func(string) string { return "" }
 	}
-	p := &pages{ctx: ctx, svc: svc, env: env, st: parseState(req.State)}
-	if req.Action != "" {
-		if !env.CanEdit {
-			return wire.ActionResult{}, ErrReadOnly
-		}
-		return p.act(req.Action, req.Values)
-	}
-	v := p.draw()
-	return wire.ActionResult{View: &v}, nil
+	return env
 }
 
 // state is a page: P names it ("" the list), the rest says which subscription, connector, source or tool.
@@ -226,7 +241,7 @@ func (p *pages) readOnly(v *wire.View) {
 				c.Control.Disabled = true
 			case c.Type == "button" && (c.Action == nil || c.Action.Push == nil):
 				continue
-			case c.Type == "row" && c.Action != nil && c.Action.Push == nil:
+			case c.Type == "row" && c.Action != nil && c.Action.Push == nil && !looks[c.Action.ID]:
 				c.Action = nil
 			case c.Type == "field":
 				val := c.Value

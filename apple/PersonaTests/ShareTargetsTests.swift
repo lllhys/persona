@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Share › Persona's targets (#1460, `ShareTargets`): what the sheet lists, which come first, which one it starts on,
 /// search, and sending to an agent and to a new chat, against a hub in memory.
@@ -54,6 +55,15 @@ import Testing
         #expect(l.agents.map(\.id) == ["m1/a-idle", "m2/a-work"])
         #expect(l.agents.map(\.machine) == ["Studio", "Laptop"])
         #expect(l.agents.first?.folder == "a-idle-repo")
+    }
+
+    @Test func mainTargetUsesTheConfirmedMainMachine() throws {
+        let routed = Self.assistantJSON.replacingOccurrences(
+            of: #"{"machine_id":"hub","launcher""#,
+            with: #"{"machine_id":"hub","main_machine_id":"route-box","launcher""#)
+        let a = try JSON.decoder.decode(APIClient.AssistantState.self, from: Data(routed.utf8))
+        let l = ShareTargets.listed(assistant: a, sessions: [], machines: [])
+        #expect(l.main?.key == SessionKey(machineID: "route-box", sessionID: "main"))
     }
 
     @Test func aHubWithoutAMainConversationStartsOnANewChat() throws {

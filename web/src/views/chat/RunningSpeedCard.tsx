@@ -86,7 +86,7 @@ export function Sparkline({ samples }: { samples: RateSample[] }) {
   );
 }
 
-const rateText = (rate: number) => t("chat-runningstatusbar.token_rate", { rate: formatRate(rate) });
+const rateText = (rate: number) => t("chat-runningspeedcard.token_rate", { rate: formatRate(rate) });
 
 export function RunningSpeedCard({ id, anchor, closeRef, open, pinned, data, onClose, onPointerEnter, onPointerLeave }: {
   id: string;

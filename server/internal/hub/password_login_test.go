@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -285,4 +286,53 @@ func TestPasswordLoginGatesExpiryAndConcurrency(t *testing.T) {
 	if success != 1 || refused != 1 {
 		t.Fatal("concurrent proof replay accepted")
 	}
+}
+
+func TestPasswordLoginProxyTLS(t *testing.T) {
+	h, _, admin, client := passwordTestHub(t)
+	registerClientPassword(t, admin, "client password", "", false)
+	h.admin.gateways = func() []netip.Addr { return []netip.Addr{netip.MustParseAddr("fd00::1")} }
+	for _, tc := range []struct {
+		name, remote, proto, forwarded string
+		tls                            bool
+		want                           int
+	}{
+		{"native TLS", "192.0.2.9:1234", "", "", true, 200},
+		{"loopback", "127.0.0.1:1234", "", "", false, 200},
+		{"LAN HTTPS proxy", "[fd00::20]:1234", "https", "", false, 200},
+		{"LAN Forwarded proxy", "[fd00::20]:1234", "", "proto=https", false, 200},
+		{"LAN plaintext", "[fd00::20]:1234", "", "", false, 403},
+		{"LAN HTTP proxy", "[fd00::20]:1234", "http", "", false, 403},
+		{"public plaintext", "192.0.2.9:1234", "", "", false, 403},
+		{"public spoofed HTTPS", "192.0.2.9:1234", "https", "", false, 403},
+		{"public spoofed Forwarded", "192.0.2.9:1234", "", "proto=https", false, 403},
+		{"untrusted container gateway", "[fd00::1]:1234", "https", "", false, 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := *client
+			c.t, c.remote, c.tls = t, tc.remote, tc.tls
+			c.header = http.Header{"X-Forwarded-Proto": {tc.proto}, "Forwarded": {tc.forwarded}}
+			state := passwordCall(t, &c, "GET", "/api/v1/auth/password/state", nil, tc.want)
+			if tc.want == 200 && state["enabled"] != true {
+				t.Fatal(state)
+			}
+			if tc.want == 403 && state["code"] != "tls_required" {
+				t.Fatal(state)
+			}
+		})
+	}
+	// Complete the password exchange through the proxy, not just discovery.
+	client.remote, client.tls = "[fd00::20]:1234", false
+	client.header = http.Header{"X-Forwarded-Proto": {"https"}}
+	session, proof, err := passwordProof(t, client, "client password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := passwordCall(t, client, "POST", "/api/v1/auth/password/finish", map[string]any{"session": session, "message": proof}, 200)
+	principal, ok := h.authenticate(context.Background(), result["token"].(string))
+	if !ok || principal.Role != roleFull {
+		t.Fatal("proxy login did not issue a usable device token")
+	}
+	client.header.Set("Origin", "https://attacker.example")
+	passwordCall(t, client, "POST", "/api/v1/auth/password/start", map[string]any{}, 403)
 }

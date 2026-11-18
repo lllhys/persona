@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,7 +13,7 @@ import (
 
 // Shared package downloads (#3692). On a slow link a phone gave up on its preview before the package arrived, and
 // the download went with it: asking again started from nothing, next to a second download of the same package on
-// the same link, which then stalled. Now a package (by its cache and sha256) downloads once at a time: who asks for
+// the same link, which then stalled. Now a package (by its cache, sha256 and declared size) downloads once at a time: who asks for
 // it meanwhile waits for that download and sees its progress, and a download whose callers all went away goes on
 // into the cache within its budget, so the next try joins it or finds the package there. Only the user's Cancel
 // (a caller leaving with ErrUserCanceled) stops it, when nobody else waits for it.
@@ -54,7 +55,9 @@ func (m *Market) sharedFetch(ctx context.Context, pkg *MarketPackage, oci *ociRe
 	if err := ctx.Err(); err != nil {
 		return "", err // nothing starts for a caller already gone
 	}
-	key := filepath.Clean(m.Cache) + "\x00" + strings.ToLower(pkg.SHA256)
+	// Size is part of the validation contract: the same bytes can be offered with conflicting sizes.
+	// Separate fetches prevent a failed or accepted size from being inherited by another caller.
+	key := filepath.Clean(m.Cache) + "\x00" + strings.ToLower(pkg.SHA256) + "\x00" + strconv.FormatInt(pkg.Size, 10)
 	fetches.Lock()
 	f := fetches.m[key]
 	if f == nil {

@@ -1,0 +1,11 @@
+{
+  "forbidden": "Only a paired device with full access can load pictures from replies.",
+  "bad_url": "That picture's address can't be loaded: only http and https addresses work.",
+  "address_not_allowed": "That picture's address isn't on the open internet, so the hub won't fetch it.",
+  "too_large": "That picture is too large to load.",
+  "unsupported_type": "That address isn't a JPEG, PNG, GIF, WebP, HEIC or AVIF picture.",
+  "bad_image": "That picture couldn't be read.",
+  "fetch_failed": "Couldn't fetch that picture. Try again later.",
+  "timeout": "Fetching that picture took too long. Try again later.",
+  "rate_limited": "Too many pictures were fetched just now. Try again in a moment."
+}

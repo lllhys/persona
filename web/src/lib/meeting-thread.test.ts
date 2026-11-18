@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { RecordingAsk } from "./kb";
 import { meetingMeta } from "./kb";
-import { followupThread, fromMeeting, hasMaterial, meetingClock, meetingLines, meetingRunning, newerParts, offersTalk, photoOf, roomState, roomThread } from "./meeting-thread";
+import {
+  followupThread, fromMeeting, hasMaterial, linesFrom, liveLines, liveLinesEnd, meetingClock, meetingLines, meetingRunning, meetingTopics,
+  mergeLiveLines, newerParts, offersTalk, photoOf, roomState, roomThread,
+} from "./meeting-thread";
 import type { Item } from "./types";
 
 const rid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -27,7 +30,7 @@ const ask = (id: string, over: Partial<RecordingAsk> = {}): RecordingAsk => ({
 });
 
 describe("the room's thread", () => {
-  it("reads the header, batches, asks and replies apart", () => {
+  it("reads the header (which shows nothing, #9411), batches, asks and replies apart", () => {
     const entries = roomThread([
       header,
       batch(["[0:05] Ada: Today we look at the export flow.", "[0:12] Bo: The cap is still 4 MB.", "(Earlier lines left out: 3.)"]),
@@ -38,13 +41,13 @@ describe("the room's thread", () => {
       item({ role: "assistant", text: "Bo owns it; it is still open." }),
       item({ role: "assistant", kind: "tool_use", tool_name: "meeting_lines" }),
     ], rid.toUpperCase(), [ask(askID, { question_source: "spoken" }), ask(heardID, { question_source: "heard", at: 1810 })]);
-    expect(entries.map((e) => e.kind)).toEqual(["joined", "lines", "question", "answer", "heard", "answer"]);
-    expect(entries[1]).toMatchObject({ lines: [{ clock: "0:05", text: "Ada: Today we look at the export flow." }, { clock: "0:12", text: "Bo: The cap is still 4 MB." }] });
-    expect(entries[2]).toMatchObject({ text: "What did we decide about the export cap last time?", via: "spoken" });
-    expect(entries[3]).toMatchObject({ text: "You kept the 4 MB cap.\n\nBo owns the regression test." });
-    expect(entries[4]).toMatchObject({ clock: "30:10", lines: [{ clock: "29:40", text: "Bo: Who owns the regression test?" }] });
+    expect(entries.map((e) => e.kind)).toEqual(["lines", "question", "answer", "heard", "answer"]);
+    expect(entries[0]).toMatchObject({ lines: [{ clock: "0:05", text: "Ada: Today we look at the export flow." }, { clock: "0:12", text: "Bo: The cap is still 4 MB." }] });
+    expect(entries[1]).toMatchObject({ text: "What did we decide about the export cap last time?", via: "spoken" });
+    expect(entries[2]).toMatchObject({ text: "You kept the 4 MB cap.\n\nBo owns the regression test." });
+    expect(entries[3]).toMatchObject({ clock: "30:10", lines: [{ clock: "29:40", text: "Bo: Who owns the regression test?" }] });
     // Each attempt names its ask, lowercase.
-    expect([entries[2], entries[4]].map((e) => ("ask" in e ? e.ask : undefined))).toEqual([askID, heardID]);
+    expect([entries[1], entries[3]].map((e) => ("ask" in e ? e.ask : undefined))).toEqual([askID, heardID]);
   });
 
   it("tells the end batch from a batch that holds no line", () => {
@@ -72,7 +75,7 @@ describe("the room's thread", () => {
       item({ client_msg_id: "web-1", text: "From an app that does not know rooms" }),
       item({ text: "Persona's notice", injected: { kind: "task_notice", title: "x" } as Item["injected"] }),
     ], rid, [ask(askID)]);
-    expect(entries.map((e) => [e.kind, "via" in e ? e.via : ""])).toEqual([["joined", ""], ["question", "typed"], ["question", "owner"]]);
+    expect(entries.map((e) => [e.kind, "via" in e ? e.via : ""])).toEqual([["question", "typed"], ["question", "owner"]]);
   });
 
   it("gives a heard question the time of its ask when its block has none", () => {
@@ -112,7 +115,7 @@ describe("photos in the room's thread", () => {
       photoImage(otherID),
       batch(["[32:10] Ada: Next item."]),
     ], rid);
-    expect(entries.map((e) => e.kind)).toEqual(["joined", "photo", "photo", "lines"]);
+    expect(entries.map((e) => e.kind)).toEqual(["photo", "photo", "lines"]);
     expect(entries.filter((e) => e.kind === "photo").map((e) => ("photo" in e ? e.photo : ""))).toEqual([photoID, otherID]);
     // Nothing of the photo's text or the note's tool call reads as a batch, the end batch or an answer.
     expect(entries.some((e) => e.kind === "ended" || e.kind === "answer" || e.kind === "image")).toBe(false);
@@ -189,6 +192,8 @@ describe("meeting fields", () => {
     expect(hasMaterial(rec({ meta: { kind: "note", chars: 120 } }))).toBe(true);
     expect(hasMaterial(rec({ segments: [{ start: 0, end: 4, text: "Call the vendor." }] }))).toBe(true);
     expect(hasMaterial(rec({ meta: { chars: 0 }, segments: [{ start: 0, end: 4, text: "  " }] }))).toBe(false);
+    // Persona's echo is no material (#5905): the hub's chars leave it out too.
+    expect(hasMaterial(rec({ meta: { chars: 0 }, segments: [{ start: 0, end: 4, text: "You kept the cap.", echo: true }] }))).toBe(false);
     expect(hasMaterial(rec({ minutes }))).toBe(true);
     // A trimmed recording keeps only its minutes.
     expect(hasMaterial(rec({ meta: { chars: 120, trimmed_at: "2026-11-10T07:00:00Z" } }))).toBe(false);
@@ -218,5 +223,61 @@ describe("meeting fields", () => {
   it("writes the meeting clock and keeps only timed lines", () => {
     expect([meetingClock(0), meetingClock(75.9), meetingClock(3725)]).toEqual(["0:00", "1:15", "1:02:05"]);
     expect(meetingLines("[1:02:05] late\nno time\n[0:01]  \n[12:30] Bo: yes")).toEqual([{ clock: "1:02:05", text: "late" }, { clock: "12:30", text: "Bo: yes" }]);
+  });
+});
+
+describe("the live view (phase 2)", () => {
+  it("reads live lines by position, leaving out what is not one", () => {
+    expect(liveLines([
+      { n: 4, start: 12.5, end: 15, text: " Bo: the cap stays. " },
+      { n: 2, start: -1, end: "x", text: "Ada: hello", source: "device" },
+      { n: 3, start: 9, end: 11, text: "" },
+      { n: 1.5, text: "half" },
+      { n: -1, text: "negative" },
+      { n: 4, start: 12.5, end: 15, text: "Bo: the cap stays." },
+      null,
+    ])).toEqual([
+      { n: 2, start: 0, end: 0, text: "Ada: hello", source: "device" },
+      { n: 4, start: 12.5, end: 15, text: "Bo: the cap stays." },
+    ]);
+    expect(liveLines({ lines: [] })).toEqual([]);
+    // A placeholder position without words still moves the reader on.
+    expect(liveLinesEnd([{ n: 7, text: "x" }, { n: 9, text: "" }, { n: "10" }])).toBe(10);
+    expect(liveLinesEnd(undefined)).toBe(0);
+  });
+
+  it("reads topics in the room's order, with at most one current", () => {
+    expect(meetingTopics([
+      { title: "Export cap", state: "done", at: 0 },
+      { title: " Pricing ", state: "CURRENT", at: 312.5, note: " Two options on the table " },
+      { title: "Hiring", state: "current" },
+      { title: "Vendor", state: "later" },
+      { title: "", state: "open" },
+      { state: "open" },
+    ])).toEqual([
+      { title: "Export cap", state: "done", at: 0 },
+      { title: "Pricing", state: "current", at: 312.5, note: "Two options on the table" },
+      { title: "Hiring", state: "open" },
+      { title: "Vendor", state: "open" },
+    ]);
+    expect(meetingTopics(null)).toEqual([]);
+  });
+
+  it("starts each read of lines at its own next position, never more than it keeps behind the newest", () => {
+    expect(linesFrom(undefined, 0)).toBe(0);
+    expect(linesFrom(undefined, 150)).toBe(0);
+    expect(linesFrom(undefined, 1000)).toBe(800);
+    expect(linesFrom(40, 120)).toBe(40);
+    expect(linesFrom(40, 900)).toBe(700);
+    expect(linesFrom(12, 3, 200)).toBe(12);
+  });
+
+  it("merges new lines by position and keeps the newest", () => {
+    const line = (n: number) => ({ n, start: n, end: n + 1, text: `line ${n}` });
+    const have = [line(0), line(1), line(2)];
+    expect(mergeLiveLines(have, [])).toBe(have);
+    expect(mergeLiveLines(have, [line(2), line(3)]).map((l) => l.n)).toEqual([0, 1, 2, 3]);
+    expect(mergeLiveLines(have, [line(5), line(4)], 4).map((l) => l.n)).toEqual([1, 2, 4, 5]);
+    expect(mergeLiveLines(have, [{ ...line(1), text: "again" }])[1].text).toBe("again");
   });
 });

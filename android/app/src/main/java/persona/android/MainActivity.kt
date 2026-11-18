@@ -1,16 +1,16 @@
 package persona.android
 
 import androidx.compose.ui.res.stringResource
-import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,6 +47,7 @@ import persona.core.designsystem.LocalAppStyleStore
 import persona.core.designsystem.LocalGlassLevel
 import persona.core.designsystem.LocalPersonaDesign
 import persona.core.designsystem.dense
+import persona.core.designsystem.keepAmbientLightMoving
 import persona.core.navigation.*
 import persona.feature.settings.SettingsServices
 import kotlinx.coroutines.CancellationException
@@ -77,7 +78,6 @@ class MainActivity : ComponentActivity() {
     /** Only a debug launch adapter overrides the system appearance. */
     private val darkTheme = mutableStateOf<Boolean?>(null)
 
-    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     /** Installed only by the debug manifest; release builds have no launch adapter or developer pages. */
     private val launchAdapter: LaunchAdapter? by lazy {
         // A legacy launcher alias does not inherit target metadata; always query the canonical Activity.
@@ -98,12 +98,13 @@ class MainActivity : ComponentActivity() {
             shell.posture.value = input.posture
             input.style?.let { (application as PersonaApp).appearance.setStyle(it) }
         }
-        if (Build.VERSION.SDK_INT >= 33 && !shell.automation && !shell.demoSaved()) {
-            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
         val app = application as PersonaApp
         lifecycleScope.launch { shell.restoreDemo() }
-        persona.android.platform.GlassFrameMonitor.attach(this) { !shell.automation }
+        persona.android.platform.GlassFrameMonitor.attach(
+            this,
+            deviceLevel = { app.appearance.deviceLevel(app.appearance.glass.value) },
+            enabled = { !shell.automation },
+        )
         managerRoster.start()
         setContent {
             val scheme by app.appearance.scheme.collectAsStateWithLifecycle()
@@ -136,6 +137,7 @@ class MainActivity : ComponentActivity() {
                 persona.core.designsystem.LocalManagerGroup provides managerGroup,
                 persona.feature.inbox.LocalTranslator provides translator,
                 LocalAppStyleStore provides app.appearance,
+                persona.core.designsystem.LocalStarPrompt provides app.starPrompt,
                 LocalGlassLevel provides glassLevel,
                 LocalPersonaDesign provides face,
                 persona.core.designsystem.LocalPersonaStore provides app.personas,
@@ -175,6 +177,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        keepAmbientLightMoving()
         setIntent(intent)
         if (intent.data != null || intent.hasExtra(EXTRA_SESSION) || intent.hasExtra("debug.openTab")) capsules.leaveFullScreen()
         handle(intent)
@@ -183,6 +186,33 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         (application as PersonaApp).hub.value?.kick()
+    }
+
+    // Input that reaches this window keeps Glass's ambient light moving; five seconds after the last it holds still
+    // (AmbientClock). Dialogs and bottom sheets are windows of their own: input there does not arrive here, so the
+    // light behind their scrim stops five seconds after the input that opened them, on purpose.
+    override fun onResume() {
+        super.onResume()
+        keepAmbientLightMoving()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        keepAmbientLightMoving()
+        return super.dispatchTouchEvent(ev)
+    }
+
+    // Overridden only to note when the user last pressed a key; it calls super as before, so behaviour is unchanged.
+    // Lint's RestrictedApi check is about calling ComponentActivity.dispatchKeyEvent from outside its library.
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        keepAmbientLightMoving()
+        return super.dispatchKeyEvent(event)
+    }
+
+    /** Mouse wheels, touchpads and hovering pointers on tablets and foldables. */
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        keepAmbientLightMoving()
+        return super.dispatchGenericMotionEvent(ev)
     }
 
     private fun handle(intent: Intent?) {

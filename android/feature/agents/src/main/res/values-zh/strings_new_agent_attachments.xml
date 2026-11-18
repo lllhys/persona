@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- New Agent's attachments (#2321): iOS NewAgentAttachments / NewChatView words. Photos, Files, Take photo and the upload states are the composer's (feature/chat). -->
+<resources>
+    <string name="agents_attach_add">添加图片或文件</string>
+    <string name="agents_attach_launcher_hold">%1$s 不能带附件</string>
+    <string name="agents_attach_launcher_refusal">这个启动器的第一条消息不能带附件。换一个启动器；或者先只发文字启动，再在会话里发附件。</string>
+    <string name="agents_attach_uploading_hold">正在等文件上传完</string>
+    <string name="agents_attach_moved">上传到“%1$s”的文件已移除。要发给这台电脑，请重新添加。</string>
+    <string name="agents_attach_remove">移除 %1$s</string>
+    <string name="agents_attach_upload_failed">「%1$s」没发出去：%2$s</string>
+    <string name="agents_attach_photo_limit">一次最多 4 张</string>
+</resources>

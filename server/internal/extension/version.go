@@ -3,6 +3,7 @@ package extension
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -12,10 +13,12 @@ import (
 
 var semverPattern = lazyre.New(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$`)
 
-// Version is a plugin's MAJOR.MINOR.PATCH[-pre].
+// Version is a plugin's MAJOR.MINOR.PATCH[-pre]. The integer fields are a
+// best-effort compatibility view; Compare retains the full parsed precision.
 type Version struct {
 	Major, Minor, Patch int
 	Pre                 string
+	rawCore             [3]string
 }
 
 // ParseVersion reads a semantic version (build metadata not allowed).
@@ -29,14 +32,24 @@ func ParseVersion(s string) (Version, error) {
 	v.Minor, _ = strconv.Atoi(m[2])
 	v.Patch, _ = strconv.Atoi(m[3])
 	v.Pre = strings.TrimPrefix(m[4], "-")
+	v.rawCore = [3]string{m[1], m[2], m[3]}
 	return v, nil
 }
 
 // Compare is -1, 0 or 1 as a is older than, the same as or newer than b (a pre-release is older than its release).
 func (a Version) Compare(b Version) int {
-	for _, d := range []int{a.Major - b.Major, a.Minor - b.Minor, a.Patch - b.Patch} {
-		if d != 0 {
-			return sign(d)
+	aCore := []int{a.Major, a.Minor, a.Patch}
+	bCore := []int{b.Major, b.Minor, b.Patch}
+	for i := range aCore {
+		aRaw, bRaw := a.rawCore[i], b.rawCore[i]
+		if aRaw == "" {
+			aRaw = strconv.Itoa(aCore[i])
+		}
+		if bRaw == "" {
+			bRaw = strconv.Itoa(bCore[i])
+		}
+		if c := compareNumeric(aRaw, bRaw); c != 0 {
+			return c
 		}
 	}
 	switch {
@@ -53,16 +66,15 @@ func (a Version) Compare(b Version) int {
 func comparePre(a, b string) int {
 	as, bs := strings.Split(a, "."), strings.Split(b, ".")
 	for i := 0; i < len(as) && i < len(bs); i++ {
-		an, aerr := strconv.Atoi(as[i])
-		bn, berr := strconv.Atoi(bs[i])
+		aNumeric, bNumeric := isASCIIDigits(as[i]), isASCIIDigits(bs[i])
 		switch {
-		case aerr == nil && berr == nil:
-			if an != bn {
-				return sign(an - bn)
+		case aNumeric && bNumeric:
+			if c := compareNumeric(as[i], bs[i]); c != 0 {
+				return c
 			}
-		case aerr == nil:
+		case aNumeric:
 			return -1
-		case berr == nil:
+		case bNumeric:
 			return 1
 		default:
 			if c := strings.Compare(as[i], bs[i]); c != 0 {
@@ -71,6 +83,26 @@ func comparePre(a, b string) int {
 		}
 	}
 	return sign(len(as) - len(bs))
+}
+
+func isASCIIDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// compareNumeric compares valid decimal integers without narrowing them to int.
+// Core strings come from semverPattern; fallback strings come from strconv.Itoa.
+func compareNumeric(a, b string) int {
+	ai, _ := new(big.Int).SetString(a, 10)
+	bi, _ := new(big.Int).SetString(b, 10)
+	return ai.Cmp(bi)
 }
 
 func sign(d int) int {

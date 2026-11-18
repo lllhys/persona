@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, memo, startTransition, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { cloneElement, isValidElement, memo, startTransition, Suspense, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import remarkGfm from "./remark-gfm-parse";
 import remarkCjkFriendly from "remark-cjk-friendly/parseOnly";
@@ -14,6 +14,9 @@ import { tableHtml, tableToTsv, writeTableClipboard } from "./tableCopy";
 import { t } from "../i18n";
 import { Icon } from "./icons";
 import { MermaidBlock } from "./Mermaid";
+import { ExternalImage } from "./ExternalImage";
+import { ReplyPicturesContext } from "./reply-pictures-context";
+import { ReplyImagesRun, useReplyImages } from "./reply-images-lazy";
 import { AssistantCard, CARD_LANGUAGES } from "./AssistantCard";
 import { rehypePathLinks, textPaths, writtenText } from "./PathLinks";
 import { usePathLinks } from "../lib/path-presence";
@@ -51,8 +54,11 @@ export function trimURL(url: string): string {
 // end of its quote or list item, or of the text while streaming), indented code (4 spaces after a blank line, outside
 // lists) and code spans (a run of n backticks up to the next run of n). Returns text and code alternately, so odd
 // indices are code: left alone by normalizeMath and linkify.
-const QUOTES = /^(?:[ \t]*>[ \t]?)*/;
-const FENCE = /^((?:[ \t]*>[ \t]?)*)([ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?[ \t]*)(`{3,}|~{3,})/;
+// Quote markers are each taken with the spaces before them, then one space after the last. Written as
+// (?:[ \t]*>[ \t]?)*, a space between two markers fits either way, and a deeply quoted line that is no fence tried every
+// split before failing (24 markers took half a second, each one more doubled it; #9795).
+const QUOTES = /^(?:[ \t]*>)*(?:(?<=>)[ \t])?/;
+const FENCE = /^((?:[ \t]*>)*(?:(?<=>)[ \t])?)([ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?[ \t]*)(`{3,}|~{3,})/;
 const LIST_ITEM = /^(?:[ \t]*>)*[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
 const INDENTED = /^( {4}|\t)/;
 
@@ -145,7 +151,7 @@ export function splitCode(md: string): string[] {
 
 // What starts a line inside a quote or list item, and what a new line needs to stay in it: quote markers are kept,
 // a list marker becomes spaces.
-const PREFIX = /^(?:[ \t]*>[ \t]?)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?/;
+const PREFIX = /^(?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?/;
 const continuation = (prefix: string) => prefix.replace(/[-*+]|\d{1,9}[.)]/, (m) => " ".repeat(m.length));
 
 // Bare URLs and <autolinks>: a $ in them (https://…/odata/$metadata) is part of the address, not math.
@@ -183,7 +189,7 @@ export function normalizeMath(md: string): string {
         return u.includes("$") ? `${pre}${hold(u, true)}${url.slice(u.length)}` : m;
       })
       .replace(
-        /^((?:[ \t]*>[ \t]?)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?)\$\$([^$\n]+)\$\$[ \t]*$/gm,
+        /^((?:[ \t]*>)*[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?)\$\$([^$\n]+)\$\$[ \t]*$/gm, // quote markers as in QUOTES
         (m, pre: string, tex: string, off: number) =>
           off === 0 && midLine ? m : `${pre}$$\n${continuation(pre)}${tex.trim()}\n${continuation(pre)}$$`,
       )
@@ -328,10 +334,11 @@ export function linkify(md: string, { math = false }: { math?: boolean } = {}): 
     .join("");
 }
 
-// persona://session links survive (they move to that conversation); everything else as react-markdown decides
-// (javascript: and other apps' schemes are dropped).
+// App links to a page of Persona's survive (persona://open<path>, persona://session|task|kb…: they open that page,
+// docs/protocol/deep-links.md); everything else as react-markdown decides (javascript: and other apps' schemes are dropped).
 export function markdownUrl(url: string): string {
-  return linkRoute(url).kind === "session" ? url : defaultUrlTransform(url);
+  const kind = linkRoute(url).kind;
+  return kind === "session" || kind === "app" ? url : defaultUrlTransform(url);
 }
 
 // A link opens where it belongs (lib/links.ts): Feishu documents in the side panel (read as the chat's manager),
@@ -367,6 +374,8 @@ const hasClass = (cls: string | undefined, name: string) => (cls ?? "").split(/\
 
 export const markdownComponents: Components = {
   a: ({ href, children }) => <Link href={href}>{children}</Link>,
+  // third-party images stay unloaded until tapped (#8162); the hub's own images render inline
+  img: (props) => <ExternalImage {...props} />,
   pre: ({ children }) => {
     const code = () => textOf(children).replace(/\n$/, "");
     if (hasClass(codeClass(children), "math-display")) return <div className="whitespace-pre-wrap" data-math-pending="display">{`$$\n${code()}\n$$`}</div>;
@@ -393,7 +402,33 @@ export const markdownComponents: Components = {
     ),
   blockquote: ({ children }) => <ReplyQuote>{children}</ReplyQuote>,
   table: ({ children, node: _node, ...rest }) => <TableBlock {...rest}>{children}</TableBlock>,
+  // a short cell stays on one line and its column as narrow as its words (styles.css `td[data-fit]`)
+  td: ({ children, node, ...rest }) => (
+    <td {...rest} data-fit={cellFits(node) ? "" : undefined}>
+      {children}
+    </td>
+  ),
 };
+// A run of a reply's pictures (#9475), drawn by its own chunk; Components' type lists HTML's elements only.
+(markdownComponents as Record<string, unknown>)["reply-images"] = ({ node }: { node?: never }) => <Suspense fallback={null}><ReplyImagesRun node={node} /></Suspense>;
+
+// A table cell's words fit on one line in what a long cell keeps (7em less its padding, about 5.5em of text): the cell
+// doesn't wrap and needs no minimum width, so a column of numbers or names is as narrow as they are (audit item 77).
+// A wide character (CJK, full-width, emoji: from U+2E80 on) counts 1em, any other about half; a line break or a picture
+// never fits.
+type HastNode = { type: string; value?: string; tagName?: string; children?: HastNode[] };
+
+export function cellFits(node: unknown): boolean {
+  let em = 0;
+  const walk = (n: HastNode): boolean => {
+    if (n.type === "text") {
+      for (const ch of n.value ?? "") if ((em += ch.codePointAt(0)! >= 0x2e80 ? 1 : 0.55) > 5.5) return false;
+      return true;
+    }
+    return n.tagName !== "br" && n.tagName !== "img" && (n.children ?? []).every(walk);
+  };
+  return Boolean(node) && walk(node as HastNode);
+}
 
 /** The class of a block's <code>. */
 function codeClass(children: React.ReactNode): string {
@@ -437,23 +472,29 @@ function CodeBlock({ children, lang = "" }: { children: React.ReactNode; lang?: 
 // keeps its width, scroll and margin (styles.css passes the prose edge rule through). The button is out of the
 // table, so a copy does not pick it up as a cell, and it stays put while a wide table scrolls. It is the control's
 // own 24px, not the 44px touch pad: it sits on a cell, and that pad would take the tap meant for a corner link.
+// It never covers header words (audit item 77): the last header cell keeps room for it (styles.css), and it sits on a
+// cap the header row's height and color, so a wide table's header words scrolled under it fade out at the edge
+// instead of running under the button. The cap shows with the button: on hover and on keyboard focus, not on any focus
+// (a button keeps the focus after a click, and the cap would stay over the header with the button taking no clicks).
 // The first placement is the ResizeObserver's first report (after layout, before paint), not a read in the effect: that
 // read laid out every table's exchange when a long chat opened, the ones skipped off screen too (#2905). A table in a
 // skipped exchange is placed when the exchange is drawn; the button only shows on hover, so it is there before it is seen.
 function TableBlock({ children, ref: _ref, ...rest }: React.ComponentProps<"table">) {
   const tableRef = useRef<HTMLTableElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const capRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const table = tableRef.current;
-    const button = buttonRef.current;
-    if (!table || !button) return;
+    const cap = capRef.current;
+    if (!table || !cap) return;
     const place = () => {
-      const host = button.parentElement;
+      const host = cap.parentElement;
       if (!host) return;
       const gap = Math.max(0, host.clientWidth - table.offsetWidth);
-      // 0.375rem is top-1.5 / right-1.5, so the inset matches a code block's button at any root font size.
-      button.style.top = `calc(${table.offsetTop}px + 0.375rem)`;
-      button.style.right = `calc(${gap}px + 0.375rem)`;
+      cap.style.top = `${table.offsetTop}px`;
+      cap.style.right = `${gap}px`;
+      // the header row, its bottom line left showing
+      const head = table.rows[0];
+      if (head) cap.style.height = `${Math.max(0, head.offsetHeight - 1)}px`;
     };
     if (typeof ResizeObserver === "undefined") {
       place();
@@ -461,7 +502,7 @@ function TableBlock({ children, ref: _ref, ...rest }: React.ComponentProps<"tabl
     }
     const obs = new ResizeObserver(place);
     obs.observe(table);
-    if (button.parentElement) obs.observe(button.parentElement);
+    if (cap.parentElement) obs.observe(cap.parentElement);
     return () => obs.disconnect();
   }, []);
   return (
@@ -469,28 +510,33 @@ function TableBlock({ children, ref: _ref, ...rest }: React.ComponentProps<"tabl
       <table {...rest} ref={tableRef}>
         {children}
       </table>
-      <button
-        ref={buttonRef}
-        type="button"
-        aria-label={t("ui-markdown.copy_table")}
-        title={t("ui-markdown.copy_table")}
-        onClick={() => {
-          const table = tableRef.current;
-          if (!table) return;
-          const tsv = tableToTsv(table);
-          if (tsv === undefined) {
-            toast(t("ui-atoms.copy_failed"), "error");
-            return;
-          }
-          const html = tableHtml(table);
-          void writeTableClipboard(tsv, html).then((ok) => {
-            toast(ok ? t("ui-atoms.copied") : t("ui-atoms.copy_failed"), ok ? "ok" : "error");
-          });
-        }}
-        className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-[6px] bg-surface text-ink-3 opacity-0 shadow-btn pointer-events-none transition-opacity duration-150 group-hover/table:pointer-events-auto group-hover/table:opacity-100 hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
+      <span
+        ref={capRef}
+        data-table-copy
+        className="pointer-events-none absolute top-0 right-0 flex h-9 w-9 items-center justify-end rounded-tr-card bg-linear-to-r from-transparent to-inset to-40% pr-1.5 opacity-0 transition-opacity duration-150 group-hover/table:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100"
       >
-        <Icon name="copy" size={13} />
-      </button>
+        <button
+          type="button"
+          aria-label={t("ui-markdown.copy_table")}
+          title={t("ui-markdown.copy_table")}
+          onClick={() => {
+            const table = tableRef.current;
+            if (!table) return;
+            const tsv = tableToTsv(table);
+            if (tsv === undefined) {
+              toast(t("ui-atoms.copy_failed"), "error");
+              return;
+            }
+            const html = tableHtml(table);
+            void writeTableClipboard(tsv, html).then((ok) => {
+              toast(ok ? t("ui-atoms.copied") : t("ui-atoms.copy_failed"), ok ? "ok" : "error");
+            });
+          }}
+          className="flex size-6 shrink-0 items-center justify-center rounded-chip bg-surface text-ink-3 shadow-btn pointer-events-none group-hover/table:pointer-events-auto hover:text-ink focus-visible:pointer-events-auto [@media(hover:none)]:pointer-events-auto"
+        >
+          <Icon name="copy" size={13} />
+        </button>
+      </span>
     </div>
   );
 }
@@ -528,7 +574,7 @@ function componentsFor(mid: string, cwd: string | undefined): Components {
 // "Reply animation" off or reduced motion; once streaming ends it is plain Markdown again, without the fade's spans.
 // `lineBreaks`: a reply, read line by line as it was written (#2088, `reply-breaks.ts`): a single line break is one,
 // and steps numbered on from 5 right under a line of text are a list.
-export const Markdown = memo(function Markdown({ text: raw, small, compact, mid, cwd, streaming, fade, lineBreaks }: { text: string; small?: boolean; compact?: boolean; mid?: string; cwd?: string; streaming?: boolean; fade?: boolean; lineBreaks?: boolean }) {
+export const Markdown = memo(function Markdown({ text: raw, small, compact, mid, cwd, streaming, fade, lineBreaks, askImages }: { text: string; small?: boolean; compact?: boolean; mid?: string; cwd?: string; streaming?: boolean; fade?: boolean; lineBreaks?: boolean; askImages?: boolean }) {
   const components = useMemo<Components>(() => (mid ? componentsFor(mid, cwd) : markdownComponents), [mid, cwd]);
   const text = useThrottledText(raw, Boolean(streaming));
   const motion = useReplyMotion();
@@ -548,10 +594,13 @@ export const Markdown = memo(function Markdown({ text: raw, small, compact, mid,
   const remarkPlugins = lineBreaks ? REMARK_LINES : REMARK;
   const wantsMath = useMemo(() => hasMath(md), [md]);
   const katex = useMath(wantsMath);
+  // The step that lifts block pictures into runs, once the text names a web picture (#9475).
+  const images = useReplyImages(useMemo(() => /!\[[^\]\n]*\]\(\s*<?https?:/i.test(text), [text]))?.rehypeReplyImages;
+  const picturesContext = useMemo(() => ({ text, ask: Boolean(askImages) }), [text, askImages]);
   const rehypePlugins = useMemo<PluggableList>(
-    () => [...(katex ? [katex] : []), ...(highlight ? [highlight] : []), ...(key ? [rehypePathLinks(linkable)] : []), rehypeLinkedCode],
+    () => [...(images ? [images] : []), ...(katex ? [katex] : []), ...(highlight ? [highlight] : []), ...(key ? [rehypePathLinks(linkable)] : []), rehypeLinkedCode],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [key, highlight, katex],
+    [key, highlight, katex, images],
   );
   const chunks = useMemo(() => (streaming ? splitChunks(md) : wordFade ? [{ start: 0, content: md }] : null), [md, streaming, wordFade]);
   // A finished block: its tree from the cache when this text was drawn with the same plugins and links before.
@@ -559,11 +608,12 @@ export const Markdown = memo(function Markdown({ text: raw, small, compact, mid,
     () =>
       chunks || !markdownCache.on
         ? null
-        : cachedMarkdown(markdownKey(md, `${katex ? "katex" : ""}|${highlight ? "highlight" : ""}|${key}`, mid, cwd), { children: md, remarkPlugins, rehypePlugins, components, urlTransform: markdownUrl }),
-    [chunks, md, katex, highlight, key, mid, cwd, remarkPlugins, rehypePlugins, components],
+        : cachedMarkdown(markdownKey(md, `${katex ? "katex" : ""}|${highlight ? "highlight" : ""}|${images ? "images" : ""}|${key}`, mid, cwd), { children: md, remarkPlugins, rehypePlugins, components, urlTransform: markdownUrl }),
+    [chunks, md, katex, highlight, images, key, mid, cwd, remarkPlugins, rehypePlugins, components],
   );
   return (
     <HighlightWanted.Provider value={fenced && inBlock}>
+      <ReplyPicturesContext.Provider value={picturesContext}>
       <ReplyStreaming.Provider value={Boolean(streaming)}>
       <div className={`prose-j ${small ? "prose-sm" : ""} ${compact ? "prose-compact" : ""}`}>
         {chunks ? (
@@ -579,6 +629,7 @@ export const Markdown = memo(function Markdown({ text: raw, small, compact, mid,
         )}
       </div>
       </ReplyStreaming.Provider>
+      </ReplyPicturesContext.Provider>
     </HighlightWanted.Provider>
   );
 });

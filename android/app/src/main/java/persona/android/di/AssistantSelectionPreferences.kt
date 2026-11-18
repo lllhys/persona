@@ -29,8 +29,10 @@ internal class AssistantSelectionPreferences(private val preferences: SharedPref
     fun reconcile(id: String?, roster: ManagerRoster) {
         if (id == null || id != hubId) return
         val choice = AssistantManagerChoice.current.value
+        // Kept while the roster lists it installed and in the switcher: one gone, still installing or hidden there (the
+        // hub's own assistant, kept out while it is not used) falls back to the default.
         val chosen = choice.manager?.takeIf { manager ->
-            choice.hubId == id && roster.isMulti && roster.installed.any { it.id == manager }
+            choice.hubId == id && roster.isMulti && roster.installed.any { it.id == manager && !it.hidden }
         }
         AssistantManagerChoice.choose(id, chosen, roster.defaultManagerId)
         rosterReady = true

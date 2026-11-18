@@ -55,4 +55,14 @@
     <string name="assistant_proactive_push_every_note">每次运行完都把回答推送到手机。</string>
     <string name="assistant_proactive_push_asked_note">只有这次运行判断你需要知道、主动提醒你时才推送，没事就不打扰；出错、被打断照常推送。这种任务固定在它自己的对话里跑，你在那段对话里发的消息做完也不推送。</string>
     <string name="assistant_proactive_push_asked_mark">只在提醒时推送</string>
+    <string name="assistant_proactive_inbox">跑完放进收件箱</string>
+    <string name="assistant_proactive_inbox_compact">跑完放收件箱</string>
+    <string name="assistant_proactive_inbox_off">不放</string>
+    <string name="assistant_proactive_inbox_worthy">有值得看的才放</string>
+    <string name="assistant_proactive_inbox_every">每次都放</string>
+    <string name="assistant_proactive_inbox_off_note">不会放进收件箱。</string>
+    <string name="assistant_proactive_inbox_worthy_note">只有这次运行发现值得你看的事，才在收件箱里放一行，点开就是那段对话。</string>
+    <string name="assistant_proactive_inbox_every_note">每次运行完都在收件箱里放一行，方便你跟进，点开就是那段对话。</string>
+    <string name="assistant_proactive_inbox_worthy_mark">收件箱：值得看才放</string>
+    <string name="assistant_proactive_inbox_every_mark">收件箱：每次</string>
 </resources>

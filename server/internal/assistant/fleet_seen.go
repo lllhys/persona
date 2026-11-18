@@ -3,8 +3,19 @@ package assistant
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/rpc"
 )
+
+// deviceSessionSeen tells a node the user saw one of its sessions (node runtimes_calls.go): a runtime keeping an unread
+// mark of its own clears it there too (Paseo, #6299).
+const deviceSessionSeen = "session.seen"
+
+// seenCallTimeout bounds telling the node (the runtime's own answer is bounded at 10 s).
+var seenCallTimeout = 15 * time.Second
 
 // ---- seen ----
 
@@ -78,4 +89,24 @@ func (s *Service) markSeen(ctx context.Context, machine, session string) {
 		}
 	}
 	s.publishSessions(machine)
+	s.seenToRuntime(machine, session)
+}
+
+// seenToRuntime tells the node of a runtime's session the user saw, while its node lists it as unread (done), #6299: a
+// runtime that keeps an unread mark of its own (Paseo's requiresAttention) clears it, so the session is not unread in
+// the runtime's own app as well. In the background, best effort; a node too old for it says nothing is known of it.
+func (s *Service) seenToRuntime(machine, session string) {
+	row, ok := s.nodeSession(machine, session)
+	if !ok || row.SourceKind != proto.SourceRuntime || row.Status != proto.StatusDone {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), seenCallTimeout)
+		defer cancel()
+		err := s.nodeCall(ctx, machine, deviceSessionSeen, map[string]any{"session_id": session}, nil)
+		var re *rpc.Error
+		if err != nil && !(errors.As(err, &re) && strings.HasPrefix(re.Message, "unknown method")) {
+			s.logf("seen %s on %s: %v", session, machine, err)
+		}
+	}()
 }

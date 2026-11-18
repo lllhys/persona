@@ -13,7 +13,7 @@ import { Icon, type IconName } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
 import { FoldedReport } from "./FoldedReport";
 import { useChatContext } from "./chat-context";
-import { ChatImageViewer } from "./ImageViewer";
+import { ChatImageViewer } from "./LazyImageViewer";
 import { t } from "../../i18n";
 
 function firstLine(s?: string) {

@@ -43,6 +43,15 @@ type Builtin struct {
 	GeneralRules string
 	// Mutable: its items can be muted by chat, sender or repository (the Inbox's menu).
 	Mutable bool
+	// Via is its default subscription (#6345); nil when it has none.
+	Via *Via
+}
+
+// Via is a built-in source's default subscription: On while its Inbox feed is read through it (P5a), and Subscription
+// its id once it was made.
+type Via struct {
+	On           bool
+	Subscription string
 }
 
 // Read is one read of a source by the Inbox: when, and the short code of its failure ("" read; ReadTimeout…).
@@ -78,6 +87,8 @@ type BuiltinSources interface {
 	// Native is the built-in source that reads a catalog service ("mail:example.com") and where it reads it
 	// ("me@example.com", a connector's name); "" when none does.
 	Native(service string) (id, where string)
+	// SetMigrated reads the source's Inbox feed through its default subscription (on) or as before (#6345).
+	SetMigrated(ctx context.Context, id string, on bool, by subscriptions.Actor) error
 }
 
 // builtins are the manager's built-in sources, by name; none without BuiltinSources.
@@ -248,8 +259,12 @@ func (p *pages) builtinPage() wire.View {
 			Items: []wire.Component{r, text("e.why", p.t("builtin.trouble_why"), "caption")}})
 	}
 	v.Sections = append(v.Sections, p.builtinSwitches(b))
+	if b.Via != nil {
+		v.Sections = append(v.Sections, p.builtinVia(b))
+	}
+	via := b.Via != nil && b.Via.On
 	freq := wire.Section{Key: "freq", Title: p.t("builtin.freq"), Footer: p.t("builtin.freq_footer")}
-	if b.InboxEvery > 0 && (b.InboxAlways || b.Inbox != nil) {
+	if b.InboxEvery > 0 && (b.InboxAlways || b.Inbox != nil) && !via { // through its subscription: on its page
 		r := row("f.inbox", p.t("builtin.freq_inbox"))
 		r.Value = p.every(b.InboxEvery, "")
 		freq.Items = append(freq.Items, r)
@@ -302,6 +317,10 @@ func (p *pages) builtinSwitches(b Builtin) wire.Section {
 		return r
 	}
 	switch {
+	case b.Via != nil && b.Via.On && b.Inbox != nil: // its rows come through its default subscription (#6345)
+		r := row("d.to_inbox", p.t("dest.to_inbox"))
+		r.Value, r.Subtitle = p.t("builtin.via_inbox"), p.t("builtin.via_inbox_detail")
+		sec.Items = append(sec.Items, r)
 	case b.InboxAlways:
 		r := row("d.to_inbox", p.t("dest.to_inbox"))
 		r.Value, r.Subtitle = p.t("builtin.always"), p.t("builtin.always_detail")
@@ -315,6 +334,46 @@ func (p *pages) builtinSwitches(b Builtin) wire.Section {
 		sec.Items = append(sec.Items, sw("to_kb", *b.Archive, p.t("source.kb_detail")))
 	}
 	return sec
+}
+
+// builtinVia is a built-in source's switch to read it through its default subscription (#6345): asked once when
+// turned on (the source stays on, decision 2 of the migration), at once back; while on, a row to the subscription.
+func (p *pages) builtinVia(b Builtin) wire.Section {
+	args := i18n.Args{"source": b.Name}
+	r := row("v.via", p.t("builtin.via"))
+	r.Subtitle = p.t("builtin.via_detail", args)
+	act := wire.Action{ID: "builtin_via"}
+	if !b.Via.On {
+		act.Confirm = p.t("builtin.via_confirm", args)
+	}
+	r.Control = &wire.RowControl{Kind: "switch", Name: "via", On: b.Via.On, Action: act}
+	sec := wire.Section{Key: "via", Title: p.t("builtin.via_title"), Footer: p.t("builtin.via_footer", args), Items: []wire.Component{r}}
+	if b.Via.On && b.Via.Subscription != "" {
+		o := row("v.open", p.t("builtin.via_open"))
+		o.Subtitle = p.t("builtin.via_open_detail")
+		o.Action = open(state{P: pageSource, ID: b.Via.Subscription}, p.t("builtin.via_open"))
+		sec.Items = append(sec.Items, o)
+	}
+	return sec
+}
+
+// builtinSwitchVia switches a built-in source's Inbox feed to its default subscription or back, and says so.
+func (p *pages) builtinSwitchVia(values map[string]string) (wire.ActionResult, error) {
+	b, ok := p.builtin(p.st.C)
+	if p.env.Builtin == nil || !ok || b.Via == nil {
+		return wire.ActionResult{}, errBadValues
+	}
+	on := values["via"] == "true"
+	if err := p.env.Builtin.SetMigrated(p.ctx, b.ID, on, p.env.By); err != nil {
+		return p.builtinFailed(err)
+	}
+	p.listed = nil // read again with the change
+	v := p.draw()
+	toast := "toast.via_off"
+	if on {
+		toast = "toast.via_on"
+	}
+	return wire.ActionResult{View: &v, Toast: p.t(toast, i18n.Args{"source": b.Name})}, nil
 }
 
 // builtinConfirm is what turning a built-in source's destination on asks: as a subscription's, what it reads and

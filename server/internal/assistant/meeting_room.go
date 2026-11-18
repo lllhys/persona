@@ -32,6 +32,10 @@ import (
 // meeting's end; deleted at the transcript's cut or with the recording (meetingRoomsSweep). The feeder looks at a
 // room meeting as it looks at an attended one (attendLook → roomLook): it moves the room along and feeds it batches.
 
+// purposeMeetingRoom is the model purpose a room starts on (#7980, the In-meeting conversation): the main chat's
+// launcher, model and effort until it is set apart in Model settings, always on Claude Code's CLI (models_room.go).
+const purposeMeetingRoom = "meeting.room"
+
 // Origins of a meeting's conversations (proto.Session.Origin): the room, and the follow-up made after the meeting.
 const (
 	OriginMeeting         = "meeting"
@@ -161,6 +165,9 @@ func (s *Service) roomStart(ctx context.Context, e *kb.Engine, id string, now ti
 	machine := s.settings(ctx).MachineID
 	sid := meetingSessionID(id, partRoom)
 	room, ok := s.roomSet(e, id, func(rm *kb.MeetingRoom) {
+		if rm.State == "" || rm.State == kb.RoomNone {
+			rm.Batching = kb.RoomBatchingLean // started by this manager: lean batches (meeting_room_lean.go)
+		}
 		if rm.State != kb.RoomStarting {
 			rm.State, rm.StartingAt = kb.RoomStarting, now
 		}
@@ -213,7 +220,8 @@ func (s *Service) roomStart(ctx context.Context, e *kb.Engine, id string, now ti
 // node cannot run a room, an error otherwise.
 func (s *Service) roomCreate(ctx context.Context, machine, sid string, r kb.Recording) (string, string, error) {
 	lang := cmp.Or(strings.TrimSpace(r.Language), string(s.lang(ctx)))
-	md := prompts.RenderMeetingRoomClaudeMD(prompts.MeetingRoomClaudeMD{Owner: s.owner(ctx), Language: lang})
+	lean := r.Conv != nil && r.Conv.Room != nil && r.Conv.Room.Batching >= kb.RoomBatchingLean // an older room keeps its own
+	md := prompts.RenderMeetingRoomClaudeMD(prompts.MeetingRoomClaudeMD{Owner: s.owner(ctx), Language: lang, Lean: lean})
 	var prep struct {
 		Cwd      string `json:"cwd"`
 		Kind     string `json:"kind"`
@@ -242,8 +250,9 @@ func (s *Service) roomCreate(ctx context.Context, machine, sid string, r kb.Reco
 		"guest":          map[string]any{"tools": meetingRoomToolNames(), "kind": guestKindMeeting},
 		"message_source": &proto.MessageSource{Kind: proto.SourceMeeting, Title: feedMeetingName(r, s.location(ctx))},
 		"client_msg_id":  "meeting-" + r.ID}
-	// The main chat's launcher and model, on the CLI even when the main chat runs on the Agent SDK: a room never does.
-	if err := s.applyModelCLI(ctx, "assistant", params); err != nil {
+	// The In-meeting conversation's launcher and model (the main chat's while it follows it). A room keeps them until
+	// it is deleted.
+	if err := s.applyModel(ctx, purposeMeetingRoom, params); err != nil {
 		return "", "", err
 	}
 	delete(params, "permission_mode")
@@ -317,15 +326,24 @@ func guestAgentRefused(err error) bool {
 // attending session ("Feeding"), but with no meeting-turn mark, and held while an ask waits for the room or runs in
 // it. The photos go before a batch, one a look (meeting_photos.go roomPhotos): none after the meeting's end, and only
 // their withdrawals while the role is off; one whose sends keep failing lets the batch go and is looked at again
-// soon. When to look again; with end, zero once the end batch went (or there was none to send) and no photo message is
-// left failing.
+// soon. A room started with lean batches gets one at most every two minutes, the lists only at the boundaries, and its
+// scheduled compaction (meeting_room_lean.go), which holds the photos and the batch while it may run. When to look
+// again; with end, zero once the end batch went (or there was none to send) and no photo message is left failing.
 func (s *Service) roomFeed(ctx context.Context, e *kb.Engine, id string, l kb.Live, r kb.Recording, now time.Time, end bool) (next time.Time) {
+	room := r.Conv.Room
+	lean := room.Batching >= kb.RoomBatchingLean
 	if !r.Attending() {
 		s.attendNote(e, id, func(l *kb.Live) { l.FedTo, l.Problem = nil, "" }) // turned on again: the meeting so far
-		next, _ = s.roomPhotos(ctx, e, id, r, now, false)
+		_, withdraw := e.PhotosForRoom(id)
+		if lean && !room.Lean.CompactStartedAt.IsZero() && len(withdraw) > 0 {
+			// A compaction asked of the node holds the withdrawals too: settled here, none is started.
+			if at, held, _ := s.roomCompaction(ctx, e, id, l, r, now, false, true, s.roomRowRead(ctx, room)); held {
+				return at
+			}
+		}
+		next, _ = s.roomPhotos(ctx, e, id, r, now, nil, withdraw, nil)
 		return next
 	}
-	room := r.Conv.Room
 	if roomAskWaiting(l) {
 		// An ask a restart left pending is taken up again here too (settleAsksLocked), not only when the asks are
 		// read: a phone that only streams lines reads none, and the batches, the end batch too, would wait for it.
@@ -336,18 +354,53 @@ func (s *Service) roomFeed(ctx context.Context, e *kb.Engine, id string, l kb.Li
 	if roomAskWaiting(l) {
 		return now.Add(feedBusyPoll) // an ask goes first; the batch after it
 	}
-	photos, held := s.roomPhotos(ctx, e, id, r, now, !end)
+	queued, withdraw := e.PhotosForRoom(id)
+	if end {
+		queued = nil // none after the meeting's end
+	}
+	every, ln := feedBatchEvery, room.Lean
+	var rd *roomRead      // a lean room's row, read once for the look's checks
+	var compact time.Time // a look for the compaction before the next batch's
+	if lean {
+		every = roomLeanEvery
+		read := s.roomRowRead(ctx, room)
+		var held bool
+		if compact, held, ln = s.roomCompaction(ctx, e, id, l, r, now, !end, len(queued) > 0 || len(withdraw) > 0, read); held {
+			return compact // the photos and the batch wait for the compaction, as for a turn
+		}
+		defer func() { next = feedEarliest(next, compact) }()
+		rd = &read
+	}
+	photos, held := s.roomPhotos(ctx, e, id, r, now, queued, withdraw, rd)
 	if held {
 		return photos // the batch waits for the photo's turn
 	}
 	defer func() { next = feedEarliest(next, photos) }() // a photo message failing: tried again first at the next look
-	if !end && !l.FedAt.IsZero() && now.Before(l.FedAt.Add(feedBatchEvery)) {
-		return l.FedAt.Add(feedBatchEvery)
+	if len(queued) > 0 || len(withdraw) > 0 {
+		rd = nil // a photo message may have gone: the batch reads the room's row again
+	}
+	if !end && !l.FedAt.IsZero() && now.Before(l.FedAt.Add(every)) {
+		return l.FedAt.Add(every)
 	}
 	ref := kb.SessionRef{MachineID: room.MachineID, SessionID: room.SessionID}
 	fresh := l.FedTo == nil || !s.sameMachine(l.FedTo.MachineID, ref.MachineID) || l.FedTo.SessionID != ref.SessionID
 	b := feedBatchOf(l, fresh, end)
-	b.room = true
+	b.room, b.lists = true, true
+	// The topics and the highlights so far, each to a room that has the tool to update them (one started before it
+	// keeps its tools).
+	if allowed, guest, err := s.guestOf(ctx, ref.MachineID, ref.SessionID); err == nil && guest {
+		if slices.Contains(allowed, toolTopicsSet) {
+			b.topics, b.topicsSoFar = true, l.Topics
+		}
+		if slices.Contains(allowed, toolHighlightsSet) {
+			b.highlights, b.highlightsSoFar = true, l.Highlights
+		}
+	}
+	// A lean room (both tools, their rules in its CLAUDE.md) sees the lists only at the boundaries: a batch with the
+	// meeting so far (its first, or after its role was off), after its conversation was compacted, and every half hour.
+	if lean && b.topics && b.highlights {
+		b.lean, b.lists = true, fresh || roomListsDue(ln, now)
+	}
 	// The room answered its own asks: they are in its thread already, only the ones meeting.answer took are told.
 	b.answers = slices.DeleteFunc(b.answers, func(a kb.LiveAsk) bool { return a.Via == kb.AskViaRoom })
 	if b.empty() {
@@ -362,7 +415,7 @@ func (s *Service) roomFeed(ctx context.Context, e *kb.Engine, id string, l kb.Li
 			return time.Time{}
 		}
 	}
-	target, verdict := s.attendeeCheckFor(ctx, ref, now, id)
+	target, verdict := s.attendeeCheckRead(ctx, ref, now, id, rd)
 	switch verdict {
 	case "":
 	case attendeeBusy:
@@ -395,10 +448,21 @@ func (s *Service) roomFeed(ctx context.Context, e *kb.Engine, id string, l kb.Li
 			l.EndFed = true
 		}
 	})
+	if lean {
+		ln = s.roomBatchNote(e, id, b, sent, ln)
+		if fresh { // the feed position after it, as noted above: the span is read up to it
+			l.Fed = b.upto
+		} else {
+			l.Fed = max(l.Fed, b.upto)
+		}
+		if roomCompactDue(l, ln) && !ln.Never && ln.CompactStartedAt.IsZero() {
+			compact = feedEarliest(compact, feedLatest(now.Add(feedBusyPoll), ln.RetryAt)) // once the batch's turn ended
+		}
+	}
 	if end {
 		return now.Add(feedBusyPoll) // its turn ends, then the room
 	}
-	return sent.Add(feedBatchEvery)
+	return sent.Add(every)
 }
 
 // roomAskWaiting: an ask of the meeting waits for the room or runs in it (pending, and not answered from material).
@@ -444,9 +508,15 @@ func (s *Service) roomEnding(ctx context.Context, e *kb.Engine, id string, l kb.
 	return feedEarliest(cmp.Or(next, now.Add(feedBusyPoll)), deadline)
 }
 
-// roomWorking: the room's row says a turn runs (or is about to).
+// roomWorking: the room's row says a turn runs (or is about to), or its conversation is being compacted (#8253): asks,
+// batches and photos wait for that as for a turn.
 func roomWorking(row proto.Session) bool {
-	return row.Status == proto.StatusWorking || row.Starting || row.State == proto.StateWorking
+	return row.Status == proto.StatusWorking || row.Starting || row.State == proto.StateWorking || roomCompacting(row)
+}
+
+// roomCompacting: the room's row says its conversation is being compacted.
+func roomCompacting(row proto.Session) bool {
+	return row.Compaction != nil && row.Compaction.State == proto.CompactionRunning
 }
 
 // roomAsksFallBack wakes the asks of recording id waiting for its room: it turned unavailable or ended, so they go to

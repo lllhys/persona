@@ -35,22 +35,38 @@ nonisolated enum Rewind {
         var cut: Bool
     }
 
+    /// What the chat's session offers once Rewind to Here is tapped (#6294): whose words its lines are, and whether its
+    /// files can go back too.
+    struct Offer: Equatable, Sendable {
+        /// The node declared rewind (`capabilities.rewind`: a runtime's session, a Codex thread). Its lines are its own
+        /// (`<seq>#<n>`, not Claude's uuids), and there is no Claude input box on the computer to speak of.
+        var declared = false
+        /// Rewind Code and Chat is offered too (`Session.rewindsCode`).
+        var code = true
+    }
+
+    static func offer(_ session: Session?) -> Offer {
+        Offer(declared: session?.capabilities?.rewind == true, code: session?.rewindsCode ?? true)
+    }
+
     /// `<transcript line uuid>#<n>` → the line's uuid; nil for items that are not a transcript line of their own
-    /// (a message still being sent, the hub's notices).
-    static func entry(of id: String) -> String? {
+    /// (a message still being sent, the hub's notices). `anyLine`: the session numbers its lines its own way
+    /// (`Offer.declared`), and any `<line>#<n>` is one, as the web reads them (`entryOf`).
+    static func entry(of id: String, anyLine: Bool = false) -> String? {
         guard let hash = id.firstIndex(of: "#") else { return nil }
         let line = String(id[..<hash])
+        if anyLine { return line.isEmpty ? nil : line }
         return UUID(uuidString: line) == nil ? nil : line
     }
 
     /// Your messages in order. Images alone are a message too (Claude lists them), with no text; a message queued while
     /// Claude worked is not in its list yet.
-    static func prompts(_ items: [Item]) -> [Prompt] {
+    static func prompts(_ items: [Item], anyLine: Bool = false) -> [Prompt] {
         var out: [Prompt] = []
         for it in items {
             guard it.role == "user", it.queued != true,
                   it.kind == .text || (it.kind == .image && it.toolUseID == nil),
-                  let entry = entry(of: it.id) else { continue }
+                  let entry = entry(of: it.id, anyLine: anyLine) else { continue }
             let text = it.kind == .text ? it.cutText : ""
             if let last = out.last, last.entry == entry {
                 if !text.isEmpty { out[out.count - 1].raw += (last.raw.isEmpty ? "" : "\n") + text }
@@ -66,9 +82,9 @@ nonisolated enum Rewind {
 
     /// Which message the bubble with this item id stands for, in the words the node needs; nil when it cannot be told
     /// apart (no words) or is not one of your transcript messages. `full` replaces the text of a message the page cut.
-    static func target(_ items: [Item], id: String, full: String? = nil) -> Target? {
-        guard let entry = entry(of: id) else { return nil }
-        var all = prompts(items)
+    static func target(_ items: [Item], id: String, full: String? = nil, anyLine: Bool = false) -> Target? {
+        guard let entry = entry(of: id, anyLine: anyLine) else { return nil }
+        var all = prompts(items, anyLine: anyLine)
         guard let at = all.firstIndex(where: { $0.entry == entry }) else { return nil }
         if let full { all[at].raw = full }
         guard !all[at].raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
@@ -79,18 +95,24 @@ nonisolated enum Rewind {
     }
 
     /// The message was cut for the page: its whole text has to be fetched first (the first cut item's id).
-    static func cutItem(_ items: [Item], id: String) -> String? {
-        guard let entry = entry(of: id) else { return nil }
-        let mine = items.filter { $0.role == "user" && $0.kind == .text && Self.entry(of: $0.id) == entry }
+    static func cutItem(_ items: [Item], id: String, anyLine: Bool = false) -> String? {
+        guard let entry = entry(of: id, anyLine: anyLine) else { return nil }
+        let mine = items.filter { $0.role == "user" && $0.kind == .text && Self.entry(of: $0.id, anyLine: anyLine) == entry }
         guard mine.contains(where: { $0.fullSize != nil }) else { return nil }
         return mine.first?.id
     }
 
     /// Whether the menu offers it at all: a Claude conversation of an agent (not the assistant's, not a subagent or a
-    /// thread another source lists). Nil when it does not; otherwise why it is off right now ("" when it is on).
+    /// thread another source lists), or a session whose node says it can (`capabilities.rewind`: a runtime's session, a
+    /// Codex thread, #6294). Nil when it does not; otherwise why it is off right now ("" when it is on).
     static func block(_ session: Session?) -> String? {
-        guard let s = session, !s.assistant, s.sourceKind == nil, !s.sessionID.contains("@") else { return nil }
-        if let agent = s.agent, agent != "claude" { return String(localized: "Claude only") }
+        guard let s = session, !s.assistant, !s.sessionID.contains("@") else { return nil }
+        if s.capabilities?.rewind != true {
+            // Not declared (an older node) or declared off: an Agent's own Claude row, as before.
+            guard s.sourceKind == nil else { return nil }
+            if let agent = s.agent, agent != "claude" { return String(localized: "Claude only") }
+            if s.capabilities?.rewind == false { return nil }
+        }
         if s.state == .offline || s.starting == true { return StateName.notRunning.text }
         if s.state == .needsYou || s.pendingInteractions > 0 { return StateName.needsYou.text }
         if s.state == .working { return StateName.working.text }
@@ -143,22 +165,28 @@ private struct RewindDialogs: ViewModifier {
 
     func body(content: Content) -> some View {
         let block = menu.rewindBlock() ?? ""
+        // A session whose node declares rewind (#6294) restores files only where it says so, and has no Claude input box.
+        let offer = menu.rewindOffer()
         content
             .confirmationDialog("Rewind to Here", isPresented: Binding(get: { menu.rewinding != nil }, set: { if !$0 { menu.rewinding = nil } }),
                                 titleVisibility: .visible, presenting: menu.rewinding) { ask in
                 if block.isEmpty {
                     Button(Rewind.Restore.conversation.title) { menu.rewind?(ask.id, ask.text, .conversation) }
-                    Button(Rewind.Restore.codeAndConversation.title, role: .destructive) {
-                        // The next question waits for this dialog to go: one presented while it leaves is dropped.
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(400))
-                            confirmCode = ask
+                    if offer.code {
+                        Button(Rewind.Restore.codeAndConversation.title, role: .destructive) {
+                            // The next question waits for this dialog to go: one presented while it leaves is dropped.
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(400))
+                                confirmCode = ask
+                            }
                         }
                     }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: { _ in
-                Text(block.isEmpty ? String(localized: "Go back to before this message: everything after it is removed from Claude, and this message goes back into the input box.") : String(localized: "Can't rewind right now: \(block)"))
+                Text(!block.isEmpty ? String(localized: "Can't rewind right now: \(block)")
+                    : offer.declared ? String(localized: "Go back to before this message: everything after it is removed from the conversation.")
+                    : String(localized: "Go back to before this message: everything after it is removed from Claude, and this message goes back into the input box."))
             }
             .alert("Rewind Code?", isPresented: Binding(get: { confirmCode != nil }, set: { if !$0 { confirmCode = nil } }),
                    presenting: confirmCode) { ask in

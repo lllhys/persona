@@ -1,0 +1,14 @@
+{
+  "call": "Urgent call: {title}",
+  "answered": "answered",
+  "answered_for": "answered · {duration}",
+  "missed": "missed",
+  "missed_twice": "missed (rang twice)",
+  "declined": "declined",
+  "cancelled": "settled elsewhere",
+  "ringing": "ringing",
+  "you_asked": "You asked to be called about this",
+  "why": "Why Persona called",
+  "outcome": "What came of it",
+  "transcript": "What was said"
+}

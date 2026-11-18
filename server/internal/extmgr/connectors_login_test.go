@@ -360,3 +360,23 @@ func TestWithQROnlyForQRSteps(t *testing.T) {
 		t.Fatal("a QR step without a URL")
 	}
 }
+
+// A device-code step gets a QR code only when its link already carries the code (Lark's, #5818): scanning it then
+// needs nothing typed. GitHub's page asks for the code, so its step stays a code to type.
+func TestWithQRForDeviceCodeOnlyWhenTheLinkCarriesIt(t *testing.T) {
+	lark := connector.Prompt{Step: "device", Kind: connector.PromptDeviceCode, URL: "https://accounts.example.com/oauth/v1/device/verify?flow_id=f1&user_code=ABCD-EFGH", UserCode: "ABCD-EFGH"}
+	if err := withQR(&lark); err != nil || lark.QR == nil || lark.QR.Size == 0 {
+		t.Fatalf("a link carrying its code: %v %+v", err, lark.QR)
+	}
+	for name, p := range map[string]connector.Prompt{
+		"page asks for the code": {Kind: connector.PromptDeviceCode, URL: "https://github.com/login/device", UserCode: "ABCD-EFGH"},
+		"another code":           {Kind: connector.PromptDeviceCode, URL: "https://accounts.example.com/verify?user_code=OTHER", UserCode: "ABCD-EFGH"},
+		"not https":              {Kind: connector.PromptDeviceCode, URL: "http://accounts.example.com/verify?user_code=ABCD-EFGH", UserCode: "ABCD-EFGH"},
+		"no code":                {Kind: connector.PromptDeviceCode, URL: "https://accounts.example.com/verify?user_code="},
+	} {
+		p.QR = &connector.QRCode{Size: 1, Rows: []string{"1"}}
+		if err := withQR(&p); err != nil || p.QR != nil {
+			t.Fatalf("%s: %v %+v", name, err, p.QR)
+		}
+	}
+}

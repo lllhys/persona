@@ -215,7 +215,7 @@ func randomFleet(rng *rand.Rand) ([]fleetInput, []proto.Interaction, map[string]
 				State:     pick(proto.StateNeedsYou, proto.StateWorking, proto.StateUnread, proto.StateIdle, proto.StateWorking),
 				Title:     pick("", "Claude Code", "Fix the build", "a very long title that goes on and on past every limit", "two\nlines"),
 				Cwd:       pick("/code/app", "/code/web", ""),
-				SpaceName: pick("", "app", "web"), SlotName: pick("", "2", "tests"), SlotIndex: rng.IntN(3),
+				SpaceName: pick("", "app", "web"), SlotName: pick("", "2", "tests"), SlotIndex: int32(rng.IntN(3)),
 				LastText:  pick("", "done", "first line\nsecond", "a long reply that is clipped somewhere after sixty runes, really quite long"),
 				Assistant: rng.IntN(8) == 0, Quiet: rng.IntN(10) == 0, UpdatedAt: at(), StateSince: at(),
 				Agent: pick("claude", "codex"), IsSubagent: rng.IntN(6) == 0, BackgroundWorking: rng.IntN(4) == 0}

@@ -1,9 +1,9 @@
 package node
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -21,7 +21,7 @@ const (
 )
 
 // claudeOpenElsewhere is the running claude that has session id open, outside any pane Persona drives (callers ask
-// for sessions with no live agent), and where it runs, in the app's words.
+// for sessions with no live agent), and where it runs (whereOpen).
 func (n *Node) claudeOpenElsewhere(id string) (pid int, where string, ok bool) {
 	if id == "" {
 		return 0, "", false
@@ -45,7 +45,7 @@ type claudeProc struct {
 	// name and two hex digits ("home-a8"); "user", "peer", "collision", "auto" and "hook" are names something chose.
 	NameSource string `json:"nameSource"`
 	// Kind is "interactive" for a claude in a terminal, "bg" for a background session Claude's daemon runs; Status is
-	// busy, idle or waiting (claudebg.go).
+	// busy, idle, shell (idle with background commands running) or waiting (claudebg.go).
 	Kind   string `json:"kind"`
 	Status string `json:"status"`
 	// ParkedJobID is set while an interactive claude has sent its own session to the background (claudebg.go).
@@ -64,13 +64,31 @@ type claudeProc struct {
 	dir  string // the sessions directory the file is in (its key file is next to it)
 }
 
+// literalGlobPath quotes every glob metacharacter in a literal directory. Windows does not support backslash escaping
+// in filepath patterns, so use character classes there. The caller appends the active *.json suffix separately.
+func literalGlobPath(path string) string {
+	return literalGlobPathForOS(path, runtime.GOOS)
+}
+
+func literalGlobPathForOS(path, goos string) string {
+	if goos == "windows" {
+		return strings.NewReplacer("[", "[[]", "*", "[*]", "?", "[?]").Replace(path)
+	}
+	return strings.NewReplacer(`\`, `\\`, "[", `\[`, "*", `\*`, "?", `\?`).Replace(path)
+}
+
 // liveClaudes reads the sessions/<pid>.json of every claude still running, in every config directory, once per pid.
+// The list calls it on every rebuild (once a second): a file is read again only once it changed (claudefiles.go).
 func (n *Node) liveClaudes() []claudeProc {
 	var out []claudeProc
 	seen := map[int]bool{}
+	var dirs []string
 	for _, dir := range n.claudeConfigDirs() {
-		sessions := filepath.Join(dir, "sessions")
-		files, _ := filepath.Glob(filepath.Join(sessions, "*.json"))
+		dirs = append(dirs, filepath.Join(dir, "sessions"))
+	}
+	listed := map[string]bool{}
+	for _, sessions := range dirs {
+		files, _ := filepath.Glob(filepath.Join(literalGlobPath(sessions), "*.json"))
 		for _, f := range files {
 			p, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(f), ".json"))
 			if err != nil || p <= 0 || seen[p] {
@@ -80,33 +98,52 @@ func (n *Node) liveClaudes() []claudeProc {
 			if err != nil || st.Size() > 64<<10 {
 				continue
 			}
-			b, err := os.ReadFile(f)
-			if err != nil {
+			listed[f] = true
+			c, ok := n.cfiles.parse(f, st)
+			if !ok {
 				continue
 			}
-			c := claudeProc{pid: p, dir: sessions}
-			if json.Unmarshal(b, &c) != nil || !sameProcess(p, claudeFileStart(c.ProcStart)) {
+			c.pid, c.dir = p, sessions
+			if !sameProcess(p, claudeFileStart(c.ProcStart)) {
 				continue // a file left by a claude that exited (its pid may have been reused)
 			}
 			seen[p] = true
 			out = append(out, c)
 		}
 	}
+	n.cfiles.keep(dirs, listed)
 	return out
 }
 
-// whereOpen names the client a claude runs in, from its entrypoint. The desktop app writes "claude-desktop" and, in
-// some builds, a suffix ("claude-desktop-3p"); all of them are the desktop app.
+// Where a claude outside Persona's panes has a session open: the open_elsewhere refusal's `where`, which the hub says
+// in the app's language (apierr openElsewhereKeys, rpc-errors.open_elsewhere_*), and its words here.
+const (
+	whereDesktop    = "desktop"
+	whereTerminal   = "terminal"
+	whereProgram    = "program"
+	whereOther      = "other"
+	whereAgentsList = "agents_list" // a parked session's pane on Claude Code's agents list (claudebg.go)
+)
+
+var whereNames = map[string]string{
+	whereDesktop:  "Claude 桌面版",
+	whereTerminal: "电脑上的一个终端",
+	whereProgram:  "电脑上的另一个程序",
+	whereOther:    "电脑上的另一个地方",
+}
+
+// whereOpen is where a claude runs, from its entrypoint. The desktop app writes "claude-desktop" and, in some builds,
+// a suffix ("claude-desktop-3p"); all of them are the desktop app.
 func whereOpen(entrypoint string) string {
 	switch {
 	case desktopEntrypoint(entrypoint):
-		return "Claude 桌面版"
+		return whereDesktop
 	case entrypoint == "cli":
-		return "电脑上的一个终端"
+		return whereTerminal
 	case strings.HasPrefix(entrypoint, "sdk"):
-		return "电脑上的另一个程序"
+		return whereProgram
 	default:
-		return "电脑上的另一个地方"
+		return whereOther
 	}
 }
 
@@ -116,15 +153,16 @@ func desktopEntrypoint(entrypoint string) bool {
 }
 
 // openElsewhereRefusal is the refusal for a resume of a session open in another client, nil when none has it open.
+// Its words name no device: the send may have come from the phone, the web or a computer.
 func (n *Node) openElsewhereRefusal(id string) error {
 	pid, where, ok := n.claudeOpenElsewhere(id)
 	if !ok {
 		return nil
 	}
-	w := where
+	w := whereNames[where]
 	if w != "" && w[0] < 0x80 {
 		w = " " + w // "in the Claude desktop app" in Chinese: a space between Chinese and a Latin word
 	}
 	return refusal(openElsewhere, "这个会话正在"+w+"里开着，Persona 不会再起一个 Claude 同时写它：在"+w+
-		"里接着用，或者先在那边关掉它再从手机发。这次没有发送。", map[string]any{"pid": pid})
+		"里接着用，或者先在那边关掉它再发。这次没有发送。", map[string]any{"pid": pid, "where": where})
 }

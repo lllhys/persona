@@ -3,12 +3,14 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // The clipboard goes through pbcopy and pbpaste (fakes here: a file stands for the clipboard).
@@ -60,6 +62,77 @@ func TestMacClipboardRunsInUTF8(t *testing.T) {
 	want := "en_US.UTF-8 en_US.UTF-8 en_US.UTF-8\n"
 	if string(got) != want+want {
 		t.Fatalf("pbcopy and pbpaste saw %q", got)
+	}
+}
+
+// Reads stop at the byte cap without cutting a UTF-8 rune; JSON would otherwise replace the partial rune with U+FFFD (#8070).
+func TestMacClipboardTruncatesAtRuneBoundary(t *testing.T) {
+	type testCase struct {
+		name, text, want string
+	}
+	ascii := strings.Repeat("a", clipboardMost)
+	tests := []testCase{
+		{"exactly at cap", ascii, ascii},
+		{"ASCII past cap", ascii + "tail", ascii},
+	}
+	for _, r := range []struct{ name, text string }{
+		{"2-byte", "é"},
+		{"3-byte", "中"},
+		{"4-byte", "😀"},
+	} {
+		for split := 1; split < len(r.text); split++ {
+			prefix := strings.Repeat("a", clipboardMost-split)
+			tests = append(tests, testCase{fmt.Sprintf("%s split after byte %d", r.name, split), prefix + r.text + "tail", prefix})
+		}
+		prefix := strings.Repeat("a", clipboardMost-len(r.text))
+		tests = append(tests, testCase{r.name + " ends at cap", prefix + r.text + "tail", prefix + r.text})
+		tests = append(tests, testCase{r.name + " starts at cap", ascii + r.text + "tail", ascii})
+	}
+
+	tail := func(s string) string {
+		return s[max(0, len(s)-12):]
+	}
+	for _, k := range tests {
+		t.Run(k.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pasteBin := filepath.Join(dir, "pbpaste")
+			if err := os.WriteFile(pasteBin, []byte("#!/bin/sh\n/bin/cat \"$0.data\"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(pasteBin+".data", []byte(k.text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			oldPaste, oldOS := pbpastePath, installOS
+			pbpastePath, installOS = pasteBin, "darwin"
+			t.Cleanup(func() { pbpastePath, installOS = oldPaste, oldOS })
+
+			result, err := macClipboard(context.Background(), json.RawMessage(`{}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := result.(map[string]any)["text"].(string)
+			if !utf8.ValidString(text) {
+				t.Errorf("truncated text is invalid UTF-8; final bytes: % x", []byte(tail(text)))
+			}
+
+			// callBuiltin JSON-marshals this map. Check what the client receives too.
+			wire, err := json.Marshal(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(wire, &response); err != nil {
+				t.Fatal(err)
+			}
+			if strings.ContainsRune(response.Text, utf8.RuneError) {
+				t.Errorf("wire text contains U+FFFD; tail %q", tail(response.Text))
+			}
+			if response.Text != k.want {
+				t.Errorf("wire text has %d bytes ending %q; want %d bytes ending %q", len(response.Text), tail(response.Text), len(k.want), tail(k.want))
+			}
+		})
 	}
 }
 

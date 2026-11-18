@@ -75,10 +75,13 @@ func fillSpaceDirectories(spaces []host.Space, panes []host.Agent) {
 	}
 }
 
+// listWorkspaces is the machine's workspace catalog: each terminal host's workspaces, and those of each engine runtime
+// that keeps workspaces of its own (Paseo's, runtimeworkspaces.go), with or without sessions in them.
 func (n *Node) listWorkspaces(ctx context.Context) (proto.WorkspacesResponse, error) {
 	out := proto.WorkspacesResponse{Workspaces: []proto.Workspace{}}
 	hs := n.hosts.All()
-	if len(hs) == 0 {
+	runtimes, runtimeEngine := n.catalogRuntimes()
+	if len(hs) == 0 && !runtimeEngine {
 		return out, fmt.Errorf("unsupported: this node has no workspace host")
 	}
 	var failures []error
@@ -122,18 +125,16 @@ func (n *Node) listWorkspaces(ctx context.Context) (proto.WorkspacesResponse, er
 				continue
 			}
 			seen[s.ID] = true
-			cwd := s.Cwd
-			if path := n.resolvePath(cwd, ""); path != "" && !inICloud(path) {
-				if real, err := filepath.EvalSymlinks(path); err == nil && !inICloud(real) {
-					cwd = real
-				}
-			}
 			out.Workspaces = append(out.Workspaces, proto.Workspace{ID: s.ID, Source: h.Kind(), SourceID: s.ID,
-				Title: firstOf(s.DisplayName, s.Label), Cwd: cwd, Branch: s.Branch, Online: true, Available: true,
+				Title: firstOf(s.DisplayName, s.Label), Cwd: n.catalogDir(s.Cwd), Branch: s.Branch, Online: true, Available: true,
 				ParentSourceID: s.ParentID, Index: s.Number,
 				ProjectID: s.ProjectID, ProjectName: s.ProjectName, ProjectPath: s.ProjectPath, IsMain: s.IsMain,
 				Unread: s.Unread, SidebarStatus: s.SidebarStatus, WorkspaceKind: s.WorkspaceKind, Head: s.Head})
 		}
+	}
+	for _, h := range runtimes {
+		succeeded++
+		out.Workspaces = append(out.Workspaces, n.runtimeWorkspaceRows(h)...)
 	}
 	if succeeded == 0 && len(failures) > 0 {
 		// Every source that runs here failed: an error, not an empty catalog.
@@ -143,8 +144,14 @@ func (n *Node) listWorkspaces(ctx context.Context) (proto.WorkspacesResponse, er
 }
 
 // resolveWorkspace validates a directory binding on the machine that owns it.
-// It performs no host, terminal, agent, or Git operations.
-func (n *Node) resolveWorkspace(asked string) (proto.Workspace, error) {
+// It performs no host, terminal, agent, or Git operations. The id is the physical path; so is the cwd, unless terminal
+// asks for the spelling an Agent is started in: the home's own spelling of that directory when the home is a link
+// (visiblePath), since a terminal in a container that mounts the home at $HOME has no directory under the home's real
+// path (#10365). The hub compares task folders with the home's two spellings folded (node.info home_real), so either
+// names the same folder there. For a terminal it also makes the git links of the linked worktree the directory is in
+// portable (portableWorktreeLinks: files only, no git run), as a checkout made before, or by git on the host, still
+// names the real path.
+func (n *Node) resolveWorkspace(asked string, terminal bool) (proto.Workspace, error) {
 	path := n.resolvePath(asked, "")
 	if path == "" {
 		return proto.Workspace{}, fmt.Errorf("workspace path must be an absolute directory or ~/ path")
@@ -166,6 +173,13 @@ func (n *Node) resolveWorkspace(asked string) (proto.Workspace, error) {
 	if !st.IsDir() {
 		return proto.Workspace{}, fmt.Errorf("workspace path is not a directory")
 	}
+	cwd := real
+	if terminal {
+		cwd = n.visiblePath(real)
+		if top := worktreeTop(real); top != "" {
+			n.portableWorktreeLinks(top)
+		}
+	}
 	return proto.Workspace{ID: real, Source: "directory", SourceID: real, Title: filepath.Base(real),
-		Cwd: real, Online: true, Available: true}, nil
+		Cwd: cwd, Online: true, Available: true}, nil
 }

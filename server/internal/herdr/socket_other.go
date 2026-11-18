@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // platformConfigDir is herdr's config directory when $XDG_CONFIG_HOME is not set: ~/.config/herdr.
@@ -29,4 +31,4 @@ func socketExists(path string) bool {
 }
 
 // listenSocket listens where a herdr would serve its API: a unix socket at path.
-func listenSocket(path string) (net.Listener, error) { return net.Listen("unix", path) }
+func listenSocket(path string) (net.Listener, error) { return osproc.Listen("unix", path) }

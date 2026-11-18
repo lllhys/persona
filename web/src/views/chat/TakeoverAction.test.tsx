@@ -1,0 +1,156 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const state = vi.hoisted(() => ({ api: vi.fn(), launch: vi.fn(), upsert: vi.fn(), toast: vi.fn() }));
+vi.mock("../../lib/api", async (original) => ({ ...(await original<typeof import("../../lib/api")>()), api: state.api }));
+vi.mock("../../lib/new-agent", async (original) => ({ ...(await original<typeof import("../../lib/new-agent")>()), launchAgent: state.launch }));
+vi.mock("../../lib/store", async (original) => ({ ...(await original<typeof import("../../lib/store")>()), upsertSession: state.upsert }));
+vi.mock("../../ui/atoms", async (original) => ({ ...(await original<typeof import("../../ui/atoms")>()), toast: state.toast }));
+
+import { ApiError } from "../../lib/api";
+import type { Session } from "../../lib/types";
+import { t } from "../../i18n";
+import TakeoverAction from "./TakeoverAction";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const baseSession = {
+  machine_id: "machine", session_id: "thread", title: "Codex history", cwd: "/work", status: "offline",
+  capabilities: { takeover: { running: true, can_resume: true } }, todo: { id: "todo-original", title: "Original task" },
+} as Session;
+
+const plan = (patch: Record<string, unknown> = {}) => ({
+  running: true, can_resume: true, token: "token-1", cwd: "/work", transcript_path: "/private/transcript",
+  continuation_prompt: "opaque encrypted continuation", ...patch,
+});
+
+let host: HTMLDivElement;
+let root: Root;
+beforeEach(() => {
+  state.api.mockReset(); state.launch.mockReset(); state.upsert.mockReset(); state.toast.mockReset();
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+});
+afterEach(() => { act(() => root.unmount()); host.remove(); });
+
+const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => await Promise.resolve()); };
+const button = (scope: ParentNode, label: string) => [...scope.querySelectorAll("button")].find((b) => b.textContent?.trim() === label) as HTMLButtonElement;
+const render = (session = baseSession) => act(() => root.render(<TakeoverAction session={session} />));
+
+describe("TakeoverAction interactions", () => {
+  it("running session click performs GET only, and cancel never posts", async () => {
+    state.api.mockResolvedValue(plan());
+    render();
+    await act(async () => button(host, t("chat-takeover.takeover")).click());
+    await flush();
+    expect(state.api.mock.calls.map(([path, options]) => [path, options?.method ?? "GET"])).toEqual([["/machines/machine/codex/thread/takeover", "GET"]]);
+    await act(async () => button(document.body, t("chat-chatview.not_now")).click());
+    expect(state.api.mock.calls).toHaveLength(1);
+  });
+
+  it("posts exactly once after running confirmation", async () => {
+    state.api.mockImplementation(async (_path: string, options?: { method?: string }) => options?.method === "POST" ? { session: baseSession } : plan());
+    render();
+    await act(async () => button(host, t("chat-takeover.takeover")).click()); await flush();
+    await act(async () => button(document.body, t("chat-takeover.takeover_confirm")).click()); await flush();
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET", "POST"]);
+    expect(state.api.mock.calls[1][1]).toMatchObject({ json: { token: "token-1", confirm_stop: true } });
+  });
+
+  it("an exited session takes over with GET followed by an unconfirmed POST", async () => {
+    state.api.mockImplementation(async (_path: string, options?: { method?: string }) => options?.method === "POST" ? { session: baseSession } : plan({ running: false }));
+    render({ ...baseSession, capabilities: { takeover: { running: false, can_resume: true } } } as Session);
+    await act(async () => button(host, t("chat-takeover.takeover")).click()); await flush();
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET", "POST"]);
+    expect(state.api.mock.calls[1][1]).toMatchObject({ json: { token: "token-1", confirm_stop: false } });
+  });
+
+  it("continues in a new session with the opaque prompt and original Todo", async () => {
+    state.api.mockResolvedValue(plan());
+    render();
+    await act(async () => button(host, t("chat-takeover.takeover_new")).click()); await flush();
+    expect(state.launch).toHaveBeenCalledWith({ machineId: "machine", cwd: "/work", launcher: "codex", agentType: "codex", inlinePrompt: true, text: "opaque encrypted continuation", attachments: [], todoId: "todo-original" });
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET"]);
+  });
+
+  it("can_resume false shows a translated reason and only the continue action", async () => {
+    state.api.mockResolvedValue(plan({ can_resume: false, reason: "encrypted_context" }));
+    render({ ...baseSession, capabilities: { takeover: { running: false, can_resume: false } } } as Session);
+    expect(button(host, t("chat-takeover.takeover"))).toBeFalsy();
+    await act(async () => button(host, t("chat-takeover.takeover_new")).click()); await flush();
+    expect(document.body.textContent).toContain(t("chat-takeover.reason_encrypted_context"));
+    expect(document.body.textContent).not.toContain("encrypted_context");
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter((b) => b.getAttribute("aria-label") !== t("ui-atoms.close"))).toHaveLength(1);
+    expect(button(document.body, t("chat-takeover.takeover_confirm"))).toBeFalsy();
+  });
+
+  it("localizes unavailable reason codes instead of displaying the enum", async () => {
+    state.api.mockResolvedValue(plan({ can_resume: false, reason: "unavailable" }));
+    render({ ...baseSession, capabilities: { takeover: { running: false, can_resume: false } } } as Session);
+    await act(async () => button(host, t("chat-takeover.takeover_new")).click()); await flush();
+    expect(document.body.textContent).toContain(t("chat-takeover.reason_unavailable"));
+    expect(document.body.textContent).not.toContain("unavailable");
+  });
+
+  it("continue-only POST refusal switches to sealed continuation without retrying the token", async () => {
+    state.api.mockImplementation(async (_path: string, options?: { method?: string; json?: { token?: string } }) => {
+      if (options?.method === "POST") throw new ApiError(409, "continue only", { code: "codex_takeover_continue_only" });
+      return plan({ running: false });
+    });
+    render();
+    await act(async () => button(host, t("chat-takeover.takeover")).click()); await flush();
+    expect(document.body.textContent).toContain(t("chat-takeover.reason_encrypted_context"));
+    expect(document.body.textContent).not.toContain("encrypted_context");
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter((b) => b.getAttribute("aria-label") !== t("ui-atoms.close"))).toHaveLength(1);
+    await act(async () => button(document.querySelector('[role="dialog"]')!, t("chat-takeover.takeover_new")).click()); await flush();
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET", "POST"]);
+    expect(state.launch).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed POST retry fetches a fresh token before posting again", async () => {
+    let gets = 0;
+    state.api.mockImplementation(async (_path: string, options?: { method?: string; json?: { token?: string } }) => {
+      if (options?.method === "POST") {
+        if (options?.json?.token === "token-1") throw new ApiError(503, "temporary", { code: "temporary" });
+        return { session: baseSession };
+      }
+      gets++;
+      return plan({ running: false, token: `token-${gets}` });
+    });
+    render({ ...baseSession, capabilities: { takeover: { running: false, can_resume: true } } } as Session);
+    await act(async () => button(host, t("chat-takeover.takeover")).click()); await flush();
+    expect(state.api.mock.calls[0][1]).toBeUndefined();
+    await act(async () => button(host, t("chat-takeover.takeover")).click()); await flush();
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET", "POST", "GET", "POST"]);
+    expect(state.api.mock.calls[1][1]).toMatchObject({ json: { token: "token-1" } });
+    expect(state.api.mock.calls[3][1]).toMatchObject({ json: { token: "token-2" } });
+  });
+
+  it("keeps a pending continue-only dialog when SSE removes takeover capability", async () => {
+    let rejectPost!: (error: Error) => void;
+    state.api.mockImplementation(async (_path: string, options?: { method?: string }) => {
+      if (options?.method === "POST") return new Promise((_resolve, reject) => { rejectPost = reject; });
+      return plan();
+    });
+    render();
+    await act(async () => button(host, t("chat-takeover.takeover")).click()); await flush();
+    await act(async () => button(document.body, t("chat-takeover.takeover_confirm")).click()); await flush();
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET", "POST"]);
+
+    render({ ...baseSession, source_kind: "codex_app_server", capabilities: undefined } as Session);
+    await act(async () => rejectPost(new ApiError(409, "continue only", { code: "codex_takeover_continue_only" })));
+    await flush();
+
+    expect(document.body.textContent).toContain(t("chat-takeover.reason_encrypted_context"));
+    expect(document.body.textContent).not.toContain("encrypted_context");
+    expect([...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter((b) => b.getAttribute("aria-label") !== t("ui-atoms.close"))).toHaveLength(1);
+    expect(button(host, t("chat-takeover.takeover"))).toBeFalsy();
+    expect(state.api.mock.calls.map(([, options]) => options?.method ?? "GET")).toEqual(["GET", "POST"]);
+  });
+
+  it("renders no takeover controls for an ordinary live Codex session without a capability", () => {
+    render({ ...baseSession, source_kind: "codex_app_server", capabilities: undefined } as Session);
+    expect(host.querySelectorAll("button")).toHaveLength(0);
+  });
+});

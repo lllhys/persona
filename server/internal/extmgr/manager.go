@@ -27,6 +27,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/nwverse/persona/server/internal/agents"
+	"github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/connector"
 	"github.com/nwverse/persona/server/internal/extwire"
@@ -78,6 +79,12 @@ type Options struct {
 	Assistant func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error)
 	// AssistantEvent tells the assistant an event the hub used to send it (feishu.owner).
 	AssistantEvent func(event string, params json.RawMessage)
+	// AssistantSocket serves the assistant's WebSocket routes (assistantwire.SocketRoutes: a meeting's audio socket),
+	// which the hub relays here over a relay stream like the extensions' routes; nil: they are 404 (tests).
+	AssistantSocket http.HandlerFunc
+	// TranscriptionChanged invalidates the assistant's availability cache after an extension registry change.
+	// It must not block or call back into the registry; nil means no observer.
+	TranscriptionChanged func()
 	// DialRelay opens the hub's relay channel with query.
 	DialRelay func(ctx context.Context, query string) (*websocket.Conn, error)
 	// Connected says whether the bus is up now (nil: always), and Connection which connection it is: a comparable
@@ -87,6 +94,9 @@ type Options struct {
 	// Ask shows a card on the phones and waits for its answer, in the assistant's interaction queue (its askHub);
 	// ctx ending withdraws the card. nil: the hub is asked (tests).
 	Ask func(ctx context.Context, ix proto.Interaction) (proto.Resolution, error)
+	// AskPrepared retains an assistant-owned mutation through clarification. It is separate from Ask so runtime-owned
+	// coding-Agent permission cards cannot accidentally acquire a second execution path.
+	AskPrepared func(context.Context, proto.Interaction, approval.Operation) (approval.Outcome, error)
 	// AssistantMachine is where the assistant's conversations run ("" while not known).
 	AssistantMachine func() string
 	// AssistantTools are the assistant's tools now (a connector's tool may not shadow one).
@@ -128,24 +138,26 @@ type Manager struct {
 	imessageArchive    imessageArchiveFence
 	imessageAIPending  atomic.Bool
 	subs               *subscriptions.Service // source subscriptions (subscriptions.go); nil until Run
-	connectorsOff      map[string]bool
-	migrated           sync.Map
-	media              mediaCache
-	recalls            recallLocks
-	extensions         *extensions
-	hostCLIMu          sync.Mutex
-	hostCLIState       *hostCLIState
-	extTokens          extTokens
-	legacyCalls        legacyCalls
-	uiPages            pageSessions
-	uiDelivery         pageDelivery
-	agents             *agents.Service
-	bots               botHub
-	channels           channelsHub
-	chans              struct{ in inbound }
-	inbox              inboxSources
-	larkDefault        larkDefault
-	admin              struct {
+	// subsLive is subs once it runs, for the connectors' events, which start before it (connectorChanged).
+	subsLive      atomic.Pointer[subscriptions.Service]
+	connectorsOff map[string]bool
+	migrated      sync.Map
+	media         mediaCache
+	recalls       recallLocks
+	extensions    *extensions
+	hostCLIMu     sync.Mutex
+	hostCLIState  *hostCLIState
+	extTokens     extTokens
+	legacyCalls   legacyCalls
+	uiPages       pageSessions
+	uiDelivery    pageDelivery
+	agents        *agents.Service
+	bots          botHub
+	channels      channelsHub
+	chans         struct{ in inbound }
+	inbox         inboxSources
+	larkDefault   larkDefault
+	admin         struct {
 		extensions extensionGate
 		now        func() time.Time // the admin UI's clock (tests move it)
 	}
@@ -162,6 +174,9 @@ type Manager struct {
 	byID        map[string]*Machine
 	isMemberNow atomic.Bool
 	hello       atomic.Pointer[assistantwire.Hello]
+
+	// cuaSessions is what is known of the Cua Driver session labels the computer tools call under (computer_session.go).
+	cuaSessions cuaSessionBook
 
 	started chan struct{} // closed once Run started everything
 
@@ -324,6 +339,34 @@ func (h *Manager) waitInteraction(ctx context.Context, ix proto.Interaction) (pr
 		return proto.Resolution{}, errAssistantOffline
 	}
 	return h.opts.Ask(ctx, ix)
+}
+
+func (h *Manager) waitPrepared(ctx context.Context, ix proto.Interaction, op approval.Operation) (approval.Outcome, error) {
+	if h.opts.AskPrepared != nil {
+		return h.opts.AskPrepared(ctx, ix, op)
+	}
+	if h.opts.Ask == nil {
+		return approval.Outcome{}, errAssistantOffline
+	}
+	// Embedders that predate AskPrepared keep their original one-shot approval
+	// behavior. The production assistant supplies AskPrepared for clarification.
+	r, err := h.opts.Ask(ctx, ix)
+	if err != nil {
+		return approval.Outcome{}, err
+	}
+	switch {
+	case r.UserAllowed():
+		text, err := op.Apply(ctx, r)
+		return approval.Outcome{Text: text}, err
+	case r.UserDenied():
+		text := op.Denied
+		if text == "" {
+			text = "The user declined the change: nothing changed."
+		}
+		return approval.Outcome{Text: text}, nil
+	default:
+		return approval.Outcome{Text: op.Unanswered}, nil
+	}
 }
 
 // callAssistant asks the assistant in this process (Options.Assistant).

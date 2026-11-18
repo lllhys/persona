@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -58,7 +59,10 @@ func modelHTTP(ctx context.Context, params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, errors.New("model.http: bad request")
 	}
-	req.Header = http.Header(p.Header)
+	if p.Header != nil {
+		req.Header = http.Header(p.Header)
+	}
+	modelhttp.SetDefaultUserAgent(req.Header)
 	resp, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("model.http: %w", err)

@@ -189,6 +189,9 @@ type (
 	}
 	CallResult struct {
 		Text string `json:"text,omitempty"`
+		// Images are tools.call's pictures for the model, after the text (connector.ToolResult holds them to its limits);
+		// actions.do and catalog.call have none.
+		Images []connector.ToolImage `json:"images,omitempty"`
 		// MessageRef is actions.do's: the id of the message the write made on the other side
 		// (connector.DoResult.MessageRef), when the connector knows one.
 		MessageRef string `json:"message_ref,omitempty"`

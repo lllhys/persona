@@ -1,4 +1,10 @@
-Review a task you handed out from this conversation (its todo id), after you checked its work yourself: each done_when criterion with its evidence (a PR link and that it merged, CI, a screenshot, what the live system answers) or what is missing. accepted closes the task (its agent is stopped once it stays still; its terminal stays); rework sends what is missing back to the same agent (refused when it has stopped: a stopped agent is read-only, so start a new agent for the task with agent_start) — at most 2 rounds; a third is refused unless it carries a decision for the user (the needs_user fields below), and otherwise you accept or cancel; needs_user puts a decision to the user, and only a decision they can answer: it is refused unless it has why_owner (why only they can decide), reason (one sentence: what is to be decided), recommend, options (2 to 4, the recommended first, each with what choosing it leads_to) and cost_of_waiting. When nothing needs the user, don't use it: decide it yourself and send the agent on, send the work back, or close the task; a task that only waits for something is no decision either: park it. parked is for a task that waits on purpose (for the user to say what comes first, for someone else, for something outside to happen, for a date): it is refused unless it has reason (one sentence: what it waits for) and waiting_on, and it takes until (default 24 hours, at most 30 days). A parked task stays open and is not in the user's Needs you: no card, no push, and no stalled, idle, orphaned or overdue signal while it is parked; only waiting_on owner_priority is listed in their daily digest. At until it comes back to you once in a 督办 message (parked_due): decide, park it again with a new reason, or close it. Its agent starting a turn ends the parking, so send it what it needs before you park. A task parked again 3 times in a row with no agent turn in between is refused the next time: close it, or state the real decision. Don't park what you can decide, and don't use needs_user to park. The hub adds where the task came from and where it stands, and the decision is listed on the to-do with its options (its conclusion card asks them too; without a card, ask them yourself: ask_user, or notify_user if they are away, as the answer says); cancelled ends it (a duplicate, no longer wanted): its agents are closed and archived, and their waiting cards end. A leader conversation's needs_user also goes to the main conversation. From a conversation other than the main one, on a task it does not supervise, only accepted and cancelled apply: send what is missing to its agent with agent_send. The criteria are the task's brief's as they stand after its logged scope changes (the 督办 message lists them), not what a later hand-over prompt says: write one check per criterion in the same words, and the completion report lists each as met, not met or dropped (with the scope change that dropped it), then also_done. Use it on every task a 督办 message says waits for review; don't accept on the agent's word alone. On a supervised task, accepted and needs_user send the user one conclusion card in Lark: the verdict (done, cannot be done, or needs your decision), reason (one sentence), link (one), and for needs_user your recommend, which the user takes by answering "OK"; so give outcome, reason and link with accepted, and reason and recommend with needs_user, and don't push the same result again. A deployed task already has a "Please verify" card from when its work went live: your accepted passes it for the user (marked verified by you), so they are not asked to press "Pass"; set user_check only when the user should still look at the result themselves (a UI change someone has to see), and then that card, or a new one, waits for them. A needs_user decision has a default and a date: unless why_owner is irreversible or visible_to_others, it takes your recommend by default after 24 hours unanswered (recorded on the to-do as taken at the deadline), or at the deadline you give; irreversible and visible_to_others are never taken by default and are raised to the user again once a day. A decision that waited a day comes back to you once to confirm its facts still hold. A decision that can wait says so with can_wait: nothing is due within 12 hours and waiting costs little (nobody is held up today). It is then not pushed and gets no card: it is in the user's Needs you at once and the next daily briefing lists it with your recommendation, where they answer it (don't ask them yourself); its default, its recheck and their answers are unchanged, and if no briefing lists it within 24 hours, or an hour before its deadline, it is pushed after all. can_wait is ignored, and the decision pushed as usual (the answer says why), for irreversible and visible_to_others, for a deadline within 12 hours or one with reversible false, and while no daily briefing with facts is on; when in doubt leave it out. Besides the options the user can answer "You decide", "This isn't what I asked for" or "Tell me the background first": that comes back to you in a 督办 message, and nothing is taken.
+Verify handed-out work. accepted closes it, stopping its idle Agent but keeping the terminal. rework sends gaps to that Agent: at most 2 rounds; a third requires a complete owner decision. A stopped Agent is read-only: replace with agent_start. External waits use parked with source evidence, not needs_user. Only answerable owner-only decisions use needs_user: why_owner, reason, recommend, 2–4 options (recommended first, each with leads_to), cost_of_waiting. Otherwise act within your authority, rework or close.
+
+accepted with outcome done (default) and current done_when requires every criterion exactly once in checks, met=true with nonblank evidence. Refuse missing/duplicate/unknown/unmet checks before writing; user_check cannot bypass this. outcome cannot, cancelled and no-criteria tasks are unchanged. Other verdicts may omit checks without erasing progress. Report each criterion as met, not met or dropped (logged scope change), then also_done. Judge the scoped brief, not a later handover or the Agent's word; review every task supervision asks you to.
+
+Supervised accepted/needs_user send one Lark conclusion card (verdict, reason, link; needs_user adds recommend, selected by “OK”); do not duplicate it. Give accepted's outcome/reason/link or needs_user's reason/recommend. Acceptance passes an existing “Please verify” card; user_check means the owner must still inspect. needs_user defaults to recommend after 24h/deadline except irreversible or visible_to_others: never default those, remind daily. Recheck once at 24h. can_wait requires nobody blocked today, low waiting cost and no deadline within 12h (see schema). “You decide”, “This isn't what I asked for”, “Tell me the background first” return to supervision: don't repeat the question or take irreversible/external action.
+
+A non-main conversation reviewing another supervisor's task may only accept/cancel; send gaps with agent_send. A leader's needs_user reaches main too. Cancel only duplicates/unwanted tasks; their Agents close/archive and waiting cards end.
 
 ```json
 {
@@ -37,16 +43,16 @@ Review a task you handed out from this conversation (its todo id), after you che
     },
     "reason": {
       "type": "string",
-      "description": "accepted: the conclusion card's one sentence of why, in the user's language; default the note's first line. needs_user (required): one sentence saying what is to be decided, in the user's language. parked (required): one sentence saying what the task waits for, in the user's language"
+      "description": "accepted: the conclusion card's one sentence of why, in the user's language; default the note's first line. needs_user (required): one sentence saying what is to be decided, in the user's language. parked (required): one sentence saying what the task waits for, in the user's language; waiting on a PR: include its link"
     },
     "waiting_on": {
       "type": "string",
-      "enum": ["owner_priority", "someone_else", "external_event", "date"],
-      "description": "parked (required): what kind of thing the task waits on. owner_priority: the user has to say whether to do it or what comes first (their daily digest lists it); someone_else: another person has to do or answer something; external_event: something outside has to happen (a release, a result, a fix upstream); date: nothing but the time"
+      "enum": ["someone_else", "external_event", "date"],
+      "description": "parked (required): the external wait. someone_else: another person must act or answer; external_event: an outside event must happen; date: wait only until a date. New owner decisions use needs_user; legacy owner_priority parks remain readable and retain their digest behavior"
     },
     "until": {
       "type": "string",
-      "description": "parked, optional: until when it is parked, a duration (\"3d\", \"36h\", \"90m\") or an RFC 3339 time, 1 minute to 30 days ahead; default 24h. At that time the task comes back to you"
+      "description": "parked, optional: duration (\"3d\", \"36h\", \"90m\") or RFC 3339 time, 1 minute to 30 days ahead; default 24h. For waiting_on date, give an explicit RFC 3339 time (no duration or default). At that time the task returns to supervision"
     },
     "link": {
       "type": "string",
@@ -100,6 +106,50 @@ Review a task you handed out from this conversation (its todo id), after you che
     "reversible": {
       "type": "boolean",
       "description": "with deadline: whether taking recommend can be undone later. false for deleting, sending anything to other people, spending money or changing production: those are never taken by default (why_owner irreversible and visible_to_others must say false)"
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "target", "wake"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["person_reply", "merge_review", "external_event", "date"],
+          "description": "parked: person_reply (a sent request to a person), merge_review (a sent request for review of a ready PR/MR), external_event (an observable outside event), or date"
+        },
+        "target": {"type": "string", "maxLength": 200, "description": "the named person/reviewer or external object"},
+        "wake": {"type": "string", "maxLength": 600, "description": "the observable change that ends this wait"},
+        "url": {"type": "string", "maxLength": 2000, "description": "required for merge_review (ready PR/MR link) and external_event (observable object URL); omit for person_reply and date"},
+        "contact": {
+          "type": "object",
+          "required": ["channel", "url", "sender", "sent_at", "request", "status"],
+          "properties": {
+            "channel": {"type": "string", "maxLength": 100},
+            "url": {"type": "string", "maxLength": 2000, "description": "sent-message/receipt link, not a channel homepage"},
+            "sender": {"type": "string", "maxLength": 200},
+            "sent_at": {"type": "string", "format": "date-time", "description": "actual sent time; not in the future"},
+            "request": {"type": "string", "maxLength": 600},
+            "status": {"type": "string", "enum": ["sent"]}
+          },
+          "description": "required for person_reply and merge_review: the request has already been sent"
+        },
+        "ready": {"type": "boolean", "enum": [true], "description": "merge_review only: the named reviewer can review the PR/MR"},
+        "reply": {
+          "type": "object",
+          "required": ["source", "brand", "app_id", "account_open_id", "person_open_id", "chat_id", "thread_id", "request_message_id"],
+          "properties": {
+            "source": {"type": "string", "enum": ["larkcli"]},
+            "brand": {"type": "string", "enum": ["feishu", "lark"]},
+            "app_id": {"type": "string"},
+            "account_open_id": {"type": "string"},
+            "person_open_id": {"type": "string", "description": "expected human OpenID in this app, not self"},
+            "chat_id": {"type": "string"},
+            "thread_id": {"type": "string", "description": "provider topic ID, not root-message ID"},
+            "request_message_id": {"type": "string"}
+          },
+          "description": "person_reply: exact IDs from a configured lark-cli reader, never names. contact.url must be the sent request's matching topic AppLink. A verified reply asks the current supervisor to review, not direct Agent delivery"
+        }
+      },
+      "description": "required for parked. Inspect the source receipt: this records your attestation, not a provider check. Do not supply recorded_by (current conversation, server-authored/output only). Legacy missing evidence is unrecorded, not verified"
     }
   }
 }

@@ -53,12 +53,23 @@ const (
 // (integrations/runtime-sdk/lib/package.js PACKAGES). Keep the two in step: a file one side counts and the other does
 // not makes every hello look like another version.
 var Packages = map[string][]string{
-	"persona-dsh-runtime": {"dsh/package.json", "dsh/lib/*.js", "runtime-sdk/package.json", "runtime-sdk/index.js", "runtime-sdk/lib/*.js"},
-	"persona-pi-runtime":  {"pi/package.json", "pi/index.js", "pi/companion.mjs", "pi/lib/*.js", "runtime-sdk/package.json", "runtime-sdk/index.js", "runtime-sdk/lib/*.js"},
+	"persona-dsh-runtime":         {"dsh/package.json", "dsh/lib/*.js", "runtime-sdk/package.json", "runtime-sdk/index.js", "runtime-sdk/lib/*.js"},
+	"persona-pi-runtime":          {"pi/package.json", "pi/index.js", "pi/companion.mjs", "pi/lib/*.js", "runtime-sdk/package.json", "runtime-sdk/index.js", "runtime-sdk/lib/*.js"},
+	"persona-antigravity-runtime": {"antigravity/package.json", "antigravity/companion.mjs", "antigravity/mcp-proxy.mjs", "antigravity/lib/*.js", "runtime-sdk/package.json", "runtime-sdk/index.js", "runtime-sdk/lib/*.js"},
 	// The Paseo bridge is not loaded by another program: the node writes it out and runs it (node/paseobridge.go).
 	"persona-paseo-runtime": {"paseo/package.json", "paseo/bridge.mjs", "paseo/lib/*.js", "runtime-sdk/package.json", "runtime-sdk/index.js", "runtime-sdk/lib/*.js"},
-	// The Agent SDK bridge, likewise run by the node (the assistant's agentsdk runtime): one bundled file, the SDK in it.
-	"persona-agent-sdk-runtime": {"agent-sdk/package.json", "agent-sdk/dist/bridge.mjs"},
+}
+
+// ClaudeCodePlugin is the Persona plugin for Claude Code (integrations/claude-code-plugin): no runtime loads it, the
+// node writes it out and has Claude Code install it (internal/claudeplugin, docs/operations/link.md "Claude Code
+// plugin").
+const ClaudeCodePlugin = "persona-claude-code-plugin"
+
+// Assets are packages that are not a runtime's: carried and loaded like Packages, but no runtime loader hashes them, so
+// they are not in the loader's list (package.js PACKAGES). A pattern ending in "/**" takes every file under that
+// directory (assetSkipped leaves out tests and dependencies).
+var Assets = map[string][]string{
+	ClaudeCodePlugin: {"claude-code-plugin/**"},
 }
 
 // OverrideEnv names a directory whose <package>/ trees replace the embedded ones: end-to-end runs offer a package
@@ -318,7 +329,7 @@ func read(fsys fs.FS, name string) (*Package, error) {
 	return p, nil
 }
 
-// Generate packs each package's files (Packages) from src (the integrations directory) into out, replacing what an
+// Generate packs each package's files (Packages and Assets) from src (the integrations directory) into out, replacing what an
 // earlier run wrote there, and returns them in pattern order. A package's files under one directory of integrations/
 // make a part, a gzipped tar written once however many packages take it; index.json names each package's parts. The
 // same files give the same bytes (no times, owners or names in the archives), so builds stay reproducible. A pattern
@@ -327,8 +338,9 @@ func Generate(src, out string) (map[string][]File, error) {
 	if err := clean(out); err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(Packages))
-	for name := range Packages {
+	all := allPackages()
+	names := make([]string, 0, len(all))
+	for name := range all {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -337,8 +349,8 @@ func Generate(src, out string) (map[string][]File, error) {
 	written := map[string]bool{}
 	for _, name := range names {
 		var files []File
-		for _, pattern := range Packages[name] {
-			matches, err := filepath.Glob(filepath.Join(src, filepath.FromSlash(pattern)))
+		for _, pattern := range all[name] {
+			matches, err := matchPattern(src, pattern)
 			if err != nil {
 				return nil, err
 			}
@@ -394,6 +406,69 @@ func Generate(src, out string) (map[string][]File, error) {
 	return res, nil
 }
 
+// allPackages is Packages and Assets together.
+func allPackages() map[string][]string {
+	all := make(map[string][]string, len(Packages)+len(Assets))
+	for name, patterns := range Packages {
+		all[name] = patterns
+	}
+	for name, patterns := range Assets {
+		all[name] = patterns
+	}
+	return all
+}
+
+// matchPattern is the files under src a package pattern names: a glob (`*` only in the last segment), or with "/**"
+// at its end every regular file under that directory but those assetSkipped leaves out, sorted.
+func matchPattern(src, pattern string) ([]string, error) {
+	dir, recursive := strings.CutSuffix(pattern, "/**")
+	if !recursive {
+		return filepath.Glob(filepath.Join(src, filepath.FromSlash(pattern)))
+	}
+	root := filepath.Join(src, filepath.FromSlash(dir))
+	var out []string
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) && p == root {
+				return nil // no such directory: matches no file, which Generate refuses
+			}
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		if rel != "." && assetSkipped(filepath.ToSlash(rel), d.IsDir()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			out = append(out, p)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return out, err
+}
+
+// assetSkipped: what a "/**" pattern leaves out of a package, at rel (slash-separated, under the pattern's directory):
+// dependencies (node_modules), hidden files and directories other than .claude-plugin (a Claude Code plugin's
+// manifest), and tests (*.test.*, test/, tests/, evals/).
+func assetSkipped(rel string, dir bool) bool {
+	base := path.Base(rel)
+	switch {
+	case base == "node_modules" || base == "test" || base == "tests" || base == "evals":
+		return dir
+	case strings.HasPrefix(base, "."):
+		return base != ".claude-plugin"
+	case !dir && strings.Contains(base, ".test."):
+		return true
+	}
+	return false
+}
+
 // clean removes what an earlier Generate wrote in out (index.json, the parts, and the per-package trees written before
 // parts), so nothing stale is embedded; anything else (dist/README.md) stays.
 func clean(out string) error {
@@ -406,7 +481,7 @@ func clean(out string) error {
 	}
 	for _, e := range entries {
 		n := e.Name()
-		_, tree := Packages[compat.RuntimePackage(n)]
+		_, tree := allPackages()[compat.RuntimePackage(n)]
 		if n == indexFile || strings.HasSuffix(n, partSuffix) || (tree && e.IsDir()) {
 			if err := os.RemoveAll(filepath.Join(out, n)); err != nil {
 				return err

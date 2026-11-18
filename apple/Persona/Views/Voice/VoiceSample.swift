@@ -3,9 +3,10 @@
 import SwiftUI
 
 /// The voice mode's screenshot switches (docs/assistant/voice.md 6.8):
-/// - `-showVoiceSample listening|speaking|working|paused|asking|approval|refused|plan_feedback|ended|setup`: a call on the
-///   page the app opens on (`-openSession`, `-openAssistant`), in that state, with no socket and no microphone: a fake
-///   socket hands the engine the frames that state comes from, and a fake audio plays nothing. `setup` is no call: what
+/// - `-showVoiceSample listening|speaking|working|paused|asking|approval|refused|plan_feedback|unprompted|ended|setup`: a
+///   call on the page the app opens on (`-openSession`, `-openAssistant`), in that state, with no socket and no
+///   microphone: a fake socket hands the engine the frames that state comes from, and a fake audio plays nothing.
+///   `unprompted` is an instruction the user-speech gate held back, with Send Anyway (#5904). `setup` is no call: what
 ///   the 「+」 menu's Voice Chat says while the voice service is not set up.
 /// - `-openVoice YES`: the real path, as a tap on the voice button, once the page offers a call (against the mock hub's
 ///   `MOCK_VOICE=1`, scripts/mock/voice_mock.py). `-openVoice silent`: the same with no microphone and no speaker (the
@@ -15,6 +16,7 @@ import SwiftUI
 enum VoiceSample: String, CaseIterable {
     case listening, speaking, working, paused, asking, approval, refused
     case planFeedback = "plan_feedback"
+    case unprompted
     case ended, setup
 
     enum Request: Equatable {
@@ -44,7 +46,7 @@ enum VoiceSample: String, CaseIterable {
 
     @MainActor static func start(_ sample: VoiceSample, key: SessionKey, model: AppModel) {
         let main = model.session(key)?.assistant == true
-        let label = VoiceEntry.label(model.session(key), model: model)
+        let label = VoiceEntry.label(key, model: model)
         Task {
             await VoiceCalls.shared.start(key, extensionID: "voice", surface: .phone,
                                           deps: deps(sample, frames: frames(sample, key: key, main: main, label: label)))
@@ -70,7 +72,7 @@ enum VoiceSample: String, CaseIterable {
         offline.transport = { _ in throw APIError(status: 404, message: "sample") }
         return VoiceDeps(api: { offline }, socket: { _, _ in SampleSocket(frames: frames) }, audio: { SampleAudio(sample: sample) },
                          mic: SampleMic(), microphone: RecordingMicrophone(), idleTimer: SampleIdleTimer(), clock: SystemVoiceClock(),
-                         session: { AppModel.shared.latest($0) }, voice: { _, _ in nil })
+                         session: { AppModel.shared.latest($0) }, voice: { _, _ in nil }, speechGate: { _, _ in true })
     }
 
     private static func json(_ object: [String: Any]) -> String {
@@ -89,7 +91,7 @@ enum VoiceSample: String, CaseIterable {
     }
 
     private static func frames(_ sample: VoiceSample, key: SessionKey, main: Bool, label: String) -> [String] {
-        let ready = json(["type": "ready", "protocol": 2, "features": ["target", "runs", "asks", "resume", "suspend"],
+        let ready = json(["type": "ready", "protocol": 2, "features": ["target", "runs", "asks", "resume", "suspend", "speech_gate"],
                           "input_rate": 16000, "output_rate": 24000,
                           "target": ["machine_id": key.machineID, "session_id": key.sessionID, "kind": main ? "main" : "agent",
                                      "agent_label": main ? "" : "Claude Code"]])
@@ -122,6 +124,12 @@ enum VoiceSample: String, CaseIterable {
             out += [caption("u2", "user", "第三步先别做"),
                     caption("a2", "assistant", "\(label) 写好了计划，在屏幕上看一下。"),
                     run("voice-5e3f1a7c9b2d4068", "第三步先别做", "refused", extra: ["code": "dialog_open", "message": "a dialog is open"])]
+        case .unprompted:
+            // The voice handed something over after an agent's words were read out, with nothing heard from the user since.
+            out += [run("voice-7c1e4a90b2d35f68", task, "done"),
+                    caption("a2", "assistant", main ? "明天下午有两个会。" : "登录页的测试修好了。"),
+                    run("voice-9a4c2e7b1d3f5086", main ? "把会议改到周五" : "顺便发布新版本", "refused", extra: ["code": "unprompted", "resendable": true]),
+                    caption("a3", "assistant", "刚才没听到你新的请求，为了安全先没发；要做的话再说一遍，或者点屏幕上的「仍然发送」。")]
         }
         return out
     }
@@ -178,7 +186,8 @@ enum VoiceSample: String, CaseIterable {
         func close() { lock.withLock { handler = nil } }
     }
 
-    /// Plays nothing; for `speaking` it says the voice plays and how loud, for `ended` that a phone call took the audio.
+    /// Plays nothing; for `speaking` it says the voice plays and how loud, for `ended` that a phone call took the audio and
+    /// did not give it back (an interruption alone only pauses the voice chat, #9887).
     @MainActor private final class SampleAudio: VoiceAudio {
         let sample: VoiceSample
         private var task: Task<Void, Never>?
@@ -193,6 +202,7 @@ enum VoiceSample: String, CaseIterable {
                 switch sample {
                 case .ended:
                     events(.interrupted)
+                    events(.interruptionEnded(shouldResume: false))
                 case .speaking:
                     events(.playing(true))
                     var t = 0.0
@@ -271,3 +281,4 @@ enum VoiceSample: String, CaseIterable {
     }
 }
 #endif
+import PersonaWire

@@ -270,7 +270,9 @@ function subscribe(l: () => void) {
 }
 
 function usePersonaStore(): PersonaStoreState {
-  const s = useSyncExternalStore(subscribe, () => ps);
+  // The third arg is the server snapshot, so views rendered with renderToStaticMarkup work (the same shape as
+  // useRoster); the module-level state is its stable value.
+  const s = useSyncExternalStore(subscribe, () => ps, () => ps);
   useEffect(() => {
     if (!ps.loaded && !loading) void refreshPersonas();
   }, []);

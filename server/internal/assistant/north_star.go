@@ -27,7 +27,7 @@ import (
 // the interactions' first-dispatch markers (#4443, confirmation_metrics.go), the work events (session_work_events) and
 // the scheduled runs. Recording adds two work events and one setting, no table:
 //
-//   - notifyEvent: a notify_user call, when it is sent.
+//   - notifyEvent: a notify_user call, when it is sent; one that no device took says why (detail "missed").
 //   - sendEvent: a start or a resume of the main or a leader conversation and how it went, from the manager's own sends
 //     (call) and from an app's message the hub sent (ConversationSent).
 //   - northStarSinceKey: when this build began recording, so what lies before it reads as unknown, not zero.
@@ -42,6 +42,7 @@ const (
 	nsActionCard    = "action_card"
 	nsNotifyUser    = "notify_user"
 	nsAuthorization = "authorization"
+	nsUrgentCall    = "urgent_call" // a matter that rang the owner's phone (urgent_call_tool.go), once however often it rang
 
 	// Where an interruption came from.
 	nsFromDot     = "dot" // the main conversation or a leader conversation
@@ -63,7 +64,7 @@ const (
 	outcomeUnknown = "unknown"
 )
 
-var nsCategories = []string{nsAskUser, nsActionCard, nsNotifyUser, nsAuthorization}
+var nsCategories = []string{nsAskUser, nsActionCard, nsNotifyUser, nsAuthorization, nsUrgentCall}
 
 // northStarSince is the setting saying when recording began, and by which build.
 type northStarSince struct {
@@ -136,6 +137,11 @@ func rolesNow(ctx context.Context, st interface {
 // recordSend keeps one start or resume of a main or leader conversation (sendEvent). main says the manager sent it
 // with is_main (a new main conversation has no id yet when its start fails).
 func (s *Service) recordSend(machine, session, op, origin string, main bool, outcome, code, msg string) {
+	s.recordSendEvent(machine, session, op, origin, main, outcome, code, msg, s.workEventNow)
+}
+
+func (s *Service) recordSendEvent(machine, session, op, origin string, main bool, outcome, code, msg string,
+	writeEvent func(string, string, string, map[string]any)) {
 	st := s.store()
 	role := ""
 	if main {
@@ -160,7 +166,7 @@ func (s *Service) recordSend(machine, session, op, origin string, main bool, out
 		detail["reason"] = sendReason(code, msg)
 		detail["error"] = clip(oneLine(msg), 200)
 	}
-	s.workEvent(machine, session, sendEvent, detail)
+	writeEvent(machine, session, sendEvent, detail)
 }
 
 // recordManagerSend is call's: the manager's own assistant.send to machine, with params p and the node's answer (or
@@ -195,11 +201,10 @@ func (s *Service) appSendRefused(machine, session string, err error) {
 }
 
 func (s *Service) recordSendAsync(machine, session, op, origin string, main bool, outcome, code, msg string) {
-	s.work.eventWrites.Add(1) // the tests wait for it as for any work event
-	go func() {
-		defer s.work.eventWrites.Done()
-		s.recordSend(machine, session, op, origin, main, outcome, code, msg)
-	}()
+	s.startWorkEventWrite(func() {
+		// Role lookup and the final write are one accepted unit: teardown must not cut it in half at a second scheduling gate.
+		s.recordSendEvent(machine, session, op, origin, main, outcome, code, msg, s.workEventNow)
+	})
 }
 
 func errCode(err error) string {
@@ -225,9 +230,13 @@ func (s *Service) ConversationSent(_ context.Context, r ConversationSent) {
 	s.recordSend(r.MachineID, r.SessionID, "resume", originApp, false, outcome, r.Code, r.Error)
 }
 
-// recordNotify keeps a notify_user call (notifyEvent): its task and whether it came from a test probe's directory.
-func (s *Service) recordNotify(ctx context.Context, machine, session string) {
+// recordNotify keeps a notify_user call (notifyEvent): its task, whether it came from a test probe's directory, and
+// why no device took it when none did (missed, notifyMissed; "" when one did or the hub did not say).
+func (s *Service) recordNotify(ctx context.Context, machine, session, missed string) {
 	detail := map[string]any{}
+	if missed != "" {
+		detail["missed"] = missed
+	}
 	if t, ok := s.todoOfSession(ctx, machine, session); ok {
 		detail["todo"] = t.ID
 	}
@@ -322,6 +331,12 @@ type InterruptExcluded struct {
 	SupervisorEscalated int `json:"supervisor_escalated"`
 	AutoAuthorized      int `json:"auto_authorized"`
 	Probe               int `json:"probe"`
+	// NotifyMissed counts the notify_user calls no device took when they were made, by why (notifyMissed): the hub
+	// handed them to no phone, computer or browser, so they did not interrupt the owner.
+	NotifyMissed map[string]int `json:"notify_missed"`
+	// CallSkipped counts the urgent calls that did not ring, by why (urgent_call_tool.go's gates, or no phone could
+	// take it): each went out as a P0 notification instead, counted under notify_user when a device took it.
+	CallSkipped map[string]int `json:"call_skipped"`
 }
 
 // InterruptSource is one source's count in one category.
@@ -428,7 +443,7 @@ func readNorthStar(ctx context.Context, st northStarStore, q northStarQuery) (No
 	if err != nil {
 		return ns, err
 	}
-	events, err := st.WorkEventsBetween(ctx, q.Since, q.Until, []string{notifyEvent, sendEvent, "ask_routed", "ask_escalated"})
+	events, err := st.WorkEventsBetween(ctx, q.Since, q.Until, []string{notifyEvent, sendEvent, "ask_routed", "ask_escalated", urgentCallEvent, urgentSkippedEvent})
 	if err != nil {
 		return ns, err
 	}
@@ -483,7 +498,8 @@ func readNorthStar(ctx context.Context, st northStarStore, q northStarQuery) (No
 }
 
 func interruptions(q northStarQuery, roles convRoles, cards []db.NorthStarCard, events []db.WorkEvent, recorded func(time.Time) bool) Interruptions {
-	in := Interruptions{Categories: map[string]*InterruptCategory{}, Sources: []InterruptSource{}}
+	in := Interruptions{Categories: map[string]*InterruptCategory{}, Sources: []InterruptSource{},
+		Excluded: InterruptExcluded{NotifyMissed: map[string]int{}, CallSkipped: map[string]int{}}}
 	for _, c := range nsCategories {
 		in.Categories[c] = &InterruptCategory{BySource: map[string]int{}, ByKind: map[string]int{}}
 	}
@@ -557,8 +573,25 @@ func interruptions(q northStarQuery, roles convRoles, cards []db.NorthStarCard, 
 				in.Excluded.Probe++
 				continue
 			}
+			if missed, _ := e.Detail["missed"].(string); missed != "" {
+				in.Excluded.NotifyMissed[missed]++
+				continue
+			}
 			todo, _ := e.Detail["todo"].(string)
 			count(nsNotifyUser, nsNotifyUser, e.MachineID, e.SessionID, todo, "")
+		case urgentCallEvent:
+			if test, _ := e.Detail["test"].(bool); test {
+				in.Excluded.Probe++ // Settings › Urgent calls › Test call
+				continue
+			}
+			why, _ := e.Detail["why"].(string)
+			count(nsUrgentCall, why, e.MachineID, e.SessionID, "", "")
+		case urgentSkippedEvent:
+			if test, _ := e.Detail["test"].(bool); test {
+				continue
+			}
+			reason, _ := e.Detail["reason"].(string)
+			in.Excluded.CallSkipped[reason]++
 		}
 	}
 	if !recorded(q.Since) {
@@ -771,8 +804,13 @@ func (b briefNorthStar) lines(l i18n.Lang) []string {
 			return i18n.T(l, "assistant-north_star.not_recorded")
 		}
 		n := ns.Interruptions
-		v := i18n.T(l, "assistant-north_star.count", i18n.Args{"n": n.Total, "ask": n.Categories[nsAskUser].Count,
-			"cards": n.Categories[nsActionCard].Count, "notify": n.Categories[nsNotifyUser].Count, "auth": n.Categories[nsAuthorization].Count})
+		key := "assistant-north_star.count"
+		if n.Categories[nsUrgentCall].Count > 0 { // the urgent calls only when one rang, so the line is as it was without them
+			key = "assistant-north_star.count_calls"
+		}
+		v := i18n.T(l, key, i18n.Args{"n": n.Total, "ask": n.Categories[nsAskUser].Count,
+			"cards": n.Categories[nsActionCard].Count, "notify": n.Categories[nsNotifyUser].Count, "auth": n.Categories[nsAuthorization].Count,
+			"calls": n.Categories[nsUrgentCall].Count})
 		if n.Partial {
 			v += i18n.T(l, "assistant-north_star.partial")
 		}
@@ -876,7 +914,7 @@ func (s *Service) runFacts(ctx context.Context, t Task, now time.Time) string {
 	case t.Facts:
 		return s.briefStart(ctx, t, now)
 	case t.Report:
-		return s.northStarRunFacts(ctx, now)
+		return s.briefReportStart(ctx, t, now)
 	}
 	return ""
 }

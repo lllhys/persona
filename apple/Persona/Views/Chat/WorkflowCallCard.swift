@@ -96,7 +96,7 @@ struct WorkflowCallCard: View {
             if open {
                 WorkflowRunBody(run: run, open: { actions?.openWorkflowAgent($0) }, scope: call.id)
                     // The phases' marks under the name (their rows have their own inset).
-                    .padding(.leading, WorkCardSlice.inset + WorkflowMark.textLeading - Theme.Space.s)
+                    .padding(.leading, WorkCardSlice.iconLeading + WorkflowMark.textLeading - Theme.Space.s)
                     .padding(.trailing, WorkCardSlice.inset)
                     .padding(.bottom, Theme.Space.m)
                     .unfolding(unfold)
@@ -120,7 +120,8 @@ struct WorkflowCallCard: View {
                 .padding(.leading, WorkflowMark.textLeading)
         }
         .padding(.vertical, WorkCardSlice.timeline ? Theme.Space.s : Theme.Space.m)
-        .padding(.horizontal, WorkCardSlice.inset)
+        .padding(.leading, WorkCardSlice.iconLeading)
+        .padding(.trailing, WorkCardSlice.inset)
         .contentShape(.rect)
     }
 }

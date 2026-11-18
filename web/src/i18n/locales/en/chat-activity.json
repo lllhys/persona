@@ -6,5 +6,12 @@
   "loop": "Loop",
   "stop_loop": "Stop loop",
   "stop_loop_explain": "This sends the agent a message so it won't schedule another wake-up. The current run finishes first.",
-  "copy_command": "Copy command"
+  "copy_command": "Copy command",
+  "output_loading": "Loading output…",
+  "output_empty_running": "No output yet.",
+  "output_empty_ended": "No output.",
+  "output_not_running": "Not listed as running",
+  "output_failed": "Couldn't load output",
+  "open_output_file": "Open as file",
+  "output_tail": "Earlier output is omitted. Open as file to view more."
 }

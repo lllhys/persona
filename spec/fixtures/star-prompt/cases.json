@@ -1,0 +1,356 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "a_fresh_install_shows_only_the_pill",
+      "description": "Nothing started yet: the empty Agents page's pill shows, the card waits for its threshold.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 0,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": null,
+      "expected": {
+        "state": {
+          "launches": 0,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "a_launch_counts_and_reaches_the_threshold",
+      "description": "The 20th Agent this device started brings the card.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 19,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "launch",
+      "expected": {
+        "state": {
+          "launches": 20,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": true,
+        "toast": false
+      }
+    },
+    {
+      "name": "the_card_waits_below_the_threshold",
+      "description": "19 launches are one short of the first threshold.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 19,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": null,
+      "expected": {
+        "state": {
+          "launches": 19,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "later_doubles_the_threshold_and_waits_three_days",
+      "description": "Later (or ✕) on the card doubles the threshold and holds the card for at least three days.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 20,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "later",
+      "expected": {
+        "state": {
+          "launches": 20,
+          "threshold": 40,
+          "snoozedUntil": 1799020800000,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "later_doubles_past_the_launches_so_far",
+      "description": "A card first seen long after the threshold doubles until the threshold is past the launches so far.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 45,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "later",
+      "expected": {
+        "state": {
+          "launches": 45,
+          "threshold": 80,
+          "snoozedUntil": 1799020800000,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "the_wait_holds_even_past_the_threshold",
+      "description": "Inside the three days the card stays away, however many Agents start.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 45,
+        "threshold": 40,
+        "snoozedUntil": 1798848000000,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": null,
+      "expected": {
+        "state": {
+          "launches": 45,
+          "threshold": 40,
+          "snoozedUntil": 1798848000000,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "the_card_returns_after_the_wait",
+      "description": "Past the wait and at the new threshold, the card shows again.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 40,
+        "threshold": 40,
+        "snoozedUntil": 1798761599999,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": null,
+      "expected": {
+        "state": {
+          "launches": 40,
+          "threshold": 40,
+          "snoozedUntil": 1798761599999,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": true,
+        "card": true,
+        "toast": false
+      }
+    },
+    {
+      "name": "star_turns_every_prompt_off",
+      "description": "A tap on Star on GitHub anywhere ends the pill, the card and the toast on this device.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 25,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "star",
+      "expected": {
+        "state": {
+          "launches": 25,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": true,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": false,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "launches_still_count_after_star",
+      "description": "The count goes on, but nothing shows once starred.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 25,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": true,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "launch",
+      "expected": {
+        "state": {
+          "launches": 26,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": true,
+          "pillHidden": false,
+          "welcomed": false
+        },
+        "pill": false,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "hiding_the_pill_leaves_the_card",
+      "description": "The pill's ✕ hides only the pill.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 20,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "hidePill",
+      "expected": {
+        "state": {
+          "launches": 20,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": false,
+          "pillHidden": true,
+          "welcomed": false
+        },
+        "pill": false,
+        "card": true,
+        "toast": false
+      }
+    },
+    {
+      "name": "onboarding_shows_the_toast_once",
+      "description": "The first finished setup on this device shows the toast and remembers it.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 0,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "onboarded",
+      "expected": {
+        "state": {
+          "launches": 0,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": true
+        },
+        "pill": true,
+        "card": false,
+        "toast": true
+      }
+    },
+    {
+      "name": "onboarding_again_shows_no_toast",
+      "description": "A second finished setup (a re-pairing) shows nothing.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 0,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": false,
+        "pillHidden": false,
+        "welcomed": true
+      },
+      "event": "onboarded",
+      "expected": {
+        "state": {
+          "launches": 0,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": false,
+          "pillHidden": false,
+          "welcomed": true
+        },
+        "pill": true,
+        "card": false,
+        "toast": false
+      }
+    },
+    {
+      "name": "no_toast_after_star",
+      "description": "Starred before setup finished: no toast.",
+      "now": 1798761600000,
+      "state": {
+        "launches": 0,
+        "threshold": 20,
+        "snoozedUntil": null,
+        "done": true,
+        "pillHidden": false,
+        "welcomed": false
+      },
+      "event": "onboarded",
+      "expected": {
+        "state": {
+          "launches": 0,
+          "threshold": 20,
+          "snoozedUntil": null,
+          "done": true,
+          "pillHidden": false,
+          "welcomed": true
+        },
+        "pill": false,
+        "card": false,
+        "toast": false
+      }
+    }
+  ]
+}

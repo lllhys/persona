@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | `questions.json` | 单选、多选、自填、多题翻页与提交门禁 | `QuestionForm` |
 | `recommended.json` | 推荐标记的显示和原文发送 | `QuestionOption.display` |
+| [`../question-review/review.json`](../question-review/review.json) | The review of a card of several questions: the click that opens it, its Submit and Previous, and the cards that skip it | `QuestionForm.submit`, `send`; `QuestionSteps.enabled`; `ScreenReviewFooter` |
 | `decisions.json` | 计划、授权、通知作答和交回终端 | `PlanForm`、`PermissionForm`、`NotificationActions` |
 | `screen.json` | 新旧 hub 的终端选项、自由输入、步骤栏 | `ScreenForm`、`ScreenParser`、Go `screen.ParseDialog` |
 | `transport.json` | 断网、成功、410、提示变化和失败后的卡片处理 | `AppModel.resolve` |
@@ -31,9 +32,11 @@
 
 `operation.picks` 是按问题原文索引的字符串数组，语义是集合；不能按输入数组次序拼答案。`other` 同样按问题原文索引。`page` 和 `option_index` 从零开始。`pick_option` 表示点击，`advance` 表示下一题／提交，`submit` 表示点击可用的提交入口；状态是点击前的快照。末题已答、前题漏答时，操作允许执行，但只跳回漏答题，`resolution` 仍为 null。
 
+**The review step (#2970, #8483).** On iPhone and iPad a card of several questions (`QuestionSteps.enabled`) shows a review before its answers go: with every question answered, Submit (or the button on an earlier question) only opens the review, and the review's own Submit calls `send()`. `operation.reviewing` is whether the review shows before the click (default false), and `expected.reviewing` whether it shows after. `confirm_review` is the review's Submit and `review_back` its Previous; both are disabled while the answer is on its way, and the options and the form's footer are not reachable while the review shows. `../question-review/review.json` asserts these transitions, starting with the first click that sends nothing. It lives outside this folder because the Android replay reads every file here and does not model the review; only the Go and Swift checks below read it. `questions.json` stays a synchronous answer-construction contract read as-is by the Rust and Kotlin replays: two of its cases (`multiple_questions_send_original_keys`, `all_answered_can_submit_from_earlier_page`) expect what the final confirmation sends, so the Swift replay checks that their click opens the review and then confirms it (`reviewConfirmedCases` in the Go test). Every other question case must leave the review closed. The BeautifulUI style's `BUIQuestionForm` is a separate form and is not replayed.
+
 `screen_option` 的 `option` 是终端给的字符串键，不是数组下标。带 hub `dialog` 时发送 `option`，不把 `rev` 塞进 Resolution；hub 从待处理 Interaction 取版本并在 node 按键前校验。旧 hub 没有 `dialog` 时使用 `keys`；自填按 `pre_keys → text → keys` 执行。原始终端输入只禁用空字符串，空白字符照发；自填选项会去掉首尾空白。
 
-`resolve` 操作用 `api_available`、`network_up` 和 `outcome` 驱动真实 `AppModel.resolve` 方法，API 替身只记录请求或抛错，不连接 hub。`resolution` 表示实际尝试发出的请求；HTTP 失败不会把已经尝试发送的请求改成 null。
+The `resolve` operation drives the real `AppModel.resolve` with `api_available`, `network_up` and `outcome`; the API stand-in only records the request or throws, and never connects to a hub. `resolution` is the request actually attempted; an HTTP failure does not turn an attempted request into null. The declarations the method uses are copied from their sources (`AnsweringInteractions`, `AnswerAttempts`, `OpRetry`, `APIError`, `ResolveResult`, `Answered`), so a 500 is not a gap and is not retried. As on the hub (`server/internal/assistant/fleet_ix_screen.go`, `server/internal/assistant/fleet_ix_codex.go`), `prompt_changed` ends the card before its 409 comes back: the API stand-in first delivers `interaction_resolved` through the app's own handling of that event, which is why the old card is not put back (#8915).
 
 所有可选协议字段按实际 Swift 编码保留或省略：例如拒绝必须是 `allow: false`，不能省略；对话页空计划意见编码为 `feedback: ""`。Go 的 `omitempty` 会省略空字符串，对照测试只允许这些已知的空字符串差异，不能据此删掉 false。
 
@@ -63,7 +66,7 @@ PERSONA_VERIFY_IOS_FIXTURES=1 go test -count=1 -p 1 -run 'TestResolutionFixture'
 `server/internal/proto/resolution_fixtures_test.go` 负责三层检查：
 
 - `TestResolutionFixtures` 读取两个领域的全部 JSON，检查来源标记、唯一名称和格式，用真实 `proto.Interaction`、`proto.Resolution` 解码并核对重编码字段；额外禁止未知 Resolution 字段，检查问题原文键、明确的计划模式和终端选项。带 hub dialog 的合成屏幕还要由真实 `screen.ParseDialog` 解析出同一份结构及版本。
-- `TestResolutionFixturesIOS` 在 Go 的临时目录生成 Swift 源码和二进制，`swiftc` 编译后读取同一批 JSON。程序逐块引用 iOS 的声明，不修改原文件：`QuestionOption.display`、QuestionForm 的 `pick / answer / advance / submit` 及计算属性、`ScreenForm.answer`、`ScreenParser`、`NotificationActions.resolution`、`ApproveFirstIntent.resolution`、`AppModel.resolve`。按钮的 Resolution 构造表达式也直接取自源文件。SwiftUI 状态容器、动画、触感、网络和提示由小型替身提供，避免启动 App 或连接 hub。临时源码和二进制不入库，Go 测试结束后删除；编译与运行共用有截止时间的 context。
+- `TestResolutionFixturesIOS` generates Swift source and binaries in Go's temporary directory, compiles them with `swiftc` and replays the same JSON. The program copies iOS declarations block by block without changing the originals: the `Interaction` model and the types it needs, `QuestionOption.display`, QuestionForm's `pick / answer / advance / submit / send` and computed properties (`stepped`, `isSending` among them), `QuestionSteps.enabled`, `pause`, `step(replacing:)` and `next(after:)`, the review footer's `back:` and `submit:` closures as written in `QuestionForm`, `ScreenForm.answer`, `ScreenParser`, `NotificationActions.resolution`, `ApproveFirstIntent.resolution` and `AppModel.resolve`. The buttons' Resolution constructor expressions also come straight from the source files. Small stand-ins provide the SwiftUI state containers, animation, haptics, network and toasts, so the app never starts and no hub is contacted. `ScreenStepsLogic.enabled` is `true` only under `#if os(iOS)`; the macOS program replays that iOS branch and fails if the declaration changes. Two programs compile from the same declarations, so one contract drifting from its source does not hide the others: `answers` replays every case except `resolve`, and `transport` adds `AppModel.resolve` for the `resolve` cases. The temporary source and binaries are never committed and are deleted when the Go test ends; compiling and running share a context with a deadline.
 - `TestResolutionFixtureSourceEvidence` 固定核对视图按钮禁用条件、终端文本门禁、手表按钮构造表达式以及通知／锁屏／Siri 单测中的认证断言，防止临时驱动与源码门禁悄悄分叉。
 
 验证范围限于逻辑和源码对照，没有启动 SwiftUI、通知中心、Face ID、Siri 或 watchOS。通知和锁屏的解锁要求只对照 `NotificationActionsTests.sayingYesNeedsUnlockSayingNoDoesNot`、`FleetIntentsTests.sayingYesNeedsUnlock` 的现有断言与源码；不声称做过真机解锁验证。对话页与手表中无法脱离 UI 宿主执行的显示／禁用条件用源码证据核对。所有 `derived` 用例均有源码对照，设计新增用例只做协议和规格一致性校验。Siri's unlock requirement is checked the same way, against the `authenticationPolicy` declaration in `apple/Persona/Intents/ApproveFirstIntent.swift` and the assertion in `IntentsTests.approvingFromSiriNeedsUnlock`.
@@ -121,6 +124,19 @@ macOS 需要能运行 `swiftc`；非 macOS 或未设置开关时，只跳过 Swi
 | 多题当前题已答时下一题只翻页。 | `apple/Persona/Views/Interactions/InteractionViews.swift：QuestionForm`；`apple/Shared/Models.swift：Resolution` | `next_page_does_not_send` |
 | 全部答完后可从前一题直接提交。 | `apple/Persona/Views/Interactions/InteractionViews.swift：QuestionForm`；`apple/Shared/Models.swift：Resolution` | `all_answered_can_submit_from_earlier_page` |
 | 正在发送时选项按钮不可再点。 | `apple/Persona/Views/Interactions/InteractionViews.swift：QuestionForm`；`apple/Shared/Models.swift：Resolution` | `sending_disables_option` |
+
+### question-review/review.json
+
+| Rule | Source | Case |
+| --- | --- | --- |
+| On a card of several questions, Submit on the last one opens the review and sends nothing yet. | `apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit`; `QuestionSteps.enabled` | `stepped_submit_opens_review` |
+| With every question answered, the button on an earlier question also opens the review. | `apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.advance, submit` | `stepped_advance_from_earlier_page_opens_review` |
+| A question left unanswered goes back to it; the review does not open. | `apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit` | `stepped_missing_answer_skips_review` |
+| The review's Submit sends every answer once, keyed by the original question. | `apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.send`; `ScreenReviewFooter` | `review_confirm_sends_all_answers` |
+| While the answer is on its way the review's buttons are disabled. | `apple/Persona/Views/Interactions/ScreenReview.swift: ScreenReviewFooter` | `review_confirm_while_sending_sends_nothing` |
+| Previous on the review closes it without sending. | `apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm` (`back:`) | `review_back_returns_to_questions` |
+| The review replaces the options. | `apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.plain` | `review_hides_options` |
+| A card of one question has no review. | `apple/Persona/Views/Interactions/QuestionSteps.swift: QuestionSteps.enabled` | `single_question_sends_without_review` |
 
 ### recommended.json
 

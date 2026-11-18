@@ -64,7 +64,6 @@ process and starts the agent as its direct child; there is no pid namespace, so 
 | Start | Started by | Code |
 | --- | --- | --- |
 | The assistant's Claude on the CLI with plain `claude` or a `~/.zshrc` launcher, guests included | the node | `assistantCLICommand`, `server/internal/node/assistant_start.go` |
-| The assistant's Claude on the Agent SDK: the bridge and the claude it starts | the node | `sdkCommand`, `server/internal/node/assistant_sdk.go` |
 | A managed launcher, `personad launch <name>`: in herdr, for the assistant, and when the node checks a launcher | a pane's shell, or the node | `launchExec`, `server/internal/node/managed.go` |
 | A Codex started from the phone, `personad codex-start` | the pane's shell | `codexStartExec`, `server/internal/node/codex_start.go` |
 
@@ -241,7 +240,7 @@ file for the process that reads it. Each start reads it in a different place:
 
 | Start | Reads the variable from |
 | --- | --- |
-| The assistant, CLI and Agent SDK | The node's environment: for the resident node, `EnvironmentVariables` in its LaunchAgent (`~/Library/LaunchAgents/com.persona.node.plist`), read when the node restarts |
+| The assistant | The node's environment: for the resident node, `EnvironmentVariables` in its LaunchAgent (`~/Library/LaunchAgents/com.persona.node.plist`), read when the node restarts |
 | `personad launch`, `personad codex-start` | The shell of the herdr or Orca pane (the node's, when the node checks a launcher) |
 | `personad node doctor` | The terminal it runs in |
 

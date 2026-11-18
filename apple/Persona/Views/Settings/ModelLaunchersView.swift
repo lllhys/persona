@@ -446,7 +446,10 @@ struct ModelLauncherDetailView: View {
                     if let o = l.origin, o.hasPrefix("zshrc:") { mono("Imported From", "~/.zshrc · " + o.dropFirst("zshrc:".count)) }
                     if let ms = l.models, ms.count > 1 { mono("Available Models", ms.map(\.id).joined(separator: String(localized: "、", comment: "Separator between computer names in a list"))) }
                     if l.hasHeaders == true { LabeledContent("Headers", value: String(localized: "Set (hidden)")) }
-                    if l.managed { LabeledContent("API Key", value: l.hasKey == true ? String(localized: "Set (hidden)") : String(localized: "Not set")) }
+                    if l.managed {
+                        LabeledContent("API Key", value: l.keyReference.map(ExtensionText.referenceState)
+                                       ?? (l.hasKey == true ? String(localized: "Set (hidden)") : String(localized: "Not set")))
+                    }
                     if l.managed, l.api != "responses" { LabeledContent("Authentication [Model Launchers View d1ff8f]", value: l.bearerAuth ? "Bearer" : "x-api-key") }
                     if let a = l.args, !a.isEmpty { mono("Extra Arguments", a.joined(separator: " ")) }
                     if let ids = l.machines, !ids.isEmpty {
@@ -645,6 +648,8 @@ struct LauncherEditor: View {
     @State private var name = ""
     @State private var baseURL = ""
     @State private var apiKey = ""
+    /// The key field takes a secret provider's reference (docs/extensions/secret-providers.md "Launcher keys").
+    @State private var keyByReference = false
     @State private var modelName = ""
     @State private var smallModel = ""
     @State private var subagentModel = ""
@@ -700,11 +705,11 @@ struct LauncherEditor: View {
             .navigationBarTitleDisplayMode(.inline)
             .sheetCancel(unsaved: opened.map { $0 != fields } ?? false) { dismiss() }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { usesPreset ? await savePreset() : await save() } }.lineLimit(1)
-                        .disabled(usesPreset ? !presets.canSave
-                                  : saving || name.isEmpty || baseURL.isEmpty || modelName.isEmpty || (isNew && apiKey.isEmpty)
-                                    || (scopeShown && scope.problem != nil))
+                SheetConfirm(id: "launcher-save",
+                             disabled: usesPreset ? !presets.canSave
+                                 : saving || name.isEmpty || baseURL.isEmpty || modelName.isEmpty || (isNew && apiKey.isEmpty)
+                                   || (scopeShown && scope.problem != nil)) {
+                    Task { usesPreset ? await savePreset() : await save() }
                 }
             }
             .task {
@@ -729,6 +734,7 @@ struct LauncherEditor: View {
                 kind = e.kind ?? "launcher"
                 protocolName = e.api ?? "messages"
                 auth = e.bearerAuth ? "bearer" : "api_key"
+                keyByReference = e.keyReference != nil
                 if let s = ProviderScopeForm(view: e) { scope = s }
             }
         }
@@ -762,8 +768,10 @@ struct LauncherEditor: View {
         Section {
             TextField("https://…", text: $baseURL)
                 .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-            SecretField(isNew || existing?.hasKey != true ? "API Key" : String(localized: "API Key (leave empty to keep)"), filled: String(localized: "Filled in; tap Save [Extension Market Views 94348c]"),
-                        text: $apiKey, identifier: "launcher.editor.key")
+            ProviderKeyField(title: isNew || existing?.hasKey != true ? "API Key" : String(localized: "API Key (leave empty to keep)"),
+                             filled: String(localized: "Filled in; tap Save [Extension Market Views 94348c]"), text: $apiKey,
+                             byReference: $keyByReference, references: model.hubFeatures.contains("launcher_secret_references"),
+                             stored: existing?.keyReference, identifier: "launcher.editor.key", explainedBelow: true)
             if !usesResponses {
                 Picker("Authentication [Model Launchers View d1ff8f]", selection: $auth) {
                     Text("x-api-key").tag("api_key")
@@ -771,8 +779,12 @@ struct LauncherEditor: View {
                 }
             }
         } header: { Text("Gateway") } footer: {
-            Text(usesResponses ? String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients.")
-                : String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients. Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN)."))
+            switch (usesResponses, keyByReference) {
+            case (true, false): Text(String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients."))
+            case (true, true): Text(String(localized: "Enter an address compatible with the selected protocol. The hub keeps only the reference and fetches the key from its provider when it's needed."))
+            case (false, false): Text(String(localized: "Enter an address compatible with the selected protocol. The key is stored encrypted on the hub and never sent back to clients. Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN)."))
+            case (false, true): Text(String(localized: "Enter an address compatible with the selected protocol. The hub keeps only the reference and fetches the key from its provider when it's needed. Choose Bearer if the gateway only accepts Authorization: Bearer (ANTHROPIC_AUTH_TOKEN)."))
+            }
         }
         Section {
             TextField(String(localized: "Default Model"), text: $modelName).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -829,8 +841,9 @@ struct LauncherEditor: View {
                                   customModelName: kind == "api" ? "" : customModelName.trimmingCharacters(in: .whitespaces),
                                   customModelDescription: kind == "api" ? "" : customModelDescription.trimmingCharacters(in: .whitespaces),
                                   args: kind == "api" ? [] : args.split(whereSeparator: \.isWhitespace).map(String.init),
-                                  apiKey: apiKey.isEmpty ? nil : apiKey, kind: kind,
-                                  api: kind == "api" ? protocolName : "messages", auth: usesResponses ? "api_key" : auth)
+                                  apiKey: apiKey.isEmpty || keyByReference ? nil : apiKey, kind: kind,
+                                  api: kind == "api" ? protocolName : "messages",
+                                  apiKeyReference: keyByReference && !apiKey.isEmpty ? apiKey : nil, auth: usesResponses ? "api_key" : auth)
         if scopeShown { scope.apply(to: &input, old: existing, machines: requestScope.machines(model), kind: kind) }
         do {
             try await api.saveLauncher(input, isNew: isNew)

@@ -13,10 +13,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import persona.core.contracts.api.AgentLauncher
+import persona.core.contracts.api.UnavailableLauncher
 import persona.core.designsystem.*
 import persona.core.designsystem.dense
 import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcons
+import persona.core.domain.models.AgentModelPanel
 
 /**
  * Why New Agent grays out a launcher on the computer picked (#4530, iOS `LauncherBlock`, docs/server/launcher-health.md):
@@ -69,6 +71,22 @@ internal fun initialLauncher(saved: String?, launchers: List<AgentLauncher>): St
     launchers.firstOrNull { it.block == null }?.let { return it.name }
     if (saved != null && launchers.any { it.name == saved }) return saved
     return launchers.firstOrNull()?.name.orEmpty()
+}
+
+/**
+ * The providers New Agent lists off after [type]'s launchers (#8109, the web's `newAgentPanel`): the hub's `unavailable`
+ * for this computer ([NewAgentState.unavailable], the Persona-managed providers their own-service rule leaves out where
+ * the agent has a sign-in of its own), never one the computer lists already. Each goes under the type it runs (Claude
+ * Code when the hub names none), or under whichever type is shown when the computer has no launcher of its type, so it
+ * is never just missing. [query] finds them as it finds the launchers.
+ */
+internal fun leftOutLaunchers(unavailable: List<UnavailableLauncher>, launchers: List<AgentLauncher>, type: String, query: String = ""): List<UnavailableLauncher> {
+    val types = launchers.mapTo(mutableSetOf()) { it.agentType }
+    return unavailable.filter { u ->
+        val runs = AgentModelPanel.engineId(u.agent)
+        launchers.none { it.name == u.name } && (runs == type || runs !in types) &&
+            (query.isBlank() || u.name.contains(query, true) || u.title.contains(query, true))
+    }
 }
 
 /**

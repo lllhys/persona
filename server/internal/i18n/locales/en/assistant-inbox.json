@@ -7,5 +7,6 @@
   "item_done": "This was already dealt with, so the reply wasn’t sent. To reply, move it back to the inbox first.",
   "suggestion_stale": "The suggestion was updated",
   "by_policy": "Your rule: {name}",
-  "refresh_failed": "The sources couldn’t be read just now, so the list wasn’t updated. Try again in a moment."
+  "refresh_failed": "The sources couldn’t be read just now, so the list wasn’t updated. Try again in a moment.",
+  "draft_no_model": "No model can be called directly to draft a reply: add a provider with a key in Settings › Model providers, then pick it in Settings › Model configuration"
 }

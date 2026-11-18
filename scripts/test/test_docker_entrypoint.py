@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from compose_cli import skip_without_compose
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKER = ROOT / "deploy/docker"
@@ -404,8 +406,6 @@ class ComposeTests(unittest.TestCase):
             self.assertIn("`" + name + "`", doc)
 
     def test_compose_config_resolves_the_disk_write_settings(self):
-        if not shutil.which("docker"):
-            self.skipTest("Docker Compose is unavailable; no containers are started by this check")
         overrides = {"PERSONA_POSTGRES_SYNCHRONOUS_COMMIT": "off", "PERSONA_POSTGRES_HEALTHCHECK_INTERVAL": "60s",
                      "PERSONA_POSTGRES_HEALTHCHECK_RETRIES": "5", "PERSONA_LOG_DRIVER": "local"}
         for env_values in ({}, overrides):
@@ -414,10 +414,9 @@ class ComposeTests(unittest.TestCase):
                        "COMPOSE_PROJECT_NAME": "persona-test-" + os.urandom(4).hex(), **env_values}
                 if os.environ.get("PERSONA_TEST_DOCKER_CONFIG"):
                     env["DOCKER_CONFIG"] = os.environ["PERSONA_TEST_DOCKER_CONFIG"]
+                skip_without_compose(self, env)
                 result = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "config", "--format", "json"],
                                         env=env, capture_output=True, text=True, timeout=15)
-                if "is not a docker command" in result.stderr:
-                    self.skipTest("Docker Compose is unavailable")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 services = json.loads(result.stdout)["services"]
                 values = {**self.DISK_WRITE_DEFAULTS, **env_values}

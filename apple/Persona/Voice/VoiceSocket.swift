@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// What came in on the call's socket.
 nonisolated enum VoiceSocketEvent: Equatable, Sendable {

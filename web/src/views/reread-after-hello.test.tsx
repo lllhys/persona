@@ -28,7 +28,7 @@ vi.mock("../lib/api", async (original) => {
       if (path === "/hub/update") return { version: "1.0.0", build: 1, channel: "release", can_update: true, state: "idle" };
       if (path === "/hub/update/history") return { history: [] };
       if (path === "/extensions" || path === "/plugins") return { extensions: [] };
-      if (/^\/(extensions|plugins)\/[^/]+\/-\/$/.test(path)) return { id: "example-ext", name: "示例扩展", kind: "process", status: "running", source: "installed", enabled: true };
+      if (/^\/(extensions|plugins)\/[^/]+\/-\/$/.test(path)) return { id: "example-ext", name: "示例扩展", kind: "process", status: "running", source: "installed", enabled: true, auth: { title: "Account", state: "signed_in" } };
       if (/^\/(extensions|plugins)\/[^/]+\/-\/auth$/.test(path)) return { state: "signed_in" };
       throw new real.ApiError(404, "not found", {});
     }),

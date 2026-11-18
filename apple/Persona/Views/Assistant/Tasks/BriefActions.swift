@@ -54,10 +54,15 @@ import SwiftUI
     }
 
     /// A round of a to-do: the same round listed by two briefings is one button.
-    private static func key(accepting row: BriefBody.Row, group: String) -> String { "\(group)|accept|\(row.id)|\(row.askedAt ?? "")" }
+    private static func key(accepting row: BriefBody.Row, group: String) -> String { key(accepting: row.id, askedAt: row.askedAt, group: group) }
+    private static func key(accepting id: String, askedAt: String?, group: String) -> String { "\(group)|accept|\(id)|\(askedAt ?? "")" }
     private static func key(marking row: BriefBody.Row, group: String) -> String { "\(group)|later|\(row.id)" }
 
     func outcome(accepting row: BriefBody.Row, group: String = "") -> Outcome? { outcomes[Self.key(accepting: row, group: group)] }
+    /// The same, by the to-do and its round: a row that only reads it (`DecisionRow`) need not build a `BriefBody.Row`.
+    func outcome(accepting id: String, askedAt: String?, group: String = "") -> Outcome? {
+        outcomes[Self.key(accepting: id, askedAt: askedAt, group: group)]
+    }
     func outcome(marking row: BriefBody.Row, group: String = "") -> Outcome? { outcomes[Self.key(marking: row, group: group)] }
 
     /// Accept, Got It or Take Recommendation (`POST /api/v1/todos/{id}/accept` with the row's round).
@@ -106,5 +111,29 @@ import SwiftUI
             outcomes[key] = nil
             failed(failure(error.localizedDescription))
         }
+    }
+}
+
+/// Where a recommended-setup line's Open Settings goes (#5804): the Settings page its mechanism is turned on at.
+@MainActor enum BriefSetupPages {
+    /// The Settings pages to show, in order.
+    static func path(_ page: BriefBody.Setup.Page) -> NavigationPath {
+        var path = NavigationPath()
+        switch page {
+        case .triage:
+            path.append(SettingsPage.triage)
+        case .superviseModel:
+            path.append(SettingsPage.modelConfiguration)
+            path.append(ModelPurposeRoute(id: ModelConfigurationModel.supervise))
+        case .standingAuthorizations:
+            path.append(SettingsPage.assistant)
+            path.append(SettingsPage.standingAuthorizations)
+        }
+        return path
+    }
+
+    static func open(_ page: BriefBody.Setup.Page, in model: AppModel = .shared) {
+        model.settingsPath = path(page)
+        model.showSettings()
     }
 }

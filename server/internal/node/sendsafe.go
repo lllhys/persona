@@ -118,6 +118,15 @@ type sendOpts struct {
 	// switch out before it is typed (launcher_switch.go). Without it (any other sender) the message goes on the launcher
 	// the agent runs on and the switch keeps waiting.
 	ApplySwitch bool `json:"apply_switch"`
+	// SwitchNow: the assistant's agent_switch (#5973), which picked the switch a moment before. It is carried out with
+	// this message now or not at all: where apply_switch alone would type the message on the launcher the agent runs on
+	// and keep the switch waiting (the agent busy, a draft or a dialog in the box), the message is refused with nothing
+	// typed and the switch is dropped, so none waits for the user's next message (switchNowRefusal).
+	SwitchNow bool `json:"switch_now"`
+	// OwnerInput: the owner typed this message in their own app (the devices manager sets it from the hub's
+	// human-input marker and drops any a caller sent). A Claude outside Persona's terminals at rest takes it as the
+	// person's input through Persona's plugin when it has it (ccplugin.go); every other message keeps its inbox.
+	OwnerInput bool `json:"owner_input"`
 	// readBox: a screen that cannot be read refuses (unreadBoxMessage) instead of passing for an empty box. After a
 	// command that may still sit in the box (ultracode.go), not knowing is not enough to type after it.
 	readBox bool
@@ -267,6 +276,7 @@ func (n *Node) checkPaneFor(ctx context.Context, pane, kind string, opts sendOpt
 const (
 	notDelivered        = "not_delivered"
 	notDeliveredMessage = "电脑上的终端这次没有收下这条消息，什么都没输入：稍后再发。"
+	botmuxDownMessage   = "这个会话在 botmux 里的机器人（%s）这次没有应答（%s），这条消息没有发出去：稍后再发。"
 	shellOnlyMessage    = "这个会话的 Agent 已经退出，终端回到了命令行，这条消息没有发出去（什么都没输入）：在电脑上重新打开它再发。"
 	cannotType          = "cannot_type"
 	cannotTypeMessage   = "电脑上的这个终端只能整条发送（粘贴后回车），不能只输入文字，这次什么都没按：在电脑上回答，或者直接发消息。"
@@ -283,6 +293,10 @@ func deliveryRefusal(err error) error {
 	}
 	if errors.Is(err, errShellOnly) {
 		return refusal(notRunning, shellOnlyMessage, nil)
+	}
+	var down *botmuxDownError
+	if errors.As(err, &down) {
+		return refusal(notDelivered, fmt.Sprintf(botmuxDownMessage, down.App, down.Why), nil)
 	}
 	return refusal(notDelivered, notDeliveredMessage, nil)
 }

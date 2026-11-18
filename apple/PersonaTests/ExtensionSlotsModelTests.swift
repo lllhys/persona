@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The plugins' UI slots (docs/extensions/extensions.md「UI slots」): what the hub lists and the app keeps (entries, cards, badges),
 /// the new items (chart, stat_grid), refresh_after, and the plugin_ui event.
@@ -183,7 +184,7 @@ import Testing
         // The context: the machine, the card's size, the app's time zone, platform and UI version.
         let body = try JSON.decoder.decode(JSONValue.self, from: hub.sent("POST", "/api/v1/plugins/example-gateway/-/ui/today")[0].body ?? Data())
         #expect(body["context"]?["machine"] == .string("macbook") && body["context"]?["size"] == .string("compact"))
-        #expect(body["context"]?["ui_version"] == .number(3))
+        #expect(body["context"]?["ui_version"] == .number(8), "a card is drawn by the app's renderer (cardVersion)")
 
         // refresh_after: due that long after it was drawn; drawn again, what the user typed stays.
         #expect(v.refreshAfter == 300)

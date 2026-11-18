@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { hasFinePointer } from "../../lib/viewport";
 import { canRecall, opensSearch, readHistory, recallIndexOf, recallStep, recordSent } from "../../lib/send-history";
+import { splitSkillDraft } from "../../lib/skill-mentions";
 
 export interface SendHistory {
   /** The search panel is open. */
@@ -41,10 +42,11 @@ export function useSendHistory(o: {
 
   const putCaretAtEnd = useCallback(
     (text: string) => {
-      setCaret(text.length);
+      const length = splitSkillDraft(text).text.length;
+      setCaret(length);
       requestAnimationFrame(() => {
         input.current?.focus();
-        input.current?.setSelectionRange(text.length, text.length);
+        input.current?.setSelectionRange(length, length);
       });
     },
     [input, setCaret],
@@ -67,8 +69,8 @@ export function useSendHistory(o: {
       draft,
       shown: shown.current?.text ?? null,
       dir,
-      firstLine: !draft.slice(0, el.selectionStart).includes("\n"),
-      lastLine: !draft.slice(el.selectionEnd).includes("\n"),
+      firstLine: !el.value.slice(0, el.selectionStart).includes("\n"),
+      lastLine: !el.value.slice(el.selectionEnd).includes("\n"),
     });
     if (!ok) return false;
     const list = readHistory(draftKey);

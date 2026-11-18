@@ -158,3 +158,26 @@ func TestRemoveCheckProjectResolvesTheTempSymlink(t *testing.T) {
 		t.Fatalf("the directory named for the resolved path (%s) is still there: %v", coded, err)
 	}
 }
+
+// A pi launcher's check runs pi's own print mode, never Codex's exec flags: pi refused --skip-git-repo-check, and the
+// health check called that a CLI too old (#8194).
+func TestCheckArgsPerAgent(t *testing.T) {
+	cases := []struct{ agent, before, noSave, after string }{
+		{"claude", ` -p 'say hi' --output-format json --max-turns 1`, "--no-session-persistence", ""},
+		{"codex", ` exec`, "--ephemeral", ` --skip-git-repo-check 'say hi'`},
+		{traexAgent, ` exec`, "--ephemeral", ` --skip-git-repo-check 'say hi'`},
+		{piAgent, ` -p 'say hi'`, "--no-session", ""},
+		{ompAgent, ` -p 'say hi'`, "", ""},
+		{"agy", ` -p 'say hi'`, "", ""},
+		{"cursor", ` -p 'say hi'`, "", ""},
+	}
+	for _, c := range cases {
+		before, noSave, after := checkArgs(c.agent, "say hi")
+		if before != c.before || noSave != c.noSave || after != c.after {
+			t.Errorf("%s: checkArgs = %q %q %q, want %q %q %q", c.agent, before, noSave, after, c.before, c.noSave, c.after)
+		}
+		if c.agent != "codex" && c.agent != traexAgent && strings.Contains(before+noSave+after, "skip-git-repo-check") {
+			t.Errorf("%s: gets Codex's flag", c.agent)
+		}
+	}
+}

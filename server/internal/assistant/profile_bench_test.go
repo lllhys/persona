@@ -74,6 +74,9 @@ func BenchmarkAssistantViewLargeInventory(b *testing.B) {
 // The view copies only the assistant's 14 conversations out of the machine's 8,200 sessions: 100,665 bytes a view
 // measured, where it allocated 12.3 MB when it copied the whole list to pick them.
 func TestAssistantViewCopiesOnlyItsConversations(t *testing.T) {
+	if raceEnabled {
+		t.Skip("race instrumentation allocates")
+	}
 	if !isolated(t) {
 		return
 	}

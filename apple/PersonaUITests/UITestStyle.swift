@@ -14,17 +14,32 @@ enum UITestStyle {
     static func pinned(_ arguments: [String]) -> [String] {
         arguments.contains("-ui.style") ? arguments : arguments + ["-ui.style", name]
     }
+
+    /// The screenshot banner (#9508) pinned as well: a system screenshot (XCUIScreen, attachments) of a chat would show
+    /// it instead of the top bar, so it is off unless the test names it, or the run asks for it
+    /// (`TEST_RUNNER_PERSONA_SCREENSHOT_BANNER=1`: the bars' own tests with the bars in the capture layer, as a fresh
+    /// install has them).
+    static func bannerPinned(_ arguments: [String]) -> [String] {
+        if arguments.contains("-ui.screenshotBanner") { return arguments }
+        let on = ProcessInfo.processInfo.environment["PERSONA_SCREENSHOT_BANNER"] == "1"
+        return arguments + ["-ui.screenshotBanner", on ? "YES" : "NO"]
+    }
 }
 
 extension XCUIApplication {
-    /// Launches in the run's style (or the one the test passes) without overriding the app's navigation defaults.
-    func launchPinned() {
-        launchArguments = UITestStyle.pinned(launchArguments)
-        launchPersona()
+    /// Launches in the run's style (or the one the test passes) without overriding the app's navigation defaults, and
+    /// in the Separate layout unless the test names one (`-app.navigation`): with nothing picked an iPad starts in the
+    /// Merged sidebar (#4206), and the tests written for the tabs and the shell would find another app. `navigation:
+    /// false` leaves the layout to the app (a test of the setting itself, which a launch argument would pin).
+    func launchPinned(navigation: Bool = true) {
+        launchArguments = UITestStyle.bannerPinned(UITestStyle.pinned(launchArguments))
+        launchPersona(navigation: navigation)
     }
 
-    /// Demo launches start clean so a pairing left by an earlier test cannot override Demo Mode.
-    func launchPersona() {
+    /// Demo launches start clean so a pairing left by an earlier test cannot override Demo Mode. The layout is pinned as
+    /// `launchPinned`'s, for the tests that name their own style.
+    func launchPersona(navigation: Bool = true) {
+        if navigation, !launchArguments.contains("-app.navigation") { launchArguments += ["-app.navigation", "separate"] }
         if Self.wantsDemo(launchArguments) { launchArguments += ["-openWelcome", "YES"] }
         launch()
     }

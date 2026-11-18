@@ -1,7 +1,7 @@
 import Foundation
 
 /// Web links in text, with one rule for where a link ends, used everywhere links are found (replies' Markdown, link
-/// preloading, the terminal; `FilePaths` ends paths the same way):
+/// preloading, the terminal; `PathRefs` ends paths at the same punctuation, but takes names in any script):
 ///
 /// - a link starts at `http://` / `https://` (or `www.`) not glued to a word before it;
 /// - it ends at whitespace, at any non-ASCII character (CJK text, full-width punctuation 「），。、」, corner brackets…) and at `<>"`'|\{}^`;

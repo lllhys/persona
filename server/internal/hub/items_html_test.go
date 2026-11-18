@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,28 +14,41 @@ import (
 	"github.com/nwverse/persona/server/internal/transcript"
 )
 
-// htmlToolInput is an MCP call's input of 200 HTML snippets: 61,011 bytes as Claude wrote it, 160,011 when every hop
-// wrote < > & as six bytes each.
-func htmlToolInput() string {
-	rows := make([]string, 200)
+// htmlToolRows returns made-up HTML snippets exactly as Claude wrote them.
+func htmlToolRows(count int) []string {
+	rows := make([]string, count)
 	for i := range rows {
 		rows[i] = `{"text":"` + strings.Repeat("<b>&amp;</b> ", 22) + `<p></p>"}`
 	}
-	return `{"items":[` + strings.Join(rows, ",") + `]}`
+	return rows
 }
 
-// A tool input of HTML reaches the apps no longer than it was written, and as the same value: no hop on the way (the
-// transcript's clip, the node's rpc reply and push, the hub's page, full item, push and subscribe backlog) writes
-// < > & as six bytes each (#2907). It went out at 160,011 bytes for these 61,011.
+// htmlToolInput is 61,011 bytes, over the input budget, so ParseLine must take the structural clipping hop.
+func htmlToolInput() string {
+	return `{"items":[` + strings.Join(htmlToolRows(200), ",") + `]}`
+}
+
+// clippedHTMLToolInput is the independently assembled 24,527-byte result: 80 unchanged rows and the object marker.
+func clippedHTMLToolInput() string {
+	return `{"items":[` + strings.Join(htmlToolRows(80), ",") + `],"zz_persona_clipped":{"note":"Omitted 120 array items and 0 object fields.\n…（已截断，共 61011 字节）"}}`
+}
+
+// A clipped tool input of HTML reaches the apps as the exact same 24,527-byte value through every hop: the transcript's
+// clip, the node's rpc reply and push, the hub's page, full item, push and subscribe backlog. None writes < > & as six
+// bytes each (#2907).
 func TestItemsKeepHTMLCharactersOnTheWire(t *testing.T) {
 	in := htmlToolInput()
+	want := clippedHTMLToolInput()
+	if len(in) != 61_011 || len(want) != 24_527 {
+		t.Fatalf("HTML fixture sizes are %d and %d, want 61,011 and 24,527", len(in), len(want))
+	}
 	line := `{"type":"assistant","uuid":"a1","timestamp":"2026-11-10T12:00:00Z","message":{"id":"m","role":"assistant",` +
 		`"content":[{"type":"tool_use","id":"t1","name":"mcp__x__y","input":` + in + `}]}}`
 	items := transcript.ParseLine(1, []byte(line), &transcript.Meta{})
 	if len(items) != 1 {
 		t.Fatalf("ParseLine gave %d items, want 1", len(items))
 	}
-	checkToolInput(t, "ParseLine", items[0].ToolInput, in)
+	checkToolInput(t, "ParseLine", items[0].ToolInput, want)
 
 	c := &client{out: make(chan []byte, 1), subs: map[[2]string]bool{{"m1", "s1"}: true}}
 	c.canonicalContracts.Store(true)
@@ -52,7 +64,7 @@ func TestItemsKeepHTMLCharactersOnTheWire(t *testing.T) {
 	req.SetPathValue("sid", "s1")
 	w := httptest.NewRecorder()
 	h.sessionItems(w, req, m)
-	checkToolInput(t, "page", firstToolInput(t, "page", w.Body.Bytes()), in)
+	checkToolInput(t, "page", firstToolInput(t, "page", w.Body.Bytes()), want)
 
 	req = httptest.NewRequest("GET", "/api/v1/sessions/m1/s1/items/i1", nil)
 	req.SetPathValue("sid", "s1")
@@ -65,14 +77,14 @@ func TestItemsKeepHTMLCharactersOnTheWire(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &full); err != nil {
 		t.Fatalf("full item: %v: %.200s", err, w.Body.Bytes())
 	}
-	checkToolInput(t, "full item", full.ToolInput, in)
+	checkToolInput(t, "full item", full.ToolInput, want)
 
 	if err := node.Notify("session.items", map[string]any{"session_id": "s1", "items": items}); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case b := <-c.out:
-		checkToolInput(t, "push", firstToolInput(t, "push", b), in)
+		checkToolInput(t, "push", firstToolInput(t, "push", b), want)
 	case <-time.After(10 * time.Second):
 		t.Fatal("no push reached the client")
 	}
@@ -83,27 +95,29 @@ func TestItemsKeepHTMLCharactersOnTheWire(t *testing.T) {
 	h.sendBacklog(ctx, c, m, "s1", 0)
 	select {
 	case b := <-c.out:
-		checkToolInput(t, "backlog", firstToolInput(t, "backlog", b), in)
+		checkToolInput(t, "backlog", firstToolInput(t, "backlog", b), want)
 	default:
 		t.Fatal("no backlog reached the client")
 	}
 }
 
-// checkToolInput fails unless got is no longer than want and holds the same value.
+// checkToolInput requires the exact expected clipped JSON and literal HTML characters on every hop.
 func checkToolInput(t *testing.T, hop string, got json.RawMessage, want string) {
 	t.Helper()
-	var g, w any
-	if err := json.Unmarshal(got, &g); err != nil {
+	var value any
+	if err := json.Unmarshal(got, &value); err != nil {
 		t.Fatalf("%s: tool_input is not JSON: %v", hop, err)
 	}
-	if err := json.Unmarshal([]byte(want), &w); err != nil {
-		t.Fatal(err)
+	if string(got) != want {
+		t.Errorf("%s: tool_input is %d bytes and differs from the exact %d-byte clipped value:\n got %.200s\nwant %.200s", hop, len(got), len(want), got, want)
 	}
-	if len(got) > len(want) {
-		t.Errorf("%s: tool_input is %d bytes, longer than the %d it was written as: %.80s", hop, len(got), len(want), got)
+	if !strings.Contains(string(got), "<b>&amp;</b>") {
+		t.Errorf("%s: tool_input lost the literal HTML snippet", hop)
 	}
-	if !reflect.DeepEqual(g, w) {
-		t.Errorf("%s: tool_input changed: %.200s", hop, got)
+	for _, sequence := range []string{"u003c", "u003e", "u0026"} {
+		if strings.Contains(string(got), string(rune(92))+sequence) {
+			t.Errorf("%s: HTML was escaped as %s: %.80s", hop, sequence, got)
+		}
 	}
 }
 

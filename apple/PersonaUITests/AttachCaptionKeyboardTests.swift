@@ -64,6 +64,7 @@ final class AttachCaptionKeyboardTests: XCTestCase {
         shot(app, "attach-caption-keyboard")
         let close = app.buttons["attach-close"].firstMatch
         let top = close.frame.minY // the sheet's top: open all the way, the caption having opened it
+        XCTAssertLessThan(top, app.frame.height * 0.3, "typing the caption opens the sheet to full (its top at \(top))")
 
         // The keyboard element is its keys: the bar of suggestions over them belongs to it too, so "on the keyboard" is
         // within a suggestion bar and a gap of its top.
@@ -79,7 +80,7 @@ final class AttachCaptionKeyboardTests: XCTestCase {
         XCTAssertTrue(picked.isHittable, "the picked photo stays in view over the keyboard")
 
         // typeText may hide the keyboard while it switches layouts and bring it back a moment later: with it down, a
-        // pull at the grid's top is the sheet's (it closes the panel then), so drag only once the caption is back on it.
+        // pull at the grid's top is the sheet's (it may lower or close the panel then), so drag only once the caption is back on it.
         let back = Date().addingTimeInterval(5)
         while caption.frame.maxY > keys, Date() < back { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
         XCTAssertLessThanOrEqual(caption.frame.maxY, keys, "the caption is back on the keyboard after typing")
@@ -88,9 +89,11 @@ final class AttachCaptionKeyboardTests: XCTestCase {
         settle()
         shot(app, "attach-caption-back")
         XCTAssertFalse(app.keyboards.firstMatch.exists, "the keyboard stays away")
-        XCTAssertEqual(close.frame.minY, top, accuracy: 2, "the sheet stays open: the drag that put the keyboard away does not take it down")
+        // A pull down from the grid's top is the system sheet's too: it may settle the sheet at half height (#4312),
+        // but never closes the panel.
+        XCTAssertTrue(app.descendants(matching: .any)["attach-sheet"].firstMatch.exists, "the drag that put the keyboard away closed the panel")
         XCTAssertTrue(caption.isHittable, "the caption is still there with the keyboard down")
-        // At rest the sheet is drawn a little smaller (`AttachSheetPhysics.scale`); open, its caption sits a few points lower.
+        // The caption goes back to the sheet's foot, where it sat before the keyboard came up.
         XCTAssertGreaterThanOrEqual(caption.frame.maxY, resting.maxY - 2, "the caption (\(caption.frame)) goes back down to the bottom (\(resting) at rest)")
         XCTAssertLessThanOrEqual(caption.frame.maxY, app.frame.maxY, "the caption (\(caption.frame)) stays on the screen")
         clearDraft(app, caption, keyboard: keyboard) // the caption is the composer's draft: leave it as it was

@@ -9,6 +9,7 @@ import { NEW_CONVERSATION, pickEffort, pickLauncher, pickModel } from "./assista
 import { assistantPick, assistantPillView, assistantSetup, type AssistantChat } from "./assistant-models";
 import { assistantPanel, assistantPickOf } from "./assistant-panel";
 import type { LauncherModels } from "./launcher-models";
+import { panelSections } from "./model-panel";
 import type { AssistantLaunchers, ModelList } from "./session-models";
 import type { Session } from "./types";
 
@@ -57,6 +58,21 @@ describe("the setup a Persona chat's next message runs on", () => {
     expect(assistantSetup(chat({ session: session({ launcher: "gone", model: "kimi" }) }), info)).toEqual({ provider: "claude", model: undefined, effort: "medium", source: "own" });
   });
 
+  it("a Main chat default of another agent kind keeps what the conversation runs; same-kind and unknown defaults stay unchanged", () => {
+    const running = chat({ isMain: true, session: session({ agent: "codex", launcher: "codex", model: "gpt-5.5" }) });
+    expect(assistantSetup(running, info)).toEqual({ provider: "codex", model: "gpt-5.5", effort: "medium", source: "own" });
+    expect(assistantPillView(running, assistantSetup(running, info), info, listOf("codex"))).toMatchObject({ engine: "codex", provider: "codex", model: "5.5" });
+    const fastRunning = chat({ isMain: true, session: session({ agent: "codex", launcher: "codex", model: "gpt-5.5", service_tier: "priority" }) });
+    expect(assistantSetup(fastRunning, info)).toEqual({ provider: "codex", model: "gpt-5.5", effort: "medium", fast: true, source: "own" });
+    expect(assistantPillView(fastRunning, assistantSetup(fastRunning, info), info, listOf("codex"))).toMatchObject({ engine: "codex", model: "5.5", fast: true });
+    const sameKind = { ...info, def: { provider: "codex" } };
+    expect(assistantSetup(running, sameKind)).toEqual({ provider: "codex", model: "gpt-5.5", effort: "medium", source: "default" });
+    const sameProviderID = { ...info, launchers: [{ name: "launcher.codex", source: "builtin" }], def: { provider: "launcher.codex" } };
+    expect(assistantSetup(running, sameProviderID)).toEqual({ provider: "launcher.codex", model: undefined, effort: "medium", source: "default" });
+    const unknown = { ...info, def: { provider: "gone" } };
+    expect(assistantSetup(running, unknown)).toEqual({ provider: "gone", model: undefined, effort: "medium", source: "default" });
+  });
+
   it("an older hub keeps this page's pick; the new-conversation page has its own, the default otherwise", () => {
     pickLauncher("server/c1", "team-api");
     pickModel("server/c1", "claude-haiku-5-5");
@@ -92,6 +108,12 @@ describe("the panel's providers", () => {
     // the provider it runs on is the one whose models switch "at once" (Recommended); its row is the default's model
     expect(state).toEqual({ current: { provider: "claude", model: "opus", effort: "medium" }, recommended: ["claude"] });
     expect(providers.find((p) => p.id === "codex")).toMatchObject({ loading: true, models: null });
+  });
+
+  it("a Paseo provider that can't run it is off as that provider, never 'paseo' (#8142)", () => {
+    const paseo: AssistantLaunchers = { ...info, unavailable: [{ name: "grok", kind: "launcher", agent: "paseo", code: "not_main_chat", reason: "跑不了主对话" }, { name: "cursor", kind: "launcher", agent: "paseo", code: "not_main_chat", reason: "跑不了主对话" }] };
+    const { providers } = assistantPanel(assistantSetup(chat({ isMain: true }), paseo), paseo, listOf, {});
+    expect(providers.filter((p) => p.unavailable).map((p) => [p.id, p.engine])).toEqual([["grok", "grok"], ["cursor", "cursor"]]);
   });
 
   it("an ID typed before is listed (and can be forgotten); typed IDs only where the hub keeps them; a launcher that fixes its model offers its default only", () => {
@@ -138,6 +160,37 @@ describe("the panel's providers", () => {
     const { providers, state } = assistantPanel(assistantSetup(c, info), info, withList, { fast: true, fastOn: true });
     expect(providers.find((p) => p.id === "codex")!.models![0].fast).toBe(true);
     expect(state.current).toMatchObject({ provider: "codex", model: "gpt-5.5", fast: true });
+  });
+});
+
+describe("a gateway provider's folded list (#10365)", () => {
+  // what the hub sends for the captured catalog: opus, fable, sonnet and haiku all ran the gateway's one model and all read
+  // "Opus 5.5"; the concrete model's row carries them, and the gateway's other route of it says its route
+  const gateway: LauncherModels = {
+    agent: "claude",
+    models: [
+      { id: "default", name: "Default (recommended)", default: true, resolved: "claude-opus-5-5", efforts: ALL },
+      { id: "claude-opus-5-5", name: "Opus 5.5", description: "Custom Opus model (claude-opus-5-5)", aliases: ["opus", "fable", "sonnet", "haiku"], efforts: ALL },
+      { id: "kiro/claude-opus-5-5", name: "Opus 5.5 (kiro)", description: "From gateway" },
+    ],
+  };
+  const gw: AssistantLaunchers = { launchers: [{ name: "gateway-api", source: "persona", display_name: "Gateway API" }], def: { provider: "gateway-api" }, unavailable: [] };
+  const lists = (name: string): ModelList => (name === "gateway-api" ? { list: gateway } : {});
+
+  it("one Opus 5.5 row in All, a pick saved as an alias on it, and picking it keeps the concrete model", () => {
+    const c = chat({ session: session({ launcher: "gateway-api", model_pick: { launcher: "gateway-api", model: "sonnet" } }) });
+    const setup = assistantSetup(c, gw);
+    const { providers, state } = assistantPanel(setup, gw, lists, { typed: true });
+    expect(state.current).toEqual({ provider: "gateway-api", model: "claude-opus-5-5", effort: "medium" });
+    const sections = panelSections({ providers, state, view: { kind: "all" }, query: "", favorites: [], recent: [], overrides: {} });
+    const rows = sections.flatMap((s) => s.rows);
+    expect(rows.map((r) => [r.model.id, r.model.name, r.current])).toEqual([
+      ["claude-opus-5-5", "Opus 5.5", true],
+      ["default", "Default (recommended)", false],
+      ["kiro/claude-opus-5-5", "Opus 5.5 (kiro)", false],
+    ]);
+    expect(assistantPickOf({ provider: "gateway-api", model: "kiro/claude-opus-5-5" }, gateway, state.current)).toEqual({ launcher: "gateway-api", model: "kiro/claude-opus-5-5" });
+    expect(assistantPickOf({ provider: "gateway-api", model: "claude-opus-5-5", effort: "medium" }, gateway, state.current)).toBeNull();
   });
 });
 

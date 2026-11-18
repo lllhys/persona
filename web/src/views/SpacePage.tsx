@@ -10,21 +10,20 @@ import { isSpacePinned } from "../lib/pins";
 import { href, navigate, onLinkClick, type Route } from "../lib/router";
 import { spaceTodos, spaceView } from "../lib/space-page";
 import { useStore } from "../lib/store";
-import { foldRows } from "../lib/folded-rows";
+import { retryAgentList, useFullAgentSessions } from "../lib/sessions";
 import { makeSessionLookup, todoStatus, todoStatusLabel, TODO_STATUS_INFO } from "../lib/todos";
 import type { Session } from "../lib/types";
 import { shortPath } from "../lib/format";
 import { Button, cx, EASE, IconButton, Loading } from "../ui/atoms";
 import { Icon } from "../ui/icons";
 import { MarkSeenDialog, SpaceMenu } from "./AgentMenus";
+import { Tag } from "./assistant/parts";
 import { RenameSpaceDialog } from "./chat/SessionDialogs";
 import { LinkTodoDialog, type LinkTargetSpace } from "./LinkTodoDialog";
 import { AgentRow } from "./machines/AgentRow";
 import { Empty } from "./session/files/parts";
 import { t } from "../i18n";
 import { markAllSeenLabel, stateCount } from "../lib/state-labels";
-
-const NO_SESSIONS: Session[] = [];
 
 const TONE: Record<(typeof TODO_STATUS_INFO)[keyof typeof TODO_STATUS_INFO]["tone"], string> = {
   red: "bg-red-tint text-red",
@@ -37,8 +36,10 @@ const TONE: Record<(typeof TODO_STATUS_INFO)[keyof typeof TODO_STATUS_INFO]["ton
 export function SpacePage({ mid, space, onToggleSidebar }: { mid: string; space: string; onToggleSidebar: () => void }) {
   const machines = useStore((s) => s.machines);
   const loaded = useStore((s) => s.loaded);
-  // a child session folds into its parent (#5120): never a row of the space of its own
-  const sessions = useStore((s) => foldRows(s.sessions[mid] ?? NO_SESSIONS));
+  // The computer's agents, read as its page reads them (MachineDetail): a hub that pages its Agents list pushes no
+  // sessions, so the store has none of them. A child session folds into its parent (#5120): never a row of its own.
+  const full = useFullAgentSessions();
+  const sessions = useMemo(() => full.sessions.filter((s) => s.machine_id === mid), [full.sessions, mid]);
   const pins = useStore((s) => s.pins);
   const mutes = useStore((s) => s.mutes);
   const todos = useStore((s) => s.todos);
@@ -95,8 +96,23 @@ export function SpacePage({ mid, space, onToggleSidebar }: { mid: string; space:
     return (
       <div className="flex h-full flex-col">
         {header}
-        {!loaded || renamedTo ? (
+        {/* not found only once the agents are read: until then (or while they can't be) nobody knows */}
+        {!loaded || renamedTo || (!full.loaded && !full.error) ? (
           <div className="flex flex-1 items-center justify-center"><Loading /></div>
+        ) : !full.loaded ? (
+          <div className="flex min-h-0 flex-1 flex-col pb-[10vh]" data-agents="failed">
+            <Empty
+              icon="alertCircle"
+              title={t("space-page.agents_failed_title")}
+              detail={t("space-page.agents_failed_detail")}
+              action={
+                <span className="flex items-center gap-2">
+                  <Button tone="secondary" icon="retry" onClick={retryAgentList}>{t("space-page.retry")}</Button>
+                  <Button tone="quiet" icon="machine" onClick={() => navigate(machineRoute)}>{t("space-page.back_to_machine_button")}</Button>
+                </span>
+              }
+            />
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col pb-[10vh]">
             <Empty
@@ -186,6 +202,7 @@ export function SpacePage({ mid, space, onToggleSidebar }: { mid: string; space:
                         <Icon name="todo" size={14} className="shrink-0 text-ink-3" />
                         <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">{x.title}</span>
                         <span className="shrink-0 text-[11.5px] whitespace-nowrap text-ink-3">{x.via === "space" ? t("space-page.todo_via_space") : t("space-page.todo_via_agent")}</span>
+                        {x.todo?.kind === "concern" && <Tag><span data-testid="todo-concern">{t("todos.concern")}</span></Tag>}
                         {status && x.todo && (
                           <span className={cx("inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-full px-1.5 text-[11px] font-medium", TONE[TODO_STATUS_INFO[status].tone])}>{todoStatusLabel(x.todo, status)}</span>
                         )}

@@ -21,6 +21,11 @@ type registrationErrorStore struct {
 	Store
 	device   func(context.Context, db.Device) error
 	activity func(context.Context, db.LiveActivity) error
+	prefs    func(context.Context, string, string, json.RawMessage) error
+}
+
+func (s *registrationErrorStore) SetDevicePrefs(ctx context.Context, id, credential string, prefs json.RawMessage) error {
+	return s.prefs(ctx, id, credential, prefs)
 }
 
 func (s *registrationErrorStore) UpsertDevice(ctx context.Context, d db.Device) error {
@@ -29,6 +34,11 @@ func (s *registrationErrorStore) UpsertDevice(ctx context.Context, d db.Device) 
 
 func (s *registrationErrorStore) SaveLiveActivity(ctx context.Context, v db.LiveActivity) error {
 	return s.activity(ctx, v)
+}
+
+// A reported token also lifts the hold on the next push-start (#7641): not what these tests fail.
+func (s *registrationErrorStore) HoldLiveActivityStart(context.Context, string, time.Time, time.Duration) (bool, error) {
+	return false, nil
 }
 
 func TestDeviceRegistrationSaveFailure(t *testing.T) {
@@ -110,6 +120,38 @@ func TestLiveActivityRegistrationSaveFailure(t *testing.T) {
 	}
 	if saved.DeviceID != "phone" || saved.ActivityID != "activity" || saved.PushToken != "token" || saved.PushToStartToken != "start-token" {
 		t.Fatalf("saved activity: %+v", saved)
+	}
+}
+
+// A device whose push registration the hub retired (its credential revoked, or inactive) is told to register again:
+// 409 push_registration_required in its language, not a 500 or 503 it retries forever.
+func TestRetiredRegistrationAsksTheAppToRegisterAgain(t *testing.T) {
+	h := newTestHub(t)
+	mux := h.routes()
+	store := &registrationErrorStore{
+		prefs:    func(context.Context, string, string, json.RawMessage) error { return db.ErrPushRegistrationConflict },
+		activity: func(context.Context, db.LiveActivity) error { return db.ErrPushRegistrationConflict },
+	}
+	h.store, h.push.store = store, store
+	for _, route := range []struct{ method, path, body string }{
+		{"PUT", "/api/v1/devices/phone/prefs", `{"input":true}`},
+		{"POST", "/api/v1/devices/phone/live-activity", `{"push_to_start_token":"start-token"}`},
+	} {
+		for _, lang := range []i18n.Lang{i18n.En, i18n.ZhHans, i18n.Ja} {
+			req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+			req.RemoteAddr = "127.0.0.1:12345"
+			req.Header.Set("Authorization", "Bearer "+h.cfg.Token)
+			req.Header.Set("Accept-Language", string(lang))
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			var out map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != http.StatusConflict || out["code"] != pushRegistrationRequired || out["error"] != i18n.T(lang, "push.registration_required") {
+				t.Fatalf("%s %s %s: %d %v", route.method, route.path, lang, w.Code, out)
+			}
+		}
 	}
 }
 

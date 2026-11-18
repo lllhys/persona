@@ -36,24 +36,24 @@ export default function MessageDraft({ item, tasks }: { item: FeedItem; tasks: D
     try {
       const receipt = await dismissMessage(item);
       if (!receipt) return;
-      toast(t("assistant-tasks.dismissed_not_sent"), "ok", {
-        label: t("assistant-tasks.undo_dismiss"),
+      toast(t("assistant-task-actions.dismissed_not_sent"), "ok", {
+        label: t("assistant-task-actions.undo_dismiss"),
         run: () => {
           void undoDismissMessage(item, receipt).then(
-            (restored) => restored && toast(t("assistant-tasks.dismiss_undone"), "ok"),
-            (e) => toast(t("assistant-tasks.undo_dismiss_failed", { error: String(e instanceof Error ? e.message : e) }), "error"),
+            (restored) => restored && toast(t("assistant-task-actions.dismiss_undone"), "ok"),
+            (e) => toast(t("assistant-task-actions.undo_dismiss_failed", { error: String(e instanceof Error ? e.message : e) }), "error"),
           );
         },
       });
     } catch (e) {
-      toast(t("assistant-tasks.dismiss_failed", { error: String(e instanceof Error ? e.message : e) }), "error");
+      toast(t("assistant-task-actions.dismiss_failed", { error: String(e instanceof Error ? e.message : e) }), "error");
     }
   };
   const send = async () => {
     try {
-      if (await sendMessage(item, draft)) toast(t("assistant-tasks.sent_done"), "ok");
+      if (await sendMessage(item, draft)) toast(t("assistant-task-actions.sent_done"), "ok");
     } catch (e) {
-      toast(t("assistant-tasks.send_failed", { error: String(e instanceof Error ? e.message : e) }), "error");
+      toast(t("assistant-task-actions.send_failed", { error: String(e instanceof Error ? e.message : e) }), "error");
     }
   };
   const status = now?.status;
@@ -76,7 +76,7 @@ export default function MessageDraft({ item, tasks }: { item: FeedItem; tasks: D
       <div className={cx("flex flex-col gap-1 rounded-control p-3", sent ? "bg-green-tint" : filed || dismissed ? "bg-field" : "bg-accent-tint")}>
         <span id={headingId} className={cx("flex items-center gap-1 text-[12px] font-semibold", sent ? "text-green" : filed || dismissed ? "text-ink-2" : "text-accent")}>
           <Icon name={sent ? "check" : filed || dismissed ? "archive" : "pencil"} size={12} />
-          {sent ? t("assistant-tasks.replied_as_you") : dismissed ? t("assistant-tasks.dismiss_draft") : filed ? t("assistant-tasks.filed_title") : t("assistant-tasks.draft_from_progress")}
+          {sent ? t("assistant-task-actions.replied_as_you") : dismissed ? t("assistant-task-actions.dismiss_draft") : filed ? t("assistant-task-actions.filed_title") : t("assistant-task-actions.draft_from_progress")}
           {sent && <span className="ml-auto font-normal text-ink-3">{clock(sent.at)}</span>}
         </span>
         {!resolved ? (
@@ -92,19 +92,19 @@ export default function MessageDraft({ item, tasks }: { item: FeedItem; tasks: D
           <div className="whitespace-pre-line text-[14.5px]">{sent ? sent.text : draft}</div>
         )}
       </div>
-      {blank && <div className="text-[12px] text-red">{t("assistant-tasks.draft_blank", { blank })}</div>}
-      {filed && <div className="text-[12px] text-ink-2">{t("assistant-tasks.filed_not_sent")}</div>}
-      {dismissed && <div className="text-[12px] text-ink-2">{t("assistant-tasks.dismissed_not_sent")}</div>}
+      {blank && <div className="text-[12px] text-red">{t("assistant-task-actions.draft_blank", { blank })}</div>}
+      {filed && <div className="text-[12px] text-ink-2">{t("assistant-task-actions.filed_not_sent")}</div>}
+      {dismissed && <div className="text-[12px] text-ink-2">{t("assistant-task-actions.dismissed_not_sent")}</div>}
       {!resolved && (
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button tone="accent" busy={busy} disabled={!!blank || !draft.trim()} onClick={send} className="min-h-11 flex-1">
-            {t("assistant-tasks.send")}
+            {t("assistant-task-actions.send")}
           </Button>
           <Button disabled={busy} onClick={() => later(item.id)} className="min-h-11">
-            {t("assistant-tasks.later")}
+            {t("assistant-task-actions.later")}
           </Button>
           <Button disabled={busy} onClick={dismiss} className="min-h-11">
-            {t("assistant-tasks.dismiss_draft")}
+            {t("assistant-task-actions.dismiss_draft")}
           </Button>
         </div>
       )}

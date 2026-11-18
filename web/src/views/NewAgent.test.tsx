@@ -98,3 +98,39 @@ describe("NewAgent with no computer", () => {
     expect(document.body.textContent).not.toContain("选一个目录");
   });
 });
+
+describe("NewAgent with an Inbox item (#5933)", () => {
+  it("shows the item's card, forwarded from where it came, over the first message, and the ask in the box", async () => {
+    const forward = { id: "inbox:lark:f1:1", kind: "context" as const, title: "Lark · Example", url: "", text: "Example: is it merged?" };
+    act(() => root.render(<NewAgent open onClose={() => {}} preset={{ forwards: [forward], prompt: "Look into it" }} key="inbox" />));
+    await flush();
+    const card = document.body.querySelector("[data-new-agent-forward]");
+    expect(card?.textContent).toContain("Lark · Example");
+    expect(card?.textContent).toContain("Example: is it merged?");
+    expect(card?.textContent).toContain("转发自 Lark · Example");
+    expect([...document.body.querySelectorAll("textarea")].some((t) => t.value.startsWith("Look into it"))).toBe(true);
+  });
+});
+
+describe("NewAgent draft persistence under storage pressure", () => {
+  it("keeps the box mounted when its prompt draft write hits a full localStorage", async () => {
+    const quotaError = () => {
+      const err = new Error("QuotaExceededError");
+      err.name = "QuotaExceededError";
+      throw err;
+    };
+    const original = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === "draft:new-agent") quotaError();
+      return original.call(this, key, value);
+    });
+    try {
+      expect(() => act(() => root.render(<NewAgent open onClose={() => {}} preset={{ prompt: "Check this machine" }} key="quota" />))).not.toThrow();
+      await flush();
+      expect(localStorage.getItem("draft:new-agent")).toBeNull(); // the failed write stayed quiet, nothing half-written
+      expect([...document.body.querySelectorAll("textarea")].some((t) => t.value.startsWith("Check this machine"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

@@ -1,4 +1,5 @@
 {
+  "skills_changed": "実行環境が変わりました。下書きは保持されています。選択したスキルを削除して選び直してください。",
   "cmd_continue_word": "/続行",
   "cmd_continue_desc": "続けてもらう",
   "cmd_continue_text": "続けて",
@@ -19,7 +20,6 @@
   "undo": "元に戻す",
   "image_too_large": "{name}は大きすぎます（画像は最大8MB）",
   "images_only": "ここでは画像のみ送信できます",
-  "uploaded": "コンピューターにアップロードしました：{path}",
   "file_too_large": "ファイルが大きすぎます（最大200MB）",
   "upload_failed": "アップロードできませんでした：{error}",
   "suggestion": "{suggestion}（Tabで挿入）",
@@ -40,5 +40,13 @@
   "more_actions": "その他の操作",
   "add_more": "ファイル、画像などを追加",
   "queue": "キューに追加",
-  "queue_hint": "キューに追加：エージェントの作業が終わったら送信（Enter）"
+  "queue_hint": "キューに追加：エージェントの作業が終わったら送信（Enter）",
+  "cmd_permissions_desc": "権限モードを切り替え",
+  "files_uploading": "ファイルをアップロード中です。完了してから送信してください",
+  "too_many_files": "1件のメッセージに添付できるファイルは{max}個までです",
+  "see_files": "添付ファイルを見てください",
+  "file_waiting": "待機中",
+  "file_failed": "失敗 · クリックして再試行",
+  "file_cancel": "{name}のアップロードをキャンセル",
+  "file_retry": "{name}を再試行"
 }

@@ -6,9 +6,9 @@
       "name": "closed_work_identity",
       "description": "收起工作行保留用户、工作标题和回复的稳定标识。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatLineTests.swift: workExpansionKeepsExistingIdentities"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatLineTests.swift: workExpansionKeepsExistingIdentities"
       ],
       "input": {
         "items": [
@@ -119,9 +119,9 @@
       "name": "open_work_identity",
       "description": "展开增加独立步骤和收起行，原有行标识保持不变。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatLineTests.swift: workExpansionKeepsExistingIdentities"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatLineTests.swift: workExpansionKeepsExistingIdentities"
       ],
       "input": {
         "items": [
@@ -262,9 +262,9 @@
       "name": "menu_owner_per_message",
       "description": "多消息轮里每条消息的菜单归属于它自己那一行。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatLineTests.swift: messageMenuStillBelongsToItsOriginalRow"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatLineTests.swift: messageMenuStillBelongsToItsOriginalRow"
       ],
       "input": {
         "items": [
@@ -346,8 +346,8 @@
       "name": "empty_session",
       "description": "没有条目时不产生对话行。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": []
@@ -362,8 +362,8 @@
       "name": "plain_exchange",
       "description": "纯问答不额外生成空工作行。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -428,8 +428,8 @@
       "name": "live_empty_work",
       "description": "进行中的轮即使没有步骤也保留工作行。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -502,8 +502,8 @@
       "name": "live_reply_stays_after_work",
       "description": "已有回复的进行中轮仍保留空的工作行。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -588,8 +588,8 @@
       "name": "orphan_assistant",
       "description": "窗口从助手内容开始时仍可生成工作行和回复。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -699,8 +699,8 @@
       "name": "ordinary_user_starts_next_turn",
       "description": "普通用户消息开启新轮，只有被吸收的消息加入原轮。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -812,8 +812,8 @@
       "name": "recap_separates_turns",
       "description": "回顾作为独立标记保留在两轮之间。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -938,8 +938,8 @@
       "name": "interrupt_is_trailing_notice",
       "description": "没有任务字段的中断通知保留在本轮末尾。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold"
       ],
       "input": {
         "items": [
@@ -1065,9 +1065,9 @@
       "name": "compaction_stays_inside_work",
       "description": "中途压缩上下文只加入工作过程，不拆成新轮。",
       "source": [
-        "ios/Shared/ChatStore.swift: buildRows / ChatBlock.build",
-        "ios/Persona/Views/Chat/ChatView.swift: chatLines / workItems / unfoldWork",
-        "ios/PersonaTests/ChatStoreTests.swift: compactionMidTurnDoesNotSplitIt"
+        "apple/Shared/ChatStore.swift: buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: compactionMidTurnDoesNotSplitIt"
       ],
       "input": {
         "items": [

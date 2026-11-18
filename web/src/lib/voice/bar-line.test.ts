@@ -65,7 +65,19 @@ describe("the voice bar's second line", () => {
     expect(line({ runs: [run("r3", "refused", { code: "conflict" })], resendable: ["r3"] }).actions).toEqual([{ kind: "resend", run: "r3" }, { kind: "dismiss", run: "r3" }]);
     expect(line({ runs: [run("r4", "unknown")] }).text).toBe("不确定发出去没有，看一下对话");
     expect(line({ runs: [run("r5", "failed")] }).text).toBe("没能交给 Claude");
-    expect(line({ runs: [run("r6", "refused", { code: "unprompted" })] }).text).toBe("这条不是你说的，没有发出去");
+  });
+
+  it("offers Send Anyway for what the user-speech gate held back, quoted, never saying someone else said it (#5904)", () => {
+    const held = run("r6", "refused", { code: "unprompted" });
+    const known = line({ runs: [held], resendable: ["r6"] });
+    // quoted: Send Anyway confirms words the user can see
+    expect(known).toEqual({ kind: "notSent", text: "刚才没听到你要做这件事，所以没发出去：『修登录页失败的测试』", actions: [{ kind: "sendAnyway", run: "r6" }, { kind: "dismiss", run: "r6" }] });
+    expect(known.text).not.toContain("不是你说的");
+    // not after a reconnect, nor from an extension that does not keep it (no speech_gate): only Never Mind
+    expect(line({ runs: [held] }).actions).toEqual([{ kind: "dismiss", run: "r6" }]);
+    // nothing to quote is nothing to send anyway (the extension keeps no run without a task)
+    expect(line({ runs: [run("r7", "refused", { code: "unprompted", task: " " })], resendable: ["r7"] }))
+      .toEqual({ kind: "notSent", text: "刚才没听到你要做这件事，所以没发出去", actions: [{ kind: "dismiss", run: "r7" }] });
   });
 
   it("offers a plan card the refused words as feedback", () => {

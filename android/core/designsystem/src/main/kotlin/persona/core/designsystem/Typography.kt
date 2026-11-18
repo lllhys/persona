@@ -87,20 +87,20 @@ internal object Types {
     private fun system(size: androidx.compose.ui.unit.TextUnit, weight: FontWeight = FontWeight.Normal) =
         TextStyle(fontFamily = FontFamily.Default, fontSize = size, fontWeight = weight)
 
-    // The iPhone's text levels (Theme.Font, from spec/tokens): roles take a level's size and weight, emphasis is semibold.
+    // Shared iPhone levels for chrome, with Android's documented long-form reading sizes (#5780).
     val Glass = PersonaType(
         largeTitle = system(Tokens.Type.Display.size, Tokens.Type.Display.weight),
         title = system(Tokens.Type.Title.size, Tokens.Type.Title.weight),
         headline = system(Tokens.Type.Heading.size, Tokens.Type.Heading.weight),
-        body = system(Tokens.Type.Body.size, Tokens.Type.Body.weight),
-        bodyStrong = system(Tokens.Type.Body.size, FontWeight.SemiBold),
-        callout = system(Tokens.Type.Secondary.size, Tokens.Type.Secondary.weight),
+        body = system(Tokens.TypeGlass.Body.size, Tokens.Type.Body.weight),
+        bodyStrong = system(Tokens.TypeGlass.Body.size, FontWeight.SemiBold),
+        callout = system(Tokens.TypeGlass.Secondary.size, Tokens.Type.Secondary.weight),
         caption = system(Tokens.Type.Caption.size, Tokens.Type.Caption.weight),
         micro = system(Tokens.Type.Label.size, Tokens.Type.Label.weight).copy(fontFeatureSettings = TabularFigures),
         label = system(Tokens.Type.Heading.size, Tokens.Type.Heading.weight),
-        labelSmall = system(Tokens.Type.Secondary.size, FontWeight.Medium),
+        labelSmall = system(Tokens.TypeGlass.Secondary.size, FontWeight.Medium),
         number = system(Tokens.Type.Display.size, Tokens.Type.Display.weight).copy(fontFeatureSettings = TabularFigures),
-        voice = system(Tokens.Type.Body.size, Tokens.Type.Body.weight),
+        voice = system(Tokens.TypeGlass.Body.size, Tokens.Type.Body.weight),
         code = system(Tokens.Type.Code.size, Tokens.Type.Code.weight).copy(fontFamily = FontFamily.Monospace),
         // iOS has one code level; the smaller code takes the label level's size.
         codeSmall = system(Tokens.Type.Label.size, Tokens.Type.Code.weight).copy(fontFamily = FontFamily.Monospace),

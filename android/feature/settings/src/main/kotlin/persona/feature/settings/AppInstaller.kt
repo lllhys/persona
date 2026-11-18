@@ -36,6 +36,9 @@ internal object AppInstaller {
         try {
             val checksum = requireNotNull(update.sha256) { "Missing SHA-256" }
             require(checksum.matches(Regex("[a-fA-F0-9]{64}"))) { "Invalid SHA-256" }
+            require(update.packageName == null || update.packageName == context.packageName) { "Package identity mismatch" }
+            val certificate = update.certificateSha256?.replace(":", "")?.lowercase()
+            require(certificate == null || certificate in installedCertificates(context)) { "Package signature mismatch" }
             requireNewerVersion(context, update)
             stage = UpdateStage.Permission
             check(context.packageManager.canRequestPackageInstalls()) { "Install permission required" }
@@ -138,6 +141,8 @@ class InstallResultActivity : Activity() {
             val text = when {
                 status == PackageInstaller.STATUS_SUCCESS -> getString(R.string.settings_install_done)
                 raw.contains("INSTALL_FAILED_ABORTED") -> getString(R.string.settings_install_aborted_by_system)
+                raw.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE") || raw.contains("INCONSISTENT_CERTIFICATES") ->
+                    getString(R.string.settings_update_v7_system_signature)
                 status == PackageInstaller.STATUS_FAILURE_ABORTED -> getString(R.string.settings_install_cancelled)
                 else -> getString(R.string.settings_install_failed)
             }

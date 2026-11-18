@@ -3,6 +3,7 @@
   "send_failed": "没发出去：{error}",
   "loading": "正在读 {name}",
   "open_in": "在 {name} 打开",
+  "open_chat": "打开对话",
   "reply_goes": "回复会{how}。",
   "content": "内容",
   "content_failed": "读不到内容：{error}",

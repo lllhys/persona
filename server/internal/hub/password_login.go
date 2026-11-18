@@ -265,8 +265,8 @@ func (h *Hub) passwordLoginRoutes(mux *http.ServeMux) {
 		if h.memberRefuses(w) {
 			return
 		}
-		// Do not trust X-Forwarded-* from arbitrary callers. TLS termination on loopback is supported.
-		if r.TLS == nil && !remoteIP(r).IsLoopback() {
+		// Use the same proxy HTTPS policy as Persona Link; public forwarding headers are not trusted.
+		if r.TLS == nil && !h.plainLinkAllowed(r) {
 			writeErrCode(w, 403, "tls_required", i18n.Err("hub-password_login.tls_required"))
 			return
 		}

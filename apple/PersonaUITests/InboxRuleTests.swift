@@ -11,7 +11,8 @@ final class InboxRuleTests: XCTestCase {
         }
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        app.launchArguments = ["-pairURL", pair, "-tab", "mail", "-inbox.kind", "", "-inbox.source", ""]
+        // the group chat is FYI: every section stacked (the section bar's All, #9053)
+        app.launchArguments = ["-pairURL", pair, "-tab", "mail", "-inbox.kind", "", "-inbox.source", "", "-showInboxSection", "all"]
         app.launchPinned()
         /// Attached to the run; with TEST_RUNNER_PERSONA_SHOTS=<dir> also saved there.
         func shot(_ name: String) {

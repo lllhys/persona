@@ -35,29 +35,13 @@ func TestHealthDenyRules(t *testing.T) {
 		t.Fatalf("a health conversation denied %q", got)
 	}
 
-	_, flags := n.claudeAssistantMCPAndTools("sess-123", assistant, true)
+	flags := n.claudeAssistantMCPAndTools("sess-123", assistant, true)
 	i := slices.Index(flags, "--disallowedTools")
 	if i < 0 || !slices.Contains(flags[i+1:], "Read(/"+health+"/**)") || slices.Contains(flags[i+1:], "--disallowedTools") {
 		t.Fatalf("flags %q", flags)
 	}
-	if _, flags := n.claudeAssistantMCPAndTools("sess-123", health, true); slices.ContainsFunc(flags, func(f string) bool { return strings.HasPrefix(f, "Read(") }) {
+	if flags := n.claudeAssistantMCPAndTools("sess-123", health, true); slices.ContainsFunc(flags, func(f string) bool { return strings.HasPrefix(f, "Read(") }) {
 		t.Fatalf("a health conversation's flags deny files: %q", flags)
-	}
-}
-
-// On the Agent SDK the deny rules go in the start's settings, next to the ones a settings file already has.
-func TestSDKOptionsCarryTheDenyRules(t *testing.T) {
-	settings := filepath.Join(t.TempDir(), "s.json")
-	if err := os.WriteFile(settings, []byte(`{"permissions":{"deny":["Bash(rm:*)"]}}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	o, err := sdkStart{id: "s1", cwd: "/home/me/.persona/assistant", settings: settings, deny: []string{"Read(//home/me/.persona/health/**)"}}.options("/bin/claude")
-	if err != nil {
-		t.Fatal(err)
-	}
-	deny := o["settings"].(map[string]any)["permissions"].(map[string]any)["deny"].([]any)
-	if len(deny) != 2 || deny[0] != "Bash(rm:*)" || deny[1] != "Read(//home/me/.persona/health/**)" {
-		t.Fatalf("deny %v", deny)
 	}
 }
 
@@ -76,7 +60,7 @@ func TestHealthReportRules(t *testing.T) {
 	if got := healthReportRules("/home/a,b/.persona/health"); got != nil {
 		t.Fatalf("a path with a comma got %q", got)
 	}
-	_, flags := n.claudeAssistantMCPAndTools("sess-123", health, true)
+	flags := n.claudeAssistantMCPAndTools("sess-123", health, true)
 	i := slices.Index(flags, "--allowedTools")
 	if i < 0 || !slices.Contains(strings.Split(flags[i+1], ","), "Edit("+reports+")") {
 		t.Fatalf("flags %q", flags)

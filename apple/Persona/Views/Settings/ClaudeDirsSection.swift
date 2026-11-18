@@ -68,6 +68,12 @@ nonisolated enum ClaudeDirsLogic {
 
     /// No connection to this machine's hub at all (not paired, or its group gone).
     static var noHub: String { String(localized: "Not connected to this computer's hub yet") }
+
+    /// A blocked list built from one computer's rows may only be sent to that same computer (#9276).
+    /// Another computer's folders must never drive Block / Unblock / Add for the one just picked.
+    static func canApply(blockedFrom sourceId: String, to targetId: String) -> Bool {
+        !sourceId.isEmpty && sourceId == targetId
+    }
 }
 
 /// Settings › Claude Code › Blocked Config Folders (docs/integrations/claude-integration.md「Blocking configuration directories」): the machine's Claude Code config
@@ -101,30 +107,33 @@ struct ClaudeDirsSection: View {
                 }
             }
             if let state {
+                // Capture the computer these rows belong to with the action; Block / Unblock / Add must not
+                // send another computer's list to the one just picked (#9276).
+                let sourceId = ref.id
                 ForEach(state.dirs) { d in
                     row(L.shortPath(d.path, home: state.home), meta: L.meta(d, home: state.home), blocked: d.blocked == true) {
                         if d.isDefault != true {
                             Button(d.blocked == true ? String(localized: "Unblock") : String(localized: "Block")) {
                                 let label = L.shortPath(d.path, home: state.home)
-                                Task { await save(L.toggled(state, d), key: d.path, done: d.blocked == true ? String(localized: "Unblocked \(d.blockedBy ?? label)") : String(localized: "Blocked \(label)")) }
+                                Task { await save(L.toggled(state, d), from: sourceId, key: d.path, done: d.blocked == true ? String(localized: "Unblocked \(d.blockedBy ?? label)") : String(localized: "Blocked \(label)")) }
                             }
                             .lineLimit(1)
                             .formButton()
-                            .disabled(busy != nil)
+                            .disabled(busy != nil || loading)
                         }
                     }
                 }
                 ForEach(L.looseRules(state), id: \.self) { p in
                     row(p, meta: String(localized: "Rule"), blocked: true) {
                         Button("Delete", role: .destructive) {
-                            Task { await save(state.blocked.filter { $0 != p }, key: p, done: String(localized: "Deleted rule \(p)")) }
+                            Task { await save(state.blocked.filter { $0 != p }, from: sourceId, key: p, done: String(localized: "Deleted rule \(p)")) }
                         }
                         .lineLimit(1)
                         .formButton()
-                        .disabled(busy != nil)
+                        .disabled(busy != nil || loading)
                     }
                 }
-                addRow(state)
+                addRow(state, sourceId: sourceId)
             } else if error == nil {
                 ProgressView().frame(maxWidth: .infinity)
             }
@@ -156,7 +165,7 @@ struct ClaudeDirsSection: View {
         .padding(.vertical, Theme.Space.xxs)
     }
 
-    @ViewBuilder private func addRow(_ state: APIClient.ClaudeDirsState) -> some View {
+    @ViewBuilder private func addRow(_ state: APIClient.ClaudeDirsState, sourceId: String) -> some View {
         let problem = L.problem(input, existing: state.blocked)
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             HStack(spacing: Theme.Space.m) {
@@ -171,12 +180,12 @@ struct ClaudeDirsSection: View {
                     .textInputAutocapitalization(.never)
                     #endif
                     .submitLabel(.done)
-                    .onSubmit { Task { await add(state) } }
-                Button { Task { await add(state) } } label: {
+                    .onSubmit { Task { await add(state, from: sourceId) } }
+                Button { Task { await add(state, from: sourceId) } } label: {
                     Label("Block", systemImage: Theme.Icon.add).lineLimit(1)
                 }
                 .formButton()
-                .disabled(input.isEmpty || problem != nil || busy != nil)
+                .disabled(input.isEmpty || problem != nil || busy != nil || loading)
             }
             if !input.isEmpty, let problem {
                 Text(problem).font(Theme.Font.label).foregroundStyle(.secondary)
@@ -184,10 +193,10 @@ struct ClaudeDirsSection: View {
         }
     }
 
-    private func add(_ state: APIClient.ClaudeDirsState) async {
+    private func add(_ state: APIClient.ClaudeDirsState, from sourceId: String) async {
         guard L.problem(input, existing: state.blocked) == nil else { return }
         let p = L.cleaned(input)
-        if await save(state.blocked + [p], key: "+", done: String(localized: "Blocked \(p)")) { input = "" }
+        if await save(state.blocked + [p], from: sourceId, key: "+", done: String(localized: "Blocked \(p)")) { input = "" }
     }
 
     private func load() async {
@@ -195,22 +204,31 @@ struct ClaudeDirsSection: View {
             error = L.noHub
             return
         }
+        // Computer changes reset via `.id(ref)` in ClaudeSettingsView; do not clear state / busy here —
+        // this also runs on navigation back and Retry, and wiping busy would allow a double submit (#9276).
+        let target = ref.id
         loading = true
         defer { loading = false }
         do {
-            state = try await api.claudeDirs(machine: ref.id)
+            let next = try await api.claudeDirs(machine: target)
+            guard target == ref.id else { return }
+            state = next
             error = nil
         } catch {
+            guard target == ref.id else { return }
             if let message = L.loadFailure(error) { self.error = message }
         }
     }
 
-    @discardableResult private func save(_ blocked: [String], key: String, done: String) async -> Bool {
-        guard let api = model.api(ref.group) else { return false }
+    @discardableResult private func save(_ blocked: [String], from sourceId: String, key: String, done: String) async -> Bool {
+        // The list and the computer must be the same one's; never send another computer's folders to the one shown (#9276).
+        guard L.canApply(blockedFrom: sourceId, to: ref.id), let api = model.api(ref.group) else { return false }
         busy = key
         defer { busy = nil }
         do {
-            state = try await api.setBlockedClaudeDirs(machine: ref.id, blocked: blocked)
+            let next = try await api.setBlockedClaudeDirs(machine: sourceId, blocked: blocked)
+            guard L.canApply(blockedFrom: sourceId, to: ref.id) else { return false }
+            state = next
             error = nil
             Haptics.success()
             model.toast = Toast(done, style: .success)

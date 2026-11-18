@@ -6,6 +6,7 @@ import { initI18n } from "../../i18n";
 import { addContext, getContexts, registerComposer, removeContext } from "../../lib/links";
 import { ChatActionsContext, liveValue, type ChatActions } from "./chat-actions";
 import { MessageActions, messageContextActions } from "./MessageActions";
+import { onDraftEvent } from "../../lib/drafts";
 
 const media = vi.hoisted(() => ({ noHover: false }));
 vi.hoisted(() => {
@@ -135,6 +136,43 @@ describe("message context actions", () => {
 });
 
 describe("message context interaction paths", () => {
+  it("restores the explicit skill identity when rewinding a selected message", async () => {
+    const selected = '<persona-context kind="skill" ref="exact-source">review</persona-context>\n\nOriginal message';
+    const run = vi.fn(async () => {});
+    act(() => root.render(
+      <ChatActionsContext.Provider value={{ ...chat, rewind: { block: liveValue(""), run } }}>
+        <MessageActions text="Original message" editText={selected} isUser side messageId="u1#0"><p>Original message</p></MessageActions>
+      </ChatActionsContext.Provider>,
+    ));
+    const item = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((el) => el.textContent?.trim() === label)!;
+    act(() => host.querySelector<HTMLButtonElement>('button[aria-label="更多"]')!.click());
+    act(() => item("回退到这里").click());
+    await act(async () => item("只回退对话").click());
+    expect(run).toHaveBeenCalledExactlyOnceWith("u1#0", selected, "conversation");
+  });
+
+  it("keeps explicit skill identity for Edit while Forward uses only the visible words", async () => {
+    const selected = '<persona-context kind="skill" ref="exact-source">review</persona-context>\n\nOriginal message';
+    const received = vi.fn();
+    const off = onDraftEvent(chat.draftKey, received);
+    try {
+      act(() => root.render(
+        <ChatActionsContext.Provider value={chat}>
+          <MessageActions text="Original message" editText={selected} isUser side messageId="u1#0"><p data-message>Original message</p></MessageActions>
+        </ChatActionsContext.Provider>,
+      ));
+      const open = () => act(() => void host.querySelector<HTMLButtonElement>('button[aria-label="更多"]')!.click());
+      const item = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) => el.textContent?.trim() === label)!;
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="改后重发"]')!.click());
+      expect(received).toHaveBeenCalledWith({ type: "replace", text: selected });
+      open();
+      await act(async () => item("转发").click());
+      expect(forward).toHaveBeenCalledWith(expect.objectContaining({ text: "Original message" }));
+    } finally {
+      off();
+    }
+  });
+
   it.each(["hover", "right-click", "long-press"] as const)("offers both actions through %s for your messages and replies", async (entry) => {
     if (entry === "long-press") {
       media.noHover = true;
@@ -191,7 +229,7 @@ describe("message context interaction paths", () => {
       await settle();
     };
     // the reply bar is always in the page, hidden by CSS on touch screens; the touch row comes only there
-    const copies = () => host.querySelectorAll('button[aria-label="拷贝回复"]').length;
+    const copies = () => host.querySelectorAll('button[aria-label="复制回复"]').length;
     await render(false);
     expect(host.querySelectorAll('button[aria-label="复制消息"]')).toHaveLength(1);
     expect(copies()).toBe(0);
@@ -232,7 +270,7 @@ describe("message context interaction paths", () => {
     act(() => host.querySelector<HTMLButtonElement>('button[aria-label="更多"]')!.click());
     const menu = document.querySelector('[role="menu"]')!;
     expect([...menu.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim())).toEqual([
-      "转发", "作为上下文", "回退到这里",
+      "转发", "作为上下文", "回退到这里", "存为常用提示词…",
     ]);
     expect(menu.querySelectorAll('[role="separator"]')).toHaveLength(1);
   });

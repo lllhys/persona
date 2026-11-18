@@ -86,6 +86,25 @@ class AssistantSelectionPreferencesTest {
         assertEquals("hub-b", AssistantManagerChoice.current.value.hubId)
     }
 
+    /** The hub's own assistant kept out of the switcher (#9055): a kept pick of it falls back to the default, as a gone one does. */
+    @Test fun hiddenBuiltInPickFallsBackToTheDefault() {
+        val store = AssistantSelectionPreferences(preferences)
+        val shown = ManagerRoster(listOf(HubManager("work", isDefault = true), HubManager("assistant", builtin = true)), "work")
+        store.atHub("hub-a")
+        store.reconcile("hub-a", shown)
+        AssistantManagerChoice.pick("assistant")
+        store.remember(AssistantManagerChoice.current.value)
+        // Only the choice, not in effect (it is in use again): kept.
+        store.reconcile("hub-a", shown.copy(managers = shown.managers.map { if (it.builtin) it.copy(hide = true) else it }))
+        assertEquals("assistant", AssistantManagerChoice.current.value.shown)
+        // In effect: back to the default, also after a restart.
+        store.reconcile("hub-a", shown.copy(managers = shown.managers.map { if (it.builtin) it.copy(hide = true, hidden = true) else it }))
+        assertEquals("work", AssistantManagerChoice.current.value.shown)
+        AssistantManagerChoice.reset()
+        AssistantSelectionPreferences(preferences).atHub("hub-a")
+        assertEquals("work", AssistantManagerChoice.current.value.shown)
+    }
+
     @Test fun delayedChoiceCannotOverwriteNewerSelectionAndHubChangeFlushesLatestPick() {
         val store = AssistantSelectionPreferences(preferences)
         selectWork(store)

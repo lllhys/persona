@@ -1,9 +1,24 @@
+import Foundation
 import SwiftUI
 import Testing
 @testable import Persona
 
 @MainActor
 struct SettingsNavigationTests {
+    private static let roster = ManagerRoster(managers: [
+        HubManager(id: "assistant", name: "助手", online: true, isDefault: true, builtin: true),
+        HubManager(id: "m-example", name: "Example", online: true),
+    ], defaultID: "assistant")
+
+    /// A model on one made-up hub: no socket, its requests go to `hub`.
+    private func model(_ hub: FakeHub = FakeHub()) throws -> AppModel {
+        let model = AppModel(stateFolder: FileManager.default.temporaryDirectory.appending(path: "settings-navigation-" + UUID().uuidString))
+        model.linkHooksForTests = (transport: try #require(hub.client.transport), socket: { SyncSocket() })
+        model.connectOnly(.demo)
+        model.managerRosters[""] = Self.roster
+        return model
+    }
+
     @Test func searchIsEmptyUntilAQueryIsEntered() {
         #expect(SettingsCatalog.search("").isEmpty)
         #expect(SettingsCatalog.search("  \n ").isEmpty)
@@ -33,17 +48,18 @@ struct SettingsNavigationTests {
         #expect(SettingsCatalog.search("not-a-setting-5236").isEmpty)
     }
 
-    @Test func onlyAssistantPagesAreBlockedByTheCurrentAssistantsOfflineState() {
+    @Test func onlyAssistantPagesAreBlockedByTheCurrentAssistantsOfflineState() throws {
+        let model = try model()
         for page in [SettingsPage.models, .agents, .assistant, .connectors, .plugins, .channels, .triage, .computers] {
-            #expect(page.belongsToCurrentAssistant)
+            #expect(page.belongsToCurrentAssistant(in: model))
         }
         for page in [SettingsPage.appearance, .language, .notifications, .health, .phoneData, .about, .persona, .pairing, .managers, .hub] {
-            #expect(!page.belongsToCurrentAssistant)
+            #expect(!page.belongsToCurrentAssistant(in: model))
         }
-        #expect(SettingsPage.plugin("example").belongsToCurrentAssistant)
-        #expect(!SettingsPage.plugin("example", manager: "m-example").belongsToCurrentAssistant)
-        #expect(!SettingsPage.connector("example", manager: "m-example").belongsToCurrentAssistant)
-        #expect(!SettingsPage.channel("example", manager: "m-example").belongsToCurrentAssistant)
+        #expect(SettingsPage.plugin("example").belongsToCurrentAssistant(in: model))
+        #expect(!SettingsPage.plugin("example", manager: "m-example").belongsToCurrentAssistant(in: model))
+        #expect(!SettingsPage.connector("example", manager: "m-example").belongsToCurrentAssistant(in: model))
+        #expect(!SettingsPage.channel("example", manager: "m-example").belongsToCurrentAssistant(in: model))
     }
 
     @Test func oldRoutesRemainIndependentFromNewContainers() {

@@ -46,8 +46,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 		// accepted: what was done beyond the brief (#3822, task_brief_result.go).
 		AlsoDone []string `json:"also_done"`
 		// parked (parked.go): until when it waits (a duration or a time; reason says for what), and on what kind of thing.
-		Until     string `json:"until"`
-		WaitingOn string `json:"waiting_on"`
+		Until     string        `json:"until"`
+		WaitingOn string        `json:"waiting_on"`
+		Evidence  *ParkEvidence `json:"evidence"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("arguments: %v", err)
@@ -83,13 +84,13 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	// A parked task says what it waits for, on what kind of thing, and until when, or it is refused (parked.go).
 	var park Parked
 	if a.Verdict == reviewParked {
-		p, err := readPark(a.Reason, a.Until, a.WaitingOn, time.Now())
+		p, err := readPark(a.Reason, a.Until, a.WaitingOn, a.Evidence, time.Now())
 		if err != nil {
 			return "", err
 		}
 		park = p
-	} else if strings.TrimSpace(a.Until) != "" || strings.TrimSpace(a.WaitingOn) != "" {
-		return "", fmt.Errorf("until and waiting_on apply to parked only")
+	} else if strings.TrimSpace(a.Until) != "" || strings.TrimSpace(a.WaitingOn) != "" || a.Evidence != nil {
+		return "", fmt.Errorf("until, waiting_on and evidence apply to parked only")
 	}
 	deadline, err := parseDeadline(a.Deadline, time.Now())
 	switch {
@@ -141,6 +142,11 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	if a.UserCheck && verdict != reviewAccepted {
 		return "", fmt.Errorf("user_check applies to accepted only")
 	}
+	if verdict == reviewAccepted { // done_needs_delivery: its PR is live first (supervise_review_delivery.go)
+		if err := s.acceptedDeliveryError(ctx, t, strings.TrimSpace(a.Link), a.Outcome); err != nil {
+			return "", err
+		}
+	}
 	// A conversation supervises what it handed out (task_plan, quietAgentTask): a task without a ledger
 	// gets none here either, or its signals would go into the main conversation's supervision messages (#4262). It can still
 	// be closed; rework, needs_user and parked are what supervision is for.
@@ -155,6 +161,7 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	over, refused, parks := false, false, 0
 	var waiting *OwnerWait // accepted while the work stopped on the owner's decision: refused, nothing written (#1277)
 	judgedDone := false    // it was waiting for review: the judge had found it done
+	var criteriaErr error
 	var v Supervision
 	if ledger {
 		v, _, err = s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
@@ -162,6 +169,11 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 				w := *v.Waits
 				waiting = &w
 				return false
+			}
+			if verdict == reviewAccepted && a.Outcome != outcomeCannot {
+				if criteriaErr = completeReviewCriteriaError(v.DoneWhen, a.Checks); criteriaErr != nil {
+					return false
+				}
 			}
 			judgedDone = v.State == reviewPending
 			if isMain && !s.isLeader(ctx, v.Supervisor) && !s.isLeaderRef(v.Supervisor) {
@@ -192,6 +204,14 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 			if verdict == reviewNeedsUser {
 				r.WhyOwner, r.Reason, r.Recommend = decision.WhyOwner, decision.Reason, decision.Recommend
 				r.Options, r.CostOfWaiting = decision.Options, decision.CostOfWaiting
+				if !deadline.IsZero() {
+					at := deadline.UTC()
+					r.Deadline = &at
+				}
+				if a.Reversible != nil { // as the supervisor said it; absent when it did not say
+					rev := *a.Reversible
+					r.Reversible = &rev
+				}
 			}
 			if verdict == reviewRework {
 				v.Round++
@@ -199,6 +219,8 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 			}
 			if verdict == reviewParked {
 				r.Reason, r.Until, r.WaitingOn, r.Parks = park.Reason, park.Until, park.WaitingOn, park.Count
+				r.Evidence = park.Evidence.clone()
+				r.Evidence.RecordedBy = self
 			}
 			v.State, v.Waits = verdict, nil // reviewed: the supervisor answered what the judge found
 			v.Reviews = append(v.Reviews, r)
@@ -210,6 +232,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	}
 	if err != nil {
 		return "", err
+	}
+	if criteriaErr != nil {
+		return "", criteriaErr
 	}
 	if refused {
 		return "", reworkOverError(t.ID)
@@ -232,8 +257,13 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 	b := &s.supervise
 	b.mu.Lock()
 	b.init()
-	for _, k := range []string{sigReview, sigIdle, sigUnjudged, sigNeedsYou, sigStalled, sigOrphaned, sigOverdue, sigRecheck, sigUndecidable, sigOwnerCannot, sigParkedDue} {
+	for _, k := range []string{sigReview, sigIdle, sigUnjudged, sigNeedsYou, sigStalled, sigNoProgress, sigOrphaned, sigOverdue, sigRecheck, sigUndecidable, sigOwnerCannot, sigParkedDue} {
 		delete(b.pending, t.ID+"|"+k) // reviewed: what waited is answered
+	}
+	if verdict == reviewAccepted || verdict == reviewCancelled {
+		// Closed: a decision that ended a parking has nothing left to move. A review that leaves the task open, parking
+		// it again included, does not say its supervisor heard of the decision: that waits for its message (decidedPark).
+		delete(b.pending, t.ID+"|"+sigParkDecided)
 	}
 	b.mu.Unlock()
 	// How it ended against what was asked (task_brief_result.go): each criterion of the brief, as scope changes left them.
@@ -290,6 +320,9 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 					s.taskClosedReport(t, reason) // the bot's task report says it is closed, as for the judge's (reports.go)
 				}
 			}
+		}
+		if verdict == reviewAccepted {
+			s.sendsAccepted(ctx, t.ID, time.Now()) // what was sent its agent before is answered: closed already, too (#7539)
 		}
 		if verdict == reviewCancelled {
 			s.stopTaskAgents(ctx, t) // its cards stop asking the user (supervise_leader.go)
@@ -387,7 +420,8 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 		if notHeld != "" {
 			pushed += " can_wait was ignored (" + notHeld + "): it is pushed as usual."
 		}
-		if s.pushDecision(ctx, t.ID) {
+		phone := s.pushDecision(ctx, t.ID)
+		if phone {
 			pushed += " A push with your recommendation also went to their phone; its \"OK\" takes the recommendation and sends it " +
 				"to the task's agent, which ends the decision too (drop a question of yours about it then)."
 		}
@@ -402,6 +436,21 @@ func (s *Service) toolTaskReview(ctx context.Context, self string, args json.Raw
 					"again; review it once the agent stops.%s", t.ID, maxReworkRounds, said, pushed), nil
 			}
 			return fmt.Sprintf("Task %s waits for the user: %s. Don't ask them again; review it once the agent stops.%s", t.ID, said, pushed), nil
+		}
+		if background {
+			// No card went out, and the main conversation was told (escalateToMain above). A round lists no ask_user
+			// (supervise_round.go roundToolsWithheld), and the owner does not read the background supervisor's folded
+			// turns: what is to decide reaches them by the hub's push, or by its notify_user when there was none.
+			was := ""
+			if over {
+				was = fmt.Sprintf(" was sent back %d times already: it now", maxReworkRounds)
+			}
+			tell := "Push what is to decide, with your recommendation, to the user with notify_user (they do not read this conversation)"
+			if phone {
+				tell = "Don't push it again"
+			}
+			return fmt.Sprintf("Task %s%s waits for the user (needs_user), and the main conversation was told. %s; review it again once "+
+				"they decide (that also ends the decision the briefing lists for it).%s", t.ID, was, tell, pushed), nil
 		}
 		if over {
 			return fmt.Sprintf("Task %s was sent back %d times already: it now waits for the user (needs_user). Tell the user what is "+
@@ -544,6 +593,12 @@ func pickTaskAgent(agents []proto.Session) proto.Session {
 // (routedFromAssistant); an agent closed after a stretch of work is resumed first (that can take minutes: it goes on in
 // the background). What it says about it: "sent to the agent" or "being sent".
 func (s *Service) sendToTask(ctx context.Context, t Todo, text string) (string, error) {
+	return s.sendToTaskAs(ctx, t, text, false)
+}
+
+// sendToTaskAs is sendToTask; with wait, a closed agent's resume and send is waited for too (up to 5 minutes), so the
+// caller learns whether the text reached it (inboxToAgent, #7346).
+func (s *Service) sendToTaskAs(ctx context.Context, t Todo, text string, wait bool) (string, error) {
 	agents := s.taskAgents(ctx, t)
 	if len(agents) == 0 {
 		return "", errors.New("the task has no agent")
@@ -570,6 +625,14 @@ func (s *Service) sendToTask(ctx context.Context, t Todo, text string) (string, 
 		}
 		_, err := s.appendFeed(ctx, t.Origin, feedRouted, t.ID, map[string]string{"text": text, "from": routedFromAssistant})
 		return err
+	}
+	if c.Status == proto.StatusOffline && wait {
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+		defer cancel()
+		if err := send(sctx); err != nil {
+			return "", err
+		}
+		return "sent to the agent after resuming it", nil
 	}
 	if c.Status == proto.StatusOffline {
 		go func() {

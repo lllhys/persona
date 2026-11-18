@@ -3,7 +3,8 @@ import XCTest
 /// The inbox event page's Hand to AI bar (#2055): a chip hands the item over in one tap behind a toast whose Undo sends
 /// nothing; left alone it goes to the main chat once. The target capsule is a menu, its choice is remembered across
 /// launches, and the bar rides up with the keyboard, the content above it. Against scripts/mock/mock_hub.py with
-/// MOCK_INBOX_EVENTS=1 (`TEST_RUNNER_PERSONA_MOCK_HUB`); `TEST_RUNNER_PERSONA_SHOTS` saves the screenshots,
+/// MOCK_INBOX_EVENTS=1 (`TEST_RUNNER_PERSONA_MOCK_HUB`); the New Agent start case also uses MOCK_SEND_DELAY_MS=6000 to
+/// distinguish the local bubble from hub delivery. `TEST_RUNNER_PERSONA_SHOTS` saves the screenshots,
 /// `TEST_RUNNER_PERSONA_SHOTS_APPEARANCE` only names them.
 final class InboxHandOffBarTests: XCTestCase {
     private static let item = "lark:oc_demo1:100"
@@ -79,8 +80,8 @@ final class InboxHandOffBarTests: XCTestCase {
         target.tap()
         app.buttons["新对话"].firstMatch.tap()
         app.buttons["handoff-chip-summarize"].tap()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "已标完成")).firstMatch
-            .waitForExistence(timeout: 15), "the hand-off did not go, or did not say it marked the item done:\n\(app.debugDescription)")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "已交给新对话")).firstMatch
+            .waitForExistence(timeout: 15), "the hand-off did not go:\n\(app.debugDescription)")
         // The sent toast (with Undo) fades into the handed one: let it finish, or the shot catches both.
         let undoGone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["toast-secondary"])
         _ = XCTWaiter.wait(for: [undoGone], timeout: 5)
@@ -105,6 +106,83 @@ final class InboxHandOffBarTests: XCTestCase {
         target.tap()
         sleep(1)
         shot(app, "source-menu")
+    }
+
+    /// New Agent… (#5933): first of the menu's Agents, it opens New Agent with the item over the first message and the
+    /// typed ask in it; nothing goes before Start, and Cancel comes back to the bar with the ask still in the field.
+    @MainActor func testNewAgentOpensThePrefilledPageAndCancelKeepsTheAsk() throws {
+        let hub = try mockHub()
+        let app = open(hub)
+        let field = app.textFields["handoff-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20), "no field:\n\(app.debugDescription)")
+        let before = handedOff(hub)
+        field.tap()
+        field.typeText("先看看这个人之前说过什么")
+        let target = app.buttons["handoff-target"]
+        target.tap()
+        let newAgent = app.buttons["新建 Agent…"].firstMatch
+        XCTAssertTrue(newAgent.waitForExistence(timeout: 3), "no New Agent… in the menu:\n\(app.debugDescription)")
+        XCTAssertTrue(app.buttons["主对话"].firstMatch.exists, "the menu lost Main Chat")
+        sleep(1)
+        shot(app, "new-agent-menu")
+        newAgent.tap()
+
+        XCTAssertTrue(app.buttons["取消"].firstMatch.waitForExistence(timeout: 10), "New Agent did not open:\n\(app.debugDescription)")
+        // The card and First Message sit below the computer, folder and model rows.
+        let card = app.descendants(matching: .any)["newChat.forward"]
+        for _ in 0..<6 where !card.exists { app.swipeUp() }
+        XCTAssertTrue(card.waitForExistence(timeout: 5), "no item card on New Agent:\n\(app.debugDescription)")
+        let prompt = app.descendants(matching: .any).matching(identifier: "newChat.prompt").firstMatch
+        XCTAssertTrue((prompt.value as? String)?.contains("先看看这个人之前说过什么") == true, "the ask is not the first message: \(String(describing: prompt.value))")
+        sleep(1)
+        shot(app, "new-agent-page")
+        app.buttons["取消"].firstMatch.tap()
+
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "not back on the item")
+        XCTAssertEqual(field.value as? String, "先看看这个人之前说过什么", "Cancel lost the ask")
+        XCTAssertEqual(target.value as? String, "主对话", "the target moved off Main Chat")
+        XCTAssertEqual(handedOff(hub), before, "something was handed over before Start")
+    }
+
+    /// An ordinary New Agent start still opens its chat on the local first message; recording waits for the delayed
+    /// hub delivery, which this case observes through the mock's send log without inspecting the record request.
+    @MainActor func testNewAgentStartOpensOnFirstMessageBeforeHubDelivery() throws {
+        let hub = try mockHub()
+        let app = open(hub, more: ["-openChatsFresh", "YES", "-newChat.machine", "macbook",
+                                  "-cwd.macbook", "/Users/me/code/weather", "-launcher.macbook", ""])
+        let ask = "New Agent hand-off \(UUID().uuidString)"
+        let startsBefore = mockEntries(hub, "started", key: "started").count
+        let field = app.textFields["handoff-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 20), "no field:\n\(app.debugDescription)")
+        field.tap()
+        field.typeText(ask)
+        app.buttons["handoff-target"].tap()
+        let newAgent = app.buttons["新建 Agent…"].firstMatch
+        XCTAssertTrue(newAgent.waitForExistence(timeout: 3), "no New Agent… in the menu:\n\(app.debugDescription)")
+        newAgent.tap()
+
+        let start = app.buttons["开始对话"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 15), "New Agent did not open:\n\(app.debugDescription)")
+        for _ in 0..<40 where !start.isEnabled { usleep(250_000) }
+        XCTAssertTrue(start.isEnabled, "New Agent is not ready:\n\(app.debugDescription)")
+        start.tap()
+
+        let bubble = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", ask)).firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 4), "the chat did not open on the local first message:\n\(app.debugDescription)")
+        XCTAssertTrue(bubble.isHittable, "the first message is still behind New Agent")
+        XCTAssertTrue(app.buttons["chat.title"].exists, "the new Agent chat is not open")
+        shot(app, "new-agent-local-first-message")
+
+        let started = mockEntries(hub, "started", key: "started")
+        XCTAssertEqual(started.count, startsBefore + 1, "New Agent did not start once")
+        let body = try XCTUnwrap(started.last)
+        XCTAssertEqual(body["async"] as? Bool, true, "the ordinary start must answer before the Agent is ready")
+        XCTAssertNil(body["prompt"], "the ordinary start must send its first message separately")
+        XCTAssertFalse(delivered(hub, ask: ask), "the local bubble waited for hub delivery, or the mock lacks MOCK_SEND_DELAY_MS=6000")
+
+        let deadline = Date().addingTimeInterval(12)
+        while !delivered(hub, ask: ask), Date() < deadline { usleep(200_000) }
+        XCTAssertTrue(delivered(hub, ask: ask), "the first message never reached the hub")
     }
 
     @MainActor func testTheBarRidesUpWithTheKeyboard() throws {
@@ -133,11 +211,11 @@ final class InboxHandOffBarTests: XCTestCase {
         return hub
     }
 
-    @MainActor private func open(_ hub: String, item: String = InboxHandOffBarTests.item) -> XCUIApplication {
+    @MainActor private func open(_ hub: String, item: String = InboxHandOffBarTests.item, more: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         app.launchArguments = ["-pairURL", pair, "-tab", "mail", "-inbox.kind", "", "-inbox.source", "",
-                               "-openInboxItem", item]
+                               "-openInboxItem", item] + more
         app.launchPinned()
         acceptIconAlert()
         return app
@@ -154,6 +232,25 @@ final class InboxHandOffBarTests: XCTestCase {
             let look = env["PERSONA_SHOTS_APPEARANCE"].map { "-" + $0 } ?? ""
             try? png.write(to: URL(fileURLWithPath: dir).appending(path: "handoff-\(name)-\(UITestStyle.name)\(look).png"))
         }
+    }
+
+    /// Whether the mock accepted this case's unique first message (`/mock/sent_to`).
+    private func delivered(_ hub: String, ask: String) -> Bool {
+        mockEntries(hub, "sent_to", key: "sent").contains { ($0["text"] as? String)?.contains(ask) == true }
+    }
+
+    private func mockEntries(_ hub: String, _ endpoint: String, key: String) -> [[String: Any]] {
+        guard let url = URL(string: hub + "/mock/" + endpoint) else { return [] }
+        var answer: [[String: Any]] = []
+        let done = expectation(description: endpoint)
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            if let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                answer = obj[key] as? [[String: Any]] ?? []
+            }
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 10)
+        return answer
     }
 
     /// How many hand-offs reached the mock's main chat (`/mock/sent_to`, the ones with an inbox block).

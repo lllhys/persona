@@ -78,6 +78,35 @@ func TestToolsListRetriesUntilTheNodeIsUp(t *testing.T) {
 	}
 }
 
+func TestToolsListAssistantToolsAreAlwaysLoaded(t *testing.T) {
+	t.Setenv("PERSONA_ASSISTANT", "1")
+	fakeNode(t, func(int) ([]byte, error) { return []byte(`{"tools":[{"name":"ask_user","description":"ask"}]}`), nil })
+	res, rerr := handle(context.Background(), "test", listRequest())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	tools := res.(map[string]any)["tools"].([]map[string]any)
+	meta, ok := tools[0]["_meta"].(map[string]any)
+	if !ok || meta["anthropic/alwaysLoad"] != true {
+		t.Fatalf("assistant tool lacks alwaysLoad metadata: %+v", tools[0])
+	}
+}
+
+func TestToolsListAgentToolsHaveNoAlwaysLoadMarker(t *testing.T) {
+	t.Setenv("PERSONA_ASSISTANT", "0")
+	fakeNode(t, func(int) ([]byte, error) {
+		return []byte(`{"tools":[{"name":"phone_health_summary","description":"health"}]}`), nil
+	})
+	res, rerr := handle(context.Background(), "test", listRequest())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	tools := res.(map[string]any)["tools"].([]map[string]any)
+	if _, present := tools[0]["_meta"]; present {
+		t.Fatalf("a non-assistant tool unexpectedly carries metadata: %+v", tools[0])
+	}
+}
+
 func TestToolsListEmptyFromAHealthyNodeIsNotAnError(t *testing.T) {
 	n := fakeNode(t, func(int) ([]byte, error) { return []byte(`{"tools":[]}`), nil })
 	res, rerr := handle(shortCtx(t), "test", listRequest())

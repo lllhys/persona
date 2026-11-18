@@ -573,9 +573,9 @@ transcription and library path, and a rule for replacing partial text in place. 
    **below a gap marker** ("Transcribing the last N s") in arrival order, and never between transcribed sentences. When the
    segment lands, its sentences arrive as one group above the marker, the marker's items re-sort by time, and the marker moves or
    goes. The group animates once with `reveal`. While the reader is detached the scroll position is anchored to the row at the top
-   of the viewport (`scrollPosition` by id), and the "N new" count counts items inserted below that anchor. Sentences spoken by
-   Persona itself are filtered out (`attendance.spokenBy`), so a row can disappear after appearing; this is accepted and not animated
-   under the finger.
+   of the viewport (`scrollPosition` by id), and the "N new" count counts items inserted below that anchor. Persona's echo
+   (a sentence that overlaps a stretch it spoke in and says its answer's words, `attendance.echo`, #5905) is filtered out, so a row can
+   disappear after appearing; this is accepted and not animated under the finger.
 6. The follow and unread logic are a pure function with unit tests (section 15).
 7. VoiceOver: transcript lines are an ordinary readable list and are not announced one by one; arriving Persona answers and state
    changes are (section 11).

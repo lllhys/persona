@@ -1,6 +1,7 @@
 import AppIntents
 import CryptoKit
 import Foundation
+import PersonaWire
 
 /// "Handle Notification" (#3848, docs/apple/intents.md "Handle Notification"): hands one item (a title, a body, the app
 /// it came from, an optional link and time) to Persona as this device's Shortcuts source
@@ -15,6 +16,7 @@ struct HandleNotificationIntent: AppIntent {
         categoryName: "Subscriptions",
         searchKeywords: ["Notification", "Inbox", "Subscription"]
     )
+    @available(iOS 26.0, *)
     nonisolated static var supportedModes: IntentModes { .background }
 
     @Parameter(title: "Title")
@@ -153,7 +155,7 @@ actor ShortcutOutbox {
     /// Read once, on this actor's own executor: an actor is never the main actor, whatever the target's default isolation.
     private func load() -> [String: [ShortcutItem]] {
         if let held { return held }
-        let data = url.flatMap { try? Data(contentsOf: $0) } // perf-ok: ShortcutOutbox is an actor, so this runs off the main actor
+        let data = url.flatMap { try? Data(contentsOf: $0) }
         let loaded = data.flatMap { try? JSON.decoder.decode([String: [ShortcutItem]].self, from: $0) } ?? [:]
         held = loaded
         return loaded

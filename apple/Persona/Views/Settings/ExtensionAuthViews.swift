@@ -1,5 +1,6 @@
 import PersonaKit
 import SwiftUI
+import PersonaWire
 
 /// The Sign In section of an extension's page (#4507), under its status: how it is signed in (Not signed in / Waiting for
 /// confirmation / Signed in: <account> / Expired / Error: <reason>), Sign In or Sign In Again, and Sign Out when signed in. Signing in is a card a step at a time: a QR code

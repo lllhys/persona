@@ -84,20 +84,26 @@ func syncDir(dir string) {
 // piece of hub state outside Postgres, because going back must work when the new version cannot reach the database
 // or does not start at all.
 type Pending struct {
-	FromVersion string    `json:"from_version"`
-	FromBuild   int64     `json:"from_build"`
-	ToVersion   string    `json:"to_version"`
-	ToBuild     int64     `json:"to_build"`
-	Target      string    `json:"target"` // the binary the hub runs
-	Prev        string    `json:"prev"`   // the one to go back to
-	Started     time.Time `json:"started"`
-	Online      []string  `json:"online"` // the machines connected before the restart: they must come back
-	Starts      int       `json:"starts"` // how many times the new version started (crash loops)
-	Auto        bool      `json:"auto"`
-	PID         int       `json:"pid"`        // the hub's process
-	Args        []string  `json:"args"`       // how it was started
-	HealthURL   string    `json:"health_url"` // where the watchdog asks
-	Nodes       string    `json:"nodes"`      // the downloaded node binaries, put in place once confirmed
+	FromVersion string                `json:"from_version"`
+	FromBuild   int64                 `json:"from_build"`
+	ToVersion   string                `json:"to_version"`
+	ToBuild     int64                 `json:"to_build"`
+	Target      string                `json:"target"` // the binary the hub runs
+	Prev        string                `json:"prev"`   // the one to go back to
+	Started     time.Time             `json:"started"`
+	Online      []string              `json:"online"` // the machines connected before the restart: they must come back
+	Starts      int                   `json:"starts"` // how many times the new version started (crash loops)
+	Auto        bool                  `json:"auto"`
+	PID         int                   `json:"pid"`        // the hub's process
+	Args        []string              `json:"args"`       // how it was started
+	HealthURL   string                `json:"health_url"` // where the watchdog asks
+	Nodes       string                `json:"nodes"`      // the downloaded node binaries, put in place once confirmed
+	Development *DevelopmentCandidate `json:"development,omitempty"`
+	Backup      *DevelopmentBackup    `json:"backup,omitempty"`
+	Web         string                `json:"web,omitempty"`
+	WebPrev     string                `json:"web_prev,omitempty"`
+	// RecoveryReady means every program preimage was saved before any live replacement.
+	RecoveryReady bool `json:"recovery_ready,omitempty"`
 	// Programs are the programs swapped with the hub (persona-hub and persona-manager): going back puts them back too.
 	Programs []Swapped `json:"programs,omitempty"`
 	// Run is the program the hub goes on as, when it is not Target: the persona-hub swapped with personad, for a hub
@@ -156,6 +162,9 @@ func RestoreAll(p Pending) error {
 		}
 		if s.Prev == "" {
 			err = os.Remove(s.Target)
+			if err == nil {
+				syncDir(filepath.Dir(s.Target))
+			}
 			if errors.Is(err, os.ErrNotExist) {
 				err = nil
 			}
@@ -166,18 +175,35 @@ func RestoreAll(p Pending) error {
 			keep(err)
 		}
 	}
+	if p.WebPrev != "" {
+		_, prevErr := os.Lstat(p.WebPrev)
+		if _, err := os.Lstat(p.Web); err == nil && errors.Is(prevErr, os.ErrNotExist) && p.RecoveryReady {
+			// The intent was journaled but not renamed, or a previous recovery
+			// already restored it. Repeating recovery must preserve that Web.
+		} else if errors.Is(err, os.ErrNotExist) {
+			keep(os.Rename(p.WebPrev, p.Web))
+			syncDir(filepath.Dir(p.Web))
+			syncDir(filepath.Dir(p.WebPrev))
+		} else if err == nil {
+			keep(errors.New("web directory changed during update; previous Web retained"))
+		} else {
+			keep(err)
+		}
+	}
 	return first
 }
 
 // RolledBack says an update went back, for the old version to record when it starts (history, bad build).
 type RolledBack struct {
-	FromVersion string    `json:"from_version"`
-	ToVersion   string    `json:"to_version"`
-	ToBuild     int64     `json:"to_build"`
-	Started     time.Time `json:"started"`
-	At          time.Time `json:"at"`
-	Reason      string    `json:"reason"`
-	Auto        bool      `json:"auto"`
+	Development *DevelopmentCandidate `json:"development,omitempty"`
+	Backup      *DevelopmentBackup    `json:"backup,omitempty"`
+	FromVersion string                `json:"from_version"`
+	ToVersion   string                `json:"to_version"`
+	ToBuild     int64                 `json:"to_build"`
+	Started     time.Time             `json:"started"`
+	At          time.Time             `json:"at"`
+	Reason      string                `json:"reason"`
+	Auto        bool                  `json:"auto"`
 }
 
 // Dir is where the markers and downloads live: ~/.persona/update.

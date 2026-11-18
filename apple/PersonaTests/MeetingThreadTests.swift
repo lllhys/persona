@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The meeting's one thread (#3862; contract docs/assistant/meeting-minutes.md「One thread」): the room conversation's and
 /// the follow-up's items read apart into what the meeting page shows (`MeetingThread`, a port of
@@ -26,9 +27,10 @@ import Testing
 
     /// One item as the hub lists it (`GET …/items`, the WS `items` push), decoded the way the app decodes them.
     private func item(role: String = "user", kind: String = "text", text: String? = nil, clientMsgID: String? = nil,
-                      origin: [String: String]? = nil, injected: [String: String]? = nil, image: [String: String]? = nil) throws -> Item {
+                      origin: [String: String]? = nil, injected: [String: String]? = nil, image: [String: String]? = nil,
+                      ts: String = "2026-11-10T06:00:00Z") throws -> Item {
         let n = seq.next()
-        var fields: [String: Any] = ["id": "item-\(n)#0", "seq": n, "ts": "2026-11-10T06:00:00Z", "role": role, "kind": kind]
+        var fields: [String: Any] = ["id": "item-\(n)#0", "seq": n, "ts": ts, "role": role, "kind": kind]
         if let text { fields["text"] = text }
         if let clientMsgID { fields["client_msg_id"] = clientMsgID }
         if let origin { fields["source"] = origin }
@@ -38,7 +40,7 @@ import Testing
     }
 
     /// The room's first message: the meeting header (`client_msg_id meeting-<recording id>`, no `source` field).
-    private func headerText() -> String {
+    private func headerText(role: String = "participant: answers may be said aloud") -> String {
         source() + """
             The meeting is starting. Write nothing now.
 
@@ -46,7 +48,7 @@ import Testing
             Title: Design review
             Started: 2026-11-10 14:00 CST
             Language: en
-            Role: participant: answers may be said aloud
+            Role: \(role)
             </persona-context>
             """
     }
@@ -61,8 +63,8 @@ import Testing
             """
     }
 
-    private func batch(_ lines: [String]) throws -> Item {
-        try item(text: batchText(lines), origin: ["kind": "meeting", "title": "Design review"])
+    private func batch(_ lines: [String], ts: String = "2026-11-10T06:00:00Z") throws -> Item {
+        try item(text: batchText(lines), origin: ["kind": "meeting", "title": "Design review"], ts: ts)
     }
 
     /// A photo as the hub forwards it into the room (phase 3, "Into the room"): the image, then a line from the meeting
@@ -110,6 +112,7 @@ import Testing
         entries.map { (entry) -> String in
             switch entry {
             case .joined: "joined"
+            case .left: "left"
             case .lines: "lines"
             case .ended: "ended"
             case .heard: "heard"
@@ -215,6 +218,29 @@ import Testing
         #expect(uniqueIDs(ended))
         #expect(kinds(MeetingThread.room([endAlone], recordingID: rid)) == ["ended"])
         #expect(kinds(MeetingThread.room([endAloneJa], recordingID: rid)) == ["ended"])
+    }
+
+    /// Persona's comings and goings (#8731): a meeting begun with Persona as the note-taker (#8851) shows nobody joining;
+    /// invited later, Persona joins where it was invited, and taken out it leaves there, among the room's entries by
+    /// time (after the last one: at the end). Begun with Persona in it, the header joins.
+    @Test func personaJoinsAndLeavesWhereItHappened() throws {
+        let headerID = "meeting-\(rid.uuidString.lowercased())"
+        let notes = try item(text: headerText(role: "notes: you keep the topics and highlights only, and nobody asks you anything until the role changes"),
+                             clientMsgID: headerID, ts: "2026-11-10T06:00:00Z")
+        let early = try batch(["[0:05] Ada: Today we look at the export flow."], ts: "2026-11-10T06:01:00Z")
+        let late = try batch(["[9:40] Bo: The cap is still 4 MB."], ts: "2026-11-10T06:10:00Z")
+        #expect(kinds(MeetingThread.room([notes, early], recordingID: rid)) == ["lines"])
+        func at(_ s: String) throws -> Date { try #require(ISO8601DateFormatter().date(from: s)) }
+        let invited = MeetingThread.room([notes, early, late], recordingID: rid, presence: [
+            RecordingPresence(at: try at("2026-11-10T06:05:00Z"), answers: true),
+            RecordingPresence(at: try at("2026-11-10T06:12:00Z"), answers: false),
+        ])
+        #expect(kinds(invited) == ["lines", "joined", "lines", "left"])
+        #expect(uniqueIDs(invited))
+        let header = try item(text: headerText(), clientMsgID: headerID, ts: "2026-11-10T06:00:00Z")
+        let removed = MeetingThread.room([header, early], recordingID: rid,
+                                         presence: [RecordingPresence(at: try at("2026-11-10T06:00:30Z"), answers: false)])
+        #expect(kinds(removed) == ["joined", "left", "lines"])
     }
 
     /// The header without its client_msg_id is known by its block; a typed ask, a message an app sent into the room, and

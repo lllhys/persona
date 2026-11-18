@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // Image is the Postgres image the containers run.
@@ -374,7 +376,7 @@ func RandomPassword() string {
 
 // FreeLoopbackPort is a TCP port free on 127.0.0.1 now.
 func FreeLoopbackPort() (int, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := osproc.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
 	}

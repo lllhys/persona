@@ -60,17 +60,31 @@ func activityText(l i18n.Lang, s string) string {
 // queuedFrom starts a queued message another session sent (transcript/user_text.go applyQueue).
 const queuedFrom = "【来自 "
 
-// localizeSession rewrites s's node-written lines in l: its activity, a background command's stand-in description, the
-// sender of a queued message, what its workflow agents' and subagents' latest tool calls do. The node's slices are
-// shared: changed ones are copied.
+// runtimeFailureText is a runtime session's last words in l when they are its bridge's own for an agent that stopped on
+// a failure (transcript.RuntimeError…: Paseo's, #8133); its agent's own words stay as they are.
+func runtimeFailureText(l i18n.Lang, s string) string {
+	if s == transcript.RuntimeError {
+		return tt(l, "runtime_error")
+	}
+	if cause, ok := strings.CutPrefix(s, transcript.RuntimeErrorLead); ok {
+		return tt(l, "runtime_error_cause", i18n.Args{"error": cause})
+	}
+	return s
+}
+
+// localizeSession rewrites s's node-written lines in l: its activity, a runtime bridge's last words for a failure, a
+// background command's stand-in description, the sender of a queued message, what its workflow agents' and subagents'
+// latest tool calls do. The node's slices are shared: changed ones are copied.
 func localizeSession(l i18n.Lang, s *proto.Session) {
 	if l == i18n.ZhHans || !i18n.Valid(l) {
 		return
 	}
 	s.Activity = activityText(l, s.Activity)
+	if s.SourceKind == proto.SourceRuntime {
+		s.LastText = runtimeFailureText(l, s.LastText)
+	}
 	localizeWorkflows(l, s)
 	localizeSubagents(l, s)
-	s.RuntimeFallback = runtimeFallbackText(l, s.RuntimeFallback)
 	s.ReadOnlyReason = claudeLiveText(l, s.ReadOnlyReason)
 	s.AttentionReason = claudeLiveText(l, s.AttentionReason)
 	copied := false
@@ -176,47 +190,13 @@ var claudeLiveTexts = map[string]string{
 	proto.ReadOnlyClaudeNoInbox:   "read_only_claude_no_inbox",
 	proto.ReadOnlyClaudeInbox:     "read_only_claude_inbox",
 	proto.AttentionClaudeComputer: "attention_claude_computer",
+	proto.AttentionClaudeAnswer:   "attention_claude_answer",
 }
 
 // claudeLiveText is one of them in l; anything else stays as it is.
 func claudeLiveText(l i18n.Lang, s string) string {
 	if key, ok := claudeLiveTexts[s]; ok {
 		return tt(l, key)
-	}
-	return s
-}
-
-// runtimeFallbacks are the node's reasons for running an Agent SDK conversation on the CLI (proto.Fallback*) and their
-// keys; the cause after one that takes it stays as it is.
-var runtimeFallbacks = []struct {
-	text, key string
-	cause     bool
-}{
-	{proto.FallbackReadBridge, "fallback_read_bridge", true},
-	{proto.FallbackNoBridge, "fallback_no_bridge", false},
-	{proto.FallbackWriteBridge, "fallback_write_bridge", true},
-	{proto.FallbackNoBridgeScript, "fallback_no_bridge_script", false},
-	{proto.FallbackNoNode, "fallback_no_node", true},
-	{proto.FallbackNoClaude, "fallback_no_claude", true},
-}
-
-// shellLauncherHead, shellLauncherTail: proto.FallbackShellLauncher around the launcher's name.
-var shellLauncherHead, shellLauncherTail, _ = strings.Cut(proto.FallbackShellLauncher, "%s")
-
-// runtimeFallbackText is the node's RuntimeFallback in l; one it does not know stays as it is.
-func runtimeFallbackText(l i18n.Lang, s string) string {
-	if s == "" {
-		return s
-	}
-	for _, f := range runtimeFallbacks {
-		if cause, ok := strings.CutPrefix(s, f.text); ok && (cause == "" || f.cause) {
-			return tt(l, f.key, i18n.Args{"cause": cause})
-		}
-	}
-	if rest, ok := strings.CutPrefix(s, shellLauncherHead); ok {
-		if name, ok := strings.CutSuffix(rest, shellLauncherTail); ok {
-			return tt(l, "fallback_shell_launcher", i18n.Args{"launcher": name})
-		}
 	}
 	return s
 }

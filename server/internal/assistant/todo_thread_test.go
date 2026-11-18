@@ -25,6 +25,7 @@ func threadOf(t *testing.T, e *todoEnv, id string) *TodoThread {
 }
 
 func todosEvents(e *todoEnv) int {
+	todosTold(e.t, e.s)
 	n := 0
 	for _, ev := range strings.Fields(e.f.eventTypes()) {
 		if ev == "todos" {

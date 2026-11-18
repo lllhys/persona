@@ -36,6 +36,7 @@ One setting has one writer. When two places seem to hold the same thing, this is
 | Per-device `devices.prefs` | quiet hours, translation scope, notification switches | that device | Per-device only; not a settings key and not synced as one |
 | `PERSONA_*` environment | `DATABASE_URL`, `PUBLIC_URL`, `LISTEN`, `NODE_PACKAGES`, `ADMIN_ACCESS` | the deployment | Overrides the matching `hub.json` field, never written back. Each also accepts its former `JARVIS_*` name |
 | Node-local third-party files | Claude / Codex / Antigravity / OMP `settings.json` | the user or those tools | Read by the node on that computer; the Agents settings page edits the allow-listed subset |
+| Node-local `node-signing.json` | the certificate a Mac's resident node signs its builds with | you, on that Mac | Read by the resident node at start; never sent to the hub ([mac-node-signing.md](mac-node-signing.md)) |
 
 Consequences worth remembering:
 
@@ -93,7 +94,7 @@ open ports, or a Tailscale account; the hub tries ssh first and falls back to ta
    ```
 
    `ssh_host` is the host name the **hub machine** uses to SSH to this one (each side has its own `~/.ssh/config`, so it can differ from `ssh` in step 1); `id` should match step 1;
-   `name` is the name shown in the App; `icon` is `server` / `laptop` / `desktop`. `remote_bin` is the path of `personad` on that computer; when omitted the hub uses `~/.persona/bin/personad` (the canonical binary the deploy script installs); set it if installed elsewhere.
+   `name` is the name shown in the App; `icon` is `server` / `laptop` / `desktop`. `remote_bin` is the path of `personad` on that computer; when omitted the hub uses `~/.persona/bin/personad` (the canonical binary the deploy script installs); set it if installed elsewhere. It may be a wrapper script that sets the node's environment and runs personad; **Redeploy** over ssh does not replace a script, so update the personad it runs by hand ([node-update.md](node-update.md) "Usage").
    Whose assistant it is and what it should know (`assistant.owner`, `assistant.notes`) go into the built-in manager's `~/.persona/managers/assistant/manager.json` (make it, 0600, if it isn't there yet; see "manager.json" below). For direct public access add `public.tls_listen` and `public.advertise` and open the TLS port per the [network doc](network.md); keep `public_url` as a reachable private-network address.
 
 4. **Restart the hub so it reads the new config**: `./scripts/deploy/deploy.sh <hub machine id>` (or `systemctl --user restart personad` on the hub machine).
@@ -111,7 +112,7 @@ install a resident node plus the connector persona-link, with one command or one
 - Linux: `curl -fsSL <site>/install.sh | sh -s -- --node --pair '<link from personad hub pair --machine <id>>'` (this computer connects to the hub; in `machines` it is
   `{"id":"laptop","name":"Laptop","kind":"link","icon":"laptop"}`, and the hub needs `public.tls_listen`), or `… --node --listen` (the hub connects to it;
   paste the printed link into the hub admin UI under **Computers › Add computer › Hub connects**, and in `machines` it is kind `service`).
-- Mac: install the menu bar App "Persona Link" (`./scripts/app/mac-link.sh install`); it bundles persona-node, the device's own program, and installs the resident node on first run; pairing is in its menu.
+- Mac: install the independent Persona Link helpers (`./scripts/app/mac-link.sh install`); the connector and resident node run as launchd agents. Pair with the optional desktop setup window or `persona-link pair`.
 
 No `ssh_host`, and no SSH setup on the hub. The SSH setup in steps 1–6 above still works, and is kept only for compatibility from now on.
 
@@ -151,7 +152,10 @@ No `ssh_host`, and no SSH setup on the hub. The SSH setup in steps 1–6 above s
 | `app.watch_widget_bundle_id` | New watch complication Bundle ID, written to `PERSONA_WATCH_WIDGET_BUNDLE_ID`; defaults to `<app.bundle_id>.watchkitapp.widgets`. This never changes the existing watch app ID. Register it before signed device builds |
 | `app.watch_app_group` | New App Group shared only by the watch app and `PersonaWatchWidgets`, written to `PERSONA_WATCH_APP_GROUP`; defaults to `<app.app_group or its derived default>.watch`. It contains watch-only system-surface credentials and caches, never phone credentials. Attach it to both watch targets before device signing |
 | `app.push_relay` | Push relay address (e.g. `https://<relay domain>/relay`), written to `PERSONA_PUSH_RELAY` in `Config.xcconfig` and `PersonaPushRelay` in Info.plist: the App registers with it, and hubs without an APNs key push through it (`docs/operations/push-relay.md`). Without it the App doesn't register, and only hubs with `apns.json` can push |
-| `app.carplay_voice` | Boolean, default `false`: enabling adds the CarPlay voice-conversation entitlement (`com.apple.developer.carplay-voice-based-conversation`) to signing, making Persona visible in the car. Apply to Apple first and enable it on the App ID after approval; do not enable before approval or signing fails. `scripts/persona_config.py xcconfig` generates `apple/PersonaCarPlay.entitlements` and writes `PERSONA_APP_ENTITLEMENTS` (see `docs/apple/carplay.md`) |
+| `app.carplay_voice` | Boolean, default `false`: enabling adds the CarPlay voice-conversation entitlement (`com.apple.developer.carplay-voice-based-conversation`) to signing, making Persona visible in the car. Apply to Apple first and enable it on the App ID after approval; do not enable before approval or signing fails. `scripts/persona_config.py xcconfig` generates `apple/PersonaOptIn.entitlements` and writes `PERSONA_APP_ENTITLEMENTS` (see `docs/apple/carplay.md`) |
+| `app.health_background_delivery` | Boolean, default `false`: enabling adds the HealthKit background delivery entitlement (`com.apple.developer.healthkit.background-delivery`) to signing and sets Info.plist `PersonaHealthBackgroundDelivery` (`PERSONA_HEALTH_BACKGROUND_DELIVERY`), so a workout report comes right after the workout is saved to Health, even while Persona is closed. Enable it only after the App ID's provisioning profile allows the entitlement, or signing fails or the export drops it; `scripts/release/entitlements.py check` reports a release without it. Off: reports come when Persona is next opened (see `docs/assistant/health.md`, "Automatic workout reports (iOS)") |
+| `app.homekit` | Boolean, default `false`: enabling adds the HomeKit entitlement (`com.apple.developer.homekit`) to the generated `apple/PersonaOptIn.entitlements` and writes `PERSONA_HOMEKIT = YES` (Info.plist `PersonaHomeKit`), which turns on the Home source and its tools (`docs/apple/phone-tools.md`, "iPhone system integrations"). Turn the HomeKit capability on for the App ID (and regenerate the provisioning profiles) first, or signing fails |
+| `app.siri_calls` | Boolean, default `false`: "Call Persona using Persona" through SiriKit (`docs/apple/siri.md` ("Calling Persona")). Enabling makes `persona_config.py env` export `PERSONA_SIRI_CALLS=YES`, so xcodegen merges `apple/siri-calls.yml` (the Intents extension `PersonaCallIntents`, bundle ID `<app.bundle_id>.callintents`; the app signed with `apple/PersonaSiriCalls.entitlements`, its entitlements plus Siri's `com.apple.developer.siri`, written by xcodegen and git-ignored; `NSSiriUsageDescription` added to the built Info.plist; Siri's example phrases `AppIntentVocabulary.plist` in en, zh-Hans and ja). No tracked file is rewritten, so a release worktree stays clean. `xcconfig` lists the entitlement in `apple/PersonaOptIn.entitlements` too; `scripts/release/asc_signing.py` asks for `SIRIKIT` on the App ID and the extension's App ID and "Persona Call Intents App Store" profile, and the export options name that profile. Prepare the account first (`docs/operations/release.md` ("Siri calls")): turned on before, the release preflight (`asc_signing.py --check`) stops the release. Off, the project, the signing preflight and the release are unchanged. The App Shortcut "Call Persona" needs none of this |
 | `app.meta_wearables` | Meta glasses (`docs/apple/meta-glasses.md`): when `enabled` is true, `persona_config.py env` exports `PERSONA_META_WEARABLES=YES`, and only then does xcodegen merge `apple/meta-wearables.yml` (Meta's DAT SDK and the Info.plist keys it needs) into the project; `app_id` and `client_token` are the app's ID and Client Token from the Wearables Developer Center, written to `PERSONA_META_APP_ID` and `PERSONA_META_CLIENT_TOKEN` in `Config.xcconfig`; they can be left empty while the glasses are in Developer Mode (`app_id` 0). Off by default: it needs Xcode 26.4 or later, and carries risk in external TestFlight / App Store review |
 | `app.tunnel_core` | Directory containing the in-App tunnel core (`libpersonatunnel.a`, `module.modulemap`, headers; [network.md](network.md) ("Connecting to hub through an in-app tunnel")). Only when set does it write `PERSONA_TUNNEL_INCLUDE` and `PERSONA_TUNNEL_LDFLAGS` into `Config.xcconfig`; only hardware builds link it. Missing files cause `xcconfig` to fail immediately. Omitted means no in-App tunnel |
 | `app_store.*` | For `release.sh` / `asc*.py` (`asc_cli.py` hands them to the App Store Connect CLI, `docs/operations/release.md` ("Releasing with asc")): the API key (`key_id`, `issuer_id`, `key_path`), the App record's numeric ID, internal testers, the TestFlight feedback email; `external` is external testing (group name, public link switch and tester limit (`public_link_limit`, 0 means unlimited), privacy policy URL, extra testers invited by email, Beta App Review contact and notes, `docs/operations/release.md`). Env vars such as `ASC_KEY_ID` can still override (key file path `ASC_KEY_PATH` or `ASC_PRIVATE_KEY_PATH`) |
@@ -161,14 +165,15 @@ No `ssh_host`, and no SSH setup on the hub. The SSH setup in steps 1–6 above s
 | `machines[]` | Machines where `deploy.sh` installs `personad`: `ssh` is the ssh host name; `os` (`linux` / `darwin`) and `arch` (`amd64` / `arm64`, optional) decide which binary to install, and whichever is missing is asked from the machine itself (`uname`); `hostnames` are the machine's own host names (when the deploy runs on it, it copies directly without ssh; the machine running the deploy must list them, and any machine without them goes through ssh); `via` is another machine's id: when the dev machine can't reach this one, it ssh-es once more through that machine to transfer the binary (leaving no files there), and `ssh` is then the host name on that machine |
 | `simulator` | Default simulator UDID for `sim.sh` (override with `SIM=<udid>`) |
 | `publish.site_url` | Where `publish.sh` publishes `personad` and `install.sh` (the domain of the `site/` worker, `docs/operations/release.md` ("Publishing personad")); without it nothing is published |
-| `publish.update_url` | Optional: where the `personad` that `publish.sh` and `deploy.sh` build looks for its updates (`-X main.updateURL`): the directory `latest.json` is in, taken as written, so a GitHub repository's release base (`https://github.com/<owner>/<repo>/releases/latest/download`) works without `/dl` added. Must be `https://` (or `file:///`), with no user, query or fragment. Without it, `<publish.site_url>/dl`, as before. A hub's `hub.json` `update.url` replaces it at run time (`docs/operations/hub-update.md` ("Update source")) |
-| `publish.getting_started_url` | Public page opened by "No hub yet?" on the iOS / Mac welcome screen (the published address of `docs/operations/getting-started.md`), written to Info.plist `PersonaGettingStartedURL`; without it, this row is hidden (#4195) |
+| `publish.update_url` | Optional: where the `personad` that `publish.sh` and `deploy.sh` build looks for its updates (`-X main.updateURL`): the directory `latest.json` is in, taken as written, so a GitHub repository's release base (`https://github.com/<owner>/<repo>/releases/latest/download`) works without `/dl` added. Must be `https://` (or `file:///`), with no user, query or fragment. Without it, `<publish.site_url>/dl`, as before, and `deploy.sh` prints that source: the official publish site's `dl/` has not moved since 2026-11-07, so a hub built against it never sees a newer release (#8108). A hub's `hub.json` `update.url` replaces it at run time (`docs/operations/hub-update.md` ("Update source")) |
+| `publish.getting_started_url` | Public page opened by "No hub yet?" on the iOS / Mac / Android welcome screen (the published address of `docs/operations/getting-started.md`), written to Info.plist `PersonaGettingStartedURL` and, on Android, passed by `scripts/app/android.sh` as `-PpersonaGettingStartedUrl` into the app manifest (https only); without it, this row is hidden (#4195) |
 | `publish.wrangler` | The wrangler command used to deploy that worker (e.g. a script that wraps authentication); defaults to `npx wrangler` |
 | `xcode` | Optional: which Xcode to build and release with (path to the `.app`); `persona_config.py env` exports `DEVELOPER_DIR` from it (a value already in the environment wins). Supporting iPhone Duo needs Xcode 27 or later; Apps built with older versions don't extend under the status bar and camera on Duo |
 | `android.application_id` | The Android App's application id (`scripts/app/android.sh`, `docs/android/android.md`); defaults to `app.bundle_id` |
 | `android.release_keystore` | Optional: the keystore `scripts/app/android.sh release` signs the release APK with (`~` is expanded). Needs `android.release_key_alias` and `android.release_keystore_password_command`, a shell command that prints the keystore's password; `android.release_key_password_command` prints the key's own password when it differs. Without `android.release_keystore` the command signs with the SDK's local debug keystore, for your own phone only (`docs/android/android.md`, "Build and install") |
 | `android.google_oauth_scheme` | The scheme the Android App uses for the Google sign-in callback for Gmail: the reversed client ID of the hub's `google.client_id` (`docs/extensions/mail.md` ("Android")); without it Gmail can only be added with an app-specific password |
-| `mac.link_bundle_id` | Bundle id of the Mac menu bar App "Persona Link" (`scripts/app/mac-link.sh`, `docs/operations/link.md`); the env var `PERSONA_LINK_BUNDLE_ID` wins; defaults to the placeholder `com.example.persona.link` |
+| `mac.link_bundle_id` | Bundle-id prefix of the independent Mac Persona Screen helper (`scripts/app/mac-link.sh`, `docs/operations/link.md`); the env var `PERSONA_LINK_BUNDLE_ID` wins; defaults to `app.bundle_id` + `.link` (`PERSONA_BUNDLE_ID` + `.link` when exported), and the build stops when neither is set. macOS keeps Persona Screen's Screen Recording grant per bundle id, so changing it means allowing Screen Recording again on that Mac (#7569) |
+| `mac.link_signing_identity` | Optional: the code signing certificate (its name as `security find-identity -v -p codesigning` prints it, or its SHA-1) `scripts/app/mac-link.sh` signs Persona Screen and Persona Input with, instead of ad hoc, so their Screen Recording and Accessibility permissions survive changes to them; the env var `PERSONA_LINK_SIGNING_IDENTITY` wins. Build in a login-session Terminal; allow both permissions once after the first signed build (`docs/operations/persona-link-install.md`, "Keeping the helpers' permissions across updates") |
 
 `python3 scripts/persona_config.py env` prints shell variables (scripts `eval` it at the top), and `xcconfig` generates `apple/Config.xcconfig`;
 `sim.sh` / `release.sh` generate it automatically. Before running `xcodegen` directly or opening Xcode, run `python3 scripts/persona_config.py xcconfig` once.
@@ -223,7 +228,7 @@ The sections that are a manager's (whose assistant it is, `ai`, `agents`, `inbox
 - `security.proxy_protocol` (optional, omitted by default): with same-machine port forwarding, a reverse tunnel, or nginx `stream` passthrough in front of the hub, public connections all look like loopback to the hub.
   Set `{"from": ["127.0.0.1/32"]}`: connections from these upstreams must carry a PROXY header (v1 / v2), and the hub checks the real source in the header; `listeners` defaults to only `tls`.
   Syntax, rules, and self-checks in [network.md](network.md#proxy-protocol).
-- `name` (optional): the hub's display name (e.g. "Home"), shown by persona-link on computers (Mac menu bar) and by future linked-hub and multi-hub clients.
+- `name` (optional): the hub's display name (e.g. "Home"), reported by persona-link and shown by clients.
   Defaults to the short host name of the hub machine; if the host name is a Docker container id or `PERSONA_LOCAL_NODE=0`, it uses `hub-<first 6 chars of hub_id>`. Manual file edits require a hub restart;
   edits in the admin UI's "Overview" take effect immediately ([admin.md](admin.md)).
 - `initial_locale` (optional, `en` / `zh-Hans` / `ja`): the user language until a device reports one ([i18n.md](../protocol/i18n.md), "User language").
@@ -265,6 +270,7 @@ The sections that are a manager's (whose assistant it is, `ai`, `agents`, `inbox
   (`docs/operations/docker.md` ("Environment variables")); with `PERSONA_LOCAL_NODE=0`, first run does not write the local machine.
 - `node_packages` (optional): where the manager fetches the node builds the hub has none of its own for (a computer of another OS or architecture, persona-node: `docs/operations/node-update.md` ("Node packages")). `url` is a release's `dl/` (`https://<site>/dl`, or a mirror of it that serves `latest.json` and `<version>/manifest.json` with the archives beside them); empty uses the hub's update source (`update.url`, else this build's update URL: a release hub's; a Docker image built with one), through `update.proxy` unless `proxy` here names one; `"off"` never fetches. A mirror must answer 404 for a file it does not have (any other error counts as the site being away). `proxy` is an `http://[user:pass@]host:port` proxy for it (the environment's proxies are not used). The env var `PERSONA_NODE_PACKAGES` overrides `url` (a compose file's mirror, or `off`); `docs/operations/docker.md` ("Node builds") covers hubs without internet access.
 - `update` (optional): where the hub looks for its own releases and the Android app they carry, and how it reaches them (`docs/operations/hub-update.md` ("Update source"); the Android app: `docs/operations/hub-update.md` ("The Android app")). `url` is the directory `latest.json` is in (`https://github.com/<owner>/<repo>/releases/latest/download`, a publish site's `https://<site>/dl`, or a mirror), in place of the one the build was made with; empty keeps the build's. It must be `https://` (`http://` only to this machine: releases are not signed), or `file:///<directory>`, without a user, password, query or fragment; one that does not read leaves the hub with no source, and Settings › hub says why. `proxy` is an `http://[user:pass@]host:port` proxy for the update's checks and downloads alone (and for node builds fetched from the same source, below); everything else the hub talks to goes as before. A `proxy` that does not read fails every check rather than going around it. Empty uses the environment's proxies for these requests, as before. Its user and password never appear in the log or the app. Read at the hub's start.
+- `update.development` (optional): coordinated history backup configuration for Web development updates from `https://github.com/nwverse/persona.git`, fixed to `main`. Only `backup` (`quiesce`, `resume`, optional `extra_roots` and `extra_databases`) is installation-owned. Build platforms are selected automatically from the Hub and registered computers' last-reported OS/architecture. Settings chooses the channel and its separate automatic-update opt-in; it cannot provide commands or credentials. See [Web development updates](hub-update.md#web-development-updates) for prerequisites, supported topology, snapshot boundaries and recovery. Unconfigured installations never enable development automation.
 - `tailcat.derp_map_url` (optional): the DERP map URL when using a self-hosted DERP relay (derper, see `docs/server/server.md` ("Self-hosted relay")) instead of Tailscale's public relays; each computer's
   `init` must use the same `--derp-map-url`.
 - `machines[].claude_config_dirs` (optional): Claude Code config directories on this machine besides `~/.claude` (`CLAUDE_CONFIG_DIR` set by launchers,
@@ -314,6 +320,14 @@ The sections that are a manager's (whose assistant it is, `ai`, `agents`, `inbox
   `live_metrics_seconds` (minimum interval between pushes to one device when only Live Activity numbers change, default 60; `docs/apple/live-activity.md` ("Push budget")).
   Each device's push preferences are set separately in the App (**Settings › Notifications**, stored in hub `devices.prefs`), not here.
   This section stays in hub.json: push delivery is the hub's, and it hands the timings to the managers in its hello.
+- `screen_link_off` (default `false`): the hub never selects the live screen's session subprotocol, so every live screen stays on the
+  plain relay through the hub, whatever the apps and nodes support ([computer-use.md](../extensions/computer-use.md) ("Live screen routes (#6398)")).
+  The switch for when direct routes misbehave; it takes effect when the hub restarts.
+- `intercept_readers` (default empty): extension IDs whose tokens may read `GET /api/v1/push/intercepts`, on top of the
+  `notify` scope. Full credentials always may; an extension token whose ID is not listed gets 403 even with `notify`.
+  A listed extension still reads only its own manager's entries, and held-push bodies are stored and served as a
+  summary (title plus at most 140 runes), never as full text. Add the extension's ID (its manifest `name`) here when
+  its control panel needs the held-push list; it takes effect when the hub restarts.
 - `shutdown_timeout_seconds` (default 8): total hub shutdown budget, including closing the database connection pool; external `docker stop -t` must be longer (`docs/server/server.md` ("Shutdown")).
 - `auto_update_nodes` (default `false`): lets the managers update the computers' nodes by themselves, after a confirmed hub update and when a node on another build reconnects (the hub hands it over in `devices.config`).
   Off, a node changes only when someone picks **Redeploy** for its computer ([hub-update.md](hub-update.md) ("Node upgrade policy")).
@@ -351,7 +365,9 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   describing things specific to your environment: code locations, skills / CLIs for work data, directories it must not touch.
 - `assistant.machine` / `assistant.launcher`: default machine and launcher for the assistant (unset, or a machine the hub doesn't have: the hub's own machine, else the first one; `claude`); App settings take priority once changed.
   `owner`, `notes`, `machine`, `launcher` are all defaults, laid over the hub's hello: changed settings belong to the assistant itself (settings `assistant`, only it reads/writes them, `docs/assistant/assistant.md` ("Boundary with hub")).
-  Only these four keys of `assistant` are the manager's: `external` stays in hub.json ("hub runtime config" above).
+- `assistant.memory_dreaming`: set to `true` in `manager.json` to enable background consolidation of the main chat's memory.
+  It is off by default and uses the Data processing model. See [Assistant memory](../assistant/assistant.md#memory-dreaming).
+  `assistant.external` stays in hub.json ("hub runtime config" above).
 - The everyday entry for model settings is **Settings › Model Providers / Model Configuration** (`docs/assistant/model-config.md`): the former manages connections and credentials; the latter manages uses such as chat, classification, translation, knowledge processing, `/agent`, and scheduled tasks. Old `ai`, `inbox.*_ai`, `kb.ai` (here) and launcher defaults (`assistant.launcher` here, `machines[].launchers` in hub.json) remain as a compatibility baseline; unified-use overrides live in Postgres, not written back to either file. Without an override the original model is kept; opening settings does not migrate it to another provider.
 - `ai` (no default since 2026-10-31): model for small App features calling model APIs directly (not through Claude Code): Inbox triage, drafting replies, recognizing email config from pasted text.
   When omitted, these uses automatically select a directly callable connection on the hub (with a Key in **Settings › Model Providers**, see `docs/assistant/model-config.md` ("Editing and inheritance")); only if none exist do they report "No directly callable model yet".
@@ -377,8 +393,8 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   since an attachment goes with its line: with `text_days` 365, a source set to 3650 keeps 365 days of attachments,
   `history` (importing chats' older history, **off unless `enabled` is `true`**; `docs/assistant/knowledge.md` "History import"):
   `{"enabled": true, "sources": {"<connector id>": {"profile": "careful", "needs_search_index": true}}}`. Sources run one at a time in the order written, and only after
-  the owner approves each source's plan in the assistant chat. Per source: `profile` (`careful`, the default, or `standard`), `needs_search_index` (default `true`: wait for
-  the knowledge base's search index, #1273; `false` runs before it), `page_limit` (page size asked for, a hint, 50) and pace overrides, each `[least, most]` or one number:
+  the owner approves each source's plan in the assistant chat. Per source: `profile` (`careful`, the default, or `standard`), `needs_search_index` (default `true`: wait until
+  the knowledge base has built its search index, which the manager does by itself within its first minutes on an existing archive, #1273; `false` does not wait), `page_limit` (page size asked for, a hint, 50) and pace overrides, each `[least, most]` or one number:
   `interval_seconds`, `batch_calls`, `rest_minutes`, `long_rest_every_hours` and `long_rest_minutes` (`[0, 0]`: none), `quiet_periods_per_day` and `quiet_hours`,
   `switch_chat_pages`, `image_interval_seconds`, and `slow_factor` (≥ 1: every interval and rest multiplied by it, e.g. `2` after a stop the import caused). A range that
   does not read (most below least, a negative number or bound) or a negative `slow_factor` is an error in `manager.json` like any other (a running manager keeps what it last read). Changing `kb.history`
@@ -387,6 +403,7 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   selection, which the manager keeps in its settings table, not here,
   `ai` (model for compression and tagging, same fields as `ai`; defaults to `inbox.triage_ai`, then `ai`), `extra_dirs` (note directories you maintain on the manager's machine, the hub machine for the built-in manager,
   e.g. a git repo of facts / lessons: `kb_search` also searches Markdown in these directories (read-only, skips dot directories such as `.git`), and the assistant's CLAUDE.md mentions them; `~/` is that machine's home).
+  Use `remote_folders` for named sources on other connected personal computers. See [Remote knowledge folders](../assistant/knowledge.md#remote-knowledge-folders-kbremote_folders) for fields and exclusions.
   With `enabled: true, read_only: true`, the manager serves existing local archives without collection, model calls,
   retention, opening-time maintenance or knowledge writes (including edits, extension updates and recording uploads/deletions).
   A missing archive returns empty lists without creating files. Recording sync writes return `403 kb_read_only`, never a deletion acknowledgement.
@@ -402,7 +419,7 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   The knowledge base belongs to the manager, which reads the whole section here (`ai` included: it is the default of its `kb.*` model purposes);
   an assistant run elsewhere (`assistant.external`) reads the `manager.json` on its own machine, and its `extra_dirs` are paths there (`docs/assistant/knowledge.md` ("Who owns what")).
 - `agents.triage`: triage after a round stops ([agent-work.md](../assistant/agent-work.md) ("Switches")). Switches are under **Settings › Session Triage** in the App (stored in the manager's settings, all off by default but `transient_retry`),
-  and only limits live here: `max_retries` (maximum consecutive automatic continuations after transient errors, default 5), `retry_base_seconds` (the first continuation's backoff, doubled for each next one, default 15), `max_wakes` (maximum wakes, default 6), `settle_seconds` (delay after stopping before triage, default 15);
+  and only limits live here: `max_retries` (maximum consecutive automatic continuations after transient errors, default 5), `retry_base_seconds` (the first continuation's backoff, doubled for each next one, default 15), `max_wakes` (maximum wakes, default 6), `settle_seconds` (delay after stopping before triage, default 15), `just_finished_hours` (how long a done turn nobody has seen stays Just finished in the Agents lists, default 3; `docs/protocol/agent-states.md` ("Just finished"));
   `enabled` / `auto_continue` / `wake` / `decide` / `tool_loop` / `closeout` / `closeout_ask` / `transient_retry` are merely initial values if never saved in the App (omitted means off, but `transient_retry` on). Triage is done by the manager (assistant process), which reads this section here; for hand edits see **Edits** above.
 - `agents.launcher_health`: launcher health checks and automatic repair ([launcher-health.md](../server/launcher-health.md)): `enabled` (off by default; true enables periodic checks and automatic repair), `interval_minutes` (default 30),
   `repair` (repair Agent: no `skill` means no repair Agent, only CLI upgrades; `machine` defaults to the assistant's computer, `cwd` to home, `launcher` to an available one, `permission` is the permission mode, default `bypassPermissions`).
@@ -491,7 +508,10 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   `github.proxy` (optional): HTTP proxy for all requests to GitHub (device-code creation and polling at `github.com`, API at `api.github.com`, plus CI logs),
   `http://[user:password@]host:port`, same format as `google.proxy`; omitted means direct (does not read process `HTTPS_PROXY`). Some networks reach only `api.github.com`, not `github.com`,
   so device-code login cannot obtain a code and needs this proxy. An invalid value does not fall back to direct: every GitHub request fails, and the settings page states that `github.proxy` in manager.json is invalid. Actual addresses belong only in manager.json.
-  The extension market also uses it to read markets on GitHub and download extension packages from Releases (`github.com`, `*.github.com`, `*.githubusercontent.com`; when unset, uses process `HTTPS_PROXY`, #3277).
+  When `extension_market.proxy` is not set, the extension market also uses it to read GitHub markets and download extension packages (`github.com`, `*.github.com`, `*.githubusercontent.com`; when both are unset, uses process `HTTPS_PROXY`, #3277).
+  Repository binding checks of public GitHub repositories use `github.proxy` too; when unset they use the manager process's `HTTPS_PROXY` and `NO_PROXY`.
+  GitLab and self-hosted repository checks use the process's proxy environment. Checks validate destination DNS locally and tunnel to a pinned IP, preserving TLS hostname checks;
+  they do not pass connector tokens to the repository or fall back to direct when a selected proxy fails. See `docs/assistant/managers.md` ("Repository references").
   `github.inbox` (optional) supplies default Inbox rules (App changes take priority, `docs/assistant/inbox.md` ("Noise reduction")): `ci` (`off` / `default_branch` / `mine` (default) / `all`),
   `muted_repos` (`["owner/name"]`), `ignore_branches` (branches not to notify for, `path.Match` patterns, default `["train/*"]`).
 - `imessage` (optional, **old syntax, retained for one version, read-only**): now choose the Mac to read in **Settings › Extensions › Messages** in the App (#1830). If configured here, the manager migrates it once at startup;
@@ -506,6 +526,7 @@ A manager's own sections of the configuration are in its `manager.json`, not in 
   `dir` (working directory), `env` (extra environment variables), `disabled` (`true` disables while keeping the config), `config` (the extension's own settings), see `docs/extensions/extensions.md` ("Extensions in manager.json");
   extensions installed with `personad extension install` are registered in the database, not here. For personad's built-in voice extension (GPT-Live), use `"command": "personad", "args": ["voice"]`,
   with upstreams in `config.providers` (`docs/extensions/extensions.md` ("Built-in voice extension")). Restart the hub after changes.
+- `extension_market.proxy` (optional): an HTTP or SOCKS5 proxy for extension marketplace catalog reads, package downloads and HTTPS git clones, independent of the GitHub connector. Write `http://[user:password@]host:port` or `socks5://[user:password@]host:port` (default ports 80 and 1080). It covers GitHub, ordinary HTTPS markets, OCI registries and mirrors. An explicit value overrides `github.proxy`, the process proxy environment and `NO_PROXY`; an invalid value fails rather than falling back to a direct connection. SSH git clones do not use it. When omitted, GitHub keeps using `github.proxy` and other market traffic follows the manager process environment, as before. Proxy credentials belong only in this 0600 manager.json. Restart the manager after changing it.
 - `trusted_extension_markets` (legacy): retained for configuration decoding only. Nonofficial signing metadata and saved keys no longer grant a sandbox exemption; installed extensions keep the default sandbox unless the owner explicitly chooses otherwise (`docs/extensions/extensions.md` ("Sandbox")).
 
 <a id="ddnspublicddns"></a>
@@ -544,6 +565,40 @@ configuration and credentials in the private profiles; do not copy existing hist
 activation, verify the installed binary's version, checksum and `personad manager capabilities --json`, the four service
 environment values, durable ownership and the actual derived directory. After activation, verify a reply and a harmless
 Persona tool call through the dedicated node, then switch between both assistants and inspect both histories.
+
+## A local external model adapter
+
+An advanced, optional node integration can reuse connections managed by a local program. Set
+`PERSONA_LAUNCHER_ADAPTER_CONFIG` only in that node service's startup environment to the absolute path of a private
+JSON configuration file. With no value, no adapter file or executable is searched for. This is local configuration,
+not hub state: the hub, manager configuration messages and clients cannot register executable commands.
+
+```json
+{
+  "version": 1,
+  "id": "example",
+  "command": ["/absolute/path/to/interpreter", "/absolute/path/to/adapter-entry", "integration"],
+  "native_program": "/absolute/path/to/claude"
+}
+```
+
+Use a stable `id`. `command` is an argument array, not a shell command; the first entry and `native_program` must be
+trusted absolute executable paths. A compiled adapter can use a one-element command array. Interpreter-based tools
+must name their interpreter explicitly rather than depend on a service finding it through an `env` shebang.
+Keep the configuration 0600 in a directory other users cannot modify; symlink configuration files and unsafe owners
+or write permissions are rejected. The command and native executable are validated on this computer, never supplied
+by a model inventory or request. Restart that node to load a changed registry; no installer or production service
+configuration is changed automatically.
+
+The first supported use is an explicit main-chat model pick on POSIX using the Claude Code CLI without a required
+agent sandbox. Unsupported execution methods and sandbox combinations fail before the agent starts, without
+changing the policy. This source cannot become a global default, profile/tier, background-task model or coding Agent
+launcher. Existing connections and their defaults are unchanged. If a saved pick names a disabled adapter, restore
+that local configuration or reset the main chat's pick; Persona does not choose another connection silently.
+
+The inventory is sanitized metadata. Connection credentials stay on the executing computer; a bootstrap may use a
+0600 temporary settings file in a 0700 directory, removed at process exit or forced stop. Full protocol, cache and
+lifecycle rules: `docs/integrations/launchers.md` ("External model adapters").
 
 ## DDNS (public.ddns)
 

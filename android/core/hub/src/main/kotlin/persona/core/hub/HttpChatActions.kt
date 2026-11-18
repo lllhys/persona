@@ -86,14 +86,16 @@ class HttpChatActions internal constructor(
         }
     }
 
-    override suspend fun editQueue(session: Session, keep: List<Int>): List<String> {
+    override suspend fun editQueue(session: Session, keep: List<Int>): QueueEdit {
         // An empty keep list is meaningful (delete the only queued message), so the body is written out explicitly.
         val body = buildJsonObject { put("keep", JsonArray(keep.map(::JsonPrimitive))) }
         return request(api("sessions", session.machineId, session.sessionId, "queue"), "POST",
             body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).use {
             if (!it.isSuccessful) throw HubFailure.from(it)
-            (JsonCodec.parseToJsonElement(it.body!!.string()).jsonObject["queue"] as? JsonArray).orEmpty()
-                .mapNotNull { item -> (item as? JsonPrimitive)?.takeIf { value -> value.isString }?.content }
+            val answer = JsonCodec.parseToJsonElement(it.body!!.string()).jsonObject
+            // A queue entry that is not text drops alone; the photos (a Persona conversation's, base64) ride beside it.
+            val queue = (answer["queue"] as? JsonArray).orEmpty().filter { item -> item is JsonPrimitive && item.isString }
+            JsonCodec.decodeFromJsonElement<QueueEdit>(JsonObject(answer + ("queue" to JsonArray(queue))))
         }
     }
 
@@ -148,6 +150,24 @@ class HttpChatActions internal constructor(
         }
     }
 
+    override suspend fun catalogPrices(ids: List<String>): Map<String, ModelPrice?> {
+        if (ids.isEmpty()) return emptyMap()
+        val body = buildJsonObject { put("ids", JsonArray(ids.map(::JsonPrimitive))) }
+        return request(api("launchers", "catalog"), "POST",
+            body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).use { response ->
+            if (!response.isSuccessful) throw HubFailure.from(response)
+            val models = (JsonCodec.parseToJsonElement(response.body!!.string()).jsonObject["models"] as? JsonArray).orEmpty()
+            buildMap {
+                for (row in models) {
+                    val obj = row as? JsonObject ?: continue
+                    val id = (obj["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() } ?: continue
+                    val price = obj["price"]
+                    put(id, if (price == null || price is JsonNull) null else JsonCodec.decodeFromJsonElement<ModelPrice>(price))
+                }
+            }
+        }
+    }
+
     override suspend fun info(session: Session): SessionInfo =
         request(api("sessions", session.machineId, session.sessionId, "info"), "GET", null).use {
             if (!it.isSuccessful) throw HubFailure.from(it)
@@ -163,6 +183,45 @@ class HttpChatActions internal constructor(
             JsonCodec.decodeFromString<SessionsResponse>(it.body!!.string()).sessions
                 .firstOrNull { row -> row.sessionId == session.sessionId }?.copy(machineId = session.machineId)
         }
+    }
+
+    override suspend fun childRows(session: Session): List<Session> = childPage(session).sessions
+
+    override suspend fun childPage(session: Session, since: String?): SessionListPage {
+        val rows = mutableListOf<Session>()
+        val removed = linkedSetOf<String>()
+        val cursors = mutableSetOf<String>()
+        var cursor: String? = null
+        var revision: String? = null
+        var total = 0
+        do {
+            val url = HttpUrl.Builder().scheme("https").host("example.com").addPathSegments("api/v1/sessions")
+                .addQueryParameter("summary", "1").addQueryParameter("limit", "200")
+                .addQueryParameter("machine_id", session.machineId).addQueryParameter("parent_session_id", session.sessionId)
+                .apply {
+                    cursor?.let { addQueryParameter("cursor", it) }
+                    since?.let { addQueryParameter("since", it) }
+                }.build()
+            val page = request(url.encodedPath + "?" + url.encodedQuery, "GET", null).use {
+                if (!it.isSuccessful) {
+                    val failure = HubFailure.from(it)
+                    if (failure.status == 409 && failure.code in setOf("cursor_expired", "revision_expired")) throw SessionListExpired()
+                    throw failure
+                }
+                JsonCodec.decodeFromString<SessionListPage>(it.body!!.string())
+            }
+            if (revision != null && revision != page.revision) throw HubFailure(HubError.Protocol, retryable = false)
+            revision = page.revision
+            total = page.total
+            rows += page.sessions.filter { it.foldedUnder == session.sessionId }.map { it.copy(machineId = session.machineId) }
+            removed += page.remove
+            cursor = if (page.hasMore) {
+                page.nextCursor?.takeIf { it.isNotBlank() && cursors.add(it) }
+                    ?: throw HubFailure(HubError.Protocol, retryable = false)
+            } else null
+        } while (cursor != null)
+        return SessionListPage(sessions = rows.associateBy { it.key }.values.toList(), remove = removed.toList(),
+            revision = revision.orEmpty(), total = total)
     }
 
     override suspend fun interactionHistory(session: Session): List<InteractionRecord> {

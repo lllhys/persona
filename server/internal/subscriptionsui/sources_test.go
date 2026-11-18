@@ -24,6 +24,7 @@ type fakeBuiltins struct {
 	unmuted  []string
 	mutesErr error
 	setErr   error
+	migrated []string // "<id>=<on>" as switched (#6345)
 }
 
 func newBuiltins() *fakeBuiltins {
@@ -43,6 +44,19 @@ func newBuiltins() *fakeBuiltins {
 }
 
 func (b *fakeBuiltins) List(context.Context) []Builtin { return b.list }
+
+func (b *fakeBuiltins) SetMigrated(_ context.Context, id string, on bool, _ subscriptions.Actor) error {
+	if b.setErr != nil {
+		return b.setErr
+	}
+	b.migrated = append(b.migrated, id+"="+map[bool]string{true: "on", false: "off"}[on])
+	for i := range b.list {
+		if b.list[i].ID == id && b.list[i].Via != nil {
+			b.list[i].Via.On, b.list[i].Via.Subscription = on, subscriptions.MigrationID(id)
+		}
+	}
+	return nil
+}
 
 func (b *fakeBuiltins) SetFeed(_ context.Context, id string, inbox, on bool, _ subscriptions.Actor) error {
 	if b.setErr != nil {
@@ -99,7 +113,7 @@ func (b *fakeBuiltins) Native(service string) (string, string) {
 // sourcesEnv is env with the built-in sources and the assistant's name.
 func sourcesEnv(lang i18n.Lang, edit bool, b *fakeBuiltins) Env {
 	e := env(lang, edit)
-	e.Builtin, e.Assistant = b, "Claude"
+	e.Builtin, e.Assistant, e.Ask = b, "Claude", true
 	return e
 }
 
@@ -294,6 +308,32 @@ func TestAskTheAssistant(t *testing.T) {
 	if strings.Count(got, "</persona-context>") != 1 || !strings.Contains(got, `title="a &quot;b&quot; &lt;c&gt;"`) ||
 		!strings.Contains(got, `source="x&quot; y=&quot;z"`) || strings.Contains(got, "persona-context >") {
 		t.Errorf("the block can't be closed or broken by what it holds: %s", got)
+	}
+}
+
+// An app that can't open Set Up with … (it sent no context.assistant: iOS before #5278's part, Android before #5308) gets
+// no row for it, so nothing it shows does nothing (#5661); the rest of the page stays, Choose a Tool too.
+func TestAskOnlyForAppsThatOpenIt(t *testing.T) {
+	f, b := newFake(), newBuiltins()
+	pages := []state{{P: pageSource, ID: "sub_outlook"}, {P: pageSource, C: "apps", S: "gmail"}, {P: pageSource, C: "apps", S: "calendar"},
+		{P: pageRecipe, ID: "sub_outlook"}}
+	old := sourcesEnv(i18n.ZhHans, true, b)
+	old.Assistant, old.Ask = "", false
+	for _, st := range pages {
+		if item(draw(t, f, old, st), "x.ask") != nil {
+			t.Errorf("%v: drawn for an app that can't open it", st)
+		}
+		if item(draw(t, f, sourcesEnv(i18n.ZhHans, true, b), st), "x.ask") == nil {
+			t.Errorf("%v: not drawn for an app that opens it", st)
+		}
+	}
+	if v := draw(t, f, old, state{P: pageSource, C: "apps", S: "gmail"}); item(v, "h.pick") == nil {
+		t.Error("a source not subscribed yet keeps Choose a Tool")
+	}
+	unnamed := sourcesEnv(i18n.ZhHans, true, b)
+	unnamed.Assistant = ""
+	if r := item(draw(t, f, unnamed, state{P: pageSource, C: "apps", S: "gmail"}), "x.ask"); r == nil || r.Title != "用助手配置" {
+		t.Errorf("an app that opens it but has no name: %+v", r)
 	}
 }
 

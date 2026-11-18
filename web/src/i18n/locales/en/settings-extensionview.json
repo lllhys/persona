@@ -10,5 +10,6 @@
   "draw_failed": "Extension didn't load",
   "retry": "Retry",
   "confirm_title": "Confirm",
-  "ok": "OK"
+  "ok": "OK",
+  "updating": "Updating…"
 }

@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -110,7 +111,7 @@ class InboxEventShotsTest {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
                 key(run) {
                     Box(Modifier.testTag("shot").width(400.dp).height(2600.dp).background(PersonaTheme.palette.background)) {
-                        InboxScreen(inbox, navigator)
+                        OnAll { InboxScreen(inbox, navigator) }
                     }
                 }
             }
@@ -150,7 +151,7 @@ class InboxEventShotsTest {
             style = s; dark = d; shown = id; run++
             rule.waitForIdle()
             rule.onNodeWithText("看原文").assertExists()
-            if (name == "waiting") rule.onNodeWithText("展开全部（6）").performClick()
+            if (name == "waiting") rule.onNodeWithText("处理链条").performClick()
             capture("inbox-event-$name-${s.name.lowercase()}-${mode(d)}")
         }
     }
@@ -202,14 +203,14 @@ class InboxEventShotsTest {
 
         rule.onNode(hasText("修改") and hasClickAction()).performClick()
         rule.waitForIdle()
-        rule.onAllNodes(hasSetTextAction())[1].performTextReplacement("别这么回，先问时间")
+        rule.onAllNodes(hasSetTextAction() and hasAnyAncestor(isDialog()))[1].performTextReplacement("别这么回，先问时间")
         rule.onNode(hasText("告诉 AI") and hasClickAction()).performClick()
         rule.waitForIdle()
         assertEquals(SuggestionAction.Instruct to "别这么回，先问时间", inbox.answers.last().action to inbox.answers.last().text)
 
         // The chain: the newest entry, its link opens the processing conversation.
         rule.onNodeWithText("管理者处理").performClick()
-        assertEquals(ChatRoute("m1", "s-demo1"), opened.last())
+        assertEquals(ChatRoute("m1", "s-demo1", source = persona.core.navigation.RouteSource.InboxItem("lark:oc_demo1:100")), opened.last())
         rule.onNodeWithText("看原文").performClick()
         assertEquals(LarkRoute("oc_demo1", "lark:oc_demo1:100", 100), opened.last())
     }

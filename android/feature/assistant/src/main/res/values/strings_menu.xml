@@ -8,6 +8,7 @@
     <string name="assistant_directory_copied">Working directory copied</string>
     <string name="assistant_info_copied">Chat info copied</string>
     <string name="assistant_interrupt">Interrupt</string>
+    <string name="assistant_menu_title_new">New chat · %1$s</string>
     <string name="assistant_copy_info_quoted">“%1$s”</string>
     <string name="assistant_copy_info_hub">Persona assistant (Claude on the hub)</string>
     <string name="assistant_copy_info_chat">Persona assistant chat</string>

@@ -35,10 +35,31 @@ func (m *Machine) isAssistant(s proto.Session) bool {
 	return isAssistantOf(s, m.assistantCwdOf(owner), owner)
 }
 
-// isAssistantOf identifies manager owner's headless conversations in its directory dir. A host pane is stronger
-// evidence than a shared working directory.
+// isMeetingRoomCwd checks whether cwd is a meeting room conversation's working directory (<state dir>/guest-meeting/<id>).
+func isMeetingRoomCwd(cwd string) bool {
+	if cwd == "" {
+		return false
+	}
+	clean := path.Clean(path.Clean(cwd))
+	parent := path.Base(path.Dir(clean))
+	if parent != "guest-meeting" {
+		return false
+	}
+	name := path.Base(clean)
+	return name != "" && name != "." && name != "/"
+}
+
+// isAssistantOf identifies manager owner's headless conversations in its directory dir, its health space's,
+// or a meeting room guest conversation (guest-meeting/<id>, #6048). A host pane is stronger evidence than
+// a shared working directory.
 func isAssistantOf(s proto.Session, dir, owner string) bool {
-	if s.PaneID != "" || dir == "" || s.Cwd == "" {
+	if s.PaneID != "" || s.Cwd == "" {
+		return false
+	}
+	if isMeetingRoomCwd(s.Cwd) || s.Origin == "meeting" {
+		return true
+	}
+	if dir == "" {
 		return false
 	}
 	// The working directory may go through a symlinked home; runtimes and offline assistants have no host pane.
@@ -49,6 +70,7 @@ func isAssistantOf(s proto.Session, dir, owner string) bool {
 func (h *Hub) assistantRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/v1/skills", h.serveSkills)
 	h.assistantRoutesRelayed(api)
+	h.assistantSocketRoutesRelayed(api)
 }
 
 // assistantSpace is the space of an assistant conversation working in cwd: "health" for the health space's

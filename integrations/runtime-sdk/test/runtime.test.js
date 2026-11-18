@@ -221,6 +221,44 @@ test('asking the phone marks the session as needing you, and a withdrawn ask tak
   assert.equal(interactionId('toy', 's1', 'permission', 'call-1'), id, 'stable ids')
 })
 
+test("a card up longer than the resume wait still waits for the hub that went away under it, from when it went", async (t) => {
+  const n = await startFakeNode(t)
+  const rt = createRuntime(minimal(), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5, resumeWaitMs: 400 })
+  t.after(() => rt.stop())
+  rt.start()
+  await n.ready
+  await until('listed', () => n.last('runtime.sessions'))
+  const gone = () => Promise.reject(new RpcError('node going away', 'node_gone')) // the node's hub link dropped under the card
+  let drop
+  n.resolve = () => new Promise((_, reject) => { drop = () => reject(new RpcError('node going away', 'node_gone')) })
+  const id = interactionId('toy', 's1', 'permission', 'call-1')
+  const asking = rt.ask({ id, kind: 'permission', session_id: 's1', tool_name: 'Bash' })
+  await until('on the phone', () => n.asked.length === 1 && drop)
+  await new Promise((r) => setTimeout(r, 600)) // up longer than the wait
+  n.resolve = gone
+  n.setHub(false)
+  drop()
+  await new Promise((r) => setTimeout(r, 250)) // a while with no hub
+  n.resolve = () => ({ allow: true })
+  n.setHub(true) // back: the next ask, with the same id, is answered
+  assert.deepEqual(await asking, { allow: true }, 'the next hub answers it, not a dismiss at once')
+  assert.deepEqual(n.asked.map((ix) => ix.id), [id, id], 'asked again with the same id')
+
+  // A hub that does not come back: the wait ends that long after it went, not at once and not never.
+  n.resolve = () => new Promise((_, reject) => { drop = () => reject(new RpcError('node going away', 'node_gone')) })
+  drop = undefined
+  const again = rt.ask({ id: 'toy-2', kind: 'permission', session_id: 's1', tool_name: 'Bash' })
+  await until('on the phone again', () => drop)
+  await new Promise((r) => setTimeout(r, 600))
+  n.resolve = gone
+  n.setHub(false)
+  const lostAt = Date.now()
+  drop()
+  assert.deepEqual(await again, { dismiss: true })
+  const waited = Date.now() - lostAt
+  assert.ok(waited >= 350 && waited < 1500, `dismissed ${waited} ms after the hub went`)
+})
+
 test('rewrites held while a watch catches up go out in order: to another history and back', async (t) => {
   const n = await startFakeNode(t)
   let release
@@ -325,6 +363,49 @@ test('the echo example is a complete runtime: start, send, stream, ask, page', a
   assert.deepEqual(page.items.map((i) => i.role), ['user', 'assistant'])
   const batches = n.all('session.items')
   assert.deepEqual(batches.slice(1).filter((b, i) => b.from_seq !== batches[i].to_seq), [])
+})
+
+test('explicit phone-first admits an unlisted session, while local-first and a missing peer do not (#8203)', async (t) => {
+  const n = await startFakeNode(t)
+  const rt = createRuntime(minimal(), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5, answerFirst: 'phone' })
+  t.after(() => rt.stop())
+  assert.equal(rt.phoneFirst('s1'), false, 'no node peer: nobody can answer on the phone')
+  rt.start()
+  await n.ready
+  await until('listed', () => n.last('runtime.sessions'))
+  assert.equal(rt.phoneFirst('unlisted'), true, 'explicit phone-first does not depend on inventory membership')
+  assert.equal(rt.phoneFirst('s1'), true, 'the listed behavior is unchanged')
+  n.setHub(false)
+  await until('hub gone', () => !rt.hubConnected)
+  assert.equal(rt.phoneFirst('unlisted'), false, 'no hub: even an explicitly phone-first session asks locally')
+
+  const other = await startFakeNode(t)
+  const local = createRuntime(minimal(), { runtime: 'toy-local', socketPath: other.path, retryMs: 20, pushDelayMs: 5, answerFirst: 'local' })
+  t.after(() => local.stop())
+  assert.equal(local.phoneFirst('s1'), false, 'local-first also stays local without a peer')
+  local.start()
+  await other.ready
+  await until('listed', () => other.last('runtime.sessions'))
+  assert.equal(local.phoneFirst('s1'), false)
+  assert.equal(local.phoneFirst('unlisted'), false)
+  other.peer.notify('runtime.driven', { session_id: 'unlisted' })
+  await until('phone-driven', () => local.touched('unlisted'))
+  assert.equal(local.phoneFirst('unlisted'), false, 'recent phone activity never overrides explicit local-first')
+})
+
+test('recent phone-driven automatic sessions are phone-first before listing, unlike unrelated unlisted sessions (#8203)', async (t) => {
+  const n = await startFakeNode(t)
+  const rt = createRuntime(minimal({ hasLocalClient: () => false }), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5 })
+  t.after(() => rt.stop())
+  rt.start()
+  await n.ready
+  await until('listed', () => n.last('runtime.sessions'))
+  assert.equal(rt.phoneFirst('s1'), true, 'a listed session with no local client remains phone-first')
+  assert.equal(rt.phoneFirst('unrelated'), false, 'no local client alone does not admit an unknown automatic session')
+  n.peer.notify('runtime.driven', { session_id: 'session-new' })
+  await until('phone-driven', () => rt.touched('session-new'))
+  assert.equal(rt.phoneFirst('session-new'), true, 'recent phone activity is enough before the delayed inventory')
+  assert.equal(rt.phoneFirst('unrelated'), false, 'admitting one phone-driven session does not admit every unlisted session')
 })
 
 test('without a hub on the node the phone is not asked first; it is again once the hub is back', async (t) => {
@@ -512,20 +593,25 @@ test('a runtime running several agents: launchers in hello and when they change,
   const rt = createRuntime(minimal({
     start: async (p) => {
       got.push(['start', p])
-      return { session: { session_id: p.resume ?? 'new', status: 'idle' } }
+      // What it asked for and does not run with goes back with the row (caps.same_kind).
+      return { session: { session_id: p.resume ?? 'new', status: 'idle' }, ...(p.resume ? {} : { instead: { launcher: p.launcher } }) }
     },
     modes: async (p) => got.push(['modes', p]),
-  }), { runtime: 'paseo', socketPath: n.path, retryMs: 20, launchers, resume: true, readonly: true })
+  }), { runtime: 'paseo', socketPath: n.path, retryMs: 20, launchers, resume: true, readonly: true, sameKind: true })
   t.after(() => rt.stop())
   rt.start()
   await n.ready
   assert.equal(n.hello.caps.modes, true)
   assert.equal(n.hello.caps.resume, true)
   assert.equal(n.hello.caps.readonly, true)
+  assert.equal(n.hello.caps.same_kind, true)
   assert.deepEqual(n.hello.launchers, launchers)
   await n.peer.call('session.modes', { session_id: 's1', permission_mode: 'plan', effort: 'high' })
   const res = await n.peer.call('session.start', { cwd: '/w', resume: 'cccccccc-0000-0000-0000-000000000001', launcher: 'paseo-claude', model: 'opus' })
   assert.equal(res.session.session_id, 'cccccccc-0000-0000-0000-000000000001')
+  const fresh = await n.peer.call('session.start', { cwd: '/w', launcher: 'cc-gateway', agent_type: 'claude' })
+  assert.deepEqual(fresh.instead, { launcher: 'cc-gateway' })
+  assert.equal(got.at(-1)[1].agent_type, 'claude')
   assert.deepEqual(got[0], ['modes', { session_id: 's1', permission_mode: 'plan', effort: 'high' }])
   assert.equal(got[1][1].model, 'opus')
   rt.launchersChanged([{ name: 'paseo-codex', agent: 'paseo' }])
@@ -555,6 +641,73 @@ test('archive: caps.archive only with both ways, calls reach the driver, one way
   await half.ready
   assert.equal(half.hello.caps.archive, undefined)
   await assert.rejects(half.peer.call('session.archive', { session_id: 's1' }), (err) => err.code === 'unsupported')
+})
+
+test('workspaces: caps.workspaces with createWorkspace and prepareWorkspace, the list on change and to every node, creation and its folder', async (t) => {
+  const n = await startFakeNode(t)
+  const got = []
+  const row = { workspace_id: 'ws-1', title: 'main', cwd: '/w/app', kind: 'checkout', branch: 'main', space_id: 'p1', space_name: 'app' }
+  const rt = createRuntime(minimal({
+    createWorkspace: async (p) => {
+      got.push(['create', p])
+      return { workspace: { workspace_id: 'ws-2', title: p.branch, cwd: `/w/trees/${p.name}`, kind: 'worktree', branch: p.branch, owned: true } }
+    },
+    prepareWorkspace: async (p) => {
+      got.push(['prepare', p])
+      return { checkouts: '/w/trees' }
+    },
+  }), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5, refreshMs: 0 })
+  t.after(() => rt.stop())
+  rt.workspacesChanged([row]) // before any node: said once one is there
+  rt.start()
+  await n.ready
+  assert.equal(n.hello.caps.workspaces, true)
+  await until('the workspaces after hello', () => n.last('runtime.workspaces'))
+  assert.deepEqual(n.last('runtime.workspaces'), { workspaces: [row] })
+  assert.deepEqual(await n.peer.call('workspace.prepare', { cwd: '/w/app', repo_root: '/w/app' }), { checkouts: '/w/trees' })
+  const made = await n.peer.call('workspace.create', { cwd: '/w/app', workspace_id: 'ws-1', branch: 'feat', create_branch: true, base: 'main', name: 'feat', key: 'k1' })
+  assert.equal(made.workspace.cwd, '/w/trees/feat')
+  assert.deepEqual(got, [['prepare', { cwd: '/w/app', repo_root: '/w/app' }],
+    ['create', { cwd: '/w/app', workspace_id: 'ws-1', branch: 'feat', create_branch: true, base: 'main', name: 'feat', key: 'k1' }]])
+  rt.workspacesChanged([row, made.workspace])
+  await until('the new list', () => n.last('runtime.workspaces')?.workspaces.length === 2)
+  // Renaming and archiving are asked of the driver that has them, and refused as unsupported by one that has not.
+  await assert.rejects(n.peer.call('workspace.rename', { workspace_id: 'ws-2', title: 'x' }), (err) => err.code === 'unsupported')
+  await assert.rejects(n.peer.call('workspace.archive', { workspace_id: 'ws-2' }), (err) => err.code === 'unsupported')
+  const n2 = await startFakeNode(t)
+  const rt3 = createRuntime(minimal({
+    createWorkspace: async () => ({}),
+    prepareWorkspace: async () => ({ checkouts: '/w/trees' }),
+    renameWorkspace: async (p) => { got.push(['rename', p]); return p.space_id ? { space_name: p.title } : { workspace: { ...row, title: p.title } } },
+    archiveWorkspace: async (p) => { got.push(['archive', p]); return { archived_at: '2026-11-12T00:00:00.000Z' } },
+  }), { runtime: 'toy2', socketPath: n2.path, retryMs: 20 })
+  t.after(() => rt3.stop())
+  rt3.start()
+  await n2.ready
+  assert.equal((await n2.peer.call('workspace.rename', { workspace_id: 'ws-1', title: 'Main' })).workspace.title, 'Main')
+  assert.deepEqual(await n2.peer.call('workspace.rename', { space_id: 'p1', title: 'App' }), { space_name: 'App' })
+  assert.deepEqual(await n2.peer.call('workspace.archive', { workspace_id: 'ws-1' }), { archived_at: '2026-11-12T00:00:00.000Z' })
+  assert.deepEqual(got.slice(2), [['rename', { workspace_id: 'ws-1', title: 'Main' }], ['rename', { space_id: 'p1', title: 'App' }],
+    ['archive', { workspace_id: 'ws-1' }]])
+
+  // Without both nothing is declared, said or answered: the node asks where the worktrees go before each one it has
+  // made, so either alone could make none.
+  const renames = { renameWorkspace: async () => ({ space_name: 'x' }), archiveWorkspace: async () => ({}) }
+  for (const [name, half] of [['prepare-only', { prepareWorkspace: async () => ({ checkouts: '/x' }), ...renames }],
+    ['create-only', { createWorkspace: async () => ({ workspace: { workspace_id: 'ws-9', cwd: '/x/y' } }), ...renames }]]) {
+    const plain = await startFakeNode(t)
+    const rt2 = createRuntime(minimal(half), { runtime: name, socketPath: plain.path, retryMs: 20 })
+    t.after(() => rt2.stop())
+    rt2.workspacesChanged([row])
+    rt2.start()
+    await plain.ready
+    assert.equal(plain.hello.caps.workspaces, undefined, name)
+    await assert.rejects(plain.peer.call('workspace.create', { cwd: '/w/app' }), (err) => err.code === 'unsupported')
+    await assert.rejects(plain.peer.call('workspace.prepare', { cwd: '/w/app' }), (err) => err.code === 'unsupported')
+    await assert.rejects(plain.peer.call('workspace.rename', { space_id: 'p1', title: 'x' }), (err) => err.code === 'unsupported')
+    await assert.rejects(plain.peer.call('workspace.archive', { workspace_id: 'ws-1' }), (err) => err.code === 'unsupported')
+    assert.equal(plain.last('runtime.workspaces'), undefined, name)
+  }
 })
 
 test('a watch for a session the node reads from its transcript streams live text only', async (t) => {
@@ -691,4 +844,94 @@ test('a card for a new session waits for a slow list already under way, then for
   assert.deepEqual(res, { allow: true })
   const card = order.findIndex((e) => e[0] === 'card')
   assert.ok(order.slice(0, card).some((e) => e[0] === 'list' && e[1].includes('new')), JSON.stringify(order))
+})
+
+
+test('native rewind is advertised and returns the driver result with a refreshed inventory', async (t) => {
+  const node = await startFakeNode(t)
+  let called
+  const result = { prompt: 'Example', restore: 'conversation', input_cleared: true, code_restored: false }
+  const rt = createRuntime(minimal({ listSessions: async () => [{ session_id: 's1', status: 'idle', rev: called ? 2 : 1 }], rewind: async (params) => { called = params; return result } }), { runtime: 'toy', socketPath: node.path, pushDelayMs: 5 })
+  t.after(() => rt.stop())
+  rt.start()
+  await node.ready
+  assert.equal(node.hello.caps.rewind, true)
+  await until('initial rewind inventory', () => node.last('runtime.sessions'))
+  const params = { session_id: 's1', prompt: 'Example', occurrence: 1, prompts_after: 0, restore: 'conversation' }
+  assert.deepEqual(await node.peer.call('session.rewind', params), result)
+  assert.deepEqual(called, params)
+  await until('inventory after rewind', () => node.all('runtime.sessions').length > 1)
+})
+
+test('seen is advertised only by a driver that has it, and reaches the driver (#6299)', async (t) => {
+  const node = await startFakeNode(t)
+  const seen = []
+  const rt = createRuntime(minimal({ listSessions: async () => [{ session_id: 's1', status: 'done', rev: 1 }], seen: async (params) => { seen.push(params) } }),
+    { runtime: 'toy', socketPath: node.path, pushDelayMs: 5 })
+  t.after(() => rt.stop())
+  rt.start()
+  await node.ready
+  assert.equal(node.hello.caps.seen, true)
+  assert.deepEqual(await node.peer.call('session.seen', { session_id: 's1' }), { ok: true })
+  assert.deepEqual(seen, [{ session_id: 's1' }])
+
+  const other = await startFakeNode(t)
+  const plain = createRuntime(minimal({}), { runtime: 'toy2', socketPath: other.path, pushDelayMs: 5 })
+  t.after(() => plain.stop())
+  plain.start()
+  await other.ready
+  assert.equal(other.hello.caps.seen, undefined, 'not said without the method')
+  await assert.rejects(other.peer.call('session.seen', { session_id: 's1' }), /unsupported/)
+})
+
+test('runtime_driven_from_the_node_makes_the_phone_answer_first', async (t) => {
+  // The session was started from Persona through another runtime (pi's companion starts it in pi-web): the node tells
+  // the runtime running it, which then puts its cards on the phone first.
+  const n = await startFakeNode(t)
+  let asked
+  const rt = createRuntime(minimal({ hasLocalClient: (id) => { asked = id; return true } }), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5 })
+  t.after(() => rt.stop())
+  rt.start()
+  await n.ready
+  await until('list', () => n.last('runtime.sessions'))
+  assert.equal(rt.phoneFirst('s1'), false, 'a local UI is open and the phone never drove it')
+  assert.equal(asked, 's1', 'the driver is asked about that session')
+  n.peer.notify('runtime.driven', { session_id: 's1' })
+  await until('driven', () => rt.phoneFirst('s1'))
+  assert.equal(rt.touched('s1'), true)
+})
+
+test('waiting_on_user_lists_the_session_blocked_until_released', async (t) => {
+  const n = await startFakeNode(t)
+  const rt = createRuntime(minimal(), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5, refreshMs: 0 })
+  t.after(() => rt.stop())
+  rt.start()
+  await n.ready
+  await until('idle', () => n.last('runtime.sessions')?.sessions[0].status === 'idle')
+  const release = rt.waitingOnUser('s1')
+  await until('blocked', () => n.last('runtime.sessions')?.sessions[0].status === 'blocked')
+  assert.equal(rt.busy(), true, 'a question waiting holds a version switch too')
+  release()
+  release() // twice: once
+  await until('idle again', () => n.last('runtime.sessions')?.sessions[0].status === 'idle')
+  assert.equal(rt.busy(), false)
+})
+
+test('send_and_interrupt_say_queued_and_settled_as_the_driver_does', async (t) => {
+  const n = await startFakeNode(t)
+  let queue = false
+  let settle = false
+  const rt = createRuntime(minimal({
+    send: async () => (queue ? { queued: true } : undefined),
+    interrupt: async () => (settle ? { settled: true } : undefined),
+  }), { runtime: 'toy', socketPath: n.path, retryMs: 20, pushDelayMs: 5 })
+  t.after(() => rt.stop())
+  rt.start()
+  await n.ready
+  assert.deepEqual(await n.peer.call('session.send', { session_id: 's1', text: 'a' }), { ok: true })
+  queue = true
+  assert.deepEqual(await n.peer.call('session.send', { session_id: 's1', text: 'b' }), { ok: true, queued: true })
+  assert.deepEqual(await n.peer.call('session.interrupt', { session_id: 's1' }), { ok: true }, 'a stop not confirmed says nothing more')
+  settle = true
+  assert.deepEqual(await n.peer.call('session.interrupt', { session_id: 's1' }), { ok: true, settled: true })
 })

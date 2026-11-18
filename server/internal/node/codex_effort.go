@@ -17,7 +17,7 @@ import (
 // messages are turn/start / turn/steer there, so the effort is the thread's own setting, not keys typed into a TUI:
 //
 //   - Shown: what the app-server says the thread is configured with (thread/read's reasoningEffort, every refresh, and
-//     thread/settings/updated; unset: its model's default from model/list), else what its rollout last ran with; the
+//     thread/settings/updated), else what its rollout last ran with, then its model's default from model/list; the
 //     choices are what the thread's model takes (model/list's supportedReasoningEfforts), Codex's whole list when the
 //     model is not listed.
 //   - Set: thread/settings/update, which applies from the next turn whoever starts it (the TUI's too). Only an
@@ -31,7 +31,7 @@ import (
 
 // codexEffortLevels are Codex's reasoning efforts, weakest first: the Codex settings page's choices (codexconfig.go)
 // and what a thread offers when its app-server's model/list does not name its model.
-var codexEffortLevels = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+var codexEffortLevels = proto.CodexEffortLevels
 
 // codexModelEfforts is what model/list says about a model's efforts.
 type codexModelEfforts struct {
@@ -135,14 +135,16 @@ func readCodexModels(ctx context.Context, call func(context.Context, string, any
 }
 
 // codexEffortNow is the effort a thread is shown with: the phone's choice still waiting for a turn/start, else what
-// the app-server says the thread is configured with (none set: its model's default), else what its rollout last ran
-// with.
+// the app-server says the thread is configured with, else what its rollout last ran with, then its model's default.
 func (n *Node) codexEffortNow(id string, c *codexRemote, t remoteThread, rollout string) string {
 	if e := n.codexPendingEffort(id, c, t); e != "" {
 		return e
 	}
 	if t.effort != "" {
 		return t.effort
+	}
+	if rollout != "" {
+		return rollout
 	}
 	if t.model != "" { // an app-server that reports the thread's settings, and it sets no effort
 		if d := c.defaultEffort(t.model); d != "" {
@@ -206,6 +208,8 @@ func (n *Node) dropCodexPending(id, conn, thread string) {
 // codexEffortRow fills in a Codex session's effort and the levels the phone may pick, when the phone drives it through
 // its app-server; m is its rollout's meta (zero without one).
 func (n *Node) codexEffortRow(id string, efforts *[]string, effort *string, m quickMeta) {
+	// Readback is independent of control support: a terminal-only session still records its actual effort.
+	*effort = m.effort
 	c, t, ok := n.codexEffortThread(id)
 	if !ok {
 		return

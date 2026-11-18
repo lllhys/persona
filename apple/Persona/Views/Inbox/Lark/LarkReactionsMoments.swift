@@ -75,7 +75,7 @@ struct LarkReactionPicker: View {
             }
             .navigationTitle("Add Reaction")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar { SheetClose { dismiss() } }
             .onAppear { LarkMedia.shared.loadEmojiCatalog(manager: manager, using: AppModel.shared.larkAPI(group: group)) }
         }
         .presentationDetents([.medium, .large])
@@ -221,7 +221,7 @@ struct LarkMomentsPostView: View {
             .navigationBarTitleDisplayMode(.inline)
             .pageToolbar {
                 if !pushed {
-                    ToolbarItem(placement: .cancellationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.tint(LarkColor.blue) }
+                    SheetClose { dismiss() }
                 }
                 if let link, let u = URL(string: link) {
                     ToolbarItem(placement: .primaryAction) {

@@ -111,6 +111,29 @@ test('runtime inventory follows an external tool turn through its final reply', 
   assert.equal(await refresh(), 'done')
 })
 
+test('runtime inventory never presents a user question as an unanswered reply', { timeout: 15_000 }, async (t) => {
+  const created_at = new Date().toISOString()
+  const previous = step('PLANNER_RESPONSE', { created_at, content: 'Which configuration should I use?' })
+  const { node, write, state, refresh } = await fixture(t, [previous], idle)
+  assert.equal(node.last('runtime.sessions').sessions[0].last_text, previous.content)
+  const turn = [
+    previous,
+    step('USER_INPUT', { created_at, source: 'USER_EXPLICIT', content: 'What were the results?' }),
+    step('PLANNER_RESPONSE', { created_at, thinking: 'Inspect the logs.', tool_calls: [{ name: 'run_command' }] }),
+    step('GENERIC', { created_at, content: 'Retry the command?' }),
+  ]
+  write(turn)
+  state({ ...idle, step_count: turn.length })
+  assert.equal(await refresh(), 'idle')
+  assert.equal(node.last('runtime.sessions').sessions[0].last_text, '')
+
+  const reply = step('PLANNER_RESPONSE', { created_at, content: 'Should I retry with the other configuration?' })
+  write([...turn, reply])
+  state({ ...idle, step_count: turn.length + 1 })
+  assert.equal(await refresh(), 'done')
+  assert.equal(node.last('runtime.sessions').sessions[0].last_text, reply.content)
+})
+
 test('owned ACP turn stays working while the native transcript has the previous reply', { timeout: 15_000 }, async (t) => {
   const created_at = new Date().toISOString()
   const { node } = await fixture(t, [step('PLANNER_RESPONSE', { created_at, content: 'Previous reply' })], idle)

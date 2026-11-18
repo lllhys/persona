@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -211,9 +212,10 @@ class AutoreleaseTests(unittest.TestCase):
         for entry in self.actions():
             self.assertEqual(entry["args"][0], self.initial)
             self.assertEqual(entry["head"], self.initial)
-            self.assertEqual(entry["cwd"], str(self.worktree))
+            # The worker resolves its configured paths (on macOS the temporary /var links to /private/var).
+            self.assertEqual(entry["cwd"], str(self.worktree.resolve()))
             self.assertEqual(entry["selected_environment"], "configured-value")
-            self.assertTrue(Path(entry["checkpoint"]).is_relative_to(self.state_dir))
+            self.assertTrue(Path(entry["checkpoint"]).is_relative_to(self.state_dir.resolve()))
         self.assertTrue(all(record["last_success"] == self.initial
                             for record in self.state()["targets"].values()))
         self.assertFalse(self.notify_log.exists())
@@ -337,12 +339,13 @@ class AutoreleaseTests(unittest.TestCase):
     def test_stale_checkout_defers_without_budget_or_notification_and_uses_next_head(self):
         self.target("web", ["web/"])
         self.modes["hub"].write_text("stale")
-        self.invoke()
-        self.invoke()
-        self.invoke()
+        for _ in range(3):
+            result = self.invoke(code=75)
+            self.assertIn("verdict=lock-busy", result.stdout)
         record = self.state()["targets"]["hub"]
         self.assertEqual(record["failures"], 0)
         self.assertNotIn("last_success", record)
+        self.assertEqual(self.state()["outbox"], [])
         self.assertFalse(self.notify_log.exists())
         self.assertEqual(len(self.actions("hub")), 3)
         self.assertEqual(len(self.actions("web")), 1)
@@ -360,7 +363,8 @@ class AutoreleaseTests(unittest.TestCase):
         newest = self.commit({"server/a.go": "merged during deployment"})
         Path(str(self.modes["hub"]) + ".gate").write_text("release")
         stdout, stderr = process.communicate(timeout=10)
-        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertEqual(process.returncode, 75, stdout + stderr)
+        self.assertIn("verdict=lock-busy", stdout)
         self.assertIn("result=checkout-stale-deferred", stderr)
         self.assertEqual(self.state()["targets"]["hub"]["failures"], 0)
         self.assertFalse(self.notify_log.exists())
@@ -374,7 +378,7 @@ class AutoreleaseTests(unittest.TestCase):
         self.invoke(code=1)
         fingerprint = self.state()["notified_failures"]["hub"]
         self.modes["hub"].write_text("stale")
-        result = self.invoke()
+        result = self.invoke(code=75)
         self.assertIn("result=checkout-stale-deferred", result.stderr)
         self.assertEqual(self.state()["targets"]["hub"]["failures"], 1)
         self.assertEqual(self.state()["notified_failures"]["hub"], fingerprint)
@@ -385,7 +389,7 @@ class AutoreleaseTests(unittest.TestCase):
     def test_retained_logs_inspect_only_current_attempt(self):
         self.config["targets"]["hub"]["log_output"] = True
         self.modes["hub"].write_text("stale")
-        self.invoke()
+        self.invoke(code=75)
         self.modes["hub"].write_text("exit-two")
         self.invoke(code=1)
         self.assertEqual(self.state()["targets"]["hub"]["failures"], 1)
@@ -680,6 +684,20 @@ class AutoreleaseTests(unittest.TestCase):
         self.wait_for(gone)
         self.assertEqual(self.state()["targets"]["hub"]["failures"], 1)
         self.assertIn("result=step-1-timeout", self.entries(self.notify_log)[0]["args"][0])
+
+    def test_kill_group_ignores_a_group_with_only_exited_members(self):
+        leader = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+        try:
+            def exited_unreaped():
+                state = subprocess.run(["ps", "-o", "stat=", "-p", str(leader.pid)],
+                                       capture_output=True, text=True).stdout.strip()
+                return state.startswith("Z")
+
+            self.wait_for(exited_unreaped)
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                autorelease.kill_group(leader.pid, sig)
+        finally:
+            leader.wait()
 
     def test_notify_timeout_retains_outbox(self):
         self.config["notify_timeout"] = 0.4

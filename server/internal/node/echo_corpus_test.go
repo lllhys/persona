@@ -64,7 +64,7 @@ func TestEchoCorpus(t *testing.T) {
 				items[i].TS = time.Time{}
 			}
 			l.expect(echoRecord{SessionID: "s", ClientMsgID: "x", Text: sent, Images: images, SentAt: time.Now(), AfterSeq: seq - 1})
-			found := l.match("s", items)
+			found := l.match("s", echoInTranscript, items)
 			switch {
 			case len(found) == 1 && found[0].Line == echoLineKey(items[0].ID):
 				tied++

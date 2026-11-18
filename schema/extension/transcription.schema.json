@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "transcription.schema.json",
+  "title": "Transcription for extensions",
+  "description": "An extension turning its own audio into text with the transcription the owner chose for meetings (docs/extensions/extensions.md \"Transcription for extensions\", #8485), with the permission transcription in the manifest's permissions.hub, granted by the user. The manager runs the job on that contribution's replay mode, which checks several sessions against each other: a span where they do not agree comes back as a gap, never as a guess. The extension never sees a key, and never anyone else's audio. One job per extension and two across all extensions at a time; at most 15 minutes of audio a job; a job with no call for 60 seconds is cancelled. There is no budget: the extension keeps its own limits. Plugin-side: only the hub and the program speak it.",
+  "x-side": "plugin",
+  "x-methods": {
+    "transcription.start": {"from": "program", "params": "TranscriptionStartParams", "result": "TranscriptionStartResult"},
+    "transcription.audio": {"from": "program", "params": "TranscriptionAudioParams", "result": "Empty"},
+    "transcription.finish": {"from": "program", "params": "TranscriptionJobParams", "result": "TranscriptionFinishResult"},
+    "transcription.cancel": {"from": "program", "params": "TranscriptionJobParams", "result": "Empty"}
+  },
+  "$defs": {
+    "TranscriptionErrorCode": {
+      "description": "error.code of the transcription calls besides permission_denied (data {scope: \"transcription\"}): invalid_params (a field missing or wrong, audio that is not base64 PCM16 or over 256 KiB a call, a job that is not this extension's or no longer runs); assistant_offline (the manager is away: try again); transcription_unavailable (no transcription is chosen, ready or able to replay: the owner sets it up in Settings › Meetings); busy (this extension has a job running, or two extensions have); too_long (more than 15 minutes of audio: the job is ended); timeout (the transcription stopped answering: the job is ended); transcription_failed (the transcription failed the job; data {code}: its error code).",
+      "type": "string",
+      "enum": ["invalid_params", "assistant_offline", "transcription_unavailable", "busy", "too_long", "timeout", "transcription_failed"]
+    },
+    "TranscriptionStartParams": {
+      "description": "transcription.start: a job for one piece of audio.",
+      "type": "object",
+      "properties": {
+        "language": {"type": "string", "description": "A BCP 47 hint (zh-CN, en-US); the transcription still follows the speech. Empty: the transcription's own guess."},
+        "label": {"type": "string", "description": "A short name of what this is, for the manager's log (its first 40 characters); never what is said."}
+      },
+      "additionalProperties": false
+    },
+    "TranscriptionStartResult": {
+      "type": "object",
+      "properties": {
+        "job": {"type": "string", "description": "The job's id, for the calls after; it is this extension's only."}
+      },
+      "required": ["job"]
+    },
+    "TranscriptionAudioParams": {
+      "description": "transcription.audio: the next piece of the audio, contiguous with the last: PCM16 little-endian, mono, 16 kHz, base64 (standard, with padding), at most 256 KiB of PCM (8 seconds) a call. The call returns once the audio is with the transcription and no more than 60 seconds wait ahead of it, so sending as fast as it returns paces the job.",
+      "type": "object",
+      "properties": {
+        "job": {"type": "string"},
+        "data": {"type": "string"}
+      },
+      "required": ["job", "data"],
+      "additionalProperties": false
+    },
+    "TranscriptionJobParams": {
+      "description": "transcription.finish (every piece is sent: wait for the text) and transcription.cancel (drop the job and its text).",
+      "type": "object",
+      "properties": {
+        "job": {"type": "string"}
+      },
+      "required": ["job"],
+      "additionalProperties": false
+    },
+    "TranscriptionSegment": {
+      "description": "One sentence, from and to in seconds from the start of the audio.",
+      "type": "object",
+      "properties": {
+        "from": {"type": "number"},
+        "to": {"type": "number"},
+        "text": {"type": "string"}
+      },
+      "required": ["from", "to", "text"]
+    },
+    "TranscriptionGap": {
+      "description": "A span the transcription did not trust any text for (its sessions did not agree: noise, music, crosstalk): say so, never guess.",
+      "type": "object",
+      "properties": {
+        "from": {"type": "number"},
+        "to": {"type": "number"}
+      },
+      "required": ["from", "to"]
+    },
+    "TranscriptionFinishResult": {
+      "type": "object",
+      "properties": {
+        "segments": {"type": "array", "items": {"$ref": "#/$defs/TranscriptionSegment"}},
+        "gaps": {"type": "array", "items": {"$ref": "#/$defs/TranscriptionGap"}},
+        "seconds": {"type": "number", "description": "How much audio the job took."}
+      },
+      "required": ["segments", "seconds"]
+    }
+  }
+}

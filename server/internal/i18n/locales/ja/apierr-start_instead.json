@@ -1,0 +1,7 @@
+{
+  "launcher": "{machine} の {engine} に「{launcher}」がないため、同じ種類のエージェント「{to}」で実行します",
+  "model": "「{to}」にはモデル {model} がないため、既定のモデルで実行します",
+  "effort": "「{to}」のモデルには思考の強さ {effort} がないため、{ran} で実行します",
+  "effort_default": "「{to}」のモデルには思考の強さ {effort} がないため、モデルの既定の強さで実行します",
+  "join": "。"
+}

@@ -122,40 +122,77 @@ abstract class PersistentDatabase : RoomDatabase() {
     abstract fun records(): PersistentDao
 }
 
-class RoomOutboxStore(private val database: PersistentDatabase, private val scope: HubScope) : OutboxStore {
+class RoomOutboxStore(
+    private val database: PersistentDatabase,
+    private val scope: HubScope,
+    private val journal: InboxReplyJournal? = null,
+) : OutboxStore {
     private val dao = database.records()
-    override val entries = dao.observeOutbox(scope.path).map { rows -> rows.map { row ->
-        OutboxEntry(row.client_msg_id, SessionKey(row.machine, row.session), row.text, row.clear_draft,
-            OutboxState.entries.single { it.wire == row.state }, row.error, row.created_at, row.main_target, row.op_id,
-            row.launcher, row.model, applySwitch = row.apply_switch)
-    } }
+    override val entries = dao.observeOutbox(scope.path).map { rows ->
+        val handOffs = journal?.read(scope.path)?.agentHandOffs.orEmpty().associateBy { it.request.operationId }
+        rows.map { row ->
+            OutboxEntry(row.client_msg_id, SessionKey(row.machine, row.session), row.text, row.clear_draft,
+                OutboxState.entries.single { it.wire == row.state }, row.error, row.created_at, row.main_target, row.op_id,
+                row.launcher, row.model, applySwitch = row.apply_switch)
+                .withAgentHandOff(handOffs[row.client_msg_id])
+        }
+    }
 
     override suspend fun enqueue(entry: OutboxEntry) = enqueueDraft(entry, null)
 
-    override suspend fun enqueueDraft(entry: OutboxEntry, draft: DraftSnapshot?) = database.withTransaction {
-        require(draft == null || draft.scope == scope) { "Draft belongs to another pairing" }
-        val existing = dao.message(scope.path, entry.clientMessageId)
-        if (existing != null) {
-            require(existing.main_target == entry.mainTarget &&
-                (entry.mainTarget || (existing.machine == entry.session.machineId && existing.session == entry.session.sessionId)) &&
-                existing.text == entry.text && existing.clear_draft == entry.clearDraft &&
-                existing.launcher == entry.launcher && existing.model == entry.model) { "Operation id reused with different parameters" }
-        } else {
-            if (draft != null) {
-                val key = draft.key.storageKey()
-                val old = dao.draft(scope.path, key.machineId, key.sessionId)
-                check((old?.version ?: 0) == draft.version && old?.text.orEmpty() == draft.text) { "Draft version changed" }
-                dao.putDraft(DraftRow(scope.path, key.machineId, key.sessionId, "", Math.addExact(draft.version, 1)))
+    override suspend fun enqueueDraft(entry: OutboxEntry, draft: DraftSnapshot?) {
+        val handOff = entry.agentHandOff?.let { it.copy(deliveryScopes = it.deliveryScopes + scope.path) }
+        if (handOff != null && handOff.scope != scope.path) {
+            // The target journal restores the outbox metadata; the origin journal drives recording and crash replay.
+            checkNotNull(kotlinx.coroutines.currentCoroutineContext()[InboxAgentHandOffContext]?.originPersisted) {
+                "Cross-pairing hand-off origin is not persisted"
+            }.await()
+            check(InboxReplyJournal.linkAgentHandOffTarget(handOff, scope.path, journal)) {
+                "Cross-pairing hand-off origin is not linked"
             }
-            val main = if (entry.mainTarget) mainConversation() else null
-            val target = main ?: entry.session
-            dao.insertMessage(OutboxRow(scope = scope.path, machine = target.machineId,
-                session = target.sessionId, client_msg_id = entry.clientMessageId, text = entry.text,
-                clear_draft = entry.clearDraft, state = OutboxState.Queued.wire, error = null,
-                created_at = entry.createdAt, main_target = entry.mainTarget, op_id = entry.opId,
-                launcher = entry.launcher, model = entry.model, apply_switch = entry.applySwitch))
+        }
+        if (handOff != null && journal != null) {
+            // The message's internal identity, item route and replay linkage are durable before the row can be sent.
+            journal.update(scope.path) { it.enqueue(handOff).linkAgentHandOffTarget(handOff.request.operationId, scope.path) }
+        }
+        database.withTransaction {
+            require(draft == null || draft.scope == scope) { "Draft belongs to another pairing" }
+            val existing = dao.message(scope.path, entry.clientMessageId)
+            if (existing != null) {
+                require(existing.main_target == entry.mainTarget &&
+                    (entry.mainTarget || (existing.machine == entry.session.machineId && existing.session == entry.session.sessionId)) &&
+                    existing.text == entry.text && existing.clear_draft == entry.clearDraft &&
+                    existing.launcher == entry.launcher && existing.model == entry.model) { "Operation id reused with different parameters" }
+            } else {
+                if (draft != null) {
+                    val key = draft.key.storageKey()
+                    val old = dao.draft(scope.path, key.machineId, key.sessionId)
+                    check((old?.version ?: 0) == draft.version && old?.text.orEmpty() == draft.text) { "Draft version changed" }
+                    dao.putDraft(DraftRow(scope.path, key.machineId, key.sessionId, "", Math.addExact(draft.version, 1)))
+                }
+                val main = if (entry.mainTarget) mainConversation() else null
+                val target = main ?: entry.session
+                dao.insertMessage(OutboxRow(scope = scope.path, machine = target.machineId,
+                    session = target.sessionId, client_msg_id = entry.clientMessageId, text = entry.text,
+                    clear_draft = entry.clearDraft, state = OutboxState.Queued.wire, error = null,
+                    created_at = entry.createdAt, main_target = entry.mainTarget, op_id = entry.opId,
+                        launcher = entry.launcher, model = entry.model, apply_switch = entry.applySwitch))
+            }
         }
     }
+
+    override suspend fun persistAgentHandOffDelivery(entry: OutboxEntry): OutboxEntry {
+        val handOff = entry.agentHandOff ?: return entry
+        val delivered = entry.copyForDelivery(agentHandOff = handOff.copy(
+            delivered = true, deliveryScopes = handOff.deliveryScopes + scope.path))
+        if (journal != null) journal.update(scope.path) { saved ->
+            saved.commitAgentHandOffDelivery(checkNotNull(delivered.agentHandOff))
+        }
+        return delivered
+    }
+
+    override fun agentHandOffOriginCommitted(entry: OutboxEntry): Boolean =
+        entry.agentHandOff?.let { journal != null && it.scope == scope.path } ?: true
 
     override suspend fun mainConversation(): SessionKey? = dao.mainConversation(scope.path)?.let {
         if (it.machine != null && it.session != null) SessionKey(it.machine, it.session) else null
@@ -245,7 +282,7 @@ interface ItemsDao {
     suspend fun insert(items: List<ItemRow>)
 }
 
-@Database(entities = [ItemRow::class, SessionCursorRow::class], version = 4,
+@Database(entities = [ItemRow::class, SessionCursorRow::class], version = 6,
     autoMigrations = [AutoMigration(from = 2, to = 3)], exportSchema = true)
 abstract class ItemsDatabase : RoomDatabase() {
     abstract fun items(): ItemsDao
@@ -265,6 +302,25 @@ abstract class ItemsDatabase : RoomDatabase() {
          * the chats load again from the hub.
          */
         val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM `items`")
+                db.execSQL("DELETE FROM `cursors`")
+            }
+        }
+
+        /** Codex commentary cached as thinking must be read again as assistant text; these are only cache rows. */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DELETE FROM `items`")
+                db.execSQL("DELETE FROM `cursors`")
+            }
+        }
+
+        /**
+         * Paseo's input to an agent cached as the user's raw <paseo-system> text must be read again as another
+         * session's message, a subagent's task note or a notice (#8220); these are only cache rows.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DELETE FROM `items`")
                 db.execSQL("DELETE FROM `cursors`")

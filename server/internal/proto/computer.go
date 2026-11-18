@@ -28,6 +28,9 @@ type Computer struct {
 	Displays []Display `json:"displays,omitempty"`
 	// NoAutoLock: "Don't auto-lock while the extension is on" is on for this Mac (the hub's, from the plugin's settings).
 	NoAutoLock bool `json:"no_auto_lock,omitempty"`
+	// ScreenX264: x264 is on for this Mac's live screen (the hub's, from the plugin's screen_x264; #8859): screen.dial
+	// asks for it, and the helper uses the user's ffmpeg on a direct LAN route. ScreenVideo.X264 says whether there is one.
+	ScreenX264 bool `json:"screen_x264,omitempty"`
 	// Backend is which driver this status is for: "cua" (Cua Driver) or "lcu" (amontlabs/lcu). Empty from a hub that
 	// only knows Cua Driver.
 	Backend string `json:"backend,omitempty"`
@@ -40,6 +43,59 @@ type Computer struct {
 	// Job: installing Cua Driver or asking for its permissions from the app (computer.install / computer.grant),
 	// the one running or the last one since the node started.
 	Job *ComputerJob `json:"job,omitempty"`
+	// ScreenVideo: this Mac can carry the live screen as a hardware video channel next to RFB (#3954,
+	// docs/extensions/computer-use.md "Live screen video"). Absent from a node without Persona Screen, or an old node,
+	// so an old app simply keeps showing RFB.
+	ScreenVideo *ScreenVideo `json:"screen_video,omitempty"`
+	// ScreenInput: this Mac's node takes the live screen's pixel scroll records out of the RFB stream for Persona Input
+	// (#7775, docs/extensions/computer-use.md "Pixel scrolling"). Absent from an old node or one without the helper: the
+	// phone then scrolls by wheel notches only, and never sends a record.
+	ScreenInput *ScreenInput `json:"screen_input,omitempty"`
+	// PhoneScreen: this Mac's Persona Input can show one window on a portrait virtual display shaped like the phone
+	// (#9314, docs/extensions/computer-use.md "Phone Screen"). Absent from an old node or helper: the app offers no Phone
+	// Screen mode.
+	PhoneScreen *PhoneScreen `json:"phone_screen,omitempty"`
+}
+
+// PhoneScreen is what a Mac can do for the live screen's Phone Screen mode (#9314): Version, the node's screen.phone
+// request set; Permission, Persona Input's Accessibility (moving windows): granted | missing. The app offers the mode
+// while it is granted and says how to allow it otherwise.
+type PhoneScreen struct {
+	Version    int    `json:"version"`
+	Permission string `json:"permission,omitempty"`
+}
+
+// ScreenInput is what a Mac can do for pixel scrolling (#7775): Persona Input is installed and the node reads scroll
+// records (Version, the record's version it reads). The phone sends records only while Permission is granted; before
+// that it says hello on its first two-finger scroll, and the node asks macOS once for this helper version (Asked).
+type ScreenInput struct {
+	Version int `json:"version"`
+	// Permission: Accessibility (posting events) for Persona Input, granted | missing | unknown.
+	Permission string `json:"permission,omitempty"`
+	// Asked: macOS was asked for this helper version's permission, so Persona Input is in System Settings' list.
+	Asked bool `json:"asked,omitempty"`
+}
+
+// ScreenVideo is what a Mac can do for the iOS live-screen hardware video channel (#3954): the capture-and-encode
+// helper Persona Screen is present and, when the app opens video, the node binds it to the signed-in RFB stream. The
+// app opens video only when this is present and the permission is granted; otherwise it stays on RFB. Produced on a
+// real Mac by the node (the helper's presence and its Screen Recording permission); absent means RFB only.
+type ScreenVideo struct {
+	// Version: the wire protocol version the helper speaks (design-3954.protocol.md). 0 or absent: no video.
+	Version int `json:"version"`
+	// Codecs the helper can encode, in preference order: "hevc", "h264".
+	Codecs []string `json:"codecs,omitempty"`
+	// Permission: Screen Recording for Persona Screen, granted | missing | unknown. "missing" keeps the phone on RFB
+	// and offers to allow again; only input on that Mac answers macOS's question.
+	Permission string `json:"permission,omitempty"`
+	// Asked: the node has asked macOS for this helper version's grant (once, when an app that plays the video first
+	// signed in to the live screen without it), so Persona Screen is in System Settings' Screen & System Audio
+	// Recording list. While Permission is missing and Asked is false, macOS's alert is about to show on the Mac.
+	Asked bool `json:"asked,omitempty"`
+	// X264: the ffmpeg with libx264 the user installed on this Mac, as the node found and tested it ("ffmpeg 9.0.2"),
+	// so x264 can be turned on for this Mac (docs/extensions/computer-use.md "x264 on a direct LAN (#8859)").
+	// Absent: none found, or not tested yet.
+	X264 string `json:"x264,omitempty"`
 }
 
 // Browser is a Mac's ego lite, the agent browser the assistant may drive (the built-in plugin ego,
@@ -63,6 +119,12 @@ type Browser struct {
 	Displays      []Display    `json:"displays,omitempty"` // as in Computer
 	Job           *ComputerJob `json:"job,omitempty"`
 	Checked       time.Time    `json:"checked,omitempty"`
+	// ScreenVideo: as in Computer (#3954). A Mac the plugin ego is on for shares the same live screen and helper.
+	ScreenVideo *ScreenVideo `json:"screen_video,omitempty"`
+	// ScreenInput: as in Computer (#7775).
+	ScreenInput *ScreenInput `json:"screen_input,omitempty"`
+	// PhoneScreen: as in Computer (#9314).
+	PhoneScreen *PhoneScreen `json:"phone_screen,omitempty"`
 }
 
 // Display is one of a Mac's displays: its frame in points in the global display space (origin at the top-left corner
@@ -75,6 +137,9 @@ type Display struct {
 	Width  int  `json:"width"`
 	Height int  `json:"height"`
 	Main   bool `json:"main,omitempty"`
+	// Scale: the display's pixels per point (2 for Retina, #9314). macOS's Screen Sharing draws each display at its own
+	// pixels, so with mixed scales the app needs it to find a display on the framebuffer. 0 from an older node.
+	Scale float64 `json:"scale,omitempty"`
 }
 
 // BrowserCookie is one cookie imported into ego lite's default profile (hub → node browser.cookies.import, #1304). The
@@ -112,8 +177,13 @@ type ComputerJob struct {
 	Kind  string `json:"kind"`  // install | grant | open
 	State string `json:"state"` // running | done | failed | cancelled
 	// Step: what it does now, in Chinese for the app; Error: why it failed (the installer's last lines).
-	Step    string    `json:"step,omitempty"`
-	Error   string    `json:"error,omitempty"`
+	Step  string `json:"step,omitempty"`
+	Error string `json:"error,omitempty"`
+	// Code and Device are an iPhone job's (#8199). Code: while it runs, what it waits for from the person at the phone
+	// (trust_pending: tap Trust and enter the passcode; locked: unlock it); once failed, why (trust_pending,
+	// pairing_rejected, timeout, …). Device: the iPhone it is for.
+	Code    string    `json:"code,omitempty"`
+	Device  string    `json:"device,omitempty"`
 	Started time.Time `json:"started"`
 }
 

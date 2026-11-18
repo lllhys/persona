@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The GitHub star prompts on the Agents list (#5761, docs/design/DESIGN_SYSTEM.md "GitHub star prompts"). -->
+<resources>
+    <string name="agents_star_on_github">GitHubでスター</string>
+    <string name="agents_star_hide">非表示</string>
+    <string name="agents_star_later">あとで</string>
+    <string name="agents_star_card">Persona を気に入っていただけましたか？オープンソースなので、GitHubでスターを付けるとほかの人にも見つけてもらえます。</string>
+</resources>

@@ -10,10 +10,8 @@ import { createContext, memo, use, useCallback, useContext, useEffect, useLayout
 import { api, ApiError, enc, errorText, getToken } from "../../lib/api";
 import { startConversation } from "../../lib/assistant-start";
 import { clock } from "../../lib/format";
-import {
-  cardText, comparePosition, emojiLabel, isDone, mergeMessages, partRuns, withToken, type InboxItem, type LarkMessage,
-  type LarkPage, type LarkPart,
-} from "../../lib/inbox";
+import { comparePosition, isDone, mergeMessages, withToken, type InboxItem, type LarkMessage, type LarkPage, type LarkPart } from "../../lib/inbox";
+import { cardText, emojiLabel, partRuns } from "../../lib/inbox-page";
 import { LARK_ATTACHMENT_REPLY_FEATURE, LARK_ATTACHMENTS_FEATURE, routeAllowed, type LarkAttachment } from "../../lib/lark-attachments";
 import { larkPath, olAccount } from "../../lib/lark-accounts";
 import { larkAccount } from "../../lib/lark-chats";

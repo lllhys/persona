@@ -323,6 +323,7 @@ func TestGitReviewRefusals(t *testing.T) {
 		{proto.GitReviewRequest{Cwd: r.dir, Scope: proto.ReviewCommit, Base: "HEAD:a.txt"}, proto.CodeBadBase},
 		{proto.GitReviewRequest{Cwd: r.dir, Scope: proto.ReviewBranch, Base: "no-such-branch"}, proto.CodeBadBase},
 		{proto.GitReviewRequest{Cwd: t.TempDir(), Scope: proto.ReviewUncommitted}, proto.CodeNotGit},
+		{proto.GitReviewRequest{Cwd: filepath.Join(t.TempDir(), "removed-worktree"), Scope: proto.ReviewBranch}, proto.CodeNoFolder},
 	} {
 		_, err := r.node.gitReview(ctx, c.req)
 		var re *rpc.Error

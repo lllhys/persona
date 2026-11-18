@@ -4,6 +4,7 @@
     <string name="app_tab_agents">Agents</string>
     <string name="app_machines">コンピュータ</string>
     <string name="app_sidebar">サイドバー</string>
+    <string name="app_show_list">一覧を表示</string>
     <string name="app_tab_settings">設定</string>
     <string name="app_demo_badge">体験</string>
     <string name="app_try_demo">ハブがない場合は体験モードへ</string>

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_paste_note_at">%1$s (%2$s)</string>
+    <string name="settings_paste_note_line">line %1$d</string>
+    <string name="settings_paste_note_unrecognized">No provider configuration was recognized</string>
+    <string name="settings_paste_note_invalid_json">The JSON could not be parsed</string>
+    <string name="settings_paste_note_unused">This part was not used</string>
+    <string name="settings_paste_note_not_claude">This command does not run Claude Code</string>
+    <string name="settings_paste_note_no_gateway">No gateway address was found</string>
+    <string name="settings_paste_note_url_shell">An address needing shell expansion was not saved</string>
+    <string name="settings_paste_note_url_user">An address with a user name or password was not imported</string>
+    <string name="settings_paste_note_url_query">An address with a query or fragment was not imported</string>
+    <string name="settings_paste_note_key_shell">A key needing shell expansion was left out; type it before saving</string>
+    <string name="settings_paste_note_no_key">No usable key was included; type one before saving</string>
+    <string name="settings_paste_note_key_helper">The key comes from a helper command; type it before saving</string>
+    <string name="settings_paste_note_args_left_out">Arguments that could contain sensitive values were left out</string>
+    <string name="settings_paste_note_header_unreadable">An unreadable header was left out</string>
+    <string name="settings_paste_note_curl_option">This curl option was not used</string>
+    <string name="settings_paste_note_curl_path">This curl path is used as the full gateway address</string>
+    <string name="settings_paste_note_cindy_kind">This cindy provider kind cannot be imported</string>
+    <string name="settings_paste_note_cindy_auth">This sign-in method is not supported; check the key before saving</string>
+    <string name="settings_paste_note_cindy_auth_none">This configuration has no key; type one before saving</string>
+    <string name="settings_paste_note_cindy_endpoint">This cindy endpoint was not used</string>
+    <string name="settings_paste_note_cindy_request_path">The cindy request path was not used; Persona uses the standard path</string>
+    <string name="settings_paste_note_too_many">Only the first 50 provider drafts are used</string>
+    <string name="settings_paste_note_link_invalid">The provider import link is invalid</string>
+    <string name="settings_paste_note_link_version">The provider import link version is not supported</string>
+    <string name="settings_paste_note_link_too_long">The provider import link is too long</string>
+    <string name="settings_paste_note_link_field">The provider import link has an invalid field</string>
+    <string name="settings_paste_reason_credential">credential</string>
+    <string name="settings_paste_reason_shell">shell expansion</string>
+    <string name="settings_paste_reason_computer">computer</string>
+    <string name="settings_paste_reason_limit">limit</string>
+    <string name="settings_paste_reason_protocol">protocol</string>
+    <string name="settings_paste_reason_unsupported">unsupported</string>
+    <string name="settings_paste_reason_unsafe">unsafe</string>
+    <string name="settings_paste_reason_other">not used</string>
+    <string name="settings_paste_env_bring">Environment variables brought along: %1$s</string>
+    <string name="settings_paste_env_skip">Environment variables left out (%1$s): %2$s</string>
+    <string name="settings_paste_headers_bring">Headers brought along: %1$s</string>
+    <string name="settings_paste_headers_skip">Headers left out (%1$s): %2$s</string>
+    <string name="settings_paste_other_ways">Start from what you already have</string>
+    <string name="settings_paste_title">Paste a configuration</string>
+    <string name="settings_paste_entry_detail">Use a shell alias, exports, settings.json, curl or a cindy provider</string>
+    <string name="settings_paste_found">Found on your computers</string>
+    <string name="settings_paste_label">Configuration</string>
+    <string name="settings_paste_hint">Nothing is saved until you review it and confirm Save.</string>
+    <string name="settings_paste_placeholder">export ANTHROPIC_BASE_URL=https://…\nexport ANTHROPIC_AUTH_TOKEN=…</string>
+    <string name="settings_paste_continue">Continue</string>
+    <string name="settings_paste_reading">Reading the configuration…</string>
+    <string name="settings_paste_read_failed">Couldn\'t read the pasted configuration: %1$s</string>
+    <string name="settings_paste_format_shell">Shell aliases and environment</string>
+    <string name="settings_paste_format_settings">Claude Code settings.json</string>
+    <string name="settings_paste_format_curl">A curl request</string>
+    <string name="settings_paste_format_cindy">A cindy provider</string>
+    <string name="settings_paste_format_link">A provider import link</string>
+    <string name="settings_paste_nothing">No provider was found in this text.</string>
+    <plurals name="settings_paste_several">
+        <item quantity="one">Choose the %1$d provider found.</item>
+        <item quantity="other">Choose one of the %1$d providers found.</item>
+    </plurals>
+    <plurals name="settings_paste_models_count">
+        <item quantity="one">%1$d model</item>
+        <item quantity="other">%1$d models</item>
+    </plurals>
+    <string name="settings_paste_action_label">This address is already in use.</string>
+    <string name="settings_paste_merge">Add models to %1$s</string>
+    <string name="settings_paste_merge_hint">Same key. Add only models this provider does not have yet.</string>
+    <string name="settings_paste_key">Replace only the key of %1$s</string>
+    <string name="settings_paste_key_hint">Another key. Its address, models and other settings stay unchanged.</string>
+    <string name="settings_paste_new">Add as a new provider</string>
+    <string name="settings_paste_new_hint">Review the prefilled form, then save it yourself.</string>
+    <string name="settings_paste_alias_import_intro">Only the alias %1$s on this computer is read and imported.</string>
+</resources>

@@ -15,7 +15,7 @@
     <string name="settings_pairing_welcome_assistant_title">Personaアシスタント</string>
     <string name="settings_pairing_welcome_assistant">ナレッジとつながります。スマートフォンのデータは必要なときに個別に許可を求めます。</string>
     <string name="settings_pairing_welcome_push">Googleサービスがなくても通知を受け取れます。スマートフォンは常時接続でハブのメッセージを受け取ります。</string>
-    <string name="settings_pairing_welcome_connect">ハブに接続</string>
+    <string name="settings_pairing_welcome_guide">ハブがまだない場合</string>
     <string name="settings_pairing_failed_title">接続できませんでした</string>
     <string name="settings_pairing_failed_body">下の案内に沿って対処してから、もう一度お試しください。</string>
     <string name="settings_pairing_stopped_at">「%1$s」で停止</string>
@@ -136,7 +136,6 @@
     <string name="settings_hub_update_turn_off">オフにする</string>
     <string name="settings_hub_update_got_it">OK</string>
     <string name="settings_hub_update_auto">ハブを自動更新</string>
-    <string name="settings_hub_update_retry">再試行</string>
     <string name="settings_hub_update_now_title">今すぐ更新しますか？</string>
     <string name="settings_hub_update_now">今すぐ更新</string>
     <string name="settings_hub_update_now_more">今すぐ更新…</string>

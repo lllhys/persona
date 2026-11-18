@@ -78,6 +78,7 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.ExpiresInHours -> -R.plurals.designsystem_core_expires_in_hours
     CoreText.Key.ExpiresInDays -> -R.plurals.designsystem_core_expires_in_days
     CoreText.Key.RequestFromSubagent -> R.string.designsystem_core_request_from_subagent
+    CoreText.Key.RequestFromSide -> R.string.designsystem_core_request_from_side
     CoreText.Key.RequestFromMcp -> R.string.designsystem_core_request_from_mcp
     CoreText.Key.RequestFromMcpConfigured -> R.string.designsystem_core_request_from_mcp_configured
     CoreText.Key.RequestFromTerminal -> R.string.designsystem_core_request_from_terminal
@@ -94,6 +95,7 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.CloseAgentTitle -> R.string.designsystem_core_close_agent_title
     CoreText.Key.CloseAgentMessageTab -> R.string.designsystem_core_close_agent_message_tab
     CoreText.Key.CloseAgentMessagePane -> R.string.designsystem_core_close_agent_message_pane
+    CoreText.Key.CloseAgentMessageRuntime -> R.string.designsystem_core_close_agent_message_runtime
     CoreText.Key.DeleteSessionTitle -> R.string.designsystem_core_delete_session_title
     CoreText.Key.DeleteSessionOnMachineCommand -> R.string.designsystem_core_delete_session_on_machine_command
     CoreText.Key.DeleteSessionOnMachine -> R.string.designsystem_core_delete_session_on_machine
@@ -124,9 +126,13 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.StateAwaitingReply -> R.string.designsystem_core_state_awaiting_reply
     CoreText.Key.StateWorking -> R.string.designsystem_core_state_working
     CoreText.Key.StateBackgroundWaiting -> R.string.designsystem_core_state_background_waiting
+    CoreText.Key.StateWorkingBackground -> R.string.designsystem_core_state_working_background
     CoreText.Key.StateWaiting -> R.string.designsystem_core_state_waiting
     CoreText.Key.StateMuted -> R.string.designsystem_core_state_muted
     CoreText.Key.StateIdle -> R.string.designsystem_core_state_idle
+    CoreText.Key.CodexWaiting -> R.string.designsystem_core_codex_waiting
+    CoreText.Key.StateNotRunning -> R.string.designsystem_core_state_not_running
+    CoreText.Key.StateUnknown -> R.string.designsystem_core_state_unknown
     CoreText.Key.AgentsNoTodo -> R.string.designsystem_core_agents_no_todo
     CoreText.Key.AgentsManual -> R.string.designsystem_core_agents_manual
     CoreText.Key.AgentsQuietSpaces -> R.string.designsystem_core_agents_quiet_spaces
@@ -137,6 +143,14 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.CountIdle -> -R.plurals.designsystem_core_count_idle
     CoreText.Key.ListSeparator -> R.string.designsystem_core_list_separator
     CoreText.Key.RepoOther -> R.string.designsystem_core_repo_other
+    CoreText.Key.DirectionDoing -> R.string.designsystem_core_direction_doing
+    CoreText.Key.DirectionNeedsYou -> R.string.designsystem_core_direction_needs_you
+    CoreText.Key.DirectionStuck -> R.string.designsystem_core_direction_stuck
+    CoreText.Key.DirectionReview -> R.string.designsystem_core_direction_review
+    CoreText.Key.DirectionPlanned -> R.string.designsystem_core_direction_planned
+    CoreText.Key.DirectionSecretary -> R.string.designsystem_core_direction_secretary
+    CoreText.Key.DirectionUntitled -> R.string.designsystem_core_direction_untitled
+    CoreText.Key.DirectionCountNeedsYou -> R.string.designsystem_core_direction_count_needs_you
     CoreText.Key.InboxAction -> R.string.designsystem_core_inbox_action
     CoreText.Key.InboxFyi -> R.string.designsystem_core_inbox_fyi
     CoreText.Key.InboxNoise -> R.string.designsystem_core_inbox_noise
@@ -206,6 +220,9 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.SourceIdentityConflict -> R.string.designsystem_core_source_identity_conflict
     CoreText.Key.SourceClaudeBackground -> R.string.designsystem_core_source_claude_background
     CoreText.Key.SourceClaudeDesktop -> R.string.designsystem_core_source_claude_desktop
+    CoreText.Key.AgentsCodexApp -> R.string.designsystem_core_agents_codex_app
+    CoreText.Key.AgentsDesktopApp -> R.string.designsystem_core_agents_desktop_app
+    CoreText.Key.AgentsRecentlyUsed -> R.string.designsystem_core_agents_recently_used
     CoreText.Key.SourceClaudeTerminal -> R.string.designsystem_core_source_claude_terminal
     CoreText.Key.SourceNoSend -> R.string.designsystem_core_source_no_send
     CoreText.Key.ReadOnlyBecause -> R.string.designsystem_core_read_only_because
@@ -216,6 +233,8 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.EngineTern -> R.string.designsystem_core_engine_tern
     CoreText.Key.EnginePaseo -> R.string.designsystem_core_engine_paseo
     CoreText.Key.EngineCindy -> R.string.designsystem_core_engine_cindy
+    CoreText.Key.EngineNone -> R.string.designsystem_core_engine_none
+    CoreText.Key.EngineNoneDetail -> R.string.designsystem_core_engine_none_detail
     CoreText.Key.EngineOffline -> R.string.designsystem_core_engine_offline
     CoreText.Key.EngineUnknown -> R.string.designsystem_core_engine_unknown
     CoreText.Key.EngineFound -> R.string.designsystem_core_engine_found
@@ -223,6 +242,8 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.EngineMissing -> R.string.designsystem_core_engine_missing
     CoreText.Key.EngineFooter -> R.string.designsystem_core_engine_footer
     CoreText.Key.EngineFooterOffline -> R.string.designsystem_core_engine_footer_offline
+    CoreText.Key.EngineFooterNone -> R.string.designsystem_core_engine_footer_none
+    CoreText.Key.EngineFooterNoneOffline -> R.string.designsystem_core_engine_footer_none_offline
     CoreText.Key.EngineSwitched -> R.string.designsystem_core_engine_switched
     CoreText.Key.EngineSavedOffline -> R.string.designsystem_core_engine_saved_offline
     CoreText.Key.ToolRun -> R.string.designsystem_core_tool_run
@@ -254,6 +275,52 @@ private fun resourceOf(key: CoreText.Key): Int = when (key) {
     CoreText.Key.ToolComputerRun -> R.string.designsystem_core_tool_computer_run
     CoreText.Key.ToolBrowserRun -> R.string.designsystem_core_tool_browser_run
     CoreText.Key.ToolBrowserLook -> R.string.designsystem_core_tool_browser_look
+    CoreText.Key.ToolTaskCreate -> R.string.designsystem_core_tool_task_create
+    CoreText.Key.ToolTaskUpdate -> R.string.designsystem_core_tool_task_update
+    CoreText.Key.ToolTaskList -> R.string.designsystem_core_tool_task_list
+    CoreText.Key.ToolTaskGet -> R.string.designsystem_core_tool_task_get
+    CoreText.Key.ToolTaskStop -> R.string.designsystem_core_tool_task_stop
+    CoreText.Key.ToolTaskOutput -> R.string.designsystem_core_tool_task_output
+    CoreText.Key.ToolSubagentHandback -> R.string.designsystem_core_tool_subagent_handback
+    CoreText.Key.ToolScheduleWakeup -> R.string.designsystem_core_tool_schedule_wakeup
+    CoreText.Key.ToolCronList -> R.string.designsystem_core_tool_cron_list
+    CoreText.Key.ToolRemoteTrigger -> R.string.designsystem_core_tool_remote_trigger
+    CoreText.Key.ToolLsp -> R.string.designsystem_core_tool_lsp
+    CoreText.Key.ToolEnterWorktree -> R.string.designsystem_core_tool_enter_worktree
+    CoreText.Key.ToolExitWorktree -> R.string.designsystem_core_tool_exit_worktree
+    CoreText.Key.ToolSendUserFile -> R.string.designsystem_core_tool_send_user_file
+    CoreText.Key.ToolArtifact -> R.string.designsystem_core_tool_artifact
+    CoreText.Key.ToolReportFindings -> R.string.designsystem_core_tool_report_findings
+    CoreText.Key.ToolSendFeedback -> R.string.designsystem_core_tool_send_feedback
+    CoreText.Key.ToolEndConversation -> R.string.designsystem_core_tool_end_conversation
+    CoreText.Key.ToolWaitForMcp -> R.string.designsystem_core_tool_wait_for_mcp
+    CoreText.Key.ToolListMcpResources -> R.string.designsystem_core_tool_list_mcp_resources
+    CoreText.Key.ToolReadMcpResource -> R.string.designsystem_core_tool_read_mcp_resource
+    CoreText.Key.ToolWorkflow -> R.string.designsystem_core_tool_workflow
+    CoreText.Key.ToolIphoneStatus -> R.string.designsystem_core_tool_iphone_status
+    CoreText.Key.ToolIphoneLook -> R.string.designsystem_core_tool_iphone_look
+    CoreText.Key.ToolIphoneDo -> R.string.designsystem_core_tool_iphone_do
+    CoreText.Key.ToolTaskStart -> R.string.designsystem_core_tool_task_start
+    CoreText.Key.ToolTaskComplete -> R.string.designsystem_core_tool_task_complete
+    CoreText.Key.ToolTaskDelete -> R.string.designsystem_core_tool_task_delete
+    CoreText.Key.ToolCellAdd -> R.string.designsystem_core_tool_cell_add
+    CoreText.Key.ToolCellDelete -> R.string.designsystem_core_tool_cell_delete
+    CoreText.Key.ToolCellEdit -> R.string.designsystem_core_tool_cell_edit
+    CoreText.Key.ToolLspDefinition -> R.string.designsystem_core_tool_lsp_definition
+    CoreText.Key.ToolLspImplementations -> R.string.designsystem_core_tool_lsp_implementations
+    CoreText.Key.ToolLspReferences -> R.string.designsystem_core_tool_lsp_references
+    CoreText.Key.ToolLspHover -> R.string.designsystem_core_tool_lsp_hover
+    CoreText.Key.ToolLspSymbols -> R.string.designsystem_core_tool_lsp_symbols
+    CoreText.Key.ToolLspWorkspaceSymbol -> R.string.designsystem_core_tool_lsp_workspace_symbol
+    CoreText.Key.ToolLspCalls -> R.string.designsystem_core_tool_lsp_calls
+    CoreText.Key.ToolStopLoop -> R.string.designsystem_core_tool_stop_loop
+    CoreText.Key.ToolWorktreeRemove -> R.string.designsystem_core_tool_worktree_remove
+    CoreText.Key.ToolArtifactsList -> R.string.designsystem_core_tool_artifacts_list
+    CoreText.Key.ToolFindings -> -R.plurals.designsystem_core_tool_findings
+    CoreText.Key.WorkTimeSeconds -> R.string.designsystem_core_work_time_seconds
+    CoreText.Key.WorkTimeMinutes -> R.string.designsystem_core_work_time_minutes
+    CoreText.Key.WorkTimeMinutesSeconds -> R.string.designsystem_core_work_time_minutes_seconds
+    CoreText.Key.WorkTimeHoursMinutes -> R.string.designsystem_core_work_time_hours_minutes
     CoreText.Key.ComputerLookAt -> R.string.designsystem_core_computer_look_at
     CoreText.Key.ComputerLookAtScreen -> R.string.designsystem_core_computer_look_at_screen
     CoreText.Key.ComputerScript -> R.string.designsystem_core_computer_script

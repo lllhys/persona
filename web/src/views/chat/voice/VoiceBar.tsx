@@ -52,6 +52,9 @@ export function VoiceBar({ call, session, cards, label, persona, onStopAgent }: 
         return void call.resend(a.run);
       case "clearAndSend":
         return void call.resend(a.run, true);
+      case "sendAnyway":
+        // the user's own confirmation: the hub sends it past the user-speech gate (docs/assistant/voice.md 3.2 resend)
+        return void call.resend(a.run);
       case "returnPlan": {
         // the page's own answer to the card (decision 5: the user clicked it), with the refused words as the feedback
         call.dismiss(a.run);
@@ -177,6 +180,8 @@ function actionLabel(a: BarAction, label: string): string {
       return t("voice.action_resend");
     case "clearAndSend":
       return t("voice.action_clear_send");
+    case "sendAnyway":
+      return t("voice.action_send_anyway");
     case "returnPlan":
       return t("voice.action_return_plan");
     case "dismiss":

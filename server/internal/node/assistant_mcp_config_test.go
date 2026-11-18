@@ -10,14 +10,12 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // Deliberately contains JSON escapes, whitespace, spaces and non-ASCII path components.
 const windowsMCPJSON = "{\n" + `  "mcpServers": {"persona": {"command": "C:\\Program Files\\café\\personad.exe", "args": ["mcp"], "env": {"PERSONA_HOME": "C:\\Users\\café user\\.persona", "EXAMPLE_SECRET": "test-only-credential", "PATTERN": "\\w+\\d"}}}` + "\n}"
 
-// HOME must already be isolated (sdkTest does this for launch tests).
+// HOME must already be isolated (cliTest does this for launch tests).
 func assistantMCPTestCache(t *testing.T) string {
 	t.Helper()
 	cache := filepath.Join(t.TempDir(), "cache space café")
@@ -170,7 +168,7 @@ func TestAssistantCLIMCPFlagsRefusesUnavailableCache(t *testing.T) {
 }
 
 func TestAssistantMCPFileStartFailure(t *testing.T) {
-	f := sdkTest(t)
+	f := cliTest(t)
 	assistantMCPTestCache(t)
 	windowsAssistantMCPTest(t)
 	cwd := t.TempDir()
@@ -199,19 +197,15 @@ func TestAssistantMCPFileStartFailure(t *testing.T) {
 }
 
 func TestAssistantMCPFileProcessExit(t *testing.T) {
-	for _, end := range []string{"stdin-close", "stop", "launcher-failure", "sdk-fallback"} {
+	for _, end := range []string{"stdin-close", "stop", "launcher-failure"} {
 		t.Run(end, func(t *testing.T) {
-			f := sdkTest(t)
+			f := cliTest(t)
 			assistantMCPTestCache(t)
 			windowsAssistantMCPTest(t)
 			launcher := "claude"
 			execution := modelExecution{}
 			if end == "launcher-failure" {
 				launcher = "false"
-			}
-			if end == "sdk-fallback" {
-				execution = sdkExec(proto.AssistantRuntimeAgentSDK)
-				sdkClaude = func() (string, error) { return "", os.ErrNotExist }
 			}
 			p, err := f.n.spawnClaude("11111111-2222-3333-4444-555555555555", t.TempDir(), launcher, false, false, execution)
 			if err != nil {

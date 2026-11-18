@@ -24,4 +24,17 @@
     <string name="chat_model_fallback_refusal_category">类别：%1$s</string>
     <string name="chat_model_fallback_refusal_explanation">说明：%1$s</string>
     <string name="chat_model_fallback_refusal_text">拒绝原文</string>
+
+    <!-- A recovery the node drove on its own (#7824): why it left the configured model, in plain words. -->
+    <string name="chat_model_fallback_cause_safeguards_refusal">模型拒绝了请求</string>
+    <string name="chat_model_fallback_cause_quota_exhausted">额度已用尽</string>
+    <string name="chat_model_fallback_cause_rate_limited">被限流</string>
+    <string name="chat_model_fallback_cause_server_error">服务出错</string>
+    <string name="chat_model_fallback_cause_model_unavailable">模型不可用</string>
+    <string name="chat_model_fallback_switched_cause">已改用 %1$s（%2$s）</string>
+    <string name="chat_model_fallback_recovery_returning">%1$s 已恢复，下一条消息会切回</string>
+    <!-- Every model of the recovery chain failed: the failure card's cause, its recovery time and the models tried. -->
+    <string name="chat_model_fallback_recovery_cause">原因：%1$s</string>
+    <string name="chat_model_fallback_recovery_reset">%1$s 恢复可用</string>
+    <string name="chat_model_fallback_recovery_tried">尝试过的模型：%1$s</string>
 </resources>

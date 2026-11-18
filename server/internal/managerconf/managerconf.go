@@ -38,9 +38,9 @@ func DefaultFile(home string) string { return filepath.Join(DefaultDir(home), Fi
 // (Marker lists what was).
 var Moved = []string{
 	"lark", "lark_gate", "connector_gate", "github", "imessage", "google", "microsoft", "bots",
-	"extensions", "plugins", "trusted_extension_markets", "extension_runtime", "ui_page_sessions", "usage", "sent_ledger_days", "sent_recall_hours",
+	"extensions", "plugins", "trusted_extension_markets", "extension_market", "extension_runtime", "ui_page_sessions", "usage", "sent_ledger_days", "sent_recall_hours",
 	"agents", "kb", "ai", "inbox", "hook_timeout_minutes",
-	"assistant.owner", "assistant.notes", "assistant.machine", "assistant.launcher",
+	"assistant.owner", "assistant.notes", "assistant.machine", "assistant.launcher", "assistant.memory_dreaming",
 }
 
 // MarkerKey is manager.json's record of the move: the sections it took over from hub.json (copied, or kept as

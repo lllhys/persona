@@ -1,7 +1,7 @@
 // Machine details (/machines/<id>, docs/server/machines.md "App", iOS MachineDetailView): one page, the most used on top — how the
 // computer is (online, system, which hub when there are several), its agents by herdr space (a row opens the chat),
 // its values now, CPU / memory / network / load over 1, 6 or 24 hours (hover a chart to read a moment, all follow) and
-// each core now (Linux), the system, the launchers. Its engine (which one the agents come from) follows the agents. A Mac the hub's extension cua is on for gets "Computer control" after that, and "Browser" (ego lite) while ego is on.
+// each core now (Linux), the system, the launchers. Its engine (which one the agents come from) follows the agents. A Mac the hub's extension cua is on for gets "Computer control" after that, and "Browser" (ego lite) while ego is on; then "iPhone control" while the extension iphone is on (a Mac or a Linux computer).
 // A Mac whose live screen can be shown (showsScreen) gets "View screen" in the top bar, the page's one way to it: it stays in view
 // while the page scrolls, and does not wait for Cua Driver, which the screen does not use.
 import { MoveToManager } from "../ManagerParts";
@@ -20,7 +20,6 @@ import {
   level,
   load as loadText,
   loadAxis,
-  localOffset,
   memPercent,
   percent,
   RANGE_KEYS,
@@ -38,10 +37,12 @@ import { hubLabel, routeText } from "../../lib/mesh";
 import { machineDeployment } from "../../lib/machine-deploy";
 import { classifyConnection } from "../../lib/node-health";
 import { screenPath, showsScreen } from "../../lib/computer";
+import { osFamily } from "../../lib/machine-capabilities";
+import { openPanel } from "../../lib/panel";
 import { href, onLinkClick } from "../../lib/router";
 import { getState, refresh, useStore } from "../../lib/store";
-import { foldRows } from "../../lib/folded-rows";
-import type { Launcher, Session } from "../../lib/types";
+import { useFullAgentSessions } from "../../lib/sessions";
+import type { Launcher } from "../../lib/types";
 import { Button, cx, EASE, IconButton, Loading, toast } from "../../ui/atoms";
 import { AgentRow } from "./AgentRow";
 import { Icon } from "../../ui/icons";
@@ -50,6 +51,7 @@ import { MetricChart, type ChartSeries } from "./MetricChart";
 import { MachineDeploy } from "./MachineDeploy";
 import { BrowserSection } from "./BrowserSection";
 import { ComputerSection } from "./ComputerSection";
+import { IPhoneSection } from "./IPhoneSection";
 import { EngineSection } from "./EngineSection";
 import { openEngineSection } from "./engine-anchor";
 import { BotmuxSwitch } from "./BotmuxSwitch";
@@ -105,8 +107,6 @@ function RenameMachine({ m, onDone }: { m: DetailMachine; onDone: () => void }) 
 
 type MachineLauncher = Pick<Launcher, "name" | "display_name" | "model" | "agent" | "agent_type">;
 
-const NO_SESSIONS: Session[] = [];
-
 function initialRange(): MetricRange {
   const r = new URLSearchParams(location.search).get("range");
   return RANGE_KEYS.includes(r as MetricRange) ? (r as MetricRange) : "1h";
@@ -115,8 +115,10 @@ function initialRange(): MetricRange {
 export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleSidebar: () => void }) {
   const machines = useStore((s) => s.machines) as DetailMachine[];
   const loaded = useStore((s) => s.loaded);
-  // a child session folds into its parent (#5120): never an agent of the computer of its own
-  const sessions = useStore((s) => foldRows(s.sessions[mid] ?? NO_SESSIONS));
+  // Its agents, read as the Agents list reads them: a hub that pages that list pushes no sessions, so the store has none
+  // of this computer's. A child session folds into its parent (#5120): never an agent of the computer of its own.
+  const full = useFullAgentSessions();
+  const sessions = useMemo(() => full.sessions.filter((s) => s.machine_id === mid), [full.sessions, mid]);
   const m = machines.find((x) => x.id === mid);
   const online = m?.online ?? false;
   const expectedDisconnect = m ? machineDeployment(m).expectedDisconnect : false;
@@ -217,7 +219,6 @@ export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleS
   const hub = hubLabel(m, machines);
   const route = routeText(m, machines);
   const system = data?.metrics.system ?? m?.system;
-  const tz = useMemo(() => localOffset(), []);
   // a hub that renames computers, and one of its own (a linked hub's is renamed there)
   const canRename = useStore((s) => s.features.includes(MACHINE_RENAME_FEATURE)) && m?.kind !== "hub" && (!m?.hub_id || !selfHub || m.hub_id === selfHub);
   const [renaming, setRenaming] = useState(false);
@@ -248,6 +249,12 @@ export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleS
       right={
         <>
           <span className="hidden whitespace-nowrap text-[11.5px] text-ink-3 sm:inline">{range === "1h" ? t("machines-machinedetail.refresh_10s") : t("machines-machinedetail.refresh_1m")}</span>
+          {online && (
+            // the computer's files from its home, in the side panel (#5827; the iPhone's Files row)
+            <Button icon="folder" onClick={() => openPanel({ kind: "files", mid, sid: "", cwd: "~" })} title={t("machines-machinedetail.files_hint")}>
+              {t("machines-machinedetail.files")}
+            </Button>
+          )}
           {showsScreen(m) && (
             <Button icon="monitor" href={screenPath(mid)} title={t("machines-machinedetail.screen_hint")}>
               {t("machines-machinedetail.screen")}
@@ -324,9 +331,12 @@ export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleS
 
       {/* agents */}
       <section>
-        <Heading title="Agent" count={online ? agentCount : undefined} />
+        {/* until its agents are read, how many there are is unknown: no count, and no "No agents running" */}
+        <Heading title="Agent" count={online && full.loaded ? agentCount : undefined} />
         {groups.length === 0 ? (
-          <p className="rounded-card bg-surface px-4 py-3 text-[12.5px] text-ink-3 shadow-card">{online ? t("machines-machinedetail.no_agents") : t("machines-machinedetail.agents_offline")}</p>
+          <p className="rounded-card bg-surface px-4 py-3 text-[12.5px] text-ink-3 shadow-card" data-agents={online ? (full.loaded ? "yes" : full.error ? "failed" : "loading") : undefined}>
+            {!online ? t("machines-machinedetail.agents_offline") : full.loaded ? t("machines-machinedetail.no_agents") : full.error ? t("machines-machinedetail.agents_failed_detail") : t("machines-machinedetail.agents_loading")}
+          </p>
         ) : (
           <div className="flex flex-col gap-2.5">
             {groups.map((g, gi) => (
@@ -400,7 +410,7 @@ export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleS
             </div>
           )
         ) : (
-          <Monitor data={data} range={range} online={online} system={system} tz={tz} onRange={setRange} />
+          <Monitor data={data} range={range} online={online} system={system} onRange={setRange} />
         )}
         {data && failure && <p className="mt-2 px-1 text-[11.5px] text-red">{t("machines-machinedetail.refresh_failed", { error: failure })}</p>}
         <p className="mt-2 px-1 text-[11.5px] leading-relaxed text-ink-3">{t("machines-machinedetail.metrics_note")}</p>
@@ -414,13 +424,14 @@ export function MachineDetail({ mid, onToggleSidebar }: { mid: string; onToggleS
 
       {m.computer && <ComputerSection mid={mid} computer={m.computer} online={online} manager={m.manager} />}
       {m.browser && <BrowserSection mid={mid} browser={m.browser} online={online} />}
+      {m.iphone && <IPhoneSection mid={mid} iphone={m.iphone} online={online} mac={osFamily(m) === "macos"} />}
 
       {/* system */}
       <section>
         <Heading title={t("machines-machinedetail.system")} />
         <div className="overflow-hidden rounded-card bg-surface shadow-card">
           <dl className="-mb-px grid grid-cols-1 md:grid-cols-2">
-            {systemFacts(system, m, Date.now() / 1000, tz).map(([k, v, mono]) => (
+            {systemFacts(system, m, Date.now() / 1000).map(([k, v, mono]) => (
               <div key={k} className="flex items-baseline gap-3 border-b border-line px-4 py-2 md:odd:border-r">
                 <dt className="w-[84px] shrink-0 whitespace-nowrap text-[12px] text-ink-3">{k}</dt>
                 <dd className={cx("min-w-0 flex-1 text-[12.5px] break-words text-ink-2 select-text", mono && "font-mono text-[12px]")}>{v}</dd>
@@ -513,14 +524,12 @@ function Monitor({
   range,
   online,
   system,
-  tz,
   onRange,
 }: {
   data: { metrics: DetailMetrics; range: MetricRange; at: number };
   range: MetricRange;
   online: boolean;
   system: DetailMachine["system"];
-  tz: number;
   onRange: (r: MetricRange) => void;
 }) {
   const { metrics } = data;
@@ -549,7 +558,7 @@ function Monitor({
   return (
     <>
       {live && <NowTiles s={live} cores={system?.cores} />}
-      <Charts data={data} range={range} live={live} system={system} tz={tz} />
+      <Charts data={data} range={range} live={live} system={system} />
       {perCore && <CoreBars cores={perCore} />}
     </>
   );
@@ -564,13 +573,11 @@ function Charts({
   range,
   live,
   system,
-  tz,
 }: {
   data: { metrics: DetailMetrics; range: MetricRange; at: number };
   range: MetricRange;
   live: NonNullable<DetailMetrics["latest"]> | undefined;
   system: DetailMachine["system"];
-  tz: number;
 }) {
   const { metrics } = data;
   const r = RANGES[data.range];
@@ -598,7 +605,7 @@ function Charts({
     setHoverRange(range);
     setHover(null);
   }
-  const common = { points: metrics.points, t0, t1, step: r.step, hover, onHover: setHover, tz };
+  const common = { points: metrics.points, t0, t1, step: r.step, hover, onHover: setHover };
 
   return (
     <div className={cx("grid grid-cols-1 gap-3 transition-opacity duration-200 md:grid-cols-2", data.range !== range && "opacity-60")}>
@@ -624,7 +631,7 @@ function NowTiles({ s, cores }: { s: NonNullable<DetailMetrics["latest"]>; cores
     { label: t("machines-machinedetail.swap"), value: s.swap_total ? bytesBin(s.swap_used) : t("machines-machinedetail.swap_off"), sub: s.swap_total ? t("machines-machinedetail.swap_total", { total: bytesBin(s.swap_total) }) : undefined, frac: swapPct, lv: "normal" },
   ];
   return (
-    <div className="mb-3 grid grid-cols-3 gap-2 lg:grid-cols-6">
+    <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       {tiles.map((tile) => (
         <div key={tile.label} className="min-w-0 rounded-card bg-surface px-2.5 py-2.5 shadow-card sm:px-3">
           <div className="flex items-center gap-1.5 text-[11px] text-ink-3">

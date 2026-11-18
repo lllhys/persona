@@ -3,6 +3,7 @@ import ImageIO
 import SwiftUI
 import WatchKit
 import WidgetKit
+import PersonaWire
 
 /// The Milk Frog's files on this watch (docs/apple/persona.md "The Milk Frog on the watch"): fetched from the hub, by hash,
 /// and shown only once all of them are here. An older hub has none, and the watch simply shows no frog.

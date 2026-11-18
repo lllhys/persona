@@ -3,7 +3,9 @@ package assistant
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,5 +137,76 @@ func TestDigestUnqueuedKeepsNewerSignals(t *testing.T) {
 	}
 	if len(b.sent) != 0 {
 		t.Errorf("still marked told: %v", b.sent)
+	}
+}
+
+// A digest that keeps finding no main conversation says so once, then hourly, not on every try: the watch's every
+// pass tries again (superviseTick), and each try logged a line, 120 an hour while the main conversation was away.
+// The line when it is back says how long it was.
+func TestDigestWithoutAMainConversationLogsOnce(t *testing.T) {
+	s, f := newQuietService(t)
+	var mu sync.Mutex
+	var lines []string
+	s.logf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	logged := func(part string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, l := range lines {
+			if strings.Contains(l, part) {
+				n++
+			}
+		}
+		return n
+	}
+	ctx := context.Background()
+	todo, err := s.createTodo(ctx, "甲", "做甲", "conv1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.superviseTodo(ctx, todo.ID, "conv1", []string{"PR 合并"}, 0)
+	if _, _, err := s.updateSupervision(ctx, todo.ID, func(v *Supervision) bool { v.State = reviewPending; return true }); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.hello.Assistant.MachineID = "" // the hub is not reachable: no main conversation to tell
+	f.mu.Unlock()
+	s.signal(superviseSignal{Todo: todo.ID, Kind: sigReview, Key: "1", Detail: "做完了", At: time.Now().Add(-time.Minute)})
+	for range 20 { // the watch's passes over ten minutes
+		s.sendDigest(ctx)
+	}
+	if n := logged("no main conversation"); n != 1 {
+		t.Fatalf("logged %d times over 20 tries, want once:\n%s", n, strings.Join(lines, "\n"))
+	}
+	if n := f.notices(); len(n) != 0 {
+		t.Fatalf("sent with no main conversation: %q", n)
+	}
+
+	// An hour on, it says so again, once.
+	b := &s.supervise
+	b.mu.Lock()
+	b.noMainSince = b.noMainSince.Add(-superviseNoMainLogEvery)
+	b.noMainLogged = b.noMainLogged.Add(-superviseNoMainLogEvery)
+	b.mu.Unlock()
+	s.sendDigest(ctx)
+	s.sendDigest(ctx)
+	if n := logged("still no main conversation after 1h"); n != 1 {
+		t.Fatalf("logged the hour %d times, want once:\n%s", n, strings.Join(lines, "\n"))
+	}
+
+	// Back: the signal goes out as before (#5420), and that is logged once.
+	f.mu.Lock()
+	f.hello.Assistant.MachineID = "server"
+	f.mu.Unlock()
+	waitFor(t, "the message once the hub is back", func() bool { return len(f.notices()) == 1 })
+	if n := logged("main conversation found after 1h"); n != 1 {
+		t.Fatalf("logged the return %d times, want once:\n%s", n, strings.Join(lines, "\n"))
+	}
+	if n := logged("no main conversation"); n != 2 {
+		t.Fatalf("no-main lines: %d, want the first and the hourly one:\n%s", n, strings.Join(lines, "\n"))
 	}
 }

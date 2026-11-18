@@ -82,8 +82,27 @@
         "expires_at": {"type": "string", "format": "date-time"}
       }
     },
+    "SettingsCheckParams": {
+      "description": "settings.check (manifest settings_check): the configuration and secrets as a change would leave them, before the hub saves it. The program answers whether they work (SettingsCheckResult) within 10 seconds.",
+      "type": "object",
+      "properties": {
+        "config": {"description": "The whole configuration as it would be saved, the schema's defaults filled in."},
+        "secrets": {"type": "object", "additionalProperties": {"type": "string"}},
+        "proxy": {"type": "string", "description": "The egress proxy URL for this check only, when the program runs behind the proxy and a config: entry of permissions.network names an address: requests sent through it reach the addresses this configuration names, its ordinary requests only the saved ones. It stops working once the check answers. Absent: use the program's ordinary proxy (an older hub sends none)."}
+      },
+      "required": ["config", "secrets"]
+    },
+    "SettingsCheckResult": {
+      "description": "settings.check's answer: ok, or why not in one sentence for the owner (the hub takes every secret out of it and cuts it to 300 characters).",
+      "type": "object",
+      "properties": {
+        "ok": {"type": "boolean"},
+        "error": {"type": "string"}
+      },
+      "required": ["ok"]
+    },
     "HubRole": {"type": "string", "enum": ["center", "member"]},
-    "HubCapability": {"type": "string", "enum": ["inbox_group"]},
+    "HubCapability": {"type": "string", "enum": ["inbox_group", "inbox_group_state", "tool_images"]},
     "InitializeParams": {
       "description": "What the hub sends first. The extension is under extension; hubs before the rename (#1844) send it as plugin, newer hubs send both.",
       "type": "object",
@@ -278,7 +297,8 @@
         "icon": {"$ref": "view.schema.json#/$defs/NavIcon"},
         "opens": {"type": "string"},
         "badge": {"$ref": "view.schema.json#/$defs/Badge"},
-        "connector": {"type": "string"}
+        "connector": {"type": "string"},
+        "group": {"$ref": "manifest.schema.json#/$defs/UIGroup", "description": "A nav_page's sidebar group, its title in the request's language (#9071)."}
       },
       "required": ["id", "title", "placement"]
     },

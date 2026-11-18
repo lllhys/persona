@@ -13,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/connector"
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/subscriptions"
+	"github.com/nwverse/persona/server/internal/subscriptionsui"
 )
 
 // hostConnector is feedConnector whose links live on a host, for telling a subscription that may duplicate it.
@@ -35,7 +36,7 @@ func TestInboxSourcesAreTheConnectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := builtinSources{h}
-	list := b.List(ctx)
+	list := connectorSources(b.List(ctx))
 	if len(list) != 1 || list[0].ID != "example" || list[0].Inbox == nil || !*list[0].Inbox || list[0].Archive == nil || !*list[0].Archive ||
 		list[0].InboxEvery != 120 || list[0].ArchiveEvery != 600 || !list[0].Mutable || list[0].Read != nil {
 		t.Fatalf("listed: %+v", list)
@@ -165,8 +166,16 @@ func TestInboxSourcesRoute(t *testing.T) {
 	}
 	var in uiRequest
 	_ = json.Unmarshal([]byte(`{"context":{"assistant":"Claude"}}`), &in)
-	if in.Context.Assistant != "Claude" {
+	if in.Context.Assistant == nil || *in.Context.Assistant != "Claude" {
 		t.Fatal("the request's assistant name isn't read")
+	}
+	// the key at all, even "", says the app opens Set Up with … (#5661); an older app sends none
+	for body, sent := range map[string]bool{`{"context":{"assistant":""}}`: true, `{"context":{}}`: false} {
+		var r uiRequest
+		_ = json.Unmarshal([]byte(body), &r)
+		if (r.Context.Assistant != nil) != sent {
+			t.Errorf("%s: sent %v", body, r.Context.Assistant != nil)
+		}
 	}
 	slot, _ := extension.Slot("extension_page")
 	params, _ := json.Marshal(h.uiParams(extension.UIItem{ID: "page"}, slot, in))
@@ -182,4 +191,50 @@ func lastParams(a *fakeAssistant, method string) json.RawMessage {
 		return nil
 	}
 	return got[len(got)-1]
+}
+
+// The assistant's own source (#6430): a row on the pages whose Add to Inbox switch is the assistant's, asked and set in
+// the assistant's process; away, it shows on (its default) and a change is refused rather than lost.
+func TestInboxSourcesAssistantRow(t *testing.T) {
+	ctx := context.Background()
+	h := newTestManager(t)
+	h.connectors = connector.NewRegistry(nil)
+	a := withAssistant(h)
+	on := false
+	a.on(assistantwire.MethodInboxPost, func(raw json.RawMessage) (any, error) {
+		var p struct {
+			On *bool `json:"on"`
+		}
+		_ = json.Unmarshal(raw, &p)
+		if p.On != nil {
+			on = *p.On
+		}
+		return map[string]any{"on": on}, nil
+	})
+	b := builtinSources{h}
+	list := b.List(ctx)
+	if len(list) != 1 || list[0].ID != assistantSource || list[0].Inbox == nil || *list[0].Inbox || list[0].Name == "" {
+		t.Fatalf("the row: %+v", list)
+	}
+	if err := b.SetFeed(ctx, assistantSource, true, true, subscriptions.Actor{}); err != nil || !on || !*b.List(ctx)[0].Inbox {
+		t.Fatalf("switched on: %v %v", err, on)
+	}
+	if err := b.SetFeed(ctx, assistantSource, false, true, subscriptions.Actor{}); err == nil {
+		t.Error("it has no knowledge-base feed")
+	}
+	h.opts.Assistant = nil
+	if l := b.List(ctx); !*l[len(l)-1].Inbox {
+		t.Error("the assistant away: the row shows its default, on")
+	}
+	if err := b.SetFeed(ctx, assistantSource, true, false, subscriptions.Actor{}); err == nil {
+		t.Error("a change while the assistant is away is refused")
+	}
+}
+
+// connectorSources is the pages' list without the assistant's own source (#6430), which is always its last row.
+func connectorSources(l []subscriptionsui.Builtin) []subscriptionsui.Builtin {
+	if n := len(l); n > 0 && l[n-1].ID == assistantSource {
+		return l[:n-1]
+	}
+	return l
 }

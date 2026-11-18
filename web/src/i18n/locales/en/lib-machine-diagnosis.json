@@ -1,0 +1,7 @@
+{
+  "node_outdated": "Persona on this computer is too old to say what is using it. Update Persona on this computer to see it.",
+  "hub_outdated": "The hub is too old to say what is using this computer. Update the hub to see it.",
+  "forbidden": "Only a fully trusted device can see what is running on this computer.",
+  "offline": "This computer isn't connected right now. Look again once it's back.",
+  "deadline": "This computer didn't answer in time. Try again in a moment."
+}

@@ -3,7 +3,8 @@
 import Foundation
 
 /// `-showMeetingSample recording`: a meeting 12:34 into its recording on the watch (no microphone), its page open;
-/// `minutes` (or with `recording`): two meetings' minutes as the phone relays them, one ready and one still being written.
+/// `running`: the same with the home list left in front, whose Recordings row then reads "Recording… Open";
+/// `minutes` (or with either): two meetings' minutes as the phone relays them, one ready and one still being written.
 enum WatchMeetingSamples {
     static let live = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
 
@@ -19,14 +20,14 @@ enum WatchMeetingSamples {
             WatchMinutes.Meeting(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!, title: "设计评审",
                                  date: start.addingTimeInterval(7200), state: .writing),
         ])
-        guard mode == "recording" else { return }
+        guard mode == "recording" || mode == "running" else { return }
         RecordingLibrary.shared.restore(live)
         var entry = RecordingEntry(id: live, createdAt: .now.addingTimeInterval(-754), source: .watch, active: true)
         entry.meeting = RecordingMeeting()
         entry.marks = [65]
         try? RecordingLibrary.shared.save(entry)
         RecordingCapture.shared.showSample(live, elapsed: 754)
-        model.meetingAsked = true
+        model.meetingAsked = mode == "recording"
     }
 }
 #endif

@@ -17,10 +17,13 @@ import SwiftUI
 /// when it was taken or picked; a picked one's row shows at once, before Photos hands its bytes over. Adding one plays
 /// no haptic: its row is the feedback, and the microphone is open.
 ///
-/// At accessibility sizes the bar is at most two rows, the field and one row of icons: Pause or Continue, Stop, a More
-/// menu (Bookmark, Just Me, the photos, What Was Just Said) and send. Why the field takes no words then shows among what
-/// the page scrolls (`notice`), and with the field as its spoken hint; so do picked photos that couldn't be read
-/// (`photoNotice`).
+/// **Talk** (#3862 phase 4) takes send's place while the field is empty and Persona can be asked (any role that attends):
+/// on from a tap until the next, or while held (#9658), to the meeting call when it is live, else asked without it. Not
+/// with Just Me on (Talk is the room's: turning it on ends a hold), and not after the meeting. While it is on the caption
+/// over the controls says Persona hears, and when a tapped Talk turns itself off it says why; where the call sends the span to the voice service, the line under it says so (the contract's
+/// Wording) until a span went while it showed, whatever word the caption has meanwhile. Until the owner has seen it
+/// there, a span stays on the phone (`MeetingCallRule.toCall`).
+/// A typed question goes as the call's `text` frame while the call is live, else through `…/ask`.
 ///
 /// Stop asks first, as the live sheet's bar does: a stopped recording cannot be continued.
 struct MeetingPageBar: View {
@@ -30,32 +33,29 @@ struct MeetingPageBar: View {
     @Binding var justMe: Bool
     /// The field has the keyboard: the page steps aside as the bar does (`MeetingPage`).
     var focus: FocusState<Bool>.Binding
-    /// At accessibility sizes, why the field takes no words now, for the page to show (nil at other sizes: the bar says it).
-    @Binding var notice: String?
-    /// At accessibility sizes, that some picked photos couldn't be read, for the page to show (nil at other sizes).
-    @Binding var photoNotice: String?
     /// After the meeting, a voice call bound to the follow-up (#3862 phase 6): set where one can start now; nil, no button.
     var voice: (() -> Void)?
 
     init(entry: RecordingEntry, mode: MeetingPage.Mode, paused: Bool = false, justMe: Binding<Bool>, focus: FocusState<Bool>.Binding,
-         notice: Binding<String?>, photoNotice: Binding<String?> = .constant(nil), voice: (() -> Void)? = nil) {
+         voice: (() -> Void)? = nil) {
         self.entry = entry
         self.mode = mode
         self.paused = paused
         _justMe = justMe
         self.focus = focus
-        _notice = notice
-        _photoNotice = photoNotice
         self.voice = voice
     }
 
-    @Environment(\.dynamicTypeSize) private var size
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.buiTheme) private var theme
     @State private var capture = RecordingCapture.shared
     @State private var ask = MeetingAsk.shared
     @State private var conversation = MeetingConversation.shared
     @State private var sync = RecordingSync.shared
+    /// The meeting call and Talk (#3862 phase 4).
+    @State private var call = MeetingCall.shared
+    /// Hub transcription (#3862 phase 5): the Talk line says hub mode's words in a meeting the hub transcribes.
+    @State private var transcription = MeetingTranscription.shared
     /// Read for one thing only: how many of the last pick couldn't be read.
     @State private var photos = MeetingPhotos.shared
     @State private var draft = ""
@@ -72,10 +72,10 @@ struct MeetingPageBar: View {
     /// The last upload's `200` had no `room`: an older manager took the meeting with Persona off (`RecordingSync`).
     private var roomMissing: Bool { sync.roomMissing.contains(entry.id) }
     /// Persona is off and Just Me is off: there is nobody to ask.
-    private var silenced: Bool { target == .room && !role.attends }
+    private var silenced: Bool { target == .room && !role.answers }
     /// Persona's role attends but it can't be asked now (`MeetingAsk.canAsk`): the hub took the meeting without its room.
     /// Just Me still goes (it needs only a meeting that records).
-    private var unreachable: Bool { target == .room && role.attends && !MeetingAsk.canAsk(entry, roomMissing: roomMissing) }
+    private var unreachable: Bool { target == .room && role.answers && !MeetingAsk.canAsk(entry, roomMissing: roomMissing) }
     /// Why the follow-up can't be written now (after the meeting).
     private var hold: MeetingConversation.FollowupHold? { target == .followup ? conversation.followupHold(entry) : nil }
     /// More words than the route takes (`MeetingConversation.maxText`): Send stays off and the caption says so, rather
@@ -93,8 +93,9 @@ struct MeetingPageBar: View {
     private var canSend: Bool {
         guard MeetingAsk.hasWords(draft), !overLong else { return false }
         switch target {
-        // One question at a time, deliberately stricter than the hub's two: an answer sits next to its question.
-        case .room: return MeetingAsk.canAsk(entry, roomMissing: roomMissing) && !ask.busy
+        // One question at a time, deliberately stricter than the hub's two: an answer sits next to its question. The
+        // meeting call takes a question whenever it is live (the fast layer hands it to the room).
+        case .room: return MeetingAsk.canAsk(entry, roomMissing: roomMissing) && (call.isLive(entry.id) || !ask.busy)
         // Just Me needs only a meeting that records; it never waits on the room's question.
         case .justMe: return entry.active
         case .followup: return hold == nil
@@ -103,26 +104,27 @@ struct MeetingPageBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            if mode == .live, !size.isAccessibilitySize { justMeRow }
+            if mode == .live { justMeRow }
             MeetingQuestionField(text: $draft, focus: focus, placeholder: placeholder, sendLabel: String(localized: "Send"),
-                                 canSend: canSend, disabled: fieldDisabled, largeTypeHint: blocked ?? "", send: send) {
+                                 canSend: canSend, disabled: fieldDisabled, showsInstead: showsTalk,
+                                 send: send) {
                 plus
                 voiceButton
-            } under: {
-                if mode == .live, !writing { largeControls }
-                voiceButton
+            } instead: {
+                talkButton
             }
             if let caption {
                 Text(caption).font(Theme.Font.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("meeting-ask-caption")
             }
-            if let photoProblem, !size.isAccessibilitySize {
+            if showsPrivacy { privacyLine }
+            if let photoProblem {
                 Text(photoProblem).font(Theme.Font.caption).foregroundStyle(Theme.danger)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("meeting-photo-problem")
             }
-            if mode == .live, !writing, !size.isAccessibilitySize { controls }
+            if mode == .live, !writing { controls }
         }
         .padding(.horizontal, Theme.Space.page)
         .padding(.vertical, Theme.Space.s)
@@ -132,20 +134,12 @@ struct MeetingPageBar: View {
         .onChange(of: fieldDisabled) { _, disabled in
             if disabled { focus.wrappedValue = false }
         }
-        .onChange(of: size.isAccessibilitySize ? blocked : nil, initial: true) { _, now in
-            if notice != now { notice = now }
-        }
-        // At accessibility sizes the line would wrap the bar past its two rows: the page shows it among what scrolls.
-        .onChange(of: size.isAccessibilitySize ? photoProblem : nil, initial: true) { _, now in
-            if photoNotice != now { photoNotice = now }
-        }
         .onChange(of: photoProblem) { _, now in
             if let now { AccessibilityNotification.Announcement(now).post() }
         }
-        .confirmationDialog("Stop Recording?", isPresented: $confirmingStop, titleVisibility: .visible) {
-            Button("Stop Recording", role: .destructive) { MeetingRecorder.shared.stop(recordingID: entry.id.uuidString) }
-        } message: {
-            Text("The audio is saved on this device and its text goes to Knowledge. A stopped recording can't be continued.")
+        // Talk is the room's: Just Me ends a hold (its button goes too, which ends it as well).
+        .onChange(of: justMe) { _, on in
+            if on { call.endHold(entry.id) }
         }
         .photosPicker(isPresented: $choosingPhotos, selection: $picks, maxSelectionCount: Theme.Recording.photoPickLimit,
                       matching: .images)
@@ -185,7 +179,7 @@ struct MeetingPageBar: View {
     /// Why the field can't take words now, and the way out when there is one here (an older manager has none: the role
     /// is on, and nothing on the phone changes it).
     private var blocked: String? {
-        if silenced { return String(localized: "Turn Persona on in the menu to ask, or use Just Me.") }
+        if silenced { return String(localized: "Invite Persona to ask, or use Just Me.") }
         if unreachable { return String(localized: "Persona can't take part in this meeting right now.") }
         switch hold {
         case .finishing?: return String(localized: "Persona is finishing the meeting. You can ask about it in a moment.")
@@ -197,17 +191,91 @@ struct MeetingPageBar: View {
         }
     }
 
-    /// The caption under the field: why it takes no words (at accessibility sizes the page shows that), or that the words
-    /// are too many to send.
+    /// The caption under the field: why it takes no words, that the words
+    /// are too many to send, or Talk's (#3862 phase 4): Persona hears while it is held, or a word after a span. Where a
+    /// span goes to the voice service, the Wording is a line of its own under it (`privacyLine`).
     private var caption: String? {
-        if !size.isAccessibilitySize, let blocked { return blocked }
-        guard overLong else { return nil }
-        return String(localized: "Too long to send. Shorten it to \(MeetingConversation.maxText.formatted()) characters.")
+        if let blocked { return blocked }
+        if overLong { return String(localized: "Too long to send. Shorten it to \(MeetingConversation.maxText.formatted()) characters.") }
+        return talkCaption
+    }
+
+    // MARK: Talk
+
+    /// Talk stands in send's place: live, asking the room, Persona can be asked now, nothing typed.
+    private var showsTalk: Bool { mode == .live && target == .room && call.canTalk(entry) && !MeetingAsk.hasWords(draft) }
+
+    /// A span from this page is open.
+    private var talking: Bool { call.talk?.recording == entry.id }
+
+    /// The span goes to the voice service (the meeting call is live) rather than staying on the phone.
+    private var talkSendsAudio: Bool { call.isLive(entry.id) }
+
+    /// The Wording shows under Talk: a span would go to the voice service and the owner hasn't seen one go with it yet.
+    /// Beside a note after a span (hold longer, heard nothing), never replaced by it: the next span goes to the call only
+    /// if this was on screen as it opened. Not while a span is held (the caption says Persona hears).
+    private var showsPrivacy: Bool { showsTalk && talkSendsAudio && !call.privacySeen && !talking }
+
+    /// The contract's Wording as its own line, which tells `MeetingCall` when it is actually on screen: a span opened
+    /// under it may go to the call and marks it seen (`MeetingCall.showingPrivacy`, `MeetingTalkPrivacy.shown`).
+    private var privacyLine: some View {
+        let recording = entry.id
+        return Text(talkPrivacy).font(Theme.Font.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("meeting-talk-privacy")
+            .onAppear { call.showingPrivacy(true, recording: recording) }
+            .onDisappear { call.showingPrivacy(false, recording: recording) }
+    }
+
+    private var talkButton: some View {
+        MeetingTalkButton(held: talking, inWindow: call.talk?.window == true,
+                          hint: talkSendsAudio ? talkPrivacy : String(localized: "Tap to talk and tap again when you’re done, or hold while you speak."),
+                          press: { startTalk() }, release: { call.endTalk() }, window: { openTalkWindow() },
+                          gone: { call.endHold(entry.id) }, keep: { call.keepOpen() })
+    }
+
+    /// What the caption says about Talk now, if anything.
+    private var talkCaption: String? {
+        guard mode == .live, target == .room else { return nil }
+        if let talk = call.talk, talk.recording == entry.id {
+            // A window (a tap on Talk, the Lock Screen's, VoiceOver's) ends on a tap; a hold when the finger lifts.
+            return talk.window ? String(localized: "Listening to you… Tap Talk when you’re done.")
+                : String(localized: "Listening to you… Let go when you’re done.")
+        }
+        switch call.note {
+        case .nothingHeard?: return String(localized: "Persona didn’t hear anything. Tap Talk and speak, or hold it while you speak.")
+        // A tapped Talk that turned itself off says why (#9658).
+        case .quiet?: return String(localized: "Talk turned off after 20 seconds without speech.")
+        case .limit?: return String(localized: "Talk turned off after a minute.")
+        case nil: return nil
+        }
+    }
+
+    /// The contract's Wording where Talk sends its spans to the voice service: privacy mode's (#3862 phase 4), or in a
+    /// meeting the hub transcribes hub mode's (phase 5: all of its audio goes through the hub, Talk included).
+    private var talkPrivacy: String {
+        MeetingTranscriptionWords.pagePrivacy(hub: transcription.hubTranscribes(entry.id), service: transcription.service)
+    }
+
+    private func startTalk() {
+        focus.wrappedValue = false
+        // Whether the Wording was on screen as the finger went down is `MeetingCall`'s to know (`privacyLine`).
+        guard call.beginTalk(entry.id, from: .hold) else { return }
+        Haptics.tap()
+        AccessibilityNotification.Announcement(String(localized: "Listening to you…")).post()
+    }
+
+    /// VoiceOver's double tap (it can't hold): a talk window. Its hint says where the words go, but not every way in speaks
+    /// it (hints off, Voice Control, Switch Control, a keyboard): it goes to the call under the Wording on screen, as a
+    /// hold does.
+    private func openTalkWindow() {
+        guard call.beginTalk(entry.id, from: .pageWindow) else { return }
+        AccessibilityNotification.Announcement(String(localized: "Listening to you…")).post()
     }
 
     /// [+]: what else the composer can send: photos for the meeting's material (a meeting that takes them), and the
     /// question about what was just said, asked of the room; with nothing to offer (Just Me, after the meeting, Persona
-    /// off or not reachable, no photos) the button is not there. At accessibility sizes its items are in More.
+    /// off or not reachable, no photos) the button is not there.
     @ViewBuilder private var plus: some View {
         if canAskHeard || canAddPhotos {
             Menu {
@@ -278,72 +346,60 @@ struct MeetingPageBar: View {
             .contentShape(.circle)
     }
 
-    // MARK: Pause, Bookmark, Stop
+    // MARK: The meeting room's controls
 
+    /// A meeting app's row (#8731 v2): Pause, Bookmark, Photo (a room meeting's), Speaker (Persona answers out loud, while
+    /// it is in the meeting), Invite (Persona in or out) and End, red, which asks first.
     private var controls: some View {
-        HStack(spacing: Theme.Space.m) {
-            barButton(pauseTitle, paused ? Theme.Icon.run : Theme.Icon.pause) { togglePause() }
+        let role = entry.attendance?.sentRole ?? .off
+        return HStack(alignment: .top, spacing: Theme.Space.xs) {
+            MeetingRoomButton(title: pauseTitle, symbol: paused ? Theme.Icon.run : Theme.Icon.pause) { togglePause() }
                 .accessibilityIdentifier("recording-pause")
-            barButton(String(localized: "Bookmark"), Theme.Icon.pin) { addBookmark() }
+            MeetingRoomButton(title: String(localized: "Bookmark"), symbol: Theme.Icon.pin) { addBookmark() }
                 .accessibilityIdentifier("recording-bookmark")
-            barButton(String(localized: "Stop [Car Play Voice Screen c7b24e]"), Theme.Icon.interrupt) { confirmingStop = true }
-                .accessibilityIdentifier("recording-stop")
-        }
-    }
-
-    /// Accessibility sizes, in the row under the field before send: Pause or Continue, Stop and More side by side as icons
-    /// (their names are their accessibility labels), so the bar stays two rows tall whatever the text size and Pause stays
-    /// one tap away. More holds Bookmark, the Just Me switch and the [+] menu's question.
-    @ViewBuilder private var largeControls: some View {
-        iconButton(pauseTitle, paused ? Theme.Icon.run : Theme.Icon.pause) { togglePause() }
-            .accessibilityIdentifier("recording-pause")
-        iconButton(String(localized: "Stop [Car Play Voice Screen c7b24e]"), Theme.Icon.interrupt) { confirmingStop = true }
-            .accessibilityIdentifier("recording-stop")
-        Menu {
-            Button { addBookmark() } label: { Label("Bookmark", systemImage: Theme.Icon.pin) }
-                .accessibilityIdentifier("recording-bookmark")
-            Toggle(isOn: $justMe) {
-                Label("Just Me", systemImage: Theme.Icon.justMe)
-                Text("Only you see it, in the main chat")
+            if canAddPhotos {
+                Menu { photoButtons } label: {
+                    MeetingRoomButton(title: String(localized: "Photo [Meeting Room]"), symbol: Theme.Icon.camera) {}
+                        .allowsHitTesting(false)
+                }
+                .accessibilityIdentifier("meeting-room-photo")
             }
-            .disabled(!entry.active)
-            .accessibilityIdentifier("meeting-just-me")
-            if canAddPhotos { photoButtons }
-            if canAskHeard { heardButton }
-        } label: {
-            ThemedIcon(Theme.Icon.moreMenu).font(Theme.Font.heading)
-                .frame(maxWidth: .infinity)
-                .scaledFrame(minHeight: Theme.Size.tapTarget)
+            if entry.roomMeeting {
+                MeetingRoomButton(title: String(localized: "Speaker [Meeting Room]"),
+                                  symbol: role.speaks ? Theme.Icon.answersAloud : Theme.Icon.answersOnScreen, on: role.speaks) {
+                    // Out loud or on screen; out loud turns echo cancellation on too where the experiment is on (`setSpeaks`, B2).
+                    Haptics.tap()
+                    _ = MeetingRecorder.shared.setRole(role.speaks ? .listener : .participant, recordingID: entry.id.uuidString)
+                }
+                .disabled(!role.answers)
+                .opacity(role.answers ? 1 : 0.4)
+                .accessibilityIdentifier("meeting-room-speaker")
+                MeetingRoomButton(title: role.answers ? String(localized: "Remove [Meeting Room]") : String(localized: "Invite [Meeting Room]"),
+                                  symbol: Theme.Icon.invite, on: false) {
+                    Haptics.tap()
+                    _ = MeetingRecorder.shared.setRole(role.answers ? .off : .listener, recordingID: entry.id.uuidString)
+                }
+                .accessibilityIdentifier("meeting-room-invite-button")
+            }
+            MeetingRoomButton(title: String(localized: "End [Meeting Room]"), symbol: Theme.Icon.interrupt, ends: true) { confirmingStop = true }
+                .accessibilityIdentifier("recording-stop")
+                // End on the Lock Screen or in the Dynamic Island (#8731 V4) asks here, never ends the meeting at once.
+                .onChange(of: RecordingLivePresenter.shared.endAsking, initial: true) { _, asked in
+                    guard asked == entry.id.uuidString.lowercased() else { return }
+                    RecordingLivePresenter.shared.endAsked()
+                    confirmingStop = true
+                }
+                // On the button, so the question points at End.
+                .confirmationDialog("End the Meeting?", isPresented: $confirmingStop, titleVisibility: .visible) {
+                    Button("End and Write the Minutes", role: .destructive) { MeetingRecorder.shared.stop(recordingID: entry.id.uuidString) }
+                    Button("Keep Going [Meeting Room]", role: .cancel) {}
+                } message: {
+                    Text("The audio is saved on this device and its text goes to Knowledge. A stopped recording can't be continued.")
+                }
         }
-        .themedButton()
-        .accessibilityLabel(Text("More"))
-        .accessibilityIdentifier("recording-more")
     }
 
     private var pauseTitle: String { paused ? String(localized: "Continue") : String(localized: "Pause") }
-
-    /// A standard button, its icon over its label, at least a finger tall.
-    private func barButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: Theme.Space.xxs) {
-                ThemedIcon(symbol).font(Theme.Font.heading).scaledFrame(height: Theme.Size.icon)
-                Text(title).font(Theme.Font.captionStrong).lineLimit(1).minimumScaleFactor(0.8)
-            }
-            .frame(maxWidth: .infinity)
-            .scaledFrame(minHeight: Theme.Size.tapTarget)
-        }
-        .themedButton()
-    }
-
-    private func iconButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ThemedIcon(symbol).font(Theme.Font.heading)
-                .frame(maxWidth: .infinity)
-                .scaledFrame(minHeight: Theme.Size.tapTarget)
-        }
-        .themedButton()
-        .accessibilityLabel(Text(title))
-    }
 
     // MARK: Actions
 
@@ -353,7 +409,8 @@ struct MeetingPageBar: View {
         let text = draft
         let sent: Bool
         switch target {
-        case .room: sent = ask.ask(entry, text: text) != nil
+        // While the meeting call is live the question is its `text` frame (#3862 phase 4); else an ask.
+        case .room: sent = call.say(text, recording: entry.id) || ask.ask(entry, text: text) != nil
         case .justMe: sent = conversation.sendJustMe(entry, text: text) != nil
         case .followup: sent = conversation.sendFollowup(entry.id, text: text) != nil
         }

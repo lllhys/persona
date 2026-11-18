@@ -109,6 +109,7 @@
   "sandbox_go_admin": "去管理界面放行",
   "tool_title": "命令行程序",
   "configuration_title": "扩展配置",
+  "fields_title": "设置",
   "no_configuration": "无需配置",
   "danger_title": "危险操作",
   "externally_managed": "这个扩展由来源端管理，请在来源端修改设置。",

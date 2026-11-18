@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The conversations opened on this device, newest first, by when they were opened rather than by their last activity
 /// (#2191): the home screen icon's long-press menu has the last one (`QuickAction`). The rules are the web's ⌘K's

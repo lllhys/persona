@@ -68,6 +68,7 @@ class ChatDetailsShotsTest {
         text = "**Where things are:** the importer retries once after a hub restart. The new test passes; the release notes still need a line.")
     private val agent = Session(key.machineId, key.sessionId, title = "Fix the importer retry", agent = "claude", status = "idle",
         cwd = "/home/me/code/app")
+    private val suggestion = "Review the release notes before sending"
 
     private fun texts(): List<String> = rule.onAllNodes(SemanticsMatcher("any node") { true }, useUnmergedTree = true).fetchSemanticsNodes().flatMap { node ->
         node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } +
@@ -85,7 +86,10 @@ class ChatDetailsShotsTest {
             else emptyList()
         val sessions = object : SessionsRepository {
             override val machines = MutableStateFlow(listOf(Machine(key.machineId, "Computer A", online = true)))
-            override val sessions = MutableStateFlow(listOf(agent))
+            override val sessions = MutableStateFlow(listOf(agent.copy(
+                suggestion = suggestion.takeIf { name == "safe-suggestion" || name == "risky-suggestion" },
+                suggestionRisky = name == "risky-suggestion",
+            )))
             override suspend fun refresh() = Unit
         }
         val chats = object : ChatRepository {
@@ -121,6 +125,7 @@ class ChatDetailsShotsTest {
             "loading" -> { shown -> shown.any { it.startsWith("Message") } }
             "ready" -> { shown -> "Also add a line to the release notes" in shown }
             "recap" -> { shown -> shown.any { it.startsWith("Recap while you were away") || it.startsWith("While you were away · ") } }
+            "safe-suggestion", "risky-suggestion" -> { shown -> suggestion in shown }
             else -> { shown -> shown.any { it.startsWith("Done. The importer") } }
         }
         val deadline = System.currentTimeMillis() + 30_000
@@ -134,8 +139,12 @@ class ChatDetailsShotsTest {
         repeat(10) { rule.mainClock.advanceTimeByFrame() }
         val image = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
         val output = File(System.getProperty("persona.shots") ?: "build/chat-details-shots").also { it.mkdirs() }
-        File(output, "$name-${style.name.lowercase()}-${if (dark) "dark" else "light"}${if (large) "-large" else ""}.png").outputStream()
-            .use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        try {
+            File(output, "$name-${style.name.lowercase()}-${if (dark) "dark" else "light"}${if (large) "-large" else ""}.png").outputStream()
+                .use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        } finally {
+            image.recycle()
+        }
     }
 
     @Test fun readyGlass() = scene("ready", AppStyle.Glass, false)
@@ -164,4 +173,16 @@ class ChatDetailsShotsTest {
     @Test fun recapBoardDark() = scene("recap", AppStyle.Board, true)
     @Test fun readyGlassLarge() = scene("ready", AppStyle.Glass, false, large = true)
     @Test fun recapGlassLarge() = scene("recap", AppStyle.Glass, false, large = true)
+
+    // Semantics tests own the action difference. These six scenes only prove risk does not change the chip's drawing:
+    // one risky chip per style, light and dark, Chinese, the largest text, and one safe comparison.
+    @Test fun safeSuggestionGlass() = scene("safe-suggestion", AppStyle.Glass, false)
+    @Test fun riskySuggestionGlass() = scene("risky-suggestion", AppStyle.Glass, false)
+    @Test fun riskySuggestionBriefDark() = scene("risky-suggestion", AppStyle.Brief, true)
+    @Test fun riskySuggestionBoard() = scene("risky-suggestion", AppStyle.Board, false)
+
+    @Config(sdk = [35], qualifiers = "zh-w400dp-h760dp-xhdpi")
+    @Test fun riskySuggestionZhGlassDark() = scene("risky-suggestion", AppStyle.Glass, true)
+
+    @Test fun riskySuggestionGlassLarge() = scene("risky-suggestion", AppStyle.Glass, false, large = true)
 }

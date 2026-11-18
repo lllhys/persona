@@ -1,7 +1,15 @@
 {
   "input_draft": "电脑上的输入框里有没发出去的字",
   "dialog_open": "电脑上开着一个对话框，先处理它再发",
-  "delivery_unknown": "不确定送到没有：先看一眼对话再决定要不要重发",
+  "delivery_unknown": "不确定送到没有：先核对这条消息",
+  "delivery_failed": "已确认未送达",
   "not_confirmed": "页面关闭前没确认送达，重试不会发两遍",
-  "not_confirmed_images": "页面关闭前没确认送达，图片也没留下"
+  "not_confirmed_images": "页面关闭前没确认送达，图片也没留下",
+  "waits_on_computer": "已发送。电脑上的那个问题答完后，Agent 才会读到这条消息",
+  "held_on_computer": "在等电脑上批准：这个 Claude 会话的权限模式是跳过确认，会先扣下 Persona 发来的消息，在电脑上允许后才会收下。允许后这里会自动更新",
+  "peer_unconfirmed": "已交给这个 Claude 会话，但它还没收下：可能在等电脑上批准。重发前先去电脑上看一眼",
+  "still_held": "还在等电脑上批准",
+  "still_unknown": "对话里还没有这条消息。重发前先去电脑上看一眼",
+  "relayed_busy": "Agent 正忙，这条经它的消息通道转交：它可能不会把这当作你本人的同意。需要你点头的事，等 Agent 停下来等你时再发一次",
+  "relayed_plugin": "这条经 Agent 的消息通道转交，不是作为你本人的输入：它可能不会把这当作你本人的同意"
 }

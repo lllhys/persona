@@ -1,7 +1,6 @@
 package persona.core.designsystem
 
 import androidx.compose.ui.res.stringResource
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,10 +59,13 @@ fun MessageContextGroup(
     val type = PersonaTheme.type
     val style = PersonaTheme.style
     var open by rememberSaveable(id) { mutableStateOf(false) }
+    // The opened list fades in place (ContextGroup, LinkSheet.swift:554, ChatPin.swift:707-726). One context is this fade only.
+    val edge = rememberOpenEdge(id)
+    val revealing = edge.revealing(open)
     val one = contexts.singleOrNull()
     val summary = contextSummary(contexts).text()
     Column(
-        modifier.fillMaxWidth().padding(vertical = Tokens.Space.xxs).animateContentSize(PersonaTheme.motion.size()),
+        modifier.fillMaxWidth().padding(vertical = Tokens.Space.xxs),
         horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
     ) {
         val spoken = stringResource(R.string.designsystem_with_state, summary, stringResource(if (open) R.string.designsystem_expanded else R.string.designsystem_collapsed))
@@ -85,7 +87,7 @@ fun MessageContextGroup(
         if (open) {
             val shape = PersonaTheme.shapes.controlShape
             Column(
-                Modifier.fillMaxWidth(0.86f).clip(shape).background(palette.sunken)
+                Modifier.unfolding(revealing).fillMaxWidth(0.86f).clip(shape).background(palette.sunken)
                     .then(if (style == AppStyle.Board) Modifier.border(1.dp, palette.line, shape) else Modifier),
             ) {
                 if (one != null) ContextBody(one, onOpen, Modifier.padding(top = Tokens.Space.m))
@@ -104,6 +106,9 @@ private fun ContextEntry(context: MessageContext, id: String, onOpen: (String) -
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
     var open by rememberSaveable(id) { mutableStateOf(false) }
+    // One title's text fades on its own (ContextRow, LinkSheet.swift:591, ChatPin.swift:707-726).
+    val edge = rememberOpenEdge(id)
+    val revealing = edge.revealing(open)
     val label = context.label.text()
     val spoken = stringResource(R.string.designsystem_with_state, label, stringResource(if (open) R.string.designsystem_expanded else R.string.designsystem_collapsed))
     Column {
@@ -124,7 +129,7 @@ private fun ContextEntry(context: MessageContext, id: String, onOpen: (String) -
             Spacer(Modifier.width(Tokens.Space.xs))
             JIcon(if (open) PhIcons.CaretDown else PhIcons.CaretRight, null, size = 12.dp, tint = palette.ink3)
         }
-        if (open) ContextBody(context, onOpen)
+        if (open) ContextBody(context, onOpen, Modifier.unfolding(revealing))
     }
 }
 

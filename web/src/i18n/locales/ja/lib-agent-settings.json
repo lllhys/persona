@@ -3,6 +3,17 @@
   "codex_footer": "そのマシンの ~/.codex/config.toml の以下の項目だけを変更します。ファイル内のほかの設定（モデルプロバイダー、プロジェクトの信頼など）はそのまま残ります。新しい Codex セッションから反映されます。",
   "agy_footer": "そのマシンの ~/.gemini/antigravity-cli/settings.json の以下の項目だけを変更します。新しい Antigravity (agy) セッションから反映されます。",
   "omp_footer": "そのマシンの ~/.omp/agent/config.yml の以下の項目だけを変更します。新しい omp セッションから反映されます。",
+  "grok_footer": "そのマシンの ~/.grok/config.toml（GROK_HOME を設定している場合は $GROK_HOME/config.toml）の以下の項目だけを変更します。新しい Grok セッションから反映されます。",
+  "setting_models.default": "デフォルトのモデル",
+  "setting_models.default_detail": "新しい Grok セッションで使うモデルです。空欄にすると Grok 自身のデフォルトを使います。",
+  "setting_models.default_reasoning_effort": "思考の深さ",
+  "setting_models.default_reasoning_effort_detail": "デフォルトのモデルが対応している場合の思考の深さです（low、high など）。",
+  "setting_ui.permission_mode": "権限モード",
+  "setting_ui.permission_mode_detail": "ツールを使う前に確認するかどうかです。always-approve を選ぶと、確認せずにすべてのツール呼び出しを承認します。",
+  "setting_ui.yolo": "すべてのツール呼び出しを承認",
+  "setting_ui.yolo_detail": "確認せずに、ツール呼び出しを常に承認します（yolo モード）。",
+  "setting_ui.compact_mode": "コンパクトモード",
+  "setting_ui.compact_mode_detail": "ターミナルでメッセージ間の余白を詰めて表示します。",
   "applied_to_other": "{count}台のマシンに適用しました",
   "saved": "保存しました",
   "failure_item": "{name}：{error}",
@@ -93,5 +104,6 @@
   "setting_agentMode": "実行モード",
   "setting_agentMode_detail": "auto は安全な操作を自動承認し、必要な場合に確認します。すべての許可はツール権限で設定します。",
   "setting_service_tier": "速度",
-  "setting_service_tier_detail": "Fast は使用量や料金が増えます。対応モデルの新規 Codex 会話に適用します。"
+  "setting_service_tier_detail": "Fast は使用量や料金が増えます。対応モデルの新規 Codex 会話に適用します。",
+  "speed_standard": "標準"
 }

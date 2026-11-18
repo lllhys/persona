@@ -27,7 +27,7 @@ internal fun leftCaptures(before: List<ComposerAttachment>, now: List<ComposerAt
         .filter { uri -> isCaptureUri(uri, packageName) && uri !in keptNow && now.none { it.uri == uri } }.distinct()
 
 /** Deletes a capture's file through the provider; anything that is not one of ours is left alone. Call off the main thread. */
-internal fun deleteCapture(context: Context, uri: String) {
+fun deleteCapture(context: Context, uri: String) {
     if (!isCaptureUri(uri, context.packageName)) return
     runCatching { context.contentResolver.delete(Uri.parse(uri), null, null) }
 }
@@ -36,7 +36,7 @@ internal fun deleteCapture(context: Context, uri: String) {
  * Whether the system camera may be started now. The app declares CAMERA (pairing scans codes), and then Android
  * refuses ACTION_IMAGE_CAPTURE until it is granted; a build that does not declare it needs nothing.
  */
-internal fun cameraAllowed(context: Context): Boolean =
+fun cameraAllowed(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED || !declaresCamera(context)
 
 private fun declaresCamera(context: Context): Boolean = runCatching {
@@ -48,11 +48,11 @@ private fun declaresCamera(context: Context): Boolean = runCatching {
 }.getOrDefault(true)
 
 /** The app's name as the system settings list it (the label is configurable per build). */
-internal fun appLabel(context: Context): String =
+fun appLabel(context: Context): String =
     runCatching { context.applicationInfo.loadLabel(context.packageManager).toString() }.getOrNull()?.takeIf(String::isNotBlank) ?: "Persona"
 
 /** This app's page in the system settings, where its permissions are. */
-internal fun openAppSettings(context: Context) {
+fun openAppSettings(context: Context) {
     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
     runCatching { context.startActivity(intent) }
         .recoverCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }

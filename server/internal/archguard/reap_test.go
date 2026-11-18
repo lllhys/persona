@@ -48,7 +48,7 @@ var reapSites = []reapSite{
 		"checkNodeStdioArgs":   "parses arguments",
 		"exitNodeUsage":        "prints the usage and exits",
 		"osproc.SealInherited": "marks inherited descriptors close-on-exec",
-		"capProcs":             "sets GOMAXPROCS",
+		"procs.AtStart":        "sets GOMAXPROCS",
 		"node.Relay":           "only dials a resident node's socket",
 	}},
 }
@@ -338,7 +338,8 @@ func calls(n ast.Node, out *[]*ast.CallExpr) {
 
 func encloses(n, target ast.Node) bool { return n.Pos() <= target.Pos() && target.End() <= n.End() }
 
-// callName is the called expression as written: capProcs, osproc.SealInherited, e.ownDatabase, os.Stdout.WriteString.
+// callName is the called expression as written: procs.AtStart, osproc.SealInherited, e.ownDatabase,
+// os.Stdout.WriteString.
 func callName(c *ast.CallExpr) string { return exprName(c.Fun) }
 
 func exprName(e ast.Expr) string {

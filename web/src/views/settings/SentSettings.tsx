@@ -280,6 +280,7 @@ function SentRow({ item, name, onOpen }: { item: SentItem; name: string; onOpen:
       </button>
       <div className="pointer-events-none relative z-10 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Pill tone={allowed.tone === "orange" ? "orange" : undefined}>{allowed.label}</Pill>
+        {item.let_through.edited_from && <Pill>{t("settings-sent.edited")}</Pill>}
         {item.recalled_at && <Pill>{t("settings-sent.recalled")}</Pill>}
         <Origin origin={item.origin} what={what} />
       </div>
@@ -414,9 +415,21 @@ function DetailBody({ item }: { item: SentItem }) {
         </Field>
         {item.message_ref && <Field label={t("settings-sent.d_message")} mono>{item.message_ref}</Field>}
       </div>
+      {item.let_through.edited_from && (
+        <section>
+          <div className="mb-1.5 flex items-center gap-2">
+            <h3 className="flex-1 text-xs font-medium text-ink-3">{t("settings-sent.d_original")}</h3>
+            <Button tone="quiet" icon="copy" onClick={() => void copyText(item.let_through.edited_from!)}>
+              {t("settings-sent.copy_text")}
+            </Button>
+          </div>
+          <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-control bg-inset p-3 font-sans text-sm leading-relaxed text-ink shadow-hairline select-text">{item.let_through.edited_from}</pre>
+          {textCut(item.let_through.edited_from) && <p className="mt-1.5 text-xs leading-snug text-ink-3">{t("settings-sent.text_cut", { count: formatNumber(SENT_TEXT_MOST) })}</p>}
+        </section>
+      )}
       <section>
         <div className="mb-1.5 flex items-center gap-2">
-          <h3 className="flex-1 text-[12px] font-medium text-ink-3">{t("settings-sent.d_text")}</h3>
+          <h3 className="flex-1 text-[12px] font-medium text-ink-3">{t(item.let_through.edited_from ? "settings-sent.d_sent_text" : "settings-sent.d_text")}</h3>
           {item.text && (
             <Button tone="quiet" icon="copy" onClick={() => void copyText(item.text)}>
               {t("settings-sent.copy_text")}

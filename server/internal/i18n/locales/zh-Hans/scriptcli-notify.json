@@ -1,5 +1,7 @@
 {
   "no_device": "没有能接收通知的设备",
+  "no_node": "没有在运行的 Persona node",
+  "queued": "manager 不在线，node 先存着，回来后再发",
   "filtered": "通知设置或在线的桌面客户端使所有可用设备都跳过了这条通知",
   "hub_not_sent": "hub 没有发送：{reason}",
   "not_sent": "没发出去：{reason}"

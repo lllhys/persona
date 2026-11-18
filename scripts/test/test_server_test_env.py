@@ -20,6 +20,7 @@ RUNNER_SPEC = importlib.util.spec_from_file_location("go_test_partitioned", ROOT
 RUNNER = importlib.util.module_from_spec(RUNNER_SPEC)
 RUNNER_SPEC.loader.exec_module(RUNNER)
 PARTITIONS = RUNNER.go_partitions
+NODE = "./internal/node"  # the fixture module's one partitioned package
 
 
 class ServerTestEnvironmentTests(unittest.TestCase):
@@ -152,6 +153,38 @@ class ServerTestEnvironmentTests(unittest.TestCase):
             self.assertEqual(len(homes), 1)
             self.assertFalse(homes[0].exists())
 
+    def test_go_test_runs_without_group_write_under_a_permissive_umask(self):
+        # A host whose umask is 002 (Ubuntu's default with a user's own group) must not hand it to go test: Go makes
+        # t.TempDir()'s directories and the test binary with it, and the external adapter tests refuse them (#10280).
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "hub.json"
+            config.write_text(json.dumps({"database_url": "postgres://user:synthetic@localhost/persona"}))
+            caches = {key: str(root / key.lower()) for key in ("GOCACHE", "GOMODCACHE", "GOPATH")}
+            seen = {}
+
+            def run(command, **kwargs):
+                if command[:2] == ["go", "env"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(caches))
+                current = os.umask(0)
+                os.umask(current)
+                seen["umask"] = current  # what the test command inherits
+                for key in ("HOME", "TMPDIR", "GOTMPDIR"):
+                    seen[key] = os.stat(kwargs["env"][key]).st_mode & 0o777
+                return subprocess.CompletedProcess(command, 0)
+
+            previous = os.umask(0o002)
+            try:
+                with mock.patch.object(ISOLATION.subprocess, "run", side_effect=run):
+                    self.assertEqual(ISOLATION.run_tests(config, ["go", "test"], {"PATH": "/usr/bin"}), 0)
+                after = os.umask(0o002)
+            finally:
+                os.umask(previous)
+            self.assertEqual(seen["umask"], 0o022)
+            for key in ("HOME", "TMPDIR", "GOTMPDIR"):
+                self.assertEqual(seen[key] & 0o022, 0, f"{key} is {seen[key]:o}")
+            self.assertEqual(after, 0o002, "the runner's own umask is restored")
+
     def test_cache_failure_never_starts_the_test_command(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "hub.json"
@@ -175,7 +208,7 @@ class ServerTestEnvironmentTests(unittest.TestCase):
             remote = root / "remote"
             profile = remote / "live-profile"
             for path in (checkout / "scripts/test", checkout / "scripts/mock", checkout / "server/internal/hub",
-                         checkout / "spec", checkout / "apple",
+                         checkout / "spec", checkout / "apple", checkout / "web/src/i18n/locales/en",
                          checkout / "docs", checkout / "sdk/go/ext", checkout / "sdk/go/wire/schema",
                          checkout / "sdk/templates/go", checkout / "sdk/ts/src", checkout / "sdk/ts/node_modules/typescript",
                          checkout / "schema/extension/examples/invalid", tools, profile):
@@ -184,6 +217,8 @@ class ServerTestEnvironmentTests(unittest.TestCase):
             (checkout / "sdk/ts/src/index.ts").write_text("export const fixture = true;\n")
             (checkout / "sdk/ts/node_modules/typescript/package.json").write_text('{"name":"typescript"}\n')
             (checkout / "docs/guide.md").write_text("# Fixture guide\n")
+            # kb's minutes tests read the web's locale files (web/src/i18n/locales/<lang>/*.json)
+            (checkout / "web/src/i18n/locales/en/fixture.json").write_text('{"locale":true}\n')
             (checkout / "scripts/deploy").mkdir()
             (checkout / "scripts/deploy/db.sh").write_text("# synthetic db script\n")
             (checkout / "sdk/templates/go/persona-extension.json").write_text('{"template":true}\n')
@@ -197,6 +232,11 @@ class ServerTestEnvironmentTests(unittest.TestCase):
             (schema / "examples/invalid/View.fixture.json").write_text('{"valid":false}\n')
             schema_capture = root / "schema-sync.json"
             remote_schema = remote / ".cache/persona-test-checkout/schema/extension"
+            wire = checkout / "schema/wire"
+            wire.mkdir(parents=True)
+            (wire / "todo-view.schema.json").write_text('{"wire":true}\n')
+            wire_capture = root / "wire-sync.json"
+            remote_wire = remote / ".cache/persona-test-checkout/schema/wire"
             shutil.copy2(ROOT / "scripts/test/test-server.sh", checkout / "scripts/test/test-server.sh")
             shutil.copy2(ROOT / "scripts/test/server_test_env.py", checkout / "scripts/test/server_test_env.py")
             # test-server.sh stages the internal/node partition runner beside server_test_env.py (#5594).
@@ -249,9 +289,11 @@ class ServerTestEnvironmentTests(unittest.TestCase):
                  "if str(source)=='sdk/go':\n"
                  f" pathlib.Path({str(sdk_capture)!r}).write_text(json.dumps(sys.argv[1:]))\n"
                  "if str(source)=='schema/extension':\n"
-                 f" pathlib.Path({str(schema_capture)!r}).write_text(json.dumps(sys.argv[1:]))\n")
+                 f" pathlib.Path({str(schema_capture)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+                 "if str(source)=='schema/wire':\n"
+                 f" pathlib.Path({str(wire_capture)!r}).write_text(json.dumps(sys.argv[1:]))\n")
             packages = ["github.com/example/fixture/server/internal/example",
-                        "github.com/example/fixture/server" + PARTITIONS.IMPORT_SUFFIX]
+                        "github.com/example/fixture/server/internal/node"]
             node_tests = ["TestNodeA", "TestNodeB", "TestNodeC", "ExampleNode"]
             node_listing = [*node_tests[:2], "BenchmarkNode", *node_tests[2:], "ok  fixture 0.1s"]
             tool("go", "import json,os,pathlib,sys\n"
@@ -266,7 +308,7 @@ class ServerTestEnvironmentTests(unittest.TestCase):
                  # what go_test_partitioned.py lists to split the module and internal/node, whatever -list pattern it uses
                  f"if sys.argv[1:]==['list',{RUNNER.WHOLE_MODULE!r}]:\n"
                  f" record(); print('\\n'.join({packages!r})); sys.exit(0)\n"
-                 f"if sys.argv[1:3]==['test','-list'] and sys.argv[-1]=={PARTITIONS.PACKAGE!r}:\n"
+                 f"if sys.argv[1:3]==['test','-list'] and sys.argv[-1]=={NODE!r}:\n"
                  f" record(); print('\\n'.join({node_listing!r})); sys.exit(0)\n"
                  "base=pathlib.Path.cwd().parent\n"
                  "sdk=base/'sdk/go'\n"
@@ -277,7 +319,11 @@ class ServerTestEnvironmentTests(unittest.TestCase):
                  "assert (schema/'examples/View.fixture.json').read_text()=='{\"valid\":true}\\n'\n"
                  "assert (schema/'examples/invalid/View.fixture.json').read_text()=='{\"valid\":false}\\n'\n"
                  "assert not (schema/'stale.json').exists()\n"
+                 "wire=base/'schema/wire'\n"
+                 "assert (wire/'todo-view.schema.json').read_text()=='{\"wire\":true}\\n'\n"
+                 "assert not (wire/'stale.json').exists()\n"
                  "assert (base/'docs/guide.md').read_text()=='# Fixture guide\\n'\n"
+                 "assert (base/'web/src/i18n/locales/en/fixture.json').read_text()=='{\"locale\":true}\\n'\n"
                  "assert (base/'sdk/templates/go/persona-extension.json').read_text()=='{\"template\":true}\\n'\n"
                  "assert (base/'sdk/ts/src/index.ts').read_text()=='export const fixture = true;\\n'\n"
                  "assert not (base/'sdk/ts/node_modules').exists()\n"
@@ -302,10 +348,10 @@ class ServerTestEnvironmentTests(unittest.TestCase):
             flags = ["test", "-count=1", "-p", "1"]
             # A listing call's -list pattern is the runner's choice; compare it by its shape.
             is_listing = lambda call: call[:1] == ["list"] or call[:2] == ["test", "-list"]
-            shape = lambda call: ["test", "-list", PARTITIONS.PACKAGE] if call[:2] == ["test", "-list"] else call
-            listing = [["list", RUNNER.WHOLE_MODULE], ["test", "-list", PARTITIONS.PACKAGE]]
-            whole = [[*flags, packages[0]]] + [[*flags, "-run", pattern, PARTITIONS.PACKAGE]
-                                               for pattern in PARTITIONS.patterns(node_tests)]
+            shape = lambda call: ["test", "-list", NODE] if call[:2] == ["test", "-list"] else call
+            listing = [["list", RUNNER.WHOLE_MODULE], ["test", "-list", NODE]]
+            whole = [[*flags, packages[0]]] + [[*flags, "-run", pattern, NODE]
+                                               for pattern in PARTITIONS.patterns(node_tests, PARTITIONS.PACKAGES[NODE])]
             for index, (args, expected, expected_listing, extra) in enumerate((
                 ([], whole, listing, {}),
                 (["-run", "TestFixture", "./internal/example"],
@@ -323,6 +369,8 @@ class ServerTestEnvironmentTests(unittest.TestCase):
                     (remote_sdk / "stale.go").write_text("package stale\n")
                 if index and remote_schema.is_dir():
                     (remote_schema / "stale.json").write_text("{}\n")
+                if index and remote_wire.is_dir():
+                    (remote_wire / "stale.json").write_text("{}\n")
                 with self.subTest(args=args, extra=extra):
                     result = subprocess.run(["bash", str(checkout / "scripts/test/test-server.sh"), *args],
                                             env={**environment, **extra}, capture_output=True, text=True, timeout=30)
@@ -346,6 +394,10 @@ class ServerTestEnvironmentTests(unittest.TestCase):
                                      ["-a", "--delete", "schema/extension/",
                                       "fake-hub:.cache/persona-test-checkout/schema/extension/"])
                     self.assertFalse((remote_schema / "stale.json").exists())
+                    self.assertEqual(json.loads(wire_capture.read_text()),
+                                     ["-a", "--delete", "schema/wire/",
+                                      "fake-hub:.cache/persona-test-checkout/schema/wire/"])
+                    self.assertFalse((remote_wire / "stale.json").exists())
                     for record in records:
                         child = record["env"]
                         # the pinned Bun lives in the hub user's ~/.local/bin, which a non-interactive shell may lack (#1947)

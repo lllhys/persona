@@ -45,13 +45,18 @@ const PREVIEW: ImportedProvider[] = [
 
 let calls: Call[];
 let preview: (machine: string) => Response;
-let answer: () => Response;
+let answer: () => Response | Promise<Response>;
 let host: HTMLDivElement;
 let root: Root;
 let imported: () => void;
 let closed: () => void;
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+const deferred = () => {
+  let finish!: (response: Response) => void;
+  const promise = new Promise<Response>((resolve) => { finish = resolve; });
+  return { promise, finish };
+};
 const flush = async () => { for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); }); };
 const text = () => document.body.textContent ?? "";
 const q = <T extends Element = HTMLElement>(selector: string) => {
@@ -64,7 +69,7 @@ const importButton = () => [...document.body.querySelectorAll("button")].find((b
 const posted = () => calls.find((c) => c.method === "POST")!.body!;
 const radio = (group: string, split: boolean) => q(`[role="radiogroup"][aria-label="${t("settings-providerimport.choice_label", { name: group })}"] [data-choice="${split ? 0 : 1}"]`);
 
-async function draw(machines: Machine[] = MACHINES, one: { machine?: string; alias?: string } = {}) {
+async function draw(machines: Machine[] = MACHINES, one: { open?: boolean; machine?: string; alias?: string } = {}) {
   Object.assign(getState(), { machines });
   act(() => root.render(<ProviderImport open onClose={closed} onImported={imported} {...one} />));
   await flush();
@@ -99,6 +104,123 @@ afterEach(() => {
 });
 
 describe("provider import", () => {
+  it("does not close a reopened dialog when an earlier import succeeds", async () => {
+    const pending = deferred();
+    answer = () => pending.promise;
+    await draw();
+    await click(importButton());
+    await draw(MACHINES, { open: false });
+    await draw();
+    expect(importButton().disabled).toBe(true);
+
+    pending.finish(json({ created: ["cc_team"] }));
+    await flush();
+
+    expect(imported).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(closed).not.toHaveBeenCalled();
+    expect(importButton().disabled).toBe(false);
+  });
+
+  it("does not show an earlier import failure on another computer", async () => {
+    const pending = deferred();
+    answer = () => pending.promise;
+    preview = (machine) => json({ machine, providers: PREVIEW });
+    await draw();
+    await click(importButton());
+    const select = q<HTMLSelectElement>("select");
+    act(() => {
+      select.value = "desk";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+
+    pending.finish(json({ error: "The earlier computer is offline", code: "offline" }, 503));
+    await flush();
+
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    expect(imported).not.toHaveBeenCalled();
+    expect(closed).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(t("settings-providerimport.failed_from", { computer: "Laptop", error: t("lib-providers.offline") }), "error");
+    expect(importButton().disabled).toBe(false);
+  });
+
+  it.each(["computer", "alias"] as const)("retires an import after changing the %s away and back", async (change) => {
+    const pending = deferred();
+    answer = () => pending.promise;
+    preview = (machine) => json({ machine, providers: PREVIEW });
+    await draw(MACHINES, { machine: "laptop", alias: "cc_team" });
+    await click(importButton());
+    await draw(MACHINES, change === "computer" ? { machine: "desk", alias: "cc_team" } : { machine: "laptop", alias: "cc_relay" });
+    await draw(MACHINES, { machine: "laptop", alias: "cc_team" });
+
+    pending.finish(json({ created: ["cc_team"] }));
+    await flush();
+
+    expect(closed).not.toHaveBeenCalled();
+    expect(imported).toHaveBeenCalledOnce();
+    expect(q<HTMLSelectElement>("select").value).toBe("laptop");
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
+
+  it("admits only one import before rendering busy and across a close/reopen", async () => {
+    const pending = deferred();
+    answer = () => pending.promise;
+    await draw();
+    const button = importButton();
+    act(() => { button.click(); button.click(); });
+    await flush();
+    await draw(MACHINES, { open: false });
+    await draw();
+    await click(importButton());
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+
+    pending.finish(json({ created: ["cc_team"] }));
+    await flush();
+    const next = deferred();
+    answer = () => next.promise;
+    await click(importButton());
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(2);
+    expect(importButton().disabled).toBe(true);
+    next.finish(json({ created: ["cc_relay"] }));
+    await flush();
+    expect(closed).toHaveBeenCalledOnce();
+    expect(imported).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a current failure inline and permits an intentional retry", async () => {
+    const pending = deferred();
+    answer = () => pending.promise;
+    await draw();
+    await click(importButton());
+    pending.finish(json({ error: "offline", code: "offline" }, 503));
+    await flush();
+    expect(q('[role="alert"]').textContent).toBe(t("lib-providers.offline"));
+    expect(importButton().disabled).toBe(false);
+    expect(toast).not.toHaveBeenCalled();
+
+    answer = () => json({ created: ["cc_team"] });
+    await click(importButton());
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    expect(closed).toHaveBeenCalledOnce();
+    expect(imported).toHaveBeenCalledOnce();
+  });
+
+  it.each([true, false])("reports a settled import after unmount without calling the removed view (success: %s)", async (success) => {
+    const pending = deferred();
+    answer = () => pending.promise;
+    await draw();
+    await click(importButton());
+    act(() => root.render(null));
+    pending.finish(success ? json({ created: ["cc_team"] }) : json({ error: "offline", code: "offline" }, 503));
+    await flush();
+
+    expect(closed).not.toHaveBeenCalled();
+    expect(imported).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith(expect.any(String), success ? "ok" : "error");
+    if (!success) expect(toast).toHaveBeenCalledWith(t("settings-providerimport.failed_from", { computer: "Laptop", error: t("lib-providers.offline") }), "error");
+  });
+
   it("opens on the first online computer with one provider per alias where they differ, and hiding on", async () => {
     await draw();
     expect(calls[0]).toMatchObject({ method: "GET", path: "/api/v1/launchers/import", query: "machine=laptop" });

@@ -17,7 +17,7 @@ import org.robolectric.annotation.Config
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 
-// Extensions' UI slots on Android (docs/extensions/extensions.md "UI slots"): what the settings home, the settings tab's badge and
+// Extensions' UI slots on Android (docs/extensions/extensions.md "UI slots"): what Settings › Extensions, the settings tab's badge and
 // machines' pages get from the hub's list, and the badge events.
 /** Robolectric for the words: the app's strings in Simplified Chinese (robolectric.properties). */
 @RunWith(AndroidJUnit4::class)
@@ -54,6 +54,7 @@ class ExtensionSlotsTest {
         assertSame(PhIcons.ChartBar, ExtensionSlotText.icon("chart"))
         assertSame(PhIcons.Coins, ExtensionSlotText.icon("money"))
         assertSame(PhIcons.CalendarBlank, ExtensionSlotText.icon("calendar"))
+        assertSame(PhIcons.List, ExtensionSlotText.icon("list"))
         assertSame(PhIcons.PuzzlePiece, ExtensionSlotText.icon("plugin"))
         assertSame(PhIcons.PuzzlePiece, ExtensionSlotText.icon("rocket"))
         assertSame(PhIcons.PuzzlePiece, ExtensionSlotText.icon(null))

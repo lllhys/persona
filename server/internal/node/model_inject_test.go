@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 )
 
 // hostileModels are what a typed model id must never turn into: more than one argument, a flag, a command run by the
@@ -25,7 +26,7 @@ var hostileModels = []string{
 // Claude Code.
 func TestHostileModelIsRefusedEverywhere(t *testing.T) {
 	for _, m := range hostileModels {
-		if err := (modelExecution{Model: m}).check(); err == nil || err.Error() != "invalid model" {
+		if err := (modelExecution{Model: m}).check("claude"); err == nil || err.Error() != "invalid model" {
 			t.Errorf("check(%q) = %v, want invalid model", m, err)
 		}
 		if _, err := modelCommand(m); err == nil && strings.TrimSpace(m) != "opus" {
@@ -38,7 +39,7 @@ func TestHostileModelIsRefusedEverywhere(t *testing.T) {
 	}
 	for _, m := range []string{"", "opus", "opus[1m]", "vendor/model-x", "qwen3:32b", "claude-x@20250101",
 		"~anthropic/claude-opus-latest", "~anthropic/claude-sonnet-latest[1m]"} {
-		if err := (modelExecution{Model: m}).check(); err != nil {
+		if err := (modelExecution{Model: m}).check("claude"); err != nil {
 			t.Errorf("check(%q) = %v", m, err)
 		}
 	}
@@ -75,8 +76,8 @@ func TestModelIsOneQuotedArgumentOnTheCommandLine(t *testing.T) {
 			if resume {
 				argv, ok := n.claudeResumeArgv(spec, startID)
 				if !ok {
-					if strings.Contains(m, "'") {
-						continue // herdr refuses an apostrophe: no resume command is given at all
+					if strings.Contains(m, "'") || strings.IndexFunc(m, unicode.IsControl) >= 0 {
+						continue // herdr refuses an apostrophe or a control character: no resume command is given at all
 					}
 					t.Fatalf("%q: no resume command", m)
 				}

@@ -22,5 +22,6 @@
   "reacted": "reacted",
   "no_detail": "No more details",
   "composer_placeholder": "Message this agent (Enter to send, Shift+Enter for a new line)",
-  "send": "Send"
+  "send": "Send",
+  "restore": "Restore"
 }

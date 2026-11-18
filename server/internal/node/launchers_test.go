@@ -48,7 +48,7 @@ func asNodeIn(t *testing.T, dir, defs, script string) string {
 func listFrom(t *testing.T, defs string) []proto.Launcher {
 	t.Helper()
 	list, _, _, _ := mergeLaunchers(asNode(t, defs, launcherScript))
-	return list
+	return withoutInstalledWorkAgents(list)
 }
 
 func fixture(t *testing.T, name string) string {
@@ -133,6 +133,7 @@ func TestHelperAndAliasesTogether(t *testing.T) {
 // No helper, no alias that starts claude: plain claude, as before.
 func TestNoLaunchersMeansClaude(t *testing.T) {
 	list := listFrom(t, `alias ll="ls -l"`)
+	list = withoutInstalledWorkAgents(list)
 	if len(list) != 1 || list[0].Name != "claude" {
 		t.Fatalf("got %v", list)
 	}
@@ -154,6 +155,7 @@ func TestCodexOnTheMachineIsALauncher(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, codex, _, _ := mergeLaunchers(asNodeIn(t, home, `alias ll="ls -l"`, launcherScript))
+	list = withoutInstalledWorkAgents(list)
 	if len(list) != 2 || list[0].Name != "claude" || list[1].Name != "codex" || list[1].Agent != "codex" || len(codex["codex"]) != 1 {
 		t.Fatalf("got %v, codex %v", list, codex)
 	}
@@ -204,5 +206,41 @@ func TestRedactAliasDefinition(t *testing.T) {
 	}
 	if got := redactSecrets(`ANTHROPIC_AUTH_TOKEN=sk-fake-aaaaaaaaaaaaaaaaaaaa claude`); strings.Contains(got, "aaaaaaaa") {
 		t.Fatalf("redacted: %s", got)
+	}
+}
+
+// withoutInstalledWorkAgents drops pi, cursor and agy. The launcher script lists them whenever the program is
+// installed, and this machine may have one; the assertions here are about the rc file, not those programs.
+func withoutInstalledWorkAgents(list []proto.Launcher) []proto.Launcher {
+	out := make([]proto.Launcher, 0, len(list))
+	for _, l := range list {
+		if l.Name == "pi" || l.Name == "cursor" || l.Name == "agy" {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// pi, the Cursor CLI and the Antigravity CLI on PATH are launchers of their own, after the Claude and Codex ones.
+func TestWorkAgentsOnPathAreLaunchers(t *testing.T) {
+	parts := []string{"", "", "", "", "", "/usr/bin/pi", "", "/usr/local/bin/agy", "", ""}
+	list, _, _, _ := mergeLaunchers(launcherBegin + strings.Join(parts, "\x1d") + launcherEnd)
+	var got []string
+	for _, l := range list {
+		got = append(got, l.Name+"="+l.Agent)
+	}
+	want := []string{"claude=", "pi=pi", "agy=agy"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("launchers %v, want %v", got, want)
+	}
+}
+
+func TestAliasLauncherEnvironmentReset(t *testing.T) {
+	words := []string{"export", "ANTHROPIC_BASE_URL=https://old.example.com", ";",
+		"ANTHROPIC_MODEL=old", "env", "-i", "claude", "--model", "explicit"}
+	got, _, ok := aliasLauncher(words)
+	if !ok || got.BaseURL != "" || got.Model != "explicit" {
+		t.Errorf("launcher after environment reset: %+v, found=%t", got, ok)
 	}
 }

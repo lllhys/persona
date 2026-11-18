@@ -13,6 +13,8 @@ export interface Listing {
   error?: string;
 }
 
+const sameLayout = (a: PanesResponse | undefined, b: PanesResponse) => a !== undefined && JSON.stringify(a) === JSON.stringify(b);
+
 /** `enabled` false reads nothing (the sidebar's tree, off). */
 export function usePanes(machines: Machine[], enabled = true) {
   const [listing, setListing] = useState<Record<string, Listing>>({});
@@ -37,10 +39,16 @@ export function usePanes(machines: Machine[], enabled = true) {
           shown.current.set(mid, n);
           return true;
         };
+        // A reply that repeats what is shown keeps the object (and so the trees built from it and every row): the
+        // layout rarely changes between two reads, and each machine's reply would re-render the page or the sidebar.
         return api<PanesResponse>(`/machines/${enc(mid)}/panes`).then(
-          (data) => fresh() && setListing((l) => ({ ...l, [mid]: { data } })),
+          (data) => fresh() && setListing((l) => (l[mid] && l[mid].error === undefined && sameLayout(l[mid].data, data) ? l : { ...l, [mid]: { data } })),
           // a failed read keeps what was seen: the list does not blink out
-          (e) => fresh() && setListing((l) => ({ ...l, [mid]: { data: l[mid]?.data, error: errorText(e) } })),
+          (e) => {
+            if (!fresh()) return;
+            const error = errorText(e);
+            setListing((l) => (l[mid]?.error === error ? l : { ...l, [mid]: { data: l[mid]?.data, error } }));
+          },
         );
       }),
     );

@@ -24,6 +24,10 @@ class HubSessionsRepository(
     override val machines = mutableMachines.asStateFlow()
     private val mutableSessions = MutableStateFlow<List<Session>>(emptyList())
     override val sessions = mutableSessions.asStateFlow()
+    private val mutableAdoptedSessions = MutableStateFlow<List<Session>>(emptyList())
+    override val adoptedSessions = mutableAdoptedSessions.asStateFlow()
+    private val mutableStartedThreads = MutableStateFlow(emptyMap<SessionKey, Session>())
+    override val startedThreads = mutableStartedThreads.asStateFlow()
     private val mutableListStatus = MutableStateFlow(SessionListStatus())
     override val listStatus = mutableListStatus.asStateFlow()
     internal val verifiedLists = MutableStateFlow(VerifiedSessionLists())
@@ -556,12 +560,27 @@ class HubSessionsRepository(
         if (session.machineId.isBlank() || session.sessionId.isBlank()) return
         restored.await()
         lock.withLock {
+            mutableAdoptedSessions.value = (mutableAdoptedSessions.value.filterNot { it.key == session.key } + session).takeLast(WINDOW_SIZE)
             if (mutableSessions.value.any { it.key == session.key }) return@withLock
             // A single start response isn't authoritative filtered membership. Reconcile the bounded list instead.
             if (mode == Mode.Paged) { invalidations.trySend(""); return@withLock }
             sessionChanges[session.machineId] = ++revision
             mutableSessions.value = (mutableSessions.value + session).let { if (mode.holdsAll) it else it.take(WINDOW_SIZE) }
             persist()
+        }
+    }
+
+    override suspend fun adoptThread(previous: SessionKey, session: Session) {
+        if (previous.machineId != session.machineId || previous == session.key) return
+        restored.await()
+        val waiting = lock.withLock {
+            (mutableAdoptedSessions.value.lastOrNull { it.key == previous }
+                ?: mutableSessions.value.firstOrNull { it.key == previous })?.awaitingFirstMessage == true
+        }
+        if (!waiting) return
+        adopt(session)
+        lock.withLock {
+            mutableStartedThreads.value = (mutableStartedThreads.value + (previous to session)).toList().takeLast(WINDOW_SIZE).toMap()
         }
     }
 

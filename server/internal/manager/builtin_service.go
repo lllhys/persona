@@ -377,7 +377,7 @@ func (e *env) builtinBinding(ctx context.Context, home string, j builtinJoin) (b
 		return b, false, ConfigError{fmt.Errorf("the built-in manager is not bound to a hub, and %s has no code: "+
 			"persona-hub manager-code on the hub's machine prints one", managerconf.BuiltinCodeEnv)}
 	}
-	b, err = JoinBuiltin(ctx, JoinOptions{Hub: j.hub, Code: j.code, Fingerprint: j.fingerprint, AllowPlaintext: j.plaintext}, home)
+	b, err = JoinBuiltin(ctx, JoinOptions{Hub: j.hub, Code: j.code, Lang: e.l(), Fingerprint: j.fingerprint, AllowPlaintext: j.plaintext}, home)
 	return b, err == nil, err
 }
 

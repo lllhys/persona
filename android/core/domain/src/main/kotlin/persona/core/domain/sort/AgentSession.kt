@@ -12,11 +12,13 @@ data class AgentSession(
     val session: Session,
     val stateSince: String? = null,
     val hasRunningSubagent: Boolean = false,
+    /** The open chat that was Unread when opened (iOS `AgentListOrder.held`), until its chat is left. */
+    val heldInList: Boolean = false,
+    /** The hub supplies the authoritative hierarchy; parent-id inference belongs only to older hubs. */
+    val hierarchyKnown: Boolean = false,
 ) {
     val id: String get() = session.key.path
-    val state: AgentState get() = session.state?.let { wire ->
-        AgentState.entries.firstOrNull { it.wire == wire } ?: AgentState.Unknown
-    } ?: AgentState.of(null, session.status)
+    val state: AgentState get() = session.foldedState
     val isLive: Boolean get() = state != AgentState.Offline
     val isQuiet: Boolean get() = state == AgentState.Idle || state == AgentState.Unknown
     val isWaiting: Boolean get() = isQuiet && (session.waiting
@@ -27,10 +29,19 @@ data class AgentSession(
      */
     val asksYou: Boolean get() = state == AgentState.Idle && session.awaitsReply
     /** Working, but all it still runs in the background only waits (iOS `Session.waitsInBackground`, #6045). */
-    val waitsInBackground: Boolean get() = state == AgentState.Working && session.backgroundWaiting
+    val waitsInBackground: Boolean get() = state == AgentState.Working && session.backgroundWaiting &&
+        (session.children?.working ?: 0) == 0 && (session.children?.needsYou ?: 0) == 0
+    /**
+     * Working while its turn has ended, because a workflow runs (iOS `Session.isBackgroundWorking`, #2935): its state is written
+     * "Working (Background)" where a state is spelled out ([stateWord]). iOS reads it off the running workflows, not off the
+     * hub's `background_working`, and not for the assistant's own conversation.
+     */
+    val isBackgroundWorking: Boolean get() = !session.assistant && state == AgentState.Working &&
+        // a summary row's count also covers a run it sends no progress for (an older runtime's background entry, #5888)
+        (session.runningWorkflows.isNotEmpty() || (session.waiting != null && (session.runningWorkflowsCount ?: 0) > 0))
     fun awaitsReply(mutes: AgentPreferences): Boolean = asksYou && !mutes.mutes(this)
-    /** Kept out of the idle folds and quiet spaces: not quiet, waiting to be woken, or Awaiting Reply ([awaitsReply]). */
-    fun stays(mutes: AgentPreferences): Boolean = !isQuiet || isWaiting || awaitsReply(mutes)
+    /** Held rows stay out of idle folds; quiet-space membership separately includes [AgentSpace.quiet]. */
+    fun stays(mutes: AgentPreferences): Boolean = !isQuiet || heldInList || isWaiting || awaitsReply(mutes)
     val updatedAt: Instant? get() = parseTime(session.updatedAt)
     val sortDate: Instant? get() = if (state == AgentState.Working) parseTime(stateSince) ?: updatedAt else updatedAt
     val spacePreferenceKey: String? get() = session.spaceName?.let { "${session.machineId}/$it" }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/proxyproto"
 )
 
@@ -27,7 +28,7 @@ func ListenSlot(path string, addr net.Addr) (*SlotListener, error) {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	ln, err := net.Listen("unix", path)
+	ln, err := osproc.Listen("unix", path)
 	if err != nil {
 		return nil, err
 	}

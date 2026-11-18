@@ -6,11 +6,16 @@ import SwiftUI
 // first time, the field for it with the steps; then Sign In with Microsoft, the same flow as Google's.
 
 /// The Outlook part of Add Mail Account: the client ID while the hub has none (or the user changes it), else the sign-in.
+/// Its requests go to the assistant the mail page opened for, as its other ones (`settingsAPI`): the account signed in
+/// here is that assistant's.
 struct OutlookSignInSection: View {
     @Environment(AppModel.self) private var model
     @Environment(\.webAuthenticationSession) private var webAuth
+    /// The mail page's client (`AddMailAccountView.settingsAPI`); nil: the current assistant's, kept from the first request.
+    var api: APIClient? = nil
     @Binding var error: String?
     var done: () -> Void
+    @State private var capturedAPI: APIClient?
     @State private var config: APIClient.MicrosoftConfig?
     @State private var clientID = ""
     @State private var editing = false
@@ -81,8 +86,17 @@ struct OutlookSignInSection: View {
         }
     }
 
+    /// The client this section's requests go to (`client(_:app:)`), the same one from its first request on.
+    private func requestAPI() -> APIClient? {
+        if capturedAPI == nil { capturedAPI = Self.client(api, app: model.api) }
+        return capturedAPI
+    }
+
+    /// The mail page's client when it has one, else the current assistant's as the app names it (none for the default's).
+    static func client(_ given: APIClient?, app: APIClient?) -> APIClient? { given ?? app?.currentAssistantSettings() }
+
     private func load() async {
-        guard let api = model.api else { return }
+        guard let api = requestAPI() else { return }
         do {
             config = try await api.microsoftConfig()
         } catch {
@@ -91,7 +105,7 @@ struct OutlookSignInSection: View {
     }
 
     private func save() async {
-        guard let api = model.api else { return }
+        guard let api = requestAPI() else { return }
         busy = true
         defer { busy = false }
         do {
@@ -107,7 +121,7 @@ struct OutlookSignInSection: View {
     /// Microsoft's sign-in page in the system browser; whatever it calls back with goes to the hub, which swaps a code
     /// for a refresh token, or says what to do about an error (an admin has to consent, IMAP is off…).
     private func signInWithMicrosoft() async {
-        guard let api = model.api else { return }
+        guard let api = requestAPI() else { return }
         busy = true
         defer { busy = false }
         error = nil

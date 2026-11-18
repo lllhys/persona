@@ -272,6 +272,66 @@ func TestKBRPCExtensionWrites(t *testing.T) {
 	}
 }
 
+// A person's profile through kb.update (an extension's own), with what the update carried that a person does not use
+// named in ignored; kb.get gives it back structured, summary.md shows it labelled; a profile that breaks a rule is
+// invalid_params and nothing is written.
+func TestKBRPCPersonProfile(t *testing.T) {
+	s := kbServiceOn(t, newFakeHub(), newKBStore(), t.TempDir(), nil)
+	e := kbEng(t, s)
+	if err := e.Store.PutPerson(&kb.Person{ID: "example-person", Name: "Example Person"}); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(method, raw string) (string, error) {
+		t.Helper()
+		out, ok, err := s.kbRequest(context.Background(), method, json.RawMessage(raw))
+		if !ok {
+			t.Fatalf("%s not handled", method)
+		}
+		b, _ := json.Marshal(out)
+		return string(b), err
+	}
+	ext := func(params string) (string, error) {
+		return ask(assistantwire.MethodKBExtensionUpdate, `{"extension":"people-notes","params":`+params+`}`)
+	}
+	got, err := ext(`{"kind":"people","id":"example-person","summary":"hand-written","log":"x","profile":{` +
+		`"facts":[{"text":"runs the example team","sources":["chats/dm-1"]}],` +
+		`"inferences":[{"text":"busy on Mondays","basis":"slow replies on Mondays","sources":["chats/dm-1"]}],` +
+		`"commitments":[{"text":"share the slides","owes":"them","sources":["chats/dm-1"]}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res assistantwire.KBUpdateResult
+	if err := json.Unmarshal([]byte(got), &res); err != nil || res.ID != "example-person" || string(res.Before["profile"]) != "null" ||
+		len(res.Ignored) != 2 || res.Ignored[0].Field != "log" || res.Ignored[1].Field != "summary" || !strings.Contains(res.Ignored[1].Reason, "profile") {
+		t.Fatalf("result %s", got)
+	}
+	got, _ = ask(assistantwire.MethodKBGet, `{"kind":"people","id":"example-person","recent_chars":0}`)
+	var d assistantwire.KBGetResult
+	if err := json.Unmarshal([]byte(got), &d); err != nil || d.Detail == nil {
+		t.Fatalf("get %s", got)
+	}
+	rec, ok := d.Detail.Profiles["ext:people-notes"]
+	if !ok || rec.Profile.Commitments[0].Owes != "them" || !strings.Contains(d.Detail.Summary, "[推断·仅供参考] busy on Mondays（依据：slow replies on Mondays）") ||
+		strings.Contains(d.Detail.Summary, "hand-written") {
+		t.Fatalf("detail %+v\n%s", d.Detail.Profiles, d.Detail.Summary)
+	}
+	var re *rpc.Error
+	if _, err := ext(`{"kind":"people","id":"example-person","note":"n","profile":{"inferences":[{"text":"t","sources":["s"]}]}}`); !errors.As(err, &re) ||
+		re.Code != bus.CodeInvalidParams || !strings.Contains(re.Message, "basis") {
+		t.Fatalf("invalid profile: %v", err)
+	}
+	if p, _ := e.Store.Person("example-person"); p.Note != "" {
+		t.Fatalf("a refused update wrote the note: %q", p.Note)
+	}
+	if _, err := ext(`{"kind":"people","id":"example-person","profile":{"facts":[{"text":"t","sources":["s"],"source_url":"x"}]}}`); !errors.As(err, &re) || re.Code != bus.CodeInvalidParams {
+		t.Fatalf("an unknown key is still refused: %v", err)
+	}
+	// The user's path (no extension) says what it did not use too.
+	if got, err := ask(assistantwire.MethodKBUpdate, `{"kind":"people","id":"example-person","summary":"x"}`); err != nil || !strings.Contains(got, `"ignored":[{"field":"summary"`) {
+		t.Fatalf("user update: %s %v", got, err)
+	}
+}
+
 // kb.recent is one feed over every source: chats of any source (with it), documents, meetings, events, recordings.
 func TestKBRPCRecentAcrossSources(t *testing.T) {
 	s := kbServiceOn(t, newFakeHub(), newKBStore(), t.TempDir(), nil)

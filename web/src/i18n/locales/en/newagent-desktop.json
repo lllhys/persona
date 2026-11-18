@@ -1,0 +1,11 @@
+{
+  "temporary_claude": "Grouped together in the Claude app's sidebar",
+  "temporary_codex": "Among the Codex App's chats in no project",
+  "use_temporary": "Use a temporary session",
+  "new_folder": "New folder…",
+  "new_folder_name": "Folder name",
+  "new_folder_use": "Use",
+  "new_folder_hint": "Made in “{folder}” when the session starts.",
+  "desktop_hint_claude": "Starts in Claude's desktop app. With no folder it goes to one temporary folder beside the app's projects; a new folder is made when it starts.",
+  "desktop_hint_codex": "Starts in the Codex App. With no folder it goes where the App keeps chats in no project; a new folder is made when it starts."
+}

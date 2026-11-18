@@ -16,3 +16,11 @@ nonisolated enum SentSettingsLink {
         }
     }
 }
+
+/// `persona://iphone/setup`: this iPhone's guided setup (#8199), the link a failed iPhone tool call has the assistant give.
+nonisolated enum IPhoneSetupLink {
+    static func matches(_ url: URL) -> Bool {
+        HubNaming.accepts(scheme: url.scheme) && url.host()?.lowercased() == "iphone"
+            && ["/setup", "/setup/"].contains(url.path().lowercased())
+    }
+}

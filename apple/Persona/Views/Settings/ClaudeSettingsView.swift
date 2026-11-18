@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// Claude Code's /config options (a whitelist of ~/.claude/settings.json keys) on each machine.
 /// Which agent's settings a page edits: Claude Code's settings.json or Codex's config.toml (the node keeps a whitelist
@@ -63,7 +64,9 @@ struct ClaudeSettingsView: View {
             if agent == .claude, let live = liveReplies, live.ref == ref, !live.unsupported {
                 LiveRepliesSection(model: live, others: applyAll ? onlineMachines.filter { $0.ref != ref }.map(\.ref) : [])
             }
-            if agent == .claude, !machineID.isEmpty { ClaudeDirsSection(ref: ref) }
+            // `.id(ref)` drops the previous computer's rows, input and busy at once; without it Block / Unblock
+            // would build a list from the old state and send it to the computer just picked (#9276).
+            if agent == .claude, !machineID.isEmpty { ClaudeDirsSection(ref: ref).id(ref) }
         }
         .themedPage()
         .detailTitle(agent.title)

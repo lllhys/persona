@@ -52,6 +52,10 @@ func (n *Node) gitReview(ctx context.Context, p proto.GitReviewRequest) (*proto.
 	if err != nil {
 		return nil, err
 	}
+	// A folder that is gone (a removed worktree) is said as such, not as a folder outside any repository.
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil, reviewErr(proto.CodeNoFolder, "the folder is not there")
+	}
 	root, err := git(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil || strings.TrimSpace(root) == "" {
 		return nil, reviewErr(proto.CodeNotGit, "not a Git repository")

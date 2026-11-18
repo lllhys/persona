@@ -125,6 +125,10 @@
     <string name="settings_notify_quiet_end">Until</string>
     <string name="settings_notify_quiet_footer">During these hours you\'re not told when an agent finishes (the morning\'s Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. A chat bot\'s nudges about unanswered cards also wait while any of your devices is in its quiet hours. In this phone\'s time zone.</string>
     <string name="settings_notify_quiet_footer_zone">During these hours you\'re not told when an agent finishes (the morning\'s Today card sums it up), and things that need you arrive without a sound. Reminders you asked the assistant for still come as usual. A chat bot\'s nudges about unanswered cards also wait while any of your devices is in its quiet hours. They\'re in %1$s, where they were set; changing them here puts them in this phone\'s time zone.</string>
+    <string name="settings_notify_low_distraction">Low-distraction mode</string>
+    <string name="settings_notify_low_distraction_subtitle">Only what needs you notifies you; the rest waits for the briefing</string>
+    <string name="settings_notify_low_distraction_footer">For all your devices. When on, questions, approvals, decisions only you can make, your reminders and the main conversation\'s notices still notify you; task results, “Please verify” requests and other conversations\' notices wait for the briefing and Held pushes, and finished agents stay silent.</string>
+    <string name="settings_notify_low_distraction_save_failed">Couldn\'t save; low-distraction mode is back as it was.</string>
     <string name="settings_reading">Reading</string>
     <string name="settings_retry_read">Try again</string>
     <string name="settings_saving">Saving…</string>
@@ -272,6 +276,14 @@
     <string name="settings_network_unreadable">Couldn\'t read the network status</string>
     <string name="settings_update_none">No update available yet.</string>
     <string name="settings_update_check_failed">Couldn\'t check for updates. Try again later.</string>
+    <string name="settings_update_up_to_date">Up to date</string>
+    <string name="settings_update_no_apk">Hub has no APK</string>
+    <string name="settings_update_package_mismatch">Different app</string>
+    <string name="settings_update_package_mismatch_detail">The release APK is for a different Android app and cannot update this installation.</string>
+    <string name="settings_update_signature_mismatch">Signature mismatch</string>
+    <string name="settings_update_signature_mismatch_detail">The release APK is signed with another key. Uninstall this app, then install the release APK from GitHub. Uninstalling removes local app data.</string>
+    <string name="settings_update_last_checked">Last checked %1$s</string>
+    <string name="settings_update_source">Hub: %1$s</string>
     <string name="settings_off">Off</string>
     <string name="settings_retry_cleanup">Retry cleanup</string>
     <string name="settings_try_demo">No hub? Try the demo</string>
@@ -347,6 +359,7 @@
     <string name="settings_ready_needs_confirm">Needs your confirmation</string>
     <string name="settings_ready_skipped_note">Skipped; come back to set it anytime</string>
     <string name="settings_ready_open">Open settings</string>
+    <string name="settings_ready_allow_notifications">Allow</string>
     <string name="settings_ready_open_failed">Couldn\'t open system settings. Open Persona\'s app info from the phone\'s Settings.</string>
     <string name="settings_ready_undo_confirm">Undo</string>
     <string name="settings_ready_mark_done">Mark done</string>
@@ -414,6 +427,8 @@
     <string name="settings_triage_actions_about">After a temporary model service error (503 and the like), it sends “continue” up to 3 times; an agent waiting on a deploy, CI or another agent is woken on time to check for itself. Both run another turn of the agent on its own model. Pushing code, deploying or messaging others: the hub only asks you, it never does these on its own.</string>
     <string name="settings_triage_closeout">Ask for a closeout</string>
     <string name="settings_triage_closeout_about">When an agent stops after doing work without saying whether it\'s done, merged and deployed, and what\'s missing, its stop is held once to ask for that record. Costs one short extra turn on the agent\'s model</string>
+    <string name="settings_triage_closeout_ask">Ask for the status afterwards</string>
+    <string name="settings_triage_closeout_ask_about">When an agent that nobody supervises stops after doing work, without a closeout and without being clearly finished, Persona asks it once for a status report on the work already done. Costs one turn on the agent\'s model</string>
     <string name="settings_triage_reply_reminder">Remind when seen but unanswered</string>
     <string name="settings_triage_reply_reminder_about">When an agent asked you something and you looked but haven\'t replied for 30 minutes, you\'re reminded once. Rules only, no tokens spent.</string>
     <plurals name="settings_notify_long_turn">

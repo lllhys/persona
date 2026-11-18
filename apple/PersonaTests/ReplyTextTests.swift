@@ -1,3 +1,4 @@
+import SwiftUI
 import Testing
 import UIKit
 @testable import Persona
@@ -23,12 +24,28 @@ struct ReplyTextTests {
         let bold = s.attribute(.font, at: 4, effectiveRange: nil) as? UIFont
         let traits = bold?.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any]
         #expect((traits?[.weight] as? CGFloat ?? 0) >= UIFont.Weight.semibold.rawValue)
+        // Inline code on no background, in its own ink (#9477).
         let code = (s.string as NSString).range(of: "swift test")
-        #expect(s.attribute(.backgroundColor, at: code.location, effectiveRange: nil) != nil)
+        #expect(s.attribute(.backgroundColor, at: code.location, effectiveRange: nil) == nil)
+        #expect(s.attribute(.foregroundColor, at: code.location, effectiveRange: nil) as? UIColor == look.codeInk)
         // A link keeps its color and is not followed: a tap on the words is about the selection.
         let link = (s.string as NSString).range(of: "PR")
         #expect(s.attribute(.link, at: link.location, effectiveRange: nil) == nil)
         #expect(s.attribute(.foregroundColor, at: link.location, effectiveRange: nil) as? UIColor == look.link)
+    }
+
+    /// Inline code that meets a CJK letter has the chat's thin space on that side (`InlineCodeGap`, #9477), which
+    /// copies as nothing; in a written link the code is the link's color, in an agent's quiet words theirs.
+    @Test func inlineCodeRoomAndInk() {
+        let s = reply("用`pnpm`装依赖，提交是 `3854bdc`。")
+        #expect(s.string == "用\u{2009}pnpm\u{2009}装依赖，提交是 3854bdc。")
+        #expect(ReplyText.copyText(s) == "用pnpm装依赖，提交是 3854bdc。")
+        let linked = reply("见 [`docs/API.md`](https://example.com/docs)")
+        let at = (linked.string as NSString).range(of: "docs/API.md").location
+        #expect(linked.attribute(.foregroundColor, at: at, effectiveRange: nil) as? UIColor == look.link)
+        let quiet = ReplyText.Look(.reply(quiet: true), traits: UITraitCollection(preferredContentSizeCategory: .large))
+        let q = ReplyText.attributed("跑 `make`", look: quiet, width: 360)
+        #expect(q.attribute(.foregroundColor, at: (q.string as NSString).range(of: "make").location, effectiveRange: nil) as? UIColor == quiet.color)
     }
 
     /// Outside a fence `a*b*c` would be emphasis (`abc`); inside it is code, kept as written, monospaced, on the code
@@ -157,6 +174,62 @@ struct ReplyTextTests {
         #expect(try ink(attached) > 200)
     }
 
+    /// Given the sizes the lifted copy draws its tables at (by part), a table is not drawn again: it takes that much
+    /// room (#5291), no wider than the words (a wider one scrolls sideways there, as tall as it is). One whose part is
+    /// not laid out takes about the room of its rows, not drawn either.
+    @Test func aTableTakesTheRoomTheCopyDrawsItIn() throws {
+        let md = "看表：\n\n| 页面 | 风险 |\n| --- | --- |\n| 首页 | 低 |\n\n完"
+        func attachment(_ tables: [Int: [CGSize]]) throws -> NSTextAttachment {
+            let s = ReplyText.attributed(md, look: look, width: 360, tables: tables)
+            #expect(ReplyText.copyText(s) == md)
+            let at = (s.string as NSString).range(of: "\u{FFFC}").location
+            return try #require(s.attribute(.attachment, at: at, effectiveRange: nil) as? NSTextAttachment)
+        }
+        let room = try attachment([0: [CGSize(width: 150, height: 90)]])
+        #expect(room.bounds.size == CGSize(width: 150, height: 90))
+        #expect(room.image === ReplyText.blank)
+        #expect(try attachment([0: [CGSize(width: 720, height: 90)]]).bounds.size == CGSize(width: 360, height: 90))
+        let guessed = try attachment([:])
+        #expect(guessed.image === ReplyText.blank)
+        #expect(guessed.bounds.size == ReplyText.tableRoom(rows: 2, look: look, width: 360))
+    }
+
+    /// An answer drawn in parts (#5291): each line of its words says its part, found by the lines the parts start on,
+    /// and its tables' sizes are found by part.
+    @Test func eachLineOfAnAnswerInPartsSaysItsPart() throws {
+        // Lines: 0 「第一段」, 2-4 a table, 6 「第二段」, 8 the heading, 10 「第三段」; the parts start on 0, 6 and 8.
+        let md = "第一段。\n\n| 页面 | 风险 |\n| --- | --- |\n| 首页 | 低 |\n\n第二段。\n\n## 标题\n\n第三段。"
+        let s = ReplyText.attributed(md, look: look, width: 360, tables: [0: [CGSize(width: 200, height: 70)]], parts: [0, 6, 8])
+        func part(of words: String) -> Int? {
+            s.attribute(.replyPart, at: (s.string as NSString).range(of: words).location, effectiveRange: nil) as? Int
+        }
+        #expect(part(of: "第一段") == 0)
+        #expect(part(of: "\u{FFFC}") == 0)
+        #expect(part(of: "第二段") == 1)
+        #expect(part(of: "标题") == 2 && part(of: "第三段") == 2)
+        let at = (s.string as NSString).range(of: "\u{FFFC}").location
+        #expect((s.attribute(.attachment, at: at, effectiveRange: nil) as? NSTextAttachment)?.bounds.size == CGSize(width: 200, height: 70))
+        var untagged = 0
+        s.enumerateAttribute(.replyPart, in: NSRange(location: 0, length: s.length)) { value, range, _ in
+            if value == nil { untagged += range.length }
+        }
+        #expect(untagged == 0, "every character says its part")
+    }
+
+    /// However short its frame, the text view lays out all of its words: one that does not scroll fits its container to
+    /// its own height as its frame is set, and the words' last line (the line spacing under it past their frame) went.
+    @Test func theTextViewLaysOutAllOfItsWordsInAShortFrame() {
+        let v = LiftUITextView()
+        let place = LiftPlace()
+        place.offer = ProposedViewSize(width: 320, height: nil)
+        v.place = place
+        v.show("第一段。\n\n第二段。\n\n最后一段。", .reply(quiet: false))
+        v.frame = CGRect(x: 0, y: 0, width: 320, height: 30)
+        v.layoutIfNeeded()
+        let laid = v.layoutManager.glyphRange(for: v.textContainer)
+        #expect(laid.length > 0 && NSMaxRange(laid) == v.layoutManager.numberOfGlyphs)
+    }
+
     /// Selected to their ends, lines are highlighted across the whole width, a table's and the last line's too (the
     /// system's stopped at the table and at the last word); the end handle stays after the last word; a word inside a
     /// line is highlighted just where it is.
@@ -183,6 +256,69 @@ struct ReplyTextTests {
         #expect(one.count == 1 && (one.first?.rect.minX ?? 1) < 0.5 && (one.first?.rect.maxX ?? 320) < 160, "\(one.map(\.rect))")
     }
 
+    /// A point on a line moved onto the chat's (`snap`) finds that line's words (#6099). Moved up under a table, a line
+    /// starts inside the table picture's line, where the system's own lookup found the table: a handle dragged onto the
+    /// line under a table ended before the table. Moved down, it passes the blank line after it, which stays.
+    @Test(arguments: [-40, 40] as [CGFloat]) func aPointOnALineMovedOntoTheChatsFindsItsWords(by shift: CGFloat) throws {
+        let v = LiftUITextView()
+        v.frame = CGRect(x: 0, y: 0, width: 370, height: 1000)
+        v.show("开头一段。\n\n| 页面 | 风险 |\n| --- | --- |\n| 首页 | 低 |\n| 价格页 | 中 |\n\n步骤：\n\n结尾一段。", .reply(quiet: false))
+        v.layoutIfNeeded()
+        let text = v.text as NSString
+        func rect(_ words: String) throws -> CGRect {
+            let r = text.range(of: words)
+            let from = try #require(v.position(from: v.beginningOfDocument, offset: r.location))
+            let to = try #require(v.position(from: from, offset: r.length))
+            let range = try #require(v.textRange(from: from, to: to))
+            return try #require(v.selectionRects(for: range).first).rect
+        }
+        let first = try rect("开头一段"), steps = try rect("步骤："), last = try rect("结尾一段")
+        // The chat's rows: its first line where TextKit put it, the two under the table `shift` lower.
+        v.snap(to: chat([first.midY, steps.midY + shift, last.midY + shift]))
+        v.layoutIfNeeded()
+        let moved = [("步骤：", try rect("步骤：")), ("结尾一段", try rect("结尾一段"))]
+        #expect(abs(moved[0].1.minY - steps.minY - shift) < 10, "步骤： did not move \(shift): \(steps) → \(moved[0].1)")
+        for (words, box) in moved {
+            let r = text.range(of: words)
+            let at = try #require(v.closestPosition(to: CGPoint(x: box.minX + 4, y: box.midY)))
+            let i = v.offset(from: v.beginningOfDocument, to: at)
+            #expect(i >= r.location && i <= NSMaxRange(r), "a point on \(words) found \(i), not \(r.location)…\(NSMaxRange(r))")
+        }
+        // Past a line's end: that line's end, not the next line's start.
+        let end = try #require(v.closestPosition(to: CGPoint(x: 360, y: first.midY)))
+        #expect(v.offset(from: v.beginningOfDocument, to: end) == NSMaxRange(text.range(of: "开头一段。")))
+    }
+
+    /// A folded quote's lines past its fold lie at its card's bottom, hidden: a point there finds the last line that
+    /// shows, not a hidden one (#6099).
+    @Test func aPointAtAFoldedQuotesBottomFindsItsLastLineThatShows() throws {
+        let v = LiftUITextView()
+        v.frame = CGRect(x: 0, y: 0, width: 370, height: 1000)
+        v.show("> 第一行\n> 第二行\n> 第三行\n> 第四行\n\n后面一段。", .reply(quiet: false))
+        v.layoutIfNeeded()
+        let text = v.text as NSString
+        func rect(_ words: String) throws -> CGRect {
+            let r = text.range(of: words)
+            let from = try #require(v.position(from: v.beginningOfDocument, offset: r.location))
+            let to = try #require(v.position(from: from, offset: r.length))
+            let range = try #require(v.textRange(from: from, to: to))
+            return try #require(v.selectionRects(for: range).first).rect
+        }
+        let one = try rect("第一行"), two = try rect("第二行")
+        // The chat folds the quote after two lines; the paragraph after it starts under the card.
+        let card = one.minY...(two.maxY + 6)
+        v.snap(to: chat([one.midY, two.midY, card.upperBound + 20], folds: [card]))
+        v.layoutIfNeeded()
+        let at = try #require(v.closestPosition(to: CGPoint(x: two.minX + 4, y: card.upperBound - 2)))
+        let i = v.offset(from: v.beginningOfDocument, to: at), r = text.range(of: "第二行")
+        #expect(i >= r.location && i <= NSMaxRange(r), "a point at the card's bottom found \(i), not \(r.location)…\(NSMaxRange(r))")
+    }
+
+    /// The chat's lines for all of the words (`LiftSegment`): its rows and folded quotes, no line breaks to follow.
+    private func chat(_ rows: [CGFloat], folds: [ClosedRange<CGFloat>] = []) -> [LiftSegment] {
+        [LiftSegment(part: nil, box: nil, rows: rows, folds: folds, texts: [], tables: [])]
+    }
+
     /// Pixels with (nearly) full alpha: the words, not the faint rules and rows.
     private func ink(_ image: UIImage) throws -> Int {
         let cg = try #require(image.cgImage)
@@ -207,10 +343,10 @@ struct ReplyTextTests {
         #expect(shown(text) != text) // as a reply it would lose marks
     }
 
-    /// Sizes in em are whole points, as MarkdownUI draws them (`round(size × scale)`, #3188): inline code at 17 is 15,
-    /// the first heading 22, an agent's quiet words 15.
+    /// Sizes in em are whole points, as MarkdownUI draws them (`round(size × scale)`, #3188): inline code at 17 is 16
+    /// (#9477), the first heading 22, an agent's quiet words 15.
     @Test func emSizesAreWholePointsAsTheChatDraws() {
-        #expect(ReplyMetrics.points(ReplyMetrics.inlineCode, of: 17) == 15)
+        #expect(ReplyMetrics.points(ReplyMetrics.inlineCode, of: 17) == 16)
         #expect(ReplyMetrics.points(ReplyMetrics.heading1.size, of: 17) == 22)
         let s = reply("以 `cb3b` 开头\n\n# 标题")
         let code = (s.string as NSString).range(of: "cb3b").location, title = (s.string as NSString).range(of: "标题").location
@@ -218,6 +354,25 @@ struct ReplyTextTests {
         #expect((s.attribute(.font, at: title, effectiveRange: nil) as? UIFont)?.pointSize == ReplyMetrics.points(ReplyMetrics.heading1.size, of: look.size))
         let quiet = ReplyText.Look(.reply(quiet: true), traits: UITraitCollection(preferredContentSizeCategory: .large))
         #expect(quiet.size == ReplyMetrics.points(ReplyMetrics.quiet, of: look.size))
+    }
+
+    /// A reply's words are the size the chat draws them, MarkdownUI's (`ScaledMetric` relative to body, a whole point),
+    /// not the body text style's; your own message keeps the body style, its bubble's. A list's words start where the
+    /// chat's do: past a marker room of 1.5 em and the label's gap, 34 pt at the default size. At xxxLarge and AX5 the
+    /// text view had wrapped the words onto more lines than the chat, and a press on the last line picked words above it (#6552).
+    @Test func aReplyIsTheChatsSizeAndItsListsStartWhereTheChatsDo() {
+        #expect(ReplyMetrics.markerRoom(of: 17) + ReplyMetrics.markerGap == 34)
+        for c: UIContentSizeCategory in [.large, .extraExtraExtraLarge, .accessibilityExtraExtraExtraLarge] {
+            let traits = UITraitCollection(preferredContentSizeCategory: c)
+            let look = ReplyText.Look(.reply(quiet: false), traits: traits)
+            #expect(look.size == UIFontMetrics(forTextStyle: .body).scaledValue(for: Theme.Level.body.size, compatibleWith: traits).rounded(), "\(c.rawValue)")
+            let mine = ReplyText.Look(.plain(.primary), traits: traits)
+            #expect(mine.size == UIFont.preferredFont(forTextStyle: .body, compatibleWith: traits).pointSize, "\(c.rawValue)")
+            let s = ReplyText.attributed("- 甲乙\n  - 丙丁", look: look, width: 360)
+            let room = ReplyMetrics.markerRoom(of: look.size) + ReplyMetrics.markerGap
+            #expect(style(s, at: "甲")?.headIndent == room, "\(c.rawValue)")
+            #expect(style(s, at: "丙")?.headIndent == 2 * room, "\(c.rawValue): a nested item's words a marker further in")
+        }
     }
 
     /// The fonts follow the text size.

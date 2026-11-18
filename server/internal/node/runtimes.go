@@ -69,6 +69,7 @@ type runtimeHello struct {
 		Interrupt bool `json:"interrupt"`
 		Rename    bool `json:"rename"`
 		Close     bool `json:"close"`
+		Rewind    bool `json:"rewind"`
 		// Assistant: its launcher may run the Persona assistant (assistant_runtime.go; docs/integrations/runtimes.md "Assistant").
 		Assistant bool `json:"assistant"`
 		// Execution reports the actual per-session execution environment via session.execution.
@@ -87,12 +88,25 @@ type runtimeHello struct {
 		// (#3974): its permission cards that offer always get the node's key for the tool. A runtime that keeps its own
 		// rule (opencode's save rule, Paseo's suggestions) does not say it, so its grant is never widened to the tool.
 		KeepAlways bool `json:"keep_always"`
+		// Seen: session.seen goes to it when the user saw one of its sessions in Persona (#6299), for a runtime that
+		// keeps an unread mark of its own (Paseo's requiresAttention) to clear it there too.
+		Seen bool `json:"seen"`
 		// Archive: session.archive / session.unarchive go to it, for its own reversible archive (archive.go): a
 		// session the user archives in Persona is archived there too, and restored with it.
 		Archive bool `json:"archive"`
 		// Readonly: a session.start with permission_mode "plan" either starts in a read-only mode before its first
 		// prompt runs or is refused with readonly_unsupported; it never falls back to a writable provider (#3238).
 		Readonly bool `json:"readonly"`
+		// SameKind: its starts run only its own launchers (#8140). One it does not have runs on one of its launchers
+		// of the agent kind session.start names (agent_type), or is refused (launcher_kind_missing), never another
+		// kind of agent; what it asked for and does not run with comes back with the session (instead). As the start's
+		// engine host its launchers are then all a start there can run (runtimes_samekind.go). Without it the node sends a
+		// launcher it does not have as shell_launcher, as before (Cindy).
+		SameKind bool `json:"same_kind"`
+		// Workspaces: it keeps workspaces of its own, pushes them (runtime.workspaces) and makes worktrees as its
+		// workspaces (workspace.prepare, workspace.create): as the machine's engine, they are the catalog's and its
+		// worktrees are made by it (runtimeworkspaces.go).
+		Workspaces bool `json:"workspaces"`
 	} `json:"caps"`
 }
 
@@ -107,7 +121,15 @@ type runtimeConn struct {
 	hello    runtimeHello
 	ready    bool            // runtime.hello arrived
 	sessions []proto.Session // its last runtime.sessions
-	watched  map[string]bool // sessions this connection was asked to watch
+	watched  map[string]bool // sessions this connection was asked to watch, including an attempt still pending
+	// watchTokens identifies the current attempt for each watched session. The counter is per connection and is never
+	// reset while it can have an RPC outstanding, so a late error cannot clear a newer attempt or a later hub watch.
+	watchTokens    map[string]uint64
+	nextWatchToken uint64
+	// onWatchFailed is nil in production and used by concurrency tests to observe completion after locks are released.
+	onWatchFailed func()
+	// drivenTold: sessions this connection was told the hub started through another runtime (runtime.driven).
+	drivenTold map[string]bool
 	// What its list said beyond the rows the apps see: the terminal pane a session runs in (pane_id: the extension of a
 	// pi in a herdr pane, pi.go), how the terminal engine resumes one it lists offline (resume_argv), the Claude
 	// session whose transcript holds a session's conversation (transcript: a runtime running Claude Code through its
@@ -117,6 +139,10 @@ type runtimeConn struct {
 	resume       map[string][]string
 	transcripts  map[string]string
 	codexThreads map[string]string
+	// workspaces are its own workspaces, as its last runtime.workspaces said (caps.workspaces, runtimeworkspaces.go);
+	// workspacesSaid: it said them on this connection (a workspace missing from them is gone).
+	workspaces     []runtimeWorkspace
+	workspacesSaid bool
 	// daemon is its id in daemons.json when the node dialed it (daemons.go), "" for a runtime on the socket.
 	daemon string
 	// pid is the process at the other end of the runtime socket; 0 when not known (a daemon's link, the Orca bridge,

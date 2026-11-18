@@ -1,5 +1,6 @@
 import Foundation
 import PersonaKit
+import PersonaWire
 
 /// What a chat last went through, in its structure only (#3783): the batches that came in (how many, which lines, what
 /// the store did with them), when the streamed text started and was cleared, and how the end of the chat was drawn
@@ -106,6 +107,7 @@ final class ChatTrace {
         case .placeMap: "map"
         case .day: "day"
         case .viewed(_, let images): "viewed\(images.count)"
+        case .modeChange(_, let c): "mode:\(c.kind)"
         }
     }
 

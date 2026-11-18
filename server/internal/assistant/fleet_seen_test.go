@@ -136,3 +136,21 @@ func (m *noSeenMem) SeenTimes(context.Context) (map[[2]string]time.Time, error) 
 	m.calls++
 	return nil, errNoTable
 }
+
+// A runtime's session the user saw is told to its node (#6299), so a runtime keeping an unread mark of its own (Paseo)
+// clears it: only while its node lists it as unread (done), and only a runtime's.
+func TestSeenToldToTheRuntimesNode(t *testing.T) {
+	ft := newFleetTest(t)
+	ft.d.setSessions("mac", []proto.Session{
+		{SessionID: "paseo-1", Status: proto.StatusDone, SourceKind: proto.SourceRuntime},
+		{SessionID: "paseo-2", Status: proto.StatusIdle, SourceKind: proto.SourceRuntime},
+		{SessionID: "11111111-2222-4333-8444-555555555555", Status: proto.StatusDone},
+	})
+	for _, id := range []string{"paseo-2", "11111111-2222-4333-8444-555555555555", "paseo-1"} {
+		ft.s.markSeen(context.Background(), "mac", id)
+	}
+	waitFor(t, "the node told", func() bool { return len(ft.d.callsTo("mac", deviceSessionSeen)) == 1 })
+	if got := string(ft.d.callsTo("mac", deviceSessionSeen)[0]); got != `{"session_id":"paseo-1"}` {
+		t.Fatalf("told %s", got)
+	}
+}

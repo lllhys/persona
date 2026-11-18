@@ -1,0 +1,12 @@
+录音：2026-11-05 11:00 开始，约 0 分钟，手机录的，语言 en-US
+已知项目：（还没有）
+已有标签：
+
+转写：
+# 录音 · 2026-11-05 11:00 · Asia/Shanghai
+
+- 11:00:00 大家好，我们先看 export 的 bug
+- 11:00:10 Ada said the export drops entries over 4 MB
+- 11:00:20 那这一版先保留上限
+- 11:00:30 Bo will add the regression test by Friday
+- 11:00:40 上限は件ごとか録音ごとか、まだ決まっていません

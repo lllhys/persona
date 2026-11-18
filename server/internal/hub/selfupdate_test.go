@@ -338,7 +338,7 @@ func TestUpdateConfirmOrRollBack(t *testing.T) {
 	update.Save(update.PendingPath(h.upd.dir), pending)
 	var told []string
 	h.upd.notify = func(title, body string) { told = append(told, title) }
-	h.upd.boot()
+	bootUpdater(t, h.upd)
 	if h.upd.view().Confirmed {
 		t.Fatal("confirmed before checking")
 	}
@@ -397,7 +397,7 @@ func TestUpdateConfirmLeavesAClaimedUpdateToTheWatchdog(t *testing.T) {
 	h.upd.edgeConfirmed = func() { told++ }
 	pending := update.Pending{FromBuild: 202611021500, ToBuild: 202611021700, Target: target, Prev: target + ".prev", Online: []string{"box"}, Auto: true}
 	update.Save(update.PendingPath(h.upd.dir), pending)
-	h.upd.boot()
+	bootUpdater(t, h.upd)
 	os.Rename(update.PendingPath(h.upd.dir), update.PendingPath(h.upd.dir)+".watch") // the watchdog's claim
 	h.upd.confirm(context.Background(), pending)
 	if h.upd.view().Confirmed || len(h.upd.settings.History) != 0 || told != 0 {
@@ -416,7 +416,7 @@ func TestUpdateBootTakesBackAWatchdogsClaim(t *testing.T) {
 		h.build = update.Make("v2-202611021700", "release", "202611021700", p.srv.URL+"/dl")
 		pending.Target, pending.Prev = target, target+".prev"
 		update.Save(update.PendingPath(h.upd.dir)+".watch", pending)
-		if !h.upd.boot() || len(execs()) != 0 {
+		if !bootUpdater(t, h.upd) || len(execs()) != 0 {
 			t.Fatalf("the new build has no update to confirm (execd %v)", execs())
 		}
 		var back update.Pending
@@ -432,7 +432,7 @@ func TestUpdateBootTakesBackAWatchdogsClaim(t *testing.T) {
 		h, _, target, _ := updatingHub(t, p, "release")
 		pending.Target, pending.Prev = target, target+".prev"
 		update.Save(update.PendingPath(h.upd.dir)+".watch", pending)
-		if h.upd.boot() {
+		if bootUpdater(t, h.upd) {
 			t.Fatal("the old build thinks it has an update to confirm")
 		}
 		var rb update.RolledBack
@@ -451,7 +451,7 @@ func TestUpdateDirectDeployIsNotARollback(t *testing.T) {
 	h, _, target, execs := updatingHub(t, p, "release")
 	h.build = update.Make("deployed-202611021800", "release", "202611021800", p.srv.URL+"/dl")
 	update.Save(update.PendingPath(h.upd.dir), update.Pending{FromBuild: 202611021500, ToBuild: 202611021700, Target: target, Prev: target + ".prev"})
-	h.upd.boot()
+	bootUpdater(t, h.upd)
 	if _, err := os.Stat(update.RolledBackPath(h.upd.dir)); !os.IsNotExist(err) {
 		t.Fatal("a direct deploy was recorded as a rollback (its release would be marked bad)")
 	}
@@ -468,11 +468,11 @@ func TestUpdateStartsCountedOnce(t *testing.T) {
 	os.WriteFile(target+".prev", []byte("old"), 0o755)
 	update.Save(update.PendingPath(h.upd.dir), update.Pending{ToBuild: 202611021700, Target: target, Prev: target + ".prev"})
 	for i := 1; i <= updateMaxStarts; i++ {
-		if !h.upd.boot() || len(execs()) != 0 {
+		if !bootUpdater(t, h.upd) || len(execs()) != 0 {
 			t.Fatalf("start %d went back already", i)
 		}
 	}
-	h.upd.boot()
+	bootUpdater(t, h.upd)
 	if len(execs()) != 1 {
 		t.Fatal("start 4 did not go back")
 	}
@@ -485,7 +485,7 @@ func TestUpdateCrashLoopGoesBack(t *testing.T) {
 	h.build = update.Make("v2-202611021700", "release", "202611021700", p.srv.URL+"/dl")
 	os.WriteFile(target+".prev", []byte("old"), 0o755)
 	update.Save(update.PendingPath(h.upd.dir), update.Pending{ToBuild: 202611021700, Target: target, Prev: target + ".prev", Starts: updateMaxStarts})
-	h.upd.boot()
+	bootUpdater(t, h.upd)
 	if b, _ := os.ReadFile(target); string(b) != "old" || len(execs()) != 1 {
 		t.Fatal("a crash loop did not go back")
 	}
@@ -510,7 +510,7 @@ func TestUpdateUnsavedStartCountGoesBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(h.upd.dir, 0o700) })
-	h.upd.boot()
+	bootUpdater(t, h.upd)
 	if b, _ := os.ReadFile(target); string(b) != "old" || len(execs()) != 1 {
 		t.Fatalf("an unsaved start count kept the new version (execd %v)", execs())
 	}

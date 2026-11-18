@@ -81,18 +81,32 @@ export function ReplyQuote({ children }: { children?: ReactNode }) {
   );
 }
 
-type HNode = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HNode[] };
+type HNode = { type: string; tagName?: string; value?: string; properties?: Record<string, unknown>; children?: HNode[] };
 
 /** A rehype plugin, last: inline code inside a link (a path that opens, a written link) is marked `data-linked`, so
- *  it stays the link's and is not a copy button of its own inside it (Markdown's `code`). */
+ *  it stays the link's and is not a copy button of its own inside it (Markdown's `code`). Inline code in a table cell
+ *  of at most 24 characters is marked `data-chip`: styles.css keeps it whole on one line (#9146). A side of inline code
+ *  whose words beside it end or start with a CJK letter is marked in `data-gap` (`s` before it, `e` after it), and
+ *  styles.css leaves a little room there (#9477): with no background, code written straight against Chinese words ran into them. Not beside
+ *  a space or CJK punctuation, which have room of their own. Only plain words count (the first screen's bytes): code
+ *  after bold words or alone in a link gets none. */
 export function rehypeLinkedCode() {
-  return (tree: HNode) => mark(tree, false);
+  return (tree: HNode) => mark(tree, false, false);
 }
 
-function mark(node: HNode, inLink: boolean) {
-  for (const c of node.children ?? []) {
-    if (c.type !== "element") continue;
-    if (c.tagName === "code" && inLink) c.properties = { ...c.properties, dataLinked: true };
-    mark(c, inLink || c.tagName === "a");
-  }
+/** Words that end, or start, with a kana or Han letter, about (iOS reads Hangul and bopomofo too, PersonaKit
+ *  `CJKEmphasis.isCJKLetter`; one range here for the first screen's bytes). CJK punctuation (U+3000–303F, the
+ *  full-width forms) is outside it. Read from an element or nothing, `undefined` is no letter. */
+const CJK_END = /[\u3041-\u9fff]$/, CJK_START = /^[\u3041-\u9fff]/;
+
+function mark(node: HNode, inLink: boolean, inCell: boolean) {
+  const kids = node.children ?? [];
+  kids.forEach((c, i) => {
+    if (c.type !== "element") return;
+    if (c.tagName === "code") {
+      const gap = (CJK_END.test(kids[i - 1]?.value!) ? "s" : "") + (CJK_START.test(kids[i + 1]?.value!) ? "e" : "");
+      c.properties = { ...c.properties, ...(inLink && { dataLinked: true }), ...(inCell && c.children?.length === 1 && c.children[0].value!.length <= 24 && { dataChip: true }), ...(gap && { dataGap: gap }) };
+    }
+    mark(c, inLink || c.tagName === "a", inCell || c.tagName === "td");
+  });
 }

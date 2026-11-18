@@ -74,11 +74,52 @@ wide symbol must scale down), in the style's icon language (`docs/apple/icons.md
 2. A new Swift file that draws sidebar rows goes into `SidebarMetricsTests.files`.
 3. Screenshot it in en and zh-Hans, light and dark (iPhone, iPad, Mac, web as it applies) and look at it.
 
+## The Sidebar layout's headings
+
+The Sidebar layout (#6332, `docs/apple/ios.md` "Sidebar layout (#6332)") heads its sections with a fold button: the name in
+`captionStrong`, a chevron, what the folded section still counts, and the section's own buttons (Persona Chats' ✎). The
+button is a sidebar row by size (`Theme.Sidebar.rowPadding`, `Theme.Sidebar.row`), so a finger always finds it and the
+words sit as the rows' do; the fold is remembered on the device (`sidebar.fold.places`, `sidebar.fold.chats`).
+
+## Pinned directions
+
+The leader conversations (`assistant.leaders`) are the group headed **Pinned** (zh-Hans 常驻, ja 常駐; the catalog key
+is still `Directions`, the owner's renaming of 2026-11-11). With the hub's direction tree (#4352,
+`GET /api/v1/assistant/directions/tree`, `AppModel.directionTree`) each row folds open; without it (an older hub, or
+before the tree is read) the rows are the plain conversation rows they were, and with no leaders the sidebar has no
+Pinned group at all.
+
+- **Row**: the leader conversation's own row as #4331 drew it (tap, long-press menu, swipe) with what its direction has
+  going, read from the same tree (`DirectionTree.leader(_:)`): "N need you" in words, and one activity mark,
+  `RowStateMark`'s spinner, while its own turn runs or anything under it does (the tree's `running`: an Agent of its
+  to-dos, or one under it, at work, whatever the to-do's state; #6230, #6626). Its own Needs You / Unread dot wins over
+  what runs under it, and VoiceOver says Working for the spinner either way. No "N working" beside the spinner: one
+  meaning, one expression (#6626). A chevron button sits at its end
+  (`safeAreaInset`). The button folds the row; its label is the direction's name with its "N need you", its value Expanded /
+  Collapsed; it is at least `Theme.Size.tapTarget` wide and
+  `Theme.Sidebar.row` high. The row's selected fill and Mac hover shade span the conversation row and the button
+  together (`row(_:named:drawsShade:)` leaves its own off), as wide as every other row's. Folded by default; each device remembers each direction in
+  `assistant.direction.open.<leader id>` (`@StoredValue`).
+- **Open**: one row per open to-do of the direction, in the tree's order, set in as Auto Chats' sources are: its title
+  and its state word in its tone (等你 Needs You's, 在做 Working's, 卡住 and 待验收 Caution's; `DirectionTaskStateWord`).
+  A tap opens the to-do's card (`TodoDetailView` in a sheet, on iPhone, iPad and Mac alike). The sheet hangs on the
+  direction's own row, not the to-do's: accepting or closing the to-do drops it from the tree, and folding the direction
+  hides it, without closing the card. A to-do with Agents has its
+  own chevron (folded by default, not remembered) that lists them a level in: the live state dot (the tree's state for
+  a sub-Agent the app does not list), the title, the state's name in its tone (not the dot's color alone); a tap
+  closes the drawer and opens the session (`openTodoAgentChat`). An Agent with sub-Agents has its own chevron too.
+  These chevrons say what they fold ("Agents of <to-do>", "Subagents of <Agent>"), not the bare title the row's own
+  button says, with Expanded / Collapsed.
+- **Secretary** (书记官): no row in the sidebar (the main conversation's row stands for it, #4331); its to-dos are in the
+  To-dos and Agents pages' Pinned grouping.
+- **Code**: `AssistantSidebarDirections.swift` (`AssistantSidebarDirection`);
+  `AssistantSidebar.swift` only places them where the direction rows were. Tests: `DirectionTreeTests`.
+
 ## Checks
 
 | Test | Guards |
 | --- | --- |
 | `apple/PersonaTests/SidebarMetricsTests.swift` | Rows' `minHeight` is only `Theme.Sidebar.row` (headings: `HeadingMenu.minHeight`); each has `Theme.Sidebar.rowPadding`; no literal heights, vertical paddings or point sizes; the iOS row is 44 pt; a line of body text in SF and PingFang fits the row |
-| `apple/PersonaMacTests/MacSidebarMetricsTests.swift` | The Mac row is 24 / 28 / 32 pt for the system's small / medium / large Sidebar icon size; body text in SF and PingFang fits the smallest |
+| Retired native Mac sidebar tests | Historical only: the Mac row was 24 / 28 / 32 pt for the system's small / medium / large Sidebar icon size; the target and its tests were removed |
 | `web/src/views/SidebarRowTokens.test.ts` | `--sidebar-row` is 32 px; every sidebar row uses `sidebar-row` with no `py-*`; no heading is uppercased or letter-spaced |
 | `apple/PersonaTests/TokenRatchetTests.swift` | Literal paddings, frames and radii in views only go down |

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -45,7 +47,8 @@ func (h *orcaHost) createTerminal(ctx context.Context, space, cwd, label string)
 		return nil, err
 	}
 
-	t, err := h.c.CreateTerminal(ctx, "id:"+wt.WorktreeID, label, newUUID())
+	shell, typed := h.launchShell(ctx)
+	t, err := h.c.CreateTerminal(ctx, "id:"+wt.WorktreeID, label, newUUID(), shell)
 	if err != nil {
 		return nil, orcaErr(err)
 	}
@@ -62,7 +65,27 @@ func (h *orcaHost) createTerminal(ctx context.Context, space, cwd, label string)
 		SpaceID: t.WorktreeID,
 		SlotID:  t.TabID,
 		Pane:    host.PaneRef{Kind: host.Orca, ID: t.PaneKey()},
+		Shell:   typed,
 	}, nil
+}
+
+// orcaOnWindows: the node and its Orca run on Windows. A var for tests.
+var orcaOnWindows = func() bool { return runtime.GOOS == "windows" }
+
+// launchShell is the shell a terminal the node types its starts into should run (terminal.create's shell), and the
+// one it then reports to them (host.Created's Shell): "" for both, Orca's default, except on Windows. There Orca
+// opens Windows PowerShell by default, which reads neither the `cd -- <dir> &&` Run types nor the POSIX start
+// (#9810), so the terminal runs Git Bash when Orca can be told so (orcart.CapShellSelection). An Orca that cannot keeps
+// its default: a user who made that Git Bash still starts as before.
+func (h *orcaHost) launchShell(ctx context.Context) (shell, typed string) {
+	if !orcaOnWindows() {
+		return "", ""
+	}
+	st, err := h.c.Probe(ctx)
+	if err != nil || !slices.Contains(st.Capabilities, orcart.CapShellSelection) {
+		return "", ""
+	}
+	return orcart.GitBash, "bash"
 }
 
 // resolveWorktree locates the best-matching local Orca worktree for cwd.
@@ -244,6 +267,14 @@ func (h *orcaHost) Run(ctx context.Context, pane host.PaneRef, command string) e
 		return orcaInputErr(h.c.Send(ctx, launch.terminal.Target(), "cd -- "+shellQuote(launch.cwd)+" && "+command+"\r"))
 	}
 	return host.Mark(fmt.Errorf("orca: the newly created shell was replaced or is no longer writable"), host.ErrNotDelivered)
+}
+
+// launchable: Run would still take a command in pane, a terminal this host made whose one launch is unused.
+func (h *orcaHost) launchable(pane host.PaneRef) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.launches[pane.ID]
+	return ok
 }
 
 func (h *orcaHost) NameAgent(ctx context.Context, pane host.PaneRef, name string) error {

@@ -1,13 +1,13 @@
 // Transcript notices, recaps and model errors. Background continuation belongs to the normal execution summary.
-import { memo, useMemo, useState } from "react";
+import { memo, Suspense, useMemo, useState } from "react";
 import { lineItemIds } from "../../lib/chat-search";
 import { useChatContext } from "./chat-context";
 import { useExpanded } from "./expanded";
 import { useReveal } from "./search-reveal";
 import { ago, clock } from "../../lib/format";
 import { retryable, type APIErrorInfo } from "../../lib/api-errors";
-import { refusalFacts } from "../../lib/model-fallback";
-import { runAction, turnErrorFix } from "../../lib/readiness";
+import type { RecoveryExhaustedView } from "../../lib/model-fallback";
+import { runAction, turnErrorFix, type TurnFix } from "../../lib/readiness";
 import { wakeSummary } from "../../lib/tasks";
 import { type ChatLine, type OpenRecap } from "../../lib/turns";
 import { sourceLabel } from "../../lib/message-source";
@@ -20,20 +20,26 @@ import { SegmentView } from "./SegmentView";
 import { CompactDivider } from "./Steps";
 import { t } from "../../i18n";
 import { ScrollFold } from "./fold-scroll";
+import { lazyPage } from "../../lib/lazy-page";
+
+export const RefusalNotice = lazyPage(() => import("./RefusalNotice").then((m) => m.RefusalNotice));
 
 export interface LineProps {
   line: ChatLine;
   mid: string;
   sid: string;
   streaming?: string;
-  expandFold: (f: Item) => Promise<void>;
+  expandFold: (f: Item) => Promise<boolean | void>;
   /** A Persona conversation: a model error's text may name a fix in Persona's settings. */
   assistant?: boolean;
   /** The hub's word on what to fix for the turn's model error (the session's turn_error_code): the chat's last line only,
    *  so its record reads as its banner did. */
-  fix?: { title: string; detail: string; action: string } | null;
+  fix?: TurnFix | null;
   /** The session is waiting out a subscription usage limit: the last error card says that, not that the turn was interrupted. */
   limit?: string;
+  /** The node's recovery chain exhausted every model (#7824): the last error card names the cause and reset time and
+   *  offers Retry even when the parsed error would otherwise read as non-transient. */
+  exhausted?: RecoveryExhaustedView | null;
   /** Inside an opened supervision trace, show complete injected inputs. */
   trace?: boolean;
   /** A finished exchange before the last two may skip drawing off screen (SegmentView `offscreen`). */
@@ -51,7 +57,7 @@ export const ChatLineView = memo(function ChatLineView(props: LineProps) {
   );
 });
 
-function LineBody({ line, mid, sid, streaming, expandFold, assistant, fix, limit, trace, offscreen, busy }: LineProps) {
+function LineBody({ line, mid, sid, streaming, expandFold, assistant, fix, limit, exhausted, trace, offscreen, busy }: LineProps) {
   switch (line.kind) {
     case "supervision":
       return <SupervisionLine line={line} mid={mid} sid={sid} streaming={streaming} expandFold={expandFold} assistant={assistant} />;
@@ -71,7 +77,7 @@ function LineBody({ line, mid, sid, streaming, expandFold, assistant, fix, limit
         />
       );
     case "notice":
-      return <LineNotice item={line.item} />;
+      return <LineNotice item={line.item} assistant={assistant} />;
     case "compact":
       return <CompactDivider item={line.item} />;
     case "recaps":
@@ -81,7 +87,15 @@ function LineBody({ line, mid, sid, streaming, expandFold, assistant, fix, limit
       // composer (ErrorBanner), while this error is the one the chat stopped on
       if (limit) return <UsageLimitLine text={limit} />;
       // the fix points at Persona's model settings: only for Persona's own conversations
-      return <APIErrorCard info={line.info} count={line.count} at={line.item.ts} fix={assistant ? (fix ?? turnErrorFix(line.info.code)) : null} />;
+      return (
+        <APIErrorCard
+          info={line.info}
+          count={line.count}
+          at={line.item.ts}
+          fix={assistant ? (fix ?? turnErrorFix(line.info.code)) : null}
+          exhausted={assistant && (fix ?? turnErrorFix(line.info.code)) ? null : exhausted}
+        />
+      );
   }
 }
 
@@ -110,9 +124,9 @@ function SupervisionLine({ line, ...props }: LineProps & { line: Extract<ChatLin
 }
 
 /** A notice on a line of its own: a wake opening new work (a centered capsule), "Interrupted", a long local command's output. */
-function LineNotice({ item }: { item: Item }) {
+function LineNotice({ item, assistant }: { item: Item; assistant?: boolean }) {
   const [open, setOpen] = useState(false);
-  if (item.model_refusal) return <RefusalNotice item={item} />;
+  if (item.model_refusal) return <Suspense fallback={null}><RefusalNotice item={item} plain={assistant} /></Suspense>;
   if (item.wake) {
     const w = wakeSummary(item);
     return (
@@ -139,38 +153,6 @@ function LineNotice({ item }: { item: Item }) {
       <Icon name="info" size={13} className="mt-[3px] shrink-0 text-ink-3" />
       <span className={cx("min-w-0 text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-2", !open && "line-clamp-4")}>{text}</span>
     </button>
-  );
-}
-
-/** A Claude Code model_refusal_* record (#2528): the refused model, the one Claude Code switched to, the category and
- *  scope as recorded, and the refusal's own words verbatim (never reworded, never the record's line). */
-function RefusalNotice({ item }: { item: Item }) {
-  const r = item.model_refusal!;
-  const f = refusalFacts(r);
-  const fallback = r.subtype === "model_refusal_fallback" && f.fallback;
-  return (
-    <div role="note" data-testid="refusal-notice" title={clock(item.ts)} className="flex w-full items-start gap-2 rounded-card bg-orange-tint px-3 py-2 text-left shadow-hairline">
-      <Icon name="warning" size={13} className="mt-[3px] shrink-0 text-orange" />
-      <span className="flex min-w-0 flex-col gap-0.5 text-[12.5px] leading-relaxed text-ink-2">
-        <span className="font-semibold text-ink">{t("chat-modelfallback.refusal_title")}</span>
-        {fallback ? (
-          <span className="[overflow-wrap:anywhere]">{t("chat-modelfallback.refusal_fallback", { from: f.original ?? "?", to: f.fallback! })}</span>
-        ) : (
-          <span>{t("chat-modelfallback.refusal_no_switch")}</span>
-        )}
-        {fallback && f.scope === "session" && <span>{t("chat-modelfallback.refusal_session")}</span>}
-        {f.category && <span className="[overflow-wrap:anywhere]">{t("chat-modelfallback.refusal_category", { category: f.category })}</span>}
-        {f.explanation && <span className="whitespace-pre-wrap">{t("chat-modelfallback.refusal_explanation", { text: f.explanation })}</span>}
-        {f.text && (
-          <span className="flex min-w-0 flex-col">
-            <span className="text-ink-3">{t("chat-modelfallback.refusal_text")}</span>
-            <span className="whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="refusal-text">
-              {f.text}
-            </span>
-          </span>
-        )}
-      </span>
-    </div>
   );
 }
 
@@ -297,13 +279,16 @@ export const errorKey = (line: APIErrorLine) => `${line.id}#${line.count}`;
 
 /** The error the chat stopped on, over the composer (cindy's ErrorBanner, #5313): the card the chat would draw, with what
  *  can be done about it now (Fix it, Retry, Edit last message) and ✕. While it is here the chat leaves the line out. */
-export function ErrorBanner({ line, assistant, limit, fix, onRetry, onEditLastMessage, onDismiss }: {
+export function ErrorBanner({ line, assistant, limit, fix, exhausted, onRetry, onEditLastMessage, onDismiss }: {
   line: APIErrorLine;
   assistant?: boolean;
   /** Waiting out a subscription usage limit: the banner says when it resets, as the line would. */
   limit?: string;
   /** The hub's word on what to fix for the turn's model error (the session's turn_error_code). */
-  fix?: { title: string; detail: string; action: string } | null;
+  fix?: TurnFix | null;
+  /** An exhausted recovery chain (#7824): Retry stays offered even for a parsed non-transient error such as a
+   *  safeguards refusal, as long as the caller says the session is idle and can send. */
+  exhausted?: RecoveryExhaustedView | null;
   /** Sends "continue"; offered only for an error that may pass by itself and needs no fix. */
   onRetry?: () => void;
   onEditLastMessage?: () => void;
@@ -312,13 +297,16 @@ export function ErrorBanner({ line, assistant, limit, fix, onRetry, onEditLastMe
   if (limit) return <UsageLimitLine text={limit} onDismiss={onDismiss} />;
   // the text-derived fix points at Persona's model settings: only for Persona's own conversations
   const f = assistant ? (fix ?? turnErrorFix(line.info.code)) : null;
+  // A fix-type error (sign-in, model route) keeps its own fix card: an exhausted marker never overrides it (#7824).
+  const shownExhausted = f ? null : exhausted;
   return (
     <APIErrorCard
       info={line.info}
       count={line.count}
       at={line.item.ts}
       fix={f}
-      onRetry={onRetry && retryable(line.info) && !f ? onRetry : undefined}
+      exhausted={shownExhausted}
+      onRetry={onRetry && (f ? f.action === "retry" : shownExhausted || retryable(line.info)) ? onRetry : undefined}
       onEditLastMessage={!assistant && line.info.code === "safeguards" ? onEditLastMessage : undefined}
       onDismiss={onDismiss}
     />
@@ -334,9 +322,23 @@ function UsageLimitLine({ text, onDismiss }: { text: string; onDismiss?: () => v
 /** A model API error (cindy's error notice): why, in words, whether it passes by itself under it, then its actions; the
  *  ids, the status code, how many times in a row and the original are under "Error details". One the user must fix (not
  *  signed in, a wrong key, a model that is not there) says so instead, with "Fix it" (docs/assistant/onboarding.md 4.4). */
-function APIErrorCard({ info, count, at, onRetry, onEditLastMessage, fix, onDismiss }: { info: APIErrorInfo; count: number; at?: string; onRetry?: () => void; onEditLastMessage?: () => void; fix?: { title: string; detail: string; action: string } | null; onDismiss?: () => void }) {
+function APIErrorCard({ info, count, at, onRetry, onEditLastMessage, fix, onDismiss, exhausted }: { info: APIErrorInfo; count: number; at?: string; onRetry?: () => void; onEditLastMessage?: () => void; fix?: TurnFix | null; onDismiss?: () => void; exhausted?: RecoveryExhaustedView | null }) {
   const sub = fix ? fix.detail : info.transient === true ? t("chat-lines.api_transient") : info.transient === false ? t("chat-lines.api_permanent") : "";
   const reason = (fix ? fix.title : info.reason) || t("chat-lines.reply_failed");
+  // An exhausted recovery chain says why every model failed and when the configured one recovers (#7824). The cause
+  // and the reset time stay on the card's face; the tried-model list goes under "Error details" only.
+  const exhaustedLines = exhausted
+    ? [exhausted.cause, exhausted.reset ? t("chat-modelfallback.exhausted_resets", { time: exhausted.reset }) : ""].filter(Boolean)
+    : [];
+  const description = exhausted
+    ? exhaustedLines.length
+      ? (
+        <span className="flex flex-col gap-1" data-testid="recovery-exhausted">
+          {exhaustedLines.map((line) => <span key={line}>{line}</span>)}
+        </span>
+      )
+      : (sub || undefined)
+    : (sub || undefined);
   return (
     <ErrorNotice
       // the banner over the composer is the one with ✕ (ErrorBanner); it says the error out of the transcript, so it is a
@@ -344,13 +346,18 @@ function APIErrorCard({ info, count, at, onRetry, onEditLastMessage, fix, onDism
       data-error-banner={onDismiss ? "" : undefined}
       role={onDismiss ? "status" : undefined}
       message={reason}
-      description={sub || undefined}
+      description={description}
       onDismiss={onDismiss}
       actions={
         <>
-          {fix && (
-            <Button tone="primary" size="sm" className="touch-hit" onClick={() => runAction(fix.action, { onHelp: () => {} })}>
+          {fix && fix.action !== "retry" && (
+            <Button tone="primary" size="sm" className="touch-hit" onClick={() => runAction(fix.action, { onHelp: () => {}, onPickModel: fix.onPickModel })}>
               {t("chat-lines.fix_it")}
+            </Button>
+          )}
+          {fix?.back && (
+            <Button size="sm" className="touch-hit" onClick={fix.back.run}>
+              {fix.back.label}
             </Button>
           )}
           {onRetry && (
@@ -372,6 +379,11 @@ function APIErrorCard({ info, count, at, onRetry, onEditLastMessage, fix, onDism
           {at && <Field label={t("chat-lines.time")} value={clock(at)} copy={false} />}
           {info.status !== undefined && <Field label={t("chat-lines.status")} value={String(info.status)} copy={false} />}
           {count > 1 && <Field label={t("chat-lines.repeated")} value={t("chat-lines.api_repeated", { count })} copy={false} mono={false} />}
+          {exhausted?.tried && (
+            <div className="min-w-0 text-label leading-5 [overflow-wrap:anywhere] text-ink-2" data-testid="recovery-exhausted-tried">
+              {t("chat-modelfallback.exhausted_tried", { models: exhausted.tried })}
+            </div>
+          )}
           <ErrorDetailsText text={info.raw} />
           <button type="button" onClick={() => copyText(info.raw)} className="touch-hit flex w-fit items-center gap-1 text-[12px] font-medium whitespace-nowrap text-accent-ink hover:underline">
             <Icon name="copy" size={12} />

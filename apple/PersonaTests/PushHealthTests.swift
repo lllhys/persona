@@ -91,6 +91,33 @@ struct PushHealthTests {
         #expect(s.level == .unavailable && s.reason?.contains("https://relay.example.com/x") == true)
     }
 
+    /// A route that couldn't be read is unchecked, not the older one as if current (#1859); turned-off notifications
+    /// still come first, and another hub's route is its own.
+    @Test func aFailedCheckIsUncheckedNotAvailable() {
+        var h = PushHealth(notificationsAllowed: true, relay: .registered)
+        h.routes["g"] = APIClient.PushRoute(route: "relay")
+        h.routes["other"] = APIClient.PushRoute(route: "relay")
+        h.readFailed("The request timed out.", group: "g")
+        let s = h.status(group: "g", allowed: true)
+        #expect(s.level == .unknown && s.reason?.contains("The request timed out.") == true)
+        #expect(s.action == String(localized: "Persona checks again when you open this page."))
+        #expect(h.status(group: "g", allowed: false).level == .unavailable)
+        #expect(h.status(group: "other", allowed: true).level == .available)
+
+        h.read(APIClient.PushRoute(route: "relay", reason: "push_failed", detail: "503 push relay not configured"), group: "g")
+        #expect(h.status(group: "g", allowed: true).level == .lastFailed)
+        #expect(h.unchecked == nil)
+    }
+
+    @Test func aReadClearsOnlyItsHub() {
+        var h = PushHealth()
+        h.readFailed("offline", group: "a")
+        h.readFailed("timed out", group: "b")
+        #expect(h.unchecked == ["a": "offline", "b": "timed out"])
+        h.read(nil, group: "a")
+        #expect(h.unchecked == ["b": "timed out"] && h.routes["a"] == nil)
+    }
+
     @Test func theStoreKeepsWhatChanged() {
         let store = PushHealthStore(health: PushHealth())
         store.update { $0.relay = .registered; $0.routes["g"] = APIClient.PushRoute(route: "relay") }

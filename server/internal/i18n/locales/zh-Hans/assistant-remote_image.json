@@ -1,0 +1,11 @@
+{
+  "forbidden": "只有完整权限的已配对设备才能加载回答里的图片。",
+  "bad_url": "这张图片的地址无法加载：只支持 http 和 https 地址。",
+  "address_not_allowed": "这张图片的地址不在公网上，hub 不会去取。",
+  "too_large": "这张图片太大，无法加载。",
+  "unsupported_type": "这个地址不是 JPEG、PNG、GIF、WebP、HEIC 或 AVIF 图片。",
+  "bad_image": "这张图片读不出来。",
+  "fetch_failed": "没能取到这张图片，请稍后再试。",
+  "timeout": "取这张图片超时了，请稍后再试。",
+  "rate_limited": "刚才取的图片太多了，请稍等一会儿再试。"
+}

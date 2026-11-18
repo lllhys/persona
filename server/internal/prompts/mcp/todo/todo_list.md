@@ -1,4 +1,4 @@
-List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): open ones by default, earliest due first (those without a due date last), each with its id, title, state, priority, project, due date, reminder and the agents on it, and the first line of its notes. Times are in the user's time zone. Filter by state, by due date (due_before / due_after: a day or a moment), overdue ones only, with or without agents, by knowledge-base project, by kind (concerns only), or a word in the title or notes. Use it before changing a to-do, to find its id; ask with todo_get for one in full.
+List Persona to-dos (not Feishu tasks): open/failed starts by default, due first and undated last. Returns id, title/state, priority/project, due/reminder, agents and first note line; times use the user's time zone. Filter by the schema fields. Find an id here before edits; use todo_get for details.
 
 ```json
 {
@@ -6,24 +6,28 @@ List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): o
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["open", "done", "all"],
-      "description": "which to-dos: open (default), done, or all"
+      "enum": [
+        "open",
+        "done",
+        "all"
+      ],
+      "description": "Default: open."
     },
     "due_before": {
       "type": "string",
-      "description": "only those due by then: a day (2026-11-15, through its end) or a moment (2026-11-15 18:00, RFC 3339); leaves out those without a due date"
+      "description": "Due no later than this date (inclusive through day's end) or datetime (user's time zone/RFC3339); excludes undated to-dos."
     },
     "due_after": {
       "type": "string",
-      "description": "only those due from then on: a day or a moment; leaves out those without a due date"
+      "description": "Due from this date/datetime onward; excludes undated to-dos."
     },
     "overdue": {
       "type": "boolean",
-      "description": "only open ones whose due date has passed"
+      "description": "Open and past due."
     },
     "with_agents": {
       "type": "boolean",
-      "description": "true: only those agents work on (tasks); false: only the user's own"
+      "description": "true: with agents (tasks); false: user's own."
     },
     "query": {
       "type": "string",
@@ -31,16 +35,19 @@ List the user's Persona to-dos (the To-dos page in the app, not Feishu tasks): o
     },
     "project": {
       "type": "string",
-      "description": "only the to-dos in this knowledge-base project (its slug or name)"
+      "description": "Existing knowledge-base project slug/name."
     },
     "kind": {
       "type": "string",
-      "enum": ["todo", "concern"],
-      "description": "only concerns (things the user raised in the main conversation that wait for you to report their outcome), or only the other to-dos; both when left out"
+      "enum": [
+        "todo",
+        "concern"
+      ],
+      "description": "todo or user-raised concerns awaiting concern_report; omitted includes both."
     },
     "limit": {
       "type": "integer",
-      "description": "at most this many (default 50, at most 200)"
+      "description": "Default 50; maximum 200."
     }
   }
 }

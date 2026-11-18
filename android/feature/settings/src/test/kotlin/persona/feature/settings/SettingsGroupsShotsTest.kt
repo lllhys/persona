@@ -148,7 +148,7 @@ class SettingsGroupsShotsTest {
         AssistantManagerChoice.choose("hub", null, "assistant")
         show({ style }, { dark })
         // 1. The current assistant's: its head, its rows in their order, its footnote.
-        rule.onNodeWithText("助手 的设置").assertExists()
+        rule.onNodeWithText("助手的设置").assertExists()
         rule.onNodeWithText("只显示「助手」自己的内容。要改别的助手，先切换过去。").assertExists()
         val first = listOf("模型", "助手资料", "连接器", "扩展", "Agent")
         first.zipWithNext().forEach { (a, b) -> assertTrue("$a before $b", top(a) < top(b)) }
@@ -214,7 +214,7 @@ class SettingsGroupsShotsTest {
         rule.onNode(hasText("工作") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
         rule.waitForIdle()
         assertEquals("m-3fa21c", AssistantManagerChoice.current.value.shown)
-        rule.onNodeWithText("工作 的设置").assertExists()
+        rule.onNodeWithText("工作的设置").assertExists()
         rule.onNodeWithText("只显示「工作」自己的内容。要改别的助手，先切换过去。").assertExists()
         assertEquals(0, rule.onAllNodesWithText("新建助手").fetchSemanticsNodes().size)
         capture("settings-switched-glass-light")
@@ -234,23 +234,23 @@ class SettingsGroupsShotsTest {
         rule.onNode(hasText("Agent") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
         rule.onNode(hasText("Codex 设置") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
         rule.waitForIdle()
-        assertEquals(0, rule.onAllNodesWithText("助手 的设置").fetchSemanticsNodes().size)
+        assertEquals(0, rule.onAllNodesWithText("助手的设置").fetchSemanticsNodes().size)
         rule.runOnIdle { AssistantManagerChoice.pick("m-3fa21c") }
         rule.waitForIdle()
-        rule.onNodeWithText("工作 的设置").assertExists()
+        rule.onNodeWithText("工作的设置").assertExists()
         // A page of this device stays open across a switch.
         rule.onNode(hasText("存储空间") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
         rule.waitForIdle()
         rule.runOnIdle { AssistantManagerChoice.pick(null) }
         rule.waitForIdle()
-        assertEquals(0, rule.onAllNodesWithText("助手 的设置").fetchSemanticsNodes().size)
+        assertEquals(0, rule.onAllNodesWithText("助手的设置").fetchSemanticsNodes().size)
     }
 
     /** One assistant: the group still names it, with its monogram, Switch (its roster: it, New assistant, Manage assistants…) and footer. */
     @Test fun oneAssistantKeepsItsGroupAndSwitch() {
         AssistantManagerChoice.choose("hub", null, "assistant")
         show(roster = ManagerRoster(ManagersSample.filter { it.id == "assistant" }, "assistant"))
-        rule.onNodeWithText("助手 的设置").assertExists()
+        rule.onNodeWithText("助手的设置").assertExists()
         rule.onNodeWithText("只显示「助手」自己的内容。要改别的助手，先切换过去。").assertExists()
         capture("settings-one-glass-light")
         rule.onNode(hasText("切换") and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick)
@@ -313,7 +313,7 @@ class SettingsGroupsShotsTest {
         var dark by mutableStateOf(false)
         AssistantManagerChoice.choose("hub", null, "assistant")
         show({ style }, { dark })
-        rule.onNodeWithText("助手 的设置").assertExists()
+        rule.onNodeWithText("助手的设置").assertExists()
         for (s in AppStyle.entries) for (d in listOf(false, true)) {
             style = s; dark = d
             rule.onNode(hasSetTextAction()).performTextClearance()

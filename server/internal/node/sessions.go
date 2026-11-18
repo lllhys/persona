@@ -74,7 +74,7 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 	for _, id := range slices.Sorted(maps.Keys(agents)) {
 		a := agents[id]
 		if !onList[id] { // a pane on Claude's agents list stays idle: the transcript is its parked session's (claudebg.go)
-			a.AgentStatus = n.claudeStatus(id, a, now)
+			a.AgentStatus = n.liveStatus(id, a, now)
 		}
 		s := proto.Session{
 			SessionID: id, Cwd: a.Cwd, Status: a.AgentStatus, PaneID: a.PaneID, TabID: a.TabID,
@@ -199,8 +199,12 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 			s.AsksRead = true
 		}
 		if a.Agent == "codex" {
+			if _, thread, err := n.codexOwner(id); err == nil && thread.model != "" {
+				s.Model = thread.model
+			}
 			n.codexEffortRow(id, &s.Efforts, &s.Effort, rollout) // joined on its app-server: its effort (codex_effort.go)
 			n.codexSpeedRow(&s)
+			n.codexRewindRow(id, &s)
 		}
 		if piFamily(a.Agent) {
 			n.mergePiRow(&s) // its conversation is the extension's (pi.go)
@@ -209,6 +213,8 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 		case a.Agent == opencodeAgent:
 			s.Title = opencodeTitle(a.Title)
 			n.mergeOpencodeRow(&s) // its conversation is the plugin's (opencode.go)
+		case a.Agent == cursorAgent || a.Agent == agyAgent:
+			// herdr drives the pane (agent.prompt, the keys); Persona does not read the conversation (workagent.go).
 		case otherAgent(a):
 			s.ReadOnlyReason = otherNoReader(a.Agent)
 		}
@@ -219,8 +225,6 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 		out = append(out, s)
 		seen[id] = true
 	}
-
-	n.forgetDialogs(livePanes)
 
 	for _, s := range n.starts.listed(seen) { // starting.go
 		n.decorateIn(&s, pass)
@@ -240,6 +244,7 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 	}
 	peak := len(out)
 	j := from
+	var rowIDs map[string]bool // the runtimes' rows, where the line of a fork stops (aliasesOf)
 	for i := from; i < len(out); i++ {
 		s := &out[i]
 		if seen[s.SessionID] {
@@ -251,9 +256,23 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 				s.PermissionMode = m
 			}
 		}
-		// A conversation in a Claude transcript here (runtimetranscript.go): what it says, and its own row goes.
+		// A conversation in a Claude transcript here (runtimetranscript.go): what it says, and its own row goes. Under
+		// an id of its own, the ids it went by go too, named on the row for the manager's archive (runtimealiases.go).
 		if t := n.mergeRuntimeTranscript(s); t != "" {
 			seen[t] = true
+			if t != s.SessionID {
+				if rowIDs == nil {
+					rowIDs = make(map[string]bool, len(out)-from)
+					for k := from; k < len(out); k++ {
+						rowIDs[out[k].SessionID] = true
+					}
+				}
+				aliases := n.aliasesOf(s.SessionID, t, func(id string) bool { return rowIDs[id] })
+				for _, a := range aliases {
+					seen[a] = true
+				}
+				s.SetAliases(aliases)
+			}
 		}
 		seen[s.SessionID] = true
 		if j != i {
@@ -269,10 +288,11 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 			seen[s.SessionID] = true
 		}
 	}
-	for _, s := range n.claudeSessions(n.liveClaudes(), seen) { // claudes outside Persona's panes (claudebg.go)
+	for _, s := range n.claudeSessions(n.liveClaudes(), seen, livePanes) { // claudes outside Persona's panes (claudebg.go)
 		out = append(out, s)
 		seen[s.SessionID] = true
 	}
+	n.forgetDialogs(livePanes) // after every row that reads a pane's dialog, the tmux claudes' too
 	for _, s := range n.codexSessionsIn(seen, pass) {
 		out = append(out, s)
 	}
@@ -283,6 +303,8 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 	from = len(out)
 	out = n.appendOffline(out, seen)
 	n.markInterrupted(out[from:], seen) // the restart cut these off (#1917)
+	// omp's stopped sessions (ompdisk.go)
+	out = append(out, n.ompOfflineRows(seen)...)
 	for i := from; i < len(out); i++ {
 		n.decorateIn(&out[i], pass)
 		n.markStopped(&out[i]) // read-only (stopped.go, #4754)
@@ -300,6 +322,9 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 	j = 0
 	for i := range out {
 		s := &out[i]
+		if !s.Assistant && s.PaneID != "" && s.Status != proto.StatusOffline && s.Status != proto.StatusInterrupted {
+			n.observedRunning(s.SessionID)
+		}
 		if earlier[s.SessionID] || !n.sessionScopeAllows(s.Cwd) {
 			continue
 		}
@@ -324,6 +349,9 @@ func (n *Node) sessionListIn(ctx context.Context, refreshAgents bool, pass *code
 		return nil
 	}
 	out = out[:j]
+	parents, origins := n.offlineDesktop()
+	linkSideSessions(out, parents)           // the desktop app's side sessions under the sessions that started them (#5935)
+	placeClaudeDesktop(out, origins, n.home) // and in their projects (#8521)
 	sortNewestFirst(out)
 	return out
 }
@@ -370,6 +398,7 @@ func (n *Node) decorateIn(s *proto.Session, pass *codexListPass) {
 		s.PendingSwitch = st.PendingSwitch   // launcher_switch.go
 		s.SetEngineHistory(st.EngineHistory) // engine_switch.go
 	}
+	n.decorateModelRecovery(s) // node-owned recovery marker, and the shipped fallback-card projection (#7824)
 	if s.PendingSwitch == nil {
 		s.PendingSwitch = n.unrecordedSwitch(s.SessionID)
 	}
@@ -383,6 +412,7 @@ func (n *Node) decorateIn(s *proto.Session, pass *codexListPass) {
 		s.Title = filepath.Base(s.Cwd)
 	}
 	s.BypassAvailable = n.hooks.canBypass(s.SessionID) // modes.go claudeCanBypass
+	n.modeRestartRow(s)                                // mode_restart.go
 	n.ultracodeRow(s, pass)
 }
 

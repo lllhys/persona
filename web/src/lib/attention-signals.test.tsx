@@ -9,14 +9,27 @@ import type { AgentState, Interaction, Session } from "./types";
 let sessions: Session[] = [];
 let mutes: { spaces: string[]; sessions: string[]; allowed: string[] } = { spaces: [], sessions: [], allowed: [] };
 let interactions: Interaction[] = [];
+let hubPrefs: Record<string, unknown> = {};
+// the hub's events this page listens to, and what its client_hello declares beyond the basics (#8145)
+const hubListeners = new Map<string, Set<(msg: Record<string, unknown>) => void>>();
+let helloExtras: () => string[] = () => [];
+const hellos: string[][] = [];
+let assistantRows: Session[] = [];
 vi.mock("./store", () => ({
   useStore: (select: (s: { loaded: boolean; interactions: Interaction[] }) => unknown) => select({ loaded: true, interactions }),
-  getState: () => ({ mutes, interactions }),
+  getState: () => ({ mutes, interactions, sessions: { server: assistantRows }, assistant: { machine_id: "server", main: "main", conversations: [] } }),
+  onHubEvent: (type: string, l: (msg: Record<string, unknown>) => void) => {
+    if (!hubListeners.has(type)) hubListeners.set(type, new Set());
+    hubListeners.get(type)!.add(l);
+    return () => void hubListeners.get(type)?.delete(l);
+  },
+  setHelloExtras: (fn: () => string[]) => void (helloExtras = fn),
+  sayHello: () => void hellos.push(helloExtras()),
 }));
 vi.mock("./sessions", () => ({ useCounts: () => ({ badge: 0 }), useAgentSessions: () => sessions }));
 vi.mock("./api", async (original) => ({
   ...(await original<typeof import("./api")>()),
-  api: async () => ({ input: true, done: "long", long_turn_seconds: 60 }),
+  api: async () => ({ input: true, done: "long", long_turn_seconds: 60, ...hubPrefs }),
   enc: encodeURIComponent,
 }));
 
@@ -71,6 +84,9 @@ beforeEach(() => {
   interactions = [];
   focused = false;
   mutes = { spaces: [], sessions: [], allowed: [] };
+  hellos.length = 0;
+  assistantRows = [];
+  hubPrefs = {};
   _setTabId("tab-me");
   root = createRoot(document.createElement("div"));
 });
@@ -377,4 +393,90 @@ it("keeps sessionless request notifications under the existing device switch", a
   await show([], []);
   await show([], [{ id: "quiet-request", machine_id: "example-computer", session_id: "", kind: "permission", summary: "Publish the draft?" }]);
   expect(posted).toEqual([]);
+});
+
+describe("the hub's notify events: the assistant's conversations (#8145)", () => {
+  const notify = (msg: Record<string, unknown>) => act(() => hubListeners.get("notify")?.forEach((l) => l({ type: "notify", ...msg })));
+  const askCard: Interaction = { id: "ask1", machine_id: "server", session_id: "main", session_title: "Persona", kind: "question", tool_name: "ask_user", questions: [{ question: "Move tomorrow's meeting?" } as never] };
+  const askNotify = { kind: "interaction", machine_id: "server", session_id: "main", interaction_id: "ask1", title: "Persona is asking you", subtitle: "Persona · hub", body: "Move tomorrow's meeting?" };
+  /** The page as it opens: its hello asks for the hub's events, and the few seconds of what the hub kept go by. */
+  async function open(next: Session[] = [], cards: Interaction[] = []) {
+    await show(next, cards);
+    await act(async () => {}); // the prefs load
+    await act(async () => void vi.advanceTimersByTime(3_001));
+  }
+
+  it("asks for them while the page can alert, and says so again when that changes", async () => {
+    await open();
+    expect(hellos).toEqual([["ws_notify"]]);
+    localStorage.removeItem("persona.systemNotify");
+    act(() => void window.dispatchEvent(new Event("storage")));
+    expect(hellos.at(-1)).toEqual([]);
+    localStorage.setItem("persona.attentionSound", "1");
+    act(() => void window.dispatchEvent(new Event("storage")));
+    expect(hellos.at(-1)).toEqual(["ws_notify"]);
+    const before = hellos.length;
+    act(() => void window.dispatchEvent(new Event("focus"))); // nothing changed: no hello
+    expect(hellos).toHaveLength(before);
+  });
+
+  it("does not ask while both the sound and system notifications are off", async () => {
+    localStorage.removeItem("persona.systemNotify");
+    await open();
+    expect(hellos).toEqual([]);
+    expect(helloExtras()).toEqual([]);
+  });
+
+  it("a new ask_user card in the main chat posts the hub's words, and goes when the card is answered", async () => {
+    await open([], [askCard]);
+    await notify(askNotify);
+    expect(posted).toEqual([{ title: "Persona is asking you", body: "Persona · hub\nMove tomorrow's meeting?", tag: "server/main#needs" }]);
+    notifications[0].onclick?.();
+    expect(window.location.pathname).toBe("/s/server/main");
+    closed.length = 0; // the click closed it
+    await show([], []);
+    expect(closed).toEqual(["Persona is asking you"]);
+  });
+
+  it("a leader's card and the assistant's notify_user post too, each once for every tab", async () => {
+    await open();
+    await notify({ ...askNotify, session_id: "leader", interaction_id: "ask2" });
+    await notify({ kind: "assistant", machine_id: "server", session_id: "main", title: "Persona", body: "The report is ready for you to sign" });
+    await notify({ kind: "assistant", machine_id: "server", session_id: "main", title: "Persona", body: "The report is ready for you to sign" });
+    expect(posted.map((p) => p.tag)).toEqual(["server/leader#needs", expect.stringMatching(/^assistant:/)]);
+    expect(posted[1].body).toBe("The report is ready for you to sign");
+  });
+
+  it("an Agent's card is its own: the hub's event for it posts nothing more", async () => {
+    await open([session("a", "working")]);
+    await show([session("a", "needs_you")], [{ id: "q1", machine_id: "m", session_id: "a", kind: "question", questions: [{ question: "Which one?" } as never] }]);
+    await notify({ kind: "interaction", machine_id: "m", session_id: "a", interaction_id: "q1", title: "a", body: "Which one?" });
+    await notify({ kind: "done", machine_id: "m", session_id: "a", title: "a", body: "done" });
+    expect(posted.map((p) => p.tag)).toEqual(["m/a#needs"]);
+  });
+
+  it("what the hub sends right after the hello (kept while no page asked) is not announced", async () => {
+    await show([], [askCard]);
+    await act(async () => {});
+    await notify(askNotify);
+    expect(posted).toEqual([]);
+  });
+
+  it("nothing while the page is in front, unless Always show is on", async () => {
+    await open();
+    focused = true;
+    await notify({ kind: "assistant", machine_id: "server", session_id: "main", title: "Persona", body: "one" });
+    expect(posted).toEqual([]);
+    localStorage.setItem("persona.systemNotifyAlways", "1");
+    await notify({ kind: "assistant", machine_id: "server", session_id: "main", title: "Persona", body: "two" });
+    expect(posted.map((p) => p.body)).toEqual(["two"]);
+  });
+
+  it("a manager this browser turned off says nothing here either", async () => {
+    assistantRows = [{ ...session("work-chat", "idle"), machine_id: "server", assistant: true, manager: "work" }];
+    hubPrefs = { muted_managers: ["work"] };
+    await open();
+    await notify({ kind: "assistant", machine_id: "server", session_id: "work-chat", title: "Work", body: "muted" });
+    expect(posted).toEqual([]);
+  });
 });

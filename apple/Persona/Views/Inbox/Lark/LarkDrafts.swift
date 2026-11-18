@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// What was typed into a Feishu box and not sent: the words, and the message the chat's quote bar answers.
 nonisolated struct LarkDraft: Codable, Hashable, Sendable {

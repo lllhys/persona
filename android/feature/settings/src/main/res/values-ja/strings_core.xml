@@ -124,6 +124,10 @@
     <string name="settings_notify_quiet_end">終了</string>
     <string name="settings_notify_quiet_footer">この時間帯は、エージェントの完了は通知しません（朝の「今日の確認事項」カードにまとまります）。対応が必要なものは音を鳴らさずに届きます。アシスタントに頼んだリマインダーはいつもどおり届きます。いずれかのデバイスがおやすみ時間の間は、チャットボットからの未回答カードのお知らせも後回しにします。このスマートフォンのタイムゾーンで判断します。</string>
     <string name="settings_notify_quiet_footer_zone">この時間帯は、エージェントの完了は通知しません（朝の「今日の確認事項」カードにまとまります）。対応が必要なものは音を鳴らさずに届きます。アシスタントに頼んだリマインダーはいつもどおり届きます。いずれかのデバイスがおやすみ時間の間は、チャットボットからの未回答カードのお知らせも後回しにします。現在は設定した場所の%1$sで判断します。ここで変更すると、このスマートフォンのタイムゾーンで判断します。</string>
+    <string name="settings_notify_low_distraction">通知を抑えるモード</string>
+    <string name="settings_notify_low_distraction_subtitle">対応が必要なことだけ通知し、ほかはブリーフィングに回します</string>
+    <string name="settings_notify_low_distraction_footer">すべてのデバイスに適用されます。オンにすると、質問、承認、あなたにしかできない判断、設定したリマインダー、メイン会話からのお知らせは通常どおり通知されます。タスクの結果、「確認してください」の依頼、ほかの会話のお知らせはブリーフィングと「保留された通知」に回り、エージェントの完了は通知されません。</string>
+    <string name="settings_notify_low_distraction_save_failed">保存できなかったため、通知を抑えるモードを元に戻しました。</string>
     <string name="settings_reading">読み込み中</string>
     <string name="settings_retry_read">再読み込み</string>
     <string name="settings_saving">保存中…</string>
@@ -271,6 +275,14 @@
     <string name="settings_network_unreadable">ネットワークの状態を読み込めません</string>
     <string name="settings_update_none">利用できるアップデートはまだありません。</string>
     <string name="settings_update_check_failed">アップデートを確認できませんでした。あとでもう一度お試しください。</string>
+    <string name="settings_update_up_to_date">最新です</string>
+    <string name="settings_update_no_apk">hub に APK がありません</string>
+    <string name="settings_update_package_mismatch">別のアプリ</string>
+    <string name="settings_update_package_mismatch_detail">Release APK は別の Android アプリ用です。このインストールを更新できません。</string>
+    <string name="settings_update_signature_mismatch">署名が一致しません</string>
+    <string name="settings_update_signature_mismatch_detail">Release APK は別の鍵で署名されています。このアプリをアンインストールしてから、GitHub の Release APK をインストールしてください。アンインストールするとローカルのアプリデータが削除されます。</string>
+    <string name="settings_update_last_checked">最終確認: %1$s</string>
+    <string name="settings_update_source">hub: %1$s</string>
     <string name="settings_off">オフ</string>
     <string name="settings_retry_cleanup">クリーンアップを再試行</string>
     <string name="settings_try_demo">ハブがない場合はデモを試す</string>
@@ -346,6 +358,7 @@
     <string name="settings_ready_needs_confirm">手動での確認が必要</string>
     <string name="settings_ready_skipped_note">スキップしました。いつでも戻って設定できます</string>
     <string name="settings_ready_open">設定を開く</string>
+    <string name="settings_ready_allow_notifications">許可</string>
     <string name="settings_ready_open_failed">システムの設定を開けません。スマートフォンの設定からPersonaのアプリ情報を開いてください。</string>
     <string name="settings_ready_undo_confirm">確認を取り消し</string>
     <string name="settings_ready_mark_done">完了にする</string>
@@ -413,6 +426,8 @@
     <string name="settings_triage_actions_about">モデルサービスの一時的なエラー（503など）のあとは「続行」を最大3回自動で送ります。デプロイ、CI、ほかのエージェントを待っているものは、時間になったら起こして自分で確認させます。どちらもエージェント自身のモデルでもう1ターン実行します。コードのプッシュ、デプロイ、他人へのメッセージ送信などは、ハブがあなたに確認するだけで自分では行いません。</string>
     <string name="settings_triage_closeout">クローズアウトを求める</string>
     <string name="settings_triage_closeout_about">作業したエージェントが、完了したか、マージとデプロイの有無、不足しているものを報告せずに止まったとき、一度だけ停止を保留してその記録を求めます。エージェント自身のモデルで短い1ターンを余分に使います</string>
+    <string name="settings_triage_closeout_ask">あとから状況を聞く</string>
+    <string name="settings_triage_closeout_ask_about">誰も監督していないエージェントが作業後に止まり、クローズアウトもなく完了したかも分からないとき、Persona がすでに行った作業の状況を一度だけ尋ねます。エージェント自身のモデルで1ターンを使います</string>
     <string name="settings_triage_reply_reminder">既読で未返信なら通知</string>
     <string name="settings_triage_reply_reminder_about">エージェントに質問され、見てから30分返信していないと1回だけ通知します。ルールだけで判断し、トークンは使いません。</string>
     <plurals name="settings_notify_long_turn">

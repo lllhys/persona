@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The `brief` item of a morning or evening routine's conversation (docs/protocol/protocol.md "Tasks and the chat feed", #2320):
 /// the fixed part of a run as the hub worked it out when the run started, the same rows as its Lark card. Hubs since the
@@ -27,6 +28,10 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
         /// waiting, later: the chat it came from (#2320). A hub from before leaves them out.
         var machineID: String?
         var sessionID: String?
+        /// A to-do's own decision (`TodoAsk.row`), never a briefing's row: it is held for the next briefing and nothing
+        /// was pushed for it (#5803), and the standing rule the hub suggests on it (#5802).
+        var forBriefing = false
+        var suggestion: RuleSuggestion?
 
         enum CodingKeys: String, CodingKey {
             case id, title, detail, from, nudged, verdict, outcome, recommend
@@ -35,7 +40,7 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
 
         init(id: String, title: String, detail: String? = nil, from: String? = nil, waitedS: Int = 0, nudged: Bool = false,
              askedAt: String? = nil, verdict: String? = nil, outcome: String? = nil, recommend: String? = nil,
-             machineID: String? = nil, sessionID: String? = nil) {
+             machineID: String? = nil, sessionID: String? = nil, forBriefing: Bool = false, suggestion: RuleSuggestion? = nil) {
             self.id = id
             self.title = title
             self.detail = detail
@@ -48,6 +53,8 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
             self.recommend = recommend
             self.machineID = machineID
             self.sessionID = sessionID
+            self.forBriefing = forBriefing
+            self.suggestion = suggestion
         }
 
         /// Only the id is needed: without it no button can say which row it means.
@@ -112,6 +119,54 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
         }
     }
 
+    /// One line of the week's recommended setup (#5085, #5804; docs/assistant/assistant.md "Recommended setup"): a
+    /// mechanism that is off and how many of the last 7 days' asks or background rounds it would have removed. The hub
+    /// counted and worded `text`; the app draws it as it came and turns nothing on.
+    nonisolated struct Setup: Decodable, Hashable, Sendable, Identifiable {
+        /// Where a line's mechanism is turned on in this app, for those with a page here.
+        enum Page: Hashable, Sendable {
+            /// Settings › Session Triage: its three switches.
+            case triage
+            /// Model Settings › the background supervisor's use.
+            case superviseModel
+            /// Assistant Profile › Standing Authorizations (#7002).
+            case standingAuthorizations
+        }
+
+        /// The mechanism (`delegate`, `task_trust`, `triage_wake`, … or a newer one).
+        var id: String
+        var text: String
+        var count: Int
+
+        enum CodingKeys: String, CodingKey { case id, text, count }
+
+        init(id: String, text: String, count: Int = 0) {
+            self.id = id
+            self.text = text
+            self.count = count
+        }
+
+        /// A line needs its id and its words; without either it is left out (`Lossy`, `BriefBody.listed`).
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            text = try c.decode(String.self, forKey: .text)
+            count = c.whole(.count) ?? 0
+        }
+
+        /// The page Open Settings goes to; nil for a mechanism that is not turned on at a page of this app (leader
+        /// conversations, the assistant's configuration file; a remembered kind of task is turned on with a plan card's
+        /// own checkbox, as its line says) and for one this build doesn't know.
+        var page: Page? {
+            switch id {
+            case "triage_decide", "triage_auto_continue", "triage_wake": .triage
+            case "supervisor_tier": .superviseModel
+            case "standing_authorizations": .standingAuthorizations
+            default: nil
+            }
+        }
+    }
+
     /// The routine's name.
     var title: String
     var hours: Int
@@ -129,16 +184,18 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
     var laterTotal: Int
     var progress: [Progress]
     var progressTotal: Int
+    /// The recommended setup, on the first briefing of a week that names something; a hub from before leaves it out.
+    var setup: [Setup]
 
     enum CodingKeys: String, CodingKey {
-        case title, hours, waiting, failed, done, accept, later, progress
+        case title, hours, waiting, failed, done, accept, later, progress, setup
         case waitingUnknown = "waiting_unknown", failedTotal = "failed_total", doneTotal = "done_total",
              laterTotal = "later_total", progressTotal = "progress_total"
     }
 
     init(title: String = "", hours: Int = 12, waitingUnknown: Bool = false, waiting: [Row] = [], failed: [TodayBody.Failed] = [],
          failedTotal: Int? = nil, done: [Done] = [], doneTotal: Int? = nil, accept: [Row] = [], later: [Row] = [],
-         laterTotal: Int? = nil, progress: [Progress] = [], progressTotal: Int? = nil) {
+         laterTotal: Int? = nil, progress: [Progress] = [], progressTotal: Int? = nil, setup: [Setup] = []) {
         self.title = title
         self.hours = hours
         self.waitingUnknown = waitingUnknown
@@ -152,6 +209,16 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
         self.laterTotal = max(laterTotal ?? 0, later.count)
         self.progress = progress
         self.progressTotal = max(progressTotal ?? 0, progress.count)
+        self.setup = Self.listed(setup)
+    }
+
+    /// The setup lines to draw: those with words, each mechanism once (a row's identity in the card).
+    static func listed(_ setup: [Setup]) -> [Setup] {
+        var seen = Set<String>()
+        return setup.filter { line in
+            let worded = !line.id.isEmpty && !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return worded && seen.insert(line.id).inserted
+        }
     }
 
     init(from decoder: Decoder) throws {
@@ -161,7 +228,7 @@ nonisolated struct BriefBody: Decodable, Hashable, Sendable {
                   waiting: c.rows(.waiting), failed: c.rows(.failed), failedTotal: c.whole(.failedTotal),
                   done: c.rows(.done), doneTotal: c.whole(.doneTotal), accept: c.rows(.accept),
                   later: c.rows(.later), laterTotal: c.whole(.laterTotal),
-                  progress: c.rows(.progress), progressTotal: c.whole(.progressTotal))
+                  progress: c.rows(.progress), progressTotal: c.whole(.progressTotal), setup: c.rows(.setup))
     }
 
     /// Done and failed past the rows the hub listed (it cuts both lists, the totals count all).

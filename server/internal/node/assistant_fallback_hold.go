@@ -1,6 +1,9 @@
 package node
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ---- staying on the fallback that answered (#3788) ----
 //
@@ -31,8 +34,7 @@ type assistantFallback struct {
 
 // sameModelChoice: two requests for the same model, whatever the message around them.
 func sameModelChoice(a, b modelExecution) bool {
-	return a.Model == b.Model && a.Effort == b.Effort && a.UseEffort == b.UseEffort && a.Fingerprint == b.Fingerprint &&
-		a.Runtime == b.Runtime
+	return a.Model == b.Model && a.Effort == b.Effort && a.UseEffort == b.UseEffort && a.Fingerprint == b.Fingerprint
 }
 
 // holdFallback starts conversation id's hold on to, after a recovery's switch away from from answered there. n.mu is
@@ -48,24 +50,33 @@ func (n *Node) holdFallback(id, launcher string, from, to modelExecution) {
 // heldFallback is the execution conversation id's message runs on: its fallback while the hold lasts and the message
 // asks for the model the switch moved away from, else what it asks for. Another model asked for ends the hold.
 func (n *Node) heldFallback(id, launcher string, asked modelExecution) modelExecution {
+	execution, _ := n.heldFallbackWithExpiry(id, launcher, asked)
+	return execution
+}
+
+// heldFallbackWithExpiry also reports whether an existing hold for this exact request expired naturally. A missing
+// hold after a restart is not expiry, and another model choice is not expiry either.
+func (n *Node) heldFallbackWithExpiry(id, launcher string, asked modelExecution) (modelExecution, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	f := n.fallbacks[id]
 	if f == nil {
-		return asked
+		return asked, false
 	}
 	now := time.Now()
 	if now.Sub(f.at) >= assistantRefusalSticky {
 		delete(n.fallbacks, id)
-		return asked
+		return asked, false
 	}
 	if !now.Before(f.until) || f.launcher != launcher || !sameModelChoice(asked, f.from) {
+		expired := !now.Before(f.until) && f.launcher == launcher && sameModelChoice(asked, f.from)
 		f.until = time.Time{} // over; a refusal soon after still skips the same-model retry
-		return asked
+		return asked, expired
 	}
 	out := f.to
 	out.IsMain, out.Interject, out.Ultracode = asked.IsMain, asked.Interject, asked.Ultracode // the message's own
-	return out
+	out.SupervisionInstructions = asked.SupervisionInstructions
+	return out, false
 }
 
 // recentFallback: conversation id's last fallback answered within assistantRefusalSticky, and what the conversation
@@ -76,6 +87,41 @@ func (n *Node) recentFallback(id string) (from modelExecution, launcher string, 
 		return modelExecution{}, "", false
 	}
 	return f.from, f.launcher, true
+}
+
+// assistantUnavailableFor: how long a model a recovery found unavailable on a launcher is not picked again, by any
+// conversation (#5234). A gateway that drops a model keeps it dropped for longer than one chain; one that adds it
+// back is tried again after this.
+const assistantUnavailableFor = 6 * time.Hour
+
+// assistantAnsweredRecently: a model that answered this conversation this recently and now "does not exist" is the
+// gateway's passing failure, not the user's choice (#5234).
+const assistantAnsweredRecently = time.Hour
+
+// noteUnavailable records that launcher's model is unavailable, so later chains skip it. n.mu is held.
+func (n *Node) noteUnavailable(launcher, model string) {
+	if model == "" {
+		return
+	}
+	if n.unavailable == nil {
+		n.unavailable = map[string]time.Time{}
+	}
+	n.unavailable[launcher+"\x00"+model] = time.Now().Add(assistantUnavailableFor)
+}
+
+// markUnavailableUsed marks every model of launcher found unavailable, and not expired, as used by chain r. n.mu is
+// held.
+func (n *Node) markUnavailableUsed(launcher string, used map[string]bool) {
+	now := time.Now()
+	for k, until := range n.unavailable {
+		if now.After(until) {
+			delete(n.unavailable, k)
+			continue
+		}
+		if l, m, ok := strings.Cut(k, "\x00"); ok && l == launcher {
+			used[m] = true
+		}
+	}
 }
 
 // forgetFallback ends conversation id's hold and its sticky window: it compacted, so the refused turns are gone.

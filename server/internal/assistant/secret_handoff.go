@@ -137,9 +137,6 @@ func (s *Service) handoffPrepare(ctx context.Context, machine, machineName strin
 		return nil, fmt.Errorf("%s cannot take secrets now: its node is offline, older than secret hand-offs, or not resident "+
 			"(Persona Link or personad node --attach); on Windows not yet", machineName)
 	}
-	if rt, _ := params["runtime"].(string); rt != "" {
-		return nil, errors.New("secrets can be handed only to Claude Code started by Persona, not to an agent runtime")
-	}
 	launcher, _ := params["launcher"].(string)
 	launcher = s.startLauncher(ctx, launcher)
 	if l, managed := s.managedNamed(ctx, launcher); managed && l.AgentType() != "claude" || !managed && launcher != "claude" {

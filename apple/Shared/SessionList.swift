@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The bounded list contract. Tokens are opaque and page cursors never stand in for delta checkpoints.
 nonisolated struct SessionListQuery: Hashable, Sendable {
@@ -20,6 +21,9 @@ nonisolated struct SessionListQuery: Hashable, Sendable {
     /// manager's, its totals and counts with them. Part of the query, so a list for another manager starts over: a
     /// cursor is bound to its filters.
     var manager: String = ""
+    /// One parent's folded children, every depth (`parent_session_id`). Never combined with `roots` (the hub rejects
+    /// that). Not part of the Agents list's query: a child page is its own request and is not merged into the window.
+    var parentSessionID = ""
 
     static let sessionsManagerFeature = "sessions_manager"
 
@@ -30,6 +34,16 @@ nonisolated struct SessionListQuery: Hashable, Sendable {
                              ("manager", manager)] where !value.isEmpty {
             out[key] = value
         }
+        return out
+    }
+
+    /// The query the hub is sent. `roots=1` only on a windowed list (and its counts) when the hub advertised
+    /// `sessions_hierarchy`. A complete copy keeps every child. A parent query never sends `roots`. The flag is not
+    /// part of the query's identity: one hub's window either folds or it does not.
+    func wireParameters(hierarchy: Bool) -> [String: String] {
+        var out = parameters
+        if !parentSessionID.isEmpty { out["parent_session_id"] = parentSessionID }
+        if hierarchy && !legacy && parentSessionID.isEmpty { out["roots"] = "1" }
         return out
     }
 }
@@ -59,7 +73,7 @@ nonisolated struct SessionListCounts: Decodable, Equatable, Sendable {
 
 extension APIClient {
     func sessionListPage(_ query: SessionListQuery, cursor: String? = nil, since: String? = nil) async throws -> SessionListPage<Session> {
-        var parameters = query.parameters
+        var parameters = query.wireParameters(hierarchy: sessionsHierarchy)
         if query.legacy {
             // A paging hub pushes no rows, only a hint for each change. Reading the whole list again for every hint was
             // hundreds of KB about once a second while agents worked (#3759): complete pages (no filters, the view
@@ -84,6 +98,12 @@ extension APIClient {
     /// page by full identity (duplicate titles are not identities). nil: no machine lists that session (an id that
     /// was never written out, or one that has since gone), which is not a failure of the request.
     func sessionListDetail(_ key: SessionKey, title: String) async throws -> Session? {
+        try await sessionListDetailAnswer(key, title: title).row
+    }
+
+    /// `sessionListDetail`, with the revision the hub's exact answer stands at (`sessions_lookup` only; nil from the paged
+    /// fallback, whose pages are no baseline for one row): what a later hint's `since` is compared with (#9479).
+    func sessionListDetailAnswer(_ key: SessionKey, title: String) async throws -> (row: Session?, revision: String?) {
         func decode(_ data: Data) async throws -> SessionListPage<Session> {
             try await Task.detached(priority: .userInitiated) { try JSON.decoder.decode(SessionListPage<Session>.self, from: data) }.value
         }
@@ -93,7 +113,8 @@ extension APIClient {
         if sessionLookup {
             // The exact form takes no `since` or `cursor`, and answers with at most the one row (a `limit` is not needed).
             let query = ["summary": "0", "machine_id": key.machineID, "session_id": key.sessionID]
-            return match(try await decode(try await request("GET", "/api/v1/sessions", query: query)))
+            let page = try await decode(try await request("GET", "/api/v1/sessions", query: query))
+            return (match(page), page.revision)
         }
         let prefix = String(title.unicodeScalars.prefix(256))
         // A title is mutable. If it changed before the hint's HTTP request, retry by stable machine/id rather than
@@ -103,19 +124,38 @@ extension APIClient {
             query["summary"] = "0"
             for _ in 0..<160 {
                 let page = try await decode(try await request("GET", "/api/v1/sessions", query: query))
-                if let row = match(page) { return row }
+                if let row = match(page) { return (row, nil) }
                 guard page.hasMore == true, let cursor = page.nextCursor else { break }
                 query["cursor"] = cursor
                 try Task.checkCancellation()
             }
         }
-        return nil
+        return (nil, nil)
+    }
+
+    /// One page of the sessions folded under `parent` on `machine`. Own states, not folded state. Never `roots`
+    /// (the hub rejects `roots` together with `parent_session_id`). Not merged into the root window.
+    func childSessionPage(machine: String, parent: String, cursor: String?, since: String?) async throws -> SessionListPage<Session> {
+        var parameters = SessionListQuery(machine: machine, parentSessionID: parent).wireParameters(hierarchy: false)
+        parameters["summary"] = "1"
+        parameters["limit"] = String(SessionListQuery.completePageSize)
+        if let cursor { parameters["cursor"] = cursor }
+        if let since { parameters["since"] = since }
+        let data = try await request("GET", "/api/v1/sessions", query: parameters)
+        var page = try await Task.detached(priority: .userInitiated) {
+            try JSON.decoder.decode(SessionListPage<Session>.self, from: data)
+        }.value
+        page.sessions = stamp(page.sessions)
+        return page
     }
 
     /// Every manager's sessions in Needs You as list rows, the newest first and at most 200 of them, from a hub with
     /// bounded lists (`sessions_list`): what the assistant switcher's counts go by (`AppModel.readNeedsYou`).
+    /// `roots=1` when the hub folds children, so a waiting child is not a row of its own here too.
     func sessionsNeedingYou() async throws -> [Session] {
-        let data = try await request("GET", "/api/v1/sessions", query: ["state": AgentState.needsYou.rawValue, "summary": "1", "limit": "200"])
+        var query = ["state": AgentState.needsYou.rawValue, "summary": "1", "limit": "200"]
+        if sessionsHierarchy { query["roots"] = "1" }
+        let data = try await request("GET", "/api/v1/sessions", query: query)
         let page = try await Task.detached(priority: .utility) {
             try JSON.decoder.decode(SessionListPage<Session>.self, from: data)
         }.value
@@ -123,11 +163,40 @@ extension APIClient {
     }
 
     func sessionListCounts(_ query: SessionListQuery, personal: Bool = false) async throws -> SessionListCounts {
-        var parameters = query.parameters
+        var parameters = query.wireParameters(hierarchy: sessionsHierarchy && !personal)
         parameters["counts"] = "1"
         let data = try await request("GET", personal ? "/api/v1/agents/sessions" : "/api/v1/sessions", query: parameters)
         return try await Task.detached(priority: .utility) { try JSON.decoder.decode(SessionListCounts.self, from: data) }.value
     }
+}
+
+/// What a `sessions_list` hint says changed, when the hub can say (`sessions_list_changes`, docs/protocol/protocol.md
+/// "Which rows changed"): the revision it starts from and the `[machine_id, session_id]` of every row changed after it.
+/// Nil (see `init`) when the hint has no starting point, or anything in it is not that shape: the hint is then read as
+/// one that could be about any row.
+nonisolated struct SessionListChanges: Equatable, Sendable {
+    static let feature = "sessions_list_changes"
+    var since: String
+    private var ids: Set<[String]>
+
+    init(since: String, changed: [(machineID: String, sessionID: String)]) {
+        self.since = since
+        ids = Set(changed.map { [$0.machineID, $0.sessionID] })
+    }
+
+    init?(since: JSONValue?, changed: JSONValue?) {
+        // Strings only (`JSONValue.string` would also read a number as one).
+        guard case .string(let since)? = since, !since.isEmpty, let list = changed?.array else { return nil }
+        var pairs: [(machineID: String, sessionID: String)] = []
+        for id in list {
+            guard let pair = id.array, pair.count == 2, case .string(let machine) = pair[0], case .string(let session) = pair[1] else { return nil }
+            pairs.append((machine, session))
+        }
+        self.init(since: since, changed: pairs)
+    }
+
+    /// Whether the change may concern this session's row.
+    func names(_ key: SessionKey) -> Bool { ids.contains([key.machineID, key.sessionID]) }
 }
 
 /// A runtime removal is a JSON tuple, not a slash-delimited path. Both components may contain slashes.

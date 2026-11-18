@@ -70,6 +70,32 @@ struct TodoCacheTests {
         #expect(store.byID["second"]?.title == "Second")
     }
 
+    /// The list is read with the tag of the last one; when the hub says it did not change (304) that list is applied
+    /// again without being read (#9590); a new one replaces it and its tag.
+    @Test func aListThatDidNotChangeIsNotReadAgain() async throws {
+        var asked: [String?] = []
+        var answers: [(list: [TodoItem]?, etag: String?)] = [
+            ([TodoItem(id: "a", title: "A")], "t1"), (nil, "t1"), ([TodoItem(id: "b", title: "B")], "t2"),
+        ]
+        let store = TodoStore(cachedTodos: [], cacheWriter: nil, hubListChanged: {}, read: { _, etag in
+            asked.append(etag)
+            return answers.removeFirst()
+        })
+        let api = FakeHub().client
+        await store.refresh(api: api)
+        #expect(store.todos.map(\.id) == ["a"])
+        await store.refresh(api: api)
+        #expect(asked == [nil, "t1"])
+        #expect(store.todos.map(\.id) == ["a"], "unchanged: the last list stands")
+        await store.refresh(api: api)
+        #expect(asked == [nil, "t1", "t1"])
+        #expect(store.todos.map(\.id) == ["b"])
+        store.forget()
+        answers = [([TodoItem(id: "c", title: "C")], "t3")]
+        await store.refresh(api: api)
+        #expect(asked.last == .some(nil), "another hub: no tag of the last one's")
+    }
+
     @Test func taskReadersShareCachedAndMutatedTodos() async throws {
         let cached = TodoItem(id: "cached", title: "Cached")
         let store = TodoStore(cachedTodos: [cached], cacheWriter: nil, hubListChanged: {})

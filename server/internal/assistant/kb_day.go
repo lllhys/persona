@@ -200,7 +200,7 @@ func (s *Service) dayRecapWritten(ctx context.Context, e *kb.Engine, r kb.Record
 		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(ctx, dayPushWait)
 			defer cancel()
-			err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: n}) // kept in the outbox while the hub is away
+			_, err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: n}) // kept in the outbox while the hub is away
 			if err != nil && answered(err) {
 				s.logf("assistant: day recap push: the hub refused it: %v", err)
 				err = nil
@@ -285,6 +285,10 @@ func dayRecapCounts(e *kb.Engine, day, id string, d kb.DayRecap) (meetings, acti
 func (s *Service) dayRecordingName(day string) string {
 	return i18n.T(s.lang(s.runCtx()), "assistant-day-recap.name", i18n.Args{"date": day})
 }
+
+// kbOwnerLanguage is the owner's language (kb.Engine.OwnerLanguage): what the minutes, summary and recap of a
+// recording that says no language of its own are written in.
+func (s *Service) kbOwnerLanguage() i18n.Lang { return s.lang(s.runCtx()) }
 
 // eveningClock is the evening routine's time of day, whether or not it is on (kb.Engine.DayRecapClock: the recap is
 // due 30 minutes before it); -1 while the schedule can't be read or has no evening routine, which the knowledge base

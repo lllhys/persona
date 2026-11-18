@@ -214,6 +214,7 @@ func TestPairURLRoundTrips(t *testing.T) {
 
 // The Mac has no camera to scan with: `personad hub pair` prints the link too, to paste into "Connect hub".
 func TestPairPrintsTheLinkForTheMac(t *testing.T) {
+	setPairLanguage(t, "en")
 	cfg := &Config{PublicURL: "http://hub.example.com:18660", Token: "tok"}
 	var b strings.Builder
 	writePair(&b, cfg)
@@ -241,14 +242,28 @@ func removeTestClient(h *Hub, c *client) {
 	delete(h.clients, c)
 }
 
+// addCfgMachines adds hub.json entries to a test hub whose managers are already connected. Until startDevices, which
+// most test hubs never call, entryOwner and cfgEntries read h.cfg.Machines under h.devices.mu from the hub's goroutines
+// (a manager's bus event, an HTTP handler), so the write takes the same lock (#8639).
+func addCfgMachines(h *Hub, machines ...MachineConfig) {
+	h.devices.mu.Lock()
+	defer h.devices.mu.Unlock()
+	h.cfg.Machines = append(h.cfg.Machines, machines...)
+}
+
 // newTestHub builds a Hub with no machines, no clients and push disabled, so interaction logic can be exercised offline.
 func newTestHub(t *testing.T) *Hub {
+	t.Helper()
+	return newTestHubWithDeployCtx(t, context.Background())
+}
+
+func newTestHubWithDeployCtx(t *testing.T, deployCtx context.Context) *Hub {
 	t.Helper()
 	cfg := defaultConfig()
 	cfg.Machines = nil
 	cfg.dir = shortTempDir(t)
 	h := &Hub{
-		cfg: cfg, version: "test", logger: log.New(io.Discard, "", 0),
+		deployCtx: deployCtx, cfg: cfg, version: "test", logger: log.New(io.Discard, "", 0),
 		byID: map[string]*Machine{}, clients: map[*client]struct{}{},
 		calls: map[string]chan proto.ToolResult{},
 		push:  newPusher(cfg.dir, nil, func(string, ...any) {}),
@@ -262,6 +277,8 @@ func newTestHub(t *testing.T) *Hub {
 	h.upd.dir = filepath.Join(cfg.dir, "update")
 	h.upd.exec = func(string) error { return errors.New("exec is not run in tests") }
 	h.upd.startWatch = func(string, string) error { return nil }
+	h.startHelloWriters()
+	t.Cleanup(h.stopHelloWriters)
 	return h
 }
 
@@ -322,6 +339,7 @@ func TestPhoneToolsPersist(t *testing.T) {
 	h.store = database
 	tools := []proto.Tool{{Name: "phone_device_info", Description: "info", InputSchema: json.RawMessage(`{"type":"object"}`)}}
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "legacy", Tools: tools})
+	waitHelloWrites(t, h)
 	if got := h.phoneToolList(); len(got) != 3 || got[0].Name != "phone_device_info" {
 		t.Fatalf("tools = %+v", got)
 	}

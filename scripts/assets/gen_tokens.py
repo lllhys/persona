@@ -280,7 +280,7 @@ def css_value(kind, value, path):
         return f"rgb({rgb} / {fmt(value['alpha'])})"
     if kind in ("dimension", "duration"):
         # Font sizes use rem so browser text-size preferences remain effective.
-        if path.startswith("type."):
+        if path.startswith(("type.", "typeGlass.")):
             return fmt(value["value"] / 16) + "rem"
         return fmt(value["value"]) + value["unit"]
     if kind == "string":
@@ -294,7 +294,7 @@ def kotlin_value(kind, value, path):
         # Float components retain alpha (e.g. 0.14), unlike packed 8-bit ARGB.
         return "Color", "Color(" + ", ".join(fmt(v) + "f" for v in channels) + ")"
     if kind == "dimension":
-        unit = "sp" if path.startswith("type.") else "dp"
+        unit = "sp" if path.startswith(("type.", "typeGlass.")) else "dp"
         return ("TextUnit" if unit == "sp" else "Dp"), fmt(value["value"]) + "." + unit
     if kind == "duration":
         return "Int", str(round(value["value"] * (1000 if value["unit"] == "s" else 1)))

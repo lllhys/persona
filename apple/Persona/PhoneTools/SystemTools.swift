@@ -66,10 +66,12 @@ enum Foreground {
 }
 #endif
 
-/// One-line wording of a time on an approval card: the phone's locale and time zone, not raw ISO 8601 (#1876).
+/// One-line wording of a time on an approval card: the phone's locale, and the request's offset when it has one.
 nonisolated enum CardTime {
-    static func text(_ date: Date, allDay: Bool = false) -> String {
-        allDay ? date.formatted(date: .abbreviated, time: .omitted) : date.formatted(date: .abbreviated, time: .shortened)
+    static func text(_ date: Date, allDay: Bool = false, timeZone: TimeZone? = nil) -> String {
+        var format = Date.FormatStyle(date: .abbreviated, time: allDay ? .omitted : .shortened)
+        format.timeZone = timeZone ?? .current
+        return date.formatted(format)
     }
 
     static func range(_ start: Date, _ end: Date, allDay: Bool = false) -> String {

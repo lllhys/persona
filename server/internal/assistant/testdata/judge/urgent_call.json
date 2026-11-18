@@ -1,0 +1,149 @@
+{
+  "about": "Behaviour checks for urgent calls (docs/assistant/urgent-call.md; the instructions' 加急来电 section and the urgent_call tool): what just happened, what the owner said in the conversation, and whether the assistant rings the owner's phone. Synthetic cases only. want: call or no_call; why and rule: what a call must give. rules: the owner's own rules besides the built-in ones (drop_rules removes built-in ones for one case). known: why the model gets the case wrong today; the live check reports it and does not fail on it.",
+  "system": "你是 Persona 助手。用户打开了加急来电，下面是你的说明里关于它的部分、urgent_call 工具的说明、刚发生的事，以及用户最近在这个对话里说过的话。判断现在要不要用 urgent_call 给用户打电话。只回一个 JSON 对象：{\"call\": true 或 false, \"why\": \"owner_asked\" 或 \"rule\" 或 \"\", \"rule\": 规则 id 或 \"\", \"owner_quote\": 用户原话或 \"\", \"happening\": 一句话事实或 \"\", \"reason\": 一句话理由}。",
+  "rules": [
+    {
+      "id": "r_kids",
+      "text": "接孩子相关的事"
+    },
+    {
+      "id": "r_dad",
+      "text": "我爸的健康"
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "gpu-runaway",
+      "situation": "账单提醒：Agent「训练任务」起的 8 台 GPU 实例近 1 小时扣了 2300 元，费用还在每分钟上涨。",
+      "want": "call",
+      "why": "rule",
+      "rule": "money_loss"
+    },
+    {
+      "name": "card-fraud",
+      "situation": "银行通知邮件：信用卡 10 分钟内在境外有三笔消费，共 1.8 万元；用户这几天没有出国。",
+      "want": "call",
+      "why": "rule",
+      "rule": "money_loss"
+    },
+    {
+      "name": "prod-drop-table",
+      "situation": "Agent「数据清理」在生产数据库执行了 DROP TABLE users，还在继续删别的表。",
+      "want": "call",
+      "why": "rule",
+      "rule": "agent_disaster"
+    },
+    {
+      "name": "key-push",
+      "situation": "Agent「发布脚本」正在把带云服务密钥的 .env 文件推到公开仓库，推送已经开始。",
+      "want": "call",
+      "why": "rule",
+      "rule": "agent_disaster"
+    },
+    {
+      "name": "gas-alarm",
+      "situation": "智能家居频道：厨房燃气报警器在响，浓度还在升高，家里没人回应。",
+      "want": "call",
+      "why": "rule",
+      "rule": "harm"
+    },
+    {
+      "name": "kids-early-dismissal",
+      "situation": "学校家长群：今天 15:00 提前放学（原定 17:30），现在 14:40，还没人去接。",
+      "want": "call",
+      "why": "rule",
+      "rule": "r_kids"
+    },
+    {
+      "name": "dad-emergency",
+      "situation": "家人发来消息：爸爸刚被送进急诊，医生要家属尽快回电。",
+      "want": "call",
+      "why": "rule",
+      "rule": "r_dad"
+    },
+    {
+      "name": "owner-asked-deploy",
+      "owner_said": [
+        "今晚上线，部署出问题就打给我"
+      ],
+      "situation": "上线后登录失败率升到 18%，告警还在持续。",
+      "want": "call",
+      "why": "owner_asked"
+    },
+    {
+      "name": "owner-asked-wake-up",
+      "owner_said": [
+        "明早 7 点打电话叫我起床"
+      ],
+      "situation": "现在是早上 7:00，用户让你这个时候打电话叫醒他们的提醒到了。",
+      "want": "call",
+      "why": "owner_asked"
+    },
+    {
+      "name": "plan-approval",
+      "situation": "Agent「重构支付」交了计划，等用户批准才开工。",
+      "want": "no_call"
+    },
+    {
+      "name": "ci-red",
+      "situation": "main 分支的 CI 红了：3 个测试失败。",
+      "want": "no_call"
+    },
+    {
+      "name": "important-mail",
+      "situation": "上级来邮件：明天上午 10 点前要季度报告。",
+      "want": "no_call"
+    },
+    {
+      "name": "meeting-soon",
+      "situation": "日历：10 分钟后有个会。",
+      "want": "no_call"
+    },
+    {
+      "name": "subscription-renewal",
+      "situation": "订阅自动续费扣了 98 元，和上个月一样。",
+      "want": "no_call"
+    },
+    {
+      "name": "loss-already-stopped",
+      "situation": "刚才失控的 GPU 实例已经停掉，共多扣了 2300 元，账单不再增长。",
+      "want": "no_call"
+    },
+    {
+      "name": "someone-else-shouts-urgent",
+      "situation": "工作群里有人喊「紧急！」，说的是别的团队的服务挂了，和用户的钱、安全、Agent 都无关。",
+      "want": "no_call"
+    },
+    {
+      "name": "recoverable-delete",
+      "situation": "Agent 误删了 docs/ 目录，git 里有，已经恢复了。",
+      "want": "no_call"
+    },
+    {
+      "name": "generic-call-me",
+      "owner_said": [
+        "有事打给我"
+      ],
+      "situation": "Agent 问用户：按钮用蓝色还是绿色？",
+      "want": "no_call"
+    },
+    {
+      "name": "kids-parent-meeting",
+      "situation": "学校通知：下周三下午开家长会。",
+      "want": "no_call"
+    },
+    {
+      "name": "dad-article",
+      "situation": "家人群里转了一篇养生文章。",
+      "want": "no_call"
+    },
+    {
+      "name": "deleted-default-rule",
+      "drop_rules": [
+        "money_loss"
+      ],
+      "situation": "账单提醒：GPU 实例扣费失控，近 1 小时扣了 2300 元还在涨。",
+      "want": "no_call"
+    }
+  ]
+}

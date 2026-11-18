@@ -7,7 +7,6 @@
   "profile": "资料",
   "sidebar": "侧边栏",
   "empty_title": "有什么要我做的？",
-  "empty_body_machines": "能看你的日程、飞书、邮件、知识库，也能到 {machines} 上动手。",
   "empty_body": "能看你的日程、飞书、邮件、知识库，也能到各台电脑上动手。",
   "ask_placeholder": "今天想让 {name} 帮你做点什么呢~",
   "empty_body_setup": "还差一步就能开始，下面告诉你缺什么。",

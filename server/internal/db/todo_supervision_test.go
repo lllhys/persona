@@ -69,6 +69,22 @@ func TestTodoSupervision(t *testing.T) {
 	if list, _ = d.ListTodoSupervision(ctx); len(list) != 1 || list[0].Waits != nil {
 		t.Fatalf("after the wait cleared: %+v", list)
 	}
+	// When its review began: kept while it waits, NULL again once it is over.
+	began := now.Add(-20 * time.Minute)
+	r.State, r.PendingSince = "pending_review", &began
+	if err := d.PutTodoSupervision(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = d.ListTodoSupervision(ctx); len(list) != 1 || list[0].PendingSince == nil || !list[0].PendingSince.Equal(began) {
+		t.Fatalf("pending_since = %+v, want %v", list, began)
+	}
+	r.State, r.PendingSince = "rework", nil
+	if err := d.PutTodoSupervision(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = d.ListTodoSupervision(ctx); len(list) != 1 || list[0].PendingSince != nil {
+		t.Fatalf("after the review: %+v", list)
+	}
 	if err := d.PutTodoSupervision(ctx, TodoSupervisionRow{TodoID: "nope", Supervisor: "main", UpdatedAt: now}); !errors.Is(err, ErrTodoNotFound) {
 		t.Fatalf("missing todo: %v", err)
 	}

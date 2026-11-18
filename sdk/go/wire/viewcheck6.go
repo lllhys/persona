@@ -357,6 +357,9 @@ func (p *pageCheck) checkTile(t *Tile) error {
 	if t.Icon != "" && t.Image != nil {
 		return errors.New("a tile has at most one of icon and image")
 	}
+	if t.Gauge != nil && (t.Image != nil || t.Spark != nil) {
+		return errors.New("a tile with a gauge has no image or spark: the ring takes their place")
+	}
 	if t.Image != nil {
 		if err := checkSource(t.Image); err != nil {
 			return err

@@ -140,7 +140,7 @@ func decodeThumb(path string, size int) (*proto.FileThumb, error) {
 		return nil, err
 	}
 	if orientation >= 2 && orientation <= 8 {
-		src = orientedThumb{src, orientation}
+		src = orientedThumb{Image: src, Orientation: orientation}
 	}
 	return encodeThumb(src, size)
 }

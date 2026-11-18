@@ -317,6 +317,17 @@ type feedBatch struct {
 	soFar   bool
 	end     bool
 	room    bool // to the meeting's own room: no meeting-turn mark, and it writes nothing after it
+	// topics: the room has meeting_topics_set, so the batch asks it to update its topics so far (topicsSoFar) and
+	// shows them (for a lean room only with lists).
+	topics      bool
+	topicsSoFar []kb.LiveTopic
+	// highlights: the room has meeting_highlights_set, so the batch asks it to update its highlights so far
+	// (highlightsSoFar) and shows them (for a lean room only with lists).
+	highlights      bool
+	highlightsSoFar []kb.LiveHighlight
+	// lean: a room started with lean batches that has both tools (#8253, meeting_room_lean.go): one short line instead
+	// of the rules, and the lists so far only at the boundaries (lists).
+	lean, lists bool
 }
 
 func (b feedBatch) empty() bool { return len(b.lines) == 0 && len(b.answers) == 0 }
@@ -371,11 +382,20 @@ func feedMeetingName(r kb.Recording, loc *time.Location) string {
 // feedText is batch b of meeting r as the session reads it (prompts/meeting/feed.md), in the user's language and
 // time zone.
 func feedText(r kb.Recording, b feedBatch, lang string, loc *time.Location) string {
-	at := func(sec float64) string {
-		return r.StartedAt.Add(time.Duration(sec * float64(time.Second))).In(loc).Format("15:04")
-	}
+	return prompts.RenderMeetingFeed(feedData(r, b, lang, loc))
+}
+
+// feedData is what prompts/meeting/feed.md renders batch b from; a lean batch without the lists has none of them.
+func feedData(r kb.Recording, b feedBatch, lang string, loc *time.Location) prompts.MeetingFeed {
+	at := func(sec float64) string { return kb.LiveClock(r, sec, loc) } // what a highlight's said_at names
 	d := prompts.MeetingFeed{Lang: lang, Title: feedMeetingName(r, loc), Role: r.AttendanceRole(), SoFar: b.soFar, LeftOut: b.leftOut,
-		Ended: b.end, Room: b.room}
+		Ended: b.end, Room: b.room, Topics: b.room && b.topics, Highlights: b.room && b.highlights, Lean: b.room && b.lean, Lists: b.lists}
+	if !d.Lean || d.Lists { // the lists only where the text shows them
+		d.TopicsSoFar = meetingTopics(b.topicsSoFar)
+		for _, h := range b.highlightsSoFar {
+			d.HighlightsSoFar = append(d.HighlightsSoFar, prompts.MeetingHighlight{At: at(h.At), Text: oneLine(h.Text)})
+		}
+	}
 	for _, sg := range b.lines {
 		d.Lines = append(d.Lines, prompts.MeetingFeedLine{At: at(sg.Start), Text: sg.Text})
 	}
@@ -388,7 +408,21 @@ func feedText(r kb.Recording, b feedBatch, lang string, loc *time.Location) stri
 	for _, a := range b.answers {
 		d.Asks = append(d.Asks, prompts.MeetingFeedAsk{Question: a.Question, Answer: a.Answer})
 	}
-	return prompts.RenderMeetingFeed(d)
+	return d
+}
+
+// meetingTopics are a meeting's topics as the prompts take them: each on one line, when it began as a time from the
+// meeting's start.
+func meetingTopics(topics []kb.LiveTopic) []prompts.MeetingTopic {
+	var out []prompts.MeetingTopic
+	for _, t := range topics {
+		mt := prompts.MeetingTopic{State: t.State, Title: oneLine(t.Title), Note: oneLine(t.Note)}
+		if t.At != nil {
+			mt.At = meetingClock(*t.At)
+		}
+		out = append(out, mt)
+	}
+	return out
 }
 
 // feedSend gives target batch b of meeting r, its turn marked a meeting turn first; when it was sent. Message source

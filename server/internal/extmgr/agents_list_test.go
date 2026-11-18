@@ -2,6 +2,7 @@ package extmgr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -128,12 +129,59 @@ func TestPersonalAgentHideRoutes(t *testing.T) {
 	}
 }
 
-func TestPersonalAgentRejectsPaneSource(t *testing.T) {
+func TestPersonalAgentRejectsRuntimeOnlyFilters(t *testing.T) {
 	_, hd, _ := agentsHub(t)
-	for _, query := range []string{"pane_source=terminal", "pane_source=unknown&counts=1", "pane_source=desktop&summary=1", "pane_source=", "pane_source=terminal&pane_source=feishu"} {
+	for _, query := range []string{"pane_source=terminal", "pane_source=unknown&counts=1", "pane_source=desktop&summary=1", "pane_source=", "pane_source=terminal&pane_source=feishu",
+		"todo=todo_a", "todo=none&counts=1", "todo=none&with_counts=1", "exclude_pane_source=feishu"} { // to-dos and origins are the runtime list's (#6662)
 		code, body := do(t, hd, "GET", "/api/v1/agents/sessions?"+query, "")
 		if code != 400 || body["code"] != "invalid_query" {
 			t.Fatalf("%s: %d %v", query, code, body)
 		}
+	}
+}
+
+// A paged read with with_counts=1 answers with the page plus the counts ?counts=1 gives for the same filters, so a
+// refresh of the personal Agents list takes one request instead of two (#6496); without the key the page is as before.
+func TestPersonalAgentPageWithCounts(t *testing.T) {
+	h, hd, _ := agentsHub(t)
+	s := &listAgentSource{}
+	for i := range 120 {
+		s.rows = append(s.rows, agents.Wrap("demo", agents.AgentSession{SessionKey: fmt.Sprintf("s%03d", i), Title: fmt.Sprintf("Demo %03d", i), AccountID: "account", Provider: "demo-provider", RankTimeMs: int64(i), UnreadCount: i % 3}, ""))
+	}
+	h.agents.Add(s)
+	plain := func(m map[string]any) string {
+		delete(m, "next_cursor") // a fresh token on every read
+		b, _ := json.Marshal(m)
+		return string(b)
+	}
+	for _, filter := range []string{"", "&state=unread", "&q=Demo+01"} {
+		code, both := do(t, hd, "GET", "/api/v1/agents/sessions?summary=1&limit=50&with_counts=1"+filter, "")
+		_, page := do(t, hd, "GET", "/api/v1/agents/sessions?summary=1&limit=50"+filter, "")
+		_, counts := do(t, hd, "GET", "/api/v1/agents/sessions?counts=1"+filter, "")
+		got, ok := both["counts"].(map[string]any)
+		if code != 200 || !ok {
+			t.Fatalf("%q: %d %v", filter, code, both)
+		}
+		if a, b := plain(got), plain(counts); a != b {
+			t.Errorf("%q: counts with the page %s, counts=1 %s", filter, a, b)
+		}
+		if _, has := page["counts"]; has {
+			t.Errorf("%q: counts without with_counts: %v", filter, page)
+		}
+		delete(both, "counts")
+		if a, b := plain(both), plain(page); a != b {
+			t.Errorf("%q: page with counts %s, without %s", filter, a, b)
+		}
+	}
+	// A since page counts the current membership, as counts=1 does.
+	_, first := do(t, hd, "GET", "/api/v1/agents/sessions?summary=1&limit=50", "")
+	s.rows = s.rows[:100]
+	h.agents.Updated("demo", nil)
+	code, delta := do(t, hd, "GET", "/api/v1/agents/sessions?summary=1&with_counts=1&since="+url.QueryEscape(first["revision"].(string)), "")
+	if code != 200 || len(delta["remove"].([]any)) != 20 || delta["counts"].(map[string]any)["total"].(float64) != 100 {
+		t.Fatalf("delta: %d %v", code, delta)
+	}
+	if code, _ := do(t, hd, "GET", "/api/v1/agents/sessions?summary=1&with_counts=yes", ""); code != 400 {
+		t.Errorf("with_counts=yes: %d, want 400", code)
 	}
 }

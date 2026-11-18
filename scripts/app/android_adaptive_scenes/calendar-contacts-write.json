@@ -1,0 +1,108 @@
+{
+  "id": "calendar-contacts-write",
+  "description": "Open Phone data and capture the calendar and contacts rows; the write confirmations, repeating-event semantics and contact edits are covered by unit tests, Robolectric fake-provider tests and the manual real-provider checks below.",
+  "requires": {
+    "fields": []
+  },
+  "steps": [
+    {
+      "step": "launch"
+    },
+    {
+      "step": "open",
+      "page": "phone",
+      "probePage": "Phone data"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {
+          "equals": "phone"
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "phone-data-write-access",
+      "state": "settings"
+    }
+  ],
+  "automatedCoverage": "Runner: only the real Phone data destination. Unit tests (PhoneToolCatalogTest, PhoneToolRegistryTest): schemas word for word as on iOS, the five confirmed writes, preparation before confirm, same call-id once, Deny / Allow-then-revoked / uncertain. Robolectric with a fake provider (CalendarWriteToolsTest, ContactsWriteToolsTest): generated operations, order and back references, stale-snapshot refusal, permission matrix; CalendarContactSummaryShotsTest: cards in three languages, light / dark, largest font. None of these proves that a real Calendar or Contacts provider accepts the operations. Real provider (device or emulator, not run by the unit task): CalendarContactsProviderTest in src/androidTest, on a throwaway local-account calendar and placeholder contacts. Its first check is the Instances RRULE / RDATE projection of phone_calendar_events; it also covers this / future, COUNT / UNTIL, all-day and daylight saving series, attendee and reminder copies, a past exception surviving a this-and-future change or cut, a non-phone-zone series with EXDATE / RDATE in the provider's stored form, expected counts and contact replace. Account sync, OEM providers and the lock-screen card still need the manual scenes below.",
+  "manualScenes": [
+    {
+      "id": "plain-event-change-and-delete",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "state": {
+        "provider": "real local calendar with a fictional non-repeating event"
+      },
+      "expect": "The card shows Time / Title / Location before → after; after Allow the provider holds exactly that one change and every other event is untouched. A delete removes only the named event."
+    },
+    {
+      "id": "repeating-event-this",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "state": {
+        "provider": "fictional daily series with COUNT, a second with UNTIL, a third with EXDATE and RDATE; attendees and a reminder on one of them"
+      },
+      "expect": "Changing or deleting one occurrence leaves the series row unchanged and adds one exception (or one cancelled exception); the occurrences before and after read back unchanged; attendees and the reminder survive on the changed occurrence; an occurrence_start that is off by minutes is refused."
+    },
+    {
+      "id": "repeating-event-future",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "state": {
+        "provider": "the same fictional series, an all-day series, and a series crossing a daylight-saving change"
+      },
+      "expect": "Delete ends the old series just before the occurrence and keeps the past; update creates the new series from the occurrence with the remaining COUNT / UNTIL, shifted EXDATE / RDATE, the same duration, attendees and reminder; the old series reads back with its past intact. An unsupported rule (EXRULE, fixed days moved, earlier exceptions in the range) is refused with a message before any card."
+    },
+    {
+      "id": "stale-and-uncertain",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": ["light"],
+      "state": {
+        "phase": "edit the event or contact in the system app while the card is open, then tap Allow; separately disconnect right after Allow"
+      },
+      "expect": "The edited target is refused with nothing written and a request to prepare again; a disconnect after Allow returns the uncertain wording and a repeated call_id is never re-executed."
+    },
+    {
+      "id": "contact-create-update-replace",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "state": {
+        "provider": "fictional contacts, one aggregated from two raw contacts, one with a custom phone label"
+      },
+      "expect": "Without replace a different name, company or title is refused; phones and emails are appended without duplicates; with replace the card shows old → new and the lists are replaced; other data rows (notes, address, photo, birthday) read back unchanged; a contact with an account that syncs shows the edit after sync."
+    },
+    {
+      "id": "permission-read-only",
+      "route": "phone",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "state": {
+        "permissions": "READ_CALENDAR and READ_CONTACTS granted, both WRITE permissions denied"
+      },
+      "expect": "The Calendar and Contacts rows read Read only; the registered tool list has no write tools; granting write adds them after the next register_phone."
+    },
+    {
+      "id": "medium-tablet-cards",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "state": {
+        "device": "Medium Tablet, three styles spot check, largest font, a long note and a long company name"
+      },
+      "expect": "The card is not clipped, Allow and Deny stay on one line, the page navigation does not change."
+    }
+  ],
+  "manualChecks": [
+    "Lock the device: Allow requires unlock; two write cards stay FIFO and reads are not blocked while one waits.",
+    "On at least one Chinese ROM if available: system Calendar and Contacts providers and account sync; without one, mark OEM behaviour unverified and do not infer it from the emulator.",
+    "Use only fictional test data and clean it up afterwards."
+  ]
+}

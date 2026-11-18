@@ -37,8 +37,14 @@ const leadKey = (mid: string, sid: string) => `${mid}/${sid}`;
 /** The worker the panel shows: the one asked for (a link, a pick), else the one picked last for this lead, else the first
  *  that needs you, else the first; undefined without workers. The lead's page and the panel read the same answer. */
 export function shownWorker(workers: readonly Session[], mid: string, lead: string, asked?: string): Session | undefined {
-  const find = (id: string | undefined) => (id ? workers.find((w) => w.session_id === id) : undefined);
-  return find(asked) ?? find(picked.get(leadKey(mid, lead))) ?? workers.find((w) => stateOf(w) === "needs_you") ?? workers[0];
+  return shownMember(workers, picked.get(leadKey(mid, lead)), asked);
+}
+
+/** The one of a strip's sessions a panel shows (the Team panel's workers, the Side sessions panel's sides): `asked`, else
+ *  `last` (picked last), else the first that needs you, else the first; undefined for none. */
+export function shownMember(members: readonly Session[], last: string | undefined, asked?: string): Session | undefined {
+  const find = (id: string | undefined) => (id ? members.find((w) => w.session_id === id) : undefined);
+  return find(asked) ?? find(last) ?? members.find((w) => stateOf(w) === "needs_you") ?? members[0];
 }
 
 /** Shows `worker` in its lead's Team panel (a pill picked on the strip), opening the panel if it is not. */

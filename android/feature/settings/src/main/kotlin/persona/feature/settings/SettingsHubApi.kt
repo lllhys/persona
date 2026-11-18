@@ -23,14 +23,21 @@ class SettingsHubApi(
 ) : AppUpdates, SettingsDiagnostics {
     private val client = pinnedClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
 
-    override suspend fun check(): AppUpdate? = withContext(Dispatchers.IO) {
+    override suspend fun check(): AppUpdate? = (lookup() as? AppUpdateLookup.Published)?.update
+
+    override suspend fun lookup(): AppUpdateLookup = withContext(Dispatchers.IO) {
         require(baseUrl.isHttps) { "Updates require the paired TLS origin" }
         val url = baseUrl.hubUrl("/api/v1/app/android/latest")
         client.newCall(request(url)).execute().use { response ->
-            if (response.code == 404 || response.code == 204) return@withContext null
+            if (response.code == 404 || response.code == 204) return@withContext AppUpdateLookup.NotPublished
             check(response.isSuccessful) { "Update metadata request failed" }
             val json = JSONObject(requireNotNull(response.body).string())
-            AppUpdate(json.getLong("version_code"), json.getString("version_name"), json.optString("download_url").ifBlank { "/api/v1/app/android/apk" }, json.getString("sha256"), json.optString("notes", json.optString("release_notes")))
+            AppUpdateLookup.Published(AppUpdate(
+                json.getLong("version_code"), json.getString("version_name"),
+                json.optString("download_url").ifBlank { "/api/v1/app/android/apk" }, json.getString("sha256"),
+                json.optString("notes", json.optString("release_notes")),
+                json.optString("package_name").ifBlank { null }, json.optString("certificate_sha256").ifBlank { null },
+            ))
         }
     }
 

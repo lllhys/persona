@@ -116,4 +116,19 @@ describe("signing out without the revoke", () => {
     signOutHere();
     expect(stored).toEqual({});
   });
+
+  it("clears the old account's native notifications and notch island before returning to sign-in", () => {
+    const clearNotifications = vi.fn();
+    const setIslandState = vi.fn();
+    vi.stubGlobal("window", { personaDesktop: { clearNotifications, setIslandState } });
+    signOutHere("dev_browser");
+    expect(clearNotifications).toHaveBeenCalledOnce();
+    expect(setIslandState).toHaveBeenCalledWith({ needsYou: 0, working: 0, unread: 0, rows: [], summary: "" });
+    expect(location.href).toBe("/");
+  });
+  it("signs out when an older desktop lacks notification cleanup", () => {
+    vi.stubGlobal("window", { personaDesktop: {} });
+    expect(() => signOutHere("dev_browser")).not.toThrow();
+    expect(location.href).toBe("/");
+  });
 });

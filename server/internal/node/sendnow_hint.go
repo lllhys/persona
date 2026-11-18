@@ -11,16 +11,18 @@ import (
 // from the binding rather than kept as text. 2.1.311 to 2.1.321 bind ctrl+x ctrl+s and ctrl+enter both and name
 // ctrl+enter where the terminal reports extended keys outside tmux and screen (a herdr pane), ctrl+x ctrl+s elsewhere
 // (#2467), and "click to send now" when no key is bound. The hint is its own line under the message (2.1.311 on), or
-// follows the message on its line after a gap (2.1.319). The node reads it by that shape, not as fixed strings
-// (#4537), so another binding, separator or letter case still gives its keys. Keys a terminal can't press (cmd, fn, a
-// click) are quoted and nothing is pressed.
+// follows the message on its line after a gap (2.1.319); 2.1.326 labels its own line "⎿  Queued · <keys> to send now"
+// where that fits the width, the bare hint as before where it doesn't (#9628). The node reads it by that shape, not as fixed
+// strings (#4537), so another binding, label, separator or letter case still gives its keys. Keys a terminal can't
+// press (cmd, fn, a click) are quoted and nothing is pressed.
 
 // sendNowLineRE is a line ending in the send-now words: what comes before them (the keys, perhaps after the queued
 // message) and from the separator on. A gap or " · " may follow, for more hints on the line.
 var sendNowLineRE = lazyre.New(`(?i)^(.*?)(\s*(?:\bto|·|•|:|-|–|—|\||→)?\s*send\s+now)\s*\)?(?:\s*$|\s+·\s|\s{2,})`)
 
-// hintGapRE is the gap between a queued message and the hint that follows it on its line.
-var hintGapRE = lazyre.New(`\s{2,}|\t`)
+// hintStartRE is where the hint's keys start after other words on its line: the gap after a queued message the hint
+// follows, or the " · " after a label ("Queued · ctrl+enter to send now").
+var hintStartRE = lazyre.New(`\s+[·•]\s+|\s{2,}|\t`)
 
 // sendNowOffer is the send-now hint the screen shows beside a queued message (the lowest one, under any older text
 // that quotes one) and the keys it names, as Persona's key names: no keys when a terminal can't press them, "" for no
@@ -49,15 +51,15 @@ func sendNowOffer(screen string) (hint string, keys []string) {
 }
 
 // hintChord is the strokes the hint names at the end of before: all of it when it is keys alone (the hint's own
-// line), else what follows the gap after the queued message, so a message ending in a key name ("…with ctrl+c")
-// lends none; nil for neither.
+// line), else what follows the last gap or " · " (after the queued message or a label), so a message ending in a key
+// name ("…with ctrl+c") lends none; nil for neither.
 func hintChord(before string) []string {
 	if !allStrokes(before) {
-		gaps := hintGapRE.FindAllStringIndex(strings.TrimRight(before, " \t"), -1)
-		if len(gaps) == 0 {
+		starts := hintStartRE.FindAllStringIndex(strings.TrimRight(before, " \t"), -1)
+		if len(starts) == 0 {
 			return nil
 		}
-		if before = before[gaps[len(gaps)-1][1]:]; !allStrokes(before) {
+		if before = before[starts[len(starts)-1][1]:]; !allStrokes(before) {
 			return nil
 		}
 	}

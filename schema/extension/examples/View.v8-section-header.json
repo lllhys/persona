@@ -1,0 +1,14 @@
+{
+  "title": "Usage",
+  "sections": [
+    {
+      "key": "today",
+      "title": "This week",
+      "icon": "chart",
+      "link": {"title": "History", "action": {"id": "history", "values": {"range": "month"}}},
+      "items": [
+        {"type": "metric", "key": "spent", "label": "Spent", "value": "¥42.10"}
+      ]
+    }
+  ]
+}

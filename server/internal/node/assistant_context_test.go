@@ -67,14 +67,14 @@ func TestContextDeltaReplacesDoneAndMutedDetails(t *testing.T) {
 		"旧屏蔽标题（server，session_id=mute-1）", "1 个，agents_list state=muted 查",
 	).Replace(before)
 	block, seen := contextDelta(seen, counts)
-	for _, want := range []string{"- Agents：", "agents_list state=done 查", "agents_list state=muted 查"} {
+	for _, want := range []string{"- Agents（", "agents_list state=done 查", "agents_list state=muted 查"} {
 		if !strings.Contains(block, want) {
-			t.Errorf("the count-only Agents section lacks %q:\n%s", want, block)
+			t.Errorf("the count-only Agents rows lack %q:\n%s", want, block)
 		}
 	}
 	for _, unwanted := range []string{"旧完成标题", "旧屏蔽标题", "旧结论", "done-1", "mute-1"} {
 		if strings.Contains(block, unwanted) {
-			t.Errorf("stale detail %q survived the section replacement:\n%s", unwanted, block)
+			t.Errorf("stale detail %q survived the rows' replacement:\n%s", unwanted, block)
 		}
 	}
 	empty := strings.NewReplacer(
@@ -82,8 +82,8 @@ func TestContextDeltaReplacesDoneAndMutedDetails(t *testing.T) {
 		"\n  - 已屏蔽（用户关了它们的通知，上面的数不算它们；别主动提，问到再说）：1 个，agents_list state=muted 查", "",
 	).Replace(counts)
 	block, _ = contextDelta(seen, empty)
-	if !strings.Contains(block, "- Agents：") || strings.Contains(block, "agents_list state=") {
-		t.Fatalf("empty done and muted lines did not replace the old Agents section:\n%s", block)
+	if !strings.Contains(block, "（已移除的行：做完的；已屏蔽）") || strings.Contains(block, "agents_list state=") {
+		t.Fatalf("the done and muted rows that are gone were not told removed:\n%s", block)
 	}
 }
 

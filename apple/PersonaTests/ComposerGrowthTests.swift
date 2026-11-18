@@ -2,16 +2,9 @@ import Testing
 @testable import Persona
 
 struct ComposerGrowthTests {
-    @Test func smallAndLargeKeyboardViewports() {
-        #expect(ComposerGrowth.maximumLines(viewportHeight: 360, lineHeight: 24) == 3)
-        #expect(ComposerGrowth.maximumLines(viewportHeight: 600, lineHeight: 24) == 5)
-    }
-
-    @Test func landscapeAndLargeTypeKeepTheDraftBounded() {
-        #expect(ComposerGrowth.maximumLines(viewportHeight: 150, lineHeight: 24) == 3)
-        #expect(ComposerGrowth.maximumLines(viewportHeight: 300, lineHeight: 40) == 3)
-        #expect(ComposerGrowth.maximumLines(viewportHeight: 1400, lineHeight: 24) == 8)
-        #expect(ComposerGrowth.maximumLines(viewportHeight: 0, lineHeight: 0) == 3)
+    @Test func phoneAndDesktopCapsAreIndependent() {
+        #expect(ComposerGrowth.maximumLines == 6)
+        #expect(Theme.Shell.composerMaximumLines == 8)
     }
 
     @Test func expandStartsAtTheLimitAndDisappearsBelowIt() {

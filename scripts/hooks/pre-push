@@ -5,8 +5,13 @@
 # The base is the first of origin/HEAD, origin/main, origin/master and the remote's tip that shares history with the
 # pushed commit (a clone older than a history rewrite can keep origin/HEAD on the old one). A branch that shares none
 # with them (an orphan, such as a screenshot branch) is scanned whole: every file and every commit message.
+# It also refuses a push whose commits change the trusted Deno adapter or what it is built from (sdk/ts/src, adapter.ts,
+# the generator) while the adapter they carry is not the one those sources build: check-deno-adapter.sh, against the
+# same base; an orphan branch has nothing to compare (#6001; docs/operations/testing.md "Trusted Deno adapter").
 set -u
 root="$(git rev-parse --show-toplevel)"
+adapter_inputs=(sdk/ts/src server/internal/extension/denohost/adapter.ts server/internal/extension/denohost/adapter.mjs
+  scripts/gen/deno_adapter.sh)
 zero="0000000000000000000000000000000000000000"
 refused=""
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -28,7 +33,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
   python3 "$root/scripts/privacy_check.py" --range "$from..$local_sha" </dev/null >&2 || refused="$refused $remote_ref"
+  if base="$(git merge-base "$from" "$local_sha" 2>/dev/null)" &&
+    [ -n "$(git diff --name-only "$base" "$local_sha" -- "${adapter_inputs[@]}")" ]; then
+    "$root/scripts/hooks/check-deno-adapter.sh" "$local_sha" </dev/null || refused="$refused $remote_ref"
+  fi
 done
 [ -z "$refused" ] && exit 0
-echo "pre-push: refused$refused; fix what is reported above, or see docs/operations/testing.md, \"Privacy scan\"" >&2
+echo "pre-push: refused$refused; fix what is reported above, or see docs/operations/testing.md, \"Privacy scan\" and \"Trusted Deno adapter\"" >&2
 exit 1

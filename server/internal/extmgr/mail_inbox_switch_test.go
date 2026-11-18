@@ -21,7 +21,7 @@ func TestMailInboxSwitch(t *testing.T) {
 		t.Fatal("on by default: the round has mail")
 	}
 	b := builtinSources{h}
-	if l := b.List(ctx); len(l) != 1 || l[0].Inbox == nil || !*l[0].Inbox || l[0].InboxAlways || l[0].InboxEvery != 180 {
+	if l := connectorSources(b.List(ctx)); len(l) != 1 || l[0].Inbox == nil || !*l[0].Inbox || l[0].InboxAlways || l[0].InboxEvery != 180 {
 		t.Fatalf("Inbox Sources shows mail's switch: %+v", l)
 	}
 	mux := http.NewServeMux() // Settings' route (the fake mail serves no pages of its own)

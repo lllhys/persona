@@ -192,3 +192,22 @@ describe("Settings > Claude Code, live replies (#1309)", () => {
     expect(liveGet()).toEqual([]);
   });
 });
+
+describe("Settings > Grok (#8353)", () => {
+  const grok: AgentSetting[] = [
+    { key: "ui.permission_mode", title: "Permission mode", detail: "", type: "enum", options: ["default", "ask", "auto", "always-approve"], default: "default", value: null },
+    { key: "ui.yolo", title: "Approve all tool calls", detail: "", type: "bool", default: false, value: null },
+  ];
+
+  it("reads and writes the Grok CLI's settings, named in the page's language", async () => {
+    await act(async () => root.render(<AgentSettings agent="grok" />));
+    const get = calls.find((c) => c.method === "GET")!;
+    expect(get.path).toBe("/machines/m-1/grok-settings");
+    await answer(get, { settings: grok });
+    expect(host.textContent).toContain(t("lib-agent-settings.setting_ui.permission_mode"));
+    expect(host.textContent).toContain(t("lib-agent-settings.setting_ui.yolo_detail"));
+    expect(host.textContent).toContain(t("lib-agent-settings.grok_footer"));
+    await click(t("lib-agent-settings.setting_ui.yolo"));
+    expect(put("ui.yolo")).toMatchObject({ path: "/machines/m-1/grok-settings", json: { key: "ui.yolo", value: true } });
+  });
+});

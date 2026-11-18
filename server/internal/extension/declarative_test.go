@@ -48,6 +48,40 @@ func TestDeclarativeContributions(t *testing.T) {
 	}
 }
 
+// Content from the data directory: instructions and skills with source data, project and Inbox context (always from
+// the data directory); none of them is a package file the install checks for.
+func TestDataContributions(t *testing.T) {
+	m, err := Parse([]byte(`{"manifest_version": 1, "id": "kit", "name": "Kit", "version": "1.0.0", "contributes": {
+		"skills": [{"id": "manuals", "source": "data", "dir": "assistant/skills"}],
+		"prompts": [{"id": "about", "kind": "instructions", "source": "data", "file": "assistant/instructions.md"},
+			{"id": "projects", "kind": "project_context", "dir": "agent/projects"},
+			{"id": "inbox", "kind": "inbox_context", "source": "data", "file": "inbox/context.md", "never_quote": "inbox/never_quote.txt"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.AssistantParts()) != 0 || len(m.DataSkills()) != 1 || len(m.DataPrompts(PromptInstructions)) != 1 ||
+		len(m.DataPrompts(PromptProjectContext)) != 1 || m.DataPrompts(PromptInboxContext)[0].NeverQuote != "inbox/never_quote.txt" || !m.HasDataContent() {
+		t.Fatalf("%+v", m.Contributions())
+	}
+	bad := map[string]string{
+		"an unknown source":                   `"skills": [{"id": "x", "source": "web", "dir": "x"}]`,
+		"a quick prompt with a source":        `"prompts": [{"id": "x", "kind": "quick", "source": "data", "title": "x", "text": "x"}]`,
+		"project context in the package":      `"prompts": [{"id": "x", "kind": "project_context", "source": "package", "dir": "x"}]`,
+		"project context without a dir":       `"prompts": [{"id": "x", "kind": "project_context", "file": "x.md"}]`,
+		"project context out of the data dir": `"prompts": [{"id": "x", "kind": "project_context", "dir": "../x"}]`,
+		"inbox context that is not .md":       `"prompts": [{"id": "x", "kind": "inbox_context", "file": "x.txt"}]`,
+		"never_quote out of the data dir":     `"prompts": [{"id": "x", "kind": "inbox_context", "file": "x.md", "never_quote": "/etc/x"}]`,
+		"never_quote on instructions":         `"prompts": [{"id": "x", "kind": "instructions", "file": "x.md", "never_quote": "x.txt"}]`,
+		"a dir on inbox context":              `"prompts": [{"id": "x", "kind": "inbox_context", "file": "x.md", "dir": "x"}]`,
+	}
+	for name, c := range bad {
+		doc := `{"manifest_version": 1, "id": "kit", "name": "Kit", "version": "1.0.0", "contributes": {` + c + `}}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("%s: parsed", name)
+		}
+	}
+}
+
 func TestDeclarativeSkillIsInThePackage(t *testing.T) {
 	r, _, _ := newTestRegistry(t)
 	dir := t.TempDir()

@@ -11,45 +11,58 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
-class ModelConfigMockTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
+class MockHubTests(unittest.TestCase):
+    mock_env = {}
+
+    def setUp(self):
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        cls.base = f"http://127.0.0.1:{port}"
-        cls.log = tempfile.TemporaryFile()
-        cls.process = subprocess.Popen(
+        self.base = f"http://127.0.0.1:{port}"
+        self.log = tempfile.TemporaryFile()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MOCK_")}
+        self.process = subprocess.Popen(
             ["python3", "-I", str(Path(__file__).with_name("mock_hub.py"))],
-            env=dict(os.environ, PORT=str(port)), stdout=cls.log, stderr=cls.log)
-        cls.addClassCleanup(cls.stop)
+            env=dict(env, PORT=str(port), **self.mock_env), stdout=self.log, stderr=self.log)
+        self.addCleanup(self.stop)
         for _ in range(60):
-            if cls.process.poll() is not None:
+            if self.process.poll() is not None:
                 raise RuntimeError("mock hub exited before startup")
             try:
-                with urlopen(cls.base + "/api/v1/health", timeout=1):
+                with urlopen(self.base + "/api/v1/health", timeout=1):
                     return
             except (URLError, TimeoutError):
                 time.sleep(0.1)
         raise RuntimeError("mock hub startup timed out")
 
-    @classmethod
-    def stop(cls):
-        cls.process.terminate()
+    def stop(self):
+        self.process.terminate()
         try:
-            cls.process.wait(timeout=5)
+            self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            cls.process.kill()
-            cls.process.wait(timeout=5)
-        cls.log.close()
+            self.process.kill()
+            self.process.wait(timeout=5)
+        self.log.close()
 
-    def request(self, path, body=None):
+    def request(self, path, body=None, method=None, language=None):
+        headers = {"Content-Type": "application/json"}
+        if language:
+            headers["Accept-Language"] = language
         request = Request(self.base + path,
                           data=None if body is None else json.dumps(body).encode(),
-                          method="GET" if body is None else "PATCH",
-                          headers={"Content-Type": "application/json"})
+                          method=method or ("GET" if body is None else "PATCH"), headers=headers)
         with urlopen(request, timeout=3) as response:
             return json.load(response)
+
+    def assert_status(self, code, path, body=None, method=None, language=None):
+        with self.assertRaises(HTTPError) as error:
+            self.request(path, body, method, language)
+        with error.exception as response:
+            self.assertEqual(response.code, code)
+            return json.load(response)
+
+
+class ModelConfigMockTests(MockHubTests):
 
     def test_catalog(self):
         catalog = self.request("/api/v1/model-config")
@@ -91,6 +104,232 @@ class ModelConfigMockTests(unittest.TestCase):
             with self.assertRaises(HTTPError) as error:
                 self.request("/api/v1/model-config/purposes/unknown", body)
             self.assertEqual(error.exception.code, 404)
+
+
+    def test_meeting_purposes_are_unknown_without_the_flag(self):
+        for pid in ("meeting.room", "meeting.minutes"):
+            path = "/api/v1/model-config/purposes/" + pid
+            self.assert_status(404, path)
+            for method in ("PATCH", "PUT"):
+                self.assert_status(404, path, {"revision": 0, "model": "unused"}, method)
+        purposes = self.request("/api/v1/model-config")["purposes"]
+        self.assertEqual([p["id"] for p in purposes], ["assistant", "agent.new", "kb", "inbox.triage"])
+        self.assertFalse(any(u["name"] in ("会中对话", "会议纪要") for p in purposes for u in p["uses"]))
+
+
+class MeetingModelMockTests(MockHubTests):
+    mock_env = {"MOCK_MEETING_MODELS": "1", "MOCK_PROVIDERS": "1", "MOCK_MODEL_DEFAULTS": "1"}
+
+    def add_api(self, protocol):
+        name = "meeting_" + protocol
+        self.request("/api/v1/launchers", {"name": name, "kind": "api", "api": protocol,
+                     "base_url": "https://api.example.com", "model": "meeting-default"}, method="POST")
+        return "launcher." + name
+
+    def test_catalog_and_localized_shapes(self):
+        # The hub's names and groups (assistant-models name_*, group_assistant, group_processing) in each language.
+        machine = self.request("/api/v1/assistant")["machine_id"]
+        chinese = {p["id"]: p for p in self.request("/api/v1/model-config")["purposes"]}
+        for language, names, groups, parents in (
+                ("en", ("In-meeting conversation", "Meeting minutes"), ("Main chat", "Processing"), ("Main chat", "Processing")),
+                ("zh-Hans", ("会中对话", "会议纪要"), ("主对话", "信息处理"), ("主对话", "信息处理")),
+                ("ja", ("会議中の会話", "議事録"), ("メインチャット", "情報処理"), ("メインチャット", "情報処理"))):
+            with self.subTest(language=language):
+                catalog = self.request("/api/v1/model-config", language=language)
+                self.assertEqual([p["id"] for p in catalog["purposes"]],
+                                 ["assistant", "agent.new", "kb", "inbox.triage", "meeting.room", "meeting.minutes"])
+                rows = {p["id"]: p for p in catalog["purposes"]}
+                for (pid, category, kind), name, group, parent in zip(
+                        (("meeting.room", "assistant", "launcher"), ("meeting.minutes", "kb", "api")), names, groups, parents):
+                    own = self.request("/api/v1/model-config/purposes/" + pid, language=language)["purpose"]
+                    self.assertEqual(own, rows[pid])
+                    self.assertEqual((own["kind"], own["category_id"], own["parent"]), (kind, category, category))
+                    self.assertEqual((own["name"], own["group"], own["inherited_from"]), (name, group, parent))
+                    self.assertEqual((own["revision"], own["override"]), (0, {}))
+                    self.assertEqual(own["effective"], rows[category]["effective"])
+                    self.assertEqual(own["fields"], ["provider", "model", "effort"])
+                    self.assertEqual(own["machine_id"], machine)  # the minutes too, as every API purpose
+                    self.assertTrue(own["description"])
+                    self.assertNotIn("uses", own)
+                # The categories' rows keep the mock's one language and their fields: the flag only adds the uses.
+                for category in ("assistant", "kb"):
+                    self.assertEqual(rows[category], chinese[category])
+                self.assertIn({"name": "会中对话"}, rows["assistant"]["uses"])
+                self.assertEqual(rows["kb"]["uses"][-2:], [{"name": "会议纪要"}, {"name": "会中对话不可用时的会议问答"}])
+                self.assertEqual(len(rows["kb"]["uses"]), 7)
+                self.assertEqual(rows["kb"]["fields"], ["provider", "model"])
+                self.assertEqual(rows["inbox.triage"]["fields"], ["provider", "model"])
+                self.assertEqual(rows["meeting.room"]["launch"], "headless")
+                self.assertNotIn("launch", rows["meeting.minutes"])
+                self.assertEqual(rows["meeting.minutes"]["provider_ids"], rows["kb"]["provider_ids"])
+                providers = rows["meeting.room"]["provider_ids"]
+                for provider in ("launcher.claude", "launcher.cc_bash", "launcher.gw_full"):
+                    self.assertIn(provider, providers)
+                for provider in ("launcher.codex", "launcher.cc_main", "legacy.ai"):
+                    self.assertNotIn(provider, providers)
+                # Each launcher's agent as the hub's viewAgent sends it: none for a Claude Code alias.
+                agents = {p["id"]: p.get("agent") for p in catalog["providers"] if p["kind"] == "launcher"}
+                self.assertEqual((agents["launcher.claude"], agents["launcher.codex"], agents["launcher.cc_bash"]), ("claude", "codex", None))
+
+    def test_own_revisions_sparse_updates_conflicts_and_reset(self):
+        api = self.add_api("messages")
+        for pid, category, first_provider, second_provider in (("meeting.room", "assistant", api, "launcher.claude"),
+                                                               ("meeting.minutes", "kb", "legacy.ai", api)):
+            with self.subTest(purpose=pid):
+                path, parent_path = "/api/v1/model-config/purposes/" + pid, "/api/v1/model-config/purposes/" + category
+                parent = self.request(parent_path)["purpose"]
+                parent = self.request(parent_path, {"revision": parent["revision"], "model": "parent-model", "effort": "low"})["purpose"]
+                own = self.request(path)["purpose"]
+                self.assertEqual((own["revision"], own["override"]), (0, {}))
+                self.assertEqual(own["effective"], parent["effective"])
+                saved = self.request(path, {"revision": 0, "provider": first_provider, "model": "meeting-model", "effort": "high"}, "PUT")["purpose"]
+                self.assertEqual(saved["revision"], 1)
+                self.assertEqual(saved["override"], {"provider": first_provider, "model": "meeting-model", "effort": "high"})
+                sparse = self.request(path, {"revision": 1, "effort": "low"})["purpose"]
+                self.assertEqual(sparse["revision"], 2)
+                self.assertEqual(sparse["override"], dict(saved["override"], effort="low"))
+                for method in ("PATCH", "PUT"):
+                    self.assert_status(409, path, {"revision": 1, "model": "stale"}, method)
+                    self.assertEqual(self.request(path)["purpose"], sparse)
+                cleared = self.request(path, {"revision": 2, "model": None}, "PUT")["purpose"]
+                self.assertEqual(cleared["override"], {"provider": first_provider, "effort": "low"})
+                first_default = "meeting-default" if first_provider == api else "model-fast"
+                expected_model = parent["effective"]["model"] if first_provider == parent["effective"]["provider"] else first_default
+                self.assertEqual(cleared["effective"]["model"], expected_model)
+                changed = self.request(path, {"revision": 3, "model": "provider-specific", "effort": "high"})["purpose"]
+                self.assertEqual(changed["override"]["model"], "provider-specific")
+                self.assertNotIn("inherited_from", changed, "set apart, it follows nothing")
+                changed = self.request(path, {"revision": 4, "provider": second_provider})["purpose"]
+                self.assertEqual(changed["override"], {"provider": second_provider})
+                if second_provider == parent["effective"]["provider"]:
+                    self.assertEqual(changed["effective"], parent["effective"])
+                else:
+                    self.assertNotIn("effort", changed["effective"])
+                restored = self.request(path, {"revision": 5, "provider": None, "model": None, "effort": None}, "PUT")["purpose"]
+                self.assertEqual((restored["revision"], restored["override"]), (6, {}))
+                self.assertEqual(restored["effective"], parent["effective"])
+                self.assertEqual(restored["inherited_from"], parent["name"])
+                self.assertEqual(self.request(parent_path)["purpose"], parent, "the category record is untouched")
+                parent = self.request(parent_path, {"revision": parent["revision"], "model": "later-parent"})["purpose"]
+                following = self.request(path)["purpose"]
+                self.assertEqual(following["effective"], parent["effective"])
+                self.assertEqual(following["revision"], 6, "category edits do not advance the own revision")
+
+    def test_same_provider_keeps_inherited_model_and_effort(self):
+        for pid, category, provider in (("meeting.room", "assistant", "launcher.claude"),
+                                        ("meeting.minutes", "kb", "legacy.ai")):
+            with self.subTest(purpose=pid):
+                parent_path = "/api/v1/model-config/purposes/" + category
+                parent = self.request(parent_path, {"revision": 0, "provider": provider,
+                                                    "model": "parent-model", "effort": "high"})["purpose"]
+                path = "/api/v1/model-config/purposes/" + pid
+                saved = self.request(path, {"revision": 0, "provider": parent["effective"]["provider"],
+                                            "model": None, "effort": None})["purpose"]
+                self.assertEqual(saved["override"], {"provider": provider})
+                self.assertEqual(saved["effective"]["model"], parent["effective"]["model"])
+                if "effort" in parent["effective"]:
+                    self.assertEqual(saved["effective"]["effort"], parent["effective"]["effort"])
+                else:
+                    self.assertNotIn("effort", saved["effective"])
+                self.assertEqual(saved["revision"], 1)
+
+    def test_room_refuses_other_runtimes_and_protocols_without_storing(self):
+        messages, responses, chat = (self.add_api(protocol) for protocol in ("messages", "responses", "chat"))
+        path = "/api/v1/model-config/purposes/meeting.room"
+        own = self.request(path, language="en")["purpose"]
+        self.assertIn(messages, own["provider_ids"])
+        for provider in ("launcher.codex", responses, chat, "legacy.ai"):
+            self.assertNotIn(provider, own["provider_ids"])
+            for method in ("PATCH", "PUT"):
+                error = self.assert_status(400, path, {"revision": 0, "provider": provider, "model": "not-saved"}, method, "en")
+                self.assertIn("runs only on Claude Code", error["error"])
+                self.assertEqual(self.request(path, language="en")["purpose"], own)
+        self.assert_status(400, path, {"revision": 0, "provider": "launcher.cc_main"})
+        for language, reason in (("zh-Hans", "只能用 Claude Code"), ("ja", "Claude Code でのみ動きます")):
+            error = self.assert_status(400, path, {"revision": 0, "provider": "launcher.codex"}, "PUT", language)
+            self.assertIn(reason, error["error"])
+        for provider in ("launcher.claude", "launcher.gw_full", messages):
+            own = self.request(path, {"revision": own["revision"], "provider": provider}, "PUT")["purpose"]
+            self.assertEqual(own["effective"]["provider"], provider)
+            self.assertNotIn("runtime", own["effective"])
+
+    def test_runtime_is_rejected_and_never_inherited(self):
+        """The runtime as an older hub keeps it (MOCK_MODEL_DEFAULTS stands for one), for the clients' picker that stays for
+        such hubs; a current hub offers no runtimes and accepts and ignores one in a save (#9799)."""
+        main_path = "/api/v1/model-config/purposes/assistant"
+        main = self.request(main_path, {"revision": 0, "runtime": "agentsdk", "model": "main-model"})["purpose"]
+        self.assertEqual(main["effective"]["runtime"], "agentsdk")
+        room = self.request("/api/v1/model-config/purposes/meeting.room")["purpose"]
+        self.assertEqual(room["effective"], {k: v for k, v in main["effective"].items() if k != "runtime"})
+        for pid in ("meeting.room", "meeting.minutes"):
+            path = "/api/v1/model-config/purposes/" + pid
+            own = self.request(path)["purpose"]
+            self.assertNotIn("runtime", own["fields"])
+            for method in ("PATCH", "PUT"):
+                for runtime in ("agentsdk", "cli", None):
+                    self.assert_status(400, path, {"revision": 0, "runtime": runtime}, method)
+                    self.assertEqual(self.request(path)["purpose"], own)
+        self.assertEqual(self.request(main_path)["purpose"], main)
+
+    def test_room_explains_codex_inheritance_and_an_override_fixes_it(self):
+        self.request("/api/v1/model-config/purposes/assistant", {"revision": 0, "provider": "launcher.codex", "model": "main-model"})
+        path = "/api/v1/model-config/purposes/meeting.room"
+        own = self.request(path, language="en")["purpose"]
+        self.assertEqual(own["effective"], {"provider": "launcher.codex", "model": "main-model"})
+        self.assertIn("codex isn't Claude Code", own["status"])
+        configured = self.request(path, {"revision": 0, "provider": "launcher.claude"}, language="en")["purpose"]
+        self.assertNotIn("isn't Claude Code", configured["status"])
+        reset = self.request(path, {"revision": 1, "provider": None}, language="en")["purpose"]
+        self.assertEqual(reset["effective"], own["effective"])
+        self.assertEqual(reset["status"], own["status"])
+
+    def test_a_model_alone_still_follows_the_category(self):
+        for pid, parent, provider in (("meeting.room", "Main chat", "launcher.claude"),
+                                      ("meeting.minutes", "Processing", "legacy.ai")):
+            path = "/api/v1/model-config/purposes/" + pid
+            own = self.request(path, {"revision": 0, "model": "only-model"}, "PUT", "en")["purpose"]
+            self.assertEqual((own["override"], own["inherited_from"]), ({"model": "only-model"}, parent))
+            own = self.request(path, {"revision": 1, "provider": provider}, "PATCH", "en")["purpose"]
+            self.assertNotIn("inherited_from", own)
+
+    def test_minutes_fields_follow_the_api_protocol(self):
+        chat, responses = (self.add_api(protocol) for protocol in ("chat", "responses"))
+        path = "/api/v1/model-config/purposes/meeting.minutes"
+        own = self.request(path, {"revision": 0, "provider": chat}, "PUT")["purpose"]
+        self.assertEqual(own["fields"], ["provider", "model"])
+        own = self.request(path, {"revision": 1, "provider": responses, "effort": "high"})["purpose"]
+        self.assertEqual(own["fields"], ["provider", "model", "effort"])
+        self.assertEqual(own["override"], {"provider": responses, "effort": "high"})
+
+
+class MeetingModelsWithSupervisorMockTests(MockHubTests):
+    mock_env = {"MOCK_MEETING_MODELS": "1", "MOCK_SUPERVISE_LISTED": "1", "MOCK_VOICE": "1"}
+
+    def test_meeting_rows_follow_supervisor_and_precede_plugins(self):
+        purposes = self.request("/api/v1/model-config")["purposes"]
+        self.assertEqual([p["id"] for p in purposes],
+                         ["assistant", "agent.new", "kb", "inbox.triage", "assistant.supervise", "meeting.room", "meeting.minutes", "plugin.voice"])
+        for purpose in purposes[4:7]:
+            self.assertEqual(purpose, self.request("/api/v1/model-config/purposes/" + purpose["id"])["purpose"])
+
+
+class MeetingModelsLimitMockTests(MockHubTests):
+    mock_env = {"MOCK_MEETING_MODELS": "1", "MOCK_MODEL_LIMIT": "1"}
+
+    def test_meeting_limits_follow_the_effective_provider(self):
+        kb = self.request("/api/v1/model-config/purposes/kb")["purpose"]
+        minutes = self.request("/api/v1/model-config/purposes/meeting.minutes")["purpose"]
+        self.assertEqual(minutes["limit"], kb["limit"])
+        self.assertEqual(minutes["status"], kb["status"])
+        path = "/api/v1/model-config/purposes/meeting.room"
+        room = self.request(path)["purpose"]
+        self.assertNotIn("limit", room)
+        for method in ("PATCH", "PUT"):
+            self.assert_status(400, path, {"revision": 0, "provider": "legacy.ai"}, method)
+            self.assertEqual(self.request(path)["purpose"], room, "a refused provider cannot import the API limit or change state")
+        room = self.request(path, {"revision": 0, "provider": "launcher.claude"})["purpose"]
+        self.assertNotIn("limit", room)
+        self.assertNotEqual(room["status"], kb["status"])
 
 
 if __name__ == "__main__":

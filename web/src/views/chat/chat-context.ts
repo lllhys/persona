@@ -24,6 +24,9 @@ export interface ChatContextValue {
   workflowCalls?: WorkflowCalls;
   /** Conversation identity; both styles share the collapsed work-line default (#2602). */
   lineStyle?: WorkLineStyle;
+  /** What runs the chat's subagents, as its agent is called ("Claude Code", "Codex", a Paseo provider's label, #8142);
+   *  unset: Claude Code. */
+  harness?: string;
   /** The message an extension opened this conversation with and where it came from (#3758, `externalOpening`). */
   opening?: { id: string; origin: ExternalOrigin };
   /** The exchange whose last words carried the closeout the card above the transcript shows (#3612): they are drawn

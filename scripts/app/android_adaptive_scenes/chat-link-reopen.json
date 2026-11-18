@@ -1,0 +1,133 @@
+{
+  "id": "chat-link-reopen",
+  "description": "An ordinary web link reopens at its own URL with no earlier page history; a forwarded port keeps its reload semantics. The runner only launches the chat; the reopen, cookie and shared-cache checks are driven by scripts/app/android_link_reopen_check.py against a local HTTP server, and the rest is by hand.",
+  "requires": {
+    "fields": []
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "session": "chat",
+      "conversationKind": "agent"
+    }
+  ],
+  "automatedCoverage": "Runner: launching the chat proves nothing about page history. JVM: ChatWebViewPoolTest, ChatLinkReopenTest and ChatLinkWebSlotTest use Robolectric shadows (the WebView feature probes fixed to unsupported) and prove which view instance the pool hands out, destroys and creates, not what a real renderer keeps. Device helper: `android_link_reopen_check.py reopen`, `cookie` and `cache` (see localServer) assert history.length, response sequence, request timestamps, preservation of the originally issued session and whether a unique cacheable script returns to the server.",
+  "localServer": {
+    "description": "Run `python3 scripts/app/android_link_reopen_check.py serve` on the host (on an emulator add `--host 127.0.0.1`); the links it prints carry the placeholder name persona.test, never this computer's address, so a capture shows no real network address. Make the name resolve first: `map-host --serial <serial>` points it at the emulator's alias for the host for the WebView of a debuggable emulator, then restart the app; it is not an adb reverse, so the link still takes the ordinary-link path. On a real phone use a hosts entry or a local DNS name instead. Each `serve` starts a fresh request log. Use an Agent reply for /a when checking first-open preload. Send /login, /whoami and /cache as the user's own messages so the session echo cannot be preloaded before login and the first cache asset request is observable. Then run `reopen`, `cookie` and `cache` with the phone's serial, the printed base (http://persona.test:<port>) and the log path.",
+    "pages": {
+      "/a": "Shows `page=a load=<request sequence> history=<history.length>` and a link to /b; never cached",
+      "/b": "Same state line for page b, with a link back to /a",
+      "/login": "Issues one random session only on its first request, then redirects to /a; later release preloads cannot reissue or rotate it",
+      "/whoami": "Shows the exact session value, or missing, and the response sequence that produced it",
+      "/cache": "A no-store main document with one unique cacheable JavaScript subresource; the page shows its main response sequence after the script executes",
+      "/cache-asset.js": "Cache-Control public,max-age=3600; a new random query key per server run makes its first network request mandatory"
+    }
+  },
+  "manualScenes": [
+    {
+      "id": "first-open-uses-preload",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light"
+      ],
+      "steps": [
+        "Receive an Agent reply containing the /a link and wait for the list to stop scrolling",
+        "Read the server log, then tap the link"
+      ],
+      "expect": "The log has a request for /a before the tap (timestamps), and the card shows the page already loaded. No request count is asserted: a cache can answer a load without one."
+    },
+    {
+      "id": "peek-back-and-selection",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light",
+        "dark"
+      ],
+      "orientation": [
+        "portrait",
+        "landscape"
+      ],
+      "steps": [
+        "Open /a, go to /b, shrink the card to Peek and expand it again",
+        "Press Back twice",
+        "Select text on a page and use AI edit, then Use as context"
+      ],
+      "expect": "Peek does not reload the page. The first Back returns to /a, the second closes the card. The selection actions carry the same context content as before."
+    },
+    {
+      "id": "port-dev-server-keeps-forget-reload",
+      "route": "agents",
+      "style": "glass",
+      "appearance": [
+        "light"
+      ],
+      "steps": [
+        "Run a dev server on the computer and tap its localhost link in an Agent reply",
+        "Change a served file, close the card and tap the link again",
+        "With the card open, edit a file that triggers hot reload",
+        "Stop the server and tap the link"
+      ],
+      "expect": "The reopened port shows the new content. Hot reload keeps working while the card is open. A stopped server reports the 404 notice as before. Not observable here and not claimed: that the phone's own loopback receives no request."
+    },
+    {
+      "id": "native-lark-and-renderer-recovery",
+      "route": "assistant",
+      "style": "glass",
+      "appearance": [
+        "light"
+      ],
+      "device": "medium tablet",
+      "steps": [
+        "Open a Feishu document link with the Lark extension on: the native reader shows, no page is loaded",
+        "Choose Open as web page, close and reopen",
+        "Kill the page's renderer process from adb on a web link and tap Reload"
+      ],
+      "expect": "The reader shows without a WebView until switched; after the switch a closed page reopens fresh. A killed renderer shows the quit notice and Reload builds a new view. If the renderer cannot be killed safely, report it as not verified on device."
+    }
+  ],
+  "automatedScenes": [
+    {
+      "id": "reopen-after-in-page-navigation",
+      "command": "android_link_reopen_check.py reopen --serial <serial> --base <base> --log <log>",
+      "asserts": [
+        "the first opening's history.length is 1",
+        "the reopened page's history.length is 1 (no in-page history from page B)",
+        "the reopened page is a different load than the first one",
+        "that load is a logged /a request made after the card closed",
+        "no /b request after the card closed"
+      ],
+      "reportedNotJudged": [
+        "whether the reopened page's request came before or after the tap (a prerendered page is loaded again when opened)"
+      ]
+    },
+    {
+      "id": "cookie-survives-release-and-preload",
+      "command": "android_link_reopen_check.py cookie --serial <serial> --base <base> --log <log>",
+      "asserts": [
+        "the server issues exactly one random session; subsequent /login release preloads do not issue another",
+        "two distinct /whoami responses produced after login both return the originally issued session",
+        "a response produced before login, a missing or replaced session, and two openings showing the same response all fail"
+      ]
+    },
+    {
+      "id": "shared-http-cache-survives-reopen",
+      "command": "android_link_reopen_check.py cache --serial <serial> --base <base> --log <log>",
+      "asserts": [
+        "the reopened no-store main document is a new logged response",
+        "the unique cacheable script executes on both openings but reaches the server only on the first load",
+        "a second script request fails the check"
+      ],
+      "reportedNotJudged": [
+        "whether the shared HTTP cache is resident in memory or persisted on disk; process-restart disk persistence is not asserted"
+      ]
+    }
+  ],
+  "notVerified": [
+    "How many WebView renderer processes exist (Chromium shares renderers by site, so the count does not follow the number of views).",
+    "That the phone's own loopback received no request for a forwarded port (nothing counts requests there).",
+    "How many requests one reopen makes: the preload happens when the card closes and the cache mode may answer a load without a request.",
+    "Whether the cookie store and HTTP cache survive an app process restart; the device checks cover release and preload within one process, not persistent storage across processes."
+  ]
+}

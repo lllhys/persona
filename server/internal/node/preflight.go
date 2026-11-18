@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/nodeclient"
 	"github.com/nwverse/persona/server/internal/osproc"
@@ -73,6 +74,14 @@ type preflightItem struct {
 	global bool   // every claude start reads it (Claude Code's own directory), not only the starts in one directory
 }
 
+// Stable role IDs stay independent of the display language. Tests and older internal fixtures may supply an opaque
+// role, which is preserved as data rather than parsed.
+const (
+	preflightRoleClaudeDir      = "claude_dir"
+	preflightRoleClaudeSettings = "claude_settings"
+	preflightRoleWorkDir        = "work_dir"
+)
+
 // preflightItems are the paths a claude start reads: Claude Code's directory (claudeDir), its settings and
 // instructions, the skills, commands and agents there; then each working directory, the assistant's first, with its
 // own .claude/skills, commands and agents. Paths that are not absolute are left out.
@@ -86,17 +95,17 @@ func preflightItems(claudeDir string, workDirs []string) []preflightItem {
 		seen[kind+"\x00"+path] = true
 		items = append(items, preflightItem{kind: kind, path: filepath.Clean(path), role: role, global: global})
 	}
-	add("dir", claudeDir, "Claude Code 的目录", true)
+	add("dir", claudeDir, preflightRoleClaudeDir, true)
 	for _, f := range []string{"settings.json", "settings.local.json", "CLAUDE.md"} {
-		add("file", filepath.Join(claudeDir, f), "Claude Code 的设置", true)
+		add("file", filepath.Join(claudeDir, f), preflightRoleClaudeSettings, true)
 	}
 	for _, d := range []string{"skills", "commands", "agents"} {
-		add("links", filepath.Join(claudeDir, d), "Claude Code 的设置", true)
+		add("links", filepath.Join(claudeDir, d), preflightRoleClaudeSettings, true)
 	}
 	for _, w := range workDirs {
-		add("dir", w, "工作目录", false)
+		add("dir", w, preflightRoleWorkDir, false)
 		for _, d := range []string{"skills", "commands", "agents"} {
-			add("links", filepath.Join(w, ".claude", d), "工作目录", false)
+			add("links", filepath.Join(w, ".claude", d), preflightRoleWorkDir, false)
 		}
 	}
 	return items
@@ -205,9 +214,10 @@ type preflightResult struct {
 // preflightOutcome is a whole run: the results in the order read, how many items were never reached (a read before
 // them hung, or the run took too long), and an error when the child could not run or did not do it.
 type preflightOutcome struct {
-	results   []preflightResult
-	unchecked int
-	err       error
+	results     []preflightResult
+	unchecked   int
+	err         error
+	unsupported string // an older child program's base name; wording is chosen by the parent display path
 }
 
 // runPreflight reads items in a child process (env.child) and kills its whole process group as soon as one read has
@@ -265,7 +275,7 @@ wait:
 	if finished {
 		o := parsePreflight(out.String(), items, true, false)
 		if !strings.HasPrefix(out.String(), preflightHello+"\n") {
-			o.err = errors.New(filepath.Base(env.child[0]) + " 不会做这项检查（版本旧？）")
+			o.unsupported = filepath.Base(env.child[0])
 		}
 		return o
 	}
@@ -423,27 +433,37 @@ func fullDiskAccessProgram(via, home, label, exe string) string {
 }
 
 // fullDiskAccessFor is, in the user's words, the program to give Full Disk Access to.
-func fullDiskAccessFor(via, exe string) string {
+func fullDiskAccessFor(via, exe string, lang i18n.Lang) string {
 	switch via {
 	case "launchd":
 		if exe == "" {
 			exe = "personad"
 		}
-		return exe + "（启动 node 的 launchd 服务运行的程序）"
+		return i18n.T(lang, "node-doctor.full_disk_access_launchd", i18n.Args{"program": exe})
 	case "ssh":
-		return "sshd-keygen-wrapper（node 经 ssh 启动）"
+		return i18n.T(lang, "node-doctor.full_disk_access_ssh")
 	}
-	return "运行 node 的终端或 App"
+	return i18n.T(lang, "node-doctor.full_disk_access_terminal")
 }
 
-// protectedFolderOf names the protected folder (Desktop, Documents, Downloads) path is in, "" when none.
-func protectedFolderOf(path, home string) string {
+// protectedFolderTop is the protected folder's stable directory name (Desktop, Documents, Downloads), "" when none.
+// The display name is chosen only at the report boundary.
+func protectedFolderTop(path, home string) string {
 	rel, err := filepath.Rel(home, path)
 	if home == "" || err != nil || strings.HasPrefix(rel, "..") {
 		return ""
 	}
 	top, _, _ := strings.Cut(rel, string(filepath.Separator))
-	return protectedDirs[top]
+	if _, ok := protectedDirs[top]; !ok {
+		return ""
+	}
+	return top
+}
+
+// protectedFolderOf names the protected folder (Desktop, Documents, Downloads) path is in, "" when none.
+// Its legacy Chinese result also serves explainDenied in files.go, so that shared behavior stays unchanged.
+func protectedFolderOf(path, home string) string {
+	return protectedDirs[protectedFolderTop(path, home)]
 }
 
 // preflightEnv is how the preflight runs and what its words depend on.
@@ -479,17 +499,32 @@ func thisPreflightEnv(home string) preflightEnv {
 
 // pathPreflight runs the preflight on items and reports it as the path-access check.
 func pathPreflight(ctx context.Context, items []preflightItem, env preflightEnv) DoctorCheck {
+	return pathPreflightIn(ctx, items, env, i18n.Default)
+}
+
+func pathPreflightIn(ctx context.Context, items []preflightItem, env preflightEnv, lang i18n.Lang) DoctorCheck {
 	if env.goos == "windows" {
-		return DoctorCheck{Name: pathAccessCheck, Status: DoctorOK, Detail: "Windows 上不检查", Items: []string{}}
+		return DoctorCheck{Name: pathAccessCheck, Status: DoctorOK, Detail: i18n.T(lang, "node-doctor.preflight_windows"), Items: []string{}}
 	}
-	return preflightCheck(runPreflight(ctx, items, env), items, env)
+	return preflightCheckIn(runPreflight(ctx, items, env), items, env, lang)
 }
 
 // preflightCheck says what a run found: each blocked path, and what to do about it.
 func preflightCheck(o preflightOutcome, items []preflightItem, env preflightEnv) DoctorCheck {
+	return preflightCheckIn(o, items, env, i18n.Default)
+}
+
+func preflightCheckIn(o preflightOutcome, items []preflightItem, env preflightEnv, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: pathAccessCheck, Items: []string{}}
+	if o.unsupported != "" {
+		c.Status = DoctorWarn
+		reason := i18n.T(lang, "node-doctor.preflight_child_unsupported", i18n.Args{"program": o.unsupported})
+		c.Detail = i18n.T(lang, "node-doctor.preflight_check_failed", i18n.Args{"error": shorten(reason, 80)})
+		return c
+	}
 	if o.err != nil {
-		c.Status, c.Detail = DoctorWarn, "没法检查："+shorten(o.err.Error(), 80)
+		c.Status = DoctorWarn
+		c.Detail = i18n.T(lang, "node-doctor.preflight_check_failed", i18n.Args{"error": shorten(o.err.Error(), 80)})
 		return c
 	}
 	var problems []preflightResult
@@ -500,21 +535,23 @@ func preflightCheck(o preflightOutcome, items []preflightItem, env preflightEnv)
 			read++
 		case r.state == "missing" && r.link:
 			dangling++
-			c.Items = append(c.Items, "链接指向的地方不存在："+r.path+" → "+r.target)
+			c.Items = append(c.Items, i18n.T(lang, "node-doctor.preflight_dangling_item", i18n.Args{"path": r.path, "target": r.target}))
 		case r.state == "missing": // a working directory since removed, a settings file the user never made
 		default:
 			problems = append(problems, r)
 		}
 	}
 	if len(problems) == 0 {
-		c.Status, c.Detail = DoctorOK, fmt.Sprintf("Claude 启动时读的 %d 个路径都能读", read)
+		c.Status = DoctorOK
+		c.Detail = i18n.T(lang, "node-doctor.preflight_all_readable", i18n.Args{"count": read})
 		if dangling > 0 {
-			c.Detail += fmt.Sprintf("；%d 个链接指向的地方不存在（Claude 会跳过）", dangling)
+			c.Detail = i18n.T(lang, "node-doctor.preflight_all_readable_with_dangling", i18n.Args{"count": read, "dangling": dangling})
 		}
 		if o.unchecked > 0 {
-			c.Status, c.Detail = DoctorWarn, fmt.Sprintf("读了 %d 个路径，都能读，但没读完", read)
-			c.Items = append(c.Items, unchecked(o))
-			c.Hint = "读得太慢：再检查一次；一直这样的话，看看工作目录或者链接是不是在网络盘上"
+			c.Status = DoctorWarn
+			c.Detail = i18n.T(lang, "node-doctor.preflight_partial_readable", i18n.Args{"count": read})
+			c.Items = append(c.Items, uncheckedIn(o, lang))
+			c.Hint = i18n.T(lang, "node-doctor.preflight_slow_hint")
 		}
 		return c
 	}
@@ -527,72 +564,100 @@ func preflightCheck(o preflightOutcome, items []preflightItem, env preflightEnv)
 		if it.global {
 			c.Status = DoctorFail
 		}
-		shown := r.path
-		if r.link {
-			shown += " → " + r.target
-		}
-		shown += "（" + it.role + "）"
+		shown := preflightShown(r, it, lang)
 		mac := env.goos == "darwin"
 		switch r.state {
 		case "hung":
-			problemItems = append(problemItems, fmt.Sprintf("卡住（%s 没有返回）：%s", env.stall, shown))
+			problemItems = append(problemItems, i18n.T(lang, "node-doctor.preflight_hung_item", i18n.Args{"wait": env.stall, "path": shown}))
 			// A hang in a protected folder is macOS holding the read; anywhere else it is as likely a mount that
 			// stopped answering (a network disk, FUSE).
-			if mac && tcc < 0 && protectedFolderOf(blockedPath(r), env.home) != "" {
+			if mac && tcc < 0 && protectedFolderTop(blockedPath(r), env.home) != "" {
 				tcc = i
 			}
 			if mac && onVolume == "" && strings.HasPrefix(blockedPath(r), "/Volumes/") {
 				onVolume = blockedPath(r)
 			}
 		case "denied":
-			problemItems = append(problemItems, "被拒绝："+shown+"："+failReason(r.msg))
+			problemItems = append(problemItems, i18n.T(lang, "node-doctor.preflight_denied_item", i18n.Args{"path": shown, "reason": failReason(r.msg)}))
 			if mac && tcc < 0 && tccRefused(r.msg) {
 				tcc = i
 			}
 		default:
-			problemItems = append(problemItems, "读不了："+shown+"："+shorten(failReason(r.msg), 80))
+			problemItems = append(problemItems, i18n.T(lang, "node-doctor.preflight_read_failed_item", i18n.Args{"path": shown, "reason": shorten(failReason(r.msg), 80)}))
 		}
 	}
 	c.Items = append(problemItems, c.Items...)
 	if o.unchecked > 0 {
-		c.Items = append(c.Items, unchecked(o))
+		c.Items = append(c.Items, uncheckedIn(o, lang))
 	}
 	first := problems[0]
 	where := first.path
 	if first.link {
 		where = first.path + " → " + first.target
 	}
-	who := "在这里启动的 Claude"
+	who := i18n.T(lang, "node-doctor.preflight_who_here")
 	if items[first.item].global {
-		who = "每个 Claude"
+		who = i18n.T(lang, "node-doctor.preflight_who_every")
 	}
 	if first.state == "hung" {
-		c.Detail = fmt.Sprintf("读 %s 超过 %s 没有返回：%s会停在 Loading commands and agents，等不到 SessionStart", where, env.stall, who)
+		c.Detail = i18n.T(lang, "node-doctor.preflight_hung_detail", i18n.Args{"path": where, "wait": env.stall, "who": who})
 	} else {
-		c.Detail = fmt.Sprintf("读不了 %s（%s）：%s启动时会失败或卡住", where, shorten(failReason(first.msg), 60), who)
+		c.Detail = i18n.T(lang, "node-doctor.preflight_read_failed_detail", i18n.Args{"path": where, "reason": shorten(failReason(first.msg), 60), "who": who})
 	}
 	if len(problems) > 1 {
-		c.Detail += fmt.Sprintf("；共 %d 处", len(problems))
+		c.Detail = i18n.T(lang, "node-doctor.preflight_detail_with_count", i18n.Args{"detail": c.Detail, "count": len(problems)})
 	}
 	if tcc < 0 {
-		c.Hint = "检查这个路径的权限，或者它所在的挂载（网络盘、FUSE）是否还有响应；或者把目录挪到别处"
+		c.Hint = i18n.T(lang, "node-doctor.preflight_mount_hint")
 		if onVolume != "" { // macOS asks before a program reads a network or removable volume, too
-			c.Hint += "。macOS 读外接盘、网络盘也要授权：挂载正常的话，在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里加上并打开 " +
-				fullDiskAccessFor(env.via, cmp.Or(env.fda, env.exe))
+			c.Hint = i18n.T(lang, "node-doctor.preflight_volume_hint", i18n.Args{
+				"hint": c.Hint, "program": fullDiskAccessFor(env.via, cmp.Or(env.fda, env.exe), lang),
+			})
 		}
 		return c
 	}
-	folder := "受保护的文件夹（桌面、文稿、下载）"
-	if name := protectedFolderOf(blockedPath(problems[tcc]), env.home); name != "" {
-		folder = "「" + name + "」文件夹"
+	folder := i18n.T(lang, "node-doctor.preflight_protected_folders_generic")
+	if top := protectedFolderTop(blockedPath(problems[tcc]), env.home); top != "" {
+		folder = i18n.T(lang, "node-doctor.preflight_protected_folder_named", i18n.Args{"folder": preflightFolderName(top, lang)})
 	}
-	it := "它"
+	target := i18n.T(lang, "node-doctor.preflight_it")
 	if tcc > 0 { // not the path the detail names
-		it = blockedPath(problems[tcc])
+		target = blockedPath(problems[tcc])
 	}
-	c.Hint = "macOS 的隐私保护挡住了" + it + "。两条出路：在「系统设置 › 隐私与安全性 › 完全磁盘访问权限」里加上并打开 " +
-		fullDiskAccessFor(env.via, cmp.Or(env.fda, env.exe)) + "；或者把它挪出" + folder
+	c.Hint = i18n.T(lang, "node-doctor.preflight_tcc_hint", i18n.Args{
+		"target": target, "program": fullDiskAccessFor(env.via, cmp.Or(env.fda, env.exe), lang), "folder": folder,
+	})
 	return c
+}
+
+func preflightRoleText(role string, lang i18n.Lang) string {
+	key := map[string]string{
+		preflightRoleClaudeDir:      "node-doctor.role_claude_dir",
+		preflightRoleClaudeSettings: "node-doctor.role_claude_settings",
+		preflightRoleWorkDir:        "node-doctor.role_work_dir",
+	}[role]
+	if key == "" {
+		return role
+	}
+	return i18n.T(lang, key)
+}
+
+func preflightShown(r preflightResult, it preflightItem, lang i18n.Lang) string {
+	args := i18n.Args{"path": r.path, "target": r.target, "role": preflightRoleText(it.role, lang)}
+	if r.link {
+		return i18n.T(lang, "node-doctor.preflight_shown_link", args)
+	}
+	return i18n.T(lang, "node-doctor.preflight_shown_path", args)
+}
+
+func preflightFolderName(top string, lang i18n.Lang) string {
+	key := map[string]string{
+		"Desktop": "node-doctor.folder_desktop", "Documents": "node-doctor.folder_documents", "Downloads": "node-doctor.folder_downloads",
+	}[top]
+	if key == "" {
+		return top
+	}
+	return i18n.T(lang, key)
 }
 
 // blockedPath is where r's read went: a link's target (made absolute), the item's path otherwise.
@@ -608,11 +673,15 @@ func blockedPath(r preflightResult) string {
 
 // unchecked says how many items were never read, and why.
 func unchecked(o preflightOutcome) string {
-	why := "前面的读卡住了"
-	if !slices.ContainsFunc(o.results, func(r preflightResult) bool { return r.state == "hung" }) {
-		why = "读得太久，停下了"
+	return uncheckedIn(o, i18n.Default)
+}
+
+func uncheckedIn(o preflightOutcome, lang i18n.Lang) string {
+	key := "node-doctor.preflight_unchecked_slow"
+	if slices.ContainsFunc(o.results, func(r preflightResult) bool { return r.state == "hung" }) {
+		key = "node-doctor.preflight_unchecked_hung"
 	}
-	return fmt.Sprintf("还有 %d 个路径没检查（%s）", o.unchecked, why)
+	return i18n.T(lang, key, i18n.Args{"count": o.unchecked})
 }
 
 // workDirs are the working directories of this node's sessions, most recently used first, at most `most` of them: the
@@ -641,47 +710,79 @@ func (n *Node) workDirs(most int) []string {
 // preflight is the path-access check run in this node's own process: macOS holds the reads to the program that runs
 // the node, as it does the claude the node starts.
 func (n *Node) preflight(ctx context.Context) DoctorCheck {
-	return pathPreflight(ctx, preflightItems(claudeDirOf(n.home), n.workDirs(preflightMaxDirs)), thisPreflightEnv(n.home))
+	return n.preflightIn(ctx, i18n.Default)
+}
+
+func (n *Node) preflightIn(ctx context.Context, lang i18n.Lang) DoctorCheck {
+	return pathPreflightIn(ctx, preflightItems(claudeDirOf(n.home), n.workDirs(preflightMaxDirs)), thisPreflightEnv(n.home), lang)
 }
 
 // preflightFromNode is `personad node doctor`'s path-access check: asked of the node listening on sock, which reads
 // with its own permissions and knows its sessions' working directories. Without one (none running, one in standby,
 // an older one) it runs here, on Claude Code's own directory only, and says so: on a Mac the result is then this
 // program's (a terminal's, ssh's), which need not be the node's.
-func preflightFromNode(sock, home, claudeDir string) func(context.Context) DoctorCheck {
-	return func(ctx context.Context) DoctorCheck {
-		c, why := askNodePreflight(ctx, sock, preflightAnswerWait)
-		if why == "" {
+func preflightFromNode(sock, home, claudeDir string) func(context.Context, i18n.Lang) DoctorCheck {
+	return func(ctx context.Context, lang i18n.Lang) DoctorCheck {
+		c, why := askNodePreflightIn(ctx, sock, preflightAnswerWait, lang)
+		if why.kind == "" {
+			// An old node ignores locale and returns its legacy report. It is already display text; pass it through.
 			return c
 		}
-		c = pathPreflight(ctx, preflightItems(claudeDir, []string{identity.AssistantDir(home)}), thisPreflightEnv(home))
-		c.Detail += "；" + why + "，只查了 Claude Code 的目录，没查各会话的工作目录"
+		c = pathPreflightIn(ctx, preflightItems(claudeDir, []string{identity.AssistantDir(home)}), thisPreflightEnv(home), lang)
+		c.Detail = i18n.T(lang, "node-doctor.preflight_fallback_detail", i18n.Args{"detail": c.Detail, "reason": why.text(lang)})
 		if runtime.GOOS == "darwin" {
-			c.Detail += "；macOS 按运行 doctor 的程序的权限算，可能和 node 的不一样"
+			c.Detail = i18n.T(lang, "node-doctor.preflight_fallback_detail_mac", i18n.Args{"detail": c.Detail})
 		}
 		return c
 	}
 }
 
-// askNodePreflight asks the node on sock for its path-access check, waiting at most wait. why says, when it got none,
-// why not, in the report's words.
+type preflightFallback struct {
+	kind string
+	wait time.Duration
+	err  error
+}
+
+func (f preflightFallback) text(lang i18n.Lang) string {
+	switch f.kind {
+	case "no_node":
+		return i18n.T(lang, "node-doctor.preflight_fallback_no_node")
+	case "timeout":
+		return i18n.T(lang, "node-doctor.preflight_fallback_timeout", i18n.Args{"wait": f.wait})
+	case "error":
+		return i18n.T(lang, "node-doctor.preflight_fallback_error", i18n.Args{"error": shorten(f.err.Error(), 60)})
+	case "old_node":
+		return i18n.T(lang, "node-doctor.preflight_fallback_old_node")
+	default:
+		return ""
+	}
+}
+
+// askNodePreflight keeps the legacy no-locale request and zh-Hans reason for older internal callers.
 func askNodePreflight(ctx context.Context, sock string, wait time.Duration) (c DoctorCheck, why string) {
+	c, reason := askNodePreflightIn(ctx, sock, wait, "")
+	return c, reason.text(i18n.Default)
+}
+
+// askNodePreflightIn asks the node on sock for its path-access check, waiting at most wait. The returned reason is
+// structured so the parent display path chooses its words.
+func askNodePreflightIn(ctx context.Context, sock string, wait time.Duration, lang i18n.Lang) (c DoctorCheck, why preflightFallback) {
 	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
-	line, err := nodeclient.DialAt(ctx, sock, sockRequest{Kind: "preflight"})
+	line, err := nodeclient.DialAt(ctx, sock, sockRequest{Kind: "preflight", Locale: string(lang)})
 	switch {
 	case errors.Is(err, nodeclient.ErrNoNode): // nothing listens, or a resident node in standby (no hub connected)
-		return c, "没有 node 回答这项检查（没在运行，或者 hub 没连上它）"
+		return c, preflightFallback{kind: "no_node"}
 	case err != nil && (ctx.Err() != nil || errors.Is(err, os.ErrDeadlineExceeded)):
-		return c, fmt.Sprintf("node %s 内没有回答这项检查", wait)
+		return c, preflightFallback{kind: "timeout", wait: wait}
 	case err != nil:
-		return c, "node 没有回答这项检查（" + shorten(err.Error(), 60) + "）"
+		return c, preflightFallback{kind: "error", err: err}
 	}
 	if json.Unmarshal(line, &c) != nil || c.Name != pathAccessCheck {
-		return DoctorCheck{}, "node 的版本旧，不会这项检查" // {"error":"unknown kind"}
+		return DoctorCheck{}, preflightFallback{kind: "old_node"} // {"error":"unknown kind"}
 	}
 	if c.Items == nil {
 		c.Items = []string{}
 	}
-	return c, ""
+	return c, preflightFallback{}
 }

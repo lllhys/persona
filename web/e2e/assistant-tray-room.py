@@ -160,6 +160,8 @@ def run(args):
                     capture("needs")
                     # the first plan (under the two Agents asking): scrolled to its top, its Start is in reach, under the
                     # header and inside the list, sticking to the list's bottom when the card is taller
+                    # a plan is folded to a line until opened (#5569)
+                    tray.locator('button[data-needs-row^="plan:"][aria-expanded="false"]').first.click()
                     plan = tray.locator("[data-plan-actions]").first.locator("xpath=..")
                     plan.evaluate("e => { const list = e.closest('[data-tray-list]'); list.scrollTop += e.getBoundingClientRect().top - list.getBoundingClientRect().top - 8; }")
                     page.evaluate(FRAME)

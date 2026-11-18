@@ -1,0 +1,21 @@
+{
+  "title": "{day} 全天回顾",
+  "covers": "时段：{from}–{to}",
+  "so_far": "（截至目前）",
+  "not_recorded": "没有录到：{gaps}",
+  "list_sep": "、",
+  "gap": "{from}–{to}（{reason}）",
+  "gap_paused": "暂停",
+  "gap_interrupted": "被打断",
+  "gap_stopped": "停止",
+  "gap_pending": "还没传完",
+  "gap_lost": "丢失",
+  "gap_erased": "已擦除",
+  "gap_unknown": "原因不明",
+  "meetings": "会议",
+  "outside": "会议以外",
+  "actions": "建议待办",
+  "aside": "（{text}）",
+  "owner": "{who}：",
+  "partial": "这一天太长，中间有些时段没有整理进回顾。"
+}

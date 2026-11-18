@@ -7,7 +7,7 @@
   "new_child": "新建子工作树…",
   "rename": "重命名工作树…",
   "copy_name": "复制工作树名称",
-  "copy_path": "复制路径",
+  "copy_path": "复制目录路径",
   "open_parent": "打开父工作树",
   "delete": "删除工作树…",
   "delete_title": "删除工作树",
@@ -43,5 +43,11 @@
   "unknown": "移除尚未确认，工作区会保留到状态核对完成。不会再次发送删除请求。",
   "check_status": "检查状态",
   "checking": "正在检查移除状态…",
-  "removing": "正在等待移除完成…"
+  "removing": "正在等待移除完成…",
+  "close_workspace": "关闭工作区…",
+  "close_title": "关闭工作区",
+  "close_confirm": "关闭工作区",
+  "close_keeps_files": "目录、文件和 Git 分支会保留。",
+  "closed": "工作区已关闭",
+  "linked_only": "关联的 Git 工作树支持销毁。当前工作区可以关闭。"
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -202,5 +203,28 @@ func TestAgyModelSettingsUseNativeCatalog(t *testing.T) {
 		if setting.Key == "model" && (setting.Type != "enum" || len(setting.Options) != 2 || setting.Options[0] != "Future Model" || setting.Options[1] != "existing-model" || setting.Default != "") {
 			t.Fatalf("native model options: %+v", setting)
 		}
+	}
+}
+
+func TestOmpYAMLCommentedHeaderAndWideIndent(t *testing.T) {
+	in := "computer: # desktop control\n  enabled: true # on\ntheme:\n    dark: titanium\n    light: paper\n"
+	v := yamlSimpleParse(in)
+	if v["computer.enabled"] != true || v["theme.dark"] != "titanium" || v["theme.light"] != "paper" {
+		t.Fatalf("%#v", v)
+	}
+	got := yamlSimpleSet(in, "computer.enabled", false)
+	if want := "computer: # desktop control\n  enabled: false\ntheme:\n    dark: titanium\n    light: paper\n"; got != want {
+		t.Fatalf("a commented header is the section, not a reason to add a second one:\ngot\n%s\nwant\n%s", got, want)
+	}
+	got = yamlSimpleSet(in, "theme.dark", "carbon")
+	if want := "computer: # desktop control\n  enabled: true # on\ntheme:\n    dark: carbon\n    light: paper\n"; got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	got = yamlSimpleSet(in, "theme.contrast", "high")
+	if want := "computer: # desktop control\n  enabled: true # on\ntheme:\n    dark: titanium\n    light: paper\n    contrast: high\n"; got != want {
+		t.Fatalf("a new key follows the section's indent:\ngot\n%s\nwant\n%s", got, want)
+	}
+	if n := strings.Count(yamlSimpleSet(in, "computer.enabled", true), "computer:"); n != 1 {
+		t.Fatalf("duplicate computer: section (%d)", n)
 	}
 }

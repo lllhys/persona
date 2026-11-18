@@ -233,5 +233,45 @@ class MockHubManagersTests(unittest.TestCase):
             self.assertEqual((status, answer.get("code")), (503, "assistant_offline"), path)
 
 
+class MockHubHiddenBuiltinTests(MockHubManagersTests):
+    """MOCK_MANAGER_HIDDEN=1 (#9055): 工作 the default with every computer, the built-in assistant kept out of the
+    switcher; hiding is refused while it is the default or has a computer, showing it always works."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["MOCK_MANAGER_HIDDEN"] = "1"
+        try:
+            super().setUpClass()
+        finally:
+            del os.environ["MOCK_MANAGER_HIDDEN"]
+
+    def builtin(self):
+        status, roster = self.call("GET", "/api/v1/managers")
+        self.assertEqual(status, 200)
+        return next(m for m in roster["managers"] if m.get("builtin")), roster["default"]
+
+    def test_hide_and_show_the_built_in(self):
+        m, default = self.builtin()
+        self.assertEqual((default, m.get("hide"), m.get("hidden")), ("m-3fa21c", True, True))
+        self.assertEqual(self.call("PATCH", "/api/v1/managers/m-3fa21c", json.dumps({"hide": True}).encode())[0], 400)
+        status, answer = self.call("PATCH", "/api/v1/managers/assistant", json.dumps({"hide": False}).encode())
+        self.assertEqual((status, answer["manager"].get("hide"), answer["manager"].get("hidden")), (200, None, None))
+        status, answer = self.call("PATCH", "/api/v1/managers/assistant", json.dumps({"hide": True, "default": True}).encode())
+        self.assertEqual((status, answer.get("code")), (409, "builtin_in_use"))
+        status, answer = self.call("PATCH", "/api/v1/managers/assistant", json.dumps({"hide": True}).encode())
+        self.assertEqual((status, answer["manager"].get("hidden")), (200, True))
+        # made the default: shown again, the choice kept
+        self.call("PATCH", "/api/v1/managers/assistant", json.dumps({"default": True}).encode())
+        m, _ = self.builtin()
+        self.assertEqual((m.get("hide"), m.get("hidden")), (True, None))
+        self.call("PATCH", "/api/v1/managers/m-3fa21c", json.dumps({"default": True}).encode())
+
+    # the inherited tests run against the default seed only
+    test_personal_agent_entry_states_are_consistent = test_a_raw_body_post_is_answered = None
+    test_the_move_routes_read_json_only = test_built_ins_are_every_managers = test_an_offline_managers_computer = None
+    test_a_computer_added_to_a_manager = test_sessions_of_one_manager = test_the_roster_counts_each_inbox = None
+    test_each_managers_mutes_and_rules = None
+
+
 if __name__ == "__main__":
     unittest.main()

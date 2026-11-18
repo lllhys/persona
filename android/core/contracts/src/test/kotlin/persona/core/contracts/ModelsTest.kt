@@ -2,6 +2,7 @@ package persona.core.contracts
 
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,6 +30,18 @@ class ModelsTest {
         // D5 preserves unknown states instead of inferring a known state from status.
         assertEquals(AgentState.Unknown, s.agentState)
         assertEquals(0, s.pendingInteractions)
+    }
+
+    @Test fun suggestionRiskDecodesAndAnAbsentFieldIsSafeByDefault() {
+        for ((field, expected) in mapOf("\"suggestion_risky\":true" to true,
+            "\"suggestion_risky\":false" to false, "" to false)) {
+            val comma = if (field.isEmpty()) "" else ","
+            val session = JsonCodec.decodeFromString<Session>(
+                """{"session_id":"s","suggestion":"Review the plan"$comma$field}""",
+            )
+            assertEquals(field.ifEmpty { "absent" }, expected, session.suggestionRisky)
+            assertEquals("Review the plan", session.suggestion)
+        }
     }
 
     @Test fun zeroTimeIsUnset() {
@@ -74,6 +87,21 @@ class ModelsTest {
         assertNull(old.sourceKind); assertNull(old.capabilities); assertEquals(false, old.attached)
     }
 
+    // #6294: what a runtime's session can do without a terminal, where its node says it; null where an older node doesn't.
+    @Test fun optionalCapabilitiesDecodeWhereTheNodeSaysThem() {
+        fun caps(json: String) = JsonCodec.decodeFromString<Session>("""{"session_id":"s","source_kind":"runtime","capabilities":$json}""").capabilities!!
+        val said = caps("""{"read":true,"close":true,"rename":false,"model":true,"rewind":true,"rewind_code":false}""")
+        assertEquals(SessionCapabilities(read = true, close = true, rename = false, model = true, rewind = true, rewindCode = false), said)
+        val older = caps("""{"read":true,"send":true}""")
+        assertEquals(listOf(null, null, null, null, null), listOf(older.close, older.rename, older.model, older.rewind, older.rewindCode))
+        // A malformed one drops only itself (D5): null, the app's own rule, never a refusal.
+        assertEquals(SessionCapabilities(read = true, rename = true), caps("""{"read":true,"close":"yes","rename":true,"rewind_code":1}"""))
+        // They go back out under their wire names.
+        val encoded = JsonCodec.encodeToString(said)
+        assertTrue(encoded, encoded.contains(""""rewind_code":false"""))
+        assertEquals(said, JsonCodec.decodeFromString<SessionCapabilities>(encoded))
+    }
+
     @Test fun agentLabelNamesEveryAgent() {
         fun label(json: String) = JsonCodec.decodeFromString<Session>("""{"session_id":"s",$json}""").agentLabel
         assertEquals("Claude", label(""""status":"idle""""))
@@ -86,6 +114,43 @@ class ModelsTest {
         val dsh = JsonCodec.decodeFromString<Session>("""{"session_id":"s","agent":"dsh"}""")
         assertTrue(!dsh.isClaude && !dsh.isCodex)
         assertTrue(JsonCodec.decodeFromString<Session>("""{"session_id":"s","agent":""}""").isClaude)
+    }
+
+    @Test fun aPaseoProviderIsNamedByItsOwnNameNeverTheEngines() {
+        fun label(json: String) = JsonCodec.decodeFromString<Session>("""{"session_id":"paseo-1","agent":"paseo",$json}""").agentLabel
+        // Paseo calls every provider but Claude Code and Codex "paseo" (#8143): the row's label, else its launcher.
+        assertEquals("My Grok", label(""""agent_label":"My Grok","launcher":"grok""""))
+        // The runtime's own name, which a node gives a row its bridge left unlabelled, is the engine's: the launcher instead.
+        assertEquals("grok", label(""""agent_label":"Paseo","launcher":"grok""""))
+        assertEquals("grok", label(""""agent_label":" ","launcher":"grok""""))
+        assertEquals("grok", label(""""launcher":"grok""""))
+        // Nothing else to go by: as before.
+        assertEquals("Paseo", label(""""agent_label":"Paseo""""))
+        assertEquals("paseo", label(""""status":"idle""""))
+        // Its providers running Claude Code and Codex are those agents', and another runtime keeps its own name.
+        assertEquals("Claude", JsonCodec.decodeFromString<Session>("""{"session_id":"s","agent":"claude","launcher":"my-claude","space_kind":"paseo"}""").agentLabel)
+        assertEquals("Codex", JsonCodec.decodeFromString<Session>("""{"session_id":"s","agent":"codex","launcher":"my-codex","space_kind":"paseo"}""").agentLabel)
+        assertEquals("DSH", JsonCodec.decodeFromString<Session>("""{"session_id":"s","agent":"dsh","agent_label":"DSH","launcher":"dsh"}""").agentLabel)
+        assertEquals("grok", unknownAgentName(PaseoAgent, "paseo", "grok"))
+        assertEquals("pi", unknownAgentName("pi", null, "my-pi"))
+    }
+
+    @Test fun aPaseoCardNamesItsProviderOrSaysOnlyWhatItWants() {
+        // A node that labels the card with the row's label (#8142): the provider's name.
+        val named = JsonCodec.decodeFromString<Interaction>("""{"id":"p","kind":"question","agent":"paseo","agent_label":"Grok"}""")
+        assertEquals("Grok", named.agentDisplayName)
+        assertTrue(named.fromOtherAgent)
+        assertEquals("Grok 在问你", (named.headline).zhAny())
+        // An older node's card names only the engine: no name, never "Paseo" (nor "Claude"), and still another agent's card.
+        for (engine in listOf(named.copy(agentLabelHint = "Paseo"), named.copy(agentLabelHint = "paseo"), named.copy(agentLabelHint = null))) {
+            assertNull(engine.agentDisplayName)
+            assertTrue(engine.fromOtherAgent)
+            assertEquals("在问你", (engine.headline).zhAny())
+            assertEquals("请求使用 read_file", (engine.copy(kind = "permission", toolName = "read_file").headline).zhAny())
+        }
+        // Whose card it is: only Claude Code's (or an older hub's, which names none) is Claude's.
+        assertEquals(listOf(false, false, false, true, true),
+            listOf(null, "", "claude", "codex", "dsh").map { Interaction(id = "c", kind = "question", agent = it).fromOtherAgent })
     }
 
     @Test fun interactionRetainsRememberedPermissionScope() {
@@ -125,6 +190,17 @@ class ModelsTest {
         assertEquals("Claude 在问你", (JsonCodec.decodeFromString<Interaction>("""{"id":"c","kind":"question"}""").headline).zhAny())
     }
 
+    @Test fun questionOptionDecodesDeferActionAndDefaultsForOldHubs() {
+        val marked = JsonCodec.decodeFromString<QuestionOption>(
+            """{"label":"Leave it","description":"Handle it later","action":"defer"}""",
+        )
+        assertEquals("Leave it", marked.label)
+        assertEquals("Handle it later", marked.description)
+        assertEquals("defer", marked.action)
+        assertEquals(marked, JsonCodec.decodeFromString<QuestionOption>(JsonCodec.encodeToString(marked)))
+        assertNull(JsonCodec.decodeFromString<QuestionOption>("""{"label":"Continue"}""").action)
+    }
+
     @Test fun sessionInfoDecodes() {
         val info = JsonCodec.decodeFromString<SessionInfo>(
             """{"session_id":"s1","cwd":"/x","model":"claude-opus","context_tokens":51234,"output_tokens":9,"turns":3,""" +
@@ -137,6 +213,9 @@ class ModelsTest {
         assertEquals(java.time.Instant.parse("2026-11-01T02:00:00Z"), parseTime(info.startedAt))
         assertNull(info.lastActivity)
         assertEquals(SessionInfo(), JsonCodec.decodeFromString<SessionInfo>("{}"))
+        // A runtime's session says nobody gives its counts (#8261): its zeros stand in for older apps.
+        assertTrue(JsonCodec.decodeFromString<SessionInfo>("""{"session_id":"s1","turns":0,"usage_unknown":true}""").usageUnknown)
+        assertFalse(info.usageUnknown)
     }
 
     @Test fun interactionHeadline() {
@@ -176,5 +255,26 @@ class ModelsTest {
         assertEquals("请求使用 github · create issue：Fix login", (ix.headline).zhAny())
         assertEquals("请求使用 Persona · mail send", (ix.copy(toolName = "mcp__persona__mail_send", summary = null).headline).zhAny())
         assertEquals("Codex 请求使用 github · create issue", (ix.copy(agent = "codex", summary = null).headline).zhAny())
+    }
+
+    @Test fun screenDialogDecodesCommandAskFieldsAndKeepsOldHubsCompatible() {
+        val ix = JsonCodec.decodeFromString<Interaction>(
+            """{"id":"ix_command","kind":"screen","dialog":{"question":"Do you want to proceed?",""" +
+                """"command":"rm -rf build","description":"Remove generated files","warning":"Dangerous rm operation","""+
+                """"risk":"delete","deadline":"Automatically denied in 1:44","deadline_action":"deny","""+
+                """"deadline_at":"2026-11-12T11:00:00+08:00","rev":"abc","options":[{"key":"1","label":"Yes"},{"key":"2","label":"No"}]}}""",
+        )
+        val dialog = ix.dialog!!
+        assertEquals("rm -rf build", dialog.command)
+        assertEquals("Remove generated files", dialog.description)
+        assertEquals("Dangerous rm operation", dialog.warning)
+        assertEquals("delete", dialog.risk)
+        assertEquals("Automatically denied in 1:44", dialog.deadline)
+        assertEquals("deny", dialog.deadlineAction)
+        assertEquals(java.time.Instant.parse("2026-11-12T03:00:00Z"), parseTime(dialog.deadlineAt))
+        assertEquals(ix, JsonCodec.decodeFromString<Interaction>(JsonCodec.encodeToString(ix)))
+        val old = JsonCodec.decodeFromString<Interaction>("""{"id":"old","kind":"screen","dialog":{"question":"Continue?"}}""").dialog!!
+        assertNull(old.command); assertNull(old.description); assertNull(old.warning); assertNull(old.risk)
+        assertNull(old.deadline); assertNull(old.deadlineAction); assertNull(old.deadlineAt)
     }
 }

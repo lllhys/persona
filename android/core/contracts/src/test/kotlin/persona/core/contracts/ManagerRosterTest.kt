@@ -149,6 +149,37 @@ class ManagerRosterTest {
             sessions.filter { it.sessionId in setOf("quiet", "muted") }, sessionCounts = { !it.quiet && it.key !in muted }))
     }
 
+    /**
+     * The hub's own assistant kept out of the switcher while it is not used (#9055): its rows leave it out, while it is
+     * still installed (and counts towards isMulti, the badges and the Default tag) and still what its things are under.
+     */
+    @Test fun aHiddenBuiltInIsLeftOutOfTheSwitcherOnly() {
+        assertEquals(listOf("m-2", "assistant", "m-3", "m-4"), roster.switcherRows.map { it.id })
+        val hidden = roster.copy(managers = roster.managers.map { if (it.builtin) it.copy(hide = true, hidden = true) else it })
+        assertEquals(listOf("m-2", "m-3", "m-4"), hidden.switcherRows.map { it.id })
+        assertEquals(listOf("m-2", "assistant", "m-3"), hidden.installed.map { it.id })
+        assertTrue(hidden.isMulti)
+        assertEquals("assistant", hidden.shownUnder("assistant"))
+        // Only the choice in effect counts: the choice alone (it is in use again) keeps it in.
+        val chosenOnly = roster.copy(managers = roster.managers.map { if (it.builtin) it.copy(hide = true) else it })
+        assertEquals(roster.switcherRows.map { it.id }, chosenOnly.switcherRows.map { it.id })
+        // Left with the default alone in the switcher, there are still two installed.
+        val two = ManagerRoster(listOf(HubManager("assistant", builtin = true, hide = true, hidden = true), HubManager("m-2", isDefault = true)), "m-2")
+        assertEquals(listOf("m-2"), two.switcherRows.map { it.id })
+        assertTrue(two.isMulti)
+    }
+
+    @Test fun theRosterReadsHideAndHiddenAndAnOlderHubsAbsence() {
+        val read = JsonCodec.decodeFromString(ManagerRoster.serializer(),
+            """{"default":"m-2","managers":[{"id":"m-2","default":true},{"id":"assistant","builtin":true,"hide":true,"hidden":true},
+               {"id":"m-3","hide":true}]}""")
+        assertEquals(listOf(false, true, true), read.managers.map { it.hide })
+        assertEquals(listOf(false, true, false), read.managers.map { it.hidden })
+        // An older hub (or the choice off) says neither.
+        val old = JsonCodec.decodeFromString(HubManager.serializer(), """{"id":"assistant","builtin":true,"default":true}""")
+        assertFalse(old.hide || old.hidden)
+    }
+
     @Test fun theRosterReadsTheInboxCount() {
         val read = JsonCodec.decodeFromString(ManagerRoster.serializer(),
             """{"default":"assistant","managers":[{"id":"assistant","online":true,"inbox_needs_you":3},{"id":"m-2","online":false}]}""")

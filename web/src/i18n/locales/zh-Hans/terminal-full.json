@@ -24,6 +24,7 @@
   "files": "文件",
   "keybar_hide": "收起按键栏",
   "keybar_show": "显示按键栏",
+  "settings": "终端设置",
   "reconnect": "重新连接",
   "opening": "正在打开完整界面",
   "back_to_pane": "回到单窗格",

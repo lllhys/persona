@@ -600,7 +600,8 @@ export function mediaLine(m: ThreadMedia): string {
   const dur = m.duration ? `${Math.floor(m.duration / 60)}:${String(m.duration % 60).padStart(2, "0")}` : "";
   if (m.kind === "voice") return [t("lib-connectors.media_voice"), dur].filter(Boolean).join(" ");
   if (m.kind === "video") return [t("lib-connectors.media_video"), dur].filter(Boolean).join(" ");
-  const size = m.size ? (m.size >= 1 << 20 ? `${(m.size / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(m.size / 1024))} KB`) : "";
+  // MB from 1023.5 KB, where the KB figure would round to 1024.
+  const size = m.size ? (m.size >= 1023.5 * 1024 ? `${(m.size / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(m.size / 1024))} KB`) : "";
   return [m.name || t("lib-connectors.media_file"), size].filter(Boolean).join(" · ");
 }
 

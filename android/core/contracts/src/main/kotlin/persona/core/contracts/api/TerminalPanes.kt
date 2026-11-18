@@ -17,14 +17,24 @@ interface TerminalPanes {
     /** Whether the hub of [machineId] lists panes; machines of a hub without the feature are not asked. */
     fun lists(machineId: String): Boolean = true
 
+    /** Whether the hub offers `new_space`; an unknown feature list offers it. */
+    fun opensNewSpaces(machineId: String): Boolean = true
+
     /** `GET /api/v1/machines/{mid}/panes`. */
     suspend fun panes(machineId: String): PanesResponse
 
     /**
-     * `POST /api/v1/machines/{mid}/panes {workspace_id, kind?}`: a shell tab in that workspace, in the workspace's own
-     * directory (the request cannot name one). Only called when the user taps "New tab".
+     * `POST /api/v1/machines/{mid}/panes {workspace_id, kind?}` opens a shell tab in that workspace. With no workspace
+     * yet, `{kind, cwd: "~", new_space: true}` opens one in the home directory instead.
      */
-    suspend fun newTab(machineId: String, workspaceId: String, kind: String? = null): NewPaneTab
+    suspend fun newTab(machineId: String, workspaceId: String, kind: String? = null, cwd: String? = null): NewPaneTab
+
+    /** User-confirmed close of one pane, including a plain terminal. */
+    suspend fun close(machineId: String, pane: String): Unit = error("Closing panes is unavailable")
+
+    /** Full devices only. Preview first, then send only the pane ids that the user confirmed. */
+    suspend fun closeFinished(machineId: String, preview: Boolean = false, panes: List<String> = emptyList()): FinishedPanes =
+        error("Closing finished terminals is unavailable")
 }
 
 /** What `GET /api/v1/machines/{mid}/panes` answers (server proto.PanesResponse); ids are the host's own. */
@@ -80,6 +90,22 @@ data class PaneItem(
     val title: String? = null,
     val cwd: String? = null,
     @SerialName("session_id") val sessionId: String? = null,
+    /** The foreground program of a plain terminal, without reading its screen. */
+    val foreground: String? = null,
+    /** The stopped Agent whose terminal this was; not an Agent currently running in it. */
+    @SerialName("agent_session") val agentSession: String? = null,
+)
+
+@Serializable
+data class FinishedPanes(val closed: List<FinishedPane> = emptyList(), val kept: List<FinishedPane> = emptyList())
+
+@Serializable
+data class FinishedPane(
+    val pane: String,
+    @SerialName("session_id") val sessionId: String = "",
+    @SerialName("tab_id") val tabId: String = "",
+    @SerialName("workspace_id") val workspaceId: String = "",
+    val why: String = "",
 )
 
 /** What `POST …/panes` opened: the new tab's pane and its terminal address. */

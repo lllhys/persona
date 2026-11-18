@@ -7,7 +7,7 @@
   "new_child": "New child worktree…",
   "rename": "Rename worktree…",
   "copy_name": "Copy worktree name",
-  "copy_path": "Copy path",
+  "copy_path": "Copy folder path",
   "open_parent": "Open parent worktree",
   "delete": "Delete worktree…",
   "delete_title": "Delete worktree",
@@ -43,5 +43,11 @@
   "unknown": "Removal is not confirmed. This workspace stays here until its status is checked. No deletion will be sent again.",
   "check_status": "Check status",
   "checking": "Checking removal status…",
-  "removing": "Waiting for removal…"
+  "removing": "Waiting for removal…",
+  "close_workspace": "Close workspace…",
+  "close_title": "Close workspace",
+  "close_confirm": "Close workspace",
+  "close_keeps_files": "The directory, files and Git branches are kept.",
+  "closed": "Workspace closed",
+  "linked_only": "Linked Git worktrees can be deleted. This workspace can be closed."
 }

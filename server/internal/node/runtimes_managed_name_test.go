@@ -43,7 +43,7 @@ func TestManagedLauncherNamedLikeARuntimeProviderIsNotTheRuntimes(t *testing.T) 
 	if _, ok := n.runtimeLauncherModels("dsh"); ok {
 		t.Fatal("the managed launcher's models came from the runtime")
 	}
-	_, _, ok := n.runtimeStart(context.Background(), runtimeStartParams{Cwd: "/w", Launcher: "dsh", Prompt: "hi"})
+	_, _, _, ok := n.runtimeStart(context.Background(), runtimeStartParams{Cwd: "/w", Launcher: "dsh", Prompt: "hi"})
 	if ok || started != 0 {
 		t.Fatalf("the start went to the runtime (ok %v, starts %d)", ok, started)
 	}

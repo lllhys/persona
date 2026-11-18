@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
@@ -21,7 +22,10 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,11 +42,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** How long an upload waits for the hub connection to be ready again before it fails (a setting, not measured). */
 internal const val UPLOAD_READY_WAIT_MILLIS = 15_000L
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun ChatComposer(
     session: SessionKey,
@@ -51,11 +58,15 @@ fun ChatComposer(
     sending: Boolean,
     canClear: Boolean,
     service: ChatComposerService?,
+    /** An ordinary file's own destination, such as a Health conversation's reports; media never uses it. */
+    uploadDestination: String? = null,
     onSend: () -> Unit,
     onCommand: (String) -> Unit,
     onNotice: (String) -> Unit,
     // Content queued outside the text field (selected page context) also makes the draft sendable.
     extraContent: Boolean = false,
+    /** Persona's conversation, including a new one: its own command list, never an Agent session's quick commands. */
+    assistantChat: Boolean = false,
     enabled: Boolean = true,
     placeholder: String = stringResource(R.string.chat_composer_placeholder),
     leading: (@Composable RowScope.() -> Unit)? = null,
@@ -92,12 +103,17 @@ fun ChatComposer(
     modelPill: (@Composable (ModelPillWidth) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val adaptiveProbePage = "chat:${session.path}"
     val resources = LocalResources.current
     val photosOnly = stringResource(R.string.chat_composer_photos_only)
     val videosOnly = stringResource(R.string.chat_composer_videos_only)
-    SideEffect { state.photosOnlyText = photosOnly; state.videosOnlyText = videosOnly }
+    val filesOnly = stringResource(R.string.chat_composer_files_only)
+    SideEffect { state.photosOnlyText = photosOnly; state.videosOnlyText = videosOnly; state.filesOnlyText = filesOnly }
     val hasContent = state.hasContent || extraContent
     val scope = rememberCoroutineScope()
+    // Picker callbacks can overlap while a provider is read; serialize them so each sees the places already taken.
+    val pickerLock = remember { Mutex() }
+    val uploadLimiter = remember(state, session, service) { ComposerUploadLimiter() }
     var menu by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     var cameraDenied by remember { mutableStateOf(false) }
@@ -129,23 +145,33 @@ fun ChatComposer(
     // [media]: from the photo picker, the camera or the clipboard, photos and videos sharing four places (iOS).
     fun select(uris: List<Uri>, media: Boolean, capture: Boolean = false) {
         scope.launch {
-            val allowed = if (media) (MAX_COMPOSER_MEDIA - state.attachments.count { it.media }).coerceAtLeast(0) else uris.size
-            if (uris.size > allowed) onNotice(resources.getString(R.string.chat_composer_photo_limit))
-            if (capture) withContext(Dispatchers.IO) { uris.drop(allowed).forEach { deleteCapture(context, it.toString()) } }
-            for (uri in uris.take(allowed)) {
-                try {
-                    val attachment = withContext(Dispatchers.IO) {
-                        val video = media && isVideo(context, uri)
-                        selectAttachment(context, uri, image = media && !video, video = video)
+            pickerLock.withLock {
+                var overflow = false
+                for (uri in uris) {
+                    // An earlier invalid pick leaves its place available; a later valid one must still be considered.
+                    val allowed = if (media) (MAX_COMPOSER_MEDIA - state.attachments.count { it.media }).coerceAtLeast(0)
+                        else composerFileRoom(state.attachments)
+                    if (allowed == 0) {
+                        overflow = true
+                        if (capture) withContext(Dispatchers.IO) { deleteCapture(context, uri.toString()) }
+                        continue
                     }
-                    state.beginEdit()
-                    state.attachments += attachment
-                    attachment.error?.let(onNotice)
-                } catch (e: CancellationException) { throw e }
-                catch (_: Exception) {
-                    if (capture) withContext(Dispatchers.IO) { deleteCapture(context, uri.toString()) }
-                    onNotice(resources.getString(R.string.chat_composer_attachment_unreadable))
+                    try {
+                        val attachment = withContext(Dispatchers.IO) {
+                            val video = media && isVideo(context, uri)
+                            selectAttachment(context, uri, image = media && !video, video = video)
+                        }
+                        state.beginEdit()
+                        state.attachments += attachment
+                        attachment.error?.let(onNotice)
+                    } catch (e: CancellationException) { throw e }
+                    catch (_: Exception) {
+                        if (capture) withContext(Dispatchers.IO) { deleteCapture(context, uri.toString()) }
+                        onNotice(resources.getString(R.string.chat_composer_attachment_unreadable))
+                    }
                 }
+                if (overflow) onNotice(resources.getString(
+                    if (media) R.string.chat_composer_photo_limit else R.string.chat_composer_file_limit))
             }
         }
     }
@@ -223,7 +249,7 @@ fun ChatComposer(
                 edited = MediaShare.writeEditedPhoto(context, result)
                 val carried = PhotoEdits(edit.sourceUri, done).takeUnless { done.edits.isEmpty }
                 val outcome = state.replaceWithEdited(edit.original, edited, carried) { photo ->
-                    uploadAttachment(context, checkNotNull(service), session, photo)
+                    uploadLimiter.withSlot { uploadAttachment(context, checkNotNull(service), session, photo) }
                 }
                 kept = outcome == PhotoEditOutcome.Replaced
                 if (outcome is PhotoEditOutcome.Failed) onNotice(resources.getString(R.string.chat_attach_edit_failed))
@@ -239,8 +265,10 @@ fun ChatComposer(
 
     state.attachments.forEach { attachment ->
         key(attachment.id) {
-            LaunchedEffect(attachment.id, attachment.error, service) {
+            LaunchedEffect(attachment.id, attachment.error, service, uploadDestination) {
                 if (attachment.uploadState == DraftUploadState.Invalid) return@LaunchedEffect
+                // Once the computer has it, a revoked local picker grant cannot make the attachment unsendable.
+                if (attachment.path != null) return@LaunchedEffect
                 if (!withContext(Dispatchers.IO) { attachmentReadable(context, attachment) }) {
                     val reason = resources.getString(R.string.chat_composer_attachment_gone)
                     state.attachments = state.attachments.map {
@@ -249,13 +277,18 @@ fun ChatComposer(
                     onNotice(reason)
                     return@LaunchedEffect
                 }
-                if (attachment.path != null) return@LaunchedEffect
                 if (attachment.error != null || service == null) return@LaunchedEffect
                 try {
-                    state.attachments = state.attachments.map {
-                        if (it.id == attachment.id) it.copy(uploadState = DraftUploadState.Uploading) else it
+                    val path = uploadLimiter.withSlot {
+                        state.attachments = state.attachments.map {
+                            if (it.id == attachment.id) it.copy(uploadState = DraftUploadState.Uploading) else it
+                        }
+                        uploadAttachment(context, service, session, attachment, destination = uploadDestination) { size ->
+                            state.attachments = state.attachments.map {
+                                if (it.id == attachment.id) it.copy(size = size) else it
+                            }
+                        }
                     }
-                    val path = uploadAttachment(context, service, session, attachment)
                     if (state.attachments.any { it.id == attachment.id }) {
                         state.attachments = state.attachments.map {
                             if (it.id == attachment.id) it.copy(path = path, uploadState = DraftUploadState.Uploaded) else it
@@ -281,10 +314,21 @@ fun ChatComposer(
     // Voice input: what the phone's recognizer heard goes at the end of the draft, to edit before sending.
     val dictation = rememberDictation(onHeard = { state.appendDictation(it) }, onError = onNotice)
     if (!visible) return
+    if (AdaptiveProbe.enabled) {
+        AdaptiveComposerProbe(adaptiveProbePage, state.value, state.attachments.map { it.id to it.uploadState.name }, state.draftLoaded)
+    }
     LaunchedEffect(state.focusRequest) { if (state.focusRequest > 0) focusRequester.requestFocus() }
     // A read-only session (enabled = false) offers nothing to type with: no +, no mic, no "/" list, no send.
     val dictate = dictation?.takeIf { enabled }
-    val suggestions = if (enabled) SlashCommand.suggestions(state.value.text, canClear && !working, model = onModel != null, loop = loop) else emptyList()
+    // The main conversation's /clear (#5100): offered while it works too (the hub stops the turn), and it never asks first.
+    val mainClear = LocalMainChatClear.current?.takeIf { enabled }
+    // Both the "/" list and the + sheet offer only what an Assistant conversation runs, never an Agent's quick messages.
+    val useMainCommands = assistantChat || mainClear != null
+    val suggestions = if (!enabled) emptyList() else if (useMainCommands) {
+        SlashCommand.mainSuggestions(state.value.text, clear = mainClear != null, resources = resources)
+    } else {
+        SlashCommand.suggestions(state.value.text, canClear && !working, resources, model = onModel != null, loop = loop)
+    }
     val hint = if (enabled && loop) loopHint(state.value.text, resources) else null
     // @: the word being typed just before the caret, while nothing is selected and no "/" list is open.
     val selection = state.value.selection
@@ -298,6 +342,8 @@ fun ChatComposer(
         if (mentions != null && mention != null) mentionRows(mentions, mention.query, browsing.listing) else emptyList()
     }
     val usedFile = stringResource(R.string.chat_mention_used_file)
+    val folderWord = stringResource(R.string.chat_mention_folder)
+    val sessionFolderWord = stringResource(R.string.chat_mention_session_folder)
     // With tasks in the list each group says what a pick does: iOS's "Message a Task", then the files and sessions.
     val taskSection = stringResource(R.string.chat_tasks_mention_title)
     val otherSection = stringResource(R.string.chat_mention).takeIf { mentionRows.any { it is MentionRow.Task } }
@@ -313,10 +359,15 @@ fun ChatComposer(
             is MentionRow.Quote -> ComposerSuggestion(row.session.displayTitle,
                 stringResource(R.string.chat_mention_session_detail, sessionMentionDetail(row.session)), key = row.key, flexible = true,
                 section = otherSection)
-            // A browsed folder's entry: its name, a folder's with a slash, and the folder typed so far (iOS `MentionRows`).
-            is MentionRow.Entry -> ComposerSuggestion(if (row.folder) "${row.name}/" else row.name, row.typed, key = row.key, flexible = true)
+            // An entry of a folder: its name, a folder's with a slash, and the folder typed so far (iOS `MentionRows`); one of
+            // the session's own folder says so ("Folder" for a folder, "Session folder" for a file), among the other groups.
+            is MentionRow.Entry -> ComposerSuggestion(if (row.folder) "${row.name}/" else row.name,
+                if (!row.top) row.typed else if (row.folder) folderWord else sessionFolderWord, key = row.key, flexible = true,
+                section = otherSection.takeIf { row.top })
         }
     }
+    // `@` at the caret, whose list opens: the @ button's, and the + menu's Mention a file or session (iOS `typeMention`).
+    fun startMention() { state.beginEdit(); state.value = typeMention(state.value); state.focusRequest++ }
     fun pickMention(picked: ComposerSuggestion) {
         val token = mention ?: return
         val row = mentionRows.firstOrNull { it.key == picked.key } ?: return
@@ -334,10 +385,23 @@ fun ChatComposer(
     }
     val extensionPrompts = if (enabled) LocalExtensionPrompts.current else emptyList()
     val quick = ExtensionPromptText.matching(extensionPrompts, state.value.text)
-    // Picking a quick message puts its words in the box to send; /clear empties the box and asks first.
+    // The main conversation's /clear: the box empties and the hub clears it; /clear goes back into the box if it did not.
+    fun clearMain(clear: MainChatClear) {
+        state.beginEdit()
+        state.value = TextFieldValue()
+        clear.clear { state.value = TextFieldValue(SlashCommand.CLEAR, TextRange(SlashCommand.CLEAR.length)) }
+    }
+    // /clear sent alone in the main conversation clears it instead of going to Persona (web `isClearCommand`).
+    fun send() {
+        val clear = mainClear
+        if (clear != null && isMainClearCommand(state.value.text, state.attachments.size, extraContent)) clearMain(clear) else onSend()
+    }
+    // Picking a quick message puts its words in the box to send; /clear empties the box and asks first (the main
+    // conversation's clears at once).
     fun pick(command: SlashCommand) {
         state.beginEdit()
         when {
+            command.clear && mainClear != null -> clearMain(mainClear)
             command.clear -> { state.value = TextFieldValue(); confirmClear = true }
             command.model -> { state.value = TextFieldValue(); onModel?.invoke() }
             else -> state.value = TextFieldValue(command.text, TextRange(command.text.length))
@@ -369,34 +433,38 @@ fun ChatComposer(
         leading = {
             JIconButton(PhIcons.Plus, stringResource(R.string.chat_composer_add), { menu = true }, enabled = !sending && enabled)
             if (expanded) {
-                if (mentions != null) JIconButton(PhIcons.At, stringResource(R.string.chat_mention), {
-                    state.beginEdit(); state.value = typeMention(state.value); state.focusRequest++
-                }, enabled = enabled)
+                if (mentions != null) JIconButton(PhIcons.At, stringResource(R.string.chat_mention), ::startMention, enabled = enabled)
                 leading?.invoke(this)
             }
         },
         trailing = {
             if (expanded && enabled) modelPill?.invoke(ModelPillWidth.of(composerDp))
             // The mic stays (iOS ShellComposerBar): more can be dictated after what is typed. Send beside it once there is
-            // something to send, else a stop while the agent works; nothing else while the box is empty.
+            // something to send, else a stop while the agent works; nothing else while the box is empty. On Glass the button
+            // changing grows and shrinks as iOS's does (ComposerActionSlot, #4210 T3).
             dictate?.let { JIconButton(PhIcons.Microphone, stringResource(R.string.chat_composer_dictate), it, enabled = !sending) }
-            when {
-                blockedLabel != null && enabled -> BlockedSendButton(blockedLabel, onBlocked)
-                hasContent -> SendButton(onClick = onSend, enabled = canSend, loading = sending)
-                working && canInterrupt -> {
-                    SendButton(onClick = {
-                        if (service != null) {
-                            interruptPending = true
-                            scope.launch {
-                                try { service.interrupt(session); onNotice(resources.getString(R.string.chat_composer_interrupt_requested)) }
-                                catch (e: CancellationException) { throw e }
-                                catch (_: Exception) { onNotice(resources.getString(R.string.chat_composer_interrupt_unknown)) }
-                            }
+            if (blockedLabel != null && enabled) BlockedSendButton(blockedLabel, onBlocked)
+            else ComposerActionSlot(
+                when {
+                    hasContent -> ComposerAction(SendKind.Send, enabled = canSend, loading = sending)
+                    working && canInterrupt -> ComposerAction(SendKind.Stop, enabled = !sending && !interruptPending && service != null)
+                    dictate == null -> ComposerAction(SendKind.Send, enabled = false, loading = sending)
+                    else -> null
+                },
+                // A lambda, not `::send`: references to a local function compare equal whatever they capture, so the slot was
+                // skipped and kept calling the `send` from before a quote joined the draft (New chat's first message lost it).
+                onSend = { send() },
+                onStop = {
+                    if (service != null) {
+                        interruptPending = true
+                        scope.launch {
+                            try { service.interrupt(session); onNotice(resources.getString(R.string.chat_composer_interrupt_requested)) }
+                            catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { onNotice(resources.getString(R.string.chat_composer_interrupt_unknown)) }
                         }
-                    }, enabled = !sending && !interruptPending && service != null, kind = SendKind.Stop)
-                }
-                dictate == null -> SendButton(onClick = onSend, enabled = false, loading = sending)
-            }
+                    }
+                },
+            )
         },
         accessory = {
             if (state.oldVersion) Text(stringResource(R.string.chat_composer_old_version), style = PersonaTheme.type.caption,
@@ -411,22 +479,32 @@ fun ChatComposer(
             ComposerSuggestions(quick.map { ComposerSuggestion(it.title, it.extensionName, key = "${it.extension}/${it.id}", flexible = true) },
                 onPick = { picked -> quick.firstOrNull { "${it.extension}/${it.id}" == picked.key }?.let { state.fillQuickPrompt(it) } },
                 modifier = Modifier.padding(vertical = Tokens.Space.xs))
-            ComposerSuggestions(suggestions.map { ComposerSuggestion(it.word, it.detail, destructive = it.clear) },
+            ComposerSuggestions(suggestions.map { ComposerSuggestion(it.word, it.detail, destructive = it.clear && mainClear == null) },
                 onPick = { picked -> suggestions.firstOrNull { it.word == picked.word }?.let(::pick) },
                 modifier = Modifier.padding(vertical = Tokens.Space.xs))
-            // The @ menu: Persona's open tasks, files this chat used, then other sessions; a word that matches nothing says so.
-            ComposerSuggestions(mentionItems, onPick = ::pickMention, modifier = Modifier.padding(vertical = Tokens.Space.xs))
-            if (mention != null && mentionItems.isEmpty()) Text(stringResource(when {
-                    browsing.reading -> R.string.chat_mention_reading_folder
-                    browsing.browse != null -> R.string.chat_mention_no_match_folder
-                    else -> R.string.chat_mention_no_match
-                }), Modifier.padding(vertical = Tokens.Space.xs), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+            // The @ menu: Persona's open tasks, files this chat used, the session folder's entries, then other sessions; a word
+            // that matches nothing says so. On Glass it grows in and out in iOS's state motion, rising from the field, as the
+            // lines over New chat's composer step aside for it (`NeedsStepAside`).
+            Column(Modifier.fillMaxWidth().then(if (PersonaTheme.style == AppStyle.Glass && !PersonaTheme.reduceMotion)
+                Modifier.animateContentSize(PersonaTheme.motion.enter(), Alignment.BottomStart) else Modifier)) {
+                ComposerSuggestions(mentionItems, onPick = ::pickMention, modifier = Modifier.padding(vertical = Tokens.Space.xs))
+                if (mention != null && mentionItems.isEmpty()) Text(stringResource(when {
+                        browsing.reading -> R.string.chat_mention_reading_folder
+                        browsing.browse != null -> R.string.chat_mention_no_match_folder
+                        else -> R.string.chat_mention_no_match
+                    }), Modifier.padding(vertical = Tokens.Space.xs), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+            }
             hint?.let { Text(it.text, style = PersonaTheme.type.caption, color = if (it.missing) PersonaTheme.palette.cautionText else PersonaTheme.palette.ink2) }
         },
     ) {
         BasicTextField(state.value, { state.beginEdit(); state.value = it },
-            modifier = Modifier.fillMaxWidth().then(if (offersExpand) Modifier.padding(end = ComposerExpandInset) else Modifier)
-                .focusRequester(focusRequester).onFocusChanged { state.focused = it.isFocused },
+            modifier = Modifier.fillMaxWidth().then(if (AdaptiveProbe.enabled) Modifier.semantics { testTagsAsResourceId = true }
+                .testTag("chat-composer-field") else Modifier)
+                .then(if (offersExpand) Modifier.padding(end = ComposerExpandInset) else Modifier)
+                .focusRequester(focusRequester).onFocusChanged {
+                    state.focused = it.isFocused
+                    if (AdaptiveProbe.enabled) AdaptiveProbe.publishComposerFocus(adaptiveProbePage, it.isFocused)
+                },
             maxLines = growLines, onTextLayout = { lineCount = it.lineCount },
             enabled = enabled, textStyle = PersonaTheme.type.body.copy(color = PersonaTheme.palette.ink),
             cursorBrush = SolidColor(PersonaTheme.palette.ink),
@@ -442,7 +520,7 @@ fun ChatComposer(
     // Same draft and caret as the field; collapsing puts the caret back in the field. Sending closes it.
     if (expandedEditor) ExpandedComposer(state.value, { state.beginEdit(); state.value = it }, composerPlaceholder,
         onCollapse = { expandedEditor = false; state.focusRequest++ }, enabled = enabled) {
-        SendButton(onClick = { expandedEditor = false; onSend() }, enabled = canSend && hasContent && blockedLabel == null, loading = sending)
+        SendButton(onClick = { expandedEditor = false; send() }, enabled = canSend && hasContent && blockedLabel == null, loading = sending)
     }
     if (menu) ChatActionsSheet(onDismiss = { menu = false }, title = stringResource(R.string.chat_composer_menu_title), actions = buildList {
         // Photos picks pictures and videos (iOS mediaPicker), four together at most.
@@ -452,10 +530,14 @@ fun ChatComposer(
         })
         add(JAction(stringResource(R.string.chat_composer_take_photo), enabled = service != null && roomForMedia) { takePhoto() })
         add(JAction(stringResource(R.string.chat_composer_files), enabled = service != null) { launchPicker { files.launch(arrayOf("*/*")) } })
-        // Quick messages go out at once; /clear asks first, and only while nothing is running or being cleared.
+        // iOS's Mention a File or Session, after the attachments (`AttachMoreSection.common`): where the composer has an @ list.
+        if (mentions != null) add(JAction(stringResource(R.string.chat_mention)) { menu = false; startMention() })
+        // An Agent's quick messages go out at once and /clear asks first; the main sheet has only its in-place clear.
         extensionPrompts.forEach { prompt -> add(JAction(prompt.title) { menu = false; state.fillQuickPrompt(prompt) }) }
-        SlashCommand.all(resources).forEach { command -> add(JAction(command.title) { menu = false; onCommand(command.text) }) }
-        if (canClear && !working) add(JAction(SlashCommand.clearCommand(resources).title, destructive = true) { menu = false; confirmClear = true })
+        if (!useMainCommands) {
+            SlashCommand.all(resources).forEach { command -> add(JAction(command.title) { menu = false; onCommand(command.text) }) }
+            if (canClear && !working) add(JAction(SlashCommand.clearCommand(resources).title, destructive = true) { menu = false; confirmClear = true })
+        } else if (mainClear != null) add(JAction(SlashCommand.mainClearCommand(resources).title) { menu = false; clearMain(mainClear) })
     })
     if (confirmClear) JDialog(onDismiss = { confirmClear = false }, title = stringResource(R.string.chat_composer_clear_title),
         text = stringResource(R.string.chat_composer_clear_text, agentName),

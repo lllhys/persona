@@ -6,5 +6,6 @@
   "quoted": "「{text}」",
   "remove_label": "このコンテキストを削除",
   "remove": "削除",
-  "workspace": "ワークスペース"
+  "workspace": "ワークスペース",
+  "skill": "スキル"
 }

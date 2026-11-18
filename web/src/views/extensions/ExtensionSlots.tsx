@@ -39,7 +39,8 @@ export function ExtensionNavPage({ extension, ui, onToggleSidebar }: { extension
   // the extension's name after the title, unless it only says the title again ("Example Example", #3115)
   const name = place?.extension_name;
   const showName = !!name && name.trim().toLowerCase() !== title.trim().toLowerCase();
-  // a code review or a file browser (UI version 4) takes the page's whole width; everything else stays a column
+  // a code review or a file browser (UI version 4) and a dashboard of columns (8) take the page's whole width; everything
+  // else stays a column
   const [wide, setWide] = useState(false);
   return (
     <div className="flex h-full flex-col">
@@ -56,7 +57,7 @@ export function ExtensionNavPage({ extension, ui, onToggleSidebar }: { extension
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cx("mx-auto flex flex-col px-4 py-6 sm:px-8", wide ? "max-w-[1680px]" : "max-w-[880px]")}>
           <Suspense fallback={<Loading />}>
-            <ExtensionUI key={`${extension}/${ui}/${n}`} extension={extension} ui={ui} title={title} bare state={state} onWide={setWide} />
+            <ExtensionUI key={`${extension}/${ui}/${n}`} extension={extension} ui={ui} title={title} bare state={state} onWide={setWide} remember />
           </Suspense>
         </div>
       </div>
@@ -64,12 +65,15 @@ export function ExtensionNavPage({ extension, ui, onToggleSidebar }: { extension
   );
 }
 
-/** The cards on "Overview" (overview_card), one row under the agents' summary: one card full width, more two a row. */
+/** The cards on "Overview" (overview_card), one row under the agents' summary: one card full width, more two a row;
+ *  on a page wide enough for two columns of rows, a lone card takes one of them. */
 export function OverviewCards() {
   const cards = useExtensionSlot("overview_card");
   if (!cards.length) return null;
   return (
-    <section aria-label={t("extensions-extensionslots.extensions")} className={cx("grid grid-cols-1 gap-3", cards.length > 1 && "md:grid-cols-2")}>
+    // a card is never wider than one of the overview's two columns of rows below it (Home's GRID.rows, from 60rem of
+    // the page): alone at 1920 px it stretched its chart to 1540 px of sparse bars, and to 1300 px at 1680
+    <section aria-label={t("extensions-extensionslots.extensions")} className={cx("grid grid-cols-1 gap-3 @min-[60rem]:grid-cols-2", cards.length > 1 && "md:grid-cols-2")}>
       {cards.map((c, i) => (
         <OverviewCard key={`${c.extension}/${c.id}`} place={c} i={i} />
       ))}

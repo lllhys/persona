@@ -16,7 +16,7 @@ import { WorkSessionForm } from "./WorkSessionForm";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const machines = [{ id: "a", name: "A", online: true }, { id: "b", name: "B", online: true }];
 const LAUNCHERS = [{ name: "claude-team", agent_type: "claude" }, { name: "codex-team", agent_type: "codex" }];
-let launcher: { name: string; display_name?: string; agent_type: string }[] = LAUNCHERS;
+let launcher: { name: string; display_name?: string; agent_type: string; agent?: string; source?: string }[] = LAUNCHERS;
 const available = (id: string) => ({ agent_type: "claude", model_mode: "selectable", models: [{ id, name: id }], attachments: true });
 const mockResponse = (v: unknown) => new Response(JSON.stringify(v));
 let host: HTMLDivElement, root: Root;
@@ -107,6 +107,26 @@ it("cannot submit offline or before reconnect validation, and does not substitut
   await choose(4, "model-new");
   await act(async () => start().click());
   expect(state.launch).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ model: "model-new", text: "draft kept", launcher: "claude-team" }));
+});
+
+it("offers each of Paseo's providers as a harness of its own, by its name, and starts it as what it is (#8142)", async () => {
+  launcher = [
+    { name: "my-claude", agent_type: "claude", source: "paseo" },
+    { name: "grok", agent_type: "paseo", agent: "paseo", source: "paseo" },
+    { name: "cursor", agent_type: "paseo", agent: "paseo", source: "paseo" },
+  ];
+  await choose(0, "a");
+  await choose(1, "/projects/a");
+  const harnesses = [...fields()[2].options].slice(1);
+  expect(harnesses.map((o) => [o.value, o.textContent])).toEqual([["claude", "Claude Code"], ["grok", "grok"], ["cursor", "Cursor"]]);
+  expect(fields()[2].textContent).not.toMatch(/paseo/i);
+  await choose(2, "grok");
+  expect(fields()[3].value).toBe("grok");
+  expect(pending[0].url).toContain("/a/launchers/grok/");
+  await reply(0, { agent_type: "paseo", model_mode: "default", prompt_required: false, inline_prompt: true, attachments: true });
+  await fill("look around");
+  await act(async () => start().click());
+  expect(state.launch).toHaveBeenCalledWith(expect.objectContaining({ launcher: "grok", agentType: "paseo", text: "look around" }));
 });
 
 it("names a provider by its display name and ID, an rc alias by its ID (#5029)", async () => {

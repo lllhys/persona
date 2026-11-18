@@ -2,6 +2,7 @@ import Foundation
 import Network
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// A forwarded port follows the group's hub (#1886): each browser connection dials the hub, route and token the group has
 /// at that moment, not the ones the forward started with, and a group that goes takes its forwards with it. The forwards

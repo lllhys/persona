@@ -1,0 +1,10 @@
+{
+  "delete_confirm": "Delete chat",
+  "delete_title": "Delete “{title}”?",
+  "delete_body": "This permanently removes this chat and its messages from Persona. You cannot undo this. Linked tasks, Agents, saved knowledge and transcript files on the computer are kept.",
+  "delete_unavailable": "This chat cannot be deleted while it is working or waiting for a response.",
+  "delete_unconfirmed": "Deletion was not confirmed. Try again.",
+  "deleted_title": "Conversation deleted",
+  "deleted_body": "This conversation was deleted. Its messages are no longer available.",
+  "all_chats": "All chats"
+}

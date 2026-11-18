@@ -65,6 +65,19 @@ func inboxRequest(ctx context.Context, s *Service, method string, decode func(an
 			return nil, true, err
 		}
 		return map[string]any{"mutes": mutes}, true, nil
+	case assistantwire.MethodInboxPost:
+		var p struct {
+			On *bool `json:"on"`
+		}
+		if err := decode(&p); err != nil {
+			return nil, true, err
+		}
+		if p.On != nil {
+			if _, err := s.updateSettings(ctx, func(v *Settings) error { v.InboxPost = p.On; return nil }); err != nil {
+				return nil, true, err
+			}
+		}
+		return map[string]any{"on": s.inboxPostOn(ctx)}, true, nil
 	case assistantwire.MethodInboxTriagePreview:
 		var p assistantwire.InboxTriagePreview
 		if err := decode(&p); err != nil {

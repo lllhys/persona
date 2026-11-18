@@ -1,0 +1,7 @@
+{
+  "launcher": "{engine} on {machine} has no “{launcher}”, so this runs on “{to}”, an agent of the same kind",
+  "model": "“{to}” doesn't offer the model {model}, so it runs its own default model",
+  "effort": "“{to}” doesn't offer the thinking effort {effort} with its model, so it runs at {ran}",
+  "effort_default": "“{to}” doesn't offer the thinking effort {effort} with its model, so it runs at the model's default",
+  "join": "; "
+}

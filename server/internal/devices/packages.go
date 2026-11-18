@@ -62,10 +62,13 @@ type nodePackage struct {
 	Fallback   bool
 	goos, arch string
 	path       string // a file on this machine; "" until fetched
-	// A fetched one: <base>/<dir>/<file.Name>, of release build.
+	// A fetched one: <base>/<dir>/<file.Name>, of release build; dir also names its cache directory.
 	base, dir string
-	file      update.File
-	build     int64
+	// flat: listed in <base>/latest.json, so also served at <base>/<file.Name>, where hub self-update fetches it. A
+	// source without per-version directories has it only there: a GitHub repository's releases/latest/download.
+	flat  bool
+	file  update.File
+	build int64
 	// The release's node protocol range and capabilities (a fetched one), kept with it in the cache so a cached
 	// fallback is judged again before it is used.
 	nodeProtocol, nodeProtocolMin int
@@ -298,6 +301,13 @@ func (d *Devices) lookupPackage(ctx context.Context, k packageKey) (nodePackage,
 		return nodePackage{}, i18n.Err("devices-deploy.os_unknown")
 	}
 	plat := k.goos + "-" + k.arch
+	localBuildOK := func(path, program string) bool {
+		if err := checkPackagePlatform(path, k.goos, k.arch, program); err != nil {
+			d.logf("node package for %s: ignore local %s: %v", plat, filepath.Base(path), err)
+			return false
+		}
+		return true
+	}
 	local := func(path, program string) nodePackage {
 		// The hub's version, or what <name>.version beside it says (a build put there that is not the hub's own: a
 		// release's, on a Docker hub without internet access, docs/operations/docker.md "Node builds").
@@ -313,11 +323,11 @@ func (d *Devices) lookupPackage(ctx context.Context, k packageKey) (nodePackage,
 			// Only deploy.sh puts persona-node there, with the version it is in <name>.version: the hub's own updates
 			// replace personad-* alone, so one left from an earlier deploy is another build than the hub's.
 			node := filepath.Join(dir, nodeproto.ProgramPersonaNode+"-"+plat)
-			if b, err := os.ReadFile(node + ".version"); err == nil && k.hub != "" && strings.TrimSpace(string(b)) == k.hub && fileExists(node) {
+			if b, err := os.ReadFile(node + ".version"); err == nil && k.hub != "" && strings.TrimSpace(string(b)) == k.hub && fileExists(node) && localBuildOK(node, nodeproto.ProgramPersonaNode) {
 				return local(node, nodeproto.ProgramPersonaNode), nil
 			}
 		}
-		if p := filepath.Join(dir, "personad-"+plat); personad == "" && fileExists(p) {
+		if p := filepath.Join(dir, "personad-"+plat); personad == "" && fileExists(p) && localBuildOK(p, nodeproto.ProgramPersonad) {
 			personad = p
 		}
 	}
@@ -372,6 +382,13 @@ func (d *Devices) lookupPackage(ctx context.Context, k packageKey) (nodePackage,
 		return nodePackage{}, i18n.Err("devices-deploy.package_unreachable", i18n.Args{"os": k.goos, "arch": k.arch, "err": err.Error()})
 	}
 	f, ok := latest.NodeFile(k.program, plat)
+	if ok && fileFor(f, plat) && latest.Version == k.hub {
+		// The newest release is the hub's own version, from a source that keeps no dl/<version>/ (a GitHub
+		// repository's releases/latest/download): the release of the hub's version, not a fallback.
+		pkg := remotePackage(k, latest, k.hub, f, false)
+		pkg.flat = true
+		return pkg, nil
+	}
 	why := releaseNodeIncompatible(latest)
 	if why == "" && (!ok || !fileFor(f, plat) || !safeVersion.MatchString(latest.Version)) {
 		why = "no build for " + plat
@@ -381,7 +398,9 @@ func (d *Devices) lookupPackage(ctx context.Context, k packageKey) (nodePackage,
 		return nodePackage{}, i18n.Err("devices-deploy.no_package", i18n.Args{"os": k.goos, "arch": k.arch, "version": latest.Version,
 			"name": "personad-" + plat})
 	}
-	return remotePackage(k, latest, latest.Version, f, true), nil
+	pkg := remotePackage(k, latest, latest.Version, f, true)
+	pkg.flat = true
+	return pkg, nil
 }
 
 // releaseNodeIncompatible is why this manager would not drive the node of release m ("" when it would): its node
@@ -605,6 +624,10 @@ func (d *Devices) fetchPackage(ctx context.Context, p nodePackage) (string, erro
 		if errors.As(err, &away) {
 			return "", i18n.Err("devices-deploy.package_unreachable", i18n.Args{"os": p.goos, "arch": p.arch, "err": redacted(err, p.base).Error()})
 		}
+		var moved *update.MovedError
+		if errors.As(err, &moved) {
+			return "", i18n.Err("devices-deploy.package_moved", i18n.Args{"os": p.goos, "arch": p.arch, "version": moved.Now.Manifest.Version})
+		}
 		return "", i18n.Err("devices-deploy.package_bad", i18n.Args{"os": p.goos, "arch": p.arch, "err": redacted(err, p.base).Error()})
 	}
 	return bin, nil
@@ -688,6 +711,11 @@ func (d *Devices) downloadPackage(ctx context.Context, p nodePackage, bin, entry
 	ctx, cancel := context.WithTimeout(ctx, packageDownload)
 	defer cancel()
 	got, err := update.Download(ctx, client, p.base+"/"+url.PathEscape(p.dir), p.file, stage) // size, sha256, binary_sha256
+	if p.flat && update.IsNotFound(err) {
+		// No dl/<version>/ there (a GitHub release base): the release's own tag on GitHub, else the file beside
+		// latest.json, checked against the same manifest; a release published since the lookup is said as such (#9263).
+		got, err = update.DownloadRelease(ctx, client, p.base, &update.Manifest{Version: p.Version, Build: p.build}, p.file, stage)
+	}
 	if err != nil {
 		var local *fs.PathError
 		if update.IsMismatch(err) || errors.As(err, &local) {
@@ -718,27 +746,36 @@ func (d *Devices) downloadPackage(ctx context.Context, p nodePackage, bin, entry
 	return nil
 }
 
-// checkPackageBuild: the file is a build for p's OS and architecture of p's kind of program, and on this machine's
-// own platform it runs and says the release's version and build.
-func checkPackageBuild(ctx context.Context, path string, p nodePackage) error {
+// checkPackagePlatform: path's Go build info names the requested OS, architecture and kind of program. Unlike a
+// downloaded build's full check, a local build is never run here: it may be for another machine's platform.
+func checkPackagePlatform(path, goos, goarch, program string) error {
 	info, err := buildinfo.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("not a Go executable: %w", err)
 	}
-	var goos, goarch string
+	var builtOS, builtArch string
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "GOOS":
-			goos = s.Value
+			builtOS = s.Value
 		case "GOARCH":
-			goarch = s.Value
+			builtArch = s.Value
 		}
 	}
-	if goos != p.goos || goarch != p.arch {
-		return fmt.Errorf("built for %s/%s, not %s/%s", goos, goarch, p.goos, p.arch)
+	if builtOS != goos || builtArch != goarch {
+		return fmt.Errorf("built for %s/%s, not %s/%s", builtOS, builtArch, goos, goarch)
 	}
-	if !strings.HasSuffix(info.Path, "/cmd/"+p.Program) { // the main package: server/cmd/personad or cmd/persona-node
-		return fmt.Errorf("it is %s, not %s", info.Path, p.Program)
+	if !strings.HasSuffix(info.Path, "/cmd/"+program) { // the main package: server/cmd/personad or cmd/persona-node
+		return fmt.Errorf("it is %s, not %s", info.Path, program)
+	}
+	return nil
+}
+
+// checkPackageBuild: the file is a build for p's OS and architecture of p's kind of program, and on this machine's
+// own platform it runs and says the release's version and build.
+func checkPackageBuild(ctx context.Context, path string, p nodePackage) error {
+	if err := checkPackagePlatform(path, p.goos, p.arch, p.Program); err != nil {
+		return err
 	}
 	if p.goos == runtime.GOOS && p.arch == runtime.GOARCH {
 		if err := os.Chmod(path, 0o755); err != nil {

@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// globProjectFiles is what walkProjects stands in for: the two globs the usage meter ran over a projects directory.
-func globProjectFiles(t testing.TB, root string) (mains, subs []string) {
+// globProjectFiles is what walkProjects stands in for: the globs the usage meter would run over a projects directory,
+// for its transcripts, their subagents' and their workflow runs' agents' (#9255).
+func globProjectFiles(t testing.TB, root string) (mains, subs, flows []string) {
 	t.Helper()
 	mains, err := filepath.Glob(filepath.Join(root, "*", "*.jsonl"))
 	if err != nil {
@@ -22,25 +23,33 @@ func globProjectFiles(t testing.TB, root string) (mains, subs []string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return mains, subs
+	flows, err = filepath.Glob(filepath.Join(root, "*", "*", "subagents", "workflows", "*", "agent-*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mains, subs, flows
 }
 
 func requireWalkMatchesGlob(t testing.TB, root string) {
 	t.Helper()
-	wantMains, wantSubs := globProjectFiles(t, root)
-	mains, subs := walkProjects(root)
+	wantMains, wantSubs, wantFlows := globProjectFiles(t, root)
+	mains, subs, flows := walkProjects(root)
 	if !slices.Equal(mains, wantMains) {
 		t.Fatalf("transcripts differ from the glob's\n got %q\nwant %q", mains, wantMains)
 	}
 	if !slices.Equal(subs, wantSubs) {
 		t.Fatalf("subagent transcripts differ from the glob's\n got %q\nwant %q", subs, wantSubs)
 	}
+	if !slices.Equal(flows, wantFlows) {
+		t.Fatalf("workflow agent transcripts differ from the glob's\n got %q\nwant %q", flows, wantFlows)
+	}
 }
 
-// The walk lists exactly what the two globs list, in their order, across what a projects directory can hold: hidden
+// The walk lists exactly what the globs list, in their order, across what a projects directory can hold: hidden
 // names, a directory named like a transcript (listed, and walked into), a transcript or a whole project reached
-// through a symlink, dangling links, a file where a directory is expected (a project, a session folder, subagents),
-// names with glob metacharacters, and a directory that cannot be read.
+// through a symlink, dangling links, a file where a directory is expected (a project, a session folder, subagents,
+// workflows, a run), names with glob metacharacters, a directory that cannot be read, and a workflow run's agents
+// beside its other files.
 func TestWalkProjectsMatchesGlob(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "projects")
 	elsewhere := t.TempDir()
@@ -78,6 +87,17 @@ func TestWalkProjectsMatchesGlob(t *testing.T) {
 	write(filepath.Join(proj, "0e000000-0000-4000-8000-000000000001", "subagents", "agent-a.meta.json"))
 	write(filepath.Join(proj, "0e000000-0000-4000-8000-000000000001", "tool-results", "r.jsonl"))
 	write(filepath.Join(proj, "dir.jsonl", "subagents", "agent-c.jsonl")) // a directory named like a transcript
+	flow := filepath.Join(proj, "0e000000-0000-4000-8000-000000000001", "subagents", "workflows")
+	write(filepath.Join(flow, "wf_b", "agent-2.jsonl"))
+	write(filepath.Join(flow, "wf_b", "agent-1.jsonl"))
+	write(filepath.Join(flow, "wf_b", "agent-1.meta.json"))
+	write(filepath.Join(flow, "wf_b", "journal.jsonl")) // not an agent's
+	write(filepath.Join(flow, "wf_a", "agent-.jsonl"))
+	write(filepath.Join(flow, "wf_a.json")) // the run's state, beside its folder
+	write(filepath.Join(flow, "wf_file"))
+	write(filepath.Join(proj, "workflows-as-file", "subagents", "workflows"))
+	write(filepath.Join(elsewhere, "run", "agent-r.jsonl"))
+	link(filepath.Join(elsewhere, "run"), filepath.Join(flow, "wf_linked"))
 	mkdir("-work-app", "0e000000-0000-4000-8000-000000000002", "subagents", "nested.jsonl")
 	write(filepath.Join(proj, "file-session"))
 	mkdir("-work-app", "subagents-as-file")
@@ -108,12 +128,12 @@ func TestWalkProjectsMatchesGlob(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
 
 	requireWalkMatchesGlob(t, root)
-	mains, subs := walkProjects(root)
-	if len(mains) < 10 || len(subs) < 6 {
-		t.Fatalf("the fixture lists too little to compare: %q %q", mains, subs)
+	mains, subs, flows := walkProjects(root)
+	if len(mains) < 10 || len(subs) < 6 || len(flows) != 4 {
+		t.Fatalf("the fixture lists too little to compare: %q %q %q", mains, subs, flows)
 	}
-	if m, s := walkProjects(filepath.Join(root, "missing")); m != nil || s != nil {
-		t.Fatalf("a missing projects directory lists %q %q", m, s)
+	if m, s, f := walkProjects(filepath.Join(root, "missing")); m != nil || s != nil || f != nil {
+		t.Fatalf("a missing projects directory lists %q %q %q", m, s, f)
 	}
 }
 
@@ -121,7 +141,7 @@ func TestWalkProjectsMatchesGlob(t *testing.T) {
 // a directory, a link to a directory, a link to a file, a dangling link) and its name.
 func buildProjectTree(t testing.TB, root string, b []byte) {
 	t.Helper()
-	names := []string{"a", "s.jsonl", "subagents", ".h.jsonl", "agent-1.jsonl", "subagents", "x[1]", "d.jsonl", "n.txt", "*", "é.jsonl", ".jsonl", "subagents", "b"}
+	names := []string{"a", "s.jsonl", "subagents", ".h.jsonl", "agent-1.jsonl", "subagents", "x[1]", "d.jsonl", "n.txt", "*", "é.jsonl", ".jsonl", "subagents", "b", "workflows", "wf_1", "workflows"}
 	dirs, files := []string{root}, []string{}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -171,7 +191,7 @@ func FuzzWalkProjectsMatchesGlob(f *testing.F) {
 
 // The generated trees above, from a fixed run of seeds: the walk lists what the globs list in every one.
 func TestWalkProjectsMatchesGlobOnGeneratedTrees(t *testing.T) {
-	var mains, subs int
+	var mains, subs, flows int
 	for seed := range 200 {
 		b := make([]byte, 90)
 		x := uint32(seed)*2654435761 + 1
@@ -184,13 +204,13 @@ func TestWalkProjectsMatchesGlobOnGeneratedTrees(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "projects")
 		buildProjectTree(t, root, b)
 		t.Run(fmt.Sprint(seed), func(t *testing.T) { requireWalkMatchesGlob(t, root) })
-		m, s := walkProjects(root)
-		mains, subs = mains+len(m), subs+len(s)
+		m, s, f := walkProjects(root)
+		mains, subs, flows = mains+len(m), subs+len(s), flows+len(f)
 	}
 	if mains < 500 || subs < 500 {
 		t.Fatalf("the trees held %d transcripts and %d subagent transcripts: too few to compare", mains, subs)
 	}
-	t.Logf("%d transcripts, %d subagent transcripts", mains, subs)
+	t.Logf("%d transcripts, %d subagent transcripts, %d workflow agent transcripts", mains, subs, flows)
 }
 
 // The usage meter lists its transcripts every 10 seconds, and the walk stats none that the directory says is a file.
@@ -215,7 +235,7 @@ func TestWalkProjectsAllocationBudget(t *testing.T) {
 			}
 		}
 	}
-	if m, s := walkProjects(root); len(m) != 400 || len(s) != 400 {
+	if m, s, _ := walkProjects(root); len(m) != 400 || len(s) != 400 {
 		t.Fatalf("listed %d transcripts and %d subagent transcripts, want 400 of each", len(m), len(s))
 	}
 	if raceEnabled {
@@ -231,9 +251,9 @@ func TestWalkProjectsAllocationBudget(t *testing.T) {
 // raceEnabled: built with -race, whose instrumentation allocates on its own (race_test.go).
 var raceEnabled bool
 
-// projectTranscripts lists what the two globProjects calls listed, in their order: every projects directory's
-// transcripts, then every one's subagent transcripts. A projects directory whose path holds a glob metacharacter is
-// still read as the globs read it (as a pattern).
+// projectTranscripts lists what the globProjects calls list, in their order: every projects directory's transcripts,
+// then every one's subagent transcripts, then its workflow runs' agents' (#9255). A projects directory whose path holds
+// a glob metacharacter is still read as the globs read it (as a pattern).
 func TestProjectTranscriptsMatchesGlobProjects(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	for _, name := range []string{"plain", "a[b]"} {
@@ -241,7 +261,8 @@ func TestProjectTranscriptsMatchesGlobProjects(t *testing.T) {
 			n, base := testNode(t)
 			n.home = filepath.Join(base, name)
 			for _, home := range []string{n.home, filepath.Join(base, "ab")} { // "ab" is what the pattern a[b] matches
-				for _, p := range []string{"-one/s1.jsonl", "-one/s1/subagents/agent-1.jsonl", "-two/s2.jsonl", "-two/s2/subagents/agent-2.jsonl"} {
+				for _, p := range []string{"-one/s1.jsonl", "-one/s1/subagents/agent-1.jsonl", "-two/s2.jsonl", "-two/s2/subagents/agent-2.jsonl",
+					"-two/s2/subagents/workflows/wf_1/agent-3.jsonl"} {
 					path := filepath.Join(home, ".claude", "projects", filepath.FromSlash(p))
 					if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 						t.Fatal(err)
@@ -252,12 +273,13 @@ func TestProjectTranscriptsMatchesGlobProjects(t *testing.T) {
 				}
 			}
 			want := append(n.globProjects("*", "*.jsonl"), n.globProjects("*", "*", "subagents", "*.jsonl")...)
+			want = append(want, n.globProjects("*", "*", "subagents", "workflows", "*", "agent-*.jsonl")...)
 			got := n.projectTranscripts()
 			if !slices.Equal(got, want) {
 				t.Fatalf("got %q\nwant %q", got, want)
 			}
-			if name == "plain" && len(got) != 4 {
-				t.Fatalf("listed %q, want the four transcripts", got)
+			if name == "plain" && len(got) != 5 {
+				t.Fatalf("listed %q, want the five transcripts", got)
 			}
 		})
 	}
@@ -312,7 +334,7 @@ func TestUsageSweepReportMatchesGlobbedFiles(t *testing.T) {
 	after := newUsageMeter()
 	for _, f := range n.usageFiles(cutoff) {
 		got = append(got, f.path)
-		after.scan(f.path, f.st, cutoff)
+		after.scan(f, cutoff)
 	}
 	if !slices.Equal(got, want) || len(got) != 4 {
 		t.Fatalf("usage files %q, want %q", got, want)

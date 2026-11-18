@@ -1,6 +1,7 @@
 import { requestRoute } from "../lib/card-focus";
 import { requestHome } from "../lib/child-sessions";
 import { stateOf } from "../lib/format";
+import { orderPending } from "../lib/pending-order";
 import { withWorkView, type Route } from "../lib/router";
 import type { AnsweredCard } from "../lib/store";
 import type { Interaction, Session } from "../lib/types";
@@ -34,12 +35,12 @@ export function sidebarPending(sessions: Session[], interactions: Interaction[],
     rows.set(key, { key, machineId: ix.machine_id, session: bySession.get(key), cards: [ix], to: to.name === "session" ? withWorkView({ ...to, view: "chat" }, true) : to });
   }
   const waiting = answeredSessions(sessions, cards, answered)
-    .filter((s) => stateOf(s) === "needs_you")
-    .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? "") || sessionKey(a.machine_id, a.session_id).localeCompare(sessionKey(b.machine_id, b.session_id)));
+    .filter((s) => stateOf(s) === "needs_you");
   for (const s of waiting) {
     const home = requestHome(s);
     const key = sessionKey(s.machine_id, home);
     if (!rows.has(key)) rows.set(key, { key, machineId: s.machine_id, session: bySession.get(key) ?? s, cards: [], to: { name: "session", mid: s.machine_id, sid: home, view: "chat", work: true } });
   }
-  return [...rows.values()];
+  // Urgency class first, then the longest wait within it (#8167); the row set above is unchanged by the ordering.
+  return orderPending([...rows.values()]);
 }

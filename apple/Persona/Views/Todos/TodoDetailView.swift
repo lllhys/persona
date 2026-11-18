@@ -6,6 +6,8 @@ struct TodoDetailView: View {
     @Environment(\.tabIsActive) private var inFront
     @Environment(\.dismiss) private var dismiss
     var todoID: String
+    /// Not `openAgent`: a stored property's name stays in the Release binary, and that is a DEBUG launch switch (#8306).
+    var onOpenAgent: ((SessionKey) -> Void)? = nil
 
     @State private var store = TodoStore.shared
     @State private var text = TodoEditorText()
@@ -28,6 +30,19 @@ struct TodoDetailView: View {
 
     private var currentTodo: TodoItem? {
         store.todo(id: todoID)
+    }
+
+    /// Marks the to-do seen when it is in Just finished and the hub keeps seen marks; a failure leaves it there.
+    private func seeIfJustFinished() async {
+        guard let todo = currentTodo, model.hubFeatures.contains(TodoSeen.feature) else { return }
+        // no restores read (UserDefaults, P2): a restore only takes a to-do out of Shelved, never into Just finished; the
+        // sessions as they are now, not watched (an action, AllSessionsReadersTests)
+        let lookup = TodosLogic.makeSessionLookup(model.sessionsNow)
+        let t = TodoTriageLogic.triage(todo, lookup: lookup, now: .now,
+                                       superseded: TodoTriageLogic.supersededFailedStarts(store.todos).contains(todo.id),
+                                       calendar: TodoCalendar.userCalendar)
+        guard t.section == .justDone else { return }
+        try? await store.setSeen(id: todo.id, true, after: t.last)
     }
 
     var body: some View {
@@ -103,6 +118,11 @@ struct TodoDetailView: View {
             if !focused { commitTitle() }
         }
         .onDisappear { commitTitle() }
+        #if !os(macOS)
+        // Opening a Just finished to-do is seeing it (#5707): it is filed under Done, where the list has it on the way
+        // back. Nothing is said: the user did not ask for it. Not on the Mac, whose list stays beside the page.
+        .task(id: currentTodo != nil) { await seeIfJustFinished() }
+        #endif
         // A tab switch hides the page without onDisappear: the mic must not go on listening behind it.
         .onTabVisibility(appear: {}, disappear: stopDictation)
         .onAppear {
@@ -137,8 +157,9 @@ struct TodoDetailView: View {
         }
     }
 
+    /// Ends dictation, and a start still asking for permission with it (#3407).
     private func stopDictation() {
-        if dictation.isListening { dictation.stop() }
+        dictation.stop()
     }
 
     /// Deletes the todo and leaves its page; a failed delete keeps the page and shows the error.
@@ -186,6 +207,9 @@ struct TodoDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    // Nobody is working on it (#3618): under its state.
+                    OrphanedLine(todo: todo, state: status)
 
                     if todo.autoDone {
                         // The hub closed it (docs/assistant/todos.md「Automatic completion」): say why, and how to undo it.
@@ -251,6 +275,7 @@ struct TodoDetailView: View {
 
                     if isEditingNotes {
                         TextField(String(localized: "To-do notes"), text: $editingNotesText, axis: .vertical)
+                            .readingContent()
                             .lineLimit(3...8)
                             .textFieldStyle(.plain)
                             .accessibilityIdentifier("todo.notes.field")
@@ -258,6 +283,7 @@ struct TodoDetailView: View {
                             .background(Theme.Fill.well, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
                     } else if !text.notes.isEmpty {
                         Text(text.notes)
+                            .readingContent()
                             .font(Theme.Font.body)
                             .foregroundStyle(Color.primary)
                     } else {
@@ -310,7 +336,9 @@ struct TodoDetailView: View {
             }
         }
         .themedPage()
-        .safeAreaInset(edge: .bottom) {
+        // The buttons float over the notes, which scroll on behind them and blur under them, with no band of page
+        // color (on one they sat on a white strip, #9008).
+        .floatingFooter(over: Theme.groupedPage) {
             bottomBar(todo)
         }
         #if DEBUG
@@ -377,8 +405,12 @@ struct TodoDetailView: View {
         }()
 
         return Button {
-            dismiss()
-            openTodoAgentChat(key, in: model)
+            if let onOpenAgent {
+                onOpenAgent(key)
+            } else {
+                dismiss()
+                openTodoAgentChat(key, in: model)
+            }
         } label: {
             HStack(alignment: .top, spacing: Theme.Space.m) {
                 if isFailed {
@@ -464,39 +496,54 @@ struct TodoDetailView: View {
     }
 
     private func bottomBar(_ todo: TodoItem) -> some View {
-        HStack(spacing: Theme.Space.m) {
-            // A done to-do can't be handed over (the hub refuses, #1856): Reopen comes first.
-            if !todo.isDone {
-                Button {
-                    showHandoff = true
-                } label: {
-                    HStack(spacing: Theme.Space.xs) {
-                        ThemedIcon(Theme.Icon.handToAI)
-                        Text("Hand to Agent").lineLimit(1).minimumScaleFactor(0.8)
-                    }
-                    .font(Theme.Font.heading)
-                    .scaledFrame(maxWidth: .infinity, minHeight: Theme.Size.wellS)
-                }
-                .themedButton(prominent: true)
-                .controlSize(.large)
-            }
-
-            Button {
-                store.toggleDone(todo)
-            } label: {
-                HStack(spacing: Theme.Space.xs) {
-                    ThemedIcon(todo.isDone ? Theme.Icon.undo : Theme.Icon.done)
-                    Text(todo.isDone ? String(localized: "Reopen") : String(localized: "Done [Extension System Presentation c0b3fb]")).lineLimit(1).minimumScaleFactor(0.8)
-                }
-                .font(Theme.Font.heading)
-                .scaledFrame(maxWidth: .infinity, minHeight: Theme.Size.wellS)
-            }
-            .themedButton(prominent: false)
-            .controlSize(.large)
+        // Side by side while both labels fit whole, else one above the other, Hand to Agent first (#6151): side by side
+        // they were cut to "Hand to A…" from xxLarge.
+        // Two pills floating over the notes, the Sidebar layout's foot's (`floatingPill`, #4206): 46 pt as its New
+        // Chat, apart from each other, with nothing behind them but the notes' blur. On a wide page (an iPad) the row
+        // is no wider than a readable page, centered, as the Inbox's hand-off bar. At the large control size across
+        // the whole page they were 61 pt tall and on an iPad 380 pt wide each, on a white strip (#9008).
+        StackingButtonRow(spacing: Theme.Space.m, stackedSpacing: Theme.Space.s) {
+            bottomButtons(todo)
         }
+        .frame(maxWidth: Theme.Size.readable)
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, Theme.Space.page)
         .padding(.vertical, Theme.Space.s)
-        .background(Theme.pageBackground)
+    }
+
+    /// Hand to Agent the Theme Color's pill, the one solid button; Done / Reopen the glass one. Each label is measured
+    /// at its full size (`minimumScale: 1`): with the row's 0.8 allowance "Hand to Agent" stayed beside Done at
+    /// xxxLarge, cut to "Hand to Age…" instead of shrunk (#9008).
+    @ViewBuilder private func bottomButtons(_ todo: TodoItem) -> some View {
+        // A done to-do can't be handed over (the hub refuses, #1856): Reopen comes first.
+        if !todo.isDone {
+            Button {
+                showHandoff = true
+            } label: {
+                HStack(spacing: Theme.Space.xs) {
+                    ThemedIcon(Theme.Icon.handToAI)
+                    // Its own string (#6151): the sheet's title keeps the longer Japanese, which the half-width button cut off.
+                    Text("Hand to Agent [To-do Page Button]").buttonLabelLine(minimumScale: 1)
+                }
+                .floatingPill(prominent: true)
+            }
+            .buttonStyle(.plain)
+            .accessibilityShowsLargeContentViewer()
+            .accessibilityIdentifier("todo.handToAgent")
+        }
+
+        Button {
+            store.toggleDone(todo)
+        } label: {
+            HStack(spacing: Theme.Space.xs) {
+                ThemedIcon(todo.isDone ? Theme.Icon.undo : Theme.Icon.done)
+                Text(todo.isDone ? String(localized: "Reopen") : String(localized: "Done [Extension System Presentation c0b3fb]")).buttonLabelLine(minimumScale: 1)
+            }
+            .floatingPill(prominent: false)
+        }
+        .buttonStyle(.plain)
+        .accessibilityShowsLargeContentViewer()
+        .accessibilityIdentifier("todo.toggleDone")
     }
 }
 

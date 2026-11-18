@@ -1,0 +1,92 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "persona_canvas",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "persona_surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "persona_brand",
+      "value": "#0055FF"
+    },
+    {
+      "name": "persona_danger",
+      "value": "#BA1A1A"
+    },
+    {
+      "name": "persona_own_glass",
+      "value": "#E0EDFF"
+    },
+    {
+      "name": "persona_own_brief",
+      "value": "#F1EADB"
+    },
+    {
+      "name": "persona_own_board",
+      "value": "#DCE8F4"
+    },
+    {
+      "name": "persona_grouped",
+      "value": "#F5F6F8"
+    },
+    {
+      "name": "persona_ink",
+      "value": "#1B1D21"
+    },
+    {
+      "name": "persona_secondary",
+      "value": "#5D646D"
+    },
+    {
+      "name": "persona_control",
+      "value": "#E9ECF1"
+    },
+    {
+      "name": "persona_selection",
+      "value": "#E5EEFC"
+    },
+    {
+      "name": "persona_question",
+      "value": "#F3F7FF"
+    },
+    {
+      "name": "persona_needs",
+      "value": "#0064C8"
+    },
+    {
+      "name": "persona_working",
+      "value": "#9B5500"
+    },
+    {
+      "name": "persona_unread",
+      "value": "#1D7A4C"
+    },
+    {
+      "name": "persona_positive",
+      "value": "#237337"
+    },
+    {
+      "name": "persona_divider",
+      "value": "#E2E5EB"
+    },
+    {
+      "name": "persona_subtle",
+      "value": "#F1F3F6"
+    },
+    {
+      "name": "persona_ai",
+      "value": "#5B4FD6"
+    },
+    {
+      "name": "persona_teal",
+      "value": "#087F8C"
+    }
+  ]
+}

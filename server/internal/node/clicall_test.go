@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/host"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -176,6 +177,69 @@ func TestCLICallOnlyForTheAssistant(t *testing.T) {
 	if len(asked) != 2 || asked[0]["name"] != "example_list" || asked[0]["assistant"] != true || asked[0]["session_id"] != "s1" ||
 		asked[1]["name"] != "other_list" || asked[1]["assistant"] != true || asked[1]["session_id"] != "s2" {
 		t.Fatalf("the hub was asked %v", asked)
+	}
+}
+
+func TestCLICallTaskSpawnUsesLivePaneSession(t *testing.T) {
+	n, hub := runtimeNode(t)
+	n.mu.Lock()
+	n.panes = map[string]string{"w1:p1": "sess-stale"}
+	n.agents = map[string]host.Agent{"sess-live": {PaneID: "w1:p1"}}
+	n.mu.Unlock()
+	taskCall := mcpRelay(t, n, hub)
+
+	// An unknown pane is rejected before the peer/hub call, regardless of forged request identity fields.
+	peer := n.peer
+	n.peer = nil
+	missing := n.cliCall(context.Background(), nil, sockRequest{Name: "task_spawn", Pane: "w9:p9", SessionID: "forged", Assistant: true})
+	n.peer = peer
+	if !missing.IsError || !strings.Contains(missing.Content[0].Text, "no Agent session is known") {
+		t.Fatalf("unknown pane: %+v", missing)
+	}
+	empty := n.cliCall(context.Background(), nil, sockRequest{Name: "task_spawn", SessionID: "forged", Assistant: true})
+	if !empty.IsError || !strings.Contains(empty.Content[0].Text, "no Agent session is known") {
+		t.Fatalf("empty pane: %+v", empty)
+	}
+
+	got := taskCall(map[string]any{"kind": "cli.call", "name": "task_spawn", "args": map[string]any{"prompt": "work", "title": "task"},
+		"pane": "w1:p1", "session_id": "forged-session", "assistant": true})
+	if got["name"] != "task_spawn" || got["session_id"] != "sess-live" || got["assistant"] != false || got["guest"] != false {
+		t.Fatalf("hub request %v: want live pane session, assistant false, guest false", got)
+	}
+	denied := n.cliCall(context.Background(), nil, sockRequest{Name: "example_list", Pane: "w1:p1"})
+	if !denied.IsError || !strings.Contains(denied.Content[0].Text, "只能在助手的对话里用") {
+		t.Fatalf("ordinary connector tool from Agent: %+v", denied)
+	}
+}
+
+func TestTaskSpawnCodexCallerDoesNotUseAStalePane(t *testing.T) {
+	n, hub := runtimeNode(t)
+	thread := "10000000-0000-0000-0000-000000000001"
+	public := "c0de-10000000000000000000000000000001"
+	n.codices = newCodexRegistry()
+	n.codices.threads[public] = codexSource{thread: thread, home: "/profiles/codex"}
+	n.panes = map[string]string{"w1:p1": "another-agent"}
+	ask := mcpRelay(t, n, hub)
+	call := map[string]any{"kind": "cli.call", "name": "task_spawn", "args": map[string]any{"title": "Check", "prompt": "Check"},
+		"pane": "w1:p1", "codex_thread_id": thread, "session_id": "forged", "assistant": true}
+	got := ask(call)
+	if got["session_id"] != public || got["assistant"] != false {
+		t.Fatalf("Codex's thread did not override the daemon's stale pane: %+v", got)
+	}
+	// A known thread without a pane is the shared app-server case.
+	delete(call, "pane")
+	if got := ask(call); got["session_id"] != public {
+		t.Fatalf("pane-less Codex caller: %+v", got)
+	}
+	for _, raw := range []string{"unknown", "20000000-0000-0000-0000-000000000002"} {
+		res := n.cliCall(context.Background(), nil, sockRequest{Name: "task_spawn", Pane: "w1:p1", CodexThreadID: raw})
+		if !res.IsError {
+			t.Fatalf("unknown Codex thread fell back to another pane: %+v", res)
+		}
+	}
+	n.codices.threads["another-home"] = codexSource{thread: thread, home: "/other/codex"}
+	if got := n.taskCodexCaller(thread); got != "" {
+		t.Fatalf("ambiguous raw thread chose %q", got)
 	}
 }
 

@@ -1,0 +1,11 @@
+{
+  "temporary_claude": "在 Claude 桌面版侧边栏里归为一组",
+  "temporary_codex": "在 Codex App 的“无项目”对话里",
+  "use_temporary": "改用临时会话",
+  "new_folder": "新建文件夹…",
+  "new_folder_name": "文件夹名称",
+  "new_folder_use": "采用",
+  "new_folder_hint": "会话开始时在“{folder}”里创建。",
+  "desktop_hint_claude": "在 Claude 桌面版里新建会话。不选文件夹时放进桌面版项目旁边统一的临时会话文件夹；新建的文件夹会在会话开始时创建。",
+  "desktop_hint_codex": "在 Codex App 里新开对话。不选文件夹时放在 App 存放“无项目”对话的位置；新建的文件夹会在对话开始时创建。"
+}

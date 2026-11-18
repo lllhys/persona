@@ -9,6 +9,7 @@
 use std::path::Path;
 
 use idevice::IdeviceService as _;
+use idevice::amfi::AmfiClient;
 use idevice::lockdown::LockdownClient;
 use idevice::provider::{IdeviceProvider as _, UsbmuxdProvider};
 use idevice::remote_pairing::{PeerDevice, RemotePairingLockdownService};
@@ -86,6 +87,32 @@ pub async fn pair(udid: &str, out: &Path) -> Result<Value, BridgeError> {
         "product_version": facts.product_version,
         "developer_mode": facts.developer_mode,
     }))
+}
+
+/// Shows Developer Mode in the phone's Settings › Privacy & Security (`reveal-developer-mode`, #8199), where iOS keeps
+/// it hidden until a developer tool asks for it: through the AMFI lockdown service over usbmuxd, so the phone has to be
+/// on the cable and trust this computer. It turns nothing on: the phone's user still turns it on, and the phone
+/// restarts. `{"udid", "revealed": true}`. Not verified on a real device.
+pub async fn reveal_developer_mode(udid: &str) -> Result<Value, BridgeError> {
+    let device = usb_devices()
+        .await?
+        .into_iter()
+        .find(|d| d.udid == udid)
+        .ok_or_else(|| BridgeError::new(Code::NotFound, format!("no iPhone {udid} is attached over USB")))?;
+    let provider = provider(&device);
+    if provider.get_pairing_file().await.is_err() {
+        return Err(BridgeError::new(
+            Code::TrustPending,
+            "the phone doesn't trust this computer yet: unlock it, tap Trust and enter its passcode, then try again",
+        ));
+    }
+    let mut amfi = AmfiClient::connect(&provider)
+        .await
+        .map_err(|e| from_idevice(e, Phase::Pairing, "open the AMFI service"))?;
+    amfi.reveal_developer_mode_option_in_ui()
+        .await
+        .map_err(|e| from_idevice(e, Phase::Pairing, "show Developer Mode in Settings"))?;
+    Ok(json!({ "udid": udid, "revealed": true }))
 }
 
 /// Whether a `_remotepairing._tcp` advertisement (its TXT `identifier` and `authTag`) is the phone of the

@@ -19,18 +19,19 @@ describe("cardFold", () => {
   const wide = { narrow: false, keyboard: false, open: false };
   const narrow = { narrow: true, keyboard: false, open: false };
 
-  it("shows every card on a wide screen, the keyboard or not", () => {
-    expect(cardFold(3, wide)).toEqual({ full: 3, summary: null });
-    expect(cardFold(3, { ...wide, keyboard: true })).toEqual({ full: 3, summary: null });
+  it("shows only the first card on a wide screen, the keyboard or not", () => {
+    expect(cardFold(3, wide)).toEqual({ full: 1, summary: null });
+    expect(cardFold(3, { ...wide, keyboard: true })).toEqual({ full: 1, summary: null });
+    expect(cardFold(3, { ...wide, open: true })).toEqual({ full: 3, summary: null });
   });
 
-  it("shows the first in full and 还有 N 件 for the rest on a narrow one", () => {
-    expect(cardFold(3, narrow)).toEqual({ full: 1, summary: { kind: "more", count: 2 } });
+  it("shows only the first in full, with no summary line, on a narrow one", () => {
+    expect(cardFold(3, narrow)).toEqual({ full: 1, summary: null });
     expect(cardFold(1, narrow)).toEqual({ full: 1, summary: null });
     expect(cardFold(0, narrow)).toEqual({ full: 0, summary: null });
   });
 
-  it("shows them all once 还有 N 件 is tapped", () => {
+  it("shows them all once the position chip is tapped", () => {
     expect(cardFold(3, { ...narrow, open: true })).toEqual({ full: 3, summary: null });
   });
 

@@ -34,7 +34,7 @@ describe("LarkSummaryCard", () => {
     const html = draw({ variant: "video-chat", title: "设计评审", eyebrow: "视频会议", status: "进行中",
       fields: [{ label: "发起人", value: "示例 A" }], actions: [{ type: "copyMeetingNumber", value: "123" }] });
     expect(html).toContain('data-variant="video-chat"');
-    for (const s of ["设计评审", "视频会议", "进行中", "发起人", "示例 A", "拷贝会议号"]) expect(html).toContain(s);
+    for (const s of ["设计评审", "视频会议", "进行中", "发起人", "示例 A", "复制会议号"]) expect(html).toContain(s);
   });
 
   it("draws a vote's options", () => {

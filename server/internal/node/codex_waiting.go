@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/host"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -119,6 +120,9 @@ func (n *Node) waitCodexBox(ctx context.Context, pane string) error {
 	if agent, err := n.paneAgent(ctx, pane); err == nil && agent != nil && agent.Agent == "codex" {
 		return errCodexBoxLate
 	}
+	if adoptedPane(ctx) != nil { // Run Agent Here (#5504): the user's own pane, not a new tab, and it stays as it is
+		return &rpc.Error{Code: "codex_no_box_here", Message: i18n.T(i18n.Default, "node-codex-start.no_box_here", map[string]any{"seconds": int(codexStartWait.Seconds())})}
+	}
 	return &rpc.Error{Code: "codex_no_box", Message: fmt.Sprintf("Codex 已经在电脑上的新标签里打开了，但 %d 秒内没看到它的输入框", int(codexStartWait.Seconds()))}
 }
 
@@ -191,7 +195,7 @@ func (n *Node) addCodexWaitLocked(w *codexWait) {
 	n.codexWaiting[w.pane] = w
 	if !n.codexWaitLooking {
 		n.codexWaitLooking = true
-		go n.lookForCodexThreads()
+		go n.lookForCodexThreads(codexWaitTick)
 	}
 }
 
@@ -434,10 +438,11 @@ func (n *Node) codexTitleThread(a host.Agent) string {
 	return n.codexPublicID(home, found[0])
 }
 
-// lookForCodexThreads looks for the waiting rows' threads every codexWaitTick until none waits.
-func (n *Node) lookForCodexThreads() {
+// lookForCodexThreads looks for the waiting rows' threads every `every` (codexWaitTick, read by the caller) until none
+// waits.
+func (n *Node) lookForCodexThreads(every time.Duration) {
 	for tick := 0; ; tick++ {
-		time.Sleep(codexWaitTick)
+		time.Sleep(every)
 		n.mu.Lock()
 		if len(n.codexWaiting) == 0 {
 			n.codexWaitLooking = false
@@ -665,6 +670,7 @@ func (n *Node) attachCodexWait(ctx context.Context, w *codexWait, thread, how st
 	n.mu.Unlock()
 	n.state.setPane(w.id, "")
 	n.logf("codex %s: thread %s attached to row %s (%s)", w.pane, thread, w.id, how)
+	n.namePersonaTab(ctx, w.pane, thread)
 	_ = n.refreshHosts(ctx)
 	n.notifySessions()
 	return true

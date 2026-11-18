@@ -278,9 +278,20 @@ impl<R: Commands> SimDevice<R> {
         if self.runner.is_none() {
             self.runner = Some(TestRunner::start(build, &self.info.udid)?);
         }
-        let runner = self.runner.as_mut().expect("just started");
-        runner.ready(Instant::now() + self.runner_wait).await?;
-        Ok(runner)
+        let (ready, exited) = {
+            let runner = self.runner.as_mut().expect("just started");
+            let ready = runner.ready(Instant::now() + self.runner_wait).await;
+            // Only a confirmed pre-handshake exit can never become ready. A live slow start stays cached.
+            let exited = ready.is_err() && runner.exited_before_ready();
+            (ready, exited)
+        };
+        if let Err(error) = ready {
+            if exited {
+                self.runner.take().expect("cached runner").stop().await;
+            }
+            return Err(error);
+        }
+        Ok(self.runner.as_mut().expect("cached runner"))
     }
 
     /// Apps running on the simulator, most recently started first, the last one seen in front before them:

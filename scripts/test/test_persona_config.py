@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -83,27 +84,60 @@ class PersonaConfigTests(unittest.TestCase):
         target.write_bytes((ROOT / 'apple' / config.APP_ENTITLEMENTS).read_bytes())
         return root
 
-    def test_carplay_entitlements_only_for_json_true(self):
-        for value in (None, False, 'false', 'False', 'true', 'no', 0, 1, [], {}):
+    def test_opt_in_entitlements_only_for_json_true(self):
+        for switch in config.OPT_IN:
+            for value in (None, False, 'false', 'False', 'true', 'no', 0, 1, [], {}):
+                with self.subTest(switch=switch, value=value), tempfile.TemporaryDirectory() as directory:
+                    root = self._fake_root(directory)
+                    cfg = {} if value is None else {'app': {switch.split('.', 1)[1]: value}}
+                    with patch.object(config, 'ROOT', str(root)):
+                        self.assertEqual(config.app_entitlements(cfg), config.APP_ENTITLEMENTS)
+                    self.assertFalse((root / 'apple' / config.OPT_IN_ENTITLEMENTS).exists())
+
+    def test_opt_in_entitlements_keep_the_app_keys(self):
+        cases = {
+            'carplay_voice': ['com.apple.developer.carplay-voice-based-conversation'],
+            'health_background_delivery': ['com.apple.developer.healthkit.background-delivery'],
+            'homekit': ['com.apple.developer.homekit'],
+            'siri_calls': ['com.apple.developer.siri'],
+        }
+        cases['all'] = (cases['carplay_voice'] + cases['health_background_delivery'] + cases['homekit']
+                        + cases['siri_calls'])
+        for name, keys in cases.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                root = self._fake_root(directory)
+                app = ({'carplay_voice': True, 'health_background_delivery': True, 'homekit': True, 'siri_calls': True}
+                       if name == 'all' else {name: True})
+                with patch.object(config, 'ROOT', str(root)):
+                    self.assertEqual(config.app_entitlements({'app': app}), config.OPT_IN_ENTITLEMENTS)
+                with open(root / 'apple' / config.APP_ENTITLEMENTS, 'rb') as f:
+                    original = plistlib.load(f)
+                with open(root / 'apple' / config.OPT_IN_ENTITLEMENTS, 'rb') as f:
+                    generated = plistlib.load(f)
+                self.assertTrue(original)
+                for key in keys:
+                    self.assertIs(generated.pop(key), True)
+                self.assertEqual(generated, original)
+
+    def test_health_background_delivery_flag_follows_the_switch(self):
+        for value, flag in ((True, 'YES'), (None, 'NO'), (False, 'NO'), ('true', 'NO')):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
                 root = self._fake_root(directory)
-                cfg = {} if value is None else {'app': {'carplay_voice': value}}
+                cfg = {} if value is None else {'app': {'health_background_delivery': value}}
                 with patch.object(config, 'ROOT', str(root)):
-                    self.assertEqual(config.app_entitlements(cfg), config.APP_ENTITLEMENTS)
-                self.assertFalse((root / 'apple' / config.CARPLAY_ENTITLEMENTS).exists())
+                    config.xcconfig(cfg)
+                text = (root / 'apple' / 'Config.xcconfig').read_text()
+                self.assertIn('PERSONA_HEALTH_BACKGROUND_DELIVERY = %s\n' % flag, text)
 
-    def test_carplay_entitlements_keep_the_app_keys(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = self._fake_root(directory)
-            with patch.object(config, 'ROOT', str(root)):
-                self.assertEqual(config.app_entitlements({'app': {'carplay_voice': True}}), config.CARPLAY_ENTITLEMENTS)
-            with open(root / 'apple' / config.APP_ENTITLEMENTS, 'rb') as f:
-                original = plistlib.load(f)
-            with open(root / 'apple' / config.CARPLAY_ENTITLEMENTS, 'rb') as f:
-                generated = plistlib.load(f)
-            self.assertTrue(original)
-            self.assertIs(generated.pop('com.apple.developer.carplay-voice-based-conversation'), True)
-            self.assertEqual(generated, original)
+    def test_homekit_flag_follows_the_switch(self):
+        for value, flag in ((True, 'YES'), (None, 'NO'), (False, 'NO'), ('true', 'NO')):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                root = self._fake_root(directory)
+                cfg = {} if value is None else {'app': {'homekit': value}}
+                with patch.object(config, 'ROOT', str(root)):
+                    config.xcconfig(cfg)
+                text = (root / 'apple' / 'Config.xcconfig').read_text()
+                self.assertIn('PERSONA_HOMEKIT = %s\n' % flag, text)
 
 
 class SigningProfileConfigTests(unittest.TestCase):
@@ -205,6 +239,136 @@ class SigningProfileConfigTests(unittest.TestCase):
                           {'com.example.other': 'Other Profile'}):
             with self.subTest(overrides=overrides), self.assertRaises(SystemExit):
                 self.exported({'app': {'bundle_id': self.bid}, 'app_store': {'provisioning_profiles': overrides}})
+
+
+class SiriCallsConfigTests(unittest.TestCase):
+    """app.siri_calls (#9290, docs/operations/release.md "Siri calls"): "call Persona using Persona" through a SiriKit
+    extension that needs account work first, so off by default, and off changes nothing a build or release reads."""
+    bid = 'com.example.persona'
+    APPLE = ROOT / 'apple'
+
+    def test_env_enables_the_include_only_for_json_true(self):
+        for value, expected in ((True, 'YES'), (None, 'NO'), (False, 'NO'), ('true', 'NO'), ('YES', 'NO'), (1, 'NO')):
+            with self.subTest(value=value):
+                cfg = {'app': {'bundle_id': self.bid}} if value is None else {'app': {'bundle_id': self.bid, 'siri_calls': value}}
+                generated = config.env(cfg)
+                self.assertEqual(generated['PERSONA_SIRI_CALLS'], expected)
+                self.assertEqual(generated[PersonaConfigTests.former_prefix + 'SIRI_CALLS'], expected)
+
+    def test_off_writes_the_xcconfig_and_export_options_as_before(self):
+        def written(cfg):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                target = root / 'apple' / config.APP_ENTITLEMENTS
+                target.parent.mkdir(parents=True)
+                target.write_bytes((self.APPLE / config.APP_ENTITLEMENTS).read_bytes())
+                with patch.object(config, 'ROOT', str(root)):
+                    config.xcconfig(cfg)
+                    options = root / 'ExportOptions.plist'
+                    config.export_options(cfg, str(options))
+                return ((root / 'apple' / 'Config.xcconfig').read_text().split('\n', 1)[1], options.read_bytes(),
+                        (root / 'apple' / config.OPT_IN_ENTITLEMENTS).exists())
+        before = written({'app': {'bundle_id': self.bid, 'team_id': 'EXAMPLE'}})
+        self.assertFalse(before[2])
+        for value in (False, 'true', None):
+            with self.subTest(value=value):
+                self.assertEqual(written({'app': {'bundle_id': self.bid, 'team_id': 'EXAMPLE', 'siri_calls': value}}), before)
+        on = written({'app': {'bundle_id': self.bid, 'team_id': 'EXAMPLE', 'siri_calls': True}})
+        self.assertIn('PERSONA_APP_ENTITLEMENTS = ' + config.OPT_IN_ENTITLEMENTS + '\n', on[0])
+        self.assertTrue(on[2])
+        self.assertEqual(plistlib.loads(on[1])['provisioningProfiles'][self.bid + '.callintents'],
+                         'Persona Call Intents App Store')
+
+    def test_the_extension_profile_only_with_the_switch(self):
+        off = config.provisioning_profiles({'app': {'bundle_id': self.bid}})
+        self.assertNotIn(self.bid + '.callintents', off)
+        on = config.provisioning_profiles({'app': {'bundle_id': self.bid, 'siri_calls': True}})
+        self.assertEqual(on, {**off, self.bid + '.callintents': 'Persona Call Intents App Store'})
+        self.assertEqual(config.call_intents_bundle_id({'app': {'bundle_id': self.bid}}), self.bid + '.callintents')
+        renamed = {self.bid + '.callintents': 'Existing Call Intents'}
+        self.assertEqual(config.provisioning_profiles({'app': {'bundle_id': self.bid, 'siri_calls': True},
+                                                      'app_store': {'provisioning_profiles': renamed}})
+                         [self.bid + '.callintents'], 'Existing Call Intents')
+        with self.assertRaises(SystemExit):
+            config.provisioning_profiles({'app': {'bundle_id': self.bid}, 'app_store': {'provisioning_profiles': renamed}})
+
+    def test_the_overlay_is_included_only_by_the_switch(self):
+        project = (self.APPLE / 'project.yml').read_text()
+        self.assertIn('  - path: siri-calls.yml\n    enable: ${PERSONA_SIRI_CALLS}\n', project)
+        overlay = (self.APPLE / 'siri-calls.yml').read_text()
+        self.assertIn('PRODUCT_BUNDLE_IDENTIFIER: $(PERSONA_BUNDLE_ID).callintents\n', overlay)
+        self.assertIn('INFOPLIST_FILE: PersonaCallIntents/Info.plist\n', overlay)
+        # Off by default: the tracked plist and entitlements XcodeGen writes have neither Siri key.
+        with open(self.APPLE / 'Persona/Resources/Info.plist', 'rb') as f:
+            info = plistlib.load(f)
+        self.assertNotIn('NSSiriUsageDescription', info)
+        self.assertNotIn('PersonaSiriCalls', info)
+        with open(self.APPLE / config.APP_ENTITLEMENTS, 'rb') as f:
+            self.assertNotIn('com.apple.developer.siri', plistlib.load(f))
+
+    def test_the_extension_hands_the_call_intent_to_the_app(self):
+        with open(self.APPLE / 'PersonaCallIntents/Info.plist', 'rb') as f:
+            extension = plistlib.load(f)['NSExtension']
+        self.assertEqual(extension['NSExtensionPointIdentifier'], 'com.apple.intents-service')
+        self.assertEqual(extension['NSExtensionAttributes']['IntentsSupported'], ['INStartCallIntent'])
+        principal = extension['NSExtensionPrincipalClass'].removeprefix('$(PRODUCT_MODULE_NAME).')
+        handler = (self.APPLE / 'PersonaCallIntents/IntentHandler.swift').read_text()
+        self.assertIn('final class %s: INExtension, INStartCallIntentHandling' % principal, handler)
+        self.assertIn('.continueInApp', handler)
+        self.assertNotIn('import Call' + 'Kit', handler)
+
+    def test_siri_has_example_phrases_in_every_language(self):
+        # ITMS-90626: App Store Connect rejects SiriKit intents without examples in each of the app's languages.
+        for language in ('en', 'zh-Hans', 'ja'):
+            with self.subTest(language=language):
+                with open(self.APPLE / 'PersonaCallIntents/Vocabulary' / (language + '.lproj') / 'AppIntentVocabulary.plist', 'rb') as f:
+                    phrases = plistlib.load(f)['IntentPhrases']
+                self.assertEqual([p['IntentName'] for p in phrases], ['INStartCallIntent'])
+                self.assertTrue(phrases[0]['IntentExamples'])
+                self.assertTrue(all(e.count('Persona') == 2 for e in phrases[0]['IntentExamples']), phrases)
+
+    def test_the_purpose_string_is_translated_as_info_plist_says_it(self):
+        overlay = (self.APPLE / 'siri-calls.yml').read_text()
+        line = next(l for l in overlay.splitlines() if l.strip().startswith('NSSiriUsageDescription='))
+        english = json.loads(line.split('=', 1)[1].strip())
+        catalog = json.loads((self.APPLE / 'Persona/Resources/InfoPlist.xcstrings').read_text())
+        units = catalog['strings']['NSSiriUsageDescription']['localizations']
+        self.assertEqual(units['en']['stringUnit']['value'], english)
+        self.assertEqual(set(units), {'en', 'zh-Hans', 'ja'})
+
+    @unittest.skipUnless(shutil.which('xcodegen'), 'needs xcodegen')
+    def test_xcodegen_adds_the_extension_only_when_on(self):
+        def dump(value):
+            env = {k: v for k, v in os.environ.items() if k != 'PERSONA_SIRI_CALLS'}
+            if value is not None:
+                env['PERSONA_SIRI_CALLS'] = value
+            out = subprocess.run(['xcodegen', 'dump', '--spec', str(self.APPLE / 'project.yml'), '--type', 'json'],
+                                 env=env, capture_output=True, text=True, timeout=120, check=True).stdout
+            return json.loads(out)['targets']
+        for value in (None, 'NO'):
+            with self.subTest(value=value):
+                targets = dump(value)
+                self.assertNotIn('PersonaCallIntents', targets)
+                self.assertNotIn({'target': 'PersonaCallIntents'}, targets['Persona']['dependencies'])
+                self.assertNotIn('com.apple.developer.siri', targets['Persona']['entitlements']['properties'])
+                self.assertEqual(targets['Persona']['entitlements']['path'], config.APP_ENTITLEMENTS)
+                self.assertEqual([s['name'] for s in targets['Persona']['postBuildScripts']], ['Stamp the commit'])
+        targets = dump('YES')
+        self.assertEqual(targets['PersonaCallIntents']['type'], 'app-extension')
+        self.assertIn({'target': 'PersonaCallIntents'}, targets['Persona']['dependencies'])
+        # Signed with a generated, git-ignored copy of the app's entitlements plus Siri's: the tracked file is not
+        # rewritten, nor the tracked Info.plist (its keys go into the built one), so a release's worktree stays clean.
+        entitlements = targets['Persona']['entitlements']
+        self.assertEqual(entitlements['path'], 'PersonaSiriCalls.entitlements')
+        self.assertIs(entitlements['properties']['com.apple.developer.siri'], True)
+        self.assertIs(entitlements['properties']['com.apple.developer.usernotifications.time-sensitive'], True)
+        ignored = subprocess.run(['git', '-C', str(ROOT), 'check-ignore', '-q', 'apple/PersonaSiriCalls.entitlements'])
+        self.assertEqual(ignored.returncode, 0, 'the generated entitlements are git-ignored')
+        self.assertNotIn('NSSiriUsageDescription', targets['Persona']['info']['properties'])
+        scripts = {s['name']: s['script'] for s in targets['Persona']['postBuildScripts']}
+        self.assertIn('plutil -replace NSSiriUsageDescription -string', scripts['Siri calls in the Info.plist'])
+        self.assertIn('plutil -replace PersonaSiriCalls -bool YES', scripts['Siri calls in the Info.plist'])
+        self.assertIn('Stamp the commit', scripts)
 
 
 class UpdateURLConfigTests(unittest.TestCase):

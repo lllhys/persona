@@ -222,7 +222,8 @@ holds every answer to it before it reaches the manager:
   settings that hold its references) and **Always for Agents** (its rules, each removed after a confirm).
 - **iPhone** (`apple/Persona/Views/Interactions/SecretHandoffForm.swift`, `apple/Persona/Views/Settings/ExtensionsViews.swift`):
   the same card, extension secrets and provider page, an Always rule removed after a confirm.
-- **Model provider keys** on the web (`web/src/views/settings/ProviderFields.tsx` `KeyField`): where the hub has
+- **Model provider keys**, in both apps (`web/src/views/settings/ProviderFields.tsx` `KeyField`,
+  `apple/Persona/Views/Settings/ProviderKeyField.swift`): where the hub has
   `launcher_secret_references`, a provider's key, a preset's key and each computer's own key offer **Use a reference**; a
   stored reference opens with it on and says **From <provider>** with its item, as the provider's page does. A reference
   is never sent to the connection test or the model list, which would hand its value to the address in the request: while
@@ -231,7 +232,5 @@ holds every answer to it before it reaches the manager:
 
 ## What comes next (#3962)
 
-1. Model provider keys as references on iPhone, as on the web. Android's part is #3986, which lists the interfaces it
-   needs; until then an Android phone shows the card as the hub sends it and cannot approve it.
-2. The 1Password extension's side (`secrets.used` on its own page; `secrets.describe` names the item and field as the title
-   and only the vault as the detail, which the host cuts at 40 characters anyway).
+Android's part is #3986, which lists the interfaces it needs; until then an Android phone shows the card as the hub sends
+it and cannot approve it.

@@ -8,6 +8,7 @@
     <string name="assistant_directory_copied">已拷贝工作目录</string>
     <string name="assistant_info_copied">已拷贝对话信息</string>
     <string name="assistant_interrupt">中断</string>
+    <string name="assistant_menu_title_new">新对话 · %1$s</string>
     <string name="assistant_copy_info_quoted">「%1$s」</string>
     <string name="assistant_copy_info_hub">Persona 助手（hub 上的 Claude）</string>
     <string name="assistant_copy_info_chat">Persona 助手的对话</string>

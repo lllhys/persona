@@ -81,7 +81,8 @@ function hostForHeader(host) {
 
 /**
  * The client end of a WebSocket: 'message' (text), 'close' (code, reason) once, 'error'. Pings are answered; a
- * message over MAX_MESSAGE, a masked server frame or a bad opcode closes it.
+ * message over MAX_MESSAGE, a masked server frame or a bad opcode closes it. local: this end closed it (close(), or a
+ * frame it refused), not the server's close frame nor a socket that ended without one (1006).
  */
 export class WsClient extends EventEmitter {
   constructor(socket, rest) {
@@ -92,6 +93,7 @@ export class WsClient extends EventEmitter {
     this.size = 0
     this.binary = false
     this.closed = false
+    this.local = false
     this.code = 1006
     this.reason = ''
     socket.setNoDelay?.(true)
@@ -194,6 +196,7 @@ export class WsClient extends EventEmitter {
   /** Close (a normal closure unless a code says otherwise). */
   close(code = 1000, reason = '') {
     if (this.closed) return
+    this.local = true
     const p = Buffer.alloc(2 + Buffer.byteLength(reason))
     p.writeUInt16BE(code, 0)
     p.write(reason, 2)

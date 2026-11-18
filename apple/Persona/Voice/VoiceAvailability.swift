@@ -45,6 +45,9 @@ nonisolated struct VoiceInfo: Decodable, Equatable, Sendable {
 extension VoiceInfo {
     /// The extension can say a given text in the realtime voice (`POST …/speak`, #5004); older ones can't.
     nonisolated static let speakFeature = "speak"
+    /// The extension sends anyway what its user-speech gate held back (a resend of a run refused `unprompted`), and its
+    /// `start` takes `speech_gate` (#5904): the bar's Send Anyway and the setting Only Send What I Just Said.
+    nonisolated static let speechGateFeature = "speech_gate"
 }
 
 /// The realtime voice saying a text (`POST …/speak`): mono PCM16, little-endian, at `rate`, in pieces as they come.
@@ -124,6 +127,9 @@ nonisolated enum VoiceAvailability: Equatable, Sendable {
     case noConversation
     /// The conversation cannot take messages from here (a read-only source).
     case readOnly
+    /// A meeting's room conversation (origin `meeting`) opened as a chat: a room takes only meeting calls, from the
+    /// meeting's page while it records (#3862 phase 4); an ordinary call would bring its tools in front of the room.
+    case meetingRoom
     /// The hub has no voice extension running (none, switched off, or a hub too old to list them).
     case noExtension
     /// The voice extension runs but has no upstream yet (no address or key).
@@ -136,6 +142,9 @@ nonisolated enum VoiceAvailability: Equatable, Sendable {
     case unknown
 
     var isAvailable: Bool { if case .available = self { true } else { false } }
+
+    /// The origin of a meeting's room conversation (docs/assistant/meeting-minutes.md「The room conversation」).
+    static let meetingOrigin = "meeting"
 
     /// The extension the app talks to: the first one with `kind == "voice"` that runs (as Android and hub/channels.go).
     static func pick(_ extensions: [HubExtension]) -> HubExtension? {
@@ -151,9 +160,16 @@ nonisolated enum VoiceAvailability: Equatable, Sendable {
     static func evaluate(platform: VoicePlatform, session: Session?, extensions: [HubExtension]?, info: VoiceInfoState?) -> VoiceAvailability {
         guard platform == .phone else { return .unsupported }
         guard let session else { return .noConversation }
+        guard session.origin != Self.meetingOrigin else { return .meetingRoom }
         // The composer's own rule: a call hands things over only where typing could. A conversation with no source
         // (herdr) takes messages without capabilities; a source has to say it does.
         guard session.canSend else { return .readOnly }
+        return evaluateExtension(extensions: extensions, info: info)
+    }
+
+    /// The hub's side alone: a voice extension that runs, speaks protocol 2 and is set up. A call to Persona (#9290) asks
+    /// only this when the app does not have the main conversation yet (a redial from Recents as the app launches).
+    static func evaluateExtension(extensions: [HubExtension]?, info: VoiceInfoState?) -> VoiceAvailability {
         guard let extensions else { return .unknown }
         guard let voice = pick(extensions) else {
             if let waiting = extensions.first(where: { $0.kind == "voice" && $0.status == "needs_setup" }) {
@@ -332,7 +348,8 @@ extension APIClient {
     private(set) var probes: [String: Probe] = [:]
     /// When each group was last asked: kept apart from `probes`, so asking again and hearing the same does not redraw.
     @ObservationIgnored private var askedAt: [String: Date] = [:]
-    @ObservationIgnored private var asking: Set<String> = []
+    /// Each group's ask on its way: a second asker waits for it instead of reading a probe that is not there yet.
+    @ObservationIgnored private var asking: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
     /// `watchesApp`: ask again when the app comes back to the foreground (the shared one).
@@ -352,14 +369,28 @@ extension APIClient {
         return VoiceAvailability.evaluate(platform: platform, session: session, extensions: probe?.extensions, info: probe?.info)
     }
 
-    /// Asks the group's hub unless its answer is younger than a minute. Not on platforms without calls.
+    /// Whether the group's hub takes a call at all (its voice extension), whatever the conversation.
+    func extensionAvailability(group: String) -> VoiceAvailability {
+        let probe = probes[group]
+        return VoiceAvailability.evaluateExtension(extensions: probe?.extensions, info: probe?.info)
+    }
+
+    /// Asks the group's hub unless its answer is younger than a minute, and returns once the answer is in. Asked already
+    /// (the chat's page on a cold launch, then a call from Recents): it waits for that ask. Not on platforms without calls.
     func refresh(group: String, api: APIClient, now: Date = .now, platform: VoicePlatform = .current) async {
-        guard platform == .phone, !asking.contains(group) else { return }
+        guard platform == .phone else { return }
+        if let ask = asking[group] { return await ask.value }
         if let probe = probes[group], let at = askedAt[group], now.timeIntervalSince(at) < Self.ttl {
             if case .failed? = probe.info {} else { return }
         }
-        asking.insert(group)
-        defer { asking.remove(group) }
+        // On a task of its own: an asker that goes away (its page) leaves the answer to the ones still waiting.
+        let ask = Task { await self.ask(group: group, api: api, now: now) }
+        asking[group] = ask
+        await ask.value
+        asking[group] = nil
+    }
+
+    private func ask(group: String, api: APIClient, now: Date) async {
         let extensions: [HubExtension]
         do {
             extensions = try await api.plugins()

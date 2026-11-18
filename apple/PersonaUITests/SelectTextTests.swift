@@ -55,6 +55,8 @@ final class SelectTextTests: XCTestCase {
 
     /// The lifted message's words while they are selected.
     private var words: XCUIElement { app.textViews["lift-text"] }
+    /// A lifted reply's card padding above its words (`MessageLift`'s `pad`, `Theme.Space.m`).
+    private static let cardPadding: CGFloat = 12
 
     /// The edit menu's item (a menu item or a button, by the system's version).
     private func menuItem(_ label: String) -> XCUIElement {
@@ -68,6 +70,9 @@ final class SelectTextTests: XCTestCase {
         XCTAssertTrue(text.waitForExistence(timeout: 20), "\(message) is not in the chat")
         acceptIconAlert(timeout: 3) // the scheme's icon
         sleep(3) // the list settles at the newest message; the header folds
+        let title = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier IN %@", ["chat.title", "chat.compactTitle"])).firstMatch
+        topBar = title.exists ? title.frame : .null
         // Rows of the flipped chat list may report flipped frames: press by the centre in the window.
         let window = app.windows.firstMatch.frame
         var f = text.frame
@@ -127,9 +132,28 @@ final class SelectTextTests: XCTestCase {
         return got
     }
 
-    /// Beside the lifted message, on the scrim: below the status bar, whose taps never reach the app.
+    /// The chat's title in its top bar, where it was before the message was lifted: the lift dims it and is drawn over it.
+    private var topBar = CGRect.null
+
+    /// Beside the lifted message, on the scrim: on the top bar it dims (below the status bar, whose taps never reach the
+    /// app). Not at a set height: a long reply's card can start there, and a tap on the card's edge ends nothing (#6099).
+    /// When the card covers the top bar (the bar under it, with its Select Messages row, #9468, needs the room), beside
+    /// that row, or under the card and the bar.
     @MainActor private func tapBeside() {
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12)).tap()
+        let card = app.descendants(matching: .any)["message-lift"].firstMatch.frame
+        let window = app.windows.firstMatch.frame
+        let row = app.buttons["chat.selectMessages"].firstMatch
+        let rowFrame = row.exists ? row.frame : CGRect.null
+        var spots = [CGPoint(x: topBar.midX, y: topBar.midY)]
+        if !rowFrame.isNull { spots.append(CGPoint(x: (rowFrame.maxX + window.maxX) / 2, y: rowFrame.midY)) }
+        spots.append(CGPoint(x: window.midX, y: max(card.maxY, rowFrame.isNull ? 0 : rowFrame.maxY) + Self.inset * 3))
+        let at = spots.first { s in
+            !card.insetBy(dx: -Self.inset, dy: -Self.inset).contains(s) && !rowFrame.contains(s)
+                && s.y < window.maxY - Self.inset * 4 && s.x < window.maxX - Self.inset
+        }
+        XCTAssertNotNil(at, "nothing beside the lifted message to tap: top bar \(topBar), card \(card), row \(rowFrame)")
+        guard let at else { return }
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: at.x, dy: at.y)).tap()
     }
 
     /// A reply with a fence inside a longer fence, a formula, indented code, a rule and a tab-indented item: the
@@ -150,7 +174,12 @@ final class SelectTextTests: XCTestCase {
         lift("迁移计划", shot: "rich")
         let lead = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "先把三个页面")).firstMatch
         XCTAssertTrue(lead.exists, "the lifted reply's first paragraph is not on screen:\n\(app.debugDescription)")
-        let f = lead.frame
+        // The words found are the chat's, behind the lift. The lifted copy can sit higher than they do, when the bar
+        // under it needs the room (its Select Messages row, #9468): press the paragraph where the copy shows it, as far
+        // under the copy's top (past its card's padding) as it is under the reply's first line in the chat.
+        let first = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "迁移计划")).firstMatch.frame
+        let card = app.descendants(matching: .any)["message-lift"].firstMatch.frame
+        let f = lead.frame.offsetBy(dx: 0, dy: card.minY + Self.cardPadding - first.minY)
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.minX + 40, dy: f.midY)).press(forDuration: 0.8)
         XCTAssertTrue(words.waitForExistence(timeout: 5), "a second long press did not select in place:\n\(app.debugDescription)")
         XCTAssertTrue(menuItem("拷贝").waitForExistence(timeout: 3), "no edit menu:\n\(app.debugDescription)")

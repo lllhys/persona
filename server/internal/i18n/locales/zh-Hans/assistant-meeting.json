@@ -20,6 +20,7 @@
   "ask_busy": "正在回答两个问题，等其中一个答完再问。",
   "meeting_ended": "这场会议已经结束，请在会后对话里继续。",
   "bad_private": "private 只能是 true 或 false。",
+  "bad_title": "标题只能是一行，最多 200 个字。",
   "not_meeting": "这条录音不是会议。",
   "text_too_long": "文字超过了 {max} 个字。",
   "too_many_images": "最多 {max} 张图片。",
@@ -38,5 +39,13 @@
   "photo_not_found": "这场会没有这张照片。",
   "photo_deleted": "这张照片已删除，不能再添加。",
   "photo_id_reused": "这个 id 已经用于另一张照片。",
-  "photos_full": "这场会已经有 {max} 张照片了。"
+  "photos_full": "这场会已经有 {max} 张照片了。",
+  "hub_transcribes": "Hub 正在转写这场会议。请发送音频，而不是实时句子。",
+  "not_hub": "这场会议使用设备端转写，不能向 Hub 发送音频。",
+  "transcription_final": "这场会议已开始最终转写，不能再添加音频。",
+  "audio_full": "这场会议的音频已达到上限，不能再添加音频。",
+  "bad_audio": "音频格式不正确。请发送带有效起始时间的 16 kHz 单声道 PCM16 音频。",
+  "bad_transcription_mode": "meeting_transcription_default 必须是 device 或 hub。",
+  "bad_glossary": "meeting_glossary 必须是字符串列表，最多 200 个词条，每条不超过 40 个字符。",
+  "bad_transcription_extension": "请选择已安装的转写扩展，以 extension-id/contribution-id 指定；留空则使用内置服务。"
 }

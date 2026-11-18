@@ -21,6 +21,8 @@ const DISK_EVERY = 30_000 // ms: list the sessions on disk at most this often (p
 const TERMINAL_HOSTS = new Set(['herdr', 'terminal']) // resumed in the machine's terminal engine, not in pi-web
 const RELOAD_COMMAND = 'persona-reload' // the command a session runs on itself to load a new version (docs/integrations/pi.md "Automatic updates")
 const IDLE_EVERY = 5000 // ms: how often to look whether the process is idle enough to switch versions
+const INTERRUPT_SETTLE = 10_000 // ms: how long an interrupt waits for the turn to end before it reports failure
+const BROWSERS_EVERY = 10_000 // ms: how often pi-web is asked which sessions a browser has open
 
 /**
  * @typedef {object} PiDeps
@@ -37,7 +39,7 @@ const IDLE_EVERY = 5000 // ms: how often to look whether the process is idle eno
 /**
  * @param {PiDeps} deps
  * @param {{ socketPath?: string, answerFirst?: 'auto'|'phone'|'local', approve?: string[], listDays?: number,
- *   maxSessions?: number, retryMs?: number, pushDelayMs?: number, listDisk?: boolean, runtime?: string,
+ *   maxSessions?: number, retryMs?: number, pushDelayMs?: number, listDisk?: boolean, runtime?: string, interruptSettleMs?: number,
  *   agent?: string, name?: string, instancePrefix?: string, interactionPrefix?: string, resumeCommand?: string[],
  *   instance?: string, update?: { name: string, hash: string, store: string, exit?: (hash: string) => void } }} [options]
  *   listDisk: list the recent sessions on disk too, and start new ones (the companion; needs web). update: this code
@@ -48,13 +50,15 @@ const IDLE_EVERY = 5000 // ms: how often to look whether the process is idle eno
  *   agent: the agent this host serves (pi; omp for the pi fork of the same extension API). name: the agent's name in
  *   the apps. instancePrefix: the `<prefix>-<pid>` the runtime and, when instance is not given, the instance take.
  *   interactionPrefix: what a card's id starts with. resumeCommand: how its terminal resumes a session on disk.
+ *   interruptSettleMs: how long an interrupt waits for the turn to end (tests).
  */
 export function createPiHost(deps, options = {}) {
   const web = deps.web
   const agent = options.agent ?? 'pi'
   const instancePrefix = options.instancePrefix ?? 'pi'
   const interactionPrefix = options.interactionPrefix ?? 'pi'
-  const resumeCommand = options.resumeCommand ?? ['pi', '--session']
+  // --approve: the resume runs in a herdr tab nobody watches, where pi's project Trust prompt would hold it (#9462).
+  const resumeCommand = options.resumeCommand ?? ['pi', '--approve', '--session']
   const pid = deps.pid ?? process.pid
   const listDisk = options.listDisk === true && web !== undefined
   const log = deps.log ?? (() => {})
@@ -72,6 +76,9 @@ export function createPiHost(deps, options = {}) {
   let installing = false
   let retired = false // stopped to hand this process over to a new version
   let idleTimer
+  const settleMs = options.interruptSettleMs ?? INTERRUPT_SETTLE
+  // pi-web: the sessions a browser has open (its event streams), as its debug snapshot said last; undefined: not known.
+  let browsers = { at: 0, open: undefined, asking: undefined }
 
   const rt = createRuntime({
     listSessions,
@@ -83,7 +90,7 @@ export function createPiHost(deps, options = {}) {
     interrupt,
     ...(listDisk ? { start } : {}),
     rename,
-    hasLocalClient: () => true, // a terminal, or pi-web's browser tabs (they cannot be counted from here)
+    hasLocalClient,
   }, {
     runtime: options.runtime ?? (listDisk ? 'pi-files' : web ? 'pi-web' : `${instancePrefix}-${pid}`),
     name: options.name ?? (web ? 'Pi Web' : 'pi'),
@@ -247,10 +254,20 @@ export function createPiHost(deps, options = {}) {
     const { text, images } = content(params) // once per client_msg_id: the SDK's
     const s = live.get(id)
     if (s) {
+      // The turn waits on the user's answer (ask_user): this message is the answer. Steered, it would wait behind the
+      // question for as long as nobody answers it.
+      if (s.asking) {
+        s.asking.answer(text, images)
+        return undefined
+      }
       const body = images.length ? [...(text ? [{ type: 'text', text }] : []), ...images] : text
-      // Into the running turn while it works (pi's steer), a new turn when idle.
-      await s.pi.sendUserMessage(body, s.running ? { deliverAs: 'steer' } : undefined)
-      return
+      // Into the running turn while it works (pi's steer: read after the step under way), a new turn when idle.
+      if (s.running) {
+        await s.pi.sendUserMessage(body, { deliverAs: 'steer' })
+        return { queued: true }
+      }
+      await s.pi.sendUserMessage(body)
+      return undefined
     }
     const path = listDisk ? await diskPath(id) : undefined
     if (!path) throw new RpcError('这个 pi 会话没有在这里运行，这次没有发送', 'not_running')
@@ -262,9 +279,83 @@ export function createPiHost(deps, options = {}) {
     await webCall(`/api/agent/${encodeURIComponent(id)}`, { type: 'prompt', message: text, ...(images.length ? { images } : {}) })
   }
 
+  /**
+   * Stops the session's turn and waits for it to end (agent_settled): {settled: true}, or an error when it did not end
+   * within settleMs. Inside pi-web its own Stop does it (it also cancels the dialogs extensions have open, and takes
+   * back what was queued for the turn); elsewhere pi's abort. A question of ask_user gives up either way.
+   */
   async function interrupt(params) {
-    const s = live.get(params.session_id)
-    if (s?.running) s.ctx.abort()
+    const id = params.session_id
+    const s = live.get(id)
+    if (!s) return undefined
+    if (!s.running) return { settled: true }
+    const ended = settled(s, settleMs)
+    let stopped = false
+    if (web && !listDisk) {
+      try {
+        await webCall(`/api/agent/${encodeURIComponent(id)}`, { type: 'abort' })
+        stopped = true
+      } catch (err) {
+        log(`persona: pi-web abort ${id}: ${err.message}`)
+      }
+    }
+    if (!stopped) s.ctx.abort()
+    s.asking?.withdraw()
+    if (!(await ended)) throw new RpcError(`pi 的这一轮在 ${Math.round(settleMs / 1000)} 秒内没有停下来`, 'interrupt_timeout')
+    return { settled: true }
+  }
+
+  /** Resolves true once the session's turn has ended (or the session closed), false after ms. */
+  function settled(s, ms) {
+    if (!s.running) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const done = (ok) => {
+        clearTimeout(timer)
+        s.settleWaiters?.delete(done)
+        resolve(ok)
+      }
+      const timer = setTimeout(() => done(false), ms)
+      timer.unref?.()
+      ;(s.settleWaiters ??= new Set()).add(done)
+    })
+  }
+
+  function wakeSettled(s) {
+    for (const done of [...(s?.settleWaiters ?? [])]) done(true)
+  }
+
+  /**
+   * Whether the session's own UI is open: a terminal pi's dialog (tui; rpc: the program driving it), or in pi-web a
+   * browser that has the session open — not known until pi-web said, which counts as open (asked again meanwhile).
+   */
+  function hasLocalClient(sessionId) {
+    const s = live.get(sessionId)
+    if (!s?.ctx?.hasUI) return false
+    if (!web || listDisk) return true
+    void refreshBrowsers()
+    return browsers.open ? browsers.open.has(sessionId) : true
+  }
+
+  /** pi-web's debug snapshot (read-only): which sessions have an event stream, at most every BROWSERS_EVERY. */
+  function refreshBrowsers(force = false) {
+    if (browsers.asking) return browsers.asking
+    if (!force && Date.now() - browsers.at < BROWSERS_EVERY) return Promise.resolve()
+    browsers.at = Date.now()
+    const headers = {}
+    if (web.password) headers.authorization = 'Basic ' + Buffer.from(`pi:${web.password}`).toString('base64')
+    browsers.asking = (async () => {
+      try {
+        const res = await doFetch(`http://${web.host}:${web.port}/api/agent/debug`, { method: 'GET', headers, signal: AbortSignal.timeout(5000) })
+        const data = res.ok ? await res.json() : undefined
+        const rows = Array.isArray(data?.sessions) ? data.sessions : undefined
+        browsers.open = rows ? new Set(rows.filter((r) => typeof r?.sessionId === 'string' && r.eventStreams > 0).map((r) => r.sessionId)) : undefined
+      } catch {
+        browsers.open = undefined // an older pi-web, or none: as before, the browser counts as open
+      } finally {
+        browsers.asking = undefined
+      }
+    })()
+    return browsers.asking
   }
 
   async function rename(params) {
@@ -350,6 +441,7 @@ export function createPiHost(deps, options = {}) {
       return s
     }
     const drop = (id) => {
+      wakeSettled(live.get(id))
       if (live.get(id)?.pi === pi) live.delete(id)
       rt.streamEnd(id)
       rt.sessionsChanged()
@@ -371,6 +463,7 @@ export function createPiHost(deps, options = {}) {
     pi.on('agent_settled', (_e, ctx) => {
       const s = track(ctx)
       s.running = false
+      wakeSettled(s)
       commit(s.id)
       rt.streamEnd(s.id)
       rt.sessionsChanged(0)
@@ -434,13 +527,21 @@ export function createPiHost(deps, options = {}) {
       if (res?.allow === false) return { out: { block: true, reason: res.message?.trim() || '用户在手机上拒绝了' } }
       return undefined
     }
+    if (web && !listDisk && ctx.hasUI) await refreshBrowsers() // whether a browser has it open decides who goes first
     const phoneFirst = rt.phoneFirst(s.id)
     if (phoneFirst) {
       const answered = await askPhone()
       if (answered) return answered.out
     }
     if (ctx.hasUI) {
-      const ok = await ctx.ui.confirm(`允许 ${name}？`, summary)
+      // Listed as needing you while the dialog waits, and taken off when the turn is stopped.
+      const release = rt.waitingOnUser(s.id)
+      let ok
+      try {
+        ok = await ctx.ui.confirm(`允许 ${name}？`, summary, { signal: ctx.signal })
+      } finally {
+        release()
+      }
       return ok ? undefined : { block: true, reason: '用户拒绝了' }
     }
     if (!phoneFirst && rt.hubConnected) {
@@ -512,7 +613,13 @@ export function createPiHost(deps, options = {}) {
     }
   }
 
-  /** ask_user: the model asks the user; the phone or pi's own dialog answers. */
+  /**
+   * ask_user: the model asks the user. The card goes to the phone whenever a hub is there, and pi's own dialog opens
+   * beside it when this pi has one: the first answer wins and the other is taken back. A message sent to the session
+   * meanwhile is the answer too. While it waits the session lists as needing you; stopping the turn (its signal) takes
+   * the question back. Handing the card back to the computer, or its expiry, leaves the dialog waiting; closing the
+   * dialog is not answering.
+   */
   function askUserTool(Type, track) {
     return {
       name: 'ask_user',
@@ -526,24 +633,64 @@ export function createPiHost(deps, options = {}) {
       async execute(toolCallId, params, signal, _onUpdate, ctx) {
         const s = track(ctx)
         const options = (params.options ?? []).filter((o) => typeof o === 'string' && o.trim())
-        let answer
-        const askPhone = async () => {
-          const res = await rt.ask({
+        const result = (text, answer, images = []) => ({ content: [{ type: 'text', text }, ...images],
+          details: { question: params.question, options, answer: answer ?? null } })
+        if (signal?.aborted) return result('The question was withdrawn: the user stopped this turn.')
+        const done = new AbortController() // takes back whatever still asks once there is an outcome
+        let settle
+        const outcome = new Promise((r) => { settle = r }) // {answer, images?} | {none: true} | {stopped: true}
+        const stop = () => settle({ stopped: true })
+        signal?.addEventListener('abort', stop, { once: true })
+        const asking = {
+          answer: (text, images = []) => settle({ answer: text, images }),
+          withdraw: stop,
+        }
+        s.asking = asking
+        const release = rt.waitingOnUser(s.id)
+        let open = 0 // places still asking
+        const nobody = () => { if (--open === 0) settle({ none: true }) }
+        const answered = (a) => typeof a === 'string' && a.trim() ? a : undefined
+        if (rt.hubConnected) {
+          open++
+          rt.ask({
             id: interactionId(interactionPrefix, s.id, 'question', toolCallId), kind: 'question', session_id: s.id,
             tool_name: 'AskUserQuestion', tool_use_id: toolCallId,
             questions: [{ question: params.question, header: '', multi_select: false, options: options.map((label) => ({ label, description: '' })) }],
-          }, { signal })
-          const a = res?.answers?.[params.question]
-          return typeof a === 'string' && a.trim() ? a : undefined
+          }, { signal: done.signal }).then((res) => {
+            const a = answered(res?.answers?.[params.question])
+            if (a) settle({ answer: a })
+            else nobody() // handed back to the computer, expired: the dialog, if any, still asks
+          }, (err) => {
+            if (!done.signal.aborted) log(`persona: ask_user on the phone: ${err.message}`)
+            nobody()
+          })
         }
-        const askHere = async () => {
-          if (!ctx.hasUI) return undefined
-          return options.length ? ctx.ui.select(params.question, options) : ctx.ui.input(params.question)
+        if (ctx.hasUI) {
+          open++
+          const opts = { signal: done.signal }
+          Promise.resolve().then(() => options.length ? ctx.ui.select(params.question, options, opts) : ctx.ui.input(params.question, undefined, opts)).then((a) => {
+            const v = answered(a)
+            if (v) settle({ answer: v })
+            else if (!done.signal.aborted) settle({ none: true }) // closed without an answer
+          }, (err) => {
+            if (!done.signal.aborted) log(`persona: ask_user dialog: ${err.message}`)
+            nobody()
+          })
         }
-        if (rt.phoneFirst(s.id)) answer = (await askPhone()) ?? (await askHere())
-        else answer = (await askHere()) ?? (rt.hubConnected ? await askPhone() : undefined)
-        const text = answer ? `The user answered: ${answer}` : 'The user did not answer.'
-        return { content: [{ type: 'text', text }], details: { question: params.question, options, answer: answer ?? null } }
+        if (open === 0) settle({ none: true }) // no dialog here and no hub: nobody to ask
+        try {
+          const o = await outcome
+          if (o.stopped) return result('The question was withdrawn: the user stopped this turn.')
+          if (o.none) return result('The user did not answer.')
+          const images = (o.images ?? []).map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType }))
+          const said = o.answer.trim() ? o.answer : 'the attached image(s)'
+          return result(`The user answered: ${said}`, o.answer, images)
+        } finally {
+          done.abort(new Error('answered elsewhere'))
+          signal?.removeEventListener('abort', stop)
+          if (s.asking === asking) s.asking = undefined
+          release()
+        }
       },
     }
   }

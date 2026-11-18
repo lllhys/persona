@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Observation
+import PersonaWire
 
 /// Which of the hub's Feishu accounts the Messages page shows (docs/extensions/feishu.md「Multiple accounts」). The hub's own account
 /// (lark.account) is what requests without `ol_account` are about; another one is named on each request.

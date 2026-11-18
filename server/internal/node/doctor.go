@@ -23,6 +23,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantskills"
 	"github.com/nwverse/persona/server/internal/extension/sandbox"
 	"github.com/nwverse/persona/server/internal/herdr"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/nodeclient"
@@ -67,8 +68,11 @@ type DoctorReport struct {
 
 // DoctorOptions says where to look; DefaultDoctorOptions fills them in for this machine (tests give their own).
 type DoctorOptions struct {
-	Dir string // the node's directory (~/.persona)
-	Bin string // the program the generated files should run: this binary
+	// Lang words this run's human-readable fields. Empty keeps the legacy zh-Hans report; it never comes from the
+	// resident node's environment.
+	Lang i18n.Lang
+	Dir  string // the node's directory (~/.persona)
+	Bin  string // the program the generated files should run: this binary
 	// Sockets: node.sock, runtime.sock and herdr's API socket.
 	NodeSock, RuntimeSock, HerdrSock string
 	// ClaudeConfigDir is where the user's own Claude Code settings are (read, never written).
@@ -91,8 +95,9 @@ type DoctorOptions struct {
 	InsideNode bool
 	// RestartWait caps the wait, after --fix loaded the agent again, for the new node to answer (0: nodeRestartWait).
 	RestartWait time.Duration
-	// Preflight is the path-access check (preflight.go); nil leaves it out.
-	Preflight func(context.Context) DoctorCheck
+	// Preflight is the path-access check (preflight.go); nil leaves it out. It receives this run's language so a
+	// terminal --json run can keep the legacy bytes even when the terminal is not Chinese.
+	Preflight func(context.Context, i18n.Lang) DoctorCheck
 	// Fix writes the generated files again when they are stale or missing, and (outside the node) writes
 	// ProcessType=Interactive into the LaunchAgent and loads it again.
 	Fix bool
@@ -104,15 +109,15 @@ func DefaultDoctorOptions() (DoctorOptions, error) {
 	if err != nil {
 		return DoctorOptions{}, err
 	}
-	bin, err := os.Executable()
+	dir := identity.DataDir(home)
+	// The node's own spelling of this program (selfprogram.go): the generated files name it, and another one would
+	// read as stale here and --fix would write them back the other way.
+	_, bin, err := selfProgram(home, dir)
 	if err != nil {
 		return DoctorOptions{}, err
 	}
-	if p, err := filepath.EvalSymlinks(bin); err == nil {
-		bin = p
-	}
 	opts := DoctorOptions{
-		Dir: identity.DataDir(home), Bin: bin,
+		Dir: dir, Bin: bin,
 		NodeSock: nodeclient.SocketPath(), RuntimeSock: RuntimeSocketPath(), HerdrSock: herdr.SocketPath(),
 		ClaudeConfigDir: claudeDirOf(home), ClaudeVersion: claudeVersion, ClaudeProbe: claudeProbe,
 	}
@@ -308,11 +313,16 @@ func writeGeneratedConfig(dir, bin string) error {
 // RunDoctor runs the checks. With opts.Fix it first puts right what it may (the generated files; outside the node, the
 // LaunchAgent's ProcessType), then checks again.
 func RunDoctor(ctx context.Context, opts DoctorOptions) DoctorReport {
+	if opts.Lang == "" {
+		opts.Lang = i18n.Default
+	} else {
+		opts.Lang = i18n.Resolve(string(opts.Lang))
+	}
 	if pre := opts.Preflight; pre != nil { // read once: nothing a fix does changes what it reads
 		var once sync.Once
 		var c DoctorCheck
-		opts.Preflight = func(ctx context.Context) DoctorCheck {
-			once.Do(func() { c = pre(ctx) })
+		opts.Preflight = func(ctx context.Context, lang i18n.Lang) DoctorCheck {
+			once.Do(func() { c = pre(ctx, lang) })
 			return c
 		}
 	}
@@ -330,8 +340,9 @@ func RunDoctor(ctx context.Context, opts DoctorOptions) DoctorReport {
 	}
 	if len(stale) > 0 {
 		if err := writeGeneratedConfig(opts.Dir, opts.Bin); err != nil {
-			failed = append(failed, DoctorCheck{Name: "fix", Status: DoctorFail, Detail: "重新生成失败：" + err.Error(),
-				Hint: "检查 " + opts.Dir + " 的权限和磁盘空间", Items: []string{}})
+			failed = append(failed, DoctorCheck{Name: "fix", Status: DoctorFail,
+				Detail: i18n.T(opts.Lang, "node-doctor.fix_regenerate_failed", i18n.Args{"error": err.Error()}),
+				Hint:   i18n.T(opts.Lang, "node-doctor.fix_regenerate_hint", i18n.Args{"dir": opts.Dir}), Items: []string{}})
 		} else {
 			fixed = append(fixed, stale...)
 		}
@@ -343,7 +354,7 @@ func RunDoctor(ctx context.Context, opts DoctorOptions) DoctorReport {
 		wrote, reloaded, err := fixLaunchAgent(ctx, opts, a)
 		if err != nil {
 			failed = append(failed, DoctorCheck{Name: "fix", Status: DoctorFail, Detail: err.Error(),
-				Hint: "也可以重新安装常驻 node 的服务（scripts/deploy/node-launchd.sh install）", Items: []string{opts.LaunchAgent}})
+				Hint: i18n.T(opts.Lang, "node-doctor.fix_reinstall_hint"), Items: []string{opts.LaunchAgent}})
 		}
 		if wrote {
 			fixed = append(fixed, launchdCheck)
@@ -358,7 +369,7 @@ func RunDoctor(ctx context.Context, opts DoctorOptions) DoctorReport {
 		return rep
 	}
 	rep = doctorChecks(ctx, opts)
-	notBackYet(&rep, notBack, opts.RestartWait, logPath)
+	notBackYet(&rep, notBack, opts.RestartWait, logPath, opts.Lang)
 	rep.Fixed = append(rep.Fixed, fixed...)
 	if len(failed) > 0 {
 		rep.Checks = append(rep.Checks, failed...)
@@ -378,18 +389,18 @@ func doctorChecks(ctx context.Context, opts DoctorOptions) DoctorReport {
 	var pre chan DoctorCheck
 	if opts.Preflight != nil { // reads in a child of its own, alongside the other checks
 		pre = make(chan DoctorCheck, 1)
-		go func() { pre <- opts.Preflight(ctx) }()
+		go func() { pre <- opts.Preflight(ctx, opts.Lang) }()
 	}
-	add(checkNodeSocket(ctx, opts.NodeSock))
-	add(checkRuntimeSocket(ctx, opts.RuntimeSock))
+	add(checkNodeSocketIn(ctx, opts.NodeSock, opts.Lang))
+	add(checkRuntimeSocketIn(ctx, opts.RuntimeSock, opts.Lang))
 	for _, c := range checkGenerated(opts) {
 		add(c)
 	}
-	add(checkCommandPaths(opts.Dir))
-	add(checkClaudeVersion(ctx, opts.claudeProbe()))
-	add(checkHerdr(ctx, opts.HerdrSock))
-	add(checkGlobalPermissionHooks(opts.ClaudeConfigDir))
-	add(checkAgentSandbox(opts.Dir))
+	add(checkCommandPathsIn(opts.Dir, opts.Lang))
+	add(checkClaudeVersionIn(ctx, opts.claudeProbe(), opts.Lang))
+	add(checkHerdrIn(ctx, opts.HerdrSock, opts.Lang))
+	add(checkGlobalPermissionHooksIn(opts.ClaudeConfigDir, opts.Lang))
+	add(checkAgentSandboxIn(opts.Dir, opts.Lang))
 	if opts.LaunchAgent != "" {
 		add(checkLaunchAgent(inspectLaunchAgent(ctx, opts), opts))
 	}
@@ -403,34 +414,43 @@ func doctorChecks(ctx context.Context, opts DoctorOptions) DoctorReport {
 const doctorDialTimeout = 3 * time.Second
 
 func checkNodeSocket(ctx context.Context, path string) DoctorCheck {
+	return checkNodeSocketIn(ctx, path, i18n.Default)
+}
+
+func checkNodeSocketIn(ctx context.Context, path string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "node.sock"}
 	if _, err := os.Stat(path); err != nil {
-		c.Status, c.Detail = DoctorFail, "不存在"
-		c.Hint = "没有 node 在监听：hook 和 MCP 会静默退回终端。确认 hub 已连上这台电脑；node 重启会重建"
+		c.Status, c.Detail = DoctorFail, i18n.T(lang, "node-doctor.socket_missing")
+		c.Hint = i18n.T(lang, "node-doctor.node_socket_missing_hint")
 		return c
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctorDialTimeout)
 	defer cancel()
 	line, err := nodeclient.DialAt(ctx, path, sockRequest{Kind: "ping"})
 	if err != nil {
-		c.Status, c.Detail = DoctorFail, "文件在但连不上或没有应答（"+shorten(err.Error(), 80)+"）"
-		c.Hint = "可能是旧 node 退出后留下的文件；重启这台电脑上的 node"
+		c.Status = DoctorFail
+		c.Detail = i18n.T(lang, "node-doctor.node_socket_unanswered", i18n.Args{"error": shorten(err.Error(), 80)})
+		c.Hint = i18n.T(lang, "node-doctor.socket_stale_hint")
 		return c
 	}
 	if !json.Valid(line) {
-		c.Status, c.Detail = DoctorFail, "应答不是 JSON"
-		c.Hint = "这个 socket 不是 node 的；重启 node"
+		c.Status, c.Detail = DoctorFail, i18n.T(lang, "node-doctor.node_socket_invalid")
+		c.Hint = i18n.T(lang, "node-doctor.node_socket_invalid_hint")
 		return c
 	}
-	c.Status, c.Detail = DoctorOK, "已应答"
+	c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.node_socket_ok")
 	return c
 }
 
 func checkRuntimeSocket(ctx context.Context, path string) DoctorCheck {
+	return checkRuntimeSocketIn(ctx, path, i18n.Default)
+}
+
+func checkRuntimeSocketIn(ctx context.Context, path string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "runtime.sock"}
 	if _, err := os.Stat(path); err != nil {
-		c.Status, c.Detail = DoctorWarn, "不存在"
-		c.Hint = "没有 node 在监听：DSH、pi 这类 runtime 连不上；没用到可忽略"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.socket_missing")
+		c.Hint = i18n.T(lang, "node-doctor.runtime_socket_missing_hint")
 		return c
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctorDialTimeout)
@@ -438,12 +458,13 @@ func checkRuntimeSocket(ctx context.Context, path string) DoctorCheck {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", path)
 	if err != nil {
-		c.Status, c.Detail = DoctorFail, "文件在但连不上（"+shorten(err.Error(), 80)+"）"
-		c.Hint = "可能是旧 node 退出后留下的文件；重启这台电脑上的 node"
+		c.Status = DoctorFail
+		c.Detail = i18n.T(lang, "node-doctor.runtime_socket_unavailable", i18n.Args{"error": shorten(err.Error(), 80)})
+		c.Hint = i18n.T(lang, "node-doctor.socket_stale_hint")
 		return c
 	}
 	conn.Close()
-	c.Status, c.Detail = DoctorOK, "可连接"
+	c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.runtime_socket_ok")
 	return c
 }
 
@@ -472,35 +493,35 @@ func checkGenerated(opts DoctorOptions) []DoctorCheck {
 			}
 		}
 		allMissing := len(issues) == total && allPrefix(issues, "missing")
-		out = append(out, generatedCheck(g, issues, allMissing, true))
+		out = append(out, generatedCheck(g, issues, allMissing, true, opts.Lang))
 	}
 	issues := assistantskills.PluginIssues(filepath.Join(opts.Dir, agentPluginGroup))
 	allMissing := len(issues) == 1 && issues[0] == "missing"
-	return append(out, generatedCheck(agentPluginGroup, issues, allMissing, false))
+	return append(out, generatedCheck(agentPluginGroup, issues, allMissing, false, opts.Lang))
 }
 
 // generatedCheck turns what differs in one generated file or directory into its check. critical: the sessions
 // lose their hooks or MCP without it (missing fails), otherwise only the skills (missing warns).
-func generatedCheck(name string, issues []string, allMissing, critical bool) DoctorCheck {
+func generatedCheck(name string, issues []string, allMissing, critical bool, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: name, Items: issues}
 	if c.Items == nil {
 		c.Items = []string{}
 	}
 	switch {
 	case len(issues) == 0:
-		c.State, c.Status, c.Detail = "current", DoctorOK, "和当前二进制会写的一致"
+		c.State, c.Status, c.Detail = "current", DoctorOK, i18n.T(lang, "node-doctor.generated_current")
 	case allMissing:
-		c.State, c.Status, c.Detail = "missing", DoctorWarn, "不存在"
+		c.State, c.Status, c.Detail = "missing", DoctorWarn, i18n.T(lang, "node-doctor.generated_missing")
 		if critical {
 			c.Status = DoctorFail
-			c.Hint = "Persona 启动的会话收不到手机上的提问和审批；重启 node 或运行 personad node doctor --fix"
+			c.Hint = i18n.T(lang, "node-doctor.generated_missing_critical_hint")
 		} else {
-			c.Hint = "Persona 启动的 Agent 没有 persona-office 技能；重启 node 或运行 personad node doctor --fix"
+			c.Hint = i18n.T(lang, "node-doctor.generated_missing_plugin_hint")
 		}
 	default:
 		c.State, c.Status = "stale", DoctorWarn
-		c.Detail = fmt.Sprintf("过期：%d 处不同（%s）", len(issues), shorten(issues[0], 60))
-		c.Hint = "重启 node 会重写；或运行 personad node doctor --fix"
+		c.Detail = i18n.T(lang, "node-doctor.generated_stale", i18n.Args{"count": len(issues), "issue": shorten(issues[0], 60)})
+		c.Hint = i18n.T(lang, "node-doctor.generated_stale_hint")
 	}
 	return c
 }
@@ -586,6 +607,10 @@ var assignmentRe = lazyre.New(`^[A-Za-z_][A-Za-z0-9_]*=`)
 // checkCommandPaths: the program each generated file runs exists and can be run. A file moved or removed under a
 // running node (a redeploy to another path) leaves hooks that fail on every call.
 func checkCommandPaths(dir string) DoctorCheck {
+	return checkCommandPathsIn(dir, i18n.Default)
+}
+
+func checkCommandPathsIn(dir string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "command-paths", Items: []string{}}
 	files := []string{"claude-settings.json", "assistant-settings.json", "mcp.json"}
 	for _, kind := range []string{"claude", "assistant"} {
@@ -615,13 +640,13 @@ func checkCommandPaths(dir string) DoctorCheck {
 	case len(bad) > 0:
 		slices.Sort(bad)
 		c.Status, c.Items = DoctorFail, bad
-		c.Detail = fmt.Sprintf("%d 个命令路径不可用（%s）", len(bad), shorten(bad[0], 80))
-		c.Hint = "hook / MCP 会失败；用 node 现在的二进制运行 personad node doctor --fix 重写"
+		c.Detail = i18n.T(lang, "node-doctor.command_paths_bad", i18n.Args{"count": len(bad), "issue": shorten(bad[0], 80)})
+		c.Hint = i18n.T(lang, "node-doctor.command_paths_bad_hint")
 	case read == 0:
-		c.Status, c.Detail = DoctorWarn, "没有可检查的生成文件"
-		c.Hint = "先让 node 启动一次，或运行 personad node doctor --fix"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.command_paths_none")
+		c.Hint = i18n.T(lang, "node-doctor.command_paths_none_hint")
 	default:
-		c.Status, c.Detail = DoctorOK, fmt.Sprintf("%d 个命令路径都存在且可执行", len(seen))
+		c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.command_paths_ok", i18n.Args{"count": len(seen)})
 	}
 	return c
 }
@@ -663,6 +688,10 @@ func (o DoctorOptions) claudeProbe() func(context.Context) (string, bool) {
 }
 
 func checkClaudeVersion(ctx context.Context, ask func(context.Context) (string, bool)) DoctorCheck {
+	return checkClaudeVersionIn(ctx, ask, i18n.Default)
+}
+
+func checkClaudeVersionIn(ctx context.Context, ask func(context.Context) (string, bool), lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "claude-version"}
 	v, missing := "", true
 	if ask != nil {
@@ -670,16 +699,18 @@ func checkClaudeVersion(ctx context.Context, ask func(context.Context) (string, 
 	}
 	switch {
 	case v == "" && !missing:
-		c.Status, c.State, c.Detail = DoctorWarn, ClaudeVersionUnanswered, "这次没读到 claude 的版本（超时或出错），claude 本身找得到"
-		c.Hint = "机器很忙或登录 shell 启动慢时会这样，稍后再查；一直这样就在终端运行 zsh -ic 'claude --version' 看看"
+		c.Status, c.State, c.Detail = DoctorWarn, ClaudeVersionUnanswered, i18n.T(lang, "node-doctor.claude_unanswered")
+		c.Hint = i18n.T(lang, "node-doctor.claude_unanswered_hint")
 	case v == "":
-		c.Status, c.Detail = DoctorWarn, "读不到 claude 的版本"
-		c.Hint = "没装 Claude Code，或登录 shell 里找不到它；读不到时 Persona 按不支持 --plugin-dir 处理，hooks 走 --settings"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.claude_missing")
+		c.Hint = i18n.T(lang, "node-doctor.claude_missing_hint")
 	case !versionAtLeast(v, pluginMinVersion):
-		c.Status, c.Detail = DoctorWarn, fmt.Sprintf("%s（低于 %d.%d.%d，不支持 --plugin-dir）", v, pluginMinVersion[0], pluginMinVersion[1], pluginMinVersion[2])
-		c.Hint = "hooks 退回 --settings，persona-office 技能不可用；升级 Claude Code"
+		c.Status = DoctorWarn
+		min := fmt.Sprintf("%d.%d.%d", pluginMinVersion[0], pluginMinVersion[1], pluginMinVersion[2])
+		c.Detail = i18n.T(lang, "node-doctor.claude_too_old", i18n.Args{"version": v, "minimum": min})
+		c.Hint = i18n.T(lang, "node-doctor.claude_too_old_hint")
 	default:
-		c.Status, c.Detail = DoctorOK, v+"，支持 --plugin-dir"
+		c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.claude_ok", i18n.Args{"version": v})
 	}
 	return c
 }
@@ -687,32 +718,41 @@ func checkClaudeVersion(ctx context.Context, ask func(context.Context) (string, 
 // checkHerdr dials herdr's API socket. The engine is chosen by the hub when it connects and is not kept on this
 // machine, so a socket that is not there is a warning: it only matters when herdr is this machine's engine.
 func checkHerdr(ctx context.Context, path string) DoctorCheck {
+	return checkHerdrIn(ctx, path, i18n.Default)
+}
+
+func checkHerdrIn(ctx context.Context, path string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "herdr"}
 	if path == "" {
-		c.Status, c.Detail = DoctorWarn, "找不到 herdr 的 socket 位置"
-		c.Hint = "设了 HERDR_SOCKET_PATH 的话确认它指向 herdr；这台电脑的引擎不是 herdr 时可忽略"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.herdr_no_path")
+		c.Hint = i18n.T(lang, "node-doctor.herdr_no_path_hint")
 		return c
 	}
 	ctx, cancel := context.WithTimeout(ctx, doctorDialTimeout)
 	defer cancel()
 	conn, err := herdr.Dial(ctx, path)
 	if err != nil {
-		c.Status, c.Detail = DoctorWarn, "连不上 herdr 的 socket"
-		c.Hint = "引擎是 herdr 时先启动 herdr；这台电脑用别的引擎时可忽略"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.herdr_unavailable")
+		c.Hint = i18n.T(lang, "node-doctor.herdr_unavailable_hint")
 		return c
 	}
 	conn.Close()
-	c.Status, c.Detail = DoctorOK, "herdr 在监听"
+	c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.herdr_ok")
 	return c
 }
 
 // checkAgentSandbox is the doctor's line for the agent sandbox: whether it is on and where from, whether this machine
 // can run it, and each kind of start's last status.
 func checkAgentSandbox(dir string) DoctorCheck {
+	return checkAgentSandboxIn(dir, i18n.Default)
+}
+
+func checkAgentSandboxIn(dir string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "agent-sandbox", Status: DoctorOK, Items: []string{}}
 	on, from := agentSandboxOn(dir)
 	support := agentSandboxProbe() // macOS runs sandbox-exec true; Linux runs a real default-allow bwrap probe
 	sup := sandbox.AgentSupport(support)
+	supWhy := sup.WhyIn(lang)
 	last := readAgentSandboxStatus(dir)
 	wheres := make([]string, 0, len(last))
 	for w := range last {
@@ -721,47 +761,54 @@ func checkAgentSandbox(dir string) DoctorCheck {
 	slices.Sort(wheres)
 	for _, w := range wheres {
 		r := last[w]
-		item := fmt.Sprintf("%s：%s（%s）", w, agentSandboxWords[r.State], r.At.Local().Format("01-02 15:04"))
+		key := "node-doctor.sandbox_status_item"
+		args := i18n.Args{"where": w, "status": agentSandboxWord(lang, r.State), "at": r.At.Local().Format("01-02 15:04")}
 		if r.Why != "" {
-			item += "：" + r.Why
+			key = "node-doctor.sandbox_status_item_why"
+			args["why"] = r.WhyIn(lang)
 		}
-		c.Items = append(c.Items, item)
+		c.Items = append(c.Items, i18n.T(lang, key, args))
 	}
 	switch {
 	case !on:
-		c.Detail = "未开启（默认关闭）"
-		if from != "" {
-			c.Detail = "未开启（" + from + "）"
+		if from == "" {
+			c.Detail = i18n.T(lang, "node-doctor.sandbox_off_default")
+		} else {
+			c.Detail = i18n.T(lang, "node-doctor.sandbox_off_from", i18n.Args{"from": from})
 		}
 		switch sup.State {
 		case sandbox.AgentActive:
-			c.Detail += "；本机可以开启"
-			c.Hint = "开启：touch " + filepath.Join(dir, sandbox.AgentOnFile) + "；见 docs/server/agent-sandbox.md"
+			c.Detail = i18n.T(lang, "node-doctor.sandbox_off_available", i18n.Args{"detail": c.Detail})
+			c.Hint = i18n.T(lang, "node-doctor.sandbox_enable_hint", i18n.Args{"path": filepath.Join(dir, sandbox.AgentOnFile)})
 		case sandbox.AgentUnsupported:
-			c.Detail += "；不支持：" + sup.Why
+			c.Detail = i18n.T(lang, "node-doctor.sandbox_off_unsupported", i18n.Args{"detail": c.Detail, "why": supWhy})
 		default:
-			c.Detail += "；工具不可用：" + sup.Why
+			c.Detail = i18n.T(lang, "node-doctor.sandbox_off_unavailable", i18n.Args{"detail": c.Detail, "why": supWhy})
 		}
 	case sup.State == sandbox.AgentUnsupported:
-		c.Status, c.Detail = DoctorWarn, "已开启，但不支持："+sup.Why
-		c.Hint = "agent 照常启动，不进沙箱"
+		c.Status = DoctorWarn
+		c.Detail = i18n.T(lang, "node-doctor.sandbox_on_unsupported", i18n.Args{"why": supWhy})
+		c.Hint = i18n.T(lang, "node-doctor.sandbox_runs_outside_hint")
 	case sup.State == sandbox.AgentUnavailable:
-		c.Status, c.Detail = DoctorWarn, "已开启，但工具不可用："+sup.Why
-		c.Hint = "agent 照常启动，不进沙箱"
+		c.Status = DoctorWarn
+		c.Detail = i18n.T(lang, "node-doctor.sandbox_on_unavailable", i18n.Args{"why": supWhy})
+		c.Hint = i18n.T(lang, "node-doctor.sandbox_runs_outside_hint")
 	default:
-		c.Detail = "已开启（" + from + "）；" + agentSandboxLimits(support.OS)
-		c.Hint = "环境变量 " + agentSandboxEnv + " 只对设置它的进程生效（node 看 launchd 的环境，personad launch 看 pane 的 shell）"
+		c.Detail = i18n.T(lang, "node-doctor.sandbox_on", i18n.Args{"from": from, "limits": agentSandboxLimitsIn(support.OS, lang)})
+		c.Hint = i18n.T(lang, "node-doctor.sandbox_environment_hint", i18n.Args{"env": agentSandboxEnv})
 		for _, w := range wheres {
 			if s := last[w].State; s == sandbox.AgentSkipped || s == sandbox.AgentUnavailable {
 				c.Status = DoctorWarn
-				c.Detail += "；有启动被跳过，见下面的原因"
-				c.Hint = "被跳过的启动照常运行、不在沙箱里"
+				c.Detail = i18n.T(lang, "node-doctor.sandbox_on_skipped", i18n.Args{"detail": c.Detail})
+				c.Hint = i18n.T(lang, "node-doctor.sandbox_skipped_hint")
 				break
 			}
 		}
 	}
 	if len(c.Items) > 0 {
-		c.Detail += "｜最近：" + strings.Join(c.Items, "；")
+		c.Detail = i18n.T(lang, "node-doctor.sandbox_with_recent", i18n.Args{
+			"detail": c.Detail, "items": strings.Join(c.Items, i18n.T(lang, "node-doctor.item_separator")),
+		})
 	}
 	return c
 }
@@ -769,35 +816,52 @@ func checkAgentSandbox(dir string) DoctorCheck {
 // agentSandboxLimits is what the doctor reminds of while the sandbox is on (docs/server/agent-sandbox.md): what it does not
 // stop, which agents it does not cover, and platform-specific behavior that needs a restart or stops working.
 func agentSandboxLimits(goos string) string {
-	limits := "挡不住 docker；在 herdr 或 Orca 里不经托管启动器（personad launch）启动的 agent，" +
-		"比如直接用 claude 或 ~/.zshrc 里的启动器，包括 herdr 重启后接着跑的，不在沙箱里"
+	return agentSandboxLimitsIn(goos, i18n.Default)
+}
+
+func agentSandboxLimitsIn(goos string, lang i18n.Lang) string {
+	limits := i18n.T(lang, "node-doctor.sandbox_limits")
 	switch goos {
 	case "darwin":
-		return limits + "；沙箱里 ps、top、sudo 这类 setuid 程序起不来"
+		return i18n.T(lang, "node-doctor.sandbox_limits_darwin", i18n.Args{"limits": limits})
 	case "linux":
-		return limits + "；node 重启后沙箱内 agent 也要一并重启（node.sock 是启动时快照）"
+		return i18n.T(lang, "node-doctor.sandbox_limits_linux", i18n.Args{"limits": limits})
 	default:
 		return limits
 	}
 }
 
-// agentSandboxWords are the statuses in the doctor's words.
-var agentSandboxWords = map[string]string{
-	sandbox.AgentOff: "未开启", sandbox.AgentActive: "已在沙箱里", sandbox.AgentSkipped: "跳过",
-	sandbox.AgentUnsupported: "不支持", sandbox.AgentUnavailable: "工具不可用",
+// agentSandboxWord is one status in the doctor's words. Unknown future states keep the old empty word.
+func agentSandboxWord(lang i18n.Lang, state string) string {
+	key := map[string]string{
+		sandbox.AgentOff:         "node-doctor.sandbox_state_off",
+		sandbox.AgentActive:      "node-doctor.sandbox_state_active",
+		sandbox.AgentSkipped:     "node-doctor.sandbox_state_skipped",
+		sandbox.AgentUnsupported: "node-doctor.sandbox_state_unsupported",
+		sandbox.AgentUnavailable: "node-doctor.sandbox_state_unavailable",
+	}[state]
+	if key == "" {
+		return ""
+	}
+	return i18n.T(lang, key)
 }
 
 // checkGlobalPermissionHooks looks at the user's own settings.json for synchronous PermissionRequest hooks (other
 // tools put them there) and says how many; it never changes the file.
 func checkGlobalPermissionHooks(configDir string) DoctorCheck {
+	return checkGlobalPermissionHooksIn(configDir, i18n.Default)
+}
+
+func checkGlobalPermissionHooksIn(configDir string, lang i18n.Lang) DoctorCheck {
 	c := DoctorCheck{Name: "global-permission-hooks", Items: []string{}}
 	b, err := os.ReadFile(filepath.Join(configDir, "settings.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		c.Status, c.Detail = DoctorOK, "没有全局 settings.json"
+		c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.global_hooks_no_file")
 		return c
 	}
 	if err != nil {
-		c.Status, c.Detail = DoctorWarn, "读不了全局 settings.json（"+shorten(err.Error(), 60)+"）"
+		c.Status = DoctorWarn
+		c.Detail = i18n.T(lang, "node-doctor.global_hooks_unreadable", i18n.Args{"error": shorten(err.Error(), 60)})
 		return c
 	}
 	var f struct {
@@ -810,8 +874,8 @@ func checkGlobalPermissionHooks(configDir string) DoctorCheck {
 		} `json:"hooks"`
 	}
 	if json.Unmarshal(b, &f) != nil {
-		c.Status, c.Detail = DoctorWarn, "全局 settings.json 不是合法 JSON"
-		c.Hint = "Claude Code 自己也读不了它；Persona 不会改这个文件"
+		c.Status, c.Detail = DoctorWarn, i18n.T(lang, "node-doctor.global_hooks_invalid")
+		c.Hint = i18n.T(lang, "node-doctor.global_hooks_invalid_hint")
 		return c
 	}
 	for _, m := range f.Hooks["PermissionRequest"] {
@@ -822,12 +886,12 @@ func checkGlobalPermissionHooks(configDir string) DoctorCheck {
 		}
 	}
 	if len(c.Items) == 0 {
-		c.Status, c.Detail = DoctorOK, "没有同步的 PermissionRequest 钩子"
+		c.Status, c.Detail = DoctorOK, i18n.T(lang, "node-doctor.global_hooks_none")
 		return c
 	}
 	c.Status = DoctorWarn
-	c.Detail = fmt.Sprintf("%d 个同步的 PermissionRequest 钩子（%s）", len(c.Items), c.Items[0])
-	c.Hint = "它们和 Persona 的手机审批同时拦着权限请求，可能互相影响；Persona 不会改这个文件，需要时自己检查"
+	c.Detail = i18n.T(lang, "node-doctor.global_hooks_found", i18n.Args{"count": len(c.Items), "hook": c.Items[0]})
+	c.Hint = i18n.T(lang, "node-doctor.global_hooks_found_hint")
 	return c
 }
 
@@ -844,62 +908,91 @@ func shorten(s string, n int) string {
 // DoctorCommand is `personad node doctor [--json] [--fix]`: it prints the report to out and says whether a check
 // failed (the caller exits non-zero then).
 func DoctorCommand(ctx context.Context, args []string, out io.Writer) (failed bool, err error) {
+	return doctorCommand(ctx, args, out, DefaultDoctorOptions)
+}
+
+func doctorCommand(ctx context.Context, args []string, out io.Writer, defaults func() (DoctorOptions, error)) (failed bool, err error) {
 	if len(args) > 0 && args[0] == preflightChildArg { // the preflight's reads, in a child of the doctor's (preflight.go)
 		preflightChild(args[1:], out)
 		return false, nil
 	}
+	lang := i18n.Terminal()
 	flags := flag.NewFlagSet("node doctor", flag.ContinueOnError)
-	asJSON := flags.Bool("json", false, "以 JSON 输出")
-	fix := flags.Bool("fix", false, "重新生成 Persona 自己生成的文件；Mac 上给常驻 node 的 LaunchAgent 写上 ProcessType=Interactive 并重新加载（不碰用户的全局配置）")
+	asJSON := flags.Bool("json", false, i18n.T(lang, "node-doctor.flag_json"))
+	fix := flags.Bool("fix", false, i18n.T(lang, "node-doctor.flag_fix"))
 	if err := flags.Parse(args); err != nil {
 		return false, err
 	}
 	if flags.NArg() != 0 {
-		return false, errors.New("node doctor 不接受位置参数")
+		return false, errors.New(i18n.T(lang, "node-doctor.positional_arguments"))
 	}
-	opts, err := DefaultDoctorOptions()
+	if *asJSON {
+		// JSON is machine output: every human field keeps its legacy zh-Hans bytes, including a preflight answer
+		// requested from the resident node. The terminal language is used only for flag help and argument errors.
+		lang = i18n.Default
+	}
+	opts, err := defaults()
 	if err != nil {
 		return false, err
 	}
 	opts.Fix = *fix
+	opts.Lang = lang
 	rep := RunDoctor(ctx, opts)
 	if *asJSON {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return !rep.OK, enc.Encode(rep)
 	}
-	PrintDoctor(out, rep)
+	PrintDoctorIn(out, rep, lang)
 	return !rep.OK, nil
 }
 
-// doctorLabels are the line prefixes of the text report, the same words `hub doctor` uses (hub/doctor.go).
-var doctorLabels = map[string]string{DoctorOK: "正常", DoctorWarn: "注意", DoctorFail: "有问题"}
-
-// PrintDoctor writes rep, one line per check: label | name: what was found; what to do about it (full-width separators).
+// PrintDoctor writes the legacy zh-Hans text report. New display paths choose their language explicitly.
 func PrintDoctor(out io.Writer, rep DoctorReport) {
-	fmt.Fprintf(out, "node 自检（%s）\n", rep.Dir)
+	PrintDoctorIn(out, rep, i18n.Default)
+}
+
+// PrintDoctorIn writes rep, one line per check: label | name: what was found; what to do about it.
+func PrintDoctorIn(out io.Writer, rep DoctorReport, lang i18n.Lang) {
+	fmt.Fprintln(out, i18n.T(lang, "node-doctor.title", i18n.Args{"dir": rep.Dir}))
 	counts := map[string]int{}
 	for _, c := range rep.Checks {
 		counts[c.Status]++
-		line := fmt.Sprintf("%s｜%s：%s", doctorLabels[c.Status], c.Name, c.Detail)
+		args := i18n.Args{"label": doctorLabel(lang, c.Status), "name": c.Name, "detail": c.Detail}
+		key := "node-doctor.check_line"
 		if c.Hint != "" && c.Status != DoctorOK {
-			line += "；" + c.Hint
+			key = "node-doctor.check_line_hint"
+			args["hint"] = c.Hint
 		}
-		fmt.Fprintln(out, line)
+		fmt.Fprintln(out, i18n.T(lang, key, args))
 	}
 	var regenerated []string
 	for _, f := range rep.Fixed {
 		switch f {
 		case launchdCheck:
-			fmt.Fprintln(out, "已给常驻 node 的 LaunchAgent 写上 ProcessType=Interactive")
+			fmt.Fprintln(out, i18n.T(lang, "node-doctor.fixed_launchd"))
 		case launchdReloaded:
-			fmt.Fprintln(out, "已重新加载常驻 node 的 LaunchAgent（node 已重启）")
+			fmt.Fprintln(out, i18n.T(lang, "node-doctor.fixed_reloaded"))
 		default:
 			regenerated = append(regenerated, f)
 		}
 	}
 	if len(regenerated) > 0 {
-		fmt.Fprintf(out, "已重新生成：%s\n", strings.Join(regenerated, "、"))
+		fmt.Fprintln(out, i18n.T(lang, "node-doctor.fixed_regenerated", i18n.Args{
+			"items": strings.Join(regenerated, i18n.T(lang, "node-doctor.list_separator")),
+		}))
 	}
-	fmt.Fprintf(out, "共 %d 项：%d 正常，%d 注意，%d 有问题\n", len(rep.Checks), counts[DoctorOK], counts[DoctorWarn], counts[DoctorFail])
+	fmt.Fprintln(out, i18n.T(lang, "node-doctor.summary", i18n.Args{
+		"total": len(rep.Checks), "ok": counts[DoctorOK], "warn": counts[DoctorWarn], "fail": counts[DoctorFail],
+	}))
+}
+
+func doctorLabel(lang i18n.Lang, status string) string {
+	key := map[string]string{
+		DoctorOK: "node-doctor.label_ok", DoctorWarn: "node-doctor.label_warn", DoctorFail: "node-doctor.label_fail",
+	}[status]
+	if key == "" {
+		return ""
+	}
+	return i18n.T(lang, key)
 }

@@ -1,0 +1,11 @@
+{
+  "rate_limited": "認証に何度も失敗したため、しばらくしてから再試行してください",
+  "wrong_credential": "認証情報が正しくありません。このコンピューターはペアリングしたハブのみを信頼します",
+  "pair_json_required": "JSONオブジェクトが必要です：{code, token, machine, hub_id, hub_name}",
+  "code_required": "codeがありません",
+  "token_invalid": "tokenは空白を含まない32～512文字の印刷可能なASCII文字である必要があります",
+  "machine_required": "machine（ハブがこのコンピューターに割り当てるマシンID）がありません",
+  "bad_code": "ペアリングコードが正しくない、期限切れ、または使用済みです。このコンピューターでpersona-link pair --listenを再実行してください",
+  "pair_save_failed": "ペアリング結果を保存できません",
+  "websocket_required": "WebSocketアップグレードが必要です"
+}

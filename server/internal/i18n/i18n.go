@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/feature/plural"
 	"golang.org/x/text/language"
@@ -113,15 +115,17 @@ func (l Lang) Name() string {
 // _meta.json matches it (any Chinese, Traditional too, is zh-Hans), the rest is en. An empty tag is "" (unknown), so
 // callers can tell "not said" from "said English".
 func Resolve(tag string) Lang {
-	tag = strings.TrimSpace(tag)
-	if tag == "" {
-		return ""
-	}
-	primary, _, _ := strings.Cut(strings.ReplaceAll(tag, "_", "-"), "-")
-	if l, ok := matches[strings.ToLower(primary)]; ok {
+	if l := Match(tag); l != "" || strings.TrimSpace(tag) == "" {
 		return l
 	}
 	return Fallback
+}
+
+// Match is the supported language that tag's language subtag picks, as for Resolve, or "" when no _meta.json matches it
+// (ko-KR, fr) or tag is empty: for a caller with a better fallback than en.
+func Match(tag string) Lang {
+	primary, _, _ := strings.Cut(strings.ReplaceAll(strings.TrimSpace(tag), "_", "-"), "-")
+	return matches[strings.ToLower(primary)]
 }
 
 // Valid: one of the supported codes exactly (what a client sends).
@@ -311,7 +315,9 @@ func T(l Lang, key string, args ...Args) string {
 
 // fill replaces each {name} in s (name an ASCII word, [0-9A-Za-z_]+) with a[name]; an unknown name or a brace
 // that does not close such a word stays as written. It is the byte-scan form of a `\{(\w+)\}` regexp replace,
-// which T runs on every call with args.
+// which T runs on every call with args. A value that ends a sentence, filled in right before the text's own
+// punctuation ("（{reason}），", "{error}。"), loses its full stop, so the text never reads "。），" or "。。" (#6822);
+// the web's interpolate does the same (web/src/i18n/index.ts).
 func fill(s string, a Args) string {
 	i := strings.IndexByte(s, '{')
 	if i < 0 {
@@ -327,6 +333,9 @@ func fill(s string, a Args) string {
 		if j > i+1 && j < len(s) && s[j] == '}' {
 			if v, ok := a[s[i+1:j]]; ok {
 				val := argText(v)
+				if markAfter(s[j+1:]) {
+					val = withoutFullStop(val)
+				}
 				if done == 0 {
 					b.Grow(len(s) + len(val)) // one allocation for the common one-placeholder text
 				}
@@ -349,6 +358,28 @@ func fill(s string, a Args) string {
 	b.WriteString(s[done:])
 	return b.String()
 }
+
+// markAfter: rest (the text after a placeholder) starts with punctuation that makes a value's own full stop a second one.
+func markAfter(rest string) bool {
+	r, _ := utf8.DecodeRuneInString(rest)
+	return strings.ContainsRune("）)，,。．.：:；;、", r)
+}
+
+// withoutFullStop is v without the full stop it ends with (and space after it); an ellipsis ("...", "。。") keeps its
+// dots, and a value that ends otherwise is v.
+func withoutFullStop(v string) string {
+	t := strings.TrimRightFunc(v, unicode.IsSpace)
+	last, n := utf8.DecodeLastRuneInString(t)
+	if n == 0 || !isFullStop(last) {
+		return v
+	}
+	if prev, _ := utf8.DecodeLastRuneInString(t[:len(t)-n]); isFullStop(prev) {
+		return v
+	}
+	return t[:len(t)-n]
+}
+
+func isFullStop(r rune) bool { return r == '。' || r == '．' || r == '.' }
 
 func isWordByte(c byte) bool {
 	return c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_'

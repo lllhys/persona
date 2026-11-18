@@ -7,8 +7,8 @@ import { createHash } from "node:crypto";
 import { brotliCompressSync, brotliDecompressSync, constants, gzipSync } from "node:zlib";
 import { LANG_MATCHES, LANGS, preferredLanguage } from "./i18n";
 import {
-  brotliCopies, BROTLI_MIN_SIZE, EXPORT_NAME_PLACEHOLDER, firstScreenBytes, firstScreenOverBudget, gzipBytes, HASH_PLACEHOLDER, idleImports,
-  localeDirs, nameHashes, placeholderExportNames, placeholderHashes, preloadScript, startupNamespaceGaps,
+  brotliCopies, BROTLI_MIN_SIZE, EXPORT_NAME_PLACEHOLDER, FIRST_SCREEN_LOW_ROOM, firstScreenBytes, firstScreenOverBudget, firstScreenRoom, gzipBytes,
+  HASH_PLACEHOLDER, idleImports, localeDirs, nameHashes, placeholderExportNames, placeholderHashes, preloadScript, startupGaps,
 } from "./startup-preload";
 
 const langs = localeDirs(join(__dirname, "i18n/locales"));
@@ -83,8 +83,11 @@ describe("brotli copies", () => {
     expect(st).toEqual({ files: 1, before: big.length, after: br.length });
     expect(brotliDecompressSync(br).toString()).toBe(big);
     expect(existsSync(join(dir, "assets/small-2.js.br"))).toBe(false);
-    // what the hub sends for them, as the first-screen budget counts it when they name no other file
-    expect(await firstScreenBytes(dir, [["en", ["assets/App-1.js", "assets/small-2.js"]]], [])).toEqual([["en", br.length + BROTLI_MIN_SIZE - 1]]);
+    // what the hub sends for them, as the first-screen budget counts it when they name no other file. Local
+    // bindings are normalized for this measurement, so the count may be smaller than the original file's brotli copy.
+    const [[, counted]] = await firstScreenBytes(dir, [["en", ["assets/App-1.js", "assets/small-2.js"]]], []);
+    expect(counted).toBeLessThanOrEqual(br.length + BROTLI_MIN_SIZE - 1);
+    expect(counted).toBeGreaterThan(BROTLI_MIN_SIZE - 1);
     await brotliCopies(dir, ["assets/App-1.js"]);
     expect(readFileSync(join(dir, "assets/App-1.js.br")).equals(br)).toBe(true);
     rmSync(dir, { recursive: true });
@@ -203,6 +206,42 @@ describe("first-screen budget", () => {
     ].join(""));
   });
 
+  it("keeps the same count when the minifier renames a chunk's local bindings", async () => {
+    const { placeholderLocalNames } = await import("./startup-preload");
+    const before = 'const firstName="x";function doThing(longParameter){const result=longParameter+firstName;return result}doThing("y");';
+    const after = 'const z9="x";function q(a){const b=a+z9;return b}q("y");';
+    expect(placeholderLocalNames(before)).toBe(placeholderLocalNames(after));
+  });
+
+  it("leaves strings, property names, method names, labels and globals alone", async () => {
+    const { placeholderLocalNames } = await import("./startup-preload");
+    const code = 'const value={longKey:"firstName",method(){return this.longKey}};outer:for(const item of [value]){if(item)break outer;console.log(Math.max(item.longKey,1)}';
+    const out = placeholderLocalNames(code);
+    expect(out).toContain('"firstName"');
+    expect(out).toContain('longKey:');
+    expect(out).toContain('method(){');
+    expect(out).toContain('this.longKey');
+    expect(out).toContain('outer:');
+    expect(out).toContain('break outer');
+    expect(out).toContain('console.log');
+    expect(out).toContain('Math.max');
+    expect(out).not.toContain('value');
+  });
+
+  it("does not move the first-screen count when local names are renamed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "first-screen-locals-"));
+    mkdirSync(join(dir, "assets"));
+    const file = "assets/App-abcdefgh.js";
+    const write = (code: string) => {
+      writeFileSync(join(dir, file), code);
+      return firstScreenBytes(dir, [["ja", [file]]], [file]);
+    };
+    const before = await write('const firstName="x";function doThing(longParameter){const result=longParameter+firstName;return result}doThing("y");');
+    const after = await write('const z9="x";function q(a){const b=a+z9;return b}q("y");');
+    expect(after).toEqual(before);
+    rmSync(dir, { recursive: true });
+  });
+
   it("does not move when a lazy chunk makes a first-screen chunk export one more name, though what is sent does", async () => {
     const dir = mkdtempSync(join(tmpdir(), "first-screen-"));
     const measure = async (b: ReturnType<typeof writeMinifiedBuild>) => {
@@ -304,11 +343,42 @@ describe("idle tier", () => {
   });
 });
 
-describe("startup namespace check", () => {
-  it("names each namespace the first screen's code reads that the startup list leaves out", () => {
-    const code = ['t("common.ok");t("page.title");x(`page.${n}`);y("settings.json");z("other.key")', 'w(\'menu.open\')'];
-    const namespaces = ["common", "page", "menu", "settings", "unread"];
-    expect(startupNamespaceGaps(code, namespaces, ["common"])).toEqual(["menu", "page", "settings"]);
-    expect(startupNamespaceGaps(code, namespaces, ["common", "menu", "page", "settings"])).toEqual([]);
+describe("startup catalog check", () => {
+  const keys = ["common.ok", "common.cancel", "page.title", "page.title_one", "page.title_other", "page.step_a", "page.step_b", "menu.open", "menu.close", "settings.avatar", "unread.x"];
+
+  it("names each key the first screen's code reads that the startup list leaves to the rest", () => {
+    const code = ['t("common.ok");t("page.title",{count:n});x(`page.step_${n}`);y("settings.json");z("other.key")', "w('menu.open')"];
+    expect(startupGaps(code, keys, ["common"])).toEqual(["menu.open", "page.step_", "page.title"]);
+    expect(startupGaps(code, keys, ["common", "menu.open", "page.step_", "page.title"])).toEqual([]);
+    expect(startupGaps(code, keys, ["common", "menu", "page"])).toEqual([]);
+  });
+
+  it("asks for the whole namespace when the code names none of the key, and only for it", () => {
+    expect(startupGaps(['t("page."+k)'], keys, ["page.title"])).toEqual(["page"]);
+    expect(startupGaps(['t("page."+k);t("page.title");t("page.step_a")'], keys, [])).toEqual(["page"]);
+  });
+
+  it("takes a listed key's plural forms and the suffixes a wrapper adds", () => {
+    expect(startupGaps(['t("page.title",{count:2});say("page.step")'], keys, ["page.title", "page.step"])).toEqual([]);
+    expect(startupGaps(['say("page.step")'], keys, ["page.step_a"])).toEqual(["page.step"]);
+  });
+
+  it("passes a string that only looks like a key", () => {
+    expect(startupGaps(['y("settings.json");z("unread.")'], keys, ["unread"])).toEqual([]);
+  });
+});
+
+describe("first-screen room", () => {
+  it("says each language's count and the room left in the fullest", () => {
+    expect(firstScreenRoom([["en", 1000], ["ja", 1500], ["zh-Hans", 1200]], 4000)).toEqual({
+      line: "startup-preload: first screen en 1,000 B, ja 1,500 B, zh-Hans 1,200 B; 2,500 B left under FIRST_SCREEN_BUDGET (ja)",
+      low: false,
+    });
+  });
+
+  it("warns under FIRST_SCREEN_LOW_ROOM", () => {
+    const room = firstScreenRoom([["en", 3000], ["ja", 3100]], 3100 + FIRST_SCREEN_LOW_ROOM - 1);
+    expect(room.low).toBe(true);
+    expect(room.line).toContain(`${(FIRST_SCREEN_LOW_ROOM - 1).toLocaleString("en-US")} B left under FIRST_SCREEN_BUDGET (ja), under FIRST_SCREEN_LOW_ROOM`);
   });
 });

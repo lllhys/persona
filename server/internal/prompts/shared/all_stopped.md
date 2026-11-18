@@ -1,0 +1,1 @@
+all participants, including the task leader and its workers, have been inactive for {{.Minutes}} minutes, with no pending answer or scheduled wake. No recent background activity was observed; missing activity times are bounded by the background task's start or its launching Agent's stop.

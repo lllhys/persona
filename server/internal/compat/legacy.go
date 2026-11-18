@@ -93,7 +93,7 @@ func LegacyTool(name string) string {
 }
 func Source(name string) string { return proto.CanonicalLauncherSource(name) }
 
-var runtimePackages = [][2]string{{"jarvis-dsh-runtime", "persona-dsh-runtime"}, {"jarvis-pi-runtime", "persona-pi-runtime"}, {"jarvis-paseo-runtime", "persona-paseo-runtime"}, {"jarvis-agent-sdk-runtime", "persona-agent-sdk-runtime"}}
+var runtimePackages = [][2]string{{"jarvis-dsh-runtime", "persona-dsh-runtime"}, {"jarvis-pi-runtime", "persona-pi-runtime"}, {"jarvis-paseo-runtime", "persona-paseo-runtime"}}
 
 func RuntimePackage(name string) string {
 	for _, pair := range runtimePackages {
@@ -148,6 +148,7 @@ func HeaderConflict(h http.Header, name string) bool {
 	return a != "" && b != "" && a != b
 }
 func ContextPattern() string { return `(?:jarvis|persona)-context` }
+func FilePattern() string    { return `(?:jarvis|persona)-file` }
 func ContextNames() []string { return []string{"jarvis-context", "persona-context"} }
 
 // compat is also built on its own, copied without the rest of the server (scripts/test/test_persona_migration_edges.py),

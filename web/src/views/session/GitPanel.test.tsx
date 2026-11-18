@@ -22,6 +22,7 @@ const moreButton = () => [...host.querySelectorAll("button")].find((button) => b
 
 beforeEach(() => {
   pending = [];
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => new Promise<Response>((resolve) => pending.push({ path: String(input), answer: (value) => resolve(new Response(JSON.stringify(value))) }))));
   host = document.createElement("div");
   document.body.append(host);
@@ -65,5 +66,34 @@ describe("GitPanel older history", () => {
     await act(async () => page.answer({ commits: [commit("valid-older-commit")], has_more: false }));
     expect(host.textContent).toContain("valid-older-commit");
     expect(moreButton()).toBeUndefined();
+  });
+});
+
+describe("GitPanel commit file contents", () => {
+  it.each([
+    ["plain.ts", "b/plain.ts"],
+    ["my docs/a b.ts", "b/my docs/a b.ts"],
+    ["你好.ts", "b/你好.ts"],
+    ['say"hello.ts', String.raw`"b/say\"hello.ts"`],
+    ["a\tb.ts", String.raw`"b/a\tb.ts"`],
+    ["a\\b.ts", String.raw`"b/a\\b.ts"`],
+  ])("opens and copies the full diff for %j", async (path, target) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      await act(async () => pending[0]!.answer(status("head")));
+      act(() => [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("head-0"))!.click());
+      expect(pending.at(-1)!.path).toContain("/show?");
+      const diff = `diff --git a/old.ts ${target}\n--- a/old.ts\n+++ ${target}\n@@ -1 +1 @@\n-before\n+after_unique_line\n`;
+      await act(async () => pending.at(-1)!.answer({ commit: commit("head-0"), files: [{ path, index: "M", worktree: ".", added: 1, deleted: 1 }], diff, truncated: false }));
+      act(() => [...host.querySelectorAll("button")].find((button) => button.textContent?.includes(path.split("/").at(-1)!))!.click());
+      await act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${t("session-gitpanel.copy_diff")}"]`)!.click());
+      expect.soft(host.textContent).toContain("after_unique_line");
+      expect.soft(writeText).toHaveBeenCalledExactlyOnceWith(diff);
+    } finally {
+      if (original) Object.defineProperty(navigator, "clipboard", original);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
   });
 });

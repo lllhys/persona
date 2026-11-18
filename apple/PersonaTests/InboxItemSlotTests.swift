@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The inbox_item slot (docs/extensions/extensions.md「Inbox items」, #1682): which sources' items a plugin draws, the item's body as
 /// the plugin's View (`context.item`, its buttons), today's body whenever that cannot be (quietly, or with a line and
@@ -37,6 +38,50 @@ import Testing
             #expect(req.query["placement"] == "inbox_item", "only the inbox_item slot")
             return Data(json.utf8)
         }
+    }
+
+    @Test func detailIdentityIncludesTheManager() throws {
+        var first = try item("lark:F1:1051", source: "lark")
+        first.manager = "manager-a"
+        var second = first
+        second.manager = "manager-b"
+        #expect(first.id == second.id)
+        #expect(InboxDetailView.identity(for: first) == first.key)
+        #expect(InboxDetailView.identity(for: first) != InboxDetailView.identity(for: second))
+        second.manager = nil
+        #expect(InboxDetailView.identity(for: first) != InboxDetailView.identity(for: second))
+    }
+
+    @Test func detailIdentityStaysStableForTheSameItem() throws {
+        var first = try item("lark:F1:1051", source: "lark")
+        first.manager = "manager-a"
+        var updated = first
+        updated.count += 1
+        updated.preview = "Another message"
+        let oldKey = InboxDetailView.identity(for: first), newKey = InboxDetailView.identity(for: updated)
+        #expect(oldKey == newKey)
+
+        let slot = InboxItemSlotModel(item: first)
+        #expect(slot.open(try #require(URL(string: "persona://inbox/lark:F1:1051/source"))))
+        slot.detailIdentityChanged(from: oldKey, to: newKey)
+        #expect(slot.showsSource, "updates to the same item keep its explicit source opening")
+    }
+
+    @Test(arguments: [("lark:F1:1051", "manager-b"), ("lark:F2:2", "manager-a")])
+    func detailIdentityChangeClearsDirectSource(id: String, manager: String) throws {
+        var first = try item("lark:F1:1051", source: "lark")
+        first.manager = "manager-a"
+        var next = try item(id, source: "lark")
+        next.manager = manager
+        let oldKey = InboxDetailView.identity(for: first), newKey = InboxDetailView.identity(for: next)
+        #expect(oldKey != newKey)
+
+        let slot = InboxItemSlotModel(item: first)
+        let source = try #require(URL(string: "persona://inbox/lark:F1:1051/source"))
+        #expect(slot.open(source) && slot.showsSource)
+        slot.detailIdentityChanged(from: oldKey, to: newKey)
+        #expect(!slot.showsSource, "a new identity needs its own explicit source action")
+        #expect(slot.open(source) && slot.showsSource, "explicit opening still works after reset")
     }
 
     @Test func theSourcesAnExtensionDraws() async throws {
@@ -114,7 +159,7 @@ import Testing
 
         // The context says which item, with the app's UI version and platform.
         let drawn = try #require(bodies.first)
-        #expect(drawn["context"]?["item"] == .string("lark:F1:1051") && drawn["context"]?["ui_version"] == .number(3))
+        #expect(drawn["context"]?["item"] == .string("lark:F1:1051") && drawn["context"]?["ui_version"] == .number(8))
         #expect(drawn["context"]?["platform"] == .string("ios") && drawn["action"] == nil)
 
         // A button: the same item, the plugin's state, the page's fields when it submits.

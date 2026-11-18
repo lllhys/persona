@@ -54,12 +54,13 @@ func TestAgentSendTaskMakesATask(t *testing.T) {
 	}
 }
 
-// A closed agent the hand-off's message resumes: its card says Resumed (#5096), not Already active.
+// An explicitly resumed, known non-user stop says Resumed, not Already active.
 func TestAgentSendTaskToAClosedAgentResumesIt(t *testing.T) {
 	s, f := newQuietService(t)
-	f.setSessions("box", proto.Session{SessionID: "sec00001", MachineID: "box", Cwd: "/code/desk", Agent: "claude", Title: "秘书",
-		Status: proto.StatusOffline, State: proto.StateOffline, UpdatedAt: time.Now()})
+	f.setSessions("box", stoppedBoxAgent("sec00001"))
+	resumingNode(f)
 	if _, err := runJSON(t, s, "conv1", "agent_send", map[string]any{"machine": "box", "session_id": "sec00001", "text": "把周报数据拉一下",
+		"resume": true, "resume_why": "The next step needs the existing context",
 		"task": map[string]any{"title": "拉周报数据"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +231,8 @@ func TestAgentSendTaskFailedSend(t *testing.T) {
 	}
 
 	f.setSessions("box", proto.Session{SessionID: "sec00001", MachineID: "box", Cwd: "/code/desk", Agent: "claude", Title: "秘书",
-		Status: proto.StatusOffline, UpdatedAt: time.Now()})
+		Status: proto.StatusOffline, UpdatedAt: time.Now(), Capabilities: &proto.SessionCapabilities{Read: true, Send: true}})
+	// A fresh, sendable fork can still start on its first message; this is not an unknown stopped terminal.
 	f.failSend = context.DeadlineExceeded
 	if _, err := runJSON(t, s, "conv1", "agent_send", args); err == nil || !strings.Contains(err.Error(), "may still arrive") {
 		t.Fatalf("unknown: %v", err)
@@ -411,7 +413,6 @@ func TestAgentSendEmptyTaskIsAReply(t *testing.T) {
 			for _, c := range []struct{ self, sid, receipt, sent string }{
 				{"conv1", "free0001", "Sent to free0001 on box.", "A reply"},
 				{"conv1", "peer0001", "Sent to peer0001 on box.", side},
-				{"conv1", "peeroff1", "Resumed peeroff1 on box (same session, directory and launcher) and sent.", side},
 				{"conv1", "user0001", "Sent to user0001 on box.", "A reply"},
 				{"conv1", "mine0001", "Sent to mine0001 on box.", "A reply"},
 				{"conv1", "manual01", "Sent to manual01 on box.", "A reply"},
@@ -428,6 +429,13 @@ func TestAgentSendEmptyTaskIsAReply(t *testing.T) {
 				}
 			}
 			n := len(sentToAgent(f))
+			if _, err := s.runTool(ctx, "server", "conv1", "agent_send", sendArgs("peeroff1", "A reply", task)); err == nil {
+				t.Fatal("an empty task silently resumed an offline agent without provenance")
+			}
+			if len(sentToAgent(f)) != n {
+				t.Fatal("the unknown stopped agent received a message")
+			}
+			n = len(sentToAgent(f))
 			if _, err := s.runTool(ctx, "server", "conv1", "agent_send", sendArgs("ro000001", "A reply", task)); err == nil ||
 				err.Error() != "这个 Agent 仅支持查看：read only" || len(sentToAgent(f)) != n {
 				t.Fatalf("read-only agent: %v", err)
@@ -561,11 +569,15 @@ func TestAgentSendExitToAnotherConversationsAgentIsRefused(t *testing.T) {
 			for _, c := range []struct {
 				sid, text string
 				todo      Todo
-			}{{"peer0001", "/exit", peer}, {"peer0001", " /quit\n", peer}, {"peeroff1", "/exit", peerOff}} {
+			}{{"peer0001", "/exit", peer}, {"peer0001", " /quit\n", peer}} {
 				if res, err := s.runTool(ctx, "server", "conv1", "agent_send", sendArgs(c.sid, c.text, task)); err == nil ||
 					err.Error() != exitRefusal(c.sid, c.todo, c.text) {
 					t.Fatalf("%q to %s: %q %v", c.text, c.sid, res, err)
 				}
+			}
+			if res, err := s.runTool(ctx, "server", "conv1", "agent_send", sendArgs("peeroff1", "/exit", task)); err != nil ||
+				res != "peeroff1 has already stopped: nothing was sent." {
+				t.Fatalf("stopped /exit: %q %v (task %s)", res, err, peerOff.ID)
 			}
 			if task == "" { // agent_interrupt's then is refused the same way, before the turn is stopped
 				args := json.RawMessage(`{"machine":"box","session_id":"peer0001","then":"/exit"}`)

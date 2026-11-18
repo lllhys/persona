@@ -79,7 +79,9 @@ def hub(test, **env):
 
 
 def blank(r):
-    return dict(r, checked_at="")
+    out = dict(r, checked_at="")
+    out["steps"] = [dict(s, occurrence="") if "occurrence" in s else s for s in r["steps"]]
+    return out
 
 
 class ScenarioGoldenTests(unittest.TestCase):

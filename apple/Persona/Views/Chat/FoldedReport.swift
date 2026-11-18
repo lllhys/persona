@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 // MARK: - A subagent's report, folded to one line
 

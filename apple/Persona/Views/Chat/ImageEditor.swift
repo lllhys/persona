@@ -69,10 +69,7 @@ struct ImageEditor: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .accessibilityIdentifier("image-edit-cancel")
-                }
+                SheetClose(id: "image-edit-cancel") { dismiss() }
                 // Undo and Redo up top, as Photos has them: the tools' rows below stay one line on the smallest iPhone. One
                 // item: the bar's middle shows only the first of a group.
                 ToolbarItem(placement: .principal) {
@@ -87,13 +84,7 @@ struct ImageEditor: View {
                             .accessibilityIdentifier("image-edit-redo")
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(doneTitle) { finish(sending: false) }
-                        .fontWeight(.semibold)
-                        .lineLimit(1)
-                        .disabled(pixels == nil || finishing)
-                        .accessibilityIdentifier("image-edit-done")
-                }
+                doneItem
             }
         }
         // Dark whatever the appearance, as the image viewer. Through the environment, not `preferredColorScheme`: that
@@ -284,6 +275,21 @@ struct ImageEditor: View {
 
     private func turnLeft() {
         change { $0.turnLeft() }
+    }
+
+    /// Done is the ✓ (#9653); Select and Add to Message say more and stay words.
+    @ToolbarContentBuilder private var doneItem: some ToolbarContent {
+        if doneTitle == String(localized: "Done [Extension System Presentation c0b3fb]") {
+            SheetConfirm(id: "image-edit-done", name: doneTitle, disabled: pixels == nil || finishing) { finish(sending: false) }
+        } else {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(doneTitle) { finish(sending: false) }
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .disabled(pixels == nil || finishing)
+                    .accessibilityIdentifier("image-edit-done")
+            }
+        }
     }
 
     private func finish(sending: Bool) {

@@ -12,6 +12,10 @@ nonisolated enum NotificationActions {
     /// A finished turn's push: a message to the session, typed on the notification (#3449).
     static let reply = "SESSION_REPLY"
     static let doneCategory = "SESSION_DONE"
+    /// A decision's push (#2056, `decideCategory` in server/internal/hub/push_payload.go): its one button takes the
+    /// recommendation the push names.
+    static let decideCategory = "TODO_DECIDE"
+    static let takeRecommendation = "TODO_TAKE_RECOMMENDATION"
 
     static func category(_ kind: InteractionKind) -> String { "INTERACTION_" + kind.rawValue.uppercased() }
 
@@ -50,8 +54,21 @@ nonisolated enum NotificationActions {
                                               textInputButtonTitle: String(localized: "Send"), textInputPlaceholder: String(localized: "What next…")),
             ],
             intentIdentifiers: [], options: [])
+        // A decision that recommends an option: taking it answers the to-do's round, so unlocked, like approving a plan.
+        let decide = UNNotificationCategory(
+            identifier: decideCategory,
+            actions: [
+                UNNotificationAction(identifier: takeRecommendation, title: String(localized: "Take Recommendation"), options: [.authenticationRequired],
+                                     icon: UNNotificationActionIcon(systemImageName: Theme.Icon.done)),
+            ],
+            intentIdentifiers: [], options: [])
         // Pairing receipts (#4199): Not you? Revoke, It's Mine / Not Mine (PairReceiptActions).
-        return Set([permission, plan, question, screen, elicitation, done] + PairReceiptActions.categories)
+        var all = Set([permission, plan, question, screen, elicitation, done, decide] + PairReceiptActions.categories)
+        #if os(iOS)
+        // A calendar meeting's reminder (#8731 G2): Start (MeetingReminders).
+        all.insert(MeetingReminders.notificationCategory)
+        #endif
+        return all
     }
 
     /// What a button sends to the hub, or nil for a plain tap (and anything we don't know).
@@ -64,6 +81,37 @@ nonisolated enum NotificationActions {
         case approvePlan: Resolution(approve: true, mode: "acceptEdits")
         case rejectPlan: Resolution(approve: false, feedback: text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
         default: nil
+        }
+    }
+
+    /// What Take Recommendation on a decision's push answers: the to-do, the round it was asked in (sent back exactly as
+    /// the push carried it, so an older round's button cannot answer a newer one) and the manager whose to-do it is.
+    struct Decision: Equatable, Sendable {
+        var todoID: String
+        var askedAt: String
+        var manager: String?
+    }
+
+    /// The decision a button answers, from the push's `todo` (decidePayloadIn); nil for any other button, and for a push
+    /// without the to-do or its round.
+    static func decision(action: String, info: [AnyHashable: Any]) -> Decision? {
+        guard action == takeRecommendation, let todo = info["todo"] as? [String: Any],
+              let id = todo["id"] as? String, !id.isEmpty,
+              let askedAt = todo["asked_at"] as? String, !askedAt.isEmpty else { return nil }
+        let manager = (todo["manager"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        return Decision(todoID: id, askedAt: askedAt, manager: manager)
+    }
+
+    /// Takes the recommendation (`POST /api/v1/todos/{id}/accept`), naming the to-do's manager so it reaches the right
+    /// one whichever is the default; a failure (a 409: the round was answered or asked again) comes back as a local
+    /// notification.
+    static func take(_ decision: Decision, group: String?) async {
+        do {
+            var client = try HubStore.client(group: group)
+            if let manager = decision.manager { client.managerID = manager }
+            try await AppModel.shared.outside(client) { try await $0.acceptTodo(decision.todoID, askedAt: decision.askedAt) }
+        } catch {
+            await reportFailure(id: decision.todoID, title: failureTitle(action: takeRecommendation), error: error)
         }
     }
 
@@ -117,6 +165,7 @@ nonisolated enum NotificationActions {
         case approvePlan: String(localized: "Couldn't approve the plan")
         case rejectPlan: String(localized: "Couldn't send back the plan")
         case reply: String(localized: "Couldn't send the reply")
+        case takeRecommendation: String(localized: "Couldn't take the recommendation")
         default: String(localized: "Couldn't complete the action")
         }
     }

@@ -127,12 +127,17 @@ func (w *boundedResponse) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// requestLifetime binds pending HTTP, tunnels and native relays to one registration.
-// Cancellation on replacement, settings changes or revocation closes only that extension's I/O.
-func (p *Proxy) requestLifetime(parent context.Context, ext string) (context.Context, func(), bool) {
+// requestLifetime binds pending HTTP, tunnels and native relays to one registration, and to the settings check chk
+// when the request came with its credential (nil: the program's own).
+// Cancellation on replacement, settings changes or revocation closes only that extension's I/O; a check's revocation
+// or end of time closes only the I/O opened with its credential.
+func (p *Proxy) requestLifetime(parent context.Context, ext string, chk *check) (context.Context, func(), bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if _, ok := p.rules[ext]; !ok {
+		return nil, nil, false
+	}
+	if chk != nil && p.liveCheckLocked(chk.cred) != chk {
 		return nil, nil, false
 	}
 	if p.active == nil {
@@ -145,10 +150,26 @@ func (p *Proxy) requestLifetime(parent context.Context, ext string) (context.Con
 		return nil, nil, false
 	}
 	ctx, cancel := context.WithCancel(parent)
+	if chk != nil {
+		ctx, cancel = context.WithDeadline(parent, chk.expires)
+	}
 	lease := &ioLease{cancel: cancel}
 	p.active[ext][lease] = struct{}{}
+	if chk != nil {
+		chk.leases[lease] = struct{}{}
+	}
 	var once sync.Once
-	return ctx, func() { once.Do(func() { cancel(); p.mu.Lock(); delete(p.active[ext], lease); p.mu.Unlock() }) }, true
+	return ctx, func() {
+		once.Do(func() {
+			cancel()
+			p.mu.Lock()
+			delete(p.active[ext], lease)
+			if chk != nil {
+				delete(chk.leases, lease)
+			}
+			p.mu.Unlock()
+		})
+	}, true
 }
 
 type ioLease struct{ cancel context.CancelFunc }

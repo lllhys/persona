@@ -301,8 +301,25 @@ const maxStatPaths = 200
 // the folder from personad; opening it explains what to do) or missing (also: not resolvable, iCloud Drive).
 type PathStat struct {
 	Path string `json:"path"` // as asked
-	Kind string `json:"kind"`
+	Kind string `json:"kind"` // with detail also "link": a symlink whose target is not there (LinkBroken)
 	Size int64  `json:"size,omitempty"`
+
+	// With detail (the Info sheet, files_info.go): permission bits as chmod takes them, owner and group names (numbers
+	// when unknown), the times the system keeps, a folder's item count, and for a symlink what it says, the real path
+	// it leads to and whether that is missing. Absent where the platform has no such thing.
+	Mode       *int       `json:"mode,omitempty"`
+	Owner      string     `json:"owner,omitempty"`
+	Group      string     `json:"group,omitempty"`
+	ModTime    *time.Time `json:"mtime,omitempty"`
+	ChangeTime *time.Time `json:"ctime,omitempty"`
+	BirthTime  *time.Time `json:"birthtime,omitempty"`
+	Items      *int       `json:"items,omitempty"`
+	ItemsMore  bool       `json:"items_more,omitempty"`
+	Symlink    bool       `json:"symlink,omitempty"`
+	LinkTarget string     `json:"link_target,omitempty"`
+	LinkReal   string     `json:"link_real,omitempty"`
+	LinkBroken bool       `json:"link_broken,omitempty"`
+	Mime       string     `json:"mime,omitempty"` // a regular file's type, as file.read would give it
 }
 
 // statTimeout bounds one fs.stat: a path on a mount that does not answer (a network share, a sleeping disk) is
@@ -315,8 +332,8 @@ const statWorkers = 8
 var statOne = (*Node).statPath
 
 // statPaths answers fs.stat: the phone links only the paths that are there (a path in a message may be another
-// machine's, or gone). Secrets and iCloud Drive count as missing (pathguard.go).
-func (n *Node) statPaths(paths []string, cwd string) []PathStat {
+// machine's, or gone). Secrets and iCloud Drive count as missing (pathguard.go). detail: the Info sheet's fields too.
+func (n *Node) statPaths(paths []string, cwd string, detail ...bool) []PathStat {
 	if len(paths) > maxStatPaths {
 		paths = paths[:maxStatPaths]
 	}
@@ -333,6 +350,9 @@ func (n *Node) statPaths(paths []string, cwd string) []PathStat {
 	slots := make(chan struct{}, statWorkers)
 	// Read once: a stat past the deadline keeps running after this returns, and must not read the variables again.
 	stat, timeout := statOne, statTimeout
+	if len(detail) > 0 && detail[0] {
+		stat = (*Node).statDetail
+	}
 	for i, asked := range paths {
 		go func() {
 			slots <- struct{}{}
@@ -432,6 +452,11 @@ type DirEntry struct {
 	ModTime time.Time `json:"mtime"`
 	// Ignored: Git ignores it (the tree dims it); never set outside a repository or without git (fsignore.go).
 	Ignored bool `json:"ignored,omitempty"`
+	// LinkTarget: what a symlink says (its text, as readlink gives it); LinkBroken: what it points to is not there, or
+	// a loop of links. A link is never followed for the listing beyond telling a folder from a file; Size and ModTime
+	// are its target's when that can be read, otherwise the link's own (#5827).
+	LinkTarget string `json:"link_target,omitempty"`
+	LinkBroken bool   `json:"link_broken,omitempty"`
 }
 
 const maxDirEntries = 2000
@@ -486,6 +511,14 @@ func (n *Node) listDir(path, cwd string) (map[string]any, error) {
 		if info, err := all[i].e.Info(); err == nil {
 			list[i].Size, list[i].ModTime = info.Size(), info.ModTime()
 		}
+		if list[i].Symlink {
+			if target, err := os.Readlink(filepath.Join(real, list[i].Name)); err == nil {
+				list[i].LinkTarget = target
+			}
+			if t := all[i].target; t != nil {
+				list[i].Size, list[i].ModTime = t.Size(), t.ModTime()
+			}
+		}
 	}
 	markIgnored(real, list)
 	return map[string]any{"path": path, "entries": list, "truncated": len(ents) > maxDirEntries}, nil
@@ -494,8 +527,9 @@ func (n *Node) listDir(path, cwd string) (map[string]any, error) {
 // treeEntry is a folder entry as the file tree shows it, before its size and time are read.
 type treeEntry struct {
 	DirEntry
-	key string // lowercased name, computed once rather than in every comparison
-	e   os.DirEntry
+	key    string // lowercased name, computed once rather than in every comparison
+	e      os.DirEntry
+	target os.FileInfo // a link's target, when it could be read
 }
 
 // treeOrder sorts the entries of the folder real the way the file tree shows them: directories first, then files, each
@@ -506,12 +540,17 @@ func (n *Node) treeOrder(real string, ents []os.DirEntry) []treeEntry {
 	all := make([]treeEntry, len(ents))
 	for i, e := range ents {
 		d := DirEntry{Name: e.Name(), Dir: e.IsDir(), Symlink: e.Type()&os.ModeSymlink != 0}
+		var target os.FileInfo
 		if d.Symlink {
-			if _, st, err := n.statSafe(filepath.Join(real, d.Name)); err == nil {
-				d.Dir = st.IsDir()
+			_, st, err := n.statSafe(filepath.Join(real, d.Name))
+			switch {
+			case err == nil:
+				d.Dir, target = st.IsDir(), st
+			case errors.Is(err, fs.ErrNotExist) || errors.Is(err, errTooManyLinks):
+				d.LinkBroken = true
 			}
 		}
-		all[i] = treeEntry{DirEntry: d, key: strings.ToLower(d.Name), e: e}
+		all[i] = treeEntry{DirEntry: d, key: strings.ToLower(d.Name), e: e, target: target}
 	}
 	slices.SortFunc(all, func(a, b treeEntry) int {
 		if a.Dir != b.Dir {

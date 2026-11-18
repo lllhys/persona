@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/assistantwire"
@@ -96,9 +97,14 @@ func (s *Service) meetingRoutes() {
 		if e == nil {
 			return
 		}
+		from, hasFrom, fromOK := liveFrom(r)
 		l, rec, err := s.asksRead(e, r.PathValue("id"))
 		if err != nil {
 			writeMeetingError(w, err)
+			return
+		}
+		if !fromOK { // after 410 and 404, as POST reads its body
+			apierr.Write(w, http.StatusBadRequest, i18n.Err("assistant-meeting.bad_from"))
 			return
 		}
 		asks := make([]askView, 0, len(l.Asks))
@@ -108,6 +114,16 @@ func (s *Service) meetingRoutes() {
 		view := s.liveView(r.Context(), l, rec, asks)
 		if rev := e.PhotosRev(rec.ID); rev > 0 { // photos has a revision and no field: GET …/photos reads them
 			view.Revs[kb.PartPhotos] = rev
+		}
+		if rec.HubTranscribed() { // the latest caption (meeting_transcribe.go), its revision its time in milliseconds
+			view.Interim = s.hubInterim(rec.ID)
+			if rev := s.hubInterimRev(rec.ID); rev > 0 {
+				view.Revs[kb.PartInterim] = rev
+			}
+		}
+		if hasFrom {
+			lines, more := liveLines(l, from)
+			view.Lines, view.More = &lines, more
 		}
 		if parts := r.URL.Query().Get("parts"); parts != "" {
 			apierr.WriteJSON(w, view.only(strings.Split(parts, ",")))
@@ -185,6 +201,16 @@ func writeMeetingError(w http.ResponseWriter, err error) {
 		apierr.WriteCode(w, http.StatusForbidden, assistantwire.CodeKBReadOnly, i18n.Err("assistant-kb_routes.read_only"))
 	case errors.Is(err, kb.ErrNotAttending):
 		apierr.WriteCode(w, http.StatusConflict, codeNotAttending, i18n.Err("assistant-meeting.not_attending"))
+	case errors.Is(err, kb.ErrHubTranscribes):
+		apierr.WriteCode(w, http.StatusConflict, codeHubTranscribes, i18n.Err("assistant-meeting.hub_transcribes"))
+	case errors.Is(err, kb.ErrNotHub):
+		apierr.WriteCode(w, http.StatusConflict, codeNotHub, i18n.Err("assistant-meeting.not_hub"))
+	case errors.Is(err, kb.ErrTranscriptionFinal):
+		apierr.WriteCode(w, http.StatusConflict, codeTranscriptionFinal, i18n.Err("assistant-meeting.transcription_final"))
+	case errors.Is(err, kb.ErrAudioFull):
+		apierr.WriteCode(w, http.StatusRequestEntityTooLarge, codeAudioFull, i18n.Err("assistant-meeting.audio_full"))
+	case errors.Is(err, kb.ErrBadAudio):
+		apierr.WriteCode(w, http.StatusBadRequest, codeBadAudio, i18n.Err("assistant-meeting.bad_audio"))
 	case errors.Is(err, kb.ErrBadLive), errors.Is(err, kb.ErrBadPhoto):
 		apierr.Write(w, http.StatusBadRequest, err)
 	case errors.Is(err, kb.ErrNotMeeting):
@@ -263,6 +289,44 @@ func wholeNumber(raw json.RawMessage) (int64, bool) {
 	return int64(f), true
 }
 
+// maxLiveLines is how many live lines one GET …/live?from= gives at most (more says there are more).
+const maxLiveLines = 500
+
+// liveFrom is GET …/live's from (phase 2's live lines from that position): has says it was given, ok that it is a
+// whole number of 0 or more (400 otherwise).
+func liveFrom(r *http.Request) (from int, has, ok bool) {
+	vals, has := r.URL.Query()["from"]
+	if !has {
+		return 0, false, true
+	}
+	v := vals[0]
+	if v == "" || strings.Trim(v, "0123456789") != "" {
+		return 0, true, false
+	}
+	n, err := strconv.Atoi(v)
+	return n, true, err == nil
+}
+
+// liveLine is one position of the live log as GET …/live gives it ("" text included: a placeholder position). In hub
+// mode Source says whose text it is: the hub's (hub) or the phone's filling in (device); absent in device mode.
+type liveLine struct {
+	N      int     `json:"n"`
+	Start  float64 `json:"start"`
+	End    float64 `json:"end"`
+	Text   string  `json:"text"`
+	Source string  `json:"source,omitempty"`
+}
+
+// liveLines are l's positions from from, at most maxLiveLines, and whether more follow them.
+func liveLines(l kb.Live, from int) ([]liveLine, bool) {
+	out := []liveLine{}
+	for n := from; n < len(l.Segments) && len(out) < maxLiveLines; n++ {
+		sg := l.Segments[n]
+		out = append(out, liveLine{N: n, Start: sg.Start, End: sg.End, Text: sg.Text, Source: sg.Source})
+	}
+	return out, from+len(out) < len(l.Segments)
+}
+
 // meetingLiveView is what …/live answers: the live log's count, the role in effect and the session being fed. With
 // attending off it is only the role, the counts and the questions.
 type meetingLiveView struct {
@@ -278,6 +342,20 @@ type meetingLiveView struct {
 	Room     *kb.RoomView     `json:"room,omitempty"`
 	Followup *kb.ConvView     `json:"followup,omitempty"`
 	Revs     map[string]int64 `json:"revs,omitempty"`
+	// The live view (#3862 phase 2), GET only: the live lines from ?from= (none without it) with more when there are
+	// more, and the room's topics ([] before the first) with their last change. Never in detail.meta.
+	Lines    *[]liveLine     `json:"lines,omitempty"`
+	More     bool            `json:"more,omitempty"`
+	Topics   *[]kb.LiveTopic `json:"topics,omitempty"`
+	TopicsAt *time.Time      `json:"topics_at,omitempty"`
+	// The highlights (#3862 phase 2b), GET only: the room's highlights so far ([] before the first) with their last
+	// change. Never in detail.meta.
+	Highlights   *[]kb.LiveHighlight `json:"highlights,omitempty"`
+	HighlightsAt *time.Time          `json:"highlights_at,omitempty"`
+	// Hub transcription (#3862 phase 5): the recording's transcription once its mode was decided (also in
+	// detail.meta), and the latest caption while the hub transcribes it (GET only, never in detail.meta).
+	Transcription *kb.TranscriptionView `json:"transcription,omitempty"`
+	Interim       *liveInterim          `json:"interim,omitempty"`
 }
 
 // only is v cut to parts (GET …/live?parts=asks,room): those of them it has, with their revisions.
@@ -305,6 +383,35 @@ func (v meetingLiveView) only(parts []string) map[string]any {
 			}
 		case kb.PartPhotos:
 			// Only its revision: the photos are read with GET …/photos.
+		case kb.PartLines:
+			if v.Lines != nil { // only with ?from=
+				out[p] = *v.Lines
+				if v.More {
+					out["more"] = true
+				}
+			}
+		case kb.PartTopics:
+			if v.Topics != nil {
+				out[p] = *v.Topics
+			}
+			if v.TopicsAt != nil {
+				out["topics_at"] = v.TopicsAt
+			}
+		case kb.PartHighlights:
+			if v.Highlights != nil {
+				out[p] = *v.Highlights
+			}
+			if v.HighlightsAt != nil {
+				out["highlights_at"] = v.HighlightsAt
+			}
+		case kb.PartTranscription:
+			if v.Transcription != nil {
+				out[p] = v.Transcription
+			}
+		case kb.PartInterim:
+			if v.Interim != nil {
+				out[p] = v.Interim
+			}
 		default:
 			continue
 		}
@@ -329,17 +436,37 @@ func (s *Service) liveView(ctx context.Context, l kb.Live, rec kb.Recording, ask
 	if asks != nil {
 		out.Asks = &asks
 	}
-	out.Revs = map[string]int64{kb.PartAsks: l.AsksRev}
+	out.Revs = map[string]int64{kb.PartAsks: l.AsksRev, kb.PartLines: int64(len(l.Segments)), kb.PartTopics: l.TopicsRev,
+		kb.PartHighlights: l.HighlightsRev}
 	if m := rec.Conv; m != nil {
-		out.Private, out.Room, out.Followup = m.Private, m.RoomView(), m.FollowupView()
-		for _, p := range []string{kb.PartRoom, kb.PartPrivate, kb.PartFollowup} {
+		out.Private, out.Room, out.Followup, out.Transcription = m.Private, m.RoomView(), m.FollowupView(), m.TranscriptionView(nil)
+		for _, p := range []string{kb.PartRoom, kb.PartPrivate, kb.PartFollowup, kb.PartTranscription} {
 			if rev, ok := m.Revs[p]; ok {
 				out.Revs[p] = rev
 			}
 		}
 	}
 	if asks == nil {
-		out.Revs = nil // POST …/live: GET reads them
+		out.Revs = nil // POST …/live: GET reads them, the topics and the highlights
+	} else {
+		topics := l.Topics
+		if topics == nil {
+			topics = []kb.LiveTopic{}
+		}
+		out.Topics = &topics
+		if !l.TopicsAt.IsZero() {
+			at := l.TopicsAt
+			out.TopicsAt = &at
+		}
+		highlights := l.Highlights
+		if highlights == nil {
+			highlights = []kb.LiveHighlight{}
+		}
+		out.Highlights = &highlights
+		if !l.HighlightsAt.IsZero() {
+			at := l.HighlightsAt
+			out.HighlightsAt = &at
+		}
 	}
 	if rec.RoomMeeting() {
 		if l.Full { // the room's own problems are its room's

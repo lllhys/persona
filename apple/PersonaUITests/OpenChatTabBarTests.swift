@@ -1,13 +1,16 @@
 import XCTest
 
 /// An Agents chat opened from the list takes the whole screen: the Shell switch goes away with the push, stays
-/// away under and after the terminal, and comes back on the list. Needs scripts/mock/mock_hub.py:
+/// away under and after the terminal, and comes back on the list. The iPhone shell's (an iPad opens the chat beside
+/// the list, under no switch). The chat is a working one of the default assistant's, on the server: the list shows the
+/// current assistant's Agents only (#5587), and on the mock hub the MacBook's are another assistant's. Needs scripts/mock/mock_hub.py:
 ///   TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:<port> xcodebuild test … -only-testing:PersonaUITests/OpenChatTabBarTests
 /// The flash itself only shows on film: run it under `xcrun simctl io <udid> recordVideo` and look at the frames
 /// right after the tap (docs/operations/testing.md).
 final class OpenChatTabBarTests: XCTestCase {
     @MainActor func testTheTabBarLeavesWithThePushAndComesBack() throws {
         continueAfterFailure = false
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("the iPhone shell's switch: an iPad opens the chat beside the list") }
         guard let hub = ProcessInfo.processInfo.environment["PERSONA_MOCK_HUB"] else { throw XCTSkip("needs scripts/mock/mock_hub.py (PERSONA_MOCK_HUB)") }
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
@@ -18,7 +21,7 @@ final class OpenChatTabBarTests: XCTestCase {
             .matching(NSPredicate(format: "label IN %@", ["允许", "Allow"])).firstMatch
         if allow.waitForExistence(timeout: 8) { allow.tap() }
 
-        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "给天气 App 加主屏幕小组件")).firstMatch
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "排查 /orders 接口变慢")).firstMatch
         for _ in 0..<8 where !(row.exists && row.isHittable) {
             app.collectionViews.firstMatch.swipeUp(velocity: .slow)
         }

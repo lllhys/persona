@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 // Things the assistant did on the phone in a second (docs/assistant/unified-entry.md「Dispatch: express intent, do not choose a project」, done in a second): a reminder or an event it added
 // is drawn as its result under the turn's work line, with Undo, instead of hiding in "Tools N"; places a location tool
@@ -136,50 +137,25 @@ struct QuickResultCard: View {
 
 // MARK: - Kinds that start without asking
 
-/// Auto-Start Tasks: the kinds remembered with Start These Directly, each removable (it asks again next time).
-struct TaskTrustView: View {
-    @State private var kinds: [APIClient.TrustKind]?
-    @State private var error: String?
+/// Auto-Start Tasks' list (`TaskTrustView`): the current assistant's, as the page opened for. GET /api/v1/task-trust isn't
+/// one of the assistant's own routes (`APIClient.assistantRoute`), so the page names it (`currentAssistantSettings`):
+/// none for the default's.
+@Observable final class TaskTrustModel {
+    private(set) var kinds: [APIClient.TrustKind]?
+    private(set) var error: String?
+    @ObservationIgnored private let api: () -> APIClient?
+    /// The client of the assistant the page opened for, kept from its first read.
+    @ObservationIgnored private var scoped: APIClient?
 
-    var body: some View {
-        List {
-            if let kinds {
-                if kinds.isEmpty {
-                    EmptyStateView(symbol: Theme.Icon.taskTrust, title: String(localized: "None yet"),
-                                   message: String(localized: "Check “Start These Directly” on a plan card in a chat, and tasks on the same computer and folder with the same read or edit access won't ask first again."))
-                        .listRowBackground(Color.clear)
-                } else {
-                    Section {
-                        ForEach(kinds, id: \.key) { k in
-                            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                                Text((k.cwd as NSString).lastPathComponent).font(Theme.Font.body)
-                                Text("\(TaskPlace.machineName(k.machine)) · \(k.readonly ? String(localized: "Read-only") : String(localized: "Can edit files")) · \(k.cwd)")
-                                    .font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            .themedRow()
-                        }
-                        .onDelete { idx in Task { await forget(idx.map { kinds[$0] }) } }
-                    } footer: {
-                        Text("Persona starts these tasks directly without showing you a plan first. Swipe left to remove one, and it'll ask first again.")
-                    }
-                }
-            } else if let error {
-                // A button, not only pull to refresh: the Mac's list has no pull.
-                EmptyStateView(symbol: Theme.Icon.error, title: String(localized: "Couldn't load [Quick Results a4ce9d]"), message: error,
-                               action: (title: String(localized: "Retry [Components b8784c]"), run: { Task { await load() } }))
-                    .listRowBackground(Color.clear)
-            } else {
-                ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
-            }
-        }
-        .themedPage()
-        .navigationTitle("Auto-Start Tasks")
-        .task { await load() }
-        .refreshable { await load() }
+    init(api: @escaping () -> APIClient? = { AppModel.shared.api }) { self.api = api }
+
+    private func client() -> APIClient? {
+        if scoped == nil { scoped = api()?.currentAssistantSettings() }
+        return scoped
     }
 
-    private func load() async {
-        guard let api = AppModel.shared.api else {
+    func load() async {
+        guard let api = client() else {
             error = String(localized: "Not connected to the hub yet")
             return
         }
@@ -195,9 +171,51 @@ struct TaskTrustView: View {
         }
     }
 
-    private func forget(_ list: [APIClient.TrustKind]) async {
-        guard let api = AppModel.shared.api else { return }
+    func forget(_ list: [APIClient.TrustKind]) async {
+        guard let api = client() else { return }
         for k in list { try? await api.forgetTrust(k.key) }
         await load()
+    }
+}
+
+/// Auto-Start Tasks: the kinds remembered with Start These Directly, each removable (it asks again next time).
+struct TaskTrustView: View {
+    @State private var page = TaskTrustModel()
+
+    var body: some View {
+        List {
+            if let kinds = page.kinds {
+                if kinds.isEmpty {
+                    EmptyStateView(symbol: Theme.Icon.taskTrust, title: String(localized: "None yet"),
+                                   message: String(localized: "Check “Start These Directly” on a plan card in a chat, and tasks on the same computer and folder with the same read or edit access won't ask first again."))
+                        .listRowBackground(Color.clear)
+                } else {
+                    Section {
+                        ForEach(kinds, id: \.key) { k in
+                            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                                Text((k.cwd as NSString).lastPathComponent).font(Theme.Font.body)
+                                Text("\(TaskPlace.machineName(k.machine)) · \(k.readonly ? String(localized: "Read-only") : String(localized: "Can edit files")) · \(k.cwd)")
+                                    .font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            .themedRow()
+                        }
+                        .onDelete { idx in Task { await page.forget(idx.map { kinds[$0] }) } }
+                    } footer: {
+                        Text("Persona starts these tasks directly without showing you a plan first. Swipe left to remove one, and it'll ask first again.")
+                    }
+                }
+            } else if let error = page.error {
+                // A button, not only pull to refresh: the Mac's list has no pull.
+                EmptyStateView(symbol: Theme.Icon.error, title: String(localized: "Couldn't load [Quick Results a4ce9d]"), message: error,
+                               action: (title: String(localized: "Retry [Components b8784c]"), run: { Task { await page.load() } }))
+                    .listRowBackground(Color.clear)
+            } else {
+                ProgressView().frame(maxWidth: .infinity).listRowBackground(Color.clear)
+            }
+        }
+        .themedPage()
+        .navigationTitle("Auto-Start Tasks")
+        .task { await page.load() }
+        .refreshable { await page.load() }
     }
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Extension Market (ExtensionMarketModel, MarketExtensionModel) and a plugin's declarative UI (ExtensionViewModel, ExtensionLauncherModel):
 /// what the hub sends decodes; the catalog is searched and filtered by market; markets are added (the hub's reason
@@ -329,7 +330,7 @@ struct ExtensionViewModelTests {
         // Drawing sends no action and no values; the context says where and for whom (docs/extensions/extensions.md「UI slots」, context).
         let body = try JSON.decoder.decode(JSONValue.self, from: hub.requests.last?.body ?? Data())
         #expect(body["action"] == nil && body["values"] == nil && body["state"] == nil)
-        #expect(body["context"]?["ui_version"] == .number(3) && body["context"]?["platform"] == .string("ios"))
+        #expect(body["context"]?["ui_version"] == .number(8) && body["context"]?["platform"] == .string("ios"))
         #expect(body["context"]?["tz"]?.string == TimeZone.current.identifier && body["context"]?["locale"]?.string?.isEmpty == false)
         #expect(body["context"]?["launcher"] == nil && body["context"]?["machine"] == nil)
     }

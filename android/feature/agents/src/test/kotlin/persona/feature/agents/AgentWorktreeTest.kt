@@ -77,6 +77,57 @@ class AgentWorktreeTest {
         }
     }
 
+    /** A Paseo workspace picked (#8856): Paseo is asked, makes the worktree, and the start goes into the workspace it made. */
+    @Test fun aPaseoWorkspacePickedStartsInANewWorktreePaseoMakes() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val store = Store()
+        val service = Service().apply {
+            catalog = listOf(
+                AgentWorkspace("first/paseo/main", "first", "paseo", "main", "weather", "/code/weather", "main"),
+                AgentWorkspace("first/orca/tree", "first", "orca", "tree", "fix", "/code/weather-fix", "fix"),
+            )
+            madeWorkspace = "made-for-it"
+        }
+        val model = NewAgentViewModel(service, store, MutableStateFlow(listOf(Machine("first", online = true))))
+        try {
+            advanceUntilIdle()
+            model.selection(model.state.value.selection.copy(launcher = "claude"))
+            val rows = model.state.value.workspaces.flatMap { s -> s.rows.map { it.workspace } }
+            // an Orca workspace's worktrees go through Orca's own New Worktree: no switch
+            model.pickWorkspace(rows.first { it.source == "orca" })
+            advanceUntilIdle()
+            assertEquals("first:/code/weather-fix", service.asked.last())
+            assertFalse(model.state.value.worktreeOffered)
+
+            model.pickWorkspace(rows.first { it.source == "paseo" })
+            advanceUntilIdle()
+            // Paseo says where its worktree goes
+            assertEquals("first:/code/weather:paseo", service.asked.last())
+            assertTrue(model.state.value.worktreeOffered)
+            model.inWorktree(true)
+            // a switch turned on does not carry to another choice
+            model.chooseByFolder()
+            assertFalse(model.state.value.inWorktree)
+            advanceUntilIdle()
+            model.pickWorkspace(rows.first { it.source == "paseo" })
+            assertFalse(model.state.value.inWorktree)
+            advanceUntilIdle()
+            model.inWorktree(true)
+            model.prompt("Fix the login bug")
+            model.submit()
+            advanceUntilIdle()
+            assertEquals(listOf("first:/code/weather:Fix the login bug::paseo"), service.added)
+            val request = requireNotNull(service.request)
+            assertEquals("/wt/persona-fix-the-login-bug", request.cwd)
+            assertEquals("made-for-it", request.workspaceId)
+            assertEquals("paseo", request.host)
+            assertEquals("/code/weather", store.operation?.folder)
+        } finally {
+            model.viewModelScope.cancel()
+            Dispatchers.resetMain()
+        }
+    }
+
     private class Store : AgentCreationStore {
         var operation: AgentStartOperation? = null
         val saved = mutableMapOf<String, AgentDefaults>()
@@ -92,6 +143,8 @@ class AgentWorktreeTest {
         val asked = mutableListOf<String>()
         val added = mutableListOf<String>()
         var failAdd = false
+        var catalog = emptyList<AgentWorkspace>()
+        var madeWorkspace: String? = null
         var starts = 0
         var request: AgentStartRequest? = null
         override suspend fun launchers(machineId: String) = listOf(AgentLauncher("claude"))
@@ -102,14 +155,16 @@ class AgentWorktreeTest {
             return AgentStartResult.Created(Session(machineId = request.machineId, sessionId = "s1", cwd = request.cwd))
         }
         override suspend fun operation(operationId: String) = AgentStartResult.Unknown
-        override suspend fun worktreeStatus(machineId: String, cwd: String): WorktreeStatus? {
-            asked += "$machineId:$cwd"
+        override suspend fun worktreeStatus(machineId: String, cwd: String, kind: String?): WorktreeStatus? {
+            asked += "$machineId:$cwd" + (kind?.let { ":$it" } ?: "")
             return if (cwd.startsWith("/code/")) WorktreeStatus(path = cwd, checkouts = "/wt") else WorktreeStatus()
         }
-        override suspend fun addWorktree(machineId: String, cwd: String, nameHint: String, branch: String): WorktreeAdded {
+        override suspend fun addWorktree(machineId: String, cwd: String, nameHint: String, branch: String, kind: String?): WorktreeAdded {
             if (failAdd) throw java.io.IOException("worktree_failed")
-            added += "$machineId:$cwd:$nameHint:$branch"
-            return WorktreeAdded("/wt/" + AgentWorktree.slug(branch), branch.trim())
+            added += "$machineId:$cwd:$nameHint:$branch" + (kind?.let { ":$it" } ?: "")
+            val made = branch.trim().ifEmpty { AgentWorktree.branch(nameHint) }
+            return WorktreeAdded("/wt/" + AgentWorktree.slug(made), made, workspaceId = madeWorkspace)
         }
+        override suspend fun workspaces(machineId: String) = catalog.filter { it.machineId == machineId }
     }
 }

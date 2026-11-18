@@ -31,12 +31,15 @@ import (
 // dest=inbox (a file sent to the computer to keep, docs/protocol/file-transfer.md): it keeps its name in the machine's
 // receive folder (hub.json machines[].inbox_dir), a taken name gets " 2"; up to proto.MaxInboxUploadBytes; only while
 // the machine's file transfer switch is on (403 file_transfer_disabled otherwise).
+// dest=attachment (a file sent with a chat message, #8361): the node keeps it beside the chat's pictures in its
+// uploads/<date>/ under its own name; a node from before it gets the upload without dest, into its temp directory, as
+// chat attachments always went, so a send never fails on an old node.
 func (h *Hub) uploadFile(w http.ResponseWriter, r *http.Request, m *Machine) {
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	size := r.ContentLength
 	dest, limit := r.URL.Query().Get("dest"), int64(proto.MaxUploadBytes)
 	switch dest {
-	case "", proto.UploadDestHealth:
+	case "", proto.UploadDestHealth, proto.UploadDestAttachment:
 	case proto.UploadDestTerminal:
 		limit = proto.MaxTerminalUploadBytes
 	case proto.UploadDestInbox:
@@ -105,7 +108,14 @@ func (h *Hub) uploadFile(w http.ResponseWriter, r *http.Request, m *Machine) {
 	if dest == proto.UploadDestInbox {
 		beginParams["dir"] = m.cfg.InboxDir // "": the node's default
 	}
-	if err := step("file.upload.begin", beginParams, &begin); err != nil {
+	err := step("file.upload.begin", beginParams, &begin)
+	if err != nil && dest == proto.UploadDestAttachment && unknownUploadDest(err) {
+		// A node from before dest=attachment refuses it: the temp directory, as before (one that ignores dest opened
+		// it there already).
+		delete(beginParams, "dest")
+		err = step("file.upload.begin", beginParams, &begin)
+	}
+	if err != nil {
 		var re *rpc.Error
 		// A node from before file.upload.*, or before dest=dir / inbox: "unknown upload destination".
 		if errors.As(err, &re) && re.Code == "" && (strings.HasPrefix(re.Message, "unknown method") || strings.HasPrefix(re.Message, "unknown upload destination")) {
@@ -165,6 +175,12 @@ func (h *Hub) uploadFile(w http.ResponseWriter, r *http.Request, m *Machine) {
 	done = true
 	h.logf("[%s] file from the phone: %d bytes", m.cfg.ID, out.Size)
 	writeJSON(w, out)
+}
+
+// unknownUploadDest: file.upload.begin was refused by a node that does not know the destination asked for.
+func unknownUploadDest(err error) bool {
+	var re *rpc.Error
+	return errors.As(err, &re) && re.Code == "" && strings.HasPrefix(re.Message, "unknown upload destination")
 }
 
 // writeCode answers with an error code the app acts on, plus extra fields.

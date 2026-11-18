@@ -1,0 +1,8 @@
+{
+  "unknown_subcommand": "Unknown node subcommand {command}; available: --stdio, --attach, tailcat, doctor, reset-uid (see {program} node -h)",
+  "extra_args": "node {subcommand} takes no arguments; got {arguments} (see {program} node -h)",
+  "tailcat_subcommand_required": "node tailcat requires init or addr (see {program} node -h)",
+  "tailcat_init_extra_args": "node tailcat init accepts only --hub and --derp-map-url; got {arguments} (see {program} node -h)",
+  "unknown_tailcat_subcommand": "Unknown node tailcat subcommand {command}; available: init, addr (see {program} node -h)",
+  "reset_uid": "Assigned a new machine uid. Restart the resident node on this computer (scripts/deploy/node-launchd.sh install restarts it); the hub will use the new uid the next time it connects."
+}

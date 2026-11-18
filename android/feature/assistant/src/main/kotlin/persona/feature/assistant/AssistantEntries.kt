@@ -8,6 +8,8 @@ import persona.core.navigation.AssistantSettingsRoute
 import persona.core.navigation.ChatRoute
 import persona.core.navigation.ConversationKind
 import persona.core.navigation.Navigator
+import persona.core.navigation.SettingsPage
+import persona.core.navigation.SettingsPageRoute
 import persona.feature.assistant.settings.AssistantSettingsScreen
 
 fun EntryProviderScope<NavKey>.assistantEntries(
@@ -32,5 +34,6 @@ private fun AssistantSettingsPage(navigator: Navigator) {
     }
     AssistantSettingsScreen(management, host.machines, onBack = navigator::back,
         onOpenConversation = { navigator.navigate(ChatRoute(it.machineId, it.sessionId, ConversationKind.Assistant)) },
-        onModelConfiguration = { purpose, owner -> navigator.navigate(persona.core.navigation.ModelPurposeRoute(purpose, owner)) })
+        onModelConfiguration = { purpose, owner -> navigator.navigate(persona.core.navigation.ModelPurposeRoute(purpose, owner)) },
+        onStandingAuthorizations = { navigator.navigate(SettingsPageRoute(SettingsPage.StandingAuthorizations)) })
 }

@@ -190,7 +190,7 @@ describe("AddComputer", () => {
     await type("我的 MacBook");
     await click("下一步");
     expect(posts[0]?.body).toEqual({ add: { name: "我的 MacBook", os: "mac" } });
-    expect(button("拷贝配对链接")).toBeTruthy();
+    expect(button("复制配对链接")).toBeTruthy();
     expect(document.querySelector<HTMLAnchorElement>('a[href$="persona-link-install.md"]')).toBeTruthy();
     expect(text()).toContain("要自己从源码编译");
     expect(text()).not.toContain("curl");
@@ -251,7 +251,7 @@ describe("AddComputer", () => {
   it("lets the user pick the system of a computer added elsewhere before", async () => {
     await act(async () => root.render(<AddComputer open onClose={() => {}} again={{ id: "home", name: "家里的服务器" }} />));
     await flush();
-    expect(button("拷贝配对链接")).toBeTruthy(); // nothing known: Mac
+    expect(button("复制配对链接")).toBeTruthy(); // nothing known: Mac
     await click("Linux");
     expect(text()).toContain("curl -fsSL https://example.com/install.sh");
     await click("Windows");

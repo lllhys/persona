@@ -165,6 +165,10 @@ func TestDecisionThatCannotBeKeptAsHeldIsPushed(t *testing.T) {
 	s.loadAcceptLocked(context.Background())
 	s.accept.mu.Unlock()
 	st := &acceptPutFails{memStore: &memStore{}, fail: true}
+	// Only the acceptance write fails: keep the settings so the replacement store cannot reset the briefing's time zone.
+	if err := st.memStore.PutSetting(context.Background(), settingsKey, s.settings(context.Background())); err != nil {
+		t.Fatal(err)
+	}
 	s.store = func() Store { return st }
 	res := reviewTask(t, s, todo.ID, waitingDecision())
 	if strings.Contains(res, "can wait (can_wait)") || !strings.Contains(res, "can_wait was ignored ("+waitNotKept+")") ||
@@ -421,7 +425,7 @@ func TestOnlyABriefingThatReachedTheOwnerEndsTheWait(t *testing.T) {
 	}
 	t.Run("the turn failed", func(t *testing.T) {
 		s, f, todo, _ := start(t)
-		if run := s.briefClaim("conv-briefing", "⏰ morning", true); run != nil {
+		if run, claimed := s.briefClaim("conv-briefing", "⏰ morning", "failed-turn", true); run != nil || claimed {
 			t.Fatal("a failed turn got the briefing card")
 		}
 		if got := s.briefPush("conv-briefing", i18n.ZhHans, false); got != "" || !askOf(s, todo.ID).ForBriefing {

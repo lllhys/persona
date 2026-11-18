@@ -42,10 +42,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-// Extensions' UI slots (docs/extensions/extensions.md "UI slots") on Android: the "Extensions" section at the top of the settings home (the
-// cards first, then a row per nav page with its icon and badge), the settings tab's badge (the nav pages' badges added
-// up), the sections extensions draw on a machine's page, and the pages they draw for their connectors' inbox items
-// (ExtensionInboxItem.kt). A hub without extension_ui_slots has none of them.
+// Extensions' UI slots (docs/extensions/extensions.md "UI slots") on Android: the "Extensions" section at the top of
+// Settings › Extensions (the cards first, then a row per nav page with its icon and badge), the settings tab's badge
+// (the nav pages' badges added up), the sections extensions draw on a machine's page, and the pages they draw for their
+// connectors' inbox items (ExtensionInboxItem.kt). A hub without extension_ui_slots has none of them.
 
 /** The slots this app draws; a placement it does not know is ignored. */
 internal object ExtensionSlotText {
@@ -65,7 +65,7 @@ internal object ExtensionSlotText {
     fun icon(name: String?): PhIcon = when (name) {
         "chart" -> PhIcons.ChartBar
         "gauge" -> PhIcons.Gauge
-        "list" -> PhIcons.ListChecks
+        "list" -> PhIcons.List
         "bell" -> PhIcons.BellSimple
         "doc" -> PhIcons.FileText
         "calendar" -> PhIcons.CalendarBlank
@@ -208,8 +208,8 @@ internal fun KeepFresh(model: ExtensionViewModel, events: Flow<ExtensionUiEvent>
 }
 
 /**
- * The "Extensions" section at the top of the settings home: each card an extension draws (`overview_card`, compact; tapping it
- * opens the page it names), then a row per nav page with its icon and badge. Nothing when no extension draws there.
+ * The "Extensions" section at the top of Settings › Extensions: each card an extension draws (`overview_card`, compact;
+ * tapping it opens the page it names), then a row per nav page with its icon and badge. Nothing when no extension draws there.
  */
 internal fun LazyListScope.extensionSlotItems(
     state: ExtensionSlotsState,
@@ -269,10 +269,10 @@ private fun ExtensionCard(place: ExtensionUiPlace, state: ExtensionViewState, ha
     }
 }
 
-/** A card of the settings home as drawn now: where it is, its view, its buttons, and reading it again ("Retry"). */
+/** A card of Settings › Extensions as drawn now: where it is, its view, its buttons, and reading it again ("Retry"). */
 internal class ExtensionCardSlot(val place: ExtensionUiPlace, val state: ExtensionViewState, val handle: ExtensionViewHandle, val reload: () -> Unit)
 
-/** The cards of the settings home, each drawn compact and kept fresh while settings is on screen. */
+/** The cards of Settings › Extensions, each drawn compact and kept fresh while that page is on screen. */
 @Composable
 internal fun rememberExtensionCards(slots: ExtensionSlots?, onOpen: (persona.core.navigation.ExtensionUiRoute) -> Unit = {}): List<ExtensionCardSlot> {
     slots ?: return emptyList()

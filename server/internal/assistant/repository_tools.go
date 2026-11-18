@@ -11,8 +11,9 @@ import (
 )
 
 type repositoryPage struct {
-	Repositories []RepositoryBinding `json:"repositories"`
-	NextCursor   string              `json:"next_cursor,omitempty"`
+	CatalogRevision int64               `json:"catalog_revision"`
+	Repositories    []RepositoryBinding `json:"repositories"`
+	NextCursor      string              `json:"next_cursor,omitempty"`
 }
 
 type repositoryCursor struct {
@@ -22,7 +23,7 @@ type repositoryCursor struct {
 }
 
 func repositoryArguments(raw []byte, out any) error {
-	if len(raw) > 4096 {
+	if len(raw) > 16<<10 {
 		return errors.New("repository arguments exceed the limit")
 	}
 	var fields map[string]json.RawMessage
@@ -106,7 +107,7 @@ func (s *Service) toolRepositories(ctx context.Context, name string, raw json.Ra
 			return "", errors.New("invalid repository cursor")
 		}
 	}
-	page := repositoryPage{Repositories: []RepositoryBinding{}}
+	page := repositoryPage{CatalogRevision: doc.Revision, Repositories: []RepositoryBinding{}}
 	for _, binding := range doc.Repositories[start:] {
 		matches := query == ""
 		for _, value := range append([]string{binding.Name, binding.Path, binding.Purpose}, binding.Aliases...) {

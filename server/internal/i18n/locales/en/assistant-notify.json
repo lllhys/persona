@@ -1,0 +1,20 @@
+{
+  "ln_held_notice": "Moved to the briefing (low-distraction mode: only the main conversation or P0 pushes reach the phone). This notice appears in “Needs you” and the briefing, with no alert sound.",
+  "sent_notice_one": "Notification sent to {count} device.",
+  "sent_notice_other": "Notification sent to {count} devices.",
+  "kept_notice_one": "Not delivered yet: no device that takes notifications is connected now, so the user has not been alerted. It waits for {count} device and shows when that device connects again within 30 minutes (it is lost if the hub restarts first). A chat channel with pushes on, if one is set up, still gets its copy.",
+  "kept_notice_other": "Not delivered yet: no device that takes notifications is connected now, so the user has not been alerted. It waits for {count} devices and shows when one connects again within 30 minutes (it is lost if the hub restarts first). A chat channel with pushes on, if one is set up, still gets its copy.",
+  "filtered_notice": "Not delivered: every device that could take it has these notifications turned off, so the user was not alerted. A chat channel with pushes on, if one is set up, still gets its copy. Do not say the user was notified.",
+  "no_device_notice": "Not delivered: no phone, computer or browser can take notifications from this hub now, so the user was not alerted. A chat channel with pushes on, if one is set up, still gets its copy. Do not say the user was notified.",
+  "hub_away_notice": "Not sent yet: the hub is unreachable now. The notification is kept and goes to the user's devices once the hub is back, so the user has not been alerted yet.",
+  "no_device_copied": "No phone, computer or browser took the push (0 devices).",
+  "filtered_copied": "No device took the push (0 devices): every device that could has these notifications turned off.",
+  "kept_copied_one": "No device took the push yet (0 devices now): it waits for {count} offline device for up to 30 minutes.",
+  "kept_copied_other": "No device took the push yet (0 devices now): it waits for {count} offline devices for up to 30 minutes.",
+  "hub_away_copied": "The hub is unreachable now: the push to the devices is kept and goes out once it is back.",
+  "copy_sent": "Copied to {name}: delivered.",
+  "copy_failed": "The copy to {name} failed to send.",
+  "copy_pending": "Copied to {name} (delivery not confirmed).",
+  "not_alerted": "The user was not alerted. Do not say the user was notified.",
+  "then": "{first} {second}"
+}

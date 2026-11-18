@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/link"
 )
 
@@ -18,7 +19,7 @@ import (
 const unitName = "persona-link.service"
 
 // noUserInstance starts the reason when systemd is there but the user's own instance cannot be reached.
-const noUserInstance = "连不上你的 systemd 用户实例"
+func noUserInstance() string { return i18n.T(i18n.Terminal(), "link-service.systemd_user_unavailable") }
 
 // unitPath is where systemd looks for the user's own units.
 func (e *env) unitPath() string {
@@ -31,8 +32,8 @@ func (e *env) unitPath() string {
 }
 
 // unitFile is the service. No network-online.target: a user instance has none to wait for, and persona-link retries
-// by itself until the hub answers. Its status lines are for the menu bar app, so not for the journal; the log goes to
-// its own file, which `persona-link logs` reads whether or not the journal keeps user logs.
+// by itself until the hub answers. Status is persisted in link.status.json, while the readable log goes to its own
+// file, which `persona-link logs` reads whether or not the journal keeps user logs.
 func unitFile(bin, logPath string) string {
 	return `# Written by persona-link install; persona-link uninstall removes it (docs/operations/link.md).
 [Unit]
@@ -72,23 +73,26 @@ func (e *env) systemctl(args ...string) (string, error) {
 // systemdMissing says why there is no systemd user instance to run persona-link in; "" when there is one.
 func (e *env) systemdMissing() string {
 	if e.goos != "linux" {
-		return "不是 Linux"
+		return i18n.T(i18n.Default, "link-cli.systemd_not_linux")
 	}
 	if _, err := e.lookPath("systemctl"); err != nil {
-		return "没有 systemctl"
+		return i18n.T(i18n.Default, "link-cli.systemctl_missing")
 	}
 	if !e.exists("/run/systemd/system") {
-		return "系统不是由 systemd 启动的（容器里常见）"
+		return i18n.T(i18n.Default, "link-cli.systemd_not_booted")
 	}
 	if out, err := e.systemctl("show-environment"); err != nil {
 		why := firstLine(out)
 		if why == "" {
 			why = err.Error()
 		}
-		return noUserInstance + "：" + why
+		return terminalText("link-cli.systemd_unavailable_detail", i18n.Args{"error": why})
 	}
 	return ""
 }
+
+// systemdReason keeps the canonical reason in errors and JSON, translating only a person's view of it.
+func systemdReason(reason string) link.StatusText { return link.StatusText(reason) }
 
 // lingering: the user's systemd instance runs from boot, with nobody logged in (loginctl enable-linger).
 func (e *env) lingering() bool {
@@ -100,7 +104,7 @@ func install(e *env, args []string) error {
 	var addrs []string
 	var sshFlags sshPairFlags
 	nodeBinAny := false // --node-bin: either program, asked which (nodeInstall)
-	pairing, passive, withNode, withTray := false, false, true, true
+	pairing, passive, withNode := false, false, true
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--pair": // the link, or - or nothing for stdin
@@ -113,8 +117,6 @@ func install(e *env, args []string) error {
 			pairing, pairLink = true, strings.TrimPrefix(a, "--pair=")
 		case a == "--no-node":
 			withNode = false
-		case a == "--no-tray":
-			withTray = false
 		default:
 			if v, next, ok := optionalValue(args, i, "--listen"); ok {
 				passive, listen, i = true, v, next
@@ -163,31 +165,28 @@ func install(e *env, args []string) error {
 		}
 	}
 	if pairing && (passive || len(addrs) > 0) {
-		return errors.New("--pair（我去连 hub）和 --listen（让 hub 来连）只能选一个")
+		return link.NewTextError("link-cli.install_pair_listen_conflict", nil)
 	}
 	if sshFlags.any() && (passive || len(addrs) > 0) {
-		return errors.New("install --listen 不要 --ssh：SSH 隧道只在主动模式（我去连 hub）下用")
+		return link.NewTextError("link-cli.install_listen_ssh", nil)
 	}
 	switch e.goos {
-	case "linux", "windows":
-	case "darwin":
-		return errors.New("Mac 上不用 install：装菜单栏 App「Persona Link」（scripts/app/mac-link.sh install），它带着 persona-link 和 persona-node、" +
-			"管着它们，登录时启动在它的菜单里勾")
+	case "linux", "darwin", "windows":
 	default:
-		return fmt.Errorf("%s 上 install 还装不了后台服务：先在前台运行 persona-link run，交给这台的进程管理", e.goos)
+		return link.NewTextError("link-cli.install_unsupported", nil, i18n.Args{"goos": e.goos})
 	}
 	if e.goos == "windows" && nodeBinAny && personad != "" && e.programOf(personad) != programPersonad {
-		return fmt.Errorf("%s is not personad: on Windows the node runs personad (docs/operations/windows.md); give personad with --personad", personad)
+		return link.NewTextError("link-cli.windows_personad_required", nil, i18n.Args{"path": personad})
 	}
 	if pairing {
 		c, err := pairWithSSH(e, pairLink, machine, sshFlags)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(e.stdout, "配对好了：这台是 hub 上的「%s」，凭据存在 %s。\n", c.Machine, e.configPath())
+		fmt.Fprintln(e.stdout, terminalText("link-cli.install_pair_success", i18n.Args{"machine": c.Machine, "path": e.configPath()}))
 	} else if sshFlags.any() {
 		if strings.TrimSpace(sshFlags.server) == "" {
-			return errors.New("用了 --ssh-target 或 --ssh-always 时要一起填 --ssh <服务器>")
+			return link.NewTextError("link-cli.ssh_flags_require_server", nil)
 		}
 		always := sshFlags.always
 		if !sshFlags.alwaysSet {
@@ -206,38 +205,40 @@ func install(e *env, args []string) error {
 			return err
 		}
 		if c.Passive.Paired() && len(addrs) == 0 {
-			fmt.Fprintf(e.stdout, "被动模式（让 hub 来连）：已经和 hub%s配对过，监听 %s。要换 hub：persona-link pair --listen。\n",
-				passiveHubText(c.Passive), c.Passive.ListenAddr())
+			fmt.Fprintln(e.stdout, terminalText("link-cli.install_passive_existing", i18n.Args{"hub": passiveHubText(c.Passive), "listen": c.Passive.ListenAddr()}))
 		} else if invite, err = link.PairListen(e.configPath(), "", addrs, e.now()); errors.Is(err, link.ErrNoAddress) {
 			// The service still goes in; the link waits for an address the hub can use.
-			fmt.Fprintf(e.stdout, "%v；装好以后：persona-link pair --listen --addr <hub 连这台用的地址>\n", err)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.install_address_later", i18n.Args{"error": link.ErrorText(i18n.Terminal(), err)}))
 		} else if err != nil {
 			return err
 		}
 	}
 	if e.goos == "windows" {
-		return installTask(e, withNode, withTray, personad, invite) // winservice.go
+		return installTask(e, withNode, personad, invite) // winservice.go
+	}
+	if e.goos == "darwin" {
+		return installMac(e, withNode, personad, nodeBinAny, invite) // service_mac.go
 	}
 	bin, copied, err := e.installBinary()
 	if err != nil {
-		return fmt.Errorf("放不进 %s：%w", e.binPath(), err)
+		return link.NewTextError("link-cli.binary_install_failed", err, i18n.Args{"path": e.binPath()})
 	}
 	if copied {
-		fmt.Fprintf(e.stdout, "装好了 %s。\n", bin)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.binary_installed", i18n.Args{"path": bin}))
 	}
 	if why := e.systemdMissing(); why != "" {
-		noSystemd(e, why, bin)
+		noSystemd(e, systemdReason(why).Text(i18n.Terminal()), bin)
 		if withNode {
-			fmt.Fprintf(e.stdout, "常驻 node 同理：nohup %s node --attach >> %s 2>&1 &\n", shellQuote(e.nodeBin()), shellQuote(e.nodeLog()))
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_nohup", i18n.Args{"binary": shellQuote(e.nodeBin()), "log": shellQuote(e.nodeLog())}))
 			// nodeupdate.Options: what restarts the node on exit has to say so, or the hub cannot update it.
-			fmt.Fprintln(e.stdout, "  交给退出后会重启它的进程管理（容器的入口脚本、supervisord、runit、s6）时写成 node --attach --supervised，hub 才能远程更新它；nohup、cron 不会重启它，别加。")
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_supervisor_hint"))
 		}
 		printInvite(e, invite)
 		return exitCode(1)
 	}
 	if withNode {
 		if err := lockedNodeCommand(e, true, func() error { return nodeInstall(e, personad, nodeBinAny) }); err != nil {
-			fmt.Fprintf(e.stdout, "常驻 node 没装好：%v\n", err)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_install_failed_output", i18n.Args{"error": link.ErrorText(i18n.Terminal(), err)}))
 		}
 	}
 	var oldPID int
@@ -254,15 +255,15 @@ func install(e *env, args []string) error {
 	started := e.now()
 	for _, step := range [][]string{{"daemon-reload"}, {"enable", e.linkUnitName()}, {"restart", e.linkUnitName()}} {
 		if out, err := e.systemctl(step...); err != nil {
-			return fmt.Errorf("systemctl --user %s 失败：%s", strings.Join(step, " "), orErr(out, err))
+			return link.NewTextError("link-cli.systemctl_step_failed", nil, i18n.Args{"step": strings.Join(step, " "), "error": orErr(out, err)})
 		}
 	}
-	fmt.Fprintf(e.stdout, "装好了 systemd 用户服务 %s（%s），已启动，以后跟着你的 systemd 用户实例启动。\n", e.linkUnitName(), unit)
+	fmt.Fprintln(e.stdout, terminalText("link-cli.systemd_installed", i18n.Args{"unit": e.linkUnitName(), "path": unit}))
 	if e.uid == 0 {
-		fmt.Fprintln(e.stdout, "注意：用 root 装的，它以 root 的身份跑、用 /root/.persona；常驻 node 也要在 root 下跑。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.root_install_warning"))
 	}
 	if !e.lingering() {
-		fmt.Fprintf(e.stdout, "注意：没开 linger，退出登录后服务就停、开机也不会自己起来。让它一直跑：sudo loginctl enable-linger %s\n", e.userOr("$USER"))
+		fmt.Fprintln(e.stdout, terminalText("link-cli.linger_install_warning", i18n.Args{"user": e.userOr("$USER")}))
 	}
 	return waitStarted(e, started, oldPID, invite)
 }
@@ -277,8 +278,7 @@ func waitStarted(e *env, started time.Time, oldPID int, invite *link.PairInvite)
 		return err
 	}
 	if _, err := link.Load(e.configPath()); err != nil {
-		fmt.Fprintln(e.stdout, "还没配对：persona-link pair '<personad hub pair --machine <这台的 id> 给的链接>'（我去连 hub），"+
-			"或者 persona-link pair --listen（让 hub 来连）；服务几秒内就会用上，不用重启。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.install_unpaired"))
 		return nil
 	}
 	return waitConnected(e, started, oldPID)
@@ -289,8 +289,7 @@ func printInvite(e *env, inv *link.PairInvite) {
 	if inv == nil {
 		return
 	}
-	fmt.Fprintf(e.stdout, "把这条链接粘贴到 hub 管理界面「电脑 › 添加电脑 › hub 来连」（%s内有效，只能用一次；地址 %s，hub 连不到时在那里改）：\n%s\n",
-		duration(link.PairCodeLife), strings.Join(inv.Addrs, "、"), inv.Link)
+	fmt.Fprintln(e.stdout, terminalText("link-cli.install_invite", i18n.Args{"duration": duration(link.PairCodeLife), "addresses": terminalJoin(inv.Addrs), "link": inv.Link}))
 	if inv.LegacyLink != "" {
 		fmt.Fprintln(e.stdout, inv.LegacyLink)
 	}
@@ -313,19 +312,9 @@ func orErr(out string, err error) string {
 // noSystemd tells what to do instead where there is no systemd user instance: a container, some NAS systems.
 func noSystemd(e *env, why, bin string) {
 	runLine := shellQuote(bin) + " run --log " + shellQuote(e.logPath())
-	fmt.Fprintf(e.stdout, `没装成后台服务：这台没有可用的 systemd 用户服务（%s）。换一种办法让 persona-link 一直跑：
-  · 现在就在后台跑起来：
-      nohup %s >/dev/null 2>&1 &
-  · 开机自动跑（cron）：
-      (crontab -l 2>/dev/null; echo '@reboot %s >/dev/null 2>&1') | crontab -
-  · 群晖等 NAS：任务计划里加一个「开机」触发的用户脚本，内容是上面 nohup 那一行（用这个用户跑，不要 root）。
-  · 容器：让 %s 当主进程，重启策略 unless-stopped，把 ~/.persona 挂成卷（凭据在里面）；常驻 node 要在同一个容器里。
-  · supervisord、runit、s6、OpenRC 这类进程管理：让它前台跑上面那条命令，退出了就重启。
-跑起来以后：persona-link status 看状态，persona-link logs -f 看日志。
-`, why, runLine, runLine, runLine)
-	if strings.HasPrefix(why, noUserInstance) {
-		fmt.Fprintf(e.stdout, "如果这台其实有 systemd：用 ssh 直接登录这个用户再装（su / sudo -u 进来的会话找不到用户实例），"+
-			"或者先 sudo loginctl enable-linger %s 再试。\n", e.userOr("$USER"))
+	fmt.Fprintln(e.stdout, terminalText("link-cli.no_systemd", i18n.Args{"error": why, "run": runLine}))
+	if strings.HasPrefix(why, noUserInstance()) {
+		fmt.Fprintln(e.stdout, terminalText("link-cli.systemd_login_hint", i18n.Args{"user": e.userOr("$USER")}))
 	}
 }
 
@@ -343,9 +332,9 @@ func waitConnected(e *env, since time.Time, oldPID int) error {
 	c, _ := link.Read(e.configPath())
 	passive := c.CurrentMode() == link.ModePassive
 	if passive {
-		fmt.Fprintln(e.stdout, "等它开始监听…")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_listen"))
 	} else {
-		fmt.Fprintln(e.stdout, "等它连上 hub…")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_connect"))
 	}
 	deadline := since.Add(e.wait)
 	var st *link.SavedStatus
@@ -367,44 +356,44 @@ func waitConnected(e *env, since time.Time, oldPID int) error {
 	}
 	switch {
 	case st == nil:
-		fmt.Fprintf(e.stdout, "%s 内服务没报告状态：persona-link status、persona-link logs 看看。\n", e.wait)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_no_report", i18n.Args{"duration": e.wait.String()}))
 		return exitCode(1)
 	case passive && st.State == "waiting":
-		fmt.Fprintf(e.stdout, "还没开始监听：%s\n服务会一直重试；persona-link status 看进展。\n", st.Error)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_not_listening", i18n.Args{"error": link.StatusErrorText(i18n.Terminal(), st.Error)}))
 		return exitCode(1)
 	case passive:
-		line := "在监听 " + st.Listen
+		line := terminalText("link-cli.wait_listening", i18n.Args{"listen": st.Listen})
 		switch st.State {
 		case "connected":
-			line += "，hub 已经连进来了（来自 " + st.Address + "）。"
+			line += terminalText("link-cli.wait_passive_connected", i18n.Args{"address": st.Address})
 		case "listening":
-			line += "，等 hub" + hubName(st.HubName) + "连进来。"
+			line += terminalText("link-cli.wait_passive_listening", i18n.Args{"hub": hubName(st.HubName)})
 		default:
-			line += "，等 hub 来配对。"
+			line += terminalText("link-cli.wait_passive_pairing")
 		}
 		fmt.Fprintln(e.stdout, line)
-		fmt.Fprintln(e.stdout, "看状态：persona-link status；看日志：persona-link logs -f")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_status_logs"))
 		return nil
 	case st.State == "connected":
-		line := "连上了：" + hubText(st.HubName, st.MeshHubs, "", true) + "，" + addressText(st.Kind, st.Address)
+		line := terminalText("link-cli.wait_connected", i18n.Args{"hub": hubText(st.HubName, st.MeshHubs, "", true), "address": addressText(st.Kind, st.Address)})
 		switch st.Node {
 		case "online":
-			line += "；本机 node 在线。"
+			line += terminalText("link-cli.wait_node_online")
 		case "offline":
-			line += "；但 hub 连不上本机的 node：" + st.NodeError + nodeHint(st.NodeError)
+			line += terminalText("link-cli.wait_node_offline", i18n.Args{"error": link.StatusErrorText(i18n.Terminal(), st.NodeError), "hint": nodeHint(st.NodeError)})
 		default:
-			line += "；hub 正在连本机的 node。"
+			line += terminalText("link-cli.wait_node_connecting")
 		}
 		fmt.Fprintln(e.stdout, line)
-		fmt.Fprintln(e.stdout, "看状态：persona-link status；看日志：persona-link logs -f")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_status_logs"))
 		return nil
 	case st.State == "unpaired":
-		fmt.Fprintln(e.stdout, "还没配对：persona-link pair '<链接>'。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_unpaired"))
 		return nil
 	default:
-		fmt.Fprintf(e.stdout, "还没连上：%s\n服务会一直重试；persona-link status 看进展，persona-link logs -f 看日志。\n", stateText(&st.Status, e.now()))
+		fmt.Fprintln(e.stdout, terminalText("link-cli.wait_not_connected", i18n.Args{"state": stateText(&st.Status, e.now())}))
 		for _, part := range errorParts(st.Error) {
-			fmt.Fprintln(e.stdout, "  · "+part)
+			fmt.Fprintln(e.stdout, "  · "+link.StatusErrorText(i18n.Terminal(), part))
 		}
 		return exitCode(1)
 	}
@@ -422,29 +411,33 @@ func uninstall(e *env, args []string) error {
 	switch {
 	case e.goos == "windows":
 		uninstallTask(e) // winservice.go
+	case e.goos == "darwin":
+		if err := uninstallMac(e); err != nil { // service_mac.go
+			return err
+		}
 	case e.goos != "linux":
 	case fileExists(unit):
 		if why := e.systemdMissing(); why == "" {
 			if out, err := e.systemctl("disable", "--now", e.linkUnitName()); err != nil {
-				fmt.Fprintf(e.stdout, "停服务时出错：%s\n", orErr(out, err))
+				fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_stop_error", i18n.Args{"error": orErr(out, err)}))
 			}
 		} else {
-			fmt.Fprintf(e.stdout, "停不了服务（%s），只删了它的文件。\n", why)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_stop_unavailable", i18n.Args{"error": systemdReason(why).Text(i18n.Terminal())}))
 		}
 		if err := os.Remove(unit); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 		_, _ = e.systemctl("daemon-reload")
-		fmt.Fprintf(e.stdout, "停掉并删掉了 systemd 用户服务 %s。\n", e.linkUnitName())
+		fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_systemd_removed", i18n.Args{"unit": e.linkUnitName()}))
 	default:
-		fmt.Fprintf(e.stdout, "没装 systemd 用户服务（%s 不存在）。\n", unit)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_systemd_missing", i18n.Args{"path": unit}))
 	}
 	if !purge {
-		fmt.Fprintf(e.stdout, "凭据还在 %s。这台不再连 hub 了：persona-link uninstall --purge，再在 App 的「设置 › 设备」里撤销它。\n", e.configPath())
+		fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_credentials_kept", i18n.Args{"path": e.configPath()}))
 		return nil
 	}
 	if link.Running(e.configPath()) {
-		return errors.New("还有一个 persona-link 在运行（不是这个服务起的：菜单栏 App，或者你自己跑的）：先停掉它，再 --purge")
+		return link.NewTextError("link-cli.running_before_purge", nil)
 	}
 	cfg := e.configPath()
 	var gone []string
@@ -462,15 +455,15 @@ func uninstall(e *env, args []string) error {
 		gone = append(gone, dir)
 	}
 	if len(gone) == 0 {
-		fmt.Fprintln(e.stdout, "没有要删的文件。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_no_files"))
 	} else {
-		fmt.Fprintf(e.stdout, "删掉了：%s\n", strings.Join(gone, "、"))
+		fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_files_removed", i18n.Args{"paths": terminalJoin(gone)}))
 	}
-	nodeLine := "常驻 node 的服务留着：persona-link node uninstall。"
+	nodeKey := "link-cli.uninstall_node_kept"
 	if e.goos == "windows" {
-		nodeLine = "常驻 node 随计划任务一起停了，" + e.nodeBin() + " 留着。"
+		nodeKey = "link-cli.uninstall_windows_node_stopped"
 	}
-	fmt.Fprintln(e.stdout, "hub 那边这台的凭据在 App 的「设置 › 设备」里撤销（被动模式的在 hub 管理界面的「电脑」里删掉这台）。"+nodeLine)
+	fmt.Fprintln(e.stdout, terminalText("link-cli.uninstall_revoke", i18n.Args{"node": terminalText(nodeKey, i18n.Args{"path": e.nodeBin()})}))
 	return nil
 }
 
@@ -479,5 +472,5 @@ func hubName(name string) string {
 	if name == "" {
 		return ""
 	}
-	return "「" + name + "」"
+	return terminalText("link-cli.hub_name_suffix", i18n.Args{"name": name})
 }

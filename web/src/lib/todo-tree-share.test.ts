@@ -17,7 +17,7 @@ const todos: Todo[] = [
 const sessions = [s("a", "/code/one"), s("a2", "/code/one"), s("b", "/code/one"), s("c", "/code/two"), s("loose", "/code/two")];
 const build = (all: Session[], ms = machines) => buildTodoTree(all.map((x) => ({ ...x })), ms.map((m) => ({ ...m })), todos, { spaces: [], sessions: [] }, NOW);
 
-const project = (tree: TodoTree, name: string) => tree.projects.find((p) => p.name === name)!;
+const todo = (tree: TodoTree, id: string) => tree.todos.find((td) => td.todoId === id)!;
 
 describe("shareTree", () => {
   it("keeps the whole tree when a push changed nothing in it", () => {
@@ -34,10 +34,10 @@ describe("shareTree", () => {
     const shared = shareTree(first, next);
     expect(shared).toEqual(next);
     expect(shared).not.toBe(first);
-    // the other project, the loose agents, and the changed project's other agent stay last time's objects
-    expect(project(shared, "two")).toBe(project(first, "two"));
+    // the other to-do, the loose agents, and the changed to-do's other agent stay last time's objects
+    expect(todo(shared, "t2")).toBe(todo(first, "t2"));
     expect(shared.loose).toBe(first.loose);
-    const [before, after] = [project(first, "one").todos[0]!, project(shared, "one").todos[0]!];
+    const [before, after] = [todo(first, "t1"), todo(shared, "t1")];
     expect(after).not.toBe(before);
     expect(after.agents.find((a) => a.session.session_id === "b")).toBe(before.agents.find((a) => a.session.session_id === "b"));
     expect(after.agents.find((a) => a.session.session_id === "a")).not.toBe(before.agents.find((a) => a.session.session_id === "a"));
@@ -48,6 +48,6 @@ describe("shareTree", () => {
     const next = build([...sessions.filter((x) => x.session_id !== "b"), s("d", "/code/three")]);
     const shared = shareTree(first, next);
     expect(shared).toEqual(next);
-    expect(project(shared, "two")).toBe(project(first, "two"));
+    expect(todo(shared, "t2")).toBe(todo(first, "t2"));
   });
 });

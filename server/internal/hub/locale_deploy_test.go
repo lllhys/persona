@@ -200,3 +200,33 @@ func TestComputerBrowserSnapshotsUseConnectionLanguage(t *testing.T) {
 		t.Fatal("locale switch kept old status")
 	}
 }
+
+// The notes nodes write on their engines (the Paseo engine's, in the canonical Chinese of node-engine) reach each
+// app in its language, in the machine list and in a machines event; the manager's snapshot keeps the canonical text,
+// and a note the hub has no words for (Orca's) stays as it is.
+func TestEngineNotesLocalized(t *testing.T) {
+	args := i18n.Args{"reason": "no Node.js found (set PERSONA_NODEJS)"}
+	paseo := i18n.T(i18n.Default, "node-engine.paseo_unreachable", args)
+	orca := "这个版本的 Orca 和 Persona 不兼容，请把两边都更新到最新版"
+	in := []proto.Machine{{ID: "laptop", Engines: []proto.Engine{{ID: "orca", Note: orca}, {ID: "paseo", Available: true, Note: paseo}}}}
+	for _, l := range []i18n.Lang{i18n.En, i18n.Ja, i18n.ZhHans} {
+		got := localizedMachines(l, in)[0].Engines
+		if got[1].Note != i18n.T(l, "node-engine.paseo_unreachable", args) || got[0].Note != orca {
+			t.Fatalf("%s: %+v", l, got)
+		}
+	}
+	if in[0].Engines[1].Note != paseo {
+		t.Fatal("the manager's snapshot was changed")
+	}
+
+	raw, _ := json.Marshal(map[string]any{"type": "machines", "machines": in})
+	var event struct {
+		Machines []proto.Machine `json:"machines"`
+	}
+	if err := json.Unmarshal(localizedMachineEvent(i18n.En, raw), &event); err != nil {
+		t.Fatal(err)
+	}
+	if got := event.Machines[0].Engines[1].Note; got != i18n.T(i18n.En, "node-engine.paseo_unreachable", args) {
+		t.Fatalf("event: %q", got)
+	}
+}

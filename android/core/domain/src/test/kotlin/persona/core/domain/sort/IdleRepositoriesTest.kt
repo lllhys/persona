@@ -87,7 +87,7 @@ class IdleRepositoriesTest {
         assertNull(list(rows, byRepo.copy(quick = AgentQuickFilter.Working)).group(id).idleFold)
         // A tree with nothing going on folds whole: no line of its own.
         assertNull(list(rows.drop(1)).groups.single().idleFold)
-        // Only By Repository draws the line.
-        assertTrue(list(rows, AgentListSettings(grouping = AgentGrouping.MachineSpace)).groups.all { it.idleFold == null })
+        // By project's spaces carry their idle agents too; its tree draws them only as the row that folds them again.
+        assertTrue(list(rows, AgentListSettings(grouping = AgentGrouping.MachineSpace)).groups.all { it.repo == null })
     }
 }

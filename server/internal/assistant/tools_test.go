@@ -121,6 +121,38 @@ func TestStartResultUnknown(t *testing.T) {
 	}
 }
 
+// Which failed sends may still have reached the agent (#7539): no answer came, or the node's error says delivered
+// unknown or yes. A refusal, an error that says nothing of delivery, and a request that never went out are definite.
+func TestSendUnknown(t *testing.T) {
+	delivered := func(code, d string) error {
+		return &rpc.Error{Code: code, Message: "send failed", Data: json.RawMessage(`{"delivered":"` + d + `"}`)}
+	}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"deadline", context.DeadlineExceeded, true},
+		{"dropped", rpc.ErrDropped, true},
+		{"inbox did not confirm it", delivered("peer_unconfirmed", "unknown"), true},
+		{"typing failed part way", delivered("", "unknown"), true},
+		{"wrapped, typing failed part way", fmt.Errorf("session.send: %w", delivered("", "unknown")), true},
+		{"delivered, then failed", delivered("internal", "yes"), true},
+		{"refused, nothing typed", delivered("not_delivered", "none"), false},
+		{"coded, no delivered", &rpc.Error{Code: "open_elsewhere", Message: "open elsewhere"}, false},
+		{"data without delivered", &rpc.Error{Message: "send failed", Data: json.RawMessage(`{"draft":"hi"}`)}, false},
+		{"plain error", errors.New("no such session"), false},
+		{"never went out, its wait ran out", rpc.NotSent(context.DeadlineExceeded), false},
+		{"never went out, closed", rpc.NotSent(rpc.ErrClosed), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sendUnknown(tc.err); got != tc.want {
+				t.Fatalf("sendUnknown(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 // The adoption filter: new, hub-started, non-assistant, same launcher and directory, fresh sign of life.
 func TestAdoptStartedSessionFilters(t *testing.T) {
 	s, f := newTaskService(t)
@@ -139,7 +171,7 @@ func TestAdoptStartedSessionFilters(t *testing.T) {
 		mk("new", func(s *proto.Session) { s.Cwd = ""; s.WorkspaceCwd = "/code/app" }),
 	} {
 		f.setSessions("box", mk("old", func(*proto.Session) {}), sess)
-		if got, ok := s.adoptStartedSession(context.Background(), dev, "claude-code", "/code/app", known); !ok || got.SessionID != "new" {
+		if got, ok := s.adoptStartedSession(context.Background(), dev, "claude-code", "/code/app", "", known); !ok || got.SessionID != "new" {
 			t.Fatalf("got %+v ok=%v, want new adopted", got, ok)
 		}
 	}
@@ -157,14 +189,14 @@ func TestAdoptStartedSessionFilters(t *testing.T) {
 		{"never seen", func(s *proto.Session) { s.UpdatedAt = time.Time{} }},
 	} {
 		f.setSessions("box", mk("old", func(*proto.Session) {}), mk("new", tc.fn))
-		if _, ok := s.adoptStartedSession(context.Background(), dev, "claude-code", "/code/app", known); ok {
+		if _, ok := s.adoptStartedSession(context.Background(), dev, "claude-code", "/code/app", "", known); ok {
 			t.Fatalf("%s session was adopted", tc.name)
 		}
 	}
 
 	// A pre-start list that failed means no guessing afterwards.
 	f.setSessions("box", mk("new", func(*proto.Session) {}))
-	if _, ok := s.adoptStartedSession(context.Background(), dev, "claude-code", "/code/app", nil); ok {
+	if _, ok := s.adoptStartedSession(context.Background(), dev, "claude-code", "/code/app", "", nil); ok {
 		t.Fatal("adoption happened without a pre-start snapshot")
 	}
 }

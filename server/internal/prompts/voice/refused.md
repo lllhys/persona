@@ -1,7 +1,7 @@
 {{- if eq .Lang "en" -}}
 {{- $to := "the Persona main conversation"}}{{if .Agent}}{{$to = "the agent"}}{{end}}{{with .To}}{{$to = .}}{{end -}}
 {{- if eq .Code "unprompted" -}}
-"{{.Task}}" was not sent to {{$to}}: the user had not spoken since the last thing you were told about an agent's work, or not in the last half minute, so for safety it was not sent. Tell the user in one sentence that this did not come from them, so you did not send it; if they want it done, they can say it again.
+"{{.Task}}" was not sent to {{$to}}: Persona did not hear a new request from the user since the last thing you were told about an agent's work (or they had not spoken in the last half minute), so it held it back to be safe. Tell the user in one sentence that you didn't hear a fresh request from them since the last result (or lately), so you held it back to be safe; if they want it done, they can say it again{{if .Resend}} or tap Send Anyway on the screen{{end}}. Do not make it sound as if someone else said it.
 {{- else if eq .Code "empty" -}}
 It was not clear what to hand to {{$to}}, so nothing was sent. Ask the user in one sentence to say it again.
 {{- else if eq .Code "unknown" -}}
@@ -23,7 +23,7 @@ Tell the user in one sentence that it was not sent, and why.
 {{- else if eq .Lang "ja" -}}
 {{- $to := "Persona のメイン会話"}}{{if .Agent}}{{$to = "エージェント"}}{{end}}{{with .To}}{{$to = print . " "}}{{end -}}
 {{- if eq .Code "unprompted" -}}
-「{{.Task}}」は{{$to}}に送っていません：エージェントの作業内容を最後に伝えてからユーザーが話していない（または最後に話してから 30 秒以上たっている）ため、安全のため送りませんでした。「それはあなたが言ったことではないので送っていません。やるならもう一度言ってください」と一文でユーザーに伝えてください。
+「{{.Task}}」は{{$to}}に送っていません：エージェントの作業内容を最後に伝えてから、ユーザーの新しい依頼が聞こえなかった（または最後に話してから 30 秒以上たっている）ため、安全のため送らずにおきました。前回の結果のあと（または最近）新しい依頼が聞き取れなかったので念のため送らずにおいたこと、やる場合は{{if .Resend}}もう一度言うか、画面の「このまま送信」を押せばよいこと{{else}}もう一度言えばよいこと{{end}}を、一文でユーザーに伝えてください。ほかの人が言ったかのような言い方はしないでください。
 {{- else if eq .Code "empty" -}}
 {{$to}}に何を頼むのか聞き取れなかったので、何も送っていません。もう一度言ってもらうよう一文でユーザーに頼んでください。
 {{- else if eq .Code "unknown" -}}
@@ -45,7 +45,7 @@ Tell the user in one sentence that it was not sent, and why.
 {{- else -}}
 {{- $to := "Persona 主对话"}}{{if .Agent}}{{$to = "Agent"}}{{end}}{{with .To}}{{$to = .}}{{end -}}
 {{- if eq .Code "unprompted" -}}
-「{{.Task}}」没有发给 {{$to}}：上次把 Agent 做的事告诉你以后用户还没说过话（或者用户上一次说话已经是半分钟以前），为了安全没有发出去。用一句话告诉用户：这条不是你说的，我没发；要做的话请再说一遍。
+「{{.Task}}」没有发给 {{$to}}：上次把 Agent 做的事告诉你以后，没听到用户提出新的请求（或者用户上一次说话已经是半分钟以前），为了安全先没发。用一句话告诉用户：上次的结果之后（或者最近）没听到你新的请求，为了安全先没发；要做的话{{if .Resend}}再说一遍，或者点屏幕上的「仍然发送」{{else}}请再说一遍{{end}}。不要说得像是别人说的。
 {{- else if eq .Code "empty" -}}
 没听清要交给 {{$to}}的是什么，没有发出去。用一句话请用户再说一遍。
 {{- else if eq .Code "unknown" -}}

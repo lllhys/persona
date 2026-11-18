@@ -13,6 +13,7 @@ const (
 // The kinds of failure git.review answers with as rpc.Error codes (the hub passes them on with 400 / 404 / 409).
 const (
 	CodeNotGit          = "not_git"           // cwd is not in a Git repository
+	CodeNoFolder        = "no_folder"         // cwd is not there: moved or deleted (a removed worktree)
 	CodeBadScope        = "bad_scope"         // a scope other than the three, or commit without a base
 	CodeBadBase         = "bad_base"          // the base is not a commit (or branch) of the repository
 	CodeNoDefaultBranch = "no_default_branch" // branch: no origin/HEAD, origin/main, origin/master, main or master

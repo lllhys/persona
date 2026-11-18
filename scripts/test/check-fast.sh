@@ -15,7 +15,7 @@
 #   web/**                     npm ci (only with no node_modules or a changed package.json/package-lock.json),
 #                              node_modules against package-lock.json, typecheck, vitest run
 #   schema/extension/**, spec/fixtures/injected/**, spec/fixtures/sync/**, spec/fixtures/attention/**,
-#   scripts/mock/inbox_events.json
+#   spec/fixtures/chat-search/**, spec/fixtures/triage/**, spec/fixtures/todo-view/**, scripts/mock/inbox_events.json
 #                              also the web check: web/src and its vitest suite read these files. They are the inputs
 #                              outside web/ of the web lane in scripts/ci/paths.py; test_check_fast.py keeps the two in sync
 #   integrations/<pkg>/**      node --test test/*.test.{js,mjs} (packages without tests are skipped)
@@ -37,18 +37,22 @@
 #                              fall, never rise; comments, strings and a // sleep-ok: reason line do not count; a new
 #                              file starts at zero; --update only lowers). A rename out of those trees counts too.
 #                              --all runs it when the script is present.
-#   spec/fixtures/**, schema/extension/**, integrations/**, docs/<file>, scripts/test/server_test_env.py
+#   spec/fixtures/**, schema/extension/**, schema/wire/**, integrations/**, docs/<file>, scripts/test/server_test_env.py
 #                              also go test on each server package whose _test.go names that input (server-test.yml's
 #                              path filter), found at run time with git grep (comment lines are ignored)
 #   android/**                 scripts/app/android_i18n_check.py plus the android checkers' own unittests (no gradle)
 #   .github/**                 scripts/test/pr_needs_issue_test.mjs
 #   schema/**                  the extension-schema py, the sdk bundle py, and sdk/go go test (mirrors CI's job)
+#   schema/wire/**, spec/fixtures/**, scripts/gen/extension_schema.py, scripts/test/test_extension_schema.py
+#                              also scripts/test/test_wire_schema.py: it holds the fixtures' samples to the wire schemas
+#                              (and imports the extension test's validator); CI's guards step always runs it
 #   scripts/**                 privacy/PR/extension/refs/bundle/i18n checks picked by path; PR+extension when
 #                              ambiguous (a case "*" matches slashes, so scripts/* covers nested paths too); plus
 #                              each changed scripts/<dir>/test_*.py and the test_<name>.py of each changed script
 #                              <name>.py / <name>.sh (- read as _; db.sh's is test_db_sh.py), run from its
 #                              directory as CI does (#3968). scripts/hooks/** also runs
-#                              scripts/test/test_privacy_check.py (it runs the hooks); scripts/privacy_check.py also
+#                              scripts/test/test_privacy_check.py and test_check_deno_adapter_sh.py (they run the
+#                              hooks; the latter also for scripts/gen/deno_adapter.sh); scripts/privacy_check.py also
 #                              scripts/release/test_check_bundle_privacy.py (it imports privacy_check)
 #   docs/**, any *.md          scripts/test/test_doc_paths.py and test_doc_go_paths.py (paths quoted in the docs, the
 #                              CLAUDE.md doc index), test_doc_sections.py (section names quoted after a doc path),
@@ -57,8 +61,10 @@
 #                              also test_doc_sections.py: it reads the code comments there too (its SOURCE_DIRS)
 #   server/internal/{proto,hub,extension}/**, schema/extension/manifest.schema.json
 #                              also test_doc_wire.py: the code side of those wire lists
-#   apple/**                   scripts/test/test_apple_l10n.py (String Catalogs, Chinese Swift literals); the iOS/macOS
-#                              builds and tests are skipped with a note (they need a Mac)
+#   apple/**                   scripts/test/test_apple_l10n.py (String Catalogs, Chinese Swift literals) and
+#                              test_apple_no_callkit.py (no CallKit import or link setting, #9290; also for
+#                              scripts/persona_config.py, whose xcconfig it reads); the iOS/macOS builds and tests
+#                              are skipped with a note (they need a Mac)
 #   deploy/docker/**, docs/operations/docker.md, Dockerfile
 #                              scripts/test/test_docker_entrypoint.py (it also reads the root Dockerfile)
 #                              These Linux suites run in CI's Scripts tests job; they run from scripts/test as there.
@@ -397,10 +403,13 @@ job_i18n() {
     python3 -B test_android_i18n_check.py || return $?
   in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: test_android_token_baseline.py self-test" \
     python3 -B test_android_token_baseline.py || return $?
+  in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: test_android_motion_baseline.py self-test" \
+    python3 -B test_android_motion_baseline.py || return $?
   in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: test_android_slot_order.py self-test" \
     python3 -B test_android_slot_order.py || return $?
   in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: android_slot_order.py" python3 -B android_slot_order.py || return $?
-  in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: android_token_baseline.py" python3 -B android_token_baseline.py
+  in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: android_token_baseline.py" python3 -B android_token_baseline.py || return $?
+  in_dir scripts/app step "$TIMEOUT_OTHER" "scripts/app: android_motion_baseline.py" python3 -B android_motion_baseline.py
 }
 
 job_external_refs() {
@@ -597,9 +606,9 @@ else
   MB=$(git merge-base HEAD "$BASE_REF" 2>/dev/null) || { echo "check-fast: no merge-base with $BASE_REF" >&2; exit 2; }
   # Committed since the merge-base, plus staged/unstaged/untracked work, so the script works before a commit too.
   CHANGED=$({
-    git diff --name-only -z "$MB" HEAD
-    git diff --name-only -z HEAD
-    git diff --cached --name-only -z
+    git diff --name-only --no-renames -z "$MB" HEAD
+    git diff --name-only --no-renames -z HEAD
+    git diff --cached --name-only --no-renames -z
     git ls-files --others --exclude-standard -z
   } | tr '\0' '\n' | sed '/^$/d' | sort -u)
   if [ -z "$CHANGED" ]; then
@@ -611,7 +620,7 @@ else
     # Repository files outside web/ that web/src and its vitest suite read: a change to one also runs the web check,
     # on top of its own mapping below. The same list is the web lane's filter in scripts/ci/paths.py.
     case "$f" in
-      schema/extension/*|spec/fixtures/injected/*|spec/fixtures/sync/*|spec/fixtures/attention/*|scripts/mock/inbox_events.json) WEB=1 ;;
+      schema/extension/*|spec/fixtures/injected/*|spec/fixtures/sync/*|spec/fixtures/attention/*|spec/fixtures/chat-search/*|spec/fixtures/triage/*|spec/fixtures/todo-view/*|scripts/mock/inbox_events.json) WEB=1 ;;
     esac
     case "$f" in server/*|sdk/go/*) GO_GUARDS=1 ;; esac  # on top of the mapping below (job_go_guards)
     case "$f" in
@@ -695,6 +704,7 @@ if [ "$ALL" -eq 0 ]; then
     case "$f" in
       spec/fixtures/*) _re='spec/fixtures|"spec", *"fixtures"' ;;
       schema/extension/*) _re='schema/extension|"schema", *"extension"' ;;
+      schema/wire/*) _re='schema/wire|"schema", *"wire"' ;;
       integrations/*/*) _re='integrations/|"integrations"' ;;
       scripts/test/server_test_env.py) _re='server_test_env\.py' ;;
       docs/*) _re=$(printf '%s' "$f" | sed 's/[][\.^$*+?(){}|]/\\&/g') ;;  # docs/example-guide.md -> docs/example-guide\.md
@@ -773,6 +783,8 @@ else
         script_test_add scripts/test/test_doc_sections.py ;;
     esac
     case "$f" in apple/*) script_test_add scripts/test/test_apple_l10n.py ;; esac
+    # Every Apple source and build file, and the xcconfig persona_config.py writes, against CallKit (#9290).
+    case "$f" in apple/*|scripts/persona_config.py) script_test_add scripts/test/test_apple_no_callkit.py ;; esac
     # test_gen_tokens.py checks the token sources against the iOS values and the committed Android Tokens.kt (#4209).
     case "$f" in
       spec/tokens/*|apple/Shared/Design/*|android/core/designsystem/src/main/kotlin/persona/core/designsystem/Tokens.kt)
@@ -783,15 +795,27 @@ else
       spec/icons/*|apple/Shared/Design/Icons.swift|android/core/designsystem/src/main/kotlin/persona/core/designsystem/icons/*)
         script_test_add scripts/assets/test_gen_icon_meanings.py ;;
     esac
-    # Suites whose names do not match the file they test: test_privacy_check.py copies scripts/hooks into its temp
-    # repositories and runs the hooks there; check_bundle_privacy.py imports privacy_check; test_merge_pr_sh.py
-    # copies privacy_check.py into its temp repositories, where merge-pr.sh runs it.
+    # Suites whose names do not match the file they test: test_privacy_check.py and test_check_deno_adapter_sh.py copy
+    # scripts/hooks into their temp repositories and run the hooks there (the latter also scripts/gen/deno_adapter.sh);
+    # check_bundle_privacy.py imports privacy_check; test_merge_pr_sh.py copies privacy_check.py into its temp
+    # repositories, where merge-pr.sh runs it, and checks that pr_watch_merge.py's merge lock excludes merge-pr.sh's.
+    # It copies changed_ratchets.py and the two ratchets it imports there too (#7977); test_changed_ratchets.py imports them.
     case "$f" in
-      scripts/hooks/*) script_test_add scripts/test/test_privacy_check.py ;;
+      scripts/hooks/*)
+        script_test_add scripts/test/test_privacy_check.py; script_test_add scripts/test/test_check_deno_adapter_sh.py ;;
+      scripts/gen/deno_adapter.sh) script_test_add scripts/test/test_check_deno_adapter_sh.py ;;
       scripts/privacy_check.py)
         script_test_add scripts/release/test_check_bundle_privacy.py; script_test_add scripts/test/test_merge_pr_sh.py ;;
+      scripts/operations/pr_watch_merge.py|scripts/ci/changed_ratchets.py) script_test_add scripts/test/test_merge_pr_sh.py ;;
+      scripts/ci/sleep_ratchet.py|scripts/ci/web_font_ratchet.py)
+        script_test_add scripts/ci/test_changed_ratchets.py; script_test_add scripts/test/test_merge_pr_sh.py ;;
     esac
     case "$f" in deploy/docker/*|docs/operations/docker.md|Dockerfile) script_test_add scripts/test/test_docker_entrypoint.py ;; esac
+    # test_wire_schema.py holds every sample the shared fixtures keep for a wire schema to that schema, at any depth.
+    case "$f" in
+      schema/wire/*|spec/fixtures/*|scripts/gen/extension_schema.py|scripts/test/test_extension_schema.py)
+        script_test_add scripts/test/test_wire_schema.py ;;
+    esac
   done <<< "$CHANGED"
 fi
 

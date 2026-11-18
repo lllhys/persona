@@ -15,6 +15,7 @@ import (
 	"github.com/nwverse/persona/server/internal/hubedge"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
+	"github.com/nwverse/persona/server/internal/procs"
 	"github.com/nwverse/persona/server/internal/update"
 )
 
@@ -56,6 +57,7 @@ func edgeOff(b update.Build) string {
 // Serve is `personad hub run`: the hub behind its edge, or by itself where the edge does not run.
 func Serve(ctx context.Context, b update.Build) error {
 	claimInherited() // before anything can start a process (listen.go)
+	procs.AtStart()  // at most procs.Max Ps here (the edge, or a hub serving by itself), and the cap for its children
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	if why := edgeOff(b); why != "" {
 		if identity.Getenv(EnvEdge) != "" || runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
@@ -107,17 +109,22 @@ func Serve(ctx context.Context, b update.Build) error {
 // pending marker's binaries go back, the rollback is written down for the old version to record (history, bad build:
 // selfupdate.go recordRolledBack), and the program the hub ran as runs again (Pending.RunPath: persona-hub for a hub
 // that ran as persona-hub; an edge older than Pending.Run goes back to personad, which serves the same hub).
-func restoreUpdate(build int64, cause error) (string, bool) {
+func restoreUpdate(build int64, cause error) (string, bool, error) {
 	return restoreUpdateIn(update.Dir(), build, cause)
 }
 
-func restoreUpdateIn(dir string, build int64, cause error) (string, bool) {
+func restoreUpdateIn(dir string, build int64, cause error) (string, bool, error) {
 	var p update.Pending
-	if ok, err := update.Load(update.PendingPath(dir), &p); err != nil || !ok || (build != 0 && p.ToBuild != build) {
-		return "", false
+	ok, err := update.Load(update.PendingPath(dir), &p)
+	if err != nil {
+		return "", false, err
+	}
+	if !ok || (build != 0 && p.ToBuild != build) {
+		return "", false, nil
 	}
 	if err := update.RestoreAll(p); err != nil {
 		log.Printf("hub edge: restore %s: %v", p.Prev, err)
+		return "", false, err
 	}
 	l := i18n.Default
 	reason := i18n.T(l, "hub-selfupdate.reason_not_confirmed")
@@ -125,17 +132,22 @@ func restoreUpdateIn(dir string, build int64, cause error) (string, bool) {
 		reason = i18n.T(l, "hub-selfupdate.reason_no_takeover", i18n.Args{"error": cause.Error()})
 	}
 	if err := update.Save(update.RolledBackPath(dir), update.RolledBack{FromVersion: p.FromVersion, ToVersion: p.ToVersion,
-		ToBuild: p.ToBuild, Started: p.Started, At: time.Now(), Reason: reason, Auto: p.Auto}); err != nil {
+		ToBuild: p.ToBuild, Started: p.Started, At: time.Now(), Reason: reason, Auto: p.Auto, Development: p.Development, Backup: p.Backup}); err != nil {
 		log.Printf("hub edge: save rollback marker: %v", err)
+		return "", false, err
 	}
-	_ = os.Remove(update.PendingPath(dir))
-	return p.RunPath(), true
+	if err := os.Remove(update.PendingPath(dir)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", false, err
+	}
+	update.ClearDevelopmentAdoption(dir, p)
+	return p.RunPath(), true, nil
 }
 
 // RunSlot is `personad hub slot`: the hub as the edge started it. A standby checks itself (its config, the database)
 // and waits; once activated, or started active, it serves on the edge's sockets until the edge releases it.
 func RunSlot(ctx context.Context, b update.Build) error {
 	claimInherited() // before anything can start a process (listen.go); the edge's pipes stay readable here
+	procs.AtStart()  // the edge's cap, out of the environment before the slot starts anything
 	slot, err := hubedge.FromEnv()
 	if err != nil {
 		return err
@@ -146,10 +158,13 @@ func RunSlot(ctx context.Context, b update.Build) error {
 	slot.Hello(b.Version, b.Number)
 	logger := slotLogger(slot)
 	// An update that keeps failing goes back before anything else can fail, the config included (selfupdate.go).
-	updating := newUpdater(&Hub{build: b, version: b.Version, logger: logger, slot: slot}).boot()
 	fail := func(err error) error {
 		slot.Failed(err.Error())
 		return err
+	}
+	updating, err := newUpdater(&Hub{build: b, version: b.Version, logger: logger, slot: slot}).boot()
+	if err != nil {
+		return fail(fmt.Errorf("update recovery: %w", err))
 	}
 	cfg, err := LoadConfig()
 	if err != nil {

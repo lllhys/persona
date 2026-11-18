@@ -14,6 +14,7 @@ import { Button, cx, Kbd } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { DigitHint } from "./Choice";
 import { Card, CloseBlockedAgent, OptionLabel, resolve, useCardKeys } from "./Interactions";
+import { useChatCardTapGuard } from "./card-tap-guard";
 
 export function CommandScreenCard({ ix }: { ix: Interaction }) {
   const d = ix.dialog;
@@ -40,11 +41,13 @@ export function CommandScreenCard({ ix }: { ix: Interaction }) {
       void go({ option: pair.allow.key }, pair.allow.key);
     },
   });
+  const tapGuard = useChatCardTapGuard(ix);
   return (
     <Card
       kicker={t("chat-interactions.permission_kicker")}
       title={t("chat-commandask.title", { agent: agentLabel({ agent: ix.agent, agent_label: ix.agent_label }) })}
       cardKeys={keys}
+      tapGuard={tapGuard}
       onDismiss={() => go({ dismiss: true }, "dismiss")}
       busy={busy !== null}
       footer={<div className="flex w-full min-w-0 flex-col gap-2">
@@ -72,6 +75,7 @@ export function CommandScreenCard({ ix }: { ix: Interaction }) {
               key={o.key}
               type="button"
               disabled={busy !== null}
+              data-tap-answer
               onClick={() => go({ option: o.key }, o.key)}
               className="touch-hit -mx-1.5 flex items-start gap-2 rounded-control px-1.5 py-1.5 text-left transition-colors hover:bg-hover disabled:opacity-60"
             >

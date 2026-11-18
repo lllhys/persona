@@ -21,6 +21,7 @@ import persona.core.contracts.BriefDone
 import persona.core.contracts.BriefFailed
 import persona.core.contracts.BriefProgress
 import persona.core.contracts.BriefRow
+import persona.core.contracts.BriefSetup
 import persona.core.contracts.BriefTake
 import persona.core.contracts.FeedItem
 import persona.core.contracts.brief
@@ -38,6 +39,7 @@ import persona.core.designsystem.StepProgress
 import persona.core.designsystem.StepState
 import persona.core.designsystem.Tokens
 import persona.core.designsystem.currentLocale
+import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcon
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.tasks.AssistantLines
@@ -65,6 +67,10 @@ internal fun BriefCard(item: FeedItem, host: AssistantTaskHost) {
             if (brief.progressTotal > 0) {
                 JDivider()
                 BriefProgress(brief, host)
+            }
+            if (brief.setup.isNotEmpty()) {
+                JDivider()
+                BriefSetupSection(brief, host)
             }
         }
     }
@@ -277,6 +283,29 @@ private fun BriefLaterRow(row: BriefRow, host: AssistantTaskHost) {
             }, Modifier.testTag("brief-handled-${row.id}"), enabled = "later:${row.id}" !in busy,
                 kind = JButtonKind.Secondary, size = JButtonSize.Small, loading = "later:${row.id}" in busy)
             if (chat != null) BriefOpen("brief-open-${row.id}") { host.onOpen(chat) }
+        }
+    }
+}
+
+/**
+ * The week's recommended setup (#5085, docs/assistant/assistant.md "Recommended setup"): the hub's own counts and words,
+ * drawn as they came. A row whose mechanism has a settings page in this app opens it; nothing is turned on from here.
+ */
+@Composable
+private fun BriefSetupSection(brief: BriefBody, host: AssistantTaskHost) {
+    Column(Modifier.testTag("brief-setup"), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+        BriefHead(PersonaIcons.settings, null, stringResource(R.string.chat_brief_setup))
+        BriefNote(stringResource(R.string.chat_brief_setup_intro))
+        brief.setup.forEach { row: BriefSetup ->
+            val open: (() -> Unit)? = row.page?.let { page -> host.onOpenSetup?.let { go -> { go(page) } } }
+            // the hub's line takes the card's width, its button under it, as the card's other rows are laid out
+            Column(Modifier.fillMaxWidth().padding(vertical = Tokens.Space.xs), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+                Text(row.text, Modifier.testTag("brief-setup-${row.id}"), style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink)
+                if (open != null) FlowRow {
+                    JButton(stringResource(R.string.chat_brief_setup_open), open, Modifier.testTag("brief-setup-open-${row.id}"),
+                        kind = JButtonKind.Secondary, size = JButtonSize.Small)
+                }
+            }
         }
     }
 }

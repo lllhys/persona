@@ -30,6 +30,7 @@ import persona.core.contracts.api.HubConnection
 import persona.core.contracts.api.HubGroups
 import persona.core.contracts.api.MachineManagement
 import persona.core.contracts.api.SessionsRepository
+import persona.core.domain.engines.Engines
 import persona.core.designsystem.JNotice
 import persona.core.designsystem.Status
 import persona.core.designsystem.failureReasonText
@@ -44,8 +45,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** The machine's engine is herdr as chosen: a machine with no terminal engine (empty host set) keeps `engine` herdr and is not. */
+internal val Machine.usesHerdr: Boolean get() = Engines.judged(this) in setOf("herdr", "herdr-both")
+
 internal fun Machine.herdrStopped(state: HerdrState?): Boolean =
-    online && engine in setOf("herdr", "herdr-both") && state?.known == true && !state.running
+    online && usesHerdr && state?.known == true && !state.running
 
 /**
  * Why a start failed, kept on the row until the next start (iOS `HerdrFailure`): [text] in words, [detail] the hub's own
@@ -105,7 +109,7 @@ internal class HerdrStarter(
 
     suspend fun refresh() {
         val before = generation
-        val machines = repository.machines.value.filter { it.online && it.engine in setOf("herdr", "herdr-both") && reachable(it.id) }
+        val machines = repository.machines.value.filter { it.online && it.usesHerdr && reachable(it.id) }
         val results = coroutineScope {
             machines.map { machine -> async {
                 try { machine.id to api.herdr(machine.id) }

@@ -1,3 +1,6 @@
 {
-  "photo": "Photo {n}, open to view"
+  "photo": "Photo {n}, open to view",
+  "files_more_one": "{count} more file",
+  "files_more_other": "{count} more files",
+  "files_less": "Show less"
 }

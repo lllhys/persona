@@ -1,0 +1,39 @@
+ ▐▛███▛█   Claude Code v2.1.326
+▝▜██████▀  Opus 5.5 with xhigh effort · API Usage Billing
+ ▝▝   ▝▝   /private/tmp/cc-probe-sendnow/work
+
+
+❯ Run ./build.sh with the Bash tool in the foreground (do not use run_in_background, timeout 300000 ms) and wait for
+  it to finish, then reply with one word: done.
+
+  Running the build script · 4s
+  ⎿  $ ./build.sh (4s · 2 lines)
+     (ctrl+b to run in background)
+
+❯ queued probe message: reply QUEUED-OK
+  ⎿  Queued · ctrl+enter to send now
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+✻ Hatching… (8s · ↓ 100 tokens)
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Press up to edit queued messages
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt

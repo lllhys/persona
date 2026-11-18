@@ -3,10 +3,13 @@ package persona.feature.settings
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -37,7 +40,8 @@ class ExtensionModelShotsTest {
         ExtensionContribution("connectors", "example-chat", "示例聊天", true, false, "connector"),
     )
     private val detail = ExtensionDetail(HubExtension("example", "示例扩展", "ui", "running", source = "installed", enabled = true,
-        sandbox = ExtensionSandbox(enabled = true, active = false, why = "这台机器无法启用隔离", egress = ExtensionEgress(14, 2))),
+        sandbox = ExtensionSandbox(enabled = true, active = false, why = "这台机器无法启用隔离", egress = ExtensionEgress(14, 2,
+            lastDenied = "feeds.example.net:443", deniedAt = Instant.now().minusSeconds(180).toString()))),
         form = listOf(ExtensionField("triage_rules", title = "分拣规则")),
         config = JsonObject(mapOf("triage_rules" to JsonPrimitive("原有规则"))), contributions = contributions)
     private val preview = ExtensionPreview(previewId = "pack", permissionsDigest = "digest", manifest = PreviewManifest("starter", "入门合集", "1.0.0",
@@ -67,8 +71,10 @@ class ExtensionModelShotsTest {
         var current = detail
         var saved = 0
         var switched = 0
+        var opened: String? = null
         val api = object : ExtensionApiStub() {
             override suspend fun extension(id: String) = current
+            override fun adminNetworkUrl(id: String) = "https://hub.example.test/base/admin/extensions?extension=$id#network"
             override suspend fun setContribution(id: String, point: String, contribution: String, enabled: Boolean): ExtensionDetail {
                 switched++
                 current = current.copy(contributions = current.contributions!!.map { if (it.id == contribution && it.point == point) it.copy(enabled = enabled) else it })
@@ -80,7 +86,10 @@ class ExtensionModelShotsTest {
         }
         rule.setContent {
             PersonaTheme(style = style, darkTheme = dark, reduceMotion = true) {
-                CompositionLocalProvider(LocalExtensionTriageTemplates provides listOf(template)) {
+                CompositionLocalProvider(
+                    LocalExtensionTriageTemplates provides listOf(template),
+                    LocalUriHandler provides object : UriHandler { override fun openUri(uri: String) { opened = uri } },
+                ) {
                     Box(Modifier.testTag("shot").fillMaxSize().background(PersonaTheme.palette.background)) {
                         ExtensionPage(api, "example", {})
                     }
@@ -88,6 +97,9 @@ class ExtensionModelShotsTest {
             }
         }
         rule.waitUntil { rule.onAllNodesWithText("首页入口").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("出网").assertExists()
+        rule.onNodeWithText("示例扩展 想连 feeds.example.net:443，这个地址不在它申请的范围里，被拦下了。\n3 分钟前").assertExists()
+        rule.onNodeWithText("去管理界面放行").assertExists()
         rule.onNodeWithText("首页入口").performClick()
         rule.waitForIdle()
         assertEquals(1, switched)
@@ -108,6 +120,48 @@ class ExtensionModelShotsTest {
         rule.waitForIdle()
         assertEquals(1, saved)
         assertEquals(JsonPrimitive(template.text), current.config["triage_rules"])
+        rule.onNodeWithText("去管理界面放行").performScrollTo().performClick()
+        assertEquals("https://hub.example.test/base/admin/extensions?extension=example#network", opened)
+    }
+
+    @Config(qualifiers = "zh-w400dp-h4000dp-xhdpi", fontScale = 2f) // tall enough for the whole page at 200%
+    @Test fun detailAtTheLargestTextSize() {
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        val api = object : ExtensionApiStub() {
+            override suspend fun extension(id: String) = detail
+            override fun adminNetworkUrl(id: String) = "https://hub.example.test/base/admin/extensions?extension=$id#network"
+        }
+        rule.setContent {
+            PersonaTheme(style = style, darkTheme = dark, reduceMotion = true) {
+                Box(Modifier.testTag("shot").fillMaxSize().background(PersonaTheme.palette.background)) {
+                    ExtensionPage(api, "example", {})
+                }
+            }
+        }
+        rule.waitUntil { rule.onAllNodesWithText("去管理界面放行").fetchSemanticsNodes().isNotEmpty() }
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            rule.onNodeWithText("去管理界面放行").assertExists()
+            capture("detail-${s.key}-${if (d) "dark" else "light"}-large")
+        }
+    }
+
+    @Test fun noDeniedTargetHasNoNoticeAndAnOldResponseNeedsNoDeniedAt() {
+        var current by mutableStateOf(ExtensionSandbox(enabled = true, active = true, egress = ExtensionEgress(12, 0)))
+        rule.setContent {
+            PersonaTheme(reduceMotion = true) {
+                LazyColumn { sandbox(current, "示例扩展", onAllow = {}) }
+            }
+        }
+        rule.onNodeWithText("出网").assertExists()
+        rule.onNodeWithText("拦下 0", substring = true).assertExists()
+        rule.onNodeWithText("被拦下了", substring = true).assertDoesNotExist()
+        rule.onNodeWithText("去管理界面放行").assertDoesNotExist()
+        current = current.copy(egress = current.egress!!.copy(denied = 1, lastDenied = "feeds.example.net:443"))
+        rule.waitForIdle()
+        rule.onNodeWithText("示例扩展 想连 feeds.example.net:443，这个地址不在它申请的范围里，被拦下了。").assertExists()
+        rule.onNodeWithText("去管理界面放行").assertExists()
     }
 
     // "Manage markets" with the official market (#2351): first, as the hub lists it, with its "Official" tag; the owner's own after it.

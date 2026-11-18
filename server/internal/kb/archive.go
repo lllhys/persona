@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kbwire"
 	"github.com/nwverse/persona/server/internal/lazyre"
 )
@@ -75,7 +76,8 @@ type Engine struct {
 	// earlier meetings: only those marked not private (meeting.go, "The private mark"). The manager turns it on.
 	EarlierMeetingsInAnswers bool
 	// MeetingChanged is told of recording id's meeting parts that changed (PartRoom, PartAsks, PartPrivate,
-	// PartFollowup, PartPhotos): the manager's meeting_live event. Called outside the store's locks; optional.
+	// PartFollowup, PartPhotos, PartLines, PartTopics, PartHighlights): the manager's meeting_live event. Called
+	// outside the store's locks; optional.
 	MeetingChanged func(id string, parts []string)
 	// MinutesWritten is told when a recording's minutes for its current revision are written (minutes.go): the
 	// assistant pushes them. Not for minutes made again only because a photo was added or deleted. Called from the
@@ -100,10 +102,17 @@ type Engine struct {
 	// DayRecordingName is a day recording's name in the owner's language for its day (YYYY-MM-DD), unless the user
 	// titled it; nil or "": the knowledge base's own.
 	DayRecordingName func(day string) string
+	// OwnerLanguage is the owner's language on the hub (an i18n code): what a recording that says no language of its
+	// own has its minutes, summary and recap written in (language.go); nil or not one of the hub's: zh-Hans.
+	OwnerLanguage func() i18n.Lang
 	// HandleKey is the hub's key for the senders' identity hints (handles.go); without it none are kept.
 	HandleKey []byte
 	// TopicsOn says whether the knowledge points curation runs (topics.go; assistant.kb_topics). nil: it does.
 	TopicsOn func() bool
+	// TranscriptionReady says whether the manager can transcribe on the hub now (meeting_transcription_ready): asked
+	// only when the first upload naming a mode names hub, so it must answer at once (a cached value). nil: never
+	// ready, and such an upload is device mode with TranscriptionUnavailable.
+	TranscriptionReady func() bool
 
 	// Limits (zero: defaults).
 	ChatsPerRun  int // how many recently active chats an archive run looks at (100)
@@ -142,6 +151,10 @@ type Engine struct {
 	clock func() time.Time
 	// jobLeft is how long a recap job has left (tests); nil: until its context's deadline.
 	jobLeft func(ctx context.Context) time.Duration
+	// minutesCall and minutesPart are the transcript runes the minutes read in one call and in one part of a long
+	// meeting (tests; zero: minutesOneCall and minutesChunk): the behaviour check sends a short meeting through the
+	// merging call.
+	minutesCall, minutesPart int
 }
 
 // Retries are the knowledge base steps' failures and when each may be tried again (retrySet, one per step).
@@ -244,7 +257,12 @@ func (e *Engine) AttachmentDaysFor(source string) int {
 // textCutoff and line stop writing. With a selection, each line's days are its deciding rule's (PruneSelected), and
 // documents past the days the user set for them go too (pruneDocs); a selection that cannot be read now
 // (Selection.Stopgap) prunes nothing: the next round tries again. The count is of day files, attachment days and documents.
-func (e *Engine) Prune(now time.Time) int {
+func (e *Engine) Prune(now time.Time) (removed int) {
+	defer func() {
+		if removed > 0 {
+			e.Store.SearchIndexPurge() // what retention removed leaves the search index at its next update
+		}
+	}()
 	if sel := e.selection(); sel != nil {
 		if sel.Stopgap() {
 			return 0

@@ -54,6 +54,7 @@ final class MainConversationActionsTests: XCTestCase {
         openMenu(app)
         XCTAssertTrue(app.buttons["会话信息"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["压缩上下文"].exists, "压缩上下文 is the main conversation's")
+        XCTAssertFalse(app.buttons["清理上下文"].exists, "清理上下文 is the main conversation's")
         XCTAssertFalse(app.buttons["新建主对话…"].exists, "新建主对话 is the main conversation's")
     }
 

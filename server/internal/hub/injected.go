@@ -17,6 +17,9 @@ func (h *Hub) withInjected(items []proto.Item) []proto.Item {
 	for i := range items {
 		it := &items[i]
 		it.Source = prompts.ItemSource(*it)
+		if it.Source != nil && it.Source.Kind == proto.SourceScheduledTask {
+			continue // already classified by the runtime; its visible instructions are not a Persona envelope
+		}
 		if it.Role != "user" || it.Kind != proto.KindText || it.ClientMsgID != "" || it.From != "" || it.Injected != nil || prompts.UserAuthoredContext(it.Text) {
 			continue
 		}
@@ -53,8 +56,8 @@ func (h *Hub) taskByTitle(title string) string {
 }
 
 // injectedLine is the one line the apps show for an injected message, in l (docs/protocol/i18n.md). The message itself stays as
-// the model read it (Chinese: prompts.ParseInjected reads it back); only the line is the user's language. zh-Hans is
-// what ParseInjected wrote.
+// the model read it; localized wakes carry a structured marker and legacy messages retain their template fallback.
+// The line follows the viewer's language. ParseInjected supplies the canonical zh-Hans line.
 func injectedLine(l i18n.Lang, in *proto.Injected) string {
 	if l == i18n.ZhHans {
 		return in.Line
@@ -77,8 +80,13 @@ func injectedLine(l i18n.Lang, in *proto.Injected) string {
 			return i18n.T(l, "injected.routine_started", args)
 		}
 	case proto.InjectedSystem:
-		if in.State == "inbox" {
+		switch in.State {
+		case "inbox":
 			return i18n.T(l, "injected.inbox_update", args)
+		case "ask_answered":
+			return i18n.T(l, "injected.ask_answered", args)
+		case "ask_expired", "ask_closed":
+			return i18n.T(l, "injected."+in.State)
 		}
 		if in.State == "lost_tasks" {
 			// the count is in the Chinese line: "node restarted, 3 background tasks stopped"

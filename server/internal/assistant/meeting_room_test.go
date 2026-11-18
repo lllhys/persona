@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"path"
 	"slices"
@@ -69,7 +70,15 @@ func (r *roomFixture) meeting(id string) kb.Meeting {
 // roomUp uploads id as a room meeting in role and starts its room; the room's session id, listed idle.
 func (r *roomFixture) roomUp(id, role string) string {
 	r.t.Helper()
-	out := r.upload(id, 1, map[string]any{"room": map[string]any{"attendance": role}, "title": "Design review", "private": false})
+	return r.roomUpWith(id, role, nil)
+}
+
+// roomUpWith is roomUp with more fields on the upload (its started_at, say).
+func (r *roomFixture) roomUpWith(id, role string, more map[string]any) string {
+	r.t.Helper()
+	fields := map[string]any{"room": map[string]any{"attendance": role}, "title": "Design review", "private": false}
+	maps.Copy(fields, more)
+	out := r.upload(id, 1, fields)
 	if room, _ := out["room"].(map[string]any); room["state"] != "none" || out["attendance"] != role {
 		r.t.Fatalf("upload: %v", out)
 	}
@@ -83,6 +92,18 @@ func (r *roomFixture) roomUp(id, role string) string {
 		State: proto.StateIdle, Origin: OriginMeeting})
 	r.f.mu.Unlock()
 	return m.Room.SessionID
+}
+
+// olderRoom makes recording id's room one an older manager started (before #8253): a batch a minute with the rules and
+// the lists in each, never compacted.
+func (r *roomFixture) olderRoom(id string) {
+	r.t.Helper()
+	if _, err := r.engine().MeetingUpdate(id, func(m *kb.Meeting, _ kb.Recording) error {
+		m.Room.Batching, m.Room.Lean = 0, kb.MeetingRoomLean{}
+		return nil
+	}); err != nil {
+		r.t.Fatal(err)
+	}
 }
 
 func (r *roomFixture) sends() []map[string]any {
@@ -126,7 +147,7 @@ func TestMeetingRoomStarts(t *testing.T) {
 	start := sends[0]
 	guest, _ := start["guest"].(map[string]any)
 	text, _ := start["text"].(string)
-	if start["new_session_id"] != sid || start["client_msg_id"] != "meeting-"+meetingRec || guest["kind"] != "meeting" || len(guest["tools"].([]any)) != 3 || start["is_main"] != false ||
+	if start["new_session_id"] != sid || start["client_msg_id"] != "meeting-"+meetingRec || guest["kind"] != "meeting" || len(guest["tools"].([]any)) != 5 || start["is_main"] != false ||
 		start["config_dir"] != meetingProfile || !strings.Contains(text, "Title: Design review") || !strings.Contains(text, `"kind":"meeting"`) || !strings.Contains(text, "Role: participant") {
 		t.Fatalf("start %v", start)
 	}
@@ -226,7 +247,7 @@ func TestMeetingRoomFed(t *testing.T) {
 	text, _ := batch["text"].(string)
 	src, _ := batch["message_source"].(map[string]any)
 	if batch["session_id"] != sid || batch["resume_only"] != true || src["kind"] != proto.SourceMeeting ||
-		!strings.Contains(text, "Ada: we keep the cap.") || !strings.Contains(text, "Write nothing in reply.") {
+		!strings.Contains(text, "Ada: we keep the cap.") || !strings.Contains(text, "then write nothing.") {
 		t.Fatalf("batch %v", batch)
 	}
 	if running, _ := r.s.meetingTurnRunning(context.Background(), "server", sid); running {
@@ -330,12 +351,15 @@ func TestMeetingRoomTools(t *testing.T) {
 	r.earlierMeeting("Exports over four megabytes are dropped")
 	sid := r.roomUp(meetingRec, "listener")
 	r.do("POST", livePath(meetingRec), "", `{"from":0,"segments":[{"start":61,"end":64,"text":"Ada: keep the cap."},{"start":3700,"end":3705,"text":"Bo: later."}]}`, http.StatusOK)
+	rec, _ := r.engine().Store.Recording(meetingRec)
+	loc := zoneApart(t, rec.StartedAt) // the user's, neither UTC nor this machine's: the batches' zone
+	setSettings(t, r.s, func(v *Settings) { v.Timezone = loc.String() })
 	tools := r.s.sessionMCPTools(context.Background(), "server", sid, true, true)
 	var names []string
 	for _, tl := range tools {
 		names = append(names, tl.Name)
 	}
-	if !slices.Equal(names, []string{"meeting_lines", "meeting_earlier", "meeting_photo_note"}) {
+	if !slices.Equal(names, []string{"meeting_lines", "meeting_earlier", "meeting_photo_note", "meeting_topics_set", "meeting_highlights_set"}) {
 		t.Fatalf("tools %v", names)
 	}
 	d := newFleetDevs() // the nodes' requests are the fleet's
@@ -355,8 +379,13 @@ func TestMeetingRoomTools(t *testing.T) {
 		}
 		return b.String()
 	}
-	if got := text(call("meeting_lines", `{"to":100}`)); got != "[1:01] Ada: keep the cap." {
+	// Each line's offset, then the clock time a batch gives it in the user's zone (what a highlight's said_at copies).
+	clock := func(sec float64) string { return kb.LiveClock(*rec, sec, loc) }
+	if got := text(call("meeting_lines", `{"to":100}`)); got != "[1:01 · "+clock(61)+"] Ada: keep the cap." {
 		t.Fatalf("lines %q", got)
+	}
+	if got := text(call("meeting_lines", `{"from":3000}`)); got != "[1:01:40 · "+clock(3700)+"] Bo: later." {
+		t.Fatalf("lines past an hour %q", got)
 	}
 	if got := text(call("meeting_earlier", `{"query":"export cap"}`)); !strings.Contains(got, "Keep the cap for this release") {
 		t.Fatalf("earlier %q", got)
@@ -459,20 +488,21 @@ func TestMeetingRoomAsk(t *testing.T) {
 	wantCode(t, r.do("POST", askPath(meetingRec), "", map[string]any{"id": askOne, "question": "Who owns the test?"}, http.StatusConflict), codeOpIDReused)
 }
 
-// A main chat on the Agent SDK does not keep its room from starting: the room takes the main chat's launcher and model
-// on the CLI, the only runtime a guest conversation runs on.
+// A main chat an older hub stored on the Agent SDK does not keep its room from starting: the room takes the main chat's
+// launcher and model, and neither names a runtime.
 func TestMeetingRoomRunsOnTheCLI(t *testing.T) {
 	r := newRoomFixture(t)
-	if err := r.s.saveModelRecord(context.Background(), "assistant", 0, ModelBinding{Runtime: proto.AssistantRuntimeAgentSDK}); err != nil {
+	ctx := context.Background()
+	if err := r.s.store().PutSetting(ctx, modelRecordKey("assistant"), json.RawMessage(`{"revision":1,"binding":{"runtime":"agentsdk"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	main := map[string]any{}
-	if err := r.s.applyModel(context.Background(), "assistant", main); err != nil || main["runtime"] != proto.AssistantRuntimeAgentSDK {
-		t.Fatalf("the main chat's runtime %v %v", main, err)
+	if err := r.s.applyModel(ctx, "assistant", main); err != nil || main["runtime"] != nil {
+		t.Fatalf("the main chat %v %v", main, err)
 	}
 	r.roomUp(meetingRec, "participant")
 	sends := r.sends()
-	if len(sends) != 1 || sends[0]["runtime"] != nil || sends[0]["launcher"] != main["launcher"] || sends[0]["model_fingerprint"] == main["model_fingerprint"] {
+	if len(sends) != 1 || sends[0]["runtime"] != nil || sends[0]["launcher"] != main["launcher"] {
 		t.Fatalf("room start %v, main chat %v", sends, main)
 	}
 }
@@ -681,4 +711,36 @@ func TestMeetingRoomDeleted(t *testing.T) {
 	other := r.roomUp(meetingOther, "listener")
 	r.do("DELETE", "/api/v1/recordings/"+meetingOther, "", nil, http.StatusOK)
 	waitFor(t, "the deleted recording's room deleted", func() bool { return !r.s.isRoom(other) })
+}
+
+// A room's row in the lists the apps and the extensions read (GET /api/v1/sessions) is the assistant's (its
+// guest-meeting/<recording id> directory counts as the assistant's since #6077) and says its origin meeting, its
+// recording and its title, so that the voice extension refuses an ordinary call bound to it (meeting_room) and the apps
+// leave its voice button out. Another row the book has an origin for is not an assistant's conversation and says none.
+func TestMeetingRoomRowSaysItsOrigin(t *testing.T) {
+	ft := newFleetTest(t)
+	machine, _ := ft.s.fleetMachine("mac")
+	sid := meetingSessionID(meetingRec, partRoom)
+	room := proto.Session{SessionID: sid, Agent: "claude", Status: proto.StatusIdle, Title: "The meeting is starting.",
+		Cwd: path.Join(path.Dir(machine.assistantCwd()), "guest-meeting", meetingRec)}
+	agent := proto.Session{SessionID: "agent", Agent: "claude", Cwd: "/home/u/src", PaneID: "p1", Status: proto.StatusIdle, Title: "Fix the build"}
+	ft.d.setSessions("mac", []proto.Session{room, agent})
+	ctx := context.Background()
+	started := time.Date(2026, 11, 13, 14, 0, 0, 0, time.UTC)
+	ft.s.originSet(ctx, "mac", sid, OriginMeeting, meetingRec, "")
+	ft.s.titleFixed("mac", sid, started, titleMeeting, "Design review")
+	ft.s.originSet(ctx, "mac", "agent", OriginTask, "task1", "")
+	rows := map[string]proto.Session{}
+	for _, sess := range ft.s.decoratedUnarchived("mac") {
+		rows[sess.SessionID] = sess
+	}
+	if r := rows[sid]; !r.Assistant || r.Origin != OriginMeeting || r.OriginRef != meetingRec || !strings.Contains(r.Title, "Design review") {
+		t.Fatalf("the room's row: assistant %v, origin %q %q, title %q", r.Assistant, r.Origin, r.OriginRef, r.Title)
+	}
+	if r := rows["agent"]; r.Origin != "" || r.OriginRef != "" || r.Title != "Fix the build" {
+		t.Fatalf("an agent's row: origin %q %q, title %q", r.Origin, r.OriginRef, r.Title)
+	}
+	if r, ok := ft.s.decoratedSession("mac", sid); !ok || r.Origin != OriginMeeting || r.OriginRef != meetingRec {
+		t.Fatalf("the room's row alone: %v %q %q", ok, r.Origin, r.OriginRef)
+	}
 }

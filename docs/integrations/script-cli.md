@@ -32,6 +32,8 @@ personad notify "title" [body] [--silent] [--error] [--strict]
 | 4 | The phone can't be reached: no node, node not connected to the hub, hub didn't accept it | - |
 | 130 | Ctrl-C / SIGTERM; the card on the phone is withdrawn too | - |
 
+Human-readable diagnostics after the `personad ask: ` / `personad notify: ` prefixes come from the `scriptcli-ask` and `scriptcli-notify` catalogs in the terminal's language (`PERSONA_LANG`, then the POSIX locale variables; English, Simplified Chinese and Japanese, with English for an unknown language). The chosen option on stdout, exit codes, output streams and line order do not change with language. Error detail returned by the node or hub is passed through as it is, never translated by matching its text. Usage and flag help stay English.
+
 - On exit code 4 or "Hand back to computer", if stdin is a real terminal (not `/dev/null` or a pipe) and `--require-remote` is not set, it falls back to asking in the terminal: a numbered list of options (type the number or the option text),
   or `[y/N]` without options. EOF counts as deny, and Ctrl-C / SIGTERM at that question exits 130. A timeout or a denial is an answer, so neither falls back to the terminal.
 - Without `--strict`, a failure only writes one line to stderr, `Not sent: <reason>` (localized), and the exit code stays 0, so a `set -e` script is never broken by a notification.
@@ -84,7 +86,7 @@ node uses the "pane → session" table learned from hooks (`bindPane`) to find t
 ### Preferences and muting
 
 `notify` uses the hub's existing "send notification" path (the same function `deliverNotify` as extensions' `POST /api/v1/notify`): a device that turned off "Needs You" (`prefs.input`) doesn't get it, and a muted session / space sends nothing (`reason: "muted"`).
-Delivery goes through APNs (direct or via the push relay) and the persistent connection event of `ws_notify` (`kind: "alert"`). If neither channel selects a recipient, the hub returns `sent: false`: `no_device` when no device has a usable push route and no capable connection is online; `filtered` when reachable recipients exist but all are excluded by "Needs You", manager notification switches, "Phone Muted", or the open-desktop rule. A selection on either channel is enough for `sent: true`; asynchronous APNs or relay failures do not change that reply.
+Delivery goes through APNs (direct or via the push relay) and the persistent connection event of `ws_notify` (`kind: "alert"`). If neither channel selects a recipient, the hub returns `sent: false`: `no_device` when no device has a usable push route and no capable connection is online; `filtered` when reachable recipients exist but all are excluded by "Needs You", manager notification switches, "Phone Muted", or the open-desktop rule. A selection on either channel, or a browser's Web Push (a subscribed browser with no Persona page open), is enough for `sent: true`; asynchronous APNs or relay failures do not change that reply.
 
 - `--error`: `interruption-level: time-sensitive`, and the title gets a "⚠️ " prefix; the default is `active`.
 - `--silent`: no `sound` in `aps`. `notifyRequest` gained an optional `silent` field for this, which the HTTP API also accepts. Through the push relay the phone takes the sound from the sealed `aps`, so it is quiet there too; only the "New message" fallback of a push that can't be opened rings (`../operations/push-relay.md`).

@@ -11,14 +11,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import persona.core.designsystem.*
+import java.time.Instant
+import java.time.ZoneId
 
 /**
  * A new conversation's first message while the conversation starts (iOS `PendingStart`), or one whose start failed
  * (iOS `FailedStart.Message`, [failed] with [reason]). [space] is the space it starts in (Health's), null for Persona's
- * own; [launcher] the launcher picked for it on the page, null for the default.
+ * own; [launcher] the launcher picked for it on the page, null for the default; [at] when it was sent (epoch millis), which
+ * the day over its bubble says (iOS `FailedStart.Message.at`).
  */
 internal data class FirstMessage(val text: String, val failed: Boolean = false, val reason: String? = null,
-                                 val space: String? = null, val launcher: String? = null)
+                                 val space: String? = null, val launcher: String? = null, val at: Long = System.currentTimeMillis())
 
 /**
  * A first message whose start failed, kept on the device for the page it was sent from (one per assistant) until it is
@@ -29,19 +32,21 @@ internal class FailedStarts(context: Context) {
 
     fun read(page: String): FirstMessage? = prefs.getString("$page.text", null)?.let { text ->
         FirstMessage(text, failed = true, reason = prefs.getString("$page.reason", null),
-            space = prefs.getString("$page.space", null), launcher = prefs.getString("$page.launcher", null))
+            space = prefs.getString("$page.space", null), launcher = prefs.getString("$page.launcher", null),
+            at = prefs.getLong("$page.at", System.currentTimeMillis()))
     }
 
     /** Keeps [message] for [page] while it failed; anything else (sending, gone) clears it. */
     fun write(page: String, message: FirstMessage?) {
         val failed = message?.takeIf { it.failed }
         prefs.edit().apply {
-            if (failed == null) listOf("text", "reason", "space", "launcher").forEach { remove("$page.$it") }
+            if (failed == null) listOf("text", "reason", "space", "launcher", "at").forEach { remove("$page.$it") }
             else {
                 putString("$page.text", failed.text)
                 putString("$page.reason", failed.reason)
                 putString("$page.space", failed.space)
                 putString("$page.launcher", failed.launcher)
+                putLong("$page.at", failed.at)
             }
         }.apply()
     }
@@ -51,7 +56,8 @@ internal class FailedStarts(context: Context) {
  * The first message at the foot of the blank page, where the conversation will show it (iOS `FirstMessagePending`):
  * your bubble and "Sending…" while the conversation starts; the conversation then takes over and says "Persona is
  * getting ready…". A start that failed keeps the message as a chat keeps one not sent: why, Resend and Delete ([busy]
- * while a resend is on its way).
+ * while a resend is on its way). On Glass the day stands over the bubble, as the conversation's own will have it (iOS
+ * `DayLine`, #1911: it does not appear later when the transcript takes over).
  */
 @Composable
 internal fun FirstMessagePending(message: FirstMessage, contentPadding: PaddingValues, busy: Boolean,
@@ -62,6 +68,8 @@ internal fun FirstMessagePending(message: FirstMessage, contentPadding: PaddingV
                 bottom = contentPadding.calculateBottomPadding() + Tokens.Space.m)
             .testTag(if (message.failed) "assistant-first-failed" else "assistant-first-sending"),
             verticalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
+            if (PersonaTheme.style == AppStyle.Glass) DayLine(remember(message.at) { Instant.ofEpochMilli(message.at).atZone(ZoneId.systemDefault()).toLocalDate() },
+                Modifier.testTag("assistant-first-day"))
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
                 // Sessions picked with @ go in front of the words as tags; the bubble shows the words.
                 UserBubble(remember(message.text) { persona.feature.chat.messageWords(message.text) })

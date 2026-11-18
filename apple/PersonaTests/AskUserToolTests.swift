@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The assistant's ask_user in the chat (issue 677): it reads as Question with its question, not the tool's raw name
 /// beside an empty chip, and once answered it keeps what was asked and what the user picked.
@@ -55,6 +56,50 @@ struct AskUserToolTests {
         #expect(!AskUserAnswers.picked("老板", answer: answers["发给谁？"], multiSelect: true))
         #expect(AskUserAnswers.typed(qs[0], answer: answers["发给谁？"]) == nil)
         #expect(AskUserAnswers.typed(qs[1], answer: answers["什么时候？"]) == "下午三点以后\n再说一句")
+    }
+
+    /// #5937: Claude Code answers its AskUserQuestion as `"<question>"="<answer>"` pairs; the row ticks those too.
+    @Test func readsThePickBackFromClaudesAnswer() {
+        let qs = AskUserAnswers.questions(.object(["questions": .array([
+            question("发给谁？", ["组里", "老板", "客户"], multi: true),
+            question("什么时候？", ["现在", "明早"]),
+        ])]))
+        let text = #"User has answered your questions: "发给谁？"="组里, 客户", "什么时候？"="明早". "#
+            + "You can now continue with the user's answers in mind."
+        let answers = AskUserAnswers.parse(text, questions: qs)
+        #expect(answers == ["发给谁？": "组里, 客户", "什么时候？": "明早"])
+        #expect(AskUserAnswers.picked("客户", answer: answers["发给谁？"], multiSelect: true))
+        #expect(!AskUserAnswers.picked("老板", answer: answers["发给谁？"], multiSelect: true))
+        #expect(AskUserAnswers.picked("明早", answer: answers["什么时候？"], multiSelect: false))
+        // A typed answer keeps the quotes inside it.
+        let typed = AskUserAnswers.parse(#"User has answered your questions: "什么时候？"="下午 "三点" 以后"."#,
+                                         questions: [qs[1]])
+        #expect(AskUserAnswers.typed(qs[1], answer: typed["什么时候？"]) == #"下午 "三点" 以后"#)
+    }
+
+    /// #5889: a Claude Code dialog only its computer can answer: the chat shows what it asks while it has no result,
+    /// and nothing once answered or once another tool ran after it; the Needs You row says it waits on the computer.
+    @Test func pendingClaudeQuestionUntilAnswered() throws {
+        func item(_ seq: Int, _ kind: ItemKind, tool: String? = nil, id: String) -> Item {
+            Item(id: "\(seq)#0", seq: seq, ts: nil, role: kind == .toolUse ? "assistant" : "user", kind: kind, text: nil,
+                 toolUseID: id, toolName: tool,
+                 toolInput: tool == nil ? nil : .object(["questions": .array([question("要发布吗？", ["发布", "先不"])])]),
+                 isError: nil, image: nil)
+        }
+        let ask = item(1, .toolUse, tool: "AskUserQuestion", id: "q")
+        #expect(AskUserAnswers.pending([ask])?.map(\.options) == [["发布", "先不"]])
+        #expect(AskUserAnswers.pending([ask, item(2, .toolResult, id: "q")]) == nil)
+        #expect(AskUserAnswers.pending([ask, item(2, .toolUse, tool: "Bash", id: "b")]) == nil)
+
+        func session(_ caps: String) throws -> Session {
+            let json = #"{"machine_id":"m","session_id":"s","title":"t","cwd":"/w","status":"blocked","state":"needs_you","source_kind":"claude_cli","attention_reason":"Only the computer can answer it","last_text":"Ship it?","capabilities":"# + caps + "}"
+            return try JSON.decoder.decode(Session.self, from: Data(json.utf8))
+        }
+        let outside = try session(#"{"read":true,"send":true,"terminal":false}"#)
+        #expect(NeedsYouWaitingCard.title(outside) == String(localized: "Waiting on Your Computer"))
+        #expect(NeedsYouWaitingCard.line(outside) == "Only the computer can answer it")
+        let pane = try session(#"{"read":true,"send":true,"terminal":true}"#)
+        #expect(NeedsYouWaitingCard.title(pane) == InteractionKind.screen.title)
     }
 
     @Test func dismissedOrExpiredHasNoAnswers() {

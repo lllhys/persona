@@ -1,25 +1,39 @@
 package persona.android.ui
 
+import persona.core.contracts.Machine
 import persona.core.contracts.Session
 import persona.core.contracts.SessionKey
 import persona.core.contracts.api.AgentCreationService
 import persona.core.contracts.api.AgentStartRequest
 import persona.core.contracts.api.AgentStartResult
+import persona.core.domain.sort.TerminalResume
+import persona.core.domain.sort.canTerminal
 import persona.core.domain.sort.hasSource
+import persona.core.domain.sort.isStoppedAgent
+import persona.core.domain.sort.terminalResume
 import persona.feature.terminal.TerminalResumeFailed
 import persona.feature.terminal.TerminalResumer
 import java.util.UUID
 
 /**
- * Resume session on the terminal of a session that isn't running (#4345), as on iOS (#4328): `POST /api/v1/sessions` with
- * `resume_session_id` and what the session ran with; a node from #4328 on fills in what is left out.
+ * Resume session on the terminal of a session that isn't running (#4345 / #5565), as on iOS (#4328): `POST /api/v1/sessions`
+ * with `resume_session_id` and what the session ran with; a node from #4328 on fills in what is left out.
  */
 internal class SessionTerminalResumer(
     private val sessions: () -> List<Session>,
     private val creation: () -> AgentCreationService?,
+    private val machines: () -> List<Machine> = { emptyList() },
 ) : TerminalResumer {
-    override fun canResume(key: SessionKey): Boolean =
-        creation() != null && sessions().firstOrNull { it.key == key }?.let(::resumableInTerminal) == true
+    override fun isStopped(key: SessionKey): Boolean = sessions().firstOrNull { it.key == key }?.isStoppedAgent == true
+
+    override fun canResume(key: SessionKey): Boolean {
+        val session = sessions().firstOrNull { it.key == key } ?: return false
+        if (creation() == null) return false
+        val machine = machines().firstOrNull { it.id == session.machineId }
+        // Nothing to resume it in (#5565): the same rule as ⋯'s Resume in Terminal.
+        if (terminalResume(session, machine) == TerminalResume.NoEngine) return false
+        return resumableInTerminal(session)
+    }
 
     override suspend fun resume(key: SessionKey) {
         val session = checkNotNull(sessions().firstOrNull { it.key == key })
@@ -33,6 +47,13 @@ internal class SessionTerminalResumer(
     }
 }
 
-/** A Claude Code session in a terminal engine that isn't being started; others (Codex) resume with their next message. */
-internal fun resumableInTerminal(session: Session): Boolean = !session.hasSource && !session.assistant && !session.starting &&
-    session.cwd.isNotBlank() && (session.agent.isNullOrEmpty() || session.agent == "claude")
+/**
+ * What the terminal page's Resume can bring back (#4345 / #5565): a stopped Agent, a Codex thread with a terminal, or a
+ * Claude Code session that isn't running (as iOS `TerminalPanel.canResume`).
+ */
+internal fun resumableInTerminal(session: Session): Boolean {
+    if (session.assistant || session.starting) return false
+    return session.isStoppedAgent ||
+        (session.sourceKind == "codex_history" && session.canTerminal) ||
+        (!session.hasSource && session.isClaude && session.cwd.isNotBlank())
+}

@@ -7,7 +7,6 @@
   "profile": "プロフィール",
   "sidebar": "サイドバー",
   "empty_title": "何をお手伝いしましょうか？",
-  "empty_body_machines": "予定、Lark、メール、ナレッジを確認できるほか、{machines}上で作業もできます。",
   "empty_body": "予定、Lark、メール、ナレッジを確認できるほか、お使いのコンピューター上で作業もできます。",
   "ask_placeholder": "今日は{name}に何をお願いしましょうか〜",
   "empty_body_setup": "あと一歩で始められます。足りないものを下に示します。",

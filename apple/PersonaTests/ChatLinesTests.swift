@@ -184,38 +184,51 @@ struct ChatLinesTests {
         #expect(kinds(ChatLines(openWork: []).build(done, live: nil)) == ["user", "work", "answer"], "reloaded history defaults to folded")
     }
 
-    @Test func aWakeJoinsItsExchangesSummaryBeforeNewWordsArrive() {
+    /// #9140: the work a background task woke the agent for is an exchange of its own. It opens with the notice and
+    /// has its own work line; the answer of the turn before it stays in place while that work runs, streams and ends.
+    @Test func aWakeOpensItsOwnWorkLineAndLeavesTheAnswerBeforeIt() {
         var wake = item(4, .notice, role: "system", text: "Forecast check")
         wake.wake = true
-        let items = [item(1, .text, role: "user", text: "Will it rain?"),
-                     item(2, .toolUse, tool: "Bash", id: "a"),
-                     item(3, .text, text: "The forecast check is running."),
-                     wake, item(5, .toolUse, tool: "Bash", id: "b")]
+        let before = [item(1, .text, role: "user", text: "Will it rain?"),
+                      item(2, .toolUse, tool: "Bash", id: "a"),
+                      item(3, .text, text: "The forecast check is running.")]
+        // Woken, nothing of the new work here yet: a live work line under the notice, under the id it keeps.
+        let woken = blocks(before + [wake])
+        guard case .turn(let first) = woken.last else { Issue.record("expected a turn"); return }
+        #expect(first.id == wake.id && first.users.isEmpty)
+        let started = ChatLines(openWork: []).build(woken, live: first.id)
+        #expect(kinds(started) == ["user", "work", "answer", "row", "work"])
+        #expect(started[2].holds("3#0"))
+        guard case .work(let wokenID, let none, let liveNow, _, _) = started[4].content else { Issue.record("expected the woken work line"); return }
+        #expect(none.isEmpty && liveNow)
+
+        let items = before + [wake, item(5, .toolUse, tool: "Bash", id: "b")]
         let b = blocks(items)
         guard case .turn(let t) = b.last else { Issue.record("expected a turn"); return }
-        #expect(t.hasPendingWake, "the wake marks unfinished continuation even before another text segment")
         let running = ChatLines(openWork: []).build(b, live: t.id)
-        #expect(kinds(running) == ["user", "work", "answer"], "before new words stream, the previous answer stays in place")
-        #expect(running.last?.holds("3#0") == true)
+        #expect(kinds(running) == ["user", "work", "answer", "row", "work"], "the previous answer stays in place")
+        #expect(running[2].holds("3#0"))
         let streaming = ChatLines(openWork: []).build(b, live: t.id, streaming: true)
-        #expect(kinds(streaming) == ["user", "work"], "new live words replace the wake's pre-existing text slot")
-        guard case .work(let id, let work, _, _, _) = running[1].content else {
-            Issue.record("expected the wake's ordinary work summary")
+        #expect(kinds(streaming) == ["user", "work", "answer", "row", "work"], "live words belong to the woken exchange, not to the answer before it")
+        #expect(streaming[2].holds("3#0"))
+        guard case .work(_, let earlier, let earlierLive, _, _) = running[1].content,
+              case .work(let id, let work, let live, _, _) = running[4].content else {
+            Issue.record("expected two work lines")
             return
         }
-        #expect(work.contains { $0.id == wake.id })
-        #expect(work.contains { $0.id == "5#0" })
+        #expect(id == wokenID, "the woken work line keeps its id from before its first step")
+        #expect(!earlierLive && live)
+        #expect(earlier.map(\.id) == ["2#0"] && work.map(\.id) == ["5#0"])
+        // Nothing opens by itself; opened, the woken work shows its own steps only.
         let open = ChatLines(openWork: [id]).build(b, live: t.id, streaming: true)
-        #expect(kinds(open) == ["user", "work", "step", "step", "step", "step", "end"])
-        #expect(open.contains { if case .workStep(_, .step(.thought(let i)), _) = $0.content { i.id == wake.id } else { false } })
-        #expect(open.contains { if case .workStep(_, .text(let i), _) = $0.content { i.id == "3#0" } else { false } })
+        #expect(kinds(open) == ["user", "work", "answer", "row", "work", "step", "end"])
 
         let complete = blocks(items + [item(6, .text, text: "No rain; keep the plan.")])
         let done = ChatLines(openWork: []).build(complete, live: nil)
-        #expect(kinds(done) == ["user", "work", "answer"])
-        #expect(done.last?.holds("6#0") == true)
-        let inspected = ChatLines(openWork: [id]).build(complete, live: nil)
-        #expect(inspected.contains { if case .workStep(_, .text(let i), _) = $0.content { i.id == "3#0" } else { false } })
+        #expect(kinds(done) == ["user", "work", "answer", "row", "work", "answer"])
+        #expect(done[2].holds("3#0") && done.last?.holds("6#0") == true)
+        guard case .work(let doneID, _, _, _, _) = done[4].content else { Issue.record("expected the woken work line"); return }
+        #expect(doneID == id)
     }
 
     @Test func liveNarrationReplacesThePreviousSegmentAndOnlyTheFinalAnswerRemains() {
@@ -532,5 +545,72 @@ struct ChatLinesTests {
         #expect(ChatLines.placeFailed(lines, [late]).before == [lines[1].id: [late]])
         let next = PendingMessage(text: "next day", images: [], state: .failed, createdAt: day2.addingTimeInterval(3600))
         #expect(ChatLines.placeFailed(lines, [next]).before == ["imgs": [next]])
+    }
+
+    // MARK: Permission mode change lines (#10297)
+
+    private func sent(_ seq: Int, at: Date, role: String = "user") -> Item {
+        Item(id: "\(seq)#0", seq: seq, ts: at, role: role, kind: .text, text: role == "user" ? "问题\(seq)" : "回答\(seq)",
+             toolUseID: nil, toolName: nil, toolInput: nil, isError: nil, image: nil)
+    }
+
+    private func modeChange(_ at: Date, _ kind: String = "set", to: String = "acceptEdits", applied: String? = "now",
+                            reason: String? = nil, from: String? = "default", who: String? = "Phone") -> APIClient.ModeChange {
+        APIClient.ModeChange(kind: kind, from: from, to: to, applied: applied, actorKind: who == nil ? "hub" : "device",
+                             deviceName: who, reason: reason, at: at)
+    }
+
+    private func modeIDs(_ lines: [ChatLine]) -> [String] {
+        lines.map { line in if case .modeChange = line.content { "mode" } else { line.id } }
+    }
+
+    @Test func modeChangesGoAtTheEndOfTheExchangeTheyHappenedIn() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let lines = ChatLines(openWork: []).build(blocks([sent(1, at: t0), sent(2, at: t0.addingTimeInterval(60), role: "assistant"),
+                                                          sent(3, at: t0.addingTimeInterval(600)), sent(4, at: t0.addingTimeInterval(660), role: "assistant")]), live: nil)
+        let merged = ChatLines.mergeModeChanges(lines, [modeChange(t0.addingTimeInterval(120)), modeChange(t0.addingTimeInterval(900), to: "plan"),
+                                                        modeChange(t0.addingTimeInterval(-60), to: "auto")])
+        // before the first message, after the first exchange (never between its message and answer), after the last
+        #expect(modeIDs(merged) == ["mode"] + modeIDs(Array(lines.prefix(2))) + ["mode"] + modeIDs(Array(lines.dropFirst(2))) + ["mode"])
+        #expect(Set(merged.map(\.id)).count == merged.count)
+        // the last line Retry and the error cards ask about is not a mode change
+        #expect(ChatLines.lastOfChat(merged)?.id == lines.last?.id)
+        // older history still to load: a change from before the first loaded item waits for it
+        let held = ChatLines.mergeModeChanges(lines, [modeChange(t0.addingTimeInterval(-60))], earliest: t0)
+        #expect(held.map(\.id) == lines.map(\.id))
+        // nothing to place them by: an empty chat keeps its placeholder
+        #expect(ChatLines.mergeModeChanges([], [modeChange(t0)]).isEmpty)
+    }
+
+    @Test func modeChangeIDsSurviveTheListGrowingOrLosingItsOldest() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let lines = ChatLines(openWork: []).build(blocks([sent(1, at: t0)]), live: nil)
+        let twice = [modeChange(t0.addingTimeInterval(5)), modeChange(t0.addingTimeInterval(5)), modeChange(t0.addingTimeInterval(9))]
+        let before = ChatLines.mergeModeChanges(lines, twice).map(\.id)
+        let after = ChatLines.mergeModeChanges(lines, Array(twice.dropFirst())).map(\.id)
+        #expect(Set(before).count == before.count)
+        #expect(after.last == before.last)
+    }
+
+    /// Tests run in zh-Hans: the modes in 「」, a restart's outcome with why, no colon without one.
+    @Test func modeChangeWords() {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let auto = SessionModes.modeLabel("acceptEdits") ?? "", all = SessionModes.modeLabel("bypassPermissions") ?? ""
+        let start = SessionModes.modeLabel("default") ?? ""
+        #expect(ModeChangeWords.label(modeChange(t0), session: nil) == "Phone 把权限模式从「\(start)」改成了「\(auto)」")
+        #expect(ModeChangeWords.label(modeChange(t0, from: nil), session: nil) == "Phone 把权限模式改成了「\(auto)」")
+        #expect(ModeChangeWords.label(modeChange(t0, to: "bypassPermissions", applied: "restart"), session: nil)
+                == "Phone 选了「\(all)」，这一轮结束后会重启会话再切过去")
+        #expect(ModeChangeWords.label(modeChange(t0, who: nil), session: nil).hasPrefix("hub 把权限模式"))
+        func outcome(_ kind: String, _ reason: String?) -> String {
+            ModeChangeWords.label(modeChange(t0, kind, to: "bypassPermissions", applied: nil, reason: reason, from: nil), session: nil)
+        }
+        #expect(outcome("restart_done", nil) == "已重启，切到了「\(all)」")
+        #expect(outcome("restart_done", "already_in") == "已经是「\(all)」了，不用重启")
+        #expect(outcome("restart_dropped", "process_replaced") == "已取消，不会重启到「\(all)」：会话换了进程")
+        #expect(outcome("restart_dropped", "process_exited") == "已取消，不会重启到「\(all)」：原进程已经退出")
+        #expect(outcome("restart_failed", "start_failed") == "没能重启到「\(all)」：新进程没起来，会话按原来的模式继续")
+        #expect(outcome("restart_failed", nil) == "没能重启到「\(all)」")
+        #expect(outcome("restart_dropped", "claude 4101, the process it was picked for, has exited") == "已取消，不会重启到「\(all)」")
     }
 }

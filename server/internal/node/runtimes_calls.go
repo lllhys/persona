@@ -19,13 +19,24 @@ import (
 var claimMethods = map[string]bool{"session.send": true, "session.items": true, "session.item": true, "session.image": true,
 	"session.watch": true, "session.info": true, "session.interrupt": true}
 
+// awayReads are the calls the node answers itself for a session of a runtime that is away whose conversation is a
+// Claude transcript here (runtimeaway.go): its content, its info and the watch of its transcript.
+var awayReads = map[string]bool{"session.items": true, "session.item": true, "session.image": true, "session.watch": true,
+	"session.info": true}
+
 // runtimeClaimTimeout bounds asking one runtime whether it has a session.
 var runtimeClaimTimeout = 5 * time.Second
 
 // runtimeFor is the runtime a hub call about session id goes to: the one listing it, else the one that listed it
 // before (an older session it no longer lists), else — for a session this machine has nothing else for (no agent, no
 // transcript) — the first connected runtime that answers for it. A session of a runtime that is not connected now is
-// refused (errRuntimeAway): it is not a Claude session to resume in a terminal.
+// refused (errRuntimeAway): it is not a Claude session to resume in a terminal. Only its content is read meanwhile
+// when its conversation is a Claude transcript here (runtimeaway.go).
+//
+// A session none of them has, whose id is one a runtime gives its own sessions ("<runtime id>-…": Paseo's
+// paseo-<agent id>), is refused with that runtime's not-found when it says it does not have it (an agent of another
+// provider archived or deleted in Paseo, opened from an old link): the node has nothing of it either, and answered with
+// its own transcript lookup's failure, a 502 the apps showed as the computer failing (#8131).
 func (n *Node) runtimeFor(ctx context.Context, method, id string) (*runtimeConn, error) {
 	if id == "" || !strings.HasPrefix(method, "session.") || method == "session.start" {
 		return nil, nil
@@ -35,7 +46,10 @@ func (n *Node) runtimeFor(ctx context.Context, method, id string) (*runtimeConn,
 		return h, nil
 	}
 	if known {
-		if claimMethods[method] || method == "session.rename" || method == "session.close" || method == "session.archive" || method == "session.unarchive" {
+		if awayReads[method] && n.runtimeTranscript(id) != "" {
+			return nil, nil // the node reads the transcript (n.file), as it does while the runtime lists the session
+		}
+		if claimMethods[method] || method == "session.rename" || method == "session.close" || method == "session.rewind" || method == "session.archive" || method == "session.unarchive" {
 			return nil, errRuntimeAway(label)
 		}
 		return nil, nil // unwatching and the like: nothing to refuse
@@ -44,9 +58,17 @@ func (n *Node) runtimeFor(ctx context.Context, method, id string) (*runtimeConn,
 		return nil, nil
 	}
 	conns := n.runtimes.askable(id)
-	if len(conns) == 0 || n.hasOwnSession(id) {
+	if len(conns) == 0 {
+		// Asked lately: what the runtime whose id it is said then, unless this machine has the session by now.
+		if gone := n.runtimes.goneOf(id); gone != nil && !n.hasOwnSession(id) {
+			return nil, gone
+		}
 		return nil, nil
 	}
+	if n.hasOwnSession(id) {
+		return nil, nil
+	}
+	var gone error
 	for _, c := range conns {
 		cctx, cancel := context.WithTimeout(ctx, runtimeClaimTimeout)
 		var page struct {
@@ -54,14 +76,28 @@ func (n *Node) runtimeFor(ctx context.Context, method, id string) (*runtimeConn,
 		}
 		err := c.peer.Call(cctx, "session.items", map[string]any{"session_id": id, "limit": 1}, &page)
 		cancel()
-		if err == nil {
+		if hasSession(err) {
 			n.runtimes.claim(c, id)
 			return c, nil
 		}
+		if rpcCode(err) == codeNotFound && strings.HasPrefix(id, c.id()+"-") {
+			gone = err
+		}
 	}
-	n.runtimes.unclaim(id)
-	return nil, nil
+	n.runtimes.unclaim(id, gone)
+	return nil, gone
 }
+
+// hasSession: a runtime's answer to session.items {limit: 1} says the session is its own. A page does, and so does a
+// refusal to read it without starting its agent (proto.CodeNotLoaded: an agent Paseo let go, #8132), which only the
+// runtime that has the session gives; the call itself then goes to it, and a watch or a send there starts the agent.
+func hasSession(err error) bool {
+	return err == nil || rpcCode(err) == proto.CodeNotLoaded
+}
+
+// codeNotFound is what a node, or a runtime it asks, answers for a session it does not have (the manager's
+// codeSessionNotFound: a card of such a session is withdrawn).
+const codeNotFound = "not_found"
 
 // hasOwnSession: this machine has the session itself (a live agent in a terminal, a Claude / Codex and compatible variants record).
 func (n *Node) hasOwnSession(id string) bool {
@@ -182,8 +218,11 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 		out, err := call(method, params)
 		return out, err, true
 	case "session.watch":
-		n.runtimes.watch(h, p.SessionID, p.SinceSeq)
+		attempt := n.runtimes.watch(h, p.SessionID, p.SinceSeq, rpc.ConnContext(ctx))
 		_, err := call("session.watch", map[string]any{"session_id": p.SessionID, "since_seq": p.SinceSeq})
+		if err != nil {
+			n.runtimes.watchFailed(h, p.SessionID, attempt.token)
+		}
 		return okResult(err), err, true
 	case "session.unwatch":
 		n.runtimes.unwatch(p.SessionID)
@@ -200,17 +239,19 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 		}
 		var opts sendOpts
 		_ = json.Unmarshal(params, &opts)
+		var said json.RawMessage // what the runtime answered: it may say the message only queued behind the turn
 		err := n.sends.once(opts.ClientMsgID, func() error {
-			var after int
+			var after echoAfter
 			if opts.ClientMsgID != "" {
-				after = n.runtimes.lastPushed(p.SessionID)
+				after = echoAfter{seq: n.runtimes.lastPushed(p.SessionID), in: echoInRuntime}
 				if n.runtimeTranscript(p.SessionID) != "" { // its items are the transcript's: its copy comes after its end
 					after = n.echoBase(p.SessionID)
 				}
 			}
 			return n.sendEchoed(p.SessionID, opts.ClientMsgID, p.Text, len(p.Images), after, func() error { // echo.go
-				_, err := call("session.send", map[string]any{"session_id": p.SessionID, "text": p.Text, "images": p.Images,
+				out, err := call("session.send", map[string]any{"session_id": p.SessionID, "text": p.Text, "images": p.Images,
 					"client_msg_id": opts.ClientMsgID})
+				said = out
 				return err
 			})
 		})
@@ -218,13 +259,14 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 			res, err := n.handOver(ctx, h, p.SessionID, params)
 			return res, err, true
 		}
-		return okResult(err), err, true
+		return withFlag(okResult(err), said, "queued"), err, true
 	case "session.interrupt":
 		if !caps.Interrupt {
 			return nil, errRuntimeUnsupported(label, "中断"), true
 		}
-		_, err := call("session.interrupt", map[string]any{"session_id": p.SessionID})
-		return okResult(err), err, true
+		// A runtime that waited for the turn to end says so (settled); one that only asked it to stop does not.
+		out, err := call("session.interrupt", map[string]any{"session_id": p.SessionID})
+		return withFlag(okResult(err), out, "settled"), err, true
 	case "session.close":
 		if !caps.Close {
 			return nil, errRuntimeUnsupported(label, "从手机关闭"), true
@@ -247,6 +289,13 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 			return nil, err, true
 		}
 		return nativeArchiveResult{Native: nativeArchiveDone, Via: "runtime"}, nil, true
+	case "session.seen":
+		// Only a runtime with an unread mark of its own is told (caps.seen); for any other there is nothing to clear.
+		if !caps.Seen || strings.Contains(p.SessionID, subagentSep) {
+			return okResult(nil), nil, true
+		}
+		_, err := call("session.seen", map[string]any{"session_id": p.SessionID})
+		return okResult(err), err, true
 	case "session.rename":
 		if p.Title == nil || strings.TrimSpace(*p.Title) == "" {
 			return okResult(nil), nil, true // a tab name: these sessions have no tab
@@ -259,10 +308,11 @@ func (n *Node) runtimeHandle(ctx context.Context, h *runtimeConn, method string,
 	case "session.screen":
 		return map[string]any{"text": "", "status": n.runtimeStatus(h, p.SessionID)}, nil, true
 	case "session.info":
-		// The counts a transcript gives are unknown here: zero, which the apps read as "none yet" (an iOS app older
-		// than this decodes them as required numbers).
+		// The counts a transcript gives are unknown here, and usage_unknown says so: the apps leave them out rather than
+		// show "0 tokens, 0 turns" (#8261). They stay zero for the apps older than that, which decode them as required
+		// numbers and read them as "none yet".
 		info := map[string]any{"session_id": p.SessionID, "agent": h.agent(), "context_tokens": 0, "output_tokens": 0,
-			"compactions": 0, "turns": 0}
+			"compactions": 0, "turns": 0, "usage_unknown": true}
 		for _, s := range h.sessionsCopy() {
 			if s.SessionID == p.SessionID {
 				info["cwd"], info["model"], info["agent"], info["last_activity"] = s.Cwd, s.Model, s.Agent, s.UpdatedAt
@@ -334,7 +384,7 @@ func (n *Node) handOver(ctx context.Context, from *runtimeConn, id string, param
 				cctx, cancel := context.WithTimeout(ctx, runtimeClaimTimeout)
 				err := c.peer.Call(cctx, "session.items", map[string]any{"session_id": id, "limit": 1}, nil)
 				cancel()
-				if err == nil {
+				if hasSession(err) {
 					n.runtimes.claim(c, id)
 					return forward(c)
 				}
@@ -366,6 +416,21 @@ func okResult(err error) any {
 		return nil
 	}
 	return map[string]any{"ok": true}
+}
+
+// withFlag carries the runtime's boolean flag (session.send's queued, session.interrupt's settled) from its answer
+// into the node's ok result, when it is set.
+func withFlag(res any, answer json.RawMessage, flag string) any {
+	m, ok := res.(map[string]any)
+	if !ok || len(answer) == 0 {
+		return res
+	}
+	var a map[string]json.RawMessage
+	if json.Unmarshal(answer, &a) != nil || string(a[flag]) != "true" {
+		return res
+	}
+	m[flag] = true
+	return m
 }
 
 func isRPCError(err error) bool {

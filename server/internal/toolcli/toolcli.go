@@ -9,6 +9,9 @@
 //	    <connector>_cli tool reads the words and names the tool to call; that tool is called (through the gate, as by
 //	    name); with --format text the connector shows its answer for people (docs/protocol/connector-protocol.md "Command line")
 //
+// The one Agent-side exception is task_spawn: the node resolves its runtime/pane identity and the manager scopes it
+// to its existing supervised task. It never grants the assistant's connector tools.
+//
 // Output is for a program: one line of JSON on stdout, or text for a person. A failure is one line of JSON on stderr
 // ({error, kind, retry_after}), or "<name>: …" with --format text, and an exit code by its kind; a mistake in the
 // command line is one too (kind usage), found before anything is called.
@@ -21,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,9 +75,10 @@ func readStdin(stdin io.Reader) ([]byte, error) {
 // it expires (replaced by tests).
 var dial nodeclient.Dialer = nodeclient.DialInterruptible
 
-// call asks the node to run a tool as the assistant's (replaced by tests).
+// call asks the node to authorize and run a tool (replaced by tests).
 var call = func(ctx context.Context, name string, args any) (proto.ToolResult, error) {
-	line, err := dial(ctx, map[string]any{"kind": "cli.call", "name": name, "args": args})
+	line, err := dial(ctx, map[string]any{"kind": "cli.call", "name": name, "args": args, "pane": nodeclient.HookPane(os.Getenv),
+		"codex_thread_id": os.Getenv("CODEX_THREAD_ID")})
 	if err != nil {
 		return proto.ToolResult{}, err
 	}
@@ -87,7 +92,8 @@ var call = func(ctx context.Context, name string, args any) (proto.ToolResult, e
 const (
 	usageTool = "personad tool <tool> [<json args> | -]"
 	usageCLI  = "personad tool --cli <connector> [--format json|text] <words…>"
-	usage     = "personad tool: a connector's tools from the assistant's shell, through the Persona hub\n  " + usageTool + "\n  " + usageCLI
+	usage     = "personad tool: a connector's tools from the assistant's shell, through the Persona hub\n  " + usageTool + "\n  " + usageCLI +
+		"\n  task_spawn: a separate session on an Agent's existing supervised task (title and prompt)"
 )
 
 // Main runs one command line and returns its exit code. Help is the usage on stdout; a mistake in the command line

@@ -27,6 +27,8 @@ internal data class ToolDefinition(
      * throw for arguments that cannot be shown.
      */
     val confirmation: ((JsonObject) -> PhoneConfirmationText)? = null,
+    /** A before → after card whose target must be read and snapshotted in the registry's suspend path. */
+    val confirmationNeedsPreparation: Boolean = false,
 )
 
 /**
@@ -36,6 +38,10 @@ internal data class ToolDefinition(
  * of range are clamped instead of refused and unknown arguments are ignored. phone_notifications_list is Android's own.
  */
 internal object PhoneToolCatalog {
+    val confirmedWriteNames = setOf(
+        "phone_calendar_create_event", "phone_calendar_update_event", "phone_calendar_delete_event",
+        "phone_contacts_create", "phone_contacts_update",
+    )
     private fun string(description: String, values: List<String> = emptyList()) = buildJsonObject {
         put("type", "string"); put("description", description)
         if (values.isNotEmpty()) put("enum", JsonArray(values.map(::JsonPrimitive)))
@@ -47,17 +53,27 @@ internal object PhoneToolCatalog {
     private fun array(description: String, items: JsonObject) = buildJsonObject {
         put("type", "array"); put("description", description); put("items", items)
     }
+    private val labeledEntry = buildJsonObject {
+        put("type", "object"); put("additionalProperties", false)
+        put("properties", buildJsonObject {
+            put("value", string("The phone number or email address."))
+            put("label", string("mobile, iphone, home, work, main or other.",
+                listOf("mobile", "iphone", "home", "work", "main", "other")))
+        })
+        put("required", JsonArray(listOf(JsonPrimitive("value"))))
+    }
 
     /** iOS Schema.object: no `properties` or `required` key when there are none. */
     private fun tool(
         name: String, description: String, source: PhoneSource,
         properties: Map<String, JsonObject> = emptyMap(), required: List<String> = emptyList(),
         foreground: Boolean = false, confirmation: ((JsonObject) -> PhoneConfirmationText)? = null,
+        preparedConfirmation: Boolean = false,
     ) = ToolDefinition(PhoneToolSpec(name, description, buildJsonObject {
         put("type", "object"); put("additionalProperties", false)
         if (properties.isNotEmpty()) put("properties", JsonObject(properties))
         if (required.isNotEmpty()) put("required", JsonArray(required.map(::JsonPrimitive)))
-    }), source, foreground, confirmation)
+    }), source, foreground, confirmation, preparedConfirmation)
 
     val all = listOf(
         tool("phone_contacts_search",
@@ -70,6 +86,34 @@ internal object PhoneToolCatalog {
                     "spaces and dashes. Pass an empty string to get the first contacts in the address book's own order."),
                 "limit" to integer("Maximum number of contacts to return, default 10, max 50.", 1, 50),
             ), listOf("query")),
+        tool("phone_contacts_create",
+            "Create a contact in the phone's address book. Pass at least a name or a company. phones and emails are " +
+                "lists of {value, label?} (label: mobile, iphone, home, work, main or other). The user sees the new card " +
+                "on the phone and must approve. Returns the new contact as phone_contacts_search does.",
+            PhoneSource.Contacts, mapOf(
+                "given_name" to string("First (given) name."),
+                "family_name" to string("Last (family) name."),
+                "company" to string("Company or organization."),
+                "job_title" to string("Job title."),
+                "phones" to array("Phone numbers to add.", labeledEntry),
+                "emails" to array("Email addresses to add.", labeledEntry),
+            ), confirmation = { args -> ContactEdit.plan(null, args).let { edit -> { res: Resources -> edit.createSummary(res) } } }),
+        tool("phone_contacts_update",
+            "Add to or change an existing contact: pass its id from phone_contacts_search and only what changes. phones " +
+                "and emails are added next to the existing ones (an existing number or address is skipped). A field that " +
+                "already has a different value (name, company, job title) is only overwritten, and phones / emails only " +
+                "replaced, with replace=true: pass it only when the user asked to change it. The user sees each change on " +
+                "the phone and must approve.",
+            PhoneSource.Contacts, mapOf(
+                "id" to string("Contact id from phone_contacts_search."),
+                "given_name" to string("First (given) name."),
+                "family_name" to string("Last (family) name."),
+                "company" to string("Company or organization."),
+                "job_title" to string("Job title."),
+                "phones" to array("Phone numbers to add (or, with replace, the new list).", labeledEntry),
+                "emails" to array("Email addresses to add (or, with replace, the new list).", labeledEntry),
+                "replace" to boolean("Overwrite fields that already have a value and replace phones / emails. Default false."),
+            ), listOf("id"), preparedConfirmation = true),
         tool("phone_calendar_events",
             "List calendar events in a time window. Defaults to the next 7 days starting at 00:00 today. Times are ISO 8601 " +
                 "with a timezone offset (e.g. 2026-10-24T14:00:00+08:00). Returns each event's id, title, start, end, all-day " +
@@ -95,6 +139,32 @@ internal object PhoneToolCatalog {
                 "calendar" to string("Calendar name (title) to put the event in. Default: the default calendar for new events."),
             ), listOf("title", "start", "end"),
             confirmation = { args -> CalendarArguments.parse(args).let { event -> { res: Resources -> event.summary(res) } } }),
+        tool("phone_calendar_update_event",
+            "Change or reschedule a calendar event: pass its id from phone_calendar_events and only the fields to change. " +
+                "For a repeating event (recurring=true) also pass occurrence_start, the occurrence's start as " +
+                "phone_calendar_events returned it, and span: \"this\" (default) changes only that occurrence, \"future\" " +
+                "it and every later one. A new start without an end keeps the duration. The user sees before and after on " +
+                "the phone and must approve.",
+            PhoneSource.Calendar, mapOf(
+                "id" to string("Event id from phone_calendar_events."),
+                "occurrence_start" to string("For a repeating event: the start of the occurrence to change, ISO 8601, as phone_calendar_events returned it."),
+                "span" to string("this (default): only this occurrence; future: this and all later occurrences.", listOf("this", "future")),
+                "title" to string("New title."),
+                "start" to string("New start, ISO 8601 with a timezone."),
+                "end" to string("New end, ISO 8601 with a timezone."),
+                "location" to string("New location; an empty string removes it."),
+                "notes" to string("New notes; they replace the old notes, an empty string removes them."),
+                "all_day" to boolean("Make the event all-day or not."),
+            ), listOf("id"), preparedConfirmation = true),
+        tool("phone_calendar_delete_event",
+            "Delete (cancel) a calendar event: pass its id from phone_calendar_events. For a repeating event also pass " +
+                "occurrence_start; span \"this\" (default) deletes only that occurrence, \"future\" it and every later one. " +
+                "The user must approve on the phone.",
+            PhoneSource.Calendar, mapOf(
+                "id" to string("Event id from phone_calendar_events."),
+                "occurrence_start" to string("For a repeating event: the start of the occurrence to delete, ISO 8601, as phone_calendar_events returned it."),
+                "span" to string("this (default): only this occurrence; future: this and all later occurrences.", listOf("this", "future")),
+            ), listOf("id"), preparedConfirmation = true),
         tool("phone_location_current",
             "Get the phone's current location. Returns latitude, longitude, horizontal accuracy in meters, altitude, the " +
                 "reverse-geocoded address (country, province, city, district, street, formatted address), the device " +
@@ -102,8 +172,10 @@ internal object PhoneToolCatalog {
                 "the user asks something that needs their location.",
             PhoneSource.Location, foreground = true),
         tool("phone_health_summary",
-            "Summarize the user's health data per day. Metrics: steps, distance (meters), active_energy (kcal), " +
-                "heart_rate (bpm, average/min/max over the day), resting_heart_rate (bpm), sleep (hours asleep), weight (kg). " +
+            "Summarize the user's health data per day. Metrics: steps, distance (meters), " +
+                "active_energy, resting_energy, dietary_energy (kcal, daily totals), " +
+                "protein, carbs, fat (grams, daily totals), heart_rate (bpm, average/min/max over the day), " +
+                "resting_heart_rate (bpm), sleep (hours asleep), weight (kg). " +
                 "Defaults to steps over the last 7 days. Only the requested metrics are read. Days run from local midnight to " +
                 "midnight; today's numbers are partial. Returns one row per day with only the days that have data. Read access is " +
                 "never reported to apps, so an empty result can also mean the user denied read access.",
@@ -111,6 +183,18 @@ internal object PhoneToolCatalog {
                 "metrics" to array("Metrics to summarize. Default [\"steps\"].", string("One metric.", Health.metricNames)),
                 "days" to integer("How many days back from today, default 7, max 90.", 1, 90),
             )),
+        tool("phone_workouts_recent",
+            "List the user's recent workouts from Apple Health (the Workout app and any app that saves workouts), newest first. Each row: id, activity, source app, start and end, duration (seconds), distance (meters), active energy (kcal), elevation_gain (meters), heart_rate_avg and heart_rate_max (bpm), and pace (seconds per kilometre) for runs, walks, hikes and rides. Fields without data are left out. Use it to compare a workout with recent ones of the same activity. No route or location is read. Read access is never reported to apps, so an empty result can also mean the user did not allow Persona to read workouts.",
+            PhoneSource.Health, mapOf(
+                "activity" to string("Only this activity; all activities when absent.", listOf("cycling", "hiking", "interval_training", "running", "strength_training", "swimming", "walking", "yoga")),
+                "days" to integer("How many days back from now, default 30, max 365.", 1, 365),
+                "limit" to integer("At most this many workouts, default 20, max 50.", 1, 50),
+            )),
+        tool("phone_workout_detail",
+            "One workout from Apple Health by its id (from phone_workouts_recent or a workout report): the fields phone_workouts_recent gives, plus splits (whole kilometres in order, the seconds each took with pauses left out) for runs, walks, hikes and rides, and heart_rate (the average bpm of each minute from the start). No route or location is read.",
+            PhoneSource.Health, mapOf(
+                "id" to string("The workout's id."),
+            ), listOf("id")),
         tool("phone_photos_recent",
             "List recent photos and videos, newest first. Each row has the Photos local identifier, creation date (ISO " +
                 "8601), media type (image/video), pixel width and height, whether it is a screenshot, whether it is a " +
@@ -193,4 +277,8 @@ private fun JsonObject.number(key: String): Long? {
     return value.longOrNull ?: value.doubleOrNull?.takeIf { it.isFinite() }?.let { kotlin.math.round(it).toLong() }
 }
 
-internal fun JsonObject.bool(key: String): Boolean = (get(key) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull ?: false
+internal fun JsonObject.bool(key: String): Boolean = boolOrNull(key) ?: false
+
+/** Unlike bool(), preserves the difference between an absent flag and an explicit false. */
+internal fun JsonObject.boolOrNull(key: String): Boolean? =
+    (get(key) as? JsonPrimitive)?.takeUnless { it.isString }?.booleanOrNull

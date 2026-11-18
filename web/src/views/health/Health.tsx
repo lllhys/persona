@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, enc, errorText } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { memoryEntries, type MemoryEntry, type MemoryFile } from "../../lib/memory";
+import { safeDraftWrite } from "../../lib/drafts";
 import { noteSent } from "../../lib/outbox";
 import { plainMarkdown } from "../../lib/plain-markdown";
 import { href, navigate, onLinkClick } from "../../lib/router";
@@ -128,7 +129,7 @@ function HealthConversation({ sid, onToggleSidebar }: { sid: string; onToggleSid
     );
   }
   if (!mid) return <div className="flex h-full items-center justify-center"><Loading /></div>;
-  return <ChatView key={sid} mid={mid} sid={sid} assistant onToggleSidebar={onToggleSidebar} headerActions={<HealthChatActions sid={sid} list={list} />} />;
+  return <ChatView key={sid} mid={mid} sid={sid} assistant placeholder={t("health.ask_placeholder")} onToggleSidebar={onToggleSidebar} headerActions={<HealthChatActions sid={sid} list={list} />} />;
 }
 
 function HealthHome({ onToggleSidebar }: { onToggleSidebar: () => void }) {
@@ -168,7 +169,8 @@ function HealthHome({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     }
   };
   const fill = (text: string) => {
-    localStorage.setItem("draft:health-new", text);
+    const stored = "draft:health-new";
+    safeDraftWrite(stored, () => localStorage.setItem(stored, text));
     setSeed((x) => x + 1);
   };
 
@@ -207,7 +209,7 @@ function HealthHome({ onToggleSidebar }: { onToggleSidebar: () => void }) {
             ))}
           </div>
 
-          <HealthReports version={seed} />
+          <HealthReports mid={mid} unavailable={error} version={seed} />
 
           <section className="mt-7">
             <SectionTitle>{t("health.recent")}</SectionTitle>
@@ -283,6 +285,8 @@ function HealthMemory() {
   }, []);
   useEffect(() => {
     void load();
+    // read again on every hello, as the space's conversations and reports are: one that failed while the hub was away
+    return onHubEvent("hello", () => void load());
   }, [load]);
   const entries = useMemo(() => memoryEntries(files ?? []), [files]);
 

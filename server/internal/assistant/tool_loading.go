@@ -1,0 +1,77 @@
+package assistant
+
+import (
+	"context"
+	"encoding/json"
+	"slices"
+
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/proto"
+)
+
+// Which Persona tools an assistant conversation loads up front (#7317). Claude Code sends a tool personad mcp marks
+// alwaysLoad in full with every request; any other it lists by name only, and the model loads it with ToolSearch when
+// it needs it (the assistant's --tools has ToolSearch, node/assistant.go). Every Persona tool used to be marked, about
+// 22K tokens a request for tools most conversations never call; now only coreTools and a leader's
+// leaderCoreTools are, unless assistant.load_all_tools is on. Changing it wakes every running personad mcp's tool watch (mcp_tools_changes.go), so a
+// running conversation is sent its new list at once; one whose personad mcp is older than tool refresh lists its tools
+// only when its process starts, and keeps them until it restarts.
+
+// coreTools are the tools assistant conversations call often: those called at least 5 times in 30 days of one
+// install's assistant conversations, less the ones whose every call failed for want of setup (mail_accounts with no
+// mail account, ask_escalate with no leader). The Lark tools are listed under both of their names: the Lark extension's
+// and the lark-cli connector's (connector/larkcli). Any other tool, a new one too, is deferred until it is added here.
+var coreTools = []string{
+	"agent_archive", "agent_interrupt", "agent_read", "agent_send", "agent_start", "agent_supervise", "agents_list",
+	"ask_user", "cancel_followup", "conversation_read", "conversation_send", "conversations_list", "interaction_answer",
+	"kb_get", "kb_list", "kb_search", "kb_update", "lark_chats", "lark_messages", "lark_search", "larkcli_chats",
+	"larkcli_messages", "larkcli_search", "list_followups", "machines_list", "model_profiles_list", "notify_user",
+	"persona_settings", "schedule_followup", "schedule_routine", "supervision_finish", "task_plan", "task_review",
+	"task_scope", "todo_get", "todo_list", "todo_update",
+}
+
+// leaderCoreTools supplement the shared list for current direction supervisors. Loading
+// these definitions does not change each tool's caller authorization.
+var leaderCoreTools = []string{"leader_progress", "todo_create", "ask_escalate", "direction_name"}
+
+// withToolLoading is a conversation's tools with DeferLoading set by the manager alone, whatever the list came with (a
+// connector program's tools are decoded as it sent them): when deferring (an assistant conversation that has ToolSearch)
+// all but coreTools (plus leaderCoreTools for leaders) are deferred, unless assistant.load_all_tools is on; otherwise (a guest, an agent) none is. A copy:
+// the list it is given may be shared.
+func (s *Service) withToolLoading(ctx context.Context, self string, tools []proto.Tool, deferring bool) []proto.Tool {
+	deferring = deferring && !s.loadAllTools(ctx)
+	leader := deferring && s.isLeader(ctx, self)
+	out := slices.Clone(tools)
+	for i := range out {
+		out[i].DeferLoading = deferring && !slices.Contains(coreTools, out[i].Name) &&
+			!(leader && slices.Contains(leaderCoreTools, out[i].Name))
+	}
+	return out
+}
+
+// loadAllTools: every Persona tool loads up front (assistant.load_all_tools, off by default).
+func (s *Service) loadAllTools(ctx context.Context) bool {
+	v := s.settings(ctx).LoadAllTools
+	return v != nil && *v
+}
+
+func (s *Service) setLoadAllTools(ctx context.Context, v json.RawMessage) (*ownChange, error) {
+	change, err := s.setBoolSetting(ctx, v, s.loadAllTools, "assistant.load_all_tools is unchanged", func(l i18n.Lang, before, after string) string {
+		return i18n.T(l, "assistant-settings_tool.change_load_all_tools", i18n.Args{"before": before, "after": after})
+	}, func(v *Settings) **bool { return &v.LoadAllTools },
+		"assistant.load_all_tools is %v: running conversations are sent their new tool list now, and new ones start with it "+
+			"(a conversation on a computer whose Persona is older than tool refresh keeps its tools until its process restarts).")
+	if err != nil || change.apply == nil {
+		return change, err
+	}
+	apply := change.apply
+	change.apply = func(ctx context.Context) (string, error) {
+		out, err := apply(ctx)
+		if err == nil {
+			// Saved first, so every watch this wakes lists its tools with the new setting.
+			s.mcpChanges.notify()
+		}
+		return out, err
+	}
+	return change, nil
+}

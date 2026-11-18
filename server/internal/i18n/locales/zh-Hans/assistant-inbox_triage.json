@@ -3,5 +3,6 @@
   "no_quota": "模型没有额度",
   "unconfigured": "没有配置分拣模型",
   "slow": "模型太慢",
-  "failed": "模型出错"
+  "failed": "模型出错",
+  "draft_withheld": "没有生成草稿：草稿一直照搬不能外露的原话，这条请你自己回"
 }

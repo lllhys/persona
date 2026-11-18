@@ -1,0 +1,130 @@
+{
+  "id": "agent-plan-card-resize",
+  "manifestId": "android-agent-plan-card-window-resize",
+  "description": "Keep an Agents chat with a plan card, a question and a command approval open through window size and density changes in one process. Resizing the window once ended the process with a NullPointerException from a list's baseline alignment in the lookahead pass; every step asserts the process is still the one that launched.",
+  "requires": {
+    "page": "chat:studio/a1f3c2d4-0000-4000-8000-000000000005",
+    "fields": []
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "session": "studio/a1f3c2d4-0000-4000-8000-000000000005",
+      "conversationKind": "agent"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {
+          "matches": "/chat$"
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "01-plan-card-tablet"
+    },
+    {
+      "step": "wm-size",
+      "size": "900x1200",
+      "density": 160,
+      "widthDp": 900,
+      "heightDp": 1200
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "matches": "/chat$"
+        },
+        "window.widthDp": {
+          "equals": 900
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "02-plan-card-900x1200"
+    },
+    {
+      "step": "wm-size",
+      "size": "1200x900",
+      "density": 160,
+      "widthDp": 1200,
+      "heightDp": 900
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "matches": "/chat$"
+        },
+        "window.widthDp": {
+          "equals": 1200
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-plan-card-1200x900"
+    },
+    {
+      "step": "wm-size",
+      "size": "600x1000",
+      "density": 160,
+      "widthDp": 600,
+      "heightDp": 1000
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "matches": "/chat$"
+        },
+        "window.widthDp": {
+          "equals": 600
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "04-plan-card-600x1000"
+    },
+    {
+      "step": "wm-size",
+      "size": "1200x900",
+      "density": 160,
+      "widthDp": 1200,
+      "heightDp": 900
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": {
+          "matches": "/chat$"
+        },
+        "window.widthDp": {
+          "equals": 1200
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "05-plan-card-1200x900"
+    },
+    {
+      "step": "rotate",
+      "orientation": "landscape"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    }
+  ]
+}

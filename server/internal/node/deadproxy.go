@@ -76,7 +76,7 @@ func dialAnswers(addr string, tries int) bool {
 // gatewayAnswers: whether the gateway at base (a launcher's Base URL; none: Anthropic's API) takes a direct connection.
 func gatewayAnswers(base string) bool {
 	if strings.TrimSpace(base) == "" {
-		base = "https://api.anthropic.com"
+		base = "https://" + proto.AnthropicAPIHost
 	}
 	u, err := url.Parse(strings.TrimSpace(base))
 	if err != nil || u.Hostname() == "" {

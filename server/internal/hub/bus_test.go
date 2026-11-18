@@ -238,7 +238,8 @@ func TestBusHello(t *testing.T) {
 			// the finished push's timings: the manager's to apply (fleet_push.go there)
 			Notify:      assistantwire.NotifyTimings{DoneDelayMS: 60000, LongTurnMS: 60000, BackgroundHoldMS: 7200000},
 			PersonaView: true, HTMLViews: true, // the cards, always on, for a manager from before #5509
-			SecretHandoffGate: true}} // this hub checks who approves a hand-off card (secret_handoff.go)
+			SecretHandoffGate: true,  // this hub checks who approves a hand-off card (secret_handoff.go)
+			ArchivedApart:     true}} // it takes a machine's archived rows apart from its list (fleet.archived, #6836)
 	if !jsonEqual(reply, want) {
 		t.Fatalf("hello answer %+v, want %+v", reply, want)
 	}

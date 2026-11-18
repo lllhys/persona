@@ -23,6 +23,6 @@
   "address": "地址",
   "fingerprint": "指纹",
   "link": "链接",
-  "copy_pair_link": "拷贝配对链接（Mac 上粘贴用）",
+  "copy_pair_link": "复制配对链接（Mac 上粘贴用）",
   "qr_warning": "二维码和链接都相当于凭据，别截图发到群里。"
 }

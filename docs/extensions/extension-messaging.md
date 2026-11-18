@@ -254,7 +254,7 @@ The App draws it natively, with tapping comments and commenting on selected text
 ## 12. Versions and compatibility
 
 - Extension point `messaging` is version 1; the hub's `features` includes `messaging`, and the App uses this path only when it sees it.
-- During migration, the extension that connects to Lark provides both the old `/api/v1/lark` (still used by Mac, Android and web) and `messaging`; iOS uses the new one when `messaging` is there, otherwise the old one.
+- During migration, the extension that connects to Lark provides both the old `/api/v1/lark` (still used by Mac, Android and web) and `messaging`; iOS uses the new one when `messaging` is there, otherwise the old one. An app that follows `messaging` says `lark_via_messaging` in `client_hello`, and the hub then leaves the old WS `lark` notice out for it (#9591; docs/protocol/protocol.md, the `lark` row).
   The old iOS implementation is deleted after iOS acceptance passes (#2138 phase 4); the old endpoints are deleted once all four clients have migrated.
 - Adding fields is backward compatible: old Apps skip fields, segments and capabilities they do not know; an extension must not use new fields to convey something old Apps must understand (that would be a new version).
 

@@ -12,6 +12,9 @@
     "TextStyle": {
       "description": "title and headline (UI version 6) are a section's big title and a small heading; an older app draws them as body.",
       "type": "string", "enum": ["body", "secondary", "caption", "code", "title", "headline"]},
+    "ProgressStyle": {
+      "description": "A progress drawing hint: bar (the default) or ring.",
+      "type": "string", "enum": ["bar", "ring"]},
     "FieldKind": {
       "description": "date, time, datetime, multichoice and multiline are UI version 6. Values stay strings: date YYYY-MM-DD, time HH:MM (24 hours), datetime YYYY-MM-DDTHH:MM local to context.tz, multichoice a JSON array of the chosen values, multiline the text with \\n.",
       "type": "string", "enum": ["text", "secret", "number", "toggle", "choice", "date", "time", "datetime", "multichoice", "multiline"]},
@@ -42,7 +45,7 @@
     },
     "Platform": {"type": "string", "enum": ["ios", "mac", "android", "web"]},
     "NavIcon": {
-      "description": "The fixed icon set: a nav_page's icon, a row's, an empty state's (UI version 3 for the last two and the icons after money; 4 for those after settings; 6 for those after file, and a metric's, a tile's, a row action's). Each app draws its own icon for the meaning; an unknown one draws as the default (extension; plugin is its old name).",
+      "description": "The fixed icon set: a nav_page's icon, a row's, an empty state's (UI version 3 for the last two and the icons after money; 4 for those after settings; 6 for those after file, and a metric's, a tile's, a row action's; 8 a section's). Each app draws its own icon for the meaning; an unknown one draws as the default (extension; plugin is its old name).",
       "type": "string",
       "enum": ["plugin", "chart", "gauge", "list", "bell", "doc", "calendar", "money", "extension", "person", "chat", "mail", "link", "folder", "star", "check", "warning", "clock", "tag", "search", "settings", "branch", "commit", "code", "pull_request", "merge", "file",
         "home", "sofa", "light", "power", "fan", "thermometer", "droplet", "lock", "unlock", "door", "window", "camera", "video", "play", "pause", "stop", "speaker", "music", "tv", "plug", "battery", "bolt", "sun", "moon", "cloud", "rain", "snow", "wind", "leaf", "car", "location", "robot", "wifi", "shield", "trend_up", "trend_down", "wallet", "bank", "heart", "plus", "minus", "trash", "edit", "refresh", "share", "info"]
@@ -74,7 +77,13 @@
         "footer": {"type": "string", "maxLength": 2000},
         "items": {"type": "array", "items": {"$ref": "#/$defs/Component"}},
         "more": {"$ref": "#/$defs/More", "x-since": 3},
-        "pane": {"$ref": "#/$defs/Pane", "x-since": 4}
+        "pane": {"$ref": "#/$defs/Pane", "x-since": 4},
+        "span": {"$ref": "#/$defs/SectionSpan", "x-since": 8},
+        "icon": {"$ref": "#/$defs/NavIcon", "x-since": 8, "description": "Drawn before the title."},
+        "icon_color": {"$ref": "#/$defs/Color", "x-since": 8},
+        "link": {"$ref": "#/$defs/SectionLink", "x-since": 8},
+        "columns": {"type": "integer", "minimum": 1, "maximum": 3, "x-since": 8,
+          "description": "How many rows sit side by side in the section on a wide screen (UI version 8), in reading order; one on a narrow screen and when absent. Other components keep the whole width."}
       },
       "required": ["items"]
     },
@@ -138,13 +147,14 @@
       "required": ["type", "label", "value"]
     },
     "ProgressComponent": {
-      "description": "A bar filled to ratio (0 to 1).",
+      "description": "Progress toward a goal, filled to ratio (0 to 1).",
       "type": "object", "x-since": 1,
       "properties": {
         "type": {"const": "progress"},
         "key": {"type": "string", "maxLength": 128, "x-since": 3},
         "label": {"type": "string", "minLength": 1, "maxLength": 2000},
         "ratio": {"type": "number", "minimum": 0, "maximum": 1, "x-go-pointer": true},
+        "style": {"$ref": "#/$defs/ProgressStyle", "description": "A drawing hint; omitted means bar. Apple Home Screen widgets (small, medium and large) draw ring as a ring; other surfaces draw a bar. Apps that do not recognize this field keep drawing a bar. Native stream does not accept this field."},
         "detail": {"type": "string", "maxLength": 2000},
         "tone": {"$ref": "#/$defs/Tone"}
       },
@@ -563,15 +573,36 @@
         "spark": {"$ref": "#/$defs/Spark"},
         "control": {"$ref": "#/$defs/RowControl", "description": "A switch only; the tile then has a key."},
         "actions": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/RowAction"}},
-        "action": {"$ref": "#/$defs/Action"}
+        "action": {"$ref": "#/$defs/Action"},
+        "gauge": {"$ref": "#/$defs/Gauge", "x-since": 9, "description": "Draws the tile as a ring (UI version 9): never with an image or a spark."}
       },
       "required": ["title"]
     },
+    "Gauge": {
+      "description": "A tile's ring (UI version 9), for a quota or a usage: filled to ratio, with the tile's value and the unit in its centre (the percentage when the tile has no value), the title below. Without color, the tile's color, else the app's accent. An older app gets the tile without it: the unit after the value, the percentage in the subtitle, the color as the tile's.",
+      "type": "object",
+      "properties": {
+        "ratio": {"type": "number", "minimum": 0, "maximum": 1, "x-go-pointer": true, "description": "How full the ring is, 0 to 1."},
+        "unit": {"type": "string", "maxLength": 8, "description": "A short word under the value (USD, GB, h), as a control's unit."},
+        "color": {"$ref": "#/$defs/Color"}
+      },
+      "required": ["ratio"]
+    },
     "Layout": {
-      "description": "stack: sections one under another. split: on a wide screen the side pane's sections in a column at the start, the rest beside it, each scrolling on its own; on a narrow one the side pane folds into a bar on top that opens as a sheet.",
-      "type": "string", "enum": ["stack", "split"]
+      "description": "stack: sections one under another. split: on a wide screen the side pane's sections in a column at the start, the rest beside it, each scrolling on its own; on a narrow one the side pane folds into a bar on top that opens as a sheet. columns (UI version 8): on a wide screen the sections are cards in a grid, two columns or three when there is room, in reading order (left to right, then down), each row as tall as its tallest card; on a narrow one a single column, as stack. An older app gets stack.",
+      "type": "string", "enum": ["stack", "split", "columns"]
     },
     "Pane": {"description": "Where a section of a split view goes.", "type": "string", "enum": ["main", "side"]},
+    "SectionSpan": {"description": "How much of a row of a columns view a section takes (UI version 8): full, the whole row; absent, one column. Other layouts ignore it.", "type": "string", "enum": ["full"]},
+    "SectionLink": {
+      "description": "A link beside a section's title (UI version 8), such as the page that has all of it: pressing it calls ui.action with action (which may answer with a push) or pushes action.push. An older app on a full page gets it as the section's last row.",
+      "type": "object",
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 40},
+        "action": {"$ref": "#/$defs/Action"}
+      },
+      "required": ["title", "action"]
+    },
     "FileStatus": {"type": "string", "enum": ["added", "modified", "deleted", "renamed"]},
     "DiffSide": {"type": "string", "enum": ["old", "new"]},
     "Tabs": {

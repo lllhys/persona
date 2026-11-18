@@ -30,10 +30,18 @@ final class TasksStore {
     var openAfterBoard: String?
     var openAgentAfterBoard: SessionKey?
     /// Feed card IDs put off with Later, sent here, or refused as handled elsewhere (409 inbox_item_done).
-    /// A new draft with the same Inbox reference has its own decision state.
-    private(set) var laterMessages: Set<String> = []
+    /// A new draft with the same Inbox reference has its own decision state. Private so a view can only ask by the card
+    /// itself (`isLater`), never by its Inbox reference (#6002).
+    private var laterMessages: Set<String> = []
     private(set) var sentMessages: Set<String> = []
     private(set) var filedMessages: Set<String> = []
+    /// Decision rounds put off with Later, for this session only (`decisionKey`), and the ones Don't handle took out of
+    /// Needs You, with their receipts, until the hub's list says so itself.
+    private(set) var laterDecisions: Set<String> = []
+    private(set) var dismissedDecisions: [String: String] = [:]
+    /// Tasks whose decision is being dismissed or restored, and whose retry is out (their buttons take no second tap).
+    private(set) var busyDecisions: Set<String> = []
+    private(set) var busyRetries: Set<String> = []
     /// Quick results (QuickResult.callID) the user took back with Undo.
     private(set) var undone: Set<String> = []
     /// Plans being started or dismissed (their card shows it and takes no second tap).
@@ -78,6 +86,10 @@ final class TasksStore {
         busyPlans = []
         busyMessages = []
         laterMessages = []
+        laterDecisions = []
+        dismissedDecisions = [:]
+        busyDecisions = []
+        busyRetries = []
         sentMessages = []
         filedMessages = []
         feedAPIs = [:]
@@ -198,6 +210,14 @@ final class TasksStore {
 
     func received(_ plan: TaskPlan) {
         if plans[plan.id] != plan { plans[plan.id] = plan }
+    }
+
+    /// A suggested rule was answered, or is no longer offered (#5802): the plans held here drop it. The hub sends no
+    /// plan event for it and a feed read brings only what came since, so nothing else would take it off them.
+    func ruleSuggestionSettled(_ id: String) {
+        for (key, plan) in plans where plan.suggestion?.id == id {
+            plans[key] = plan.withoutSuggestion
+        }
     }
 
     private func merge(_ items: [FeedItem], into conversation: String) {
@@ -398,6 +418,107 @@ final class TasksStore {
     }
 
     func later(_ cardID: String) { laterMessages.insert(cardID) }
+    /// Put off with Later, by the card's own id: Needs You and the chat's feed both ask this, so a card whose Inbox item
+    /// (`ref`) differs from its id leaves both (#6002).
+    func isLater(_ card: FeedItem) -> Bool { laterMessages.contains(card.id) }
+    /// A card put off with Later, opened again (a hand-off card's one line, #5932).
+    func unlater(_ cardID: String) { laterMessages.remove(cardID) }
+
+    // MARK: Decisions (Later / Don't handle on a decision row)
+
+    /// One round of one task's decision, as the web keys it (`decisionLaterKey`): a new round is a new question, so
+    /// Later and Don't handle do not follow the task to it. Nil without a round to name.
+    nonisolated static func decisionKey(_ todo: TodoItem) -> String? {
+        guard let round = todo.decisionReview?.reviewAt ?? todo.ask?.askedAt, !round.isEmpty else { return nil }
+        return "decision:\(todo.manager ?? ""):\(todo.id):\(round)"
+    }
+
+    /// Later puts the round off until the app starts again; nothing is written.
+    func laterDecision(_ todo: TodoItem) {
+        guard let key = Self.decisionKey(todo) else { return }
+        laterDecisions.insert(key)
+        Haptics.tap()
+    }
+
+    /// Whether Needs You leaves this decision out: put off, or dismissed (here, or elsewhere: the hub's `dismissal_id`).
+    func decisionHidden(_ todo: TodoItem) -> Bool {
+        guard let key = Self.decisionKey(todo) else { return false }
+        return laterDecisions.contains(key) || dismissedDecisions[key] != nil || todo.decisionReview?.dismissed == true
+    }
+
+    /// Don't handle: the hub keeps the round dismissed and the task open (`POST /todos/{id}/decision-dismiss`); a toast
+    /// offers Undo for a few seconds. 409: the round moved on, so the list is read again.
+    @discardableResult
+    func dismissDecision(_ todo: TodoItem, api injected: APIClient? = nil) async -> Bool {
+        guard let round = todo.decisionReview?.reviewAt, let key = Self.decisionKey(todo), !busyDecisions.contains(todo.id),
+              let api = (injected ?? AppModel.shared.api)?.manager(todoStore.named(todo.id)) else { return false }
+        busyDecisions.insert(todo.id)
+        defer { busyDecisions.remove(todo.id) }
+        let ticket = generation
+        do {
+            let result = try await api.dismissDecision(todo.id, reviewAt: round)
+            guard generation == ticket else { return false }
+            dismissedDecisions[key] = result.dismissalID ?? ""
+            laterDecisions.remove(key)
+            reloadTodos(api: injected)
+            Haptics.success()
+            let receipt = result.dismissalID ?? ""
+            showToast(Toast(String(localized: "Decision dismissed. The task stays open."), style: .success,
+                            action: receipt.isEmpty ? nil : Toast.Action(title: String(localized: "Undo")) { [weak self] in
+                                Task { await self?.undoDecisionDismissal(todo, receipt: receipt, api: api, expectedGeneration: ticket) }
+                            }, duration: Theme.Motion.draftUndo))
+            return true
+        } catch {
+            guard generation == ticket else { return false }
+            showToast(Toast(String(localized: "Couldn't dismiss: \(error.localizedDescription)"), style: .error))
+            if let e = error as? APIError, e.status == 409 { reloadTodos(api: injected) }
+            return false
+        }
+    }
+
+    @discardableResult
+    func undoDecisionDismissal(_ todo: TodoItem, receipt: String, api: APIClient, expectedGeneration: UInt? = nil) async -> Bool {
+        guard let round = todo.decisionReview?.reviewAt, let key = Self.decisionKey(todo), !receipt.isEmpty, !busyDecisions.contains(todo.id),
+              expectedGeneration == nil || generation == expectedGeneration else { return false }
+        busyDecisions.insert(todo.id)
+        defer { busyDecisions.remove(todo.id) }
+        let ticket = generation
+        do {
+            try await api.undoDecisionDismissal(todo.id, reviewAt: round, receipt: receipt)
+            guard generation == ticket else { return false }
+            dismissedDecisions[key] = nil
+            laterDecisions.remove(key)
+            reloadTodos()
+            Haptics.tap()
+            return true
+        } catch {
+            guard generation == ticket else { return false }
+            showToast(Toast(String(localized: "Couldn't restore: \(error.localizedDescription)"), style: .error))
+            if let e = error as? APIError, e.status == 409 { reloadTodos() }
+            return false
+        }
+    }
+
+    /// Retry on a task whose agent did not start, Continue on one a model error cut off: `POST /todos/{id}/retry`.
+    @discardableResult
+    func retry(_ todo: TodoItem, api injected: APIClient? = nil) async -> Bool {
+        guard !busyRetries.contains(todo.id), let api = (injected ?? AppModel.shared.api)?.manager(todoStore.named(todo.id)) else { return false }
+        busyRetries.insert(todo.id)
+        defer { busyRetries.remove(todo.id) }
+        let ticket = generation
+        do {
+            _ = try await api.retryTodo(todo.id)
+            guard generation == ticket else { return false }
+            reloadTodos(api: injected)
+            Haptics.success()
+            return true
+        } catch {
+            guard generation == ticket else { return false }
+            showToast(Toast(String(localized: "Couldn't start it again: \(error.localizedDescription)"), style: .error))
+            if let e = error as? APIError, e.status == 409 { reloadTodos(api: injected) }
+            return false
+        }
+    }
 
     enum MessageState { case open, sent, filed, dismissed }
 
@@ -446,12 +567,12 @@ final class TasksStore {
         return model.api?.manager(model.feedManager(of: plan.conversation, group: model.hub?.group ?? ""))
     }
 
-    func start(_ plan: TaskPlan, edits: [PlanTask]? = nil, remember: Bool = false) async {
+    func start(_ plan: TaskPlan, edits: [PlanTask]? = nil, remember: Bool = false, scheduleGrant: Bool = false) async {
         guard let api = client(for: plan), !busyPlans.contains(plan.id) else { return }
         busyPlans.insert(plan.id)
         defer { busyPlans.remove(plan.id) }
         do {
-            received(try await api.startPlan(plan.id, edits: edits, remember: remember))
+            received(try await api.startPlan(plan.id, edits: edits, remember: remember, scheduleGrant: scheduleGrant))
             reloadTodos()
             Haptics.success()
         } catch {

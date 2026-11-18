@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// When a conversation offers Voice Chat (docs/assistant/voice.md 3.1, 6.1, 6.10「VoiceAvailability」), the model a call starts with
 /// (「未验证」 is usable, a model no longer offered is not), and the extension's /info, /models and /voices.
@@ -169,10 +170,53 @@ struct VoiceAvailabilityTests {
         #expect(support.availability(for: Self.agent, group: "", platform: .phone) == .needsSetup(["还缺 Key"]))
     }
 
+    /// The chat's page asked first (a cold launch), then a call from Recents asks before that answer came: the second
+    /// waits for the first ask's answer instead of reading "not known yet" (#9290), and the hub is asked once.
+    @MainActor @Test func aSecondAskWaitsForTheOneOnItsWay() async {
+        let hub = FakeHub()
+        let held = HeldAnswer()
+        hub.onAsync("GET", "/api/v1/extensions") { _ in
+            await held.wait()
+            return Data(#"{"extensions":[{"id":"voice","name":"实时语音","kind":"voice","status":"running"}]}"#.utf8)
+        }
+        hub.on("GET", "/api/v1/extensions/voice/info", json: #"{"protocol":2}"#)
+        var api = hub.client
+        api.extensionsAPI = true
+        let support = VoiceSupport()
+        let composer = Task { await support.refresh(group: "", api: api, platform: .phone) }
+        for _ in 0..<200 where !held.arrived { try? await Task.sleep(for: .milliseconds(5)) }
+        let call = Task { () -> VoiceAvailability in
+            await support.refresh(group: "", api: api, platform: .phone)
+            return support.extensionAvailability(group: "")
+        }
+        for _ in 0..<20 { await Task.yield() }
+        held.release()
+        #expect(await call.value == .available(extensionID: "voice"))
+        await composer.value
+        #expect(hub.sent("GET", "/api/v1/extensions").count == 1)
+    }
+
     @MainActor @Test func supportOnAHubWithoutExtensions() async {
         let hub = FakeHub()
         let support = VoiceSupport()
         await support.refresh(group: "", api: hub.client, platform: .phone)
         #expect(support.availability(for: Self.agent, group: "", platform: .phone) == .noExtension)
+    }
+}
+
+/// Holds a fake hub's answer until the test lets it go.
+@MainActor private final class HeldAnswer {
+    private(set) var arrived = false
+    private var waiting: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        arrived = true
+        await withCheckedContinuation { waiting = $0 }
+    }
+
+    func release() {
+        let waiting = waiting
+        self.waiting = nil
+        waiting?.resume()
     }
 }

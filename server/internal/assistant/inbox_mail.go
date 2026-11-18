@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,7 +25,9 @@ func (s *Service) collectMail(ctx context.Context, read *assistantwire.InboxMail
 	b.readSource("mail", "邮箱")
 	var changed []*InboxItem
 	for _, a := range read.Accounts {
-		changed = append(changed, b.applyMail(a, a.Messages, time.Now())...)
+		now := time.Now()
+		changed = append(changed, b.applyMail(a, a.Messages, now)...)
+		changed = append(changed, s.settleMailOffPage(ctx, a, now)...)
 		b.mu.Lock()
 		var unread []*InboxItem
 		b.each(func(it *InboxItem) {
@@ -39,6 +42,7 @@ func (s *Service) collectMail(ctx context.Context, read *assistantwire.InboxMail
 			}
 		}
 	}
+	s.saveMailBaselines(ctx)
 	return changed
 }
 
@@ -81,6 +85,43 @@ func (s *Service) readMailBody(ctx context.Context, a assistantwire.InboxMailAcc
 	return true
 }
 
+// mailReadElsewhere is an open mail item whose mail is all read in another client, gone from the mailbox or past the
+// window, under b.mu: read, and done unless it needs the user. An FYI conclusion is still waiting for Got it: the
+// source is read, but the card is never filed before that explicit confirmation (#5471).
+func (b *inboxBook) mailReadElsewhere(it *InboxItem, now time.Time) {
+	b.roundWrite(it)
+	it.Read = true
+	g := currentSuggestion(it)
+	if it.Tier != TierAction && it.Tier != "" && (g == nil || g.Kind != SuggestConclusion) {
+		b.file(it, now, "read")
+	}
+}
+
+// mailAnswered files an open mail item as replied when one of its mails on the page carries IMAP \Answered (the owner
+// replied from a mail client) and no unread mail of the thread came after that one, whatever its tier, under b.mu. An
+// item its processing conversation handles or that has a suggestion is left to that. Reports whether it filed the item.
+func (b *inboxBook) mailAnswered(it *InboxItem, list, unseen []assistantwire.InboxMailSummary, now time.Time) bool {
+	if it.Mail == nil || !it.open() || it.handled() || currentSuggestion(it) != nil {
+		return false
+	}
+	var answered uint32
+	for _, m := range list {
+		if m.Answered && slices.Contains(it.Mail.UIDs, m.UID) {
+			answered = max(answered, m.UID)
+		}
+	}
+	evidence := "mail:" + strconv.FormatUint(uint64(answered), 10)
+	if answered == 0 || it.SettledOf == evidence || slices.ContainsFunc(unseen, func(m assistantwire.InboxMailSummary) bool { return m.UID > answered }) {
+		return false // nothing answered, reopened by hand after being filed on this answer, or newer mail came since
+	}
+	b.roundWrite(it)
+	b.noteSelfReplied(it, now)
+	it.Read = true
+	it.done(now, "replied")
+	it.SettledOf = evidence
+	return true
+}
+
 var replyPrefix = lazyre.New(`(?i)^\s*((re|fw|fwd|aw|回复|答复|转发)\s*[:：]\s*|\[[^\]]{1,30}\]\s*)+`)
 
 // mailThread is what keeps replies in one item: the subject without Re: / Fwd: / [list] prefixes. A subject that is
@@ -95,12 +136,14 @@ func mailThread(subject string, from ...string) string {
 	return hex.EncodeToString(sum[:6])
 }
 
-// applyMail turns one account's latest inbox page into items: unseen messages grouped by thread.
+// applyMail turns one account's latest inbox page into items: unseen messages grouped by thread, and the mail that
+// was already read when the inbox first saw it as items read and done (mailReadOnArrival).
 func (b *inboxBook) applyMail(a assistantwire.InboxMailAccount, msgs []assistantwire.InboxMailSummary, now time.Time) []*InboxItem {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	defer b.settleRound()
 	var changed []*InboxItem
+	baseline, since := b.mailBaseline(a, msgs)
 	index := b.threads(func(it *InboxItem) (string, bool) {
 		if it.Mail == nil || it.Mail.AccountID != a.ID {
 			return "", false
@@ -124,23 +167,23 @@ func (b *inboxBook) applyMail(a assistantwire.InboxMailAccount, msgs []assistant
 	for _, t := range order {
 		list := threads[t]
 		sort.Slice(list, func(i, j int) bool { return list[i].UID < list[j].UID })
-		var unseen []assistantwire.InboxMailSummary
+		var unseen, seen []assistantwire.InboxMailSummary
 		for _, m := range list {
 			d, _ := time.Parse(time.RFC3339, m.Date)
-			if !m.Seen && now.Sub(d) <= inboxWindow {
+			switch {
+			case now.Sub(d) > inboxWindow:
+			case !m.Seen:
 				unseen = append(unseen, m)
+			case since && m.UID > baseline: // arrived since the account's baseline, already read
+				seen = append(seen, m)
 			}
 		}
 		open, done := index.openFor(t)
 		if open == nil && done != nil {
 			last, _ := strconv.ParseUint(done.Last, 10, 32)
-			var fresh []assistantwire.InboxMailSummary
-			for _, m := range unseen {
-				if uint64(m.UID) > last {
-					fresh = append(fresh, m)
-				}
-			}
-			unseen = fresh
+			older := func(m assistantwire.InboxMailSummary) bool { return uint64(m.UID) <= last }
+			unseen = slices.DeleteFunc(unseen, older)
+			seen = slices.DeleteFunc(seen, older)
 		}
 		// Mail the thread's other items hold (a done one still unread on the server, an older one moved back) is
 		// theirs: it does not come into the open one too, counted twice (#3796).
@@ -154,18 +197,19 @@ func (b *inboxBook) applyMail(a assistantwire.InboxMailAccount, msgs []assistant
 		}
 		if len(held) > 0 {
 			unseen = slices.DeleteFunc(unseen, func(m assistantwire.InboxMailSummary) bool { return held[m.UID] })
+			seen = slices.DeleteFunc(seen, func(m assistantwire.InboxMailSummary) bool { return held[m.UID] })
+		}
+		if open != nil && b.mailAnswered(open, list, unseen, now) {
+			changed = append(changed, open)
+			continue
 		}
 		if len(unseen) == 0 {
-			// Read in another client: done unless it needs the user. An FYI conclusion is still waiting for Got it:
-			// mark the source read, but never file the card before that explicit confirmation (#5471).
+			// Read in another client (or past the window): done unless it needs the user (mailReadElsewhere).
 			if open != nil && !open.Read {
-				b.roundWrite(open)
-				open.Read = true
-				g := currentSuggestion(open)
-				if open.Tier != TierAction && open.Tier != "" && (g == nil || g.Kind != SuggestConclusion) {
-					b.file(open, now, "read")
-				}
+				b.mailReadElsewhere(open, now)
 				changed = append(changed, open)
+			} else if open == nil && len(seen) > 0 {
+				changed = append(changed, b.mailReadOnArrival(a, t, seen, index, now))
 			}
 			continue
 		}
@@ -187,36 +231,136 @@ func (b *inboxBook) applyMail(a assistantwire.InboxMailAccount, msgs []assistant
 			b.roundNew(it)
 			index.note(it)
 		}
-		it.AccountName = a.Email
-		it.Title = newest.Subject
-		if it.Title == "" {
-			it.Title = "（无主题）"
-		}
-		it.Sender = newest.From.Name
-		if it.Sender == "" {
-			it.Sender = newest.From.Email
-		}
-		it.Preview = clip(oneLine(newest.Snippet), 200)
-		it.Count = len(unseen)
-		it.UpdatedAt, _ = time.Parse(time.RFC3339, newest.Date)
+		fillMail(it, a, unseen)
 		it.Read = false
-		it.Last = strconv.FormatUint(uint64(newest.UID), 10)
-		it.Mail.UIDs = it.Mail.UIDs[:0]
-		for _, m := range unseen {
-			it.Mail.UIDs = append(it.Mail.UIDs, m.UID)
-		}
-		it.Mail.MessageID, it.Mail.From = newest.MessageID, newest.From
-		it.Mail.Direct = false
-		for _, to := range newest.To {
-			if strings.EqualFold(to.Email, a.Email) {
-				it.Mail.Direct = true
-			}
-		}
-		it.Context = mailContext(a, unseen)
+		it.Context = mailContext(a, unseen, false)
 		b.noteReceived(it, prev, mailMessages(unseen, prev.uids))
 		changed = append(changed, it)
 	}
 	return changed
+}
+
+// fillMail sets what a mail item shows and holds from its mails (oldest first, at least one).
+func fillMail(it *InboxItem, a assistantwire.InboxMailAccount, msgs []assistantwire.InboxMailSummary) {
+	newest := msgs[len(msgs)-1]
+	it.AccountName = a.Email
+	it.Title = newest.Subject
+	if it.Title == "" {
+		it.Title = "（无主题）"
+	}
+	it.Sender = newest.From.Name
+	if it.Sender == "" {
+		it.Sender = newest.From.Email
+	}
+	it.Preview = clip(oneLine(newest.Snippet), 200)
+	it.Count = len(msgs)
+	it.UpdatedAt, _ = time.Parse(time.RFC3339, newest.Date)
+	it.Last = strconv.FormatUint(uint64(newest.UID), 10)
+	it.Mail.UIDs = it.Mail.UIDs[:0]
+	for _, m := range msgs {
+		it.Mail.UIDs = append(it.Mail.UIDs, m.UID)
+	}
+	it.Mail.MessageID, it.Mail.From = newest.MessageID, newest.From
+	it.Mail.Direct = false
+	for _, to := range newest.To {
+		if strings.EqualFold(to.Email, a.Email) {
+			it.Mail.Direct = true
+		}
+	}
+}
+
+// mailReadOnArrival files a thread's mail that was already read when the inbox first saw it (read in another client,
+// or marked read by a forwarding rule, between two rounds) as one item, read and done (#8298): Done lists it, so the
+// mail is never missing from the inbox, but it is no push, no unread and nothing in "Needs you". No model is asked
+// about it: it has its rule tier, as filed. Under b.mu.
+func (b *inboxBook) mailReadOnArrival(a assistantwire.InboxMailAccount, t string, seen []assistantwire.InboxMailSummary,
+	index *threadIndex, now time.Time) *InboxItem {
+	it := &InboxItem{ID: fmt.Sprintf("mail:%s:%s:%d", a.ID, t, seen[0].UID), Source: "mail", Kind: KindMail,
+		Account: a.ID, Mail: &InboxMail{AccountID: a.ID, Mailbox: seen[len(seen)-1].Mailbox, Thread: t}}
+	it.StartedAt, _ = time.Parse(time.RFC3339, seen[0].Date)
+	b.add("mail", it)
+	b.roundNew(it)
+	index.note(it)
+	fillMail(it, a, seen)
+	it.Read = true
+	it.Context = mailContext(a, seen, true)
+	it.Tier, it.Reason = b.ruleTier(it), b.byRules()
+	it.TriagedAt, it.TriageRev = it.Last, inboxTriageRev
+	b.noteReceived(it, inboxSeen{}, mailMessages(seen, nil))
+	b.file(it, now, "read")
+	return it
+}
+
+// inboxMailBaselinesKey keeps each mail account's baseline (mailBaseline), by account id.
+const inboxMailBaselinesKey = "inbox_mail_baselines"
+
+// mailBaseline is the account's baseline for mail already read when the inbox first sees it, under b.mu: only mail
+// with a newer UID becomes an item read and done (mailReadOnArrival). since is false on the account's first round
+// (or the first after this was added): its baseline is then the page's newest UID, so turning an account on (or the
+// update) does not file the window's read mail all at once, as unread mail always was. A page whose newest UID is
+// under the baseline (the mailbox was renumbered: a new UIDVALIDITY) starts again the same way. A new baseline is
+// stored after the round (saveMailBaselines).
+func (b *inboxBook) mailBaseline(a assistantwire.InboxMailAccount, msgs []assistantwire.InboxMailSummary) (baseline uint32, since bool) {
+	var newest uint32
+	for _, m := range msgs {
+		newest = max(newest, m.UID)
+	}
+	baseline, since = b.mailBaselines[a.ID]
+	if since && newest >= baseline {
+		return baseline, true
+	}
+	if b.mailBaselines == nil {
+		b.mailBaselines = map[string]uint32{}
+	}
+	b.mailBaselines[a.ID] = newest
+	b.mailBaselinesDirty = true
+	return newest, false
+}
+
+// loadMailBaselines reads the mail accounts' baselines kept; false when the database could not be read.
+func (s *Service) loadMailBaselines(ctx context.Context) bool {
+	st := s.store()
+	if st == nil {
+		return true
+	}
+	var kept map[string]uint32
+	if _, err := st.Setting(ctx, inboxMailBaselinesKey, &kept); err != nil {
+		s.logf("inbox: mail baselines: %v", err)
+		return false
+	}
+	b := &s.inbox
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if kept == nil {
+		kept = map[string]uint32{}
+	}
+	maps.Copy(kept, b.mailBaselines) // set by a round before the load: memory is newer
+	b.mailBaselines = kept
+	return true
+}
+
+// saveMailBaselines stores the baselines when a round set one; one that could not be written is tried again after the
+// next round (until then a restart sets it again, a little later).
+func (s *Service) saveMailBaselines(ctx context.Context) {
+	b := &s.inbox
+	b.mu.Lock()
+	if !b.mailBaselinesDirty {
+		b.mu.Unlock()
+		return
+	}
+	b.mailBaselinesDirty = false
+	kept := maps.Clone(b.mailBaselines)
+	b.mu.Unlock()
+	st := s.store()
+	if st == nil {
+		return
+	}
+	if err := st.PutSetting(ctx, inboxMailBaselinesKey, kept); err != nil {
+		s.logf("inbox: mail baselines: %v", err)
+		b.mu.Lock()
+		b.mailBaselinesDirty = true
+		b.mu.Unlock()
+	}
 }
 
 // subjectlessThread is the key every subject-less mail had before #4852 grouped them by sender too.
@@ -319,9 +463,14 @@ func mailMessages(unseen []assistantwire.InboxMailSummary, had []uint32) []Inbox
 	return out
 }
 
-func mailContext(a assistantwire.InboxMailAccount, msgs []assistantwire.InboxMailSummary) string {
+// mailContext is the item's mails as the models read them; read: they were already read when they came.
+func mailContext(a assistantwire.InboxMailAccount, msgs []assistantwire.InboxMailSummary, read bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "邮箱 %s 收到的未读邮件：\n", a.Email)
+	head := "邮箱 %s 收到的未读邮件：\n"
+	if read {
+		head = "邮箱 %s 收到的邮件（来时已读）：\n" // i18n-ignore: text for a model
+	}
+	fmt.Fprintf(&b, head, a.Email)
 	for _, m := range msgs {
 		var to []string
 		for _, t := range m.To {

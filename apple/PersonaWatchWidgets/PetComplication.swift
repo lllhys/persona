@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import WidgetKit
+import PersonaWire
 
 /// The Milk Frog on the watch face (docs/apple/persona.md "The Milk Frog on the watch"): the face of the state the
 /// watch app last saw, a widget of `PersonaWatchWidgetsBundle`. Still by design; the frog moves only in the app.

@@ -1,4 +1,5 @@
 import tokens from "../styles.css?page-tokens";
+import { SCHEME_ATTR } from "../lib/terminal-appearance";
 
 export interface ExtensionTheme {
   extension: string;
@@ -69,4 +70,16 @@ export function extensionThemeTokens(t: ExtensionTheme, scheme: "light" | "dark"
     if (role === "ai") out["--thinking-ink"] = color;
   }
   return out;
+}
+
+/**
+ * The theme's tokens of each scheme on its terminal scope (SCHEME_ATTR, lib/terminal-appearance.ts): a terminal of the
+ * other scheme than the page's reads them there. Above the stylesheet's and the theme color's (`[data-accent] …`), as
+ * the inline tokens on <html> are.
+ */
+export function scopedThemeCSS(byScheme: Record<"light" | "dark", Record<string, string>>): string {
+  return (["light", "dark"] as const)
+    .filter((scheme) => Object.keys(byScheme[scheme]).length)
+    .map((scheme) => `:root[data-extension-theme] [${SCHEME_ATTR}="${scheme}"] { ${Object.entries(byScheme[scheme]).map(([k, v]) => `${k}: ${v};`).join(" ")} }`)
+    .join("\n");
 }

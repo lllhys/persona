@@ -236,8 +236,9 @@ struct TerminalSettingsView: View {
             .navigationTitle("Terminal Settings")
             .navigationBarTitleDisplayMode(.inline)
             .pageToolbar {
-                ToolbarItem(placement: .topBarLeading) { EditButton() }
-                ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } }
+                // ✕ at the leading corner, the list's own Edit at the trailing one (#9653).
+                SheetClose { dismiss() }
+                ToolbarItem(placement: .primaryAction) { EditButton() }
             }
         }
     }

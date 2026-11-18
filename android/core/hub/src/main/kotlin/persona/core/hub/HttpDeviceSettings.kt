@@ -71,6 +71,15 @@ class HttpDeviceSettings(
         return decode(request("devices", preferenceDeviceId, "prefs"))
     }
 
+    override suspend fun lowDistraction(): Boolean? = try {
+        request("push", "ln-mode")["enabled"]?.jsonPrimitive?.booleanOrNull == true
+    } catch (failure: HubFailure) {
+        if (failure.status == 404 || failure.status == 405) null else throw failure // an older hub has no switch
+    }
+
+    override suspend fun saveLowDistraction(on: Boolean): Boolean =
+        request("push", "ln-mode", method = "PUT", body = buildJsonObject { put("enabled", on) })["enabled"]?.jsonPrimitive?.booleanOrNull == true
+
     override suspend fun savePreferences(preferences: DeviceNotificationPreferences): DeviceNotificationPreferences {
         require(preferenceDeviceId.isNotBlank())
         // Leave island and future server fields untouched.
@@ -81,6 +90,14 @@ class HttpDeviceSettings(
             put("live_activity", preferences.liveActivity)
             preferences.muteWhileDesktop?.let { put("mute_while_desktop", it) }
         }))
+    }
+
+    override suspend fun browserLogin(id: String, hub: String, allow: Boolean?): BrowserLoginDetails {
+        val data = request("auth", "browser-login", "approve", method = "POST", body = buildJsonObject {
+            put("id", id); put("hub", hub); allow?.let { put("allow", it) }
+        })
+        return BrowserLoginDetails(data.getValue("name").jsonPrimitive.content,
+            data.getValue("source").jsonPrimitive.content, data.getValue("age_seconds").jsonPrimitive.int)
     }
 
     override suspend fun pairCode(): AppPairCode {

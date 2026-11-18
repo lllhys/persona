@@ -30,4 +30,30 @@ class ProtocolCompatibilityConfirmationsTest {
             } finally { PhoneConfirmations.callbacks.remove(token) }
         }
     }
+
+    /**
+     * A stale notification's delete intent (jarvis-phone or persona-phone scheme, from before an upgrade) only
+     * ends the confirmation its token names. With no live confirmation under that token nothing happens, so a
+     * late "Clear all" cannot answer the next write's card.
+     */
+    @Test fun aStaleDeleteIntentDoesNotAnswerALaterConfirmation() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        for ((action, scheme) in listOf("jarvis.phone.confirm" to "jarvis-phone", "persona.phone.confirm" to "persona-phone")) {
+            val staleToken = "stale-token"
+            val liveToken = "live-token"
+            var dismissed = false
+            PhoneConfirmations.dismissals[liveToken] = { dismissed = true }
+            try {
+                PhoneConfirmationReceiver().onReceive(context, Intent(action)
+                    .setData(Uri.parse("$scheme://confirmation/$staleToken/dismissed"))
+                    .putExtra("token", staleToken).putExtra(PhoneConfirmations.DISMISSED, true))
+                assertFalse("a dismissal for an unknown token must not touch the live confirmation", dismissed)
+                // The live token's own dismissal still reaches it.
+                PhoneConfirmationReceiver().onReceive(context, Intent(action)
+                    .setData(Uri.parse("$scheme://confirmation/$liveToken/dismissed"))
+                    .putExtra("token", liveToken).putExtra(PhoneConfirmations.DISMISSED, true))
+                assertTrue(dismissed)
+            } finally { PhoneConfirmations.dismissals.remove(liveToken) }
+        }
+    }
 }

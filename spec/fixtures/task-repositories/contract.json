@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "catalog": {
+    "revision": 4,
+    "repositories": [
+      {
+        "provider": "github",
+        "instance_url": "https://github.com",
+        "path": "example/web",
+        "canonical_url": "https://github.com/example/web",
+        "id": "repo_web",
+        "clone_url": "https://github.com/example/web.git"
+      },
+      {
+        "provider": "gitlab",
+        "instance_url": "https://gitlab.example.com",
+        "path": "example/subgroup/api",
+        "canonical_url": "https://gitlab.example.com/example/subgroup/api",
+        "id": "repo_api"
+      }
+    ]
+  },
+  "input": [
+    {
+      "repo_id": "repo_web",
+      "requested_ref": {
+        "kind": "default"
+      },
+      "links": [
+        {
+          "kind": "pull_request",
+          "number": "7"
+        },
+        {
+          "kind": "pull_request",
+          "number": "8"
+        }
+      ]
+    },
+    {
+      "repo_id": "repo_api",
+      "directory_alias": "api",
+      "requested_ref": {
+        "kind": "ref",
+        "value": "refs/merge-requests/7/head"
+      },
+      "links": [
+        {
+          "kind": "issue",
+          "number": "7"
+        }
+      ]
+    }
+  ],
+  "selected": [
+    "repo_web",
+    "repo_api"
+  ],
+  "snapshot_revision": 1,
+  "snapshot_digest": "sha256:de660eda6c4d840576a2d7d113ddb9928c9f8ff6a1e88fcba5af3b9b7b1c833d",
+  "canonical_snapshot_payload": "{\"schema_version\":1,\"manager\":\"assistant\",\"todo_id\":\"todo_example\",\"repositories\":[{\"repo_id\":\"repo_api\",\"directory_alias\":\"api\",\"requested_ref\":{\"kind\":\"ref\",\"value\":\"refs/merge-requests/7/head\"},\"source_snapshot\":{\"identity\":{\"provider\":\"gitlab\",\"instance_url\":\"https://gitlab.example.com\",\"path\":\"example/subgroup/api\",\"canonical_url\":\"https://gitlab.example.com/example/subgroup/api\"},\"clone_url\":\"https://gitlab.example.com/example/subgroup/api\",\"transport_origin\":\"canonical_default\",\"catalog_revision\":4}},{\"repo_id\":\"repo_web\",\"requested_ref\":{\"kind\":\"default\"},\"source_snapshot\":{\"identity\":{\"provider\":\"github\",\"instance_url\":\"https://github.com\",\"path\":\"example/web\",\"canonical_url\":\"https://github.com/example/web\"},\"clone_url\":\"https://github.com/example/web.git\",\"transport_origin\":\"catalog\",\"catalog_revision\":4}}]}",
+  "aliases": {
+    "valid": [
+      "",
+      "web",
+      "api-server",
+      "Repo_2"
+    ],
+    "invalid": [
+      ".",
+      "..",
+      ".persona",
+      "CON",
+      "com1.txt",
+      "a/b",
+      "a\\b",
+      "foo.",
+      "é"
+    ]
+  },
+  "refs": [
+    {
+      "kind": "default"
+    },
+    {
+      "kind": "branch",
+      "value": "feature/login"
+    },
+    {
+      "kind": "tag",
+      "value": "v1.0"
+    },
+    {
+      "kind": "commit",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "kind": "ref",
+      "value": "refs/pull/42/head"
+    }
+  ]
+}

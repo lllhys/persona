@@ -170,6 +170,77 @@ test('a wrong token, a missing subprotocol or another path is refused before the
   assert.equal(rt.connected, false)
 })
 
+async function exerciseThrowingToken(t, { mounted }) {
+  const { driver } = toy()
+  const thrownSecret = 'callback-thrown-secret-8672'
+  const fileContents = 'token-file-contents-8672'
+  const validToken = 'restored-token-8672'
+  const wrongBearer = 'wrong-bearer-8672'
+  const logs = []
+  const acceptReturns = []
+  let calls = 0
+  let failure = new Error(`token callback failed with ${thrownSecret}; file contents: ${fileContents}`)
+  const token = () => {
+    calls++
+    if (failure) throw failure
+    return validToken
+  }
+  const rt = createRuntime(driver, {
+    runtime: 'toy', refreshMs: 0, log: (message) => logs.push(message),
+    ...(mounted ? { listen: true, token } : { listen: { port: 0, token } }),
+  })
+  t.after(() => rt.stop())
+  let url
+  if (mounted) {
+    assert.equal(await rt.start(), undefined)
+    const server = createServer((req, res) => res.end('the daemon\'s own API'))
+    server.on('upgrade', (req, socket, head) => {
+      if (req.url === '/api/persona') acceptReturns.push(rt.accept(req, socket, head))
+      else socket.destroy()
+    })
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    t.after(() => server.close())
+    url = `ws://127.0.0.1:${server.address().port}/api/persona`
+  } else {
+    const { port } = await rt.start()
+    url = `ws://127.0.0.1:${port}/persona/runtime`
+  }
+
+  assert.equal(await refusedStatus(url, { token: wrongBearer }), 401)
+  assert.equal(calls, 1)
+  assert.equal(rt.connected, false, 'a failed token read must not adopt the connection')
+  if (mounted) assert.deepEqual(acceptReturns, [false])
+
+  failure = undefined
+  const n = dialNode(url, { token: validToken })
+  t.after(() => n.ws.close())
+  await until('hello after the token callback recovers', () => n.hello, 3000)
+  assert.equal(n.hello.runtime, 'toy')
+  assert.equal(calls, 2, 'the callback runs again for the next upgrade')
+  assert.equal(rt.connected, true)
+  n.ws.close()
+  await until('the recovered node disconnected', () => n.closed && !rt.connected, 3000)
+
+  assert.equal(await refusedStatus(url, { token: wrongBearer }), 401)
+  assert.equal(calls, 3, 'even a wrong bearer reads the current expected token')
+  assert.equal(rt.connected, false, 'a wrong bearer must not adopt a connection')
+  if (mounted) assert.deepEqual(acceptReturns, [false, true, false])
+
+  const diagnostic = logs.join('\n')
+  assert.ok(logs.some((line) => /refused a connection/.test(line)))
+  for (const secret of [thrownSecret, fileContents, validToken, wrongBearer]) {
+    assert.ok(!diagnostic.includes(secret), `the diagnostic exposed ${secret}`)
+  }
+}
+
+test('an SDK-owned listener refuses a throwing token callback and recovers on a later upgrade', async (t) => {
+  await exerciseThrowingToken(t, { mounted: false })
+})
+
+test('mounted accept() returns false for a throwing token callback and recovers on a later upgrade', async (t) => {
+  await exerciseThrowingToken(t, { mounted: true })
+})
+
 test('a newer connection from the node replaces the last one', async (t) => {
   const { driver } = toy()
   const rt = createRuntime(driver, { runtime: 'toy', listen: { port: 0, token: 'tok' }, refreshMs: 0 })

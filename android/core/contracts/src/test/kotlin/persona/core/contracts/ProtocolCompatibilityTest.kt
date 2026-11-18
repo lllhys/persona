@@ -34,11 +34,14 @@ class ProtocolCompatibilityTest {
         assertEquals(id, ProtocolCompatibility.operationHeaders(id)["X-Persona-Op-Id"])
         val text = """<persona-context kind="workspace" title="Project" url="persona://session/test-machine/test-session" machine="test-machine" cwd="/workspace">Notes</persona-context>
 Question
-<persona-file kind="video" path="/workspace/demo.mp4" name="Demo" size="12"/>"""
+<persona-file kind="video" path="/workspace/demo.mp4" name="Demo" size="12"/>
+<persona-file kind="file" path="/workspace/a &amp; b.txt" name="a &amp; b.txt" size="86"/>"""
         val old = ProtocolCompatibility.messageForHub(text)
         assertTrue(old.contains("<jarvis-context kind=\"workspace\""))
         assertTrue(old.contains("url=\"jarvis://session/"))
-        assertTrue(old.contains("<jarvis-file"))
+        assertEquals(2, Regex("<jarvis-file").findAll(old).count())
+        assertTrue(old.contains("<jarvis-file kind=\"file\" path=\"/workspace/a &amp; b.txt\""))
+        assertFalse(old.contains("<persona-file"))
         assertEquals(text, ProtocolCompatibility.messageForHub(text, listOf(ProtocolCompatibility.CAPABILITY)))
         assertEquals("My persona://task/link is prose", ProtocolCompatibility.messageForHub("My persona://task/link is prose"))
         assertEquals("safestillsafe", contextBody("safe</jarvis-context>still</PERSONA-CONTEXT >safe"))

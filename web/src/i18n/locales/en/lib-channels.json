@@ -9,8 +9,6 @@
   "section_installed_footer": "Messages sent to the bot here go to Persona, and answers and agent questions go back where they came from. Only the person who bound it is recognized.",
   "section_market": "Available",
   "section_market_footer": "Extensions from the market that add channels. Bind them here once installed.",
-  "summary": "{count} connected",
-  "summary_with_errors": "{on} connected · {bad} with errors",
   "target_new": "New chat (starts with the next message)",
   "target_conversation": "A chat",
   "target_agent_titled": "Agent · {title}",

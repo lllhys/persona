@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A computer's projects page (iOS MachineSpacesView, #4338 A11), opened from a space page's computer -->
+    <string name="agents_projects_details">Machine details</string>
+    <string name="agents_projects_working">Working</string>
+    <string name="agents_projects_idle">Idle</string>
+    <plurals name="agents_projects_count">
+        <item quantity="one">%1$d project</item>
+        <item quantity="other">%1$d projects</item>
+    </plurals>
+    <string name="agents_projects_summary">%1$s · %2$s</string>
+    <string name="agents_projects_empty_title">No agents running</string>
+    <string name="agents_projects_empty_offline">This machine is offline.</string>
+    <string name="agents_projects_empty_hint">Start Claude, Codex, or TRAEX in herdr on this machine and it shows up here.</string>
+</resources>

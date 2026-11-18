@@ -18,5 +18,17 @@
   "route_to_persona": "发给 Persona",
   "route_to_agent": "发给 {agent}",
   "route_from_to_agent_on": "从 {from} 转发 · 发到 {machine} 上的 {agent}",
-  "route_to_agent_on": "发到 {machine} 上的 {agent}"
+  "route_to_agent_on": "发到 {machine} 上的 {agent}",
+  "select_messages": "多选…",
+  "selection": "选中的消息",
+  "selected": "已选 {count} 条",
+  "remove_group": "取消转发这几条",
+  "at_most": "一次最多转发 {count} 条",
+  "group_heading_chat": "转发的 {count} 条消息 · {chat}",
+  "line": "{who}：{text}",
+  "more": "还有 {count} 条",
+  "include_questions": "包含提问",
+  "export_image": "导出图片",
+  "copied_author": "{author}：",
+  "goes_with_answer": "随回答一起"
 }

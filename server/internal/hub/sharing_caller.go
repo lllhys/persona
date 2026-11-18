@@ -44,6 +44,15 @@ func (h *Hub) captureHumanSubmission(r *http.Request, text string) *http.Request
 	return r.WithContext(out)
 }
 
+// captureOwnerAnswer reuses full-device admission, then carries only the answer provenance across the bus.
+func (h *Hub) captureOwnerAnswer(r *http.Request) *http.Request {
+	admitted := h.captureHumanSubmission(r, "")
+	if _, ok := admitted.Context().Value(trustedSubmissionKey{}).(devicewire.Submission); ok {
+		return r.WithContext(devicewire.WithOwnerAnswer(r.Context()))
+	}
+	return r
+}
+
 // attachNodeCaller excludes manager-originated device.call, regardless of any
 // principal retained on a tool's transport. Reserved fields live in the envelope.
 func attachNodeCaller(ctx context.Context, p *devicewire.NodeCall) {

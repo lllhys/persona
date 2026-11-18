@@ -274,13 +274,13 @@ func TestInboxSaveFailureRollback(t *testing.T) {
 	})
 	t.Run("task link joins the escalation", func(t *testing.T) {
 		h, st := newBulkFailHub(t)
-		h.in.setModel(fakeModel(t, `{"task_id":"todo_1"}`))
+		h.in.setModel(fakeModel(t, `{"task_id":"todo_1","evidence":"Fix the login crash"}`))
 		now := time.Now()
 		it := actionItem("a", now)
 		h.inbox.items["a"] = it
 		before := stateOf(h, it)
 		ws := h.inbox.escalate(now.Add(-time.Hour), now)
-		if len(ws) != 1 || !h.linkTaskFor(ctx, it, []prompts.InboxTask{{ID: "todo_1"}}, ws[0]) || it.Agent.TodoID != "todo_1" {
+		if len(ws) != 1 || !h.linkTaskFor(ctx, it, []prompts.InboxTask{{ID: "todo_1", Title: "Fix the login crash"}}, ws[0]) || it.Agent.TodoID != "todo_1" {
 			t.Fatalf("not linked: %+v", it.Agent)
 		}
 		st.failAll = true

@@ -162,8 +162,8 @@ val LocalAppStyleStore = staticCompositionLocalOf<AppStyleStore?> { null }
 object GlassThrottle {
     val ceiling = mutableStateOf(GlassLevel.Liquid)
 
-    fun lower() {
-        ceiling.value = when (ceiling.value) {
+    fun lower(deviceLevel: GlassLevel = GlassLevel.Liquid) {
+        ceiling.value = when (maxOf(deviceLevel, ceiling.value)) {
             GlassLevel.Liquid -> GlassLevel.Frosted
             else -> GlassLevel.Solid
         }

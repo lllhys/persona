@@ -193,6 +193,7 @@ class ExtensionUiV3Test {
             ExtensionViewItem("row", key = "a"), ExtensionViewItem("row", key = "a"), ExtensionViewItem("row"))))
         // Icons this app does not know are the extension icon.
         assertEquals(persona.core.designsystem.icons.PhIcons.User, ExtensionIcons.of("person"))
+        assertEquals(persona.core.designsystem.icons.PhIcons.List, ExtensionIcons.of("list"))
         assertEquals(persona.core.designsystem.icons.PhIcons.PuzzlePiece, ExtensionIcons.of("rocket"))
     }
 }

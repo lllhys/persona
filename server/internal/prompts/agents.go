@@ -1,5 +1,7 @@
 package prompts
 
+import "encoding/json"
+
 func RenderAgentSessionName() string { return render("agents/session_name", nil) }
 
 // AgentSessionNameInput contains only bounded dialogue, never machine paths or credentials.
@@ -17,6 +19,17 @@ func RenderReadonlyTaskPlanExit() string { return render("agents/readonly_plan_e
 
 // RenderReadonlyTaskConstraint carries a read-only task's limit in its first prompt.
 func RenderReadonlyTaskConstraint() string { return render("agents/readonly_task", nil) }
+
+type TaskContinuation struct {
+	TodoID   string
+	Readonly bool
+}
+
+func RenderTaskContinuation(t TaskContinuation) string { return render("agents/task_continuation", t) }
+
+// RenderPlanFirstTaskConstraint carries a task's self-planning requirement in its first prompt, for launches whose
+// thinking-effort setting the underlying model does not act on: the prompt is the only lever there.
+func RenderPlanFirstTaskConstraint() string { return render("agents/plan_first_task", nil) }
 
 // AgentTriage is the system prompt that reads a stopped agent's last reply and says where its work stands
 // (agents/triage, docs/assistant/agent-work.md).
@@ -75,6 +88,7 @@ func RenderAgentTriageInput(in AgentTriageInput) string { return render("agents/
 
 // AgentWake is what the hub sends an agent whose wait should be over (agents/wake).
 type AgentWake struct {
+	Language  string // Native language name; empty preserves the legacy Chinese text.
 	Attempt   int
 	Wait      string
 	Then      string
@@ -85,7 +99,17 @@ type AgentWake struct {
 	ApprovedByTask bool
 }
 
-func RenderAgentWake(w AgentWake) string { return render("agents/wake", w) }
+func RenderAgentWake(w AgentWake) string {
+	// JSON escapes tags and newlines in the wait, keeping the marker on one line.
+	marker, err := json.Marshal(wakeMetadata{Title: w.Wait})
+	if err != nil {
+		panic(err)
+	}
+	return render("agents/wake", struct {
+		AgentWake
+		Marker string
+	}{w, string(marker)})
+}
 
 // RenderAgentLimitContinue is what the manager sends an agent a subscription's usage limit stopped, once the limit has
 // reset and its CLI did not say it goes on by itself (agents/limit_continue, docs/assistant/agent-work.md "Usage limits").
@@ -231,6 +255,15 @@ func RenderTaskWorker() string { return render("agents/task_worker", struct{}{})
 // should get is named by its absolute path, never pasted as text. It is always asked for, unlike the closeout form,
 // which depends on a switch.
 func RenderTaskFiles() string { return render("agents/task_files", struct{}{}) }
+
+// TaskHandoff describes the scoped entries the assignment's actual launcher can use.
+type TaskHandoff struct {
+	Language   string // the caller's reply language; empty keeps the existing default
+	MCP        bool   // the selected launcher has the existing scoped Persona MCP tools
+	Executable string // a verified node executable, encoded as a JSON string, never shell code
+}
+
+func RenderTaskHandoff(h TaskHandoff) string { return render("agents/task_handoff", h) }
 
 // RenderWorkerSupervise is the supervision message a task leader's agent gets about its workers (agents/worker_supervise,
 // assistant/task_leader.go): what each task of its own needs, from the same entries a conversation's message lists.

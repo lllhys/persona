@@ -59,6 +59,10 @@
         <item quantity="other">Its %1$d computers go back to the hub\'s own assistant.</item>
     </plurals>
     <string name="settings_managers_delete_sources">Its sources (mail accounts, for example) are kept in its own database: unless you move them to another assistant first, they are deleted with it.</string>
+    <string name="settings_managers_show_in_switcher">Show in the switcher</string>
+    <string name="settings_managers_switcher_note">When off, the switcher leaves this assistant out while it isn\'t the default and has no computer</string>
+    <string name="settings_managers_switcher_in_use">It\'s the default or has a computer, so the switcher shows it</string>
+    <string name="settings_managers_switcher_unsupported">This hub\'s version can\'t keep it out of the switcher yet. Update the hub and come back</string>
     <string name="settings_managers_needs_update">Needs update</string>
     <string name="settings_managers_needs_update_note">Its personad is older and doesn\'t read settings of its own (manager.json) yet, so it runs on built-in defaults. Update personad on the computer it runs on.</string>
     <string name="settings_switcher_line">%1$s · %2$s</string>

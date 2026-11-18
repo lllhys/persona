@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { credentialOwner, setToken } from "./api";
+import { ApiError, credentialOwner, setToken } from "./api";
 import { chooseManager, resetManagerChoice, setRosterDefault } from "./manager-choice";
 import { WorktreeMutation, postWorktreeAction, type WorktreeActionPost, type WorktreeDeletionPreview } from "./worktree-actions-state";
 import type { OwnedWorkspaceTarget, ResolvedWorktreeAction } from "./worktree-actions";
@@ -18,10 +18,41 @@ const done = () => ({ workspace_id: "work", removed: true, state: "removed" });
 beforeEach(() => {
   resetManagerChoice(); setRosterDefault("manager"); setToken("synthetic-mutations"); current = true; calls = []; acknowledged.mockClear();
   target = { owner: credentialOwner(), manager: "manager", machineId: "computer", host: "orca", workspaceId: "work", cwd: "/repo/work" };
-  context = { writable: true, available: true, canDelete: true, canReconcile: true, canRename: true, canCreate: true, hasChildren: false, reason: "", workspace: undefined, machine: undefined, parent: undefined };
+  context = { writable: true, available: true, canClose: false, canDelete: true, canReconcile: true, canRename: true, canCreate: true, hasChildren: false, reason: "", workspace: undefined, machine: undefined, parent: undefined };
   model = new WorktreeMutation(target, { resolve: () => context, current: () => current, acknowledged, post });
 });
 afterEach(() => { model.dispose(); vi.unstubAllGlobals(); });
+
+it("binds herdr close confirmation and reconciliation to the file-preserving operation", async () => {
+  target.host = "herdr"; context.canClose = true; context.canDelete = false;
+  const pending = model.preview(true);
+  expect(calls[0].body).toEqual({ workspace_id: "work", kind: "herdr", preview: true, close_only: true });
+  calls[0].resolve(preview({ kind: "herdr", instance_id: "", folder: true, close_only: true })); await pending;
+  const removal = model.remove(true, true);
+  expect(calls[1].body).toEqual({ workspace_id: "work", kind: "herdr", preview_token: "opaque-preview", close_only: true });
+  calls[1].reject(new Error("Connection lost")); await removal;
+  const check = model.reconcile();
+  expect(calls[2].body).toEqual({ workspace_id: "work", kind: "herdr", preview_token: "opaque-preview", reconcile: true, close_only: true });
+  calls[2].resolve(done()); await check;
+  expect(acknowledged).toHaveBeenCalledExactlyOnceWith("close");
+});
+
+it("rejects a deletion preview returned for a close request", async () => {
+  target.host = "herdr"; context.canClose = true;
+  const pending = model.preview(true); calls[0].resolve(preview({ kind: "herdr", instance_id: "" })); await pending;
+  expect(model.snapshot().phase).toBe("idle"); expect(model.snapshot().error).toBeTruthy();
+  await model.remove(true, true); expect(calls).toHaveLength(1);
+});
+
+it("retires a parent-close confirmation refused by herdr so reopening gets a fresh preview", async () => {
+  target.host = "herdr"; context.canClose = true;
+  const pending = model.preview(true);
+  calls[0].resolve(preview({ kind: "herdr", instance_id: "", folder: true, close_only: true })); await pending;
+  const close = model.remove(false, false);
+  calls[1].reject(new ApiError(409, "Close the linked workspaces first", { code: "worktree_herdr_children" })); await close;
+  expect(model.snapshot().phase).toBe("invalid");
+  expect(model.snapshot().error).toBe("Close the linked workspaces first");
+});
 
 it("pins the exact manager and canonical runtime id in the existing API transport/envelope", async () => {
   const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })); vi.stubGlobal("fetch", fetcher);
@@ -59,6 +90,15 @@ describe("one-use safe removal", () => {
     const check = model.reconcile(); expect(calls[2].body).toEqual({ workspace_id: "work", kind: "orca", preview_token: "opaque-preview", reconcile: true });
     calls[2].resolve({ workspace_id: "work", removed: false, state: "present" }); await check;
     expect(model.snapshot().phase).toBe("uncertain");
+  });
+  it("deletes a Paseo worktree through the same preview, acknowledgement and one-use token", async () => {
+    target.host = "paseo";
+    const pending = model.preview(); calls[0].resolve(preview({ kind: "paseo", dirty: 2 })); await pending;
+    expect(calls[0].body).toEqual({ workspace_id: "work", kind: "paseo", preview: true });
+    await model.remove(false, false); expect(calls).toHaveLength(1);
+    const removing = model.remove(true, false);
+    expect(calls[1].body).toEqual({ workspace_id: "work", kind: "paseo", preview_token: "opaque-preview", force: true });
+    calls[1].resolve(done()); await removing; expect(acknowledged).toHaveBeenCalledExactlyOnceWith("delete");
   });
   it("folder unregister cannot send force or branch deletion even with dirty metadata", async () => {
     await ready({ folder: true, dirty: 8 }); const pending = model.remove(true, true);

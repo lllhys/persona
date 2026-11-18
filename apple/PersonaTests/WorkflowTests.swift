@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Background workflows on a session (#2935, docs/protocol/protocol.md `workflows`): read leniently, and what an older hub without
 /// them looks like.
@@ -70,6 +71,33 @@ import Testing
         // #2228's background work alone: working, not marked as a workflow.
         let bg = try session(#""background":[{"id":"b1","kind":"shell","command":"sleep 60"}]"#)
         #expect(!bg.isBackgroundWorking && bg.stateLabel == "工作中" && bg.backgroundCount == 1)
+    }
+
+    /// A summary row (`summary=1`, for example the Agents list's Recent grouping, #5888) sends `running_workflows` and
+    /// the newest run's `workflow_progress` instead of `workflows`: the row keeps its workflow line and 「工作中（后台）」.
+    @Test func aSummaryRowReadsItsWorkflowProgress() throws {
+        let progress = #""waiting":true,"background_count":1,"background_tasks_count":0,"running_workflows":1,"workflow_progress":{"task_id":"w","name":"parity-audit","status":"running","running":true,"phase":"Verify","phase_index":2,"phase_count":2,"agents_started":185,"agents_done":169}"#
+        let s = try session(progress)
+        #expect(s.workflows == nil)
+        #expect(s.runningWorkflows.map(\.title) == ["parity-audit"] && s.leadWorkflow?.phaseLabel == "Verify 2/2")
+        #expect(s.isBackgroundWorking && s.stateLabel == "工作中（后台）")
+        // A count without progress (an older runtime's background entry) still reads as background work.
+        let counted = try session(#""waiting":true,"background_count":1,"running_workflows":1"#)
+        #expect(counted.runningWorkflows.isEmpty && counted.isBackgroundWorking)
+        // A complete row reads its `workflows`.
+        let complete = try session(#""workflows":[{"task_id":"w","status":"completed","running":false}]"#)
+        #expect(complete.runningWorkflows.isEmpty && !complete.isBackgroundWorking)
+    }
+
+    /// A summary row keeps an older complete row's `workflows` (`preservingDetails`, once the chat was opened); its own
+    /// counts still win (#3588): a run that started after the chat was opened shows, and one that ended clears.
+    @Test func aSummaryOverAnOpenedChatReadsItsOwnCounts() throws {
+        let progress = #""waiting":true,"background_count":1,"running_workflows":1,"workflow_progress":{"task_id":"w2","name":"widget-audit","status":"running","running":true}"#
+        let started = try session(progress).preservingDetails(from: session(#""workflows":[]"#))
+        #expect(started.workflows == [] && started.leadWorkflow?.title == "widget-audit" && started.isBackgroundWorking)
+        let stale = try session(#""workflows":[{"task_id":"w","name":"old","status":"running","running":true}]"#)
+        let ended = try session(#""waiting":false"#).preservingDetails(from: stale)
+        #expect(ended.workflows?.count == 1 && ended.runningWorkflows.isEmpty && !ended.isBackgroundWorking)
     }
 
     /// The hub decides the state: a running workflow on an idle agent (an older hub) is not drawn as working, and the

@@ -33,6 +33,9 @@ func fakePRGh(t *testing.T, auth string, views ...string) (calls func() []string
  {"isResolved":false,"isOutdated":false,"path":"src/login.ts","line":12,"originalLine":10,
   "comments":{"nodes":[{"author":{"login":"reviewer"},"body":"Handle the empty password.","url":"https://github.com/acme/web/pull/42#r1","createdAt":"2026-11-01T10:00:00Z"}]}},
  {"isResolved":true,"isOutdated":false,"path":"src/old.ts","line":3,"originalLine":3,"comments":{"nodes":[]}}]}}}}}`
+	if len(views) > 1 {
+		threads = views[1]
+	}
 	script := `#!/bin/sh
 printf '%s\n' "$*" >> '` + log + `'
 if [ '` + auth + `' = out ]; then echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4; fi
@@ -63,6 +66,54 @@ esac
 	return func() []string {
 		b, _ := os.ReadFile(log)
 		return strings.Split(strings.TrimSpace(string(b)), "\n")
+	}
+}
+
+func TestGitPRSupervisionEvidenceCompleteness(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		reviews        any
+		threads        string
+		reviewsOK      bool
+		threadsOK      bool
+		lastReviewTime string
+	}{
+		{"missing reviews", nil, `{"nodes":[]}`, false, true, ""},
+		{"empty complete reviews", []any{}, `{"nodes":[]}`, true, true, ""},
+		{"dated review", []any{map[string]any{"submittedAt": "2026-11-01T10:00:00Z"}}, `{"nodes":[]}`, true, true, "2026-11-01T10:00:00Z"},
+		{"undated review", []any{map[string]any{}}, `{"nodes":[]}`, false, true, ""},
+		{"review page boundary", make([]any, 100), `{"nodes":[]}`, false, true, ""},
+		{"missing threads", []any{}, `{}`, true, false, ""},
+		{"null threads", []any{}, `{"nodes":null}`, true, false, ""},
+		{"thread page boundary", []any{}, `{"nodes":[` + strings.TrimSuffix(strings.Repeat(`{"isResolved":true},`, 50), ",") + `]}`, true, false, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPullFixture(t)
+			view, err := json.Marshal(map[string]any{
+				"number": 42, "url": "https://github.com/acme/web/pull/42", "state": "OPEN",
+				"headRefOid": "0123456789abcdef0123456789abcdef01234567", "reviews": tc.reviews,
+				"statusCheckRollup": []any{map[string]any{"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fakePRGh(t, "", string(view), `{"data":{"repository":{"pullRequest":{"reviewThreads":`+tc.threads+`}}}}`)
+			out, err := f.node.gitPR(context.Background(), f.local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pr := out["pr"].(GitPR)
+			if pr.ReviewsComplete != tc.reviewsOK || pr.ThreadsComplete != tc.threadsOK {
+				t.Fatalf("review completeness = %v, threads = %v", pr.ReviewsComplete, pr.ThreadsComplete)
+			}
+			last := ""
+			if pr.LastReviewAt != nil {
+				last = pr.LastReviewAt.UTC().Format("2006-01-02T15:04:05Z07:00")
+			}
+			if last != tc.lastReviewTime {
+				t.Fatalf("last review = %q; want %q", last, tc.lastReviewTime)
+			}
+		})
 	}
 }
 

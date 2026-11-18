@@ -2,10 +2,13 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // interjectClaude is a claude that names version in its init, starts answering the first message and never finishes
@@ -38,7 +41,7 @@ func interjectLog(t *testing.T) string {
 
 // interjectSecond starts a conversation that stays busy answering "first", waits for its init, then sends "second".
 // It returns what the fake claude read after "first".
-func interjectSecond(t *testing.T, version string, on bool) string {
+func interjectSecond(t *testing.T, version string, on bool, images ...proto.Image) string {
 	t.Helper()
 	interjectClaude(t, version)
 	n := codexTestNode(t)
@@ -51,20 +54,54 @@ func interjectSecond(t *testing.T, version string, on bool) string {
 	n.mu.Lock()
 	p := n.procs[id]
 	n.mu.Unlock()
-	sdkWait(t, "its init", func() bool {
+	cliWait(t, "its init", func() bool {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		return p.claudeVersion == version
 	})
-	if _, err := n.assistantSend(context.Background(), id, "", "claude", "second", nil, "", "", modelExecution{Interject: on}); err != nil {
+	if _, err := n.assistantSend(context.Background(), id, "", "claude", "second", images, "", "", modelExecution{Interject: on}); err != nil {
 		t.Fatal(err)
 	}
-	sdkWait(t, "the second message", func() bool { return strings.Contains(interjectLog(t), "second") })
+	cliWait(t, "the second message", func() bool { return strings.Contains(interjectLog(t), "second") })
 	if on && versionAtLeast(version, backgroundTasksMinVersion) {
-		sdkWait(t, "background_tasks", func() bool { return strings.Contains(interjectLog(t), "background_tasks") })
+		cliWait(t, "background_tasks", func() bool { return strings.Contains(interjectLog(t), "background_tasks") })
 	}
 	log := interjectLog(t)
 	return log[strings.Index(log, `"first"`):]
+}
+
+func TestAssistantImageInterjectionKeepsModelInstructions(t *testing.T) {
+	interjectSecond(t, "2.1.322", false, proto.Image{Mime: "image/png", Data: "iVBORw0KGgo="})
+	for _, line := range strings.Split(interjectLog(t), "\n") {
+		var input struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content []struct{ Type, Text string }
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &input) != nil || input.Type != "user" {
+			continue
+		}
+		note, image, caption := -1, -1, -1
+		for i, b := range input.Message.Content {
+			if strings.Contains(b.Text, `title="插话"`) {
+				note = i
+			}
+			if b.Type == "image" {
+				image = i
+			}
+			if b.Text == "second" {
+				caption = i
+			}
+		}
+		if caption >= 0 {
+			if note < 0 || note >= image || image >= caption {
+				t.Fatalf("model input order note/image/caption = %d/%d/%d", note, image, caption)
+			}
+			return
+		}
+	}
+	t.Fatal("image interjection was not written to the model")
 }
 
 // A message to a conversation that is answering moves its foreground work to the background, after the message is
@@ -126,7 +163,7 @@ func TestAssistantFirstMessageHasNoInterjectNote(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { n.stopAssistant(id) })
-	sdkWait(t, "the first message", func() bool { return strings.Contains(interjectLog(t), "first") })
+	cliWait(t, "the first message", func() bool { return strings.Contains(interjectLog(t), "first") })
 	if strings.Contains(interjectLog(t), "插话") {
 		t.Fatalf("a message to an idle conversation carries the note:\n%s", interjectLog(t))
 	}
@@ -137,17 +174,16 @@ func TestAssistantFirstMessageHasNoInterjectNote(t *testing.T) {
 func TestAssistantInterjects(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
-		agent, rt, v           string
+		agent, v               string
 		busy, expects, midTurn bool
 	}{
-		{"busy", "claude", "", "2.1.139", true, true, true},
-		{"idle", "claude", "", "2.1.322", false, false, false},
-		{"before init", "claude", "", "", true, false, true},
-		{"old", "claude", "", "2.1.138", true, false, true},
-		{"codex", "codex", "", "2.1.322", true, false, false},
-		{"agent sdk", "claude", "agentsdk", "2.1.322", true, false, false},
+		{"busy", "claude", "2.1.139", true, true, true},
+		{"idle", "claude", "2.1.322", false, false, false},
+		{"before init", "claude", "", true, false, true},
+		{"old", "claude", "2.1.138", true, false, true},
+		{"codex", "codex", "2.1.322", true, false, false},
 	} {
-		p := &assistantProc{agent: tc.agent, runtime: tc.rt, claudeVersion: tc.v, busy: tc.busy}
+		p := &assistantProc{agent: tc.agent, claudeVersion: tc.v, busy: tc.busy}
 		if got := p.interjects(); got != tc.expects {
 			t.Errorf("%s: interjects %v, want %v", tc.name, got, tc.expects)
 		}

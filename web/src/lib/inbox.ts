@@ -13,10 +13,9 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api, ApiError, enc, errorText, getToken } from "./api";
 import { BASE } from "./base";
 import type { AgentMutes } from "./agent-groups";
+import { agentName } from "./agent-kind";
 import { connectorOpenTitle } from "./connectors";
 import { contextBody } from "./context-body";
-import { larkPath } from "./lark-accounts";
-import { baseName } from "./format";
 import { conversationPage } from "./conversation-page";
 import type { Route } from "./router";
 import { isResumed } from "./reconnect";
@@ -69,6 +68,8 @@ export interface InboxDoc {
 }
 
 export interface InboxAgent {
+  /** The business task this event is about; distinct from its draft-processing session. */
+  todo_id?: string;
   state: string; // skipped | queued | running | drafted | failed
   task?: string;
   reason?: string;
@@ -90,6 +91,8 @@ export interface InboxItem {
   account: string;
   account_name: string;
   title: string;
+  /** Where the matter happens: a group's name, the other person of a direct chat, or a repository. */
+  where?: string;
   sender?: string;
   avatar?: string;
   preview: string;
@@ -98,6 +101,9 @@ export interface InboxItem {
   updated_at?: string;
   tier?: string;
   summary?: string;
+  /** An assistant row's text as Markdown, its line breaks kept (#9041): the detail draws it; `summary` and `preview`
+   *  are the same words without the marks. Older hubs leave it out. */
+  body?: string;
   reason?: string;
   read?: boolean;
   done_at?: string | null;
@@ -130,6 +136,10 @@ export interface InboxItem {
   // ── events (docs/assistant/inbox.md "Events and handling chain"; lib/inbox-events.ts): absent from an older hub ──
   /** The section of an open item; absent: by `tier` as before. */
   status?: InboxStatus;
+  /** What or whom it waits on, the next step, and when to look again. */
+  follow?: { who?: string; next?: string; check_at?: string };
+  /** The manager's state key; apps translate it with the shared table in spec/fixtures/inbox/now.json. */
+  now?: string;
   /** Urgent: stays in "Needs you" while the AI prepares a suggestion. */
   urgent?: boolean;
   /** Summary by the manager: background, progress, where it is stuck. */
@@ -138,6 +148,8 @@ export interface InboxItem {
   suggestion?: InboxSuggestion;
   /** Handling chain, oldest first. */
   chain?: ChainEntry[];
+  /** The rows merged into this one by hand (the hub hides them; #6480). */
+  merged_from?: { id: string; source: string; account_name?: string; title?: string }[];
   related?: InboxRelated[];
   /** The conversations it was handed to with "Hand to AI" (POST /inbox/{id}/handoff), oldest first: they may write back to it. */
   handoffs?: InboxHandoff[];
@@ -167,33 +179,6 @@ export interface InboxMute extends InboxMuteOption {
   manager?: string;
 }
 
-/** The menu's words for a mute option (iOS MuteOption.title). */
-export function muteTitle(o: Pick<InboxMuteOption, "tag">): string {
-  return t(o.tag === "repo" ? "lib-inbox.mute_repo" : o.tag === "chat" ? "lib-inbox.mute_chat" : "lib-inbox.mute_sender");
-}
-
-/** The name under the menu's words, on one line: a repository without its owner (example-repo). */
-export function muteShortName(o: InboxMuteOption): string {
-  return o.tag === "repo" ? o.name.split("/").pop() || o.name : o.name;
-}
-
-/** What kind of thing a mute is, for people: "Repository" / "Chat" / "Sender". */
-export function muteTagName(tag: string): string {
-  return t(tag === "repo" ? "lib-inbox.mute_tag_repo" : tag === "chat" ? "lib-inbox.mute_tag_chat" : "lib-inbox.mute_tag_sender");
-}
-
-/** The "Muted" list's second line: the source's name, then "Repository" / "Chat" / "Sender". */
-export function muteLine(m: InboxMute): string {
-  return [m.source_name || m.source, muteTagName(m.tag)].join(" · ");
-}
-
-/** The mutes, newest first (iOS InboxMutesView). */
-export function sortMutes(list: InboxMute[]): InboxMute[] {
-  // By time, not by string: RFC3339Nano drops trailing zeros, so "…:05Z" and "…:05.1Z" compare the wrong way.
-  const ts = (m: InboxMute) => (m.created_at ? Date.parse(m.created_at) || 0 : 0);
-  return [...list].sort((a, b) => ts(b) - ts(a));
-}
-
 export type InboxParentKind = "inbox" | "todo" | "session";
 export interface InboxParent { kind: InboxParentKind; id: string; by?: "continues" | "connector" | "user" }
 
@@ -206,25 +191,11 @@ export interface InboxTree {
   children: InboxItem[];
 }
 
-/** `manager`: whose inbox the node is in (an item's, docs/assistant/managers.md "Clients"); none: the default's. */
-export function fetchInboxTree(kind: InboxParentKind, id: string, manager?: string): Promise<InboxTree> {
-  const path = kind === "session" ? id.split("/").map(enc).join("/") : enc(id).replace(/%3A/gi, ":");
-  return api<InboxTree>(`/inbox/tree/${kind}/${path}`, { headers: itemHeaders(manager) });
-}
-
 /** The route of an inbox item: its id, and its manager when that is another than the default (two managers may list
  *  the same id). */
 export function itemRoute(it: { id: string; manager?: string }): Extract<Route, { name: "inbox" }> {
   const other = otherManager(it.manager);
   return other ? { name: "inbox", id: it.id, manager: other } : { name: "inbox", id: it.id };
-}
-
-/** Where a node of a line opens; `manager`: whose line it is (its items are that manager's too). */
-export function parentRoute(p: InboxParent, manager?: string): Route | undefined {
-  if (p.kind === "inbox") return itemRoute({ id: p.id, manager });
-  if (p.kind === "todo") return { name: "todos", id: p.id };
-  const i = p.id.indexOf("/");
-  return i > 0 && i < p.id.length - 1 ? { name: "session", mid: p.id.slice(0, i), sid: p.id.slice(i + 1) } : undefined;
 }
 
 export interface InboxConnector {
@@ -282,11 +253,6 @@ export function isLarkSource(it: InboxItem): boolean {
 export function connectorReference(it: InboxItem): string | undefined {
   const t = it.connector?.thread;
   return t && t.includes("#") ? t : undefined;
-}
-
-/** Whether "AI draft reply" applies: a connector's thread only when the hub can answer it (a CI run cannot). */
-export function canDraft(it: InboxItem): boolean {
-  return !it.connector || !!it.connector.can_reply;
 }
 
 /** The button that opens a connector item's `open_url`, where the user answers it. */
@@ -356,6 +322,7 @@ export function docTypeName(type?: string): string {
 /** Who wrote what: the row's line under the summary (or its second line before triage); `preview` is the hub's
  * translation of a foreign mail's when it is shown. */
 export function fromLine(it: InboxItem, preview?: string): string {
+  if (it.source === "assistant") return it.preview; // the assistant's own row: the tag already says who, so no "Assistant:" prefix
   if (it.doc) return `${docTypeName(it.doc.type)} · ${it.preview}`; // the preview names who: "<name> mentioned you"
   if (it.moment) return t("lib-inbox.sender_line", { sender: it.sender ?? "", text: it.preview });
   if (it.connector) {
@@ -367,18 +334,6 @@ export function fromLine(it: InboxItem, preview?: string): string {
   // a Feishu direct chat's title already is the sender
   if (!it.sender || (isLark(it) && it.lark && !it.lark.is_group)) return it.preview;
   return t("lib-inbox.sender_line", { sender: it.sender, text: it.preview });
-}
-
-/** Where it came from, for the detail page's subtitle. */
-export function sourceLine(it: InboxItem): string {
-  if (it.doc) return [docTypeName(it.doc.type), it.preview].filter(Boolean).join(" · ");
-  if (it.moment) return it.moment.my_post ? t("lib-inbox.moments_my_post") : t("lib-inbox.moments");
-  if (it.connector) return [it.account_name || it.source, connectorReference(it)].filter(Boolean).join(" · ");
-  // Lark · <name> while the hub reads more than one Feishu account
-  // i18n-ignore: the hub names its Lark accounts "Lark · <name>" in Chinese
-  if (isLark(it)) return [it.account_name?.startsWith("飞书 · ") ? it.account_name : t("lib-inbox.lark"), it.lark?.is_group ? t("lib-inbox.kind_group") : it.kind === "bot" ? t("lib-inbox.kind_bot") : t("lib-inbox.kind_dm")].join(" · ");
-  const from = it.mail?.from;
-  return [it.account_name, from?.name && from.email ? `${from.name} <${from.email}>` : from?.email || it.sender].filter(Boolean).join(" · ");
 }
 
 export function agentDraft(it: InboxItem): string | undefined {
@@ -397,20 +352,6 @@ export function keptChanges(it: InboxItem, dropped: readonly string[]): DocChang
 
 export function agentWorking(it: InboxItem): boolean {
   return it.agent?.state === "queued" || it.agent?.state === "running";
-}
-
-/** The AI twin's proposed status move as a line ("Status: In progress → Done · write the doc", in Chinese). */
-export function docChangeLine(change: DocChange, doc?: InboxDoc): string {
-  const row = doc?.rows?.find((r) => r.ref === change.ref);
-  const st = row?.status?.find((s) => s.field === change.field);
-  if (!row || !st) return change.value;
-  return t("lib-inbox.doc_change", { field: st.name, from: st.value || t("lib-inbox.not_set"), to: change.value, row: row.title });
-}
-
-/** The part of an address before the @ (chips stay short), unless that alone says nothing ("c@…"). */
-export function mailShort(email: string): string {
-  const name = email.split("@")[0] ?? email;
-  return name.length >= 3 ? name : email;
 }
 
 /** Item ids are `lark:<feed>:<pos>` / `mail:<acc>:<thread>:<uid>`: the colons stay as they are in the path. */
@@ -489,7 +430,7 @@ export function matches(it: InboxItem, f: InboxFilter): boolean {
     const ok = it.kind === f.kind || (f.kind === "mention" && (it.kind === "doc" || (it.kind === "moment" && kindLabel(it) === AT_ME)));
     if (!ok) return false;
   }
-  return hasText([it.title, it.sender, it.preview, it.summary], f.query);
+  return hasText([it.title, it.sender, it.preview, it.summary, it.where], f.query);
 }
 
 const byUpdated = (a: InboxItem, b: InboxItem) => byTime(b.updated_at, a.updated_at) || a.id.localeCompare(b.id);
@@ -548,10 +489,11 @@ export function interactionMuted(ix: Interaction, sessions: Record<string, Sessi
   return Boolean(space && mutes.spaces.includes(`${ix.machine_id}/${space}`));
 }
 
-/** What it waits for: "Claude is asking you", "Plan waiting for your approval"…; Persona's ask_user and other agents by name. */
+/** What it waits for: "Claude is asking you", "Plan waiting for your approval"…; Persona's ask_user and other agents by
+ *  name: the card's own name for an agent the app doesn't know (a Paseo provider's label, "Grok", #8142), never its id. */
 export function interactionTitle(ix: Interaction): string {
   if (ix.tool_name === "ask_user") return t("lib-inbox.ix_persona_asks");
-  const name = ix.agent === "codex" ? "Codex" : ix.agent === "traex" ? "TRAEX" : ix.agent && ix.agent !== "claude" ? ix.agent : "";
+  const name = ix.agent && ix.agent !== "claude" ? agentName(ix.agent, ix.agent_label) : "";
   if (name && ix.kind === "question") return t("lib-inbox.ix_named_asks", { name });
   if (name && ix.kind === "permission") return t("lib-inbox.ix_named_permission", { name });
   if (ix.kind === "elicitation") return ix.elicitation?.mode === "url" ? t("lib-inbox.ix_elicitation_url") : t("lib-inbox.ix_elicitation_form");
@@ -574,10 +516,6 @@ export function interactionAsk(ix: Interaction): string {
     default:
       return ix.summary || "";
   }
-}
-
-export function interactionAgentTitle(ix: Interaction): string {
-  return ix.session_title?.trim() || baseName(ix.cwd) || "Agent";
 }
 
 export function waitingAgents(interactions: Interaction[], sessions: Record<string, Session[]>, mutes: AgentMutes, f: InboxFilter): Interaction[] {
@@ -609,10 +547,6 @@ export function conversationRoute(mid: string, sid: string, sessions: Record<str
   return s?.assistant || own ? conversationPage(sid, mid, s?.manager ?? manager ?? (own ? chosenManager() ?? undefined : undefined)) : { name: "session", mid, sid };
 }
 
-// ── Hand to AI ───────────────────────────────────────────
-
-export const HANDOFF_PRESETS = [t("lib-inbox.handoff_summarize"), t("lib-inbox.handoff_research"), t("lib-inbox.handoff_handle")];
-
 function escAttr(s: string) {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -620,21 +554,6 @@ function escAttr(s: string) {
 /** `<persona-context kind="…" title="…" url="…">` the way the app writes it (ContextRef.xml). */
 export function contextXML(kind: string, title: string, url: string, text: string): string {
   return `<persona-context kind="${kind}" title="${escAttr(title)}" url="${escAttr(url)}">\n${contextBody(text)}\n</persona-context>`;
-}
-
-/** The item as context the chat shows as a chip, then what to do with it (InboxHandOffSheet.message). */
-export function handOffMessage(it: InboxItem, ask: string): string {
-  const title = `${it.connector ? it.account_name || it.source : isLark(it) ? t("lib-inbox.lark") : t("lib-inbox.kind_mail")} · ${it.title}`;
-  let text = it.context?.trim() ? it.context : [it.sender ?? "", it.preview].filter(Boolean).join(t("lib-inbox.sender_separator"));
-  if (it.lark) {
-    const ol = it.lark.ol_account;
-    const account = ol ? t("lib-inbox.handoff_lark_account", { account: ol }) : "";
-    text += `\n\n${t("lib-inbox.handoff_lark", { feed: it.lark.feed_id, account })}`;
-  }
-  if (it.connector?.url) text += `\n\n${t("lib-inbox.handoff_connector", { name: it.account_name || it.source, url: it.connector.url })}`;
-  const uid = it.mail?.uids[it.mail.uids.length - 1];
-  if (it.mail && uid !== undefined) text += `\n\n${t("lib-inbox.handoff_mail", { account: it.mail.account_id, mailbox: it.mail.mailbox, uid })}`;
-  return `${contextXML("context", title, "", text)}\n\n${ask.trim() || HANDOFF_PRESETS[0]}`;
 }
 
 /** "Hand to AI" to Persona's main conversation (docs/assistant/inbox.md "Item actions"): the item's manager sends text there
@@ -722,66 +641,6 @@ export function comparePosition(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-/** Inline parts flow in one paragraph; the others (pictures, files, code, cards, system lines) stand alone. */
-export function isInlinePart(p: LarkPart): boolean {
-  switch (p.kind) {
-    case "text":
-      return !p.metadata?.markdown && !p.metadata?.system;
-    case "at":
-    case "link":
-    case "docs":
-    case "table":
-      return true;
-    case "emotion":
-      return !p.url;
-    default:
-      return false;
-  }
-}
-
-/** Parts in runs: consecutive inline ones together, each block part on its own. */
-export function partRuns(parts: LarkPart[]): { inline: boolean; parts: LarkPart[] }[] {
-  const out: { inline: boolean; parts: LarkPart[] }[] = [];
-  for (const p of parts) {
-    const inline = isInlinePart(p);
-    const last = out[out.length - 1];
-    if (inline && last?.inline) last.parts.push(p);
-    else out.push({ inline, parts: [p] });
-  }
-  return out;
-}
-
-/** Bracketed-name-style text (like `[Smile]` in Chinese) for an emoji key without its picture. */
-export function emojiLabel(key: string, text?: string): string {
-  if (text) return text;
-  let k = key.replace(/^Lark_Emoji_/, "");
-  const us = k.lastIndexOf("_");
-  if (us > 0) k = k.slice(0, us);
-  return `[${k}]`;
-}
-
-const CARD_SKIP = new Set(["button", "action", "overflow", "select_static", "select_person", "date_picker", "picker_time", "picker_datetime", "hr", "img"]);
-
-/** A card simplified to its title and lines of text (no buttons: the page only reads). */
-export function cardText(meta: Record<string, unknown> | undefined): { title: string; lines: string[] } {
-  if (!meta) return { title: "", lines: [] };
-  const str = (v: unknown): string => (typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { content?: unknown }).content === "string" ? (v as { content: string }).content : "");
-  const header = meta.header as Record<string, unknown> | undefined;
-  const title = str(meta.title) || str(header?.title) || "";
-  const lines: string[] = [];
-  const walk = (node: unknown) => {
-    if (Array.isArray(node)) return node.forEach(walk);
-    if (!node || typeof node !== "object") return;
-    const o = node as Record<string, unknown>;
-    if (typeof o.tag === "string" && CARD_SKIP.has(o.tag)) return;
-    const own = str(o.text) || (typeof o.content === "string" ? o.content : "");
-    if (own.trim()) lines.push(own.trim());
-    for (const [k, v] of Object.entries(o)) if (k !== "text" && k !== "content" && v && typeof v === "object") walk(v);
-  };
-  walk(meta.elements ?? (meta.body as Record<string, unknown> | undefined)?.elements ?? meta.body);
-  return { title, lines: lines.filter((l, i) => l !== title && l !== lines[i - 1]) };
-}
-
 // ── Moments ──────────────────────────────────────────────
 
 export interface MomentContent {
@@ -810,12 +669,6 @@ export interface MomentComment {
   createTime?: number;
   replyUserName?: string;
   reactionCount?: number;
-}
-
-/** A post / comment's text, emoji as `[key]`. */
-export function momentText(c?: MomentContent): string {
-  if (!c?.segments?.length) return c?.text ?? "";
-  return c.segments.map((s) => (s.kind === "emoji" ? emojiLabel(s.key ?? s.emojiKey ?? "", s.text) : s.text ?? "")).join("");
 }
 
 // ── triage: the new items held back from the list (#1773) ───
@@ -854,9 +707,6 @@ export const TRIAGE_REASONS: Record<string, string> = {
   behind: t("lib-inbox.triage_behind"),
 };
 
-/** The model settings "Set up" opens: inbox triage, the purpose that sorts the inbox. */
-export const TRIAGE_SETTINGS = "/settings?tab=model-config&purpose=inbox.triage";
-
 /**
  * The banner over the list while new items wait for triage; null when none wait, triage is ok, or the hub is older.
  * One source waiting names it ("3 Lark messages waiting to be sorted: …"), several do not; the reason is the hub's, else the
@@ -872,22 +722,6 @@ export function triageBanner(tr: InboxTriage | null | undefined): { text: string
   const waiting = name ? t("lib-inbox.triage_waiting_named", { count, name }) : t("lib-inbox.triage_waiting", { count });
   const text = reason ? t("lib-inbox.triage_waiting_reason", { waiting, reason }) : waiting;
   return { text, configure: tr.state === "unconfigured" };
-}
-
-/**
- * The quiet notice over the list naming the sources the hub could not read this round (#1849): one line per source with a
- * `read_error`, "name: the hub's read_reason" (the hub's own fallback words when it gives none), so a list that is behind
- * does not look complete. Empty when every source was read, or from an older hub. Apart from the triage banner: a source
- * can be unread while triage is ok and nothing waits. The same lines as Android (InboxTriageText.unread).
- */
-export function triageUnread(tr: InboxTriage | null | undefined): string[] {
-  if (!tr || typeof tr !== "object" || !Array.isArray(tr.sources)) return [];
-  return tr.sources
-    .filter((x) => x && typeof x.read_error === "string" && x.read_error.trim())
-    .map((x) => t("lib-inbox.read_failed_line", {
-      name: (x.name ?? "").trim() || x.source || "",
-      reason: (x.read_reason ?? "").trim() || t("lib-inbox.read_failed"),
-    }));
 }
 
 // ── the list, shared by the page and the sidebar badge ───
@@ -1012,6 +846,17 @@ export function replaceItem(item: InboxItem, manager?: string) {
   if (item?.id) patchItem({ id: item.id, manager: item.manager ?? manager }, (before) => keepStamp(item, before));
 }
 
+/** Rows the hub changed or took out of the list (a merge, a to-do): its copies replace ours (`manager` says whose answer it is:
+ *  the default's answers carry no stamp), and `gone` ids leave the list (a merged row's members are hidden by the hub). */
+export function applyInboxChange(changed: InboxItem[], gone: string[], manager?: string) {
+  const fresh = new Map(changed.map((it) => [it.id, it]));
+  const out = new Set(gone);
+  const same = (it: InboxItem) => sameManager(it.manager, manager);
+  set({
+    items: withPending(state.items.filter((it) => !(same(it) && out.has(it.id))).map((it) => (same(it) && fresh.has(it.id) ? keepStamp(fresh.get(it.id)!, it) : it))),
+  });
+}
+
 /** A done / open mark still being sent: what the item shows until the hub answers. A mute's mark also carries its
  * reason ("Muted: <name>"). */
 type DoneMark = Pick<InboxItem, "done_at" | "done_by" | "reason">;
@@ -1098,12 +943,15 @@ let started = false;
 let inFlight: Promise<void> | null = null;
 let again = false;
 
-/** The last list the hub answered in full, as it came (before the marks were laid over it), and its validator: a
- * reload sends it as If-None-Match, and a 304 says the hub's list is still this one (docs/protocol/protocol.md
- * "Inbox validator"). */
-let lastList: { etag: string; items: InboxItem[]; triage: InboxTriage | null } | null = null;
+/** The hub's last list as it came (before the marks were laid over it) and what names it: its cursor, so a reload asks
+ * only for what changed since (docs/protocol/protocol.md "Inbox delta"), and its validator, sent as If-None-Match: a
+ * 304 says the list is still this one ("Inbox validator"). Memory only: a page's first list is whole. */
+let lastList: { etag: string; cursor: string; items: InboxItem[]; triage: InboxTriage | null } | null = null;
 /** What a reload sends before it has a validator: a tag no list has, which asks the hub for its own. */
 const NO_LIST_TAG = 'W/"i1-"';
+/** Until when reloads ask without `since`: an answer had no cursor (an older hub or manager, or one that failed), so the
+ * validator does the work, and deltas are tried again ten minutes later. */
+let deltasOff = 0;
 
 function start() {
   if (started) return;
@@ -1142,16 +990,26 @@ export function reloadInbox(): Promise<void> {
         try {
           let status = 0;
           let etag = "";
-          const r = await api<{ items?: InboxItem[]; triage?: InboxTriage }>("/inbox?sources=all", {
-            headers: { "If-None-Match": lastList?.etag ?? NO_LIST_TAG },
+          const held = lastList;
+          // "0" until a list is held: one no list has, so the hub answers the whole list and its cursor
+          const since = Date.now() < deltasOff ? "" : held?.cursor || "0";
+          // If-None-Match too: a hub that knows no `since` still answers a list it has with a 304
+          const r = await api<{ items?: InboxItem[]; triage?: InboxTriage; cursor?: string; delta?: boolean; removed?: { id: string; manager?: string }[] }>(`/inbox?sources=all${since && `&since=${enc(since)}`}`, {
+            headers: { "If-None-Match": held?.etag || NO_LIST_TAG },
             onResponse: (headers, code) => {
               status = code;
               etag = headers?.get("ETag") ?? "";
             },
           });
           // 304: the list is still the one kept, and the marks are laid over it again as over any list of this seq
-          const list = status === 304 ? lastList : { etag, items: r.items ?? [], triage: r.triage ?? null };
-          if (status !== 304) lastList = etag ? list : null;
+          let list = held;
+          if (status !== 304) {
+            const cursor = r.cursor ?? "";
+            if (since && !cursor) deltasOff = Date.now() + 600_000;
+            // a delta answers only the cursor sent, so the list it changes is the one held
+            list = { etag, cursor, items: r.delta && held ? applyInboxDelta(held.items, r.items ?? [], r.removed ?? []) : r.items ?? [], triage: r.triage ?? null };
+            lastList = etag || cursor ? list : null;
+          }
           if (list) set({ items: keepSameItems(state.items, withPending(list.items, seq)), triage: list.triage, loaded: true, error: "" });
         } finally {
           endList(seq);
@@ -1167,7 +1025,25 @@ export function reloadInbox(): Promise<void> {
   return inFlight;
 }
 
-/** "Refresh": the hub collects Feishu and mail now, then lists. */
+/** `held` with a delta applied (docs/protocol/protocol.md "Inbox delta"): changed items in place, new ones in, removed
+ *  ones out, in the hub's order (each manager's items together, the managers as they came; newest first, then by id). */
+export function applyInboxDelta(held: InboxItem[], changed: InboxItem[], removed: { id: string; manager?: string }[]): InboxItem[] {
+  const gone = new Set(removed.map(itemKey));
+  const fresh = new Map(changed.map((it) => [itemKey(it), it]));
+  const out = held.filter((it) => !gone.has(itemKey(it))).map((it) => {
+    const k = itemKey(it);
+    const now = fresh.get(k) ?? it;
+    fresh.delete(k);
+    return now;
+  });
+  out.push(...fresh.values());
+  const managers = new Map<string | undefined, number>();
+  for (const it of out) if (!managers.has(it.manager)) managers.set(it.manager, managers.size);
+  return out.sort((a, b) => managers.get(a.manager)! - managers.get(b.manager)! || byTime(b.updated_at, a.updated_at) || (a.id < b.id ? -1 : +(a.id > b.id)));
+}
+
+/** "Refresh": the hub collects Feishu and mail now, then lists. Its whole list has no cursor: what is held stays, so the
+ * next reload's delta is still from the list its cursor names. */
 export async function refreshInbox(): Promise<void> {
   set({ loading: true });
   const seq = beginList();
@@ -1433,19 +1309,6 @@ export async function muteItem(item: InboxItem, o: InboxMuteOption): Promise<voi
   }
 }
 
-/** What the user muted, in every source (GET /api/v1/inbox/mutes), newest first. `manager`: whose mutes (each manager
- *  keeps its own; named even when it is the default, which may move before an Unmute; stamped on each); none: the
- *  default's, nothing named. */
-export async function listInboxMutes(manager?: string): Promise<InboxMute[]> {
-  const r = await api<{ mutes?: InboxMute[] }>("/inbox/mutes", { headers: stampedHeaders(manager) });
-  return sortMutes((r.mutes ?? []).map((m) => (manager ? { ...m, manager } : m)));
-}
-
-/** "Unmute" (`mute`'s manager's, named even when it is the default now): only what comes in later comes back. */
-export function unmuteInbox(mute: Pick<InboxMute, "id" | "manager">): Promise<unknown> {
-  return api(`/inbox/mutes/${enc(mute.id)}`, { method: "DELETE", headers: stampedHeaders(mute.manager) });
-}
-
 /** A policy's tier (docs/assistant/inbox.md "Policies"): "" leaves the tier to triage. */
 export type PolicyTier = "" | "action" | "fyi" | "noise";
 /** What a policy does with the AI twin: "first" hands it over first (even when not Needs you), "never" keeps it away; "" as configured. */
@@ -1464,57 +1327,10 @@ export interface InboxPolicy extends InboxMuteOption {
   manager?: string;
 }
 
-/** The tags a policy can name, the most specific first: a sender's policy beats its chat's (the hub's rule). */
-const POLICY_TAGS = ["sender", "chat", "repo"];
-
-/** The policy that applies to an item, as the hub picks it: the same source, one of its mute options, sender before chat before repository. */
-export function policyFor(it: InboxItem, policies: InboxPolicy[]): InboxPolicy | undefined {
-  let best: InboxPolicy | undefined;
-  let rank = POLICY_TAGS.length;
-  for (const o of it.mutes ?? []) {
-    const r = POLICY_TAGS.indexOf(o.tag);
-    if (r < 0 || r >= rank) continue;
-    const p = policies.find((x) => x.source === it.source && x.tag === o.tag && x.value === o.value);
-    if (p) [best, rank] = [p, r];
-  }
-  return best;
-}
-
-/** The menu's words for setting a policy on an option: "Rule for this repository / chat / sender…". */
-export function policyMenuTitle(o: Pick<InboxMuteOption, "tag">): string {
-  return t(o.tag === "repo" ? "lib-inbox.policy_repo" : o.tag === "chat" ? "lib-inbox.policy_chat" : "lib-inbox.policy_sender");
-}
-
-/** A policy tier's words: "Always Needs you" / "FYI" / "Collapsed"; "" is "Leave to triage". */
-export function policyTierName(tier: PolicyTier): string {
-  return t(tier === "action" ? "lib-inbox.policy_tier_action" : tier === "fyi" ? "lib-inbox.policy_tier_fyi" : tier === "noise" ? "lib-inbox.policy_tier_noise" : "lib-inbox.policy_tier_none");
-}
-
-/** A policy twin's words: "AI twin first" / "AI twin never"; "" is "As set". */
-export function policyTwinName(twin: PolicyTwin): string {
-  return t(twin === "first" ? "lib-inbox.policy_twin_first" : twin === "never" ? "lib-inbox.policy_twin_never" : "lib-inbox.policy_twin_none");
-}
-
-/** What a policy does, for people: "Always Needs you · AI twin first", one part when it sets one. */
-export function policySummary(p: Pick<InboxPolicy, "tier" | "twin">): string {
-  const parts: string[] = [];
-  if (p.tier) parts.push(policyTierName(p.tier));
-  if (p.twin) parts.push(policyTwinName(p.twin));
-  return parts.join(" · ");
-}
-
 /** Whether a policy's tier reaches an item at once (the hub's rule): the same thing, open, triaged, not being handled,
  *  and the same manager's (each manager keeps its own rules). */
 function policyReaches(source: string, o: InboxMuteOption, it: InboxItem, manager: { manager?: string }): boolean {
   return muteCovers(source, o, it, manager) && Boolean(it.tier) && statusOf(it) !== "working";
-}
-
-/** The policies, newest first. `manager`: whose rules (named even when it is the default, which may move before a
- *  Remove; stamped on each); none: the default's, nothing named. */
-export async function listInboxPolicies(manager?: string): Promise<InboxPolicy[]> {
-  const r = await api<{ policies?: InboxPolicy[] }>("/inbox/policies", { headers: stampedHeaders(manager) });
-  const ts = (p: InboxPolicy) => (p.created_at ? Date.parse(p.created_at) || 0 : 0);
-  return [...(r.policies ?? [])].map((p) => (manager ? { ...p, manager } : p)).sort((a, b) => ts(b) - ts(a));
 }
 
 /**
@@ -1545,12 +1361,6 @@ export async function saveInboxPolicy(target: { item?: InboxItem; option: InboxM
   }
 }
 
-/** Remove a policy (`policy`'s manager's, named even when it is the default now): items keep the tier it gave until new
- *  content is triaged again. */
-export function removeInboxPolicy(policy: Pick<InboxPolicy, "id" | "manager">): Promise<unknown> {
-  return api(`/inbox/policies/${enc(policy.id)}`, { method: "DELETE", headers: stampedHeaders(policy.manager) });
-}
-
 /** What a bulk action does (POST /api/v1/inbox/bulk): `dismiss` is Clean up all (done_by=dismissed), `done` files a section
  * (Mark all as seen / Clear all), `reopen` is Move back (their Undo). */
 export type BulkAction = "done" | "dismiss" | "reopen";
@@ -1558,9 +1368,6 @@ export type BulkAction = "done" | "dismiss" | "reopen";
 /** What a bulk request did: the items it moved as the hub has them now, the ones already so, and the ones it left
  * (`changed`: new messages since the list; `missing`: gone from the hub). */
 export type BulkResult = { changed: InboxItem[]; unchanged: string[]; skipped: { id: string; reason: string; manager?: string }[] };
-
-/** From this many items on, Clean up all asks first ("Will clean up N items"); fewer go at once, with Undo on the toast. */
-export const BULK_CONFIRM_AT = 10;
 
 /** The toast after a bulk request. */
 export function bulkMessage(action: BulkAction | boolean, r: BulkResult): string {
@@ -1571,18 +1378,6 @@ export function bulkMessage(action: BulkAction | boolean, r: BulkResult): string
     ? t(a === "reopen" ? "lib-inbox.bulk_undone_none" : "lib-inbox.bulk_done_none")
     : t(a === "reopen" ? "lib-inbox.bulk_undone" : a === "dismiss" ? "lib-inbox.bulk_cleaned" : "lib-inbox.bulk_done", { count: moved });
   return fresh ? t("lib-inbox.bulk_fresh", { head, count: fresh }) : head;
-}
-
-/** What Clean up all covers, for its label: the filters' names and the search, or All. */
-export function bulkScope(filters: string[], query: string, count: number): string {
-  return count ? t("lib-inbox.scope_count", { scope: bulkScopeName(filters, query), count }) : t("lib-inbox.scope_none");
-}
-
-/** The filters' names and the search, or "All": what a bulk action covers, without the count. */
-export function bulkScopeName(filters: string[], query: string): string {
-  const parts = filters.filter(Boolean);
-  if (query.trim()) parts.push(t("lib-inbox.scope_search", { query: query.trim() }));
-  return parts.length ? parts.join(" · ") : t("lib-inbox.scope_all");
 }
 
 /** What the managers answered, put together, and the items of those that did not answer (with why). */
@@ -1715,13 +1510,13 @@ export async function sendReply(item: InboxItem, text: string, changes: DocChang
 
 /** "Send" / "Start" / "Got it" / "Confirm", "Reject", "Say something" on the item's suggestion: the hub's item replaces ours. A suggestion that
  * changed meanwhile is not run: "Suggestion updated" and the item as it is now. Resolves to whether it went through. */
-export async function suggestionAct(item: InboxItem, action: SuggestionAction, text?: string): Promise<boolean> {
+export async function suggestionAct(item: InboxItem, action: SuggestionAction, text?: string, due?: string): Promise<boolean> {
   const s = item.suggestion;
   const key = itemKey(item);
   if (!s || state.sending.includes(key)) return false;
   set({ sending: [...state.sending, key] });
   try {
-    const r = await actOnSuggestion(itemPath(item.id), s.version, action, text, undefined, item.manager);
+    const r = await actOnSuggestion(itemPath(item.id), s.version, action, text, undefined, item.manager, due);
     if (r.ok) {
       if (r.item?.id === item.id) replaceItem(r.item, item.manager);
       toast(actedText(s, action), "ok");
@@ -1815,6 +1610,7 @@ export function resetInboxForTests() {
   inFlight = null;
   again = false;
   lastList = null;
+  deltasOff = 0;
   pendingDone.clear();
   listsOut.clear();
   listSeq = 0;
@@ -1826,42 +1622,4 @@ export function resetInboxForTests() {
 export interface LarkMention {
   user_id: string;
   name: string;
-}
-
-const mentionList = (mentions?: LarkMention[]) => (mentions?.length ? mentions.map((m) => ({ user_id: m.user_id, name: m.name })) : undefined);
-
-/** Sends a message to a Feishu conversation via the native hub API, as account `ol` (undefined: the hub's own). */
-export async function sendLarkMessage(feed: string, text: string, clientID?: string, ol?: number, mentions?: LarkMention[], manager?: string): Promise<{ message_id?: string }> {
-  return api<{ message_id?: string }>(larkPath(`/lark/conversations/${enc(feed)}/messages`, ol, manager), {
-    method: "POST",
-    json: { text, client_id: clientID, mentions: mentionList(mentions) },
-    token: getToken(),
-  });
-}
-
-/** Replies to a Feishu message (either quoted in chat or in its topic thread). */
-export async function replyLarkMessage(
-  messageID: string,
-  text: string,
-  thread = false,
-  clientID?: string,
-  ol?: number,
-  mentions?: LarkMention[],
-  manager?: string,
-): Promise<{ message_id?: string }> {
-  return api<{ message_id?: string }>(larkPath(`/lark/messages/${enc(messageID)}/replies`, ol, manager), {
-    method: "POST",
-    json: { text, thread, client_id: clientID, mentions: mentionList(mentions) },
-    token: getToken(),
-  });
-}
-
-/** Computes the next position string for an optimistic LarkMessage in the list. */
-export function nextLarkPosition(messages: LarkMessage[]): string {
-  let max = 0;
-  for (const m of messages) {
-    const n = Number(m.position);
-    if (Number.isFinite(n) && n > max) max = n;
-  }
-  return String(max > 0 ? max + 1 : Date.now());
 }

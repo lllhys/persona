@@ -96,9 +96,8 @@ describe("the To-dos list's filter and sort", () => {
     await act(async () => host.querySelector<HTMLElement>("[data-testid=todos-filter] button")!.click());
     await act(async () => menuRow("优先级")!.click());
     await flush();
-    // Other open starts folded while Needs you has a row
-    await act(async () => host.querySelector<HTMLElement>("[data-testid=todo-section][data-section=other] button[aria-expanded]")!.click());
-    await flush();
+    // Other open starts open, whatever else has rows (#5707)
+    expect(host.querySelector("[data-testid=todo-section][data-section=other] button[aria-expanded]")?.getAttribute("aria-expanded")).toBe("true");
     const open = titles().filter((x) => x === "Back up the photos" || x === "Renew the domain");
     expect(open).toEqual(["Back up the photos", "Renew the domain"]);
     expect(localStorage.getItem("persona.todos.sort")).toBe("priority");

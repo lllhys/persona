@@ -13,9 +13,10 @@ import (
 
 // Alias is a claude alias: its name, the variables it sets for claude and the words after claude.
 type Alias struct {
-	Name string
-	Env  map[string]string
-	Args []string
+	Name     string
+	Env      map[string]string
+	Args     []string
+	ResetEnv bool
 }
 
 // Def is one name=value an alias command defines.
@@ -81,11 +82,11 @@ func ClaudeCommand(value string) (Alias, bool) {
 			continue
 		}
 		env := maps.Clone(exported)
-		i := CommandIndex(cmd, env)
+		i, reset := CommandEnvironment(cmd, env)
 		if i < 0 || filepath.Base(cmd[i]) != "claude" {
 			continue
 		}
-		return Alias{Env: env, Args: slices.Clone(cmd[i+1:])}, true
+		return Alias{Env: env, ResetEnv: reset, Args: slices.Clone(cmd[i+1:])}, true
 	}
 	return Alias{}, false
 }

@@ -491,3 +491,20 @@ func TestWorkbenchInboxCardFilesAnItem(t *testing.T) {
 		t.Fatalf("the redrawn card: %s", redrawn)
 	}
 }
+
+// A card names where an item came from in words: a connector's label for it, else its source's name (a subscription's
+// one row has no label, #5671), never the source's id.
+func TestWorkbenchSourceIsAName(t *testing.T) {
+	for _, c := range []struct {
+		it   InboxItem
+		want string
+	}{
+		{InboxItem{Source: "github", AccountName: "GitHub", Connector: &InboxConnector{Label: "Review requested"}}, "Review requested"},
+		{InboxItem{Source: "sub_example", AccountName: "Example group", Connector: &InboxConnector{}}, "Example group"},
+		{InboxItem{Source: "sub_example", Connector: &InboxConnector{}}, "sub_example"},
+	} {
+		if got := wbSource(i18n.En, c.it); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.it, got, c.want)
+		}
+	}
+}

@@ -1,10 +1,11 @@
 #if os(iOS)
 import SwiftUI
 
-/// Forward To (#3807, docs/apple/ios.md "Forwarding a message"): Share as Image at the top, then the message, Persona and
-/// New Agent, the recent targets, and each computer's Agents, with search. A tap reads the whole message when the chat
-/// holds it cut, then leaves the rest to the chat (`ForwardOutcome`): the target's chat opens with the forward over its
-/// box. The lists come from the sessions the app already has, read once as the sheet opens.
+/// Forward To (#3807, docs/apple/ios.md "Forwarding a message"): Share as Image and Select Messages… (#3838) at the top,
+/// then the message (or the messages), Persona and New Agent, the recent targets, and each computer's Agents, with
+/// search. A tap reads the whole of a message the chat holds cut, then leaves the rest to the chat (`ForwardOutcome`):
+/// the target's chat opens with the forward over its box. The lists come from the sessions the app already has, read
+/// once as the sheet opens.
 struct ForwardSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -39,16 +40,26 @@ struct ForwardSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Button {
-                        picked(.share(draft.share))
-                        dismiss()
-                    } label: {
-                        Label("Share as Image…", systemImage: Theme.Icon.share).lineLimit(1)
+                    if let share = draft.share {
+                        Button {
+                            picked(.share(share))
+                            dismiss()
+                        } label: {
+                            Label("Share as Image…", systemImage: Theme.Icon.share).lineLimit(1)
+                        }
+                        .accessibilityIdentifier("forward.shareImage")
                     }
-                    .accessibilityIdentifier("forward.shareImage")
-                    let p = draft.preview
-                    QuoteCard(heading: p.quoteHeading, icon: Theme.Icon.forwardMessage, meta: ForwardMessage.meta(p),
-                              summary: p.forwardSummary, lines: 2, tint: Theme.accent, ink: .secondary) {}
+                    // More of the chat's messages (#3838): the chat starts selecting with this one picked.
+                    if draft.selects {
+                        Button {
+                            picked(.select(draft.source.item))
+                            dismiss()
+                        } label: {
+                            Label("Select Messages…", systemImage: Theme.Icon.pickMessages).lineLimit(1)
+                        }
+                        .accessibilityIdentifier("forward.selectMessages")
+                    }
+                    preview
                         .allowsHitTesting(false)
                         .accessibilityIdentifier("forward.preview")
                 }
@@ -79,17 +90,14 @@ struct ForwardSheet: View {
             }
             .pageSearchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                             prompt: String(localized: "Search chats, computers or projects"))
-            // The list only: Cancel stays usable while the message is read.
+            // The list only: ✕ stays usable while the message is read.
             .disabled(busy != nil)
             .navigationTitle("Forward To")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        work?.cancel()
-                        dismiss()
-                    }
-                    .accessibilityIdentifier("forward.cancel")
+                SheetClose(id: "forward.cancel") {
+                    work?.cancel()
+                    dismiss()
                 }
             }
         }
@@ -107,15 +115,7 @@ struct ForwardSheet: View {
 
     private func fixedRow(_ target: ForwardTarget, title: String, detail: String, icon: String) -> some View {
         Button { pick(target) } label: {
-            HStack(spacing: Theme.Space.m) {
-                IconTile(icon, tint: Theme.accent)
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(verbatim: title).foregroundStyle(.primary).lineLimit(1)
-                    Text(verbatim: detail).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: Theme.Space.s)
-                if busy == target { ProgressView() }
-            }
+            ForwardFixedRow(title: title, detail: detail, icon: icon, busy: busy == target)
         }
         .accessibilityIdentifier(target == .persona ? "forward.persona" : "forward.newAgent")
     }
@@ -123,25 +123,21 @@ struct ForwardSheet: View {
     private func row(_ s: Session, showsMachine: Bool) -> some View {
         let machine = showsMachine && !s.assistant ? (model.machine(s.machineRef)?.name ?? s.machineID) : nil
         return Button { pick(.session(s.key)) } label: {
-            HStack(spacing: Theme.Space.m) {
-                if s.assistant { IconTile(Theme.Icon.persona, tint: Theme.accent) } else { AgentMark(s, side: Theme.Size.wellM) }
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(s.displayTitle).foregroundStyle(.primary).lineLimit(1)
-                    Text(ForwardTargets.detail(s, machine: machine)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: Theme.Space.s)
-                if busy == .session(s.key) {
-                    ProgressView()
-                } else if !s.assistant {
-                    HStack(spacing: Theme.Space.xs) {
-                        Circle().fill(s.state.color).scaledFrame(width: Theme.Size.dot, height: Theme.Size.dot)
-                        Text(s.state.label).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                    .fixedSize()
-                }
-            }
+            ForwardSessionRow(session: s, machine: machine, busy: busy == .session(s.key))
         }
         .accessibilityIdentifier("forward.session." + s.sessionID)
+    }
+
+    /// What goes: one message's card, or several's heading and a line each.
+    @ViewBuilder private var preview: some View {
+        let refs = draft.previews
+        if refs.count == 1, let p = refs.first {
+            QuoteCard(heading: p.quoteHeading, icon: Theme.Icon.forwardMessage, meta: ForwardMessage.meta(p),
+                      summary: p.forwardSummary, lines: 2, tint: Theme.accent, ink: .secondary) {}
+        } else {
+            QuoteCard(heading: ForwardMessage.groupHeading(refs), icon: Theme.Icon.forwardMessage, meta: refs.first?.extra?["machine"],
+                      summary: refs.map(ForwardMessage.line).joined(separator: "\n"), lines: 3, tint: Theme.accent, ink: .secondary) {}
+        }
     }
 
     /// Reads the whole message (and its pictures), then hands it to the chat and goes.
@@ -154,12 +150,61 @@ struct ForwardSheet: View {
                 let done = try await draft.complete()
                 guard !Task.isCancelled else { return }
                 Haptics.tap()
-                picked(target == .newAgent ? .newAgent(done.ref, done.images) : .target(done.ref, done.images, target))
+                picked(target == .newAgent ? .newAgent(done.refs, done.images) : .target(done.refs, done.images, target))
                 dismiss()
             } catch {
                 guard !Task.isCancelled else { return }
                 busy = nil
                 self.error = error.isOffline ? String(localized: "Can't reach the hub") : error.shown
+            }
+        }
+    }
+}
+/// A fixed target's row in Forward To and Send To (Persona, New Agent).
+struct ForwardFixedRow: View {
+    let title: String
+    let detail: String
+    let icon: String
+    var busy = false
+
+    var body: some View {
+        HStack(spacing: Theme.Space.m) {
+            IconTile(icon, tint: Theme.accent)
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(verbatim: title).foregroundStyle(.primary).lineLimit(1)
+                Text(verbatim: detail).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: Theme.Space.s)
+            if busy { ProgressView() }
+        }
+    }
+}
+
+/// A chat's row in Forward To and Send To: its mark, title, who answers there (and its computer where rows mix them),
+/// and an Agent's state.
+struct ForwardSessionRow: View {
+    let session: Session
+    /// The computer's name, where the rows of several computers mix.
+    let machine: String?
+    var busy = false
+
+    var body: some View {
+        let s = session
+        HStack(spacing: Theme.Space.m) {
+            if s.assistant { IconTile(Theme.Icon.persona, tint: Theme.accent) } else { AgentMark(s, side: Theme.Size.wellM) }
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(s.displayTitle).foregroundStyle(.primary).lineLimit(1)
+                Text(ForwardTargets.detail(s, machine: machine)).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: Theme.Space.s)
+            if busy {
+                ProgressView()
+            } else if !s.assistant {
+                HStack(spacing: Theme.Space.xs) {
+                    Circle().fill(s.state.color).scaledFrame(width: Theme.Size.dot, height: Theme.Size.dot)
+                    Text(s.state.label).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .fixedSize()
             }
         }
     }

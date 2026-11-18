@@ -1,7 +1,8 @@
 import XCTest
 
 /// Choosing the voice (#2411, docs/assistant/voice.md 5.7, 6.2, 6.7): the call's ⋯ › Voice with the list, while it loads,
-/// after it failed and once Retry got it, a pick that keeps the call; and the Voice row on the voice extension's page.
+/// after it failed and once Retry got it, a pick that keeps the call; and the Voice row on the voice extension's page,
+/// with Only Send What I Just Said under it (#5904).
 /// Against scripts/mock/mock_hub.py with MOCK_VOICE=1, whose /voices fails or waits on demand (`/mock/voice2?voices=`):
 ///   MOCK_VOICE=1 PORT=<port> python3 scripts/mock/mock_hub.py
 ///   TEST_RUNNER_PERSONA_VOICE_HUB=http://127.0.0.1:<port>
@@ -68,19 +69,14 @@ final class VoicePickerTests: XCTestCase {
         more.tap()
     }
 
-    /// ⋯ opened and its Voice item ready to tap: a call's bar redraws its line as the call goes on, which closes the
-    /// menu, so it opens it again until the item stays.
+    /// ⋯ opened and its Voice item ready to tap. The menu stays open while the call's line changes (#2619), so it is
+    /// opened once.
     @MainActor private func steadyVoiceItem(_ app: XCUIApplication, _ words: String) -> XCUIElement? {
-        for _ in 0..<4 {
-            openMore(app)
-            let item = voiceItem(app, words)
-            if item.waitForExistence(timeout: 3) {
-                Thread.sleep(forTimeInterval: 0.5)
-                if item.exists, item.isHittable { return item }
-            }
-            if voiceItem(app, "音色").exists { closeMenu(app) }
-        }
-        return nil
+        openMore(app)
+        let item = voiceItem(app, words)
+        guard item.waitForExistence(timeout: 5) else { return nil }
+        Thread.sleep(forTimeInterval: 0.5)
+        return item.exists && item.isHittable ? item : nil
     }
 
     /// The voice starts the mock has had so far (each with the voice it asked for).
@@ -93,6 +89,43 @@ final class VoicePickerTests: XCTestCase {
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons
             .matching(NSPredicate(format: "label IN %@", ["Allow", "允许"])).firstMatch
         if allow.waitForExistence(timeout: 5) { allow.tap() }
+    }
+
+    /// Taps a switch's own knob: a tap on the row's middle lands on its words.
+    @MainActor private func flip(_ toggle: XCUIElement) {
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+    }
+
+    private func waitValue(_ element: XCUIElement, _ value: String, timeout: TimeInterval = 5) -> Bool {
+        let deadline = Date.now.addingTimeInterval(timeout)
+        while Date.now < deadline {
+            if element.value as? String == value { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
+    }
+
+    /// The voice extension's page, scrolled to Only Send What I Just Said; nil (and a failure) when it is not there.
+    @MainActor private func speechGateSwitch(_ app: XCUIApplication) -> XCUIElement? {
+        let toggle = app.switches["voice-speech-gate-setting"].firstMatch
+        guard toggle.waitForExistence(timeout: 30) else {
+            XCTFail("no Only Send What I Just Said:\n\(app.debugDescription)")
+            return nil
+        }
+        for _ in 0..<4 where !toggle.isHittable { app.swipeUp() }
+        usleep(800_000) // the page coasts on after a swipe, and a tap then only stops it
+        return toggle
+    }
+
+    /// The next call's start (`-openVoice silent` on the agent's chat), as the mock logged it.
+    @MainActor private func nextStart(_ hub: String) throws -> [String: Any]? {
+        let first = starts(hub).count
+        let app = try launch(Self.agent + ["-openVoice", "silent"])
+        allowMicrophone()
+        let deadline = Date.now.addingTimeInterval(30)
+        while Date.now < deadline, starts(hub).count == first { Thread.sleep(forTimeInterval: 0.3) }
+        app.terminate()
+        return starts(hub).count > first ? starts(hub).last : nil
     }
 
     @MainActor private func closeMenu(_ app: XCUIApplication) {
@@ -159,7 +192,6 @@ final class VoicePickerTests: XCTestCase {
         allowMicrophone()
         let status = element(app, "voice-status")
         XCTAssertTrue(status.waitForExistence(timeout: 30), "no voice bar:\n\(app.debugDescription)")
-        // The script's question holds the bar's line still for a while (the menu closes when the line's layout changes).
         XCTAssertTrue(element(app, "voice-asking").waitForExistence(timeout: 20), "the script never asked")
         let first = starts(hub).count
         let current = try XCTUnwrap(steadyVoiceItem(app, "音色："), "no Voice item:\n\(app.debugDescription)")
@@ -176,6 +208,34 @@ final class VoicePickerTests: XCTestCase {
         XCTAssertFalse(element(app, "voice-ended").exists, "the call ended")
         XCTAssertNotNil(steadyVoiceItem(app, "音色：" + name), "the menu does not name the new voice:\n\(app.debugDescription)")
         closeMenu(app)
+        element(app, "voice-end").tap()
+        app.terminate()
+    }
+
+    /// The call's line changes while ⋯ is open: the menu stays open (#2619). The script's line goes from the question (no
+    /// buttons) to the refused instruction (Clear and Send, Never Mind), and ⋯ moves between the line's layouts as its
+    /// buttons come and go.
+    @MainActor func testTheMenuStaysOpenWhenTheLineChanges() throws {
+        let hub = try hub
+        try mock(hub, voices: "ok")
+        let app = try launch(Self.agent + ["-openVoice", "silent"])
+        allowMicrophone()
+        XCTAssertTrue(element(app, "voice-asking").waitForExistence(timeout: 45), "the script never asked:\n\(app.debugDescription)")
+        openMore(app)
+        XCTAssertTrue(voiceItem(app, "音色").waitForExistence(timeout: 5), "the menu did not open:\n\(app.debugDescription)")
+        shot(app, "menu-line-before")
+        // The line changes under the open menu until the refused instruction offers Clear and Send (24 s into the script).
+        let clear = app.buttons["voice-line-clear"]
+        let deadline = Date.now.addingTimeInterval(40)
+        while Date.now < deadline, !clear.exists { Thread.sleep(forTimeInterval: 0.25) }
+        XCTAssertTrue(clear.exists, "the line never changed")
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertTrue(voiceItem(app, "音色").exists, "the menu closed when the line changed:\n\(app.debugDescription)")
+        shot(app, "menu-line-after")
+        closeMenu(app)
+        // The menu is drawn over the line: it must not cover the line's own buttons, and VoiceOver and taps still reach it.
+        XCTAssertTrue(clear.isHittable, "Clear and Send is covered")
+        XCTAssertTrue(app.buttons["voice-more"].isHittable, "⋯ cannot be tapped after the line changed")
         element(app, "voice-end").tap()
         app.terminate()
     }
@@ -224,5 +284,39 @@ final class VoicePickerTests: XCTestCase {
         retry.tap()
         XCTAssertTrue(containing(app, "元气").waitForExistence(timeout: 10), "Retry did not get the list")
         app.terminate()
+    }
+
+    /// Settings › Extensions › the voice extension (#5904): Only Send What I Just Said under the Voice row, on by
+    /// default; turned off it is kept on the device and the next call's start says `speech_gate: false`; on again, the
+    /// next start says `speech_gate: true`. Shots of both (`picker-<style>-<appearance>-settings-speech-gate-on|off.png`).
+    @MainActor func testTheSpeechGateSwitch() throws {
+        let hub = try hub
+        try mock(hub, voices: "ok")
+        var app = try launch(["-tab", "settings", "-openExtension", "voice"])
+        guard let toggle = speechGateSwitch(app) else { return }
+        if toggle.value as? String == "0" { // a run before stopped half-way: back to the default first
+            flip(toggle)
+            XCTAssertTrue(waitValue(toggle, "1"))
+        }
+        XCTAssertEqual(toggle.value as? String, "1", "on by default")
+        shot(app, "settings-speech-gate-on")
+        flip(toggle)
+        XCTAssertTrue(waitValue(toggle, "0"), "it did not turn off")
+        Thread.sleep(forTimeInterval: 0.6)
+        shot(app, "settings-speech-gate-off")
+        app.terminate()
+
+        let off = try XCTUnwrap(try nextStart(hub), "no call started")
+        XCTAssertEqual(off["speech_gate"] as? Bool, false, "the next call did not start with the gate off: \(off)")
+
+        app = try launch(["-tab", "settings", "-openExtension", "voice"])
+        guard let kept = speechGateSwitch(app) else { return }
+        XCTAssertEqual(kept.value as? String, "0", "it was not kept off")
+        flip(kept)
+        XCTAssertTrue(waitValue(kept, "1"), "it did not turn on again")
+        app.terminate()
+
+        let on = try XCTUnwrap(try nextStart(hub), "no call started")
+        XCTAssertEqual(on["speech_gate"] as? Bool, true, "on is said in start (it also says the app has Send Anyway): \(on)")
     }
 }

@@ -2,11 +2,13 @@ package extmgr
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/netproxy"
 )
 
 const marketSettingsKey = "extension_market_settings"
@@ -26,6 +28,13 @@ func (h *Manager) marketSettings(ctx context.Context) (extension.MarketMirrors, 
 }
 
 func (h *Manager) configureMarket(m *extension.Market) error {
+	if h.cfg != nil {
+		proxy, err := netproxy.ParseHTTPOrSOCKS5(h.cfg.ExtensionMarket.Proxy)
+		if err != nil {
+			return fmt.Errorf("manager.json extension_market.proxy: %w", err)
+		}
+		m.UpstreamProxy = proxy
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := h.marketSettings(ctx)

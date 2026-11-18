@@ -69,6 +69,25 @@ class AgentsListTest {
         assertEquals("来自 MCP 服务器 Persona", request.copy(mcpServerName = "persona").sourceLabel(res, AgentsMetadata()))
     }
 
+    @Test fun aUsageLimitedUnreadSessionStaysUnreadInTheAgentsList() {
+        val resets = Instant.now().plusSeconds(3600).toString()
+        val limited = Session(machineId = "machine", sessionId = "limited", state = "unread", title = "Wait",
+            turnError = "Weekly limit reached", turnErrorKind = "usage_limit", turnErrorResetsAt = resets)
+        val plain = Session(machineId = "machine", sessionId = "plain", state = "unread", title = "Wait")
+        val cut = Session(machineId = "machine", sessionId = "cut", state = "unread", title = "Wait", turnError = "stopped")
+        assertTrue(limited.interrupted)
+        assertTrue(limited.isUsageLimited())
+        assertEquals(plain.agentState, limited.agentState)
+        val settings = AgentListSettings(grouping = AgentGrouping.State, quick = AgentQuickFilter.Unread)
+        fun listed(session: Session) = buildAgentList(listOf(AgentSession(session)), settings = settings).groups.single().visibleRows.single()
+        val limitRow = listed(limited)
+        assertEquals(AgentState.Unread, limitRow.state)
+        assertEquals(listed(plain).state, limitRow.state)
+        assertEquals(listed(cut).state, limitRow.state)
+        assertEquals(listed(plain).rowContent(), limitRow.rowContent())
+        assertEquals(listed(cut).rowContent(), limitRow.rowContent())
+    }
+
     @Test fun idleRowsStayCollapsedUntilExpandedAndRemainHiddenInFoldedGroup() {
         val rows = listOf("working", "idle", "idle").mapIndexed { index, state ->
             AgentSession(Session(machineId = "machine", sessionId = "session-$index", state = state, spaceId = "space", spaceName = "空间"))

@@ -109,6 +109,7 @@
   "sandbox_go_admin": "管理画面で許可",
   "tool_title": "コマンドラインプログラム",
   "configuration_title": "拡張機能の設定",
+  "fields_title": "設定",
   "no_configuration": "設定は不要です",
   "danger_title": "危険な操作",
   "externally_managed": "この拡張機能は接続元で管理されています。設定は接続元で変更してください。",

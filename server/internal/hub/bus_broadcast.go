@@ -38,10 +38,10 @@ import (
 // Manager.broadcast and broadcastExtension, internal/devices Devices.broadcast).
 var managerMessageTypes = map[string]bool{
 	// the assistant
-	"assistant_feed": true, "assistant_schedule": true, "assistant_view": true, "assistant_view_action": true,
+	"saved_agent_searches": true, "assistant_feed": true, "assistant_saved_prompts": true, "assistant_schedule": true, "assistant_view": true, "assistant_view_action": true,
 	"assistant_view_block": true, "agents.triage": true, "direction_offer": true, "directions": true, "interaction_reanswered": true, "kb_selection": true, "launcher_health": true,
-	"model_profile": true, "task_plan": true, "todos": true, "workspace_board": true, "workspace_board_settings": true,
-	"meeting_live": true,
+	"model_profile": true, "navigation": true, "task_plan": true, "todos": true, "workspace_board": true, "workspace_board_settings": true,
+	"meeting_live": true, "urgent_call": true,
 	// its extensions' manager
 	"agents": true, "agents.prefs": true, "inbox": true, "mail_accounts": true, "messaging": true,
 	"extension_auth": true, "extension_operation": true, "extension_ui": true, "plugin_ui": true,
@@ -57,7 +57,8 @@ var hubMessageTypes = map[string]bool{
 	"hello": true, "client_hello_ack": true, "pong": true, "notify": true, "lock_test": true, "error": true,
 	"interaction": true, "interaction_resolved": true,
 	"machines": true, "sessions": true, "sessions_delta": true, "sessions_list": true, "items": true, "revs": true,
-	"delta": true, "live": true, proto.FeatureMessageSendState: true,
+	"conversation_deleted": true,
+	"delta":                true, "live": true, proto.FeatureMessageSendState: true,
 	"screen": true, "tool_call": true, "hook_event": true, "fs_changed": true, "desktops": true, "endpoints": true,
 	"terminal": true, "terminal_control": true, "herdr_state": true, "herdr_focus": true, "herdr_end": true, "herdr_data": true,
 	"fleet": true, "liveactivity": true, "look": true, "personas": true, "managers": true, "hub_update": true,

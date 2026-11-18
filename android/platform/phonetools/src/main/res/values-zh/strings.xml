@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="phonetools_source_contacts">通讯录</string>
-    <string name="phonetools_source_contacts_detail">搜索姓名、公司、电话和邮箱</string>
+    <string name="phonetools_source_contacts_detail">搜索并编辑姓名、公司、电话和邮箱，每次修改须逐次确认</string>
     <string name="phonetools_source_calendar">日历</string>
-    <string name="phonetools_source_calendar_detail">查看日程，新建日程须逐次确认</string>
+    <string name="phonetools_source_calendar_detail">查看并编辑日程，每次修改须逐次确认</string>
     <string name="phonetools_source_location">位置</string>
     <string name="phonetools_source_location_detail">仅在前台获取位置，不依赖 Google 服务</string>
     <string name="phonetools_source_health">健康</string>
@@ -51,6 +51,34 @@
     <string name="phonetools_calendar_location">地点：%1$s</string>
     <string name="phonetools_calendar_calendar">日历：%1$s</string>
     <string name="phonetools_calendar_notes">备注：%1$s</string>
+    <!-- Calendar and contact write confirmations. -->
+    <string name="phonetools_not_set">未设置</string>
+    <string name="phonetools_untitled">（无标题）</string>
+    <string name="phonetools_calendar_change">修改日程「%1$s」</string>
+    <string name="phonetools_calendar_delete">删除日程「%1$s」</string>
+    <string name="phonetools_calendar_time_change">时间：%1$s → %2$s</string>
+    <string name="phonetools_calendar_title_change">标题：%1$s → %2$s</string>
+    <string name="phonetools_calendar_location_change">地点：%1$s → %2$s</string>
+    <string name="phonetools_calendar_notes_change">备注：%1$s → %2$s</string>
+    <plurals name="phonetools_text_clipped">
+        <item quantity="other">%1$s…（共 %2$d 字）</item>
+    </plurals>
+    <string name="phonetools_calendar_all_day_on">改为全天日程</string>
+    <string name="phonetools_calendar_all_day_off">不再是全天日程</string>
+    <string name="phonetools_calendar_this_occurrence">仅此一次</string>
+    <string name="phonetools_calendar_future_occurrences">这次及以后所有</string>
+    <string name="phonetools_contact_new">新建联系人「%1$s」</string>
+    <string name="phonetools_contact_change">修改联系人「%1$s」</string>
+    <string name="phonetools_contact_field_change">%1$s：%2$s → %3$s</string>
+    <string name="phonetools_contact_field_value">%1$s：%2$s</string>
+    <string name="phonetools_contact_given_name">名字</string>
+    <string name="phonetools_contact_family_name">姓氏</string>
+    <string name="phonetools_contact_company">公司</string>
+    <string name="phonetools_contact_job_title">职位</string>
+    <string name="phonetools_contact_phones">电话</string>
+    <string name="phonetools_contact_emails">邮箱</string>
+    <string name="phonetools_contact_phones_add">新增电话：%1$s</string>
+    <string name="phonetools_contact_emails_add">新增邮箱：%1$s</string>
     <string name="phonetools_health_rationale_title">健康数据</string>
     <string name="phonetools_health_rationale_how">Persona 怎么用你的健康数据</string>
     <string name="phonetools_health_rationale_read">只有你在电脑上问 Claude 健康相关的问题时，Claude 才通过 Persona 读一次每天的汇总：步数、距离、活动能量、心率、静息心率、睡眠时长、体重。</string>

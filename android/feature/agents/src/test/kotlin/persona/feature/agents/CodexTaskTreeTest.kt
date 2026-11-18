@@ -72,7 +72,7 @@ class CodexTaskTreeTest {
         assertEquals(2, list.machines.single().sessionCount)
         // A computer heading counts idle ones too, as iOS's StateCounts (#4338 A7): none here.
         assertEquals(listOf(1, 1, 0, 0), list.machines.single().headingCounts.map { it.second })
-        assertEquals(listOf(1, 1, 0), list.groups.single().headingCounts.map { it.second })
+        assertEquals(listOf(1, 1, 0, 0), list.groups.single().headingCounts.map { it.second })
         assertEquals(2, machineCounts(machines, list.groups.flatMap { it.rows }).single().count)
         assertEquals(2, list.groups.sumOf { group -> group.rows.count { !it.isNestedSubtask } })
         // Needs you lists it with nothing opened.

@@ -119,4 +119,45 @@ class DeviceSettingsStateTest {
         older.saveQuietHours(QuietHours(enabled = true))
         assertEquals(1, sent.size)
     }
+
+    // 设置 › 通知 › 低打扰模式 (#8157): read after this phone's prefs, shown at once when changed, put back when the hub
+    // refuses; a hub without the switch (null) shows no row and takes no write.
+    @Test fun lowDistractionFollowsTheHubAndGoesBackWhenRefused() = runBlocking {
+        var hub: Boolean? = false
+        var refuse = false
+        val writes = mutableListOf<Boolean>()
+        val api = object : DeviceSettings {
+            override suspend fun devices() = PairedDevices(emptyList(), null)
+            override suspend fun preferences() = DeviceNotificationPreferences()
+            override suspend fun savePreferences(preferences: DeviceNotificationPreferences) = preferences
+            override suspend fun revoke(credentialId: String) = Unit
+            override suspend fun lowDistraction() = hub
+            override suspend fun saveLowDistraction(on: Boolean): Boolean {
+                writes += on
+                if (refuse) error("Save failed")
+                hub = on
+                return on
+            }
+        }
+        val controller = DeviceSettingsState(api) {}
+        assertNull(controller.state.value.lowDistraction)
+        controller.loadLowDistraction()
+        assertEquals(false, controller.state.value.lowDistraction)
+        controller.saveLowDistraction(true)
+        assertEquals(true, controller.state.value.lowDistraction)
+        assertEquals(listOf(true), writes)
+        controller.saveLowDistraction(true) // already on: nothing to send
+        assertEquals(listOf(true), writes)
+        refuse = true
+        controller.saveLowDistraction(false)
+        assertEquals(true, controller.state.value.lowDistraction)
+        assertNotNull(controller.state.value.message)
+
+        hub = null
+        val older = DeviceSettingsState(api) {}
+        older.loadLowDistraction()
+        assertNull(older.state.value.lowDistraction)
+        older.saveLowDistraction(true)
+        assertEquals(listOf(true, false), writes)
+    }
 }

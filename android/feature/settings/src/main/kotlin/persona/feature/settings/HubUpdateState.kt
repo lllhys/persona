@@ -9,6 +9,7 @@ import persona.core.contracts.api.HubUpdateStatus
 import persona.core.contracts.api.HubUpdates
 import persona.core.contracts.api.HubUpdatesUnsupported
 import persona.core.contracts.parseTime
+import persona.core.designsystem.JLoadable
 import persona.core.designsystem.failureReasonText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +25,9 @@ internal data class HubUpdateState(
     val checking: Boolean = false,
     /** A start or settings call is on its way: its buttons wait. */
     val sending: Boolean = false,
-    /** Reading the status failed (the page has nothing else to show). */
+    /** The status is being read (the first load, a retry, or the connection coming back). */
+    val loading: Boolean = false,
+    /** Reading the status failed: the page's whole error when it has no status, a line over the stale one when it has. */
     val error: SettingsUiText? = null,
     /** The last action that failed, for a notice over the groups. */
     val actionError: SettingsUiText? = null,
@@ -39,6 +42,15 @@ internal class HubUpdateModel(private val api: HubUpdates) {
     val state = mutable.asStateFlow()
 
     suspend fun load() {
+        mutable.update { it.copy(loading = true) }
+        try {
+            read()
+        } finally {
+            mutable.update { it.copy(loading = false) }
+        }
+    }
+
+    private suspend fun read() {
         try {
             val before = state.value.status
             val read = api.status()
@@ -96,6 +108,17 @@ internal class HubUpdateModel(private val api: HubUpdates) {
         catch (error: Exception) { mutable.update { it.copy(actionError = SettingsUiText.Res(failed, listOf(failureReasonText(error)))) } }
         finally { mutable.update { it.copy(sending = false) } }
     }
+}
+
+/**
+ * The page's [JLoadable]: the status with the checking flag and a failed read over it, the failure when there is no status,
+ * or loading. A read in progress hides the failure it is retrying (a retry shows the spinner, not the old error);
+ * [error] is that failure's words in the page's language.
+ */
+internal fun HubUpdateState.loadable(error: String?): JLoadable<HubUpdateStatus> = when {
+    status != null -> JLoadable.Loaded(status, refreshing = checking, failure = error.takeUnless { loading })
+    error != null && !loading -> JLoadable.Failed(error)
+    else -> JLoadable.Loading
 }
 
 /** What the "Update" group shows (the web's `updateView`). */

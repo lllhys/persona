@@ -1,0 +1,24 @@
+{
+  "typeGlass": {
+    "body": {
+      "size": {
+        "$type": "dimension",
+        "$value": {
+          "value": 16,
+          "unit": "px"
+        },
+        "$description": "Android Glass long-form body text (#5780): 16sp for comfortable reading; intentionally one point smaller than the iOS body level"
+      }
+    },
+    "secondary": {
+      "size": {
+        "$type": "dimension",
+        "$value": {
+          "value": 14,
+          "unit": "px"
+        },
+        "$description": "Android Glass secondary reading text (#5780): 14sp for comfortable reading; intentionally one point smaller than the iOS secondary level"
+      }
+    }
+  }
+}

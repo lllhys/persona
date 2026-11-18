@@ -1,0 +1,17 @@
+{
+  "title": "iPhone control",
+  "allow": "Allow the assistant to operate iPhones through this computer",
+  "allow_detail": "Sees the iPhone's screen, taps, types and takes screenshots through this computer",
+  "turn_on_failed": "Couldn't turn on: {error}",
+  "turn_off_failed": "Couldn't turn off: {error}",
+  "install": "Install the iPhone helper",
+  "retry": "Try again",
+  "check_again": "Check again",
+  "pair": "Pair",
+  "prepare": "Prepare",
+  "details": "Details",
+  "more": "More for {name}",
+  "forget": "Forget this iPhone",
+  "forget_confirm": "Forget",
+  "forget_detail": "This computer deletes its pairing with the iPhone; pairing again needs the cable."
+}

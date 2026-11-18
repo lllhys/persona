@@ -1,0 +1,7 @@
+📋 督办：你派出去的任务有 1 个要你处理
+（这是 Persona 的督办消息，不是用户发的。）
+<persona-supervision level="triage" />
+
+1. 任务「Example task」（todo_example，signal=decision_reply）：ユーザーが box/agent-session に発言。既定の実行は停止中。`agent_read` で確認し、`task_decided` または質問で確定する。
+
+   验收标准：未记录

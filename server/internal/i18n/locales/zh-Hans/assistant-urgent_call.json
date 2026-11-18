@@ -1,0 +1,14 @@
+{
+  "store": "加急来电的设置读不到或存不上，请重试。",
+  "read_only": "这台设备不能修改加急来电。",
+  "invalid": "加急来电的设置不对。",
+  "not_found": "这通电话已经不在了。",
+  "state": "这通电话已经结束或有了结果。",
+  "test_title": "试打一次",
+  "test_body": "Persona 在确认加急来电能打到这台 iPhone。",
+  "missed_title": "未接的加急来电：{title}",
+  "declined_title": "已拒接：{title}",
+  "rule_add": "这类事以后打电话给你：{text}",
+  "rule_update": "把「{old}」改成：{text}",
+  "rule_remove": "这类事不再打电话给你：{text}"
+}

@@ -1,0 +1,11 @@
+{
+  "temporary_claude": "Claude アプリのサイドバーで 1 つのグループにまとまります",
+  "temporary_codex": "Codex App のプロジェクトなしのチャットに入ります",
+  "use_temporary": "一時セッションにする",
+  "new_folder": "新規フォルダ…",
+  "new_folder_name": "フォルダ名",
+  "new_folder_use": "採用",
+  "new_folder_hint": "セッション開始時に「{folder}」内に作成されます。",
+  "desktop_hint_claude": "Claude デスクトップアプリでセッションを開始します。フォルダを選ばない場合は、アプリのプロジェクトの隣にある共通の一時フォルダに入ります。新しいフォルダはセッション開始時に作成されます。",
+  "desktop_hint_codex": "Codex App でチャットを開始します。フォルダを選ばない場合は、App がプロジェクトなしのチャットを置く場所に入ります。新しいフォルダはチャット開始時に作成されます。"
+}

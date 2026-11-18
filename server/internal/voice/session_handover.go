@@ -128,7 +128,9 @@ func (c *conversation) handOver(name, task, delegation string, gen int, at time.
 // can come after the model acted on it). The user's own voice since at, by the time the model acted, opens it too: a
 // reply that only calls a tool has the user's caption come after the call's result on the measured service (gate.go).
 //
-// name is what the log calls what waits (its delegation, its call): the gate's decision on it is a line of the log.
+// With the gate off (the app's setting, speechGate.off) it is let through at once, and the log says what the gate
+// would have decided. name is what the log calls what waits (its delegation, its call): the gate's decision on it is
+// a line of the log, with what it went by (logGate).
 func (c *conversation) whenSpoken(name string, at time.Time, f func(spoken bool)) {
 	c.waitGate(name, at, false, "", f)
 }
@@ -138,15 +140,21 @@ func (c *conversation) whenSpoken(name string, at time.Time, f func(spoken bool)
 // caption of the request the model acts on comes 0.1–0.4 s after its call on the measured service (#5506); without
 // it the message would go without the user's own words. Not once reply, the model's reply that handed this over, was
 // over without saying anything: the service holds that caption until the call's result (#5790), so it cannot come.
+// With the gate off it still waits for that caption, so the user's words go with the message.
 func (c *conversation) whenSaid(name string, at time.Time, reply string, f func(spoken bool)) {
 	c.waitGate(name, at, true, reply, f)
 }
 
 func (c *conversation) waitGate(name string, at time.Time, caption bool, reply string, f func(spoken bool)) {
-	heard := c.gate.heardSince(at, time.Now()) // mu held: the user's voice by the time the model acted
+	acted := time.Now()                   // mu held: when the model acted
+	heard := c.gate.heardSince(at, acted) // the user's voice by then
+	voice := c.gate.voice                 // what heard went by, for the log: it moves as the user goes on speaking
+	// off: the app's setting turned the gate off (#5904): it goes without the user's words, still with the caption of
+	// what they said when that is due, and the log says what the gate would have decided.
+	off := c.gate.off
 	go func() {
-		began := time.Now()
-		deadline := began.Add(gateWait)
+		deadline := acted.Add(gateWait)
+		waitedDue := false // a caption was due on some pass: waited for it
 		for {
 			c.mu.Lock()
 			now := time.Now()
@@ -154,24 +162,24 @@ func (c *conversation) waitGate(name string, at time.Time, caption bool, reply s
 			by := c.gate.openedBy(at, now)
 			due := caption && c.captionDue()
 			held := due && reply != "" && slices.Contains(c.silent, reply)
-			c.mu.Unlock()
 			open := heard || worded
+			pass := open || off // what goes: the gate is open, or off
 			if !worded {
 				by = "own voice; their caption had not come"
 			}
-			if held && open {
+			if held && pass {
 				due = false
 				by += "; the reply that handed it over said nothing, so its caption comes after the result: not waited for"
 			}
-			if open && !due || !time.Now().Before(deadline) {
-				if open {
-					c.logf("%s: the user-speech gate let it through (%s) in %v", name, by, logDur(time.Since(began)))
-				} else {
-					c.logf("%s: the user-speech gate refused it (unprompted) after %v", name, logDur(time.Since(began)))
-				}
-				f(open)
+			waitedDue = waitedDue || due
+			if pass && !due || !now.Before(deadline) {
+				basis := c.gate.explain(at, acted, now, voice)
+				c.mu.Unlock()
+				c.logGate(name, off, open, by, now.Sub(acted), basis, waitedDue, due)
+				f(pass)
 				return
 			}
+			c.mu.Unlock()
 			select {
 			case <-c.ctx.Done():
 				return
@@ -179,6 +187,32 @@ func (c *conversation) waitGate(name string, at time.Time, caption bool, reply s
 			}
 		}
 	}()
+}
+
+// logGate is the line of the gate's decision on what name calls, took after the model acted (#1485, #5904): let
+// through by what (by), refused, or let through while the gate is off with what it would have decided; then what it
+// went by (basis: speechGate.explain), and whether it waited for a caption due (still due: it had not come). Times
+// and sources only, never words.
+func (c *conversation) logGate(name string, off, open bool, by string, took time.Duration, basis string, waitedDue, due bool) {
+	if waitedDue {
+		came := "it came"
+		if due {
+			came = "it had not come"
+		}
+		basis += fmt.Sprintf(", waited %v for a caption due: %s", logDur(took), came)
+	}
+	switch {
+	case off && open:
+		c.logf("%s: the user-speech gate is off (the app's setting): let it through in %v; on, it would have let it through (%s); %s",
+			name, logDur(took), by, basis)
+	case off:
+		c.logf("%s: the user-speech gate is off (the app's setting): let it through in %v; on, it would have refused it (unprompted) "+
+			"unless the user's words came within %v; %s", name, logDur(took), gateWait, basis)
+	case open:
+		c.logf("%s: the user-speech gate let it through (%s) in %v; %s", name, by, logDur(took), basis)
+	default:
+		c.logf("%s: the user-speech gate refused it (unprompted) after %v; %s", name, logDur(took), basis)
+	}
 }
 
 // captionDue: the app's audio had the user's voice in it after their last caption (or typed line) came, within

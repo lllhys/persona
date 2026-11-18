@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   AWAIT_FULL_MS,
@@ -334,10 +335,22 @@ describe("key names from xterm's bytes", () => {
 });
 
 describe("font stack", () => {
-  it("puts a family before the generic monospace, once", () => {
-    expect(withFamily('"JetBrains Mono", Menlo, monospace', "X")).toBe('"JetBrains Mono", Menlo, "X", monospace');
-    expect(withFamily("Menlo", "X")).toBe('Menlo, "X", monospace');
-    expect(withFamily('Menlo, "X", monospace', "X")).toBe('Menlo, "X", monospace');
+  it("puts a range-limited fallback before named families, once", () => {
+    expect(withFamily('"JetBrains Mono", Menlo, monospace', "X")).toBe('"X", "JetBrains Mono", Menlo, monospace');
+    expect(withFamily("Menlo", "X")).toBe('"X", Menlo, monospace');
+    expect(withFamily('Menlo, "X", monospace', "X")).toBe('"X", Menlo, monospace');
+  });
+
+  it("prefers Linux monospace faces before UI and substituted desktop fallbacks", () => {
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    const stack = /--font-mono:\s*([^;]+);/.exec(css)?.[1] ?? "";
+    const families = stack.split(",").map((family) => family.trim().replaceAll('"', ""));
+    expect(families.at(-1)).toBe("monospace");
+    for (const family of ["DejaVu Sans Mono", "Liberation Mono"]) {
+      expect(families.indexOf(family)).toBeGreaterThanOrEqual(0);
+      expect(families.indexOf(family)).toBeLessThan(families.indexOf("ui-monospace"));
+      expect(families.indexOf(family)).toBeLessThan(families.indexOf("Menlo"));
+    }
   });
 });
 

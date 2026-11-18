@@ -24,6 +24,7 @@
   "files": "ファイル",
   "keybar_hide": "キーバーを閉じる",
   "keybar_show": "キーバーを表示",
+  "settings": "ターミナル設定",
   "reconnect": "再接続",
   "opening": "フル画面を開いています",
   "back_to_pane": "単一ペインに戻る",

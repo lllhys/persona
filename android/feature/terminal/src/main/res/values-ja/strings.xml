@@ -44,7 +44,7 @@
     <string name="terminal_select_empty_body">ターミナルに内容が表示されてから選択してください。</string>
     <string name="terminal_screen_description">ターミナル画面</string>
     <string name="terminal_note_offline">ハブに接続できません。前回の画面を表示しています</string>
-    <string name="terminal_note_no_terminal">このセッションはコンピュータで実行されていません。メッセージを送ると再開します。</string>
+    <string name="terminal_note_no_terminal">このセッションはコンピュータで実行されていません。</string>
     <string name="terminal_no_terminal_title">ターミナルがありません</string>
     <string name="terminal_note_no_terminal_resume">このセッションはコンピュータで実行されていません。再開するとターミナルを開けます。</string>
     <string name="terminal_resume">セッションを再開</string>
@@ -62,11 +62,13 @@
     <string name="terminal_panes_refresh">リストを更新</string>
     <string name="terminal_panes_offline">オフライン</string>
     <string name="terminal_panes_loading">読み込み中…</string>
-    <string name="terminal_panes_no_panes">ペインがありません</string>
+    <string name="terminal_panes_no_panes">このコンピュータで開いているターミナルはありません。</string>
+    <string name="terminal_panes_no_panes_agent">このコンピュータで Agent を開始すると、ここにターミナルが表示されます。</string>
     <string name="terminal_panes_no_computers">コンピューターがまだありません</string>
     <string name="terminal_panes_no_computers_detail">コンピューターを接続すると、ここにそのターミナルが表示されます。</string>
     <string name="terminal_panes_tab">タブ「%1$s」</string>
     <string name="terminal_panes_untitled">ターミナル</string>
     <string name="terminal_panes_new_tab">新しいタブ</string>
+    <string name="terminal_panes_new_terminal">新規ターミナル</string>
     <string name="terminal_panes_new_tab_failed">新しいタブを開けませんでした：%1$s</string>
 </resources>

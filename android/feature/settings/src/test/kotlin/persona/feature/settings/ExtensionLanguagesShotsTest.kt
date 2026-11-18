@@ -35,8 +35,8 @@ import java.io.File
 
 /**
  * Settings › Extensions in each of the app's languages (docs/protocol/i18n.md): the list, an extension's page (switch, form, secrets,
- * contributions, sandbox, permissions, about), the market, one of its extensions, the markets, and the settings home's
- * "Extensions" section with a card that failed. Every style light and dark, written as PNGs to `build/i18n-shots/` (or
+ * contributions, sandbox, permissions, about), the market, one of its extensions, the markets, and the Extensions page's
+ * slots section with a card that failed. Every style light and dark, written as PNGs to `build/i18n-shots/` (or
  * `-Dpersona.shots=<dir>`). The extensions' own words (names, form labels) are data and stay as the hub sends them.
  */
 @RunWith(AndroidJUnit4::class)
@@ -49,7 +49,7 @@ class ExtensionLanguagesShotsTest {
     private val notes = HubExtension("example-notes", "Example Notes", "connectors", "needs_setup", version = "1.2.0", source = "installed",
         enabled = true, description = "Notes from an example service.", contributes = mapOf("connectors" to listOf("notes")),
         needsSetup = listOf("API Key"), sandbox = ExtensionSandbox(enabled = true, active = true, egress = ExtensionEgress(allowed = 12, denied = 1,
-            lastDenied = "tracker.example.net")))
+            lastDenied = "tracker.example.net", deniedAt = "2026-11-12T09:57:00Z")))
     private val list = listOf(
         notes,
         HubExtension("voice", "Voice", "voice", "running", version = "2.0.0", source = "builtin", enabled = true),
@@ -92,6 +92,7 @@ class ExtensionLanguagesShotsTest {
         override suspend fun listing() = ExtensionListing(list, markets = true)
         override suspend fun extensions() = list
         override suspend fun extension(id: String) = detail
+        override fun adminNetworkUrl(id: String) = "https://hub.example.test/admin/extensions?extension=$id#network"
         override suspend fun catalog(query: String, market: String?, refresh: Boolean) =
             ExtensionCatalog(listOf(marketA, marketB), catalog.filter { market == null || it.market == market }, "linux-amd64")
         override suspend fun markets() = listOf(marketA, marketB)
@@ -103,15 +104,15 @@ class ExtensionLanguagesShotsTest {
     ))
 
     @Config(sdk = [35], qualifiers = "zh-w400dp-h2400dp-xhdpi")
-    @Test fun simplifiedChinese() = shots("zh", listOf("扩展市场", "这台 hub 的扩展", "需要设置"), listOf("运行隔离", "密钥", "提供", "信息", "扩展配置"),
+    @Test fun simplifiedChinese() = shots("zh", listOf("扩展市场", "这台 hub 的扩展", "需要设置"), listOf("运行隔离", "出网", "Example Notes 想连 tracker.example.net，这个地址不在它申请的范围里，被拦下了。", "去管理界面放行", "密钥", "提供", "信息", "扩展配置"),
         listOf("可以安装的扩展", "可升级"), listOf("这台 hub 读的市场", "官方"), listOf("扩展", "重试"))
 
     @Config(sdk = [35], qualifiers = "en-w400dp-h2400dp-xhdpi")
-    @Test fun english() = shots("en", listOf("Extension market", "This hub's extensions", "Needs setup"), listOf("Isolation", "Secrets", "Provides", "Information", "Extension configuration"),
+    @Test fun english() = shots("en", listOf("Extension market", "This hub's extensions", "Needs setup"), listOf("Isolation", "Network", "Example Notes tried to reach tracker.example.net, which isn't among the addresses it asked for, so it was blocked.", "Allow in Admin Page", "Secrets", "Provides", "Information", "Extension configuration"),
         listOf("Extensions to install", "Upgrade available"), listOf("Markets this hub reads", "Official"), listOf("Extensions", "Retry"))
 
     @Config(sdk = [35], qualifiers = "ja-w400dp-h2400dp-xhdpi")
-    @Test fun japanese() = shots("ja", listOf("拡張機能マーケット", "このハブの拡張機能", "設定が必要"), listOf("実行の分離", "シークレット", "提供機能", "情報", "拡張機能の設定"),
+    @Test fun japanese() = shots("ja", listOf("拡張機能マーケット", "このハブの拡張機能", "設定が必要"), listOf("実行の分離", "ネットワーク", "Example Notesがtracker.example.netに接続しようとしましたが、申請したアドレスに含まれていないためブロックされました。", "管理画面で許可", "シークレット", "提供機能", "情報", "拡張機能の設定"),
         listOf("インストールできる拡張機能", "アップグレード可"), listOf("このハブが読むマーケット", "公式"), listOf("拡張機能", "再試行"))
 
     private enum class Page { List, Detail, Market, Catalog, Markets, Slots }
@@ -139,14 +140,14 @@ class ExtensionLanguagesShotsTest {
         for (p in Page.entries) for (s in AppStyle.entries) for (d in listOf(false, true)) {
             page = p; style = s; dark = d
             rule.waitForIdle()
-            expect.getValue(p).forEach { assertTrue("$language ${p.name}: $it", rule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty()) }
+            expect.getValue(p).forEach { assertTrue("$language ${p.name}: $it", rule.onAllNodesWithText(it, substring = true).fetchSemanticsNodes().isNotEmpty()) }
             val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
             val name = "extensions-${p.name.lowercase()}-$language-${s.name.lowercase()}-${if (d) "dark" else "light"}.png"
             File(out(), name).outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         }
     }
 
-    /** The settings home's "Extensions" section: a card whose view could not be read ("Retry"), a nav page. */
+    /** Settings › Extensions slots: a card whose view could not be read ("Retry"), a nav page. */
     @Composable
     private fun SlotsSection() {
         val failed = ExtensionViewState(error = ExtensionFailure(R.string.settings_ext_load_failed, "hub"))

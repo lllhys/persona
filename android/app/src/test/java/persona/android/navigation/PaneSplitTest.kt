@@ -10,6 +10,20 @@ import org.junit.Test
 class PaneSplitTest {
     private fun flat(at: Float) = PaneHinge(at, at)
 
+    @Test fun regularColumnsOverlayUntilThePageKeepsItsMinimumWidth() {
+        for (width in listOf(600f, 673f, 720f, 840f, 1000f)) {
+            val expected = if (width < 720f) ColumnPlacement.Over else ColumnPlacement.Beside
+            assertEquals("no fold at $width dp", expected, columnPlacement(width, emptyList()))
+            assertEquals("flat fold at $width dp", expected, columnPlacement(width, listOf(flat(width / 2))))
+            // The existing hinge rule requires 280dp left and 320dp right. A separating fold at that position
+            // keeps both panes safe even when the right half is below the ordinary 400dp page minimum.
+            val separating = PaneHinge(280f, 280f, separating = true)
+            assertEquals("separating fold at $width dp", ColumnPlacement.Beside, columnPlacement(width, listOf(separating)))
+        }
+        assertEquals(ColumnPlacement.Over, columnPlacement(719f, emptyList()))
+        assertEquals(ColumnPlacement.Over, columnPlacement(673f, listOf(PaneHinge(150f, 160f, separating = true))))
+    }
+
     @Test fun theDetailGetsMostOfAnInnerScreen() {
         // A book-style foldable's inner screen, 770.67 dp, the fold flat down the middle: not halves any more.
         val s = paneSplit(770.67f, listOf(flat(385.33f)), null)
@@ -77,6 +91,12 @@ class PaneSplitTest {
         assertEquals(0f, dragRange(800f, canCollapse = true).start, 0.01f)
         assertEquals(280f, dragRange(800f, canCollapse = false).start, 0.01f)
         assertEquals(480f, dragRange(800f, canCollapse = false).endInclusive, 0.01f)
+    }
+
+    @Test fun overlayMinimumDoesNotChangeSavedSharesOrNarrowPaneDragging() {
+        assertEquals(896f, paneSplit(1280f, emptyList(), 0.7f).left, 0.01f)
+        assertEquals(353f, dragRange(673f, canCollapse = false).endInclusive, 0.01f)
+        assertEquals(680f, maxLeft(1000f), 0.01f)
     }
 
     @Test fun aDragTicksOnceAtAFoldAndAtTheClosingPoint() {

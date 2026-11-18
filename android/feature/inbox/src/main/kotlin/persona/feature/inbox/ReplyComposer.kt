@@ -5,8 +5,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.annotation.StringRes
@@ -22,6 +27,7 @@ import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -138,10 +144,17 @@ class ReplyComposer(
             repository.replyUpdates(target).collect {
                 val current = state.value
                 if (!current.loading && !current.sending) {
-                    val delivery = repository.replyStatus(target, current.draft.clientId)
-                    mutableState.value = if (delivery == ReplyDelivery.Sent)
-                        ReplyComposerState(draft = ReplyDraft(""), loading = false, sent = true)
-                    else current.copy(delivery = delivery)
+                    val clientId = current.draft.clientId
+                    val delivery = repository.replyStatus(target, clientId)
+                    // The answer is about the draft as it was when it was asked for: an edit (a new id) or a send
+                    // started meanwhile stays as it is (#9907).
+                    mutableState.update { now ->
+                        when {
+                            now.loading || now.sending || now.draft.clientId != clientId -> now
+                            delivery == ReplyDelivery.Sent -> ReplyComposerState(draft = ReplyDraft(""), loading = false, sent = true)
+                            else -> now.copy(delivery = delivery)
+                        }
+                    }
                 }
             }
         }
@@ -256,9 +269,12 @@ internal fun ReplyComposerField(
     placeholder: String,
     modifier: Modifier = Modifier,
     sendEnabled: Boolean = true,
+    probePage: String? = null,
     accessory: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val focus = remember { FocusRequester() }
+    var focused by remember { mutableStateOf(false) }
+    InboxReplyDraftProbe(probePage, state.draft.text, focused)
     val keyboard = LocalSoftwareKeyboardController.current
     ComposerFrame(modifier,
         // Blank space around the field types too, as in the chat composer (#894, #4093).
@@ -278,6 +294,8 @@ internal fun ReplyComposerField(
                     state.delivery !in setOf(ReplyDelivery.Queued, ReplyDelivery.WaitingForNetwork, ReplyDelivery.Verifying))
         },
         field = {
-            ComposerTextField(state.draft.text, onUpdate, placeholder, Modifier.focusRequester(focus), enabled = state.canEdit)
+            ComposerTextField(state.draft.text, onUpdate, placeholder,
+                Modifier.focusRequester(focus).testTag("inbox-reply-field").onFocusChanged { focused = it.isFocused },
+                enabled = state.canEdit)
         })
 }

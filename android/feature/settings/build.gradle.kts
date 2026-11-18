@@ -54,4 +54,6 @@ dependencies {
     implementation(project(":core:domain"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:navigation"))
+    // The link card for the welcome page's public guide (PairingScreen.kt); feature:chat does not depend on this module.
+    implementation(project(":feature:chat"))
 }

@@ -87,7 +87,8 @@ func TestSubcommandHelpExitsZero(t *testing.T) {
 		return string(out), code
 	}
 	for _, args := range [][]string{{"node", "tailcat", "init", "-h"}, {"hub", "switch", "-h"}, {"hub", "pair", "--help"},
-		{"release", "manifest", "-h"}, {"release", "verify", "-h"}, {"release", "check-next", "x", "-h"}, {"release", "check-next", "-h"}, {"release", "check-next", "--help"}, {"hub", "setup", "-h"}, {"hub", "admin", "access", "-h"}} {
+		{"release", "manifest", "-h"}, {"release", "verify", "-h"}, {"release", "check-next", "x", "-h"}, {"release", "check-next", "-h"}, {"release", "check-next", "--help"}, {"hub", "setup", "-h"}, {"hub", "admin", "access", "-h"},
+		{"backup", "create", "-h"}, {"backup", "verify", "-h"}, {"backup", "restore", "-h"}} {
 		out, code := run(args...)
 		if code != 0 || !strings.Contains(out, "Usage of") || strings.Contains(out, "help requested") {
 			t.Errorf("%q: exit %d, output %q", args, code, out)

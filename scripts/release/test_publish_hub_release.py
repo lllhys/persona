@@ -60,6 +60,44 @@ class PublisherSetupTests(unittest.TestCase):
         self.assertIsNone(sock)
         client.get_transport.return_value.set_keepalive.assert_called_once_with(30)
 
+    def test_key_file_login_offers_only_the_configured_key(self):
+        fields = [{'id': 'host', 'value': 'example.invalid'},
+                  {'id': 'username', 'value': 'fixture'},
+                  {'id': 'key_filename', 'label': 'Key file', 'value': '~/keys/publisher'}]
+        client = Mock()
+        with patch.object(publisher.subprocess, 'check_output',
+                          return_value=json.dumps({'fields': fields}).encode()), \
+                patch.object(publisher.paramiko, 'SSHClient', return_value=client):
+            publisher.connect_publisher({'credentials_command': ['credentials']})
+        client.connect.assert_called_once_with(
+            'example.invalid', port=22, username='fixture', password=None,
+            key_filename=str(Path('~/keys/publisher').expanduser()),
+            look_for_keys=False, allow_agent=False, timeout=20, sock=None)
+
+    def test_password_login_is_unchanged(self):
+        credentials = json.dumps({'host': 'example.invalid', 'port': '2222', 'username': 'fixture',
+                                  'password': 'test-secret'}).encode()
+        client = Mock()
+        with patch.object(publisher.subprocess, 'check_output', return_value=credentials), \
+                patch.object(publisher.paramiko, 'SSHClient', return_value=client):
+            publisher.connect_publisher({'credentials_command': ['credentials']})
+        client.connect.assert_called_once_with(
+            'example.invalid', port=2222, username='fixture', password='test-secret',
+            look_for_keys=False, allow_agent=False, timeout=20, sock=None)
+
+    def test_login_needs_exactly_one_method_before_connecting(self):
+        for extra in ({}, {'password': ''}, {'password': 'test-secret', 'key_filename': '/keys/publisher'}):
+            with self.subTest(extra=extra):
+                credentials = json.dumps({'host': 'example.invalid', 'username': 'fixture', **extra}).encode()
+                with patch.object(publisher.subprocess, 'check_output', return_value=credentials), \
+                        patch.object(publisher.paramiko, 'SSHClient') as client, \
+                        patch.object(publisher.socket, 'create_connection') as connection:
+                    with self.assertRaisesRegex(ValueError, 'exactly one of password or key_filename'):
+                        publisher.connect_publisher({'credentials_command': ['credentials'],
+                                                     'ssh_proxy': 'http://proxy.invalid:8080'})
+                client.assert_not_called()
+                connection.assert_not_called()
+
     def test_reconciliation_still_rejects_other_platforms(self):
         manifest = {'files': {'darwin-arm64': {}}, 'build': 1}
         with self.assertRaises(ValueError):

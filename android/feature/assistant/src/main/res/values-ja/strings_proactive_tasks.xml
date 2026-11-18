@@ -55,4 +55,14 @@
     <string name="assistant_proactive_push_every_note">実行が終わるたびに回答をスマートフォンにプッシュします。</string>
     <string name="assistant_proactive_push_asked_note">実行時にあなたが知るべきだと判断して通知した場合のみプッシュし、何もなければ邪魔しません。エラーや中断は通常どおりプッシュします。このタスクは常に専用のチャットで実行され、そのチャットで送ったメッセージも完了時にプッシュされません。</string>
     <string name="assistant_proactive_push_asked_mark">通知時のみプッシュ</string>
+    <string name="assistant_proactive_inbox">完了後に受信箱へ入れる</string>
+    <string name="assistant_proactive_inbox_compact">完了後に受信箱へ</string>
+    <string name="assistant_proactive_inbox_off">入れない</string>
+    <string name="assistant_proactive_inbox_worthy">注目時のみ</string>
+    <string name="assistant_proactive_inbox_every">毎回</string>
+    <string name="assistant_proactive_inbox_off_note">受信箱には入れません。</string>
+    <string name="assistant_proactive_inbox_worthy_note">実行で見る価値のあることが見つかったときだけ、受信箱に1行追加します。開くとそのチャットが表示されます。</string>
+    <string name="assistant_proactive_inbox_every_note">実行のたびに受信箱へ1行追加するので、フォローしやすくなります。開くとそのチャットが表示されます。</string>
+    <string name="assistant_proactive_inbox_worthy_mark">受信箱：見る価値があれば</string>
+    <string name="assistant_proactive_inbox_every_mark">受信箱：毎回</string>
 </resources>

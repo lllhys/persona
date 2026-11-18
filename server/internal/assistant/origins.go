@@ -289,9 +289,9 @@ func (s *Service) firstMessage(ctx context.Context, machine, id string) (string,
 }
 
 // isAssistantRow: c runs in one of this manager's assistant directories (the hub's Assistant flag on a
-// decorated list; the node's own lists only have the directory).
+// decorated list; the node's own lists only have the directory), or a meeting room (#6048).
 func (s *Service) isAssistantRow(c proto.Session) bool {
-	return c.Assistant || c.PaneID == "" && c.Cwd != "" && identity.IsAssistantDirOf(c.Cwd, s.id)
+	return c.Assistant || c.PaneID == "" && c.Cwd != "" && (identity.IsAssistantDirOf(c.Cwd, s.id) || isMeetingRoomCwd(c.Cwd) || c.Origin == OriginMeeting)
 }
 
 // BackfillResult is what one backfill did.

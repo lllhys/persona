@@ -67,6 +67,8 @@ describe("baseline browser persistence compatibility", () => {
     localStorage.setItem("jarvis.tokenId", "old-device");
     localStorage.setItem("persona.tokenId", "orphan-device");
     expect(storedCredentials()).toEqual({ token: "", tokenId: "" });
+    expect(storedValue("persona.token")).toBeNull();
+    expect(storedValue("persona.tokenId")).toBe("orphan-device");
     localStorage.setItem("persona.token", "");
     expect(getToken()).toBe("");
     expect(storedCredentials().tokenId).toBe("");
@@ -85,6 +87,54 @@ describe("baseline browser persistence compatibility", () => {
     setToken("");
     for (const key of ["jarvis.token", "jarvis.tokenId", "persona.token", "persona.tokenId"]) expect(localStorage.getItem(key)).toBeNull();
     expect(getToken()).toBe("");
+  });
+
+  it("keeps serving a legacy credential pair when its canonical migration cannot be written", () => {
+    for (const failKey of ["persona.token", "persona.tokenId"]) {
+      const values = new Map<string, string>([["jarvis.token", "old-token"], ["jarvis.tokenId", "old-device"]]);
+      const full = {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          if (key === failKey) throw new DOMException("Synthetic storage full", "QuotaExceededError");
+          values.set(key, value);
+        },
+        removeItem: (key: string) => values.delete(key),
+      } as unknown as Storage;
+
+      expect(() => storedCredentials(full)).not.toThrow();
+      expect(storedCredentials(full)).toEqual({ token: "old-token", tokenId: "old-device" });
+      expect(storedValue("persona.token", full)).toBe("old-token");
+      expect(storedValue("persona.tokenId", full)).toBe("old-device");
+      expect(values.get(failKey)).toBeUndefined();
+    }
+
+    const signedOut = {
+      getItem: (key: string) => key === "persona.token" ? "" : key === "jarvis.token" ? "old-token" : null,
+      setItem: () => { throw new DOMException("Synthetic storage full", "QuotaExceededError"); },
+      removeItem() {},
+    } as unknown as Storage;
+    expect(storedCredentials(signedOut)).toEqual({ token: "", tokenId: "" });
+    expect(storedValue("persona.token", signedOut)).toBe("");
+  });
+
+  it("keeps serving the legacy value on read when the alias restore write hits a full quota", () => {
+    const quotaError = () => {
+      const err = new Error("QuotaExceededError");
+      err.name = "QuotaExceededError";
+      throw err;
+    };
+    // storage holds only the legacy key and refuses every write: a read must not throw into the composer's mount
+    const full = {
+      getItem: (k: string) => (k === "draft:jarvis-new" ? "legacy words" : null),
+      setItem: quotaError,
+      removeItem() {},
+    } as unknown as Storage;
+
+    let value: string | null = null;
+    expect(() => {
+      value = storedValue("draft:persona-new", full);
+    }).not.toThrow();
+    expect(value).toBe("legacy words");
   });
 
   it("migrates the legacy theme before either HTML entry point applies its initial theme", () => {

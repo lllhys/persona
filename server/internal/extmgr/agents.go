@@ -69,6 +69,13 @@ func (h *Manager) agentRoutes(api *http.ServeMux) {
 					return
 				}
 				writeJSON(w, counts)
+			} else if with := q.Get("with_counts"); with == "1" || with == "true" {
+				both, err := h.agents.ListPageWithCounts(r.Context(), opts) // one read where a refresh took two (#6496)
+				if err != nil {
+					agentsErr(w, err)
+					return
+				}
+				writeJSON(w, both)
 			} else {
 				page, err := h.agents.ListPage(r.Context(), opts)
 				if err != nil {

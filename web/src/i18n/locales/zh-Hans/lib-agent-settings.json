@@ -3,6 +3,17 @@
   "codex_footer": "改的是那台机器的 ~/.codex/config.toml，只动下面这几项，文件里别的配置（模型提供方、项目信任等）原样保留；新开的 Codex 会话生效。",
   "agy_footer": "改的是那台机器的 ~/.gemini/antigravity-cli/settings.json，只动下面这几项；新开的 Antigravity (agy) 会话生效。",
   "omp_footer": "改的是那台机器的 ~/.omp/agent/config.yml，只动下面这几项；新开的 omp 会话生效。",
+  "grok_footer": "改的是那台机器的 ~/.grok/config.toml（设了 GROK_HOME 时是 $GROK_HOME/config.toml），只动下面这几项；新开的 Grok 会话生效。",
+  "setting_models.default": "默认模型",
+  "setting_models.default_detail": "新开的 Grok 会话用哪个模型；留空就用 Grok 自己的默认模型。",
+  "setting_models.default_reasoning_effort": "思考强度",
+  "setting_models.default_reasoning_effort_detail": "默认模型支持时用的思考强度，比如 low 或 high。",
+  "setting_ui.permission_mode": "权限模式",
+  "setting_ui.permission_mode_detail": "用工具前要不要先问你；选 always-approve 会不问就批准每一次工具调用。",
+  "setting_ui.yolo": "批准所有工具调用",
+  "setting_ui.yolo_detail": "不问你，一律批准工具调用（yolo 模式）。",
+  "setting_ui.compact_mode": "紧凑模式",
+  "setting_ui.compact_mode_detail": "终端里消息之间的间距更小。",
   "applied_to_other": "已应用到 {count} 台机器",
   "saved": "已保存",
   "failure_item": "{name}：{error}",
@@ -93,5 +104,6 @@
   "setting_agentMode": "执行模式",
   "setting_agentMode_detail": "auto 自动放行安全操作，需要时仍会询问。全部放行由工具权限控制。",
   "setting_service_tier": "速度",
-  "setting_service_tier_detail": "Fast 会增加用量或费用，对支持该模式的新 Codex 会话生效。"
+  "setting_service_tier_detail": "Fast 会增加用量或费用，对支持该模式的新 Codex 会话生效。",
+  "speed_standard": "标准"
 }

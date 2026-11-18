@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var pbcopyPath, pbpastePath = "/usr/bin/pbcopy", "/usr/bin/pbpaste"
@@ -55,7 +56,11 @@ func macClipboard(ctx context.Context, params json.RawMessage) (any, error) {
 		return nil, errors.New("读不了剪贴板")
 	}
 	if len(out) > clipboardMost {
-		out = out[:clipboardMost]
+		cut := clipboardMost
+		for cut > 0 && !utf8.RuneStart(out[cut]) {
+			cut--
+		}
+		out = out[:cut]
 	}
 	return map[string]any{"text": string(out)}, nil
 }

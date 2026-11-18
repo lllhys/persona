@@ -6,7 +6,7 @@
   "newer_format": "このマーケットのカタログは形式{version}で、より新しいハブが必要です。ハブを更新してからもう一度お試しください。",
   "no_name": "カタログには名前（60文字以内）が必要です。",
   "description_too_long": "カタログの説明が長すぎます。",
-  "too_many": "カタログの拡張機能が{most}個を超えています。",
+  "catalog_over_limit": "カタログの拡張機能が{most}個を超えています。",
   "entry_skipped": "{n}番目の拡張機能は表示されません：{err}",
   "entry_duplicate": "拡張機能{id}が複数回掲載されています。最初のものだけを使います。",
   "entry_no_manifest": "manifestがありません。",

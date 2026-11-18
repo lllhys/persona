@@ -1,3 +1,4 @@
+import { deletedConversationID, onConversationDeleted } from "./conversation-deleted";
 // What the web knows about the assistant's cards in a conversation (docs/assistant/assistant-views.md "Persistent submission" and "Live cards"):
 // the live cards (view_show / view_update, by version), the answers given from any card on any device (by revision),
 // and which text blocks the hub has registered (only those take an answer). It comes from the feed's snapshot (views,
@@ -109,6 +110,7 @@ function patchConversation(conversation: string, f: (c: ConversationCards) => Co
 
 /** A live card, unless one as new or newer is here. */
 export function applyView(conversation: string, v: AssistantView | undefined) {
+  if (deletedConversationID(conversation)) return;
   if (!conversation || !v?.id || typeof v.version !== "number") return;
   if (v.conversation && v.conversation !== conversation) return;
   patchConversation(conversation, (c) => {
@@ -120,6 +122,7 @@ export function applyView(conversation: string, v: AssistantView | undefined) {
 
 /** An answer, unless the one here has a later revision; the draft's submit for it is over. */
 export function applyAction(conversation: string, a: ViewAction | undefined) {
+  if (deletedConversationID(conversation)) return;
   if (!conversation || !a?.key || !a.client_msg_id) return;
   patchConversation(conversation, (c) => {
     const old = c.actions[a.key];
@@ -134,12 +137,14 @@ export function applyAction(conversation: string, a: ViewAction | undefined) {
 }
 
 export function applyBlock(conversation: string, key: string | undefined) {
+  if (deletedConversationID(conversation)) return;
   if (!conversation || !key) return;
   patchConversation(conversation, (c) => (c.blocks[key] ? c : { ...c, blocks: { ...c.blocks, [key]: true } }));
 }
 
 /** The feed's snapshot: every live card, answer and registered block of the conversation (nothing is taken away). */
 export function applySnapshot(conversation: string, res: { views?: Record<string, AssistantView> | null; view_actions?: Record<string, ViewAction> | ViewAction[] | null; view_blocks?: string[] | null }) {
+  if (deletedConversationID(conversation)) return;
   for (const v of Object.values(res.views ?? {})) applyView(conversation, v);
   // the hub sends the answers keyed by card (docs/protocol/protocol.md); Object.values also takes a list
   for (const a of Object.values(res.view_actions ?? {})) applyAction(conversation, a);
@@ -251,3 +256,10 @@ function failed(conversation: string, key: CardKey, e: unknown): SubmitOutcome {
 export function resetCards(hub = "") {
   set({ hub, conversations: {}, drafts: {} });
 }
+
+onConversationDeleted((_mid, sid) => {
+  const conversations = { ...st.conversations };
+  delete conversations[sid];
+  const drafts = Object.fromEntries(Object.entries(st.drafts).filter(([key]) => key.split("\u0000")[1] !== sid));
+  set({ ...st, conversations, drafts });
+});

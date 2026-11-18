@@ -3,6 +3,7 @@
   "send_failed": "送信できませんでした：{error}",
   "loading": "{name}を読み込み中",
   "open_in": "{name}で開く",
+  "open_chat": "チャットを開く",
   "reply_goes": "返信：{how}。",
   "content": "内容",
   "content_failed": "内容を読み込めませんでした：{error}",

@@ -3,5 +3,9 @@
   "summary": "Worker {count} 件 · 実行中 {running} 件",
   "waiting": "Worker を待機中",
   "scroll_left": "前の Worker へスクロール",
-  "scroll_right": "次の Worker へスクロール"
+  "scroll_right": "次の Worker へスクロール",
+  "no_sides": "子セッションはありません",
+  "sides_scroll_left": "前の子セッションへスクロール",
+  "sides_scroll_right": "ほかの子セッションへスクロール",
+  "side_sessions": "子セッション"
 }

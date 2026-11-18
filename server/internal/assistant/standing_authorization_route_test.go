@@ -199,7 +199,7 @@ func TestStandingAuthorizationFailureAndRevocation(t *testing.T) {
 			}
 			p := &pending{ix: ix, done: make(chan proto.Resolution, 1)}
 			if test == "local_card" {
-				p.local = func(proto.Resolution) error { t.Fatal("local side effect"); return nil }
+				p.local = func(context.Context, proto.Resolution) error { t.Fatal("local side effect"); return nil }
 			}
 			putPending(e.s, p)
 			e.s.record(ix)

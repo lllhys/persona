@@ -166,7 +166,7 @@ func TestRuntimeLauncherNamesHaveOneOwner(t *testing.T) {
 			t.Fatal("session.start with dsh would not reach the runtime the form shows")
 		}
 	}
-	if _, _, ok := n.runtimeStart(context.Background(), runtimeStartParams{Launcher: "shared", Cwd: "/w"}); ok {
+	if _, _, _, ok := n.runtimeStart(context.Background(), runtimeStartParams{Launcher: "shared", Cwd: "/w"}); ok {
 		t.Fatal("a launcher named like the shell's started on the runtime")
 	}
 	if _, err := nodeCall(t, n, "session.start", map[string]any{"cwd": "/w", "launcher": "dsh", "async": true}); err != nil {

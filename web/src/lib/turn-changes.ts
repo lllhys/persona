@@ -121,6 +121,11 @@ function clipped(v: unknown): boolean {
 
 const absolute = (p: string) => p.startsWith("/") || p.startsWith("~") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\");
 
+/** An edit's path, normalized against the session's folder when it was relative. */
+export function changePath(named: string, cwd?: string): string {
+  return normalizePath(cwd && !absolute(named) ? joinPath(cwd, named) : named);
+}
+
 /** What an exchange's own edits changed, by file in the order first edited, or null when there is nothing to show (no
  *  successful edit). Work the hub folded counts by its fold's `changes`; a fold without them (an older node) leaves the
  *  edits unknown, and there is no card rather than a wrong count. `steps` are the exchange's own (`exchangeSteps`),
@@ -128,7 +133,7 @@ const absolute = (p: string) => p.startsWith("/") || p.startsWith("~") || /^[A-Z
 export function turnChanges(steps: readonly Step[], cwd?: string): TurnChangeSet | null {
   const files = new Map<string, ChangedFile>();
   const add = (named: string, n: Counts, exact: boolean) => {
-    const path = normalizePath(cwd && !absolute(named) ? joinPath(cwd, named) : named);
+    const path = changePath(named, cwd);
     const had = files.get(path);
     if (had) {
       had.add += n.add;

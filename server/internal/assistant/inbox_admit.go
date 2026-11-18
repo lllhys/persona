@@ -91,8 +91,9 @@ func (s *Service) admitInbox(ctx context.Context, batch *inboxBatch, todo []*Inb
 }
 
 // admit lets in the items that got a tier: the model's, or — when the model can't (not set up, held, failing, too
-// slow) — their fallback tier with "By rule", for good (this version is not asked again when the model is back). The
-// rest are dropped this round and counted as held back. One whose row could not be written is forgotten again
+// slow) — their fallback tier with "By rule". One the model failed on (an error, too slow) is asked again once it
+// answers (RuleOf, retryRuled, #8298); under no model or a held connection the rule tier is final. The rest are
+// dropped this round and counted as held back. One whose row could not be written is forgotten again
 // (#4981): like one held back, its connector hands it in again next round, and it is triaged then.
 func (s *Service) admit(ctx context.Context, batch *inboxBatch, todo []*InboxItem) {
 	b := &s.inbox
@@ -131,6 +132,7 @@ func (s *Service) admit(ctx context.Context, batch *inboxBatch, todo []*InboxIte
 		switch {
 		case v.state == "":
 			it.Tier, it.Summary, it.Reason = v.tier, v.summary, v.reason
+			b.ruledAnswered()
 		case v.state != triageBehind && fallback != "":
 			it.Tier, it.Reason = fallback, b.byRules()
 		default:
@@ -146,7 +148,13 @@ func (s *Service) admit(ctx context.Context, batch *inboxBatch, todo []*InboxIte
 		}
 		it.Urgent = v.state == "" && v.urgent && it.Tier == TierAction
 		b.applyPolicyTier(it)
-		it.TriagedAt = it.Last
+		it.TriageRev = inboxTriageRev
+		if v.state == triageFailed || v.state == triageTimeout {
+			it.RuleOf = it.Last
+			b.deferRuled(time.Now())
+		} else {
+			it.TriagedAt = it.Last
+		}
 		b.noteTriaged(it)
 		b.items[it.ID] = it
 		w := newWrite(it)

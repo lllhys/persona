@@ -6,11 +6,13 @@ import { ago, baseName, sessionTitle, stateOf } from "../../lib/format";
 import { agentLabel } from "../../lib/mentions";
 import { machineWithHub } from "../../lib/mesh";
 import { href, onLinkClick } from "../../lib/router";
-import { runtimeIdentity, runtimeOrder, runtimeRemoval, runtimeSessions } from "../../lib/runtime-list";
+import { runtimeIdentity, runtimeOrder, runtimeParentIdentity, runtimePlace, runtimeRemoval, runtimeSessions } from "../../lib/runtime-list";
+import { SESSIONS_CATALOG_FEATURE, SESSIONS_JUST_FINISHED_FEATURE } from "../../lib/session-groups";
 import { readWorkSessionCounts, WorkSessionList, workSessionCountsPath, workSessionQuery, type WorkSessionFilters } from "../../lib/work-session-list";
 import { SESSIONS_LIST_FEATURE } from "../../lib/session-list";
 import { STATE_LABEL } from "../../lib/state-labels";
 import { onHubEvent, useStore } from "../../lib/store";
+import { SESSIONS_SIDE_FOLD_FEATURE } from "../../lib/side-fold";
 import type { AgentState, Machine } from "../../lib/types";
 import { WORK_DIMENSIONS, WORK_SESSION_DIMENSIONS_FEATURE, WORK_SORTS, workSessionItems, type WorkDimension, type WorkFacet, type WorkSession, type WorkSessionDirection, type WorkSessionSort } from "../../lib/work-session-data";
 import { defaultWorkSessionView, readWorkSessionView, writeWorkSessionView, type WorkSessionView } from "../../lib/work-session-preferences";
@@ -218,10 +220,14 @@ export function WorkSessionBrowser(props: WorkSessionBrowserProps) {
 
 function LegacyBrowser({ activeSession, machines, onSelect }: WorkSessionBrowserProps & { machines: Machine[] }) {
   const now = useNow();
+  const catalog = useStore((s) => s.features.includes(SESSIONS_CATALOG_FEATURE));
+  const justFinished = useStore((s) => s.features.includes(SESSIONS_JUST_FINISHED_FEATURE));
+  // a hub that folds side sessions (#7944) leaves them out: nothing to nest under a parent
+  const sideFold = useStore((s) => s.features.includes(SESSIONS_SIDE_FOLD_FEATURE));
   return <div className="@container/work-sessions">
     <p className="px-2 pt-2 text-xs text-ink-3">{copy("legacy")}</p>
-    <PagedSessionList root={runtimeSessions} path="/sessions" identity={runtimeIdentity} compare={runtimeOrder} removeIdentity={runtimeRemoval}
-      event="sessions_list" label={(dimension, id) => dimension === "machine" ? machineWithHub(id, machines) : id}
+    <PagedSessionList root={runtimeSessions} path="/sessions" identity={runtimeIdentity} compare={runtimeOrder} removeIdentity={runtimeRemoval} parentOf={sideFold ? undefined : runtimeParentIdentity}
+      event="sessions_list" catalog={catalog} justFinished={justFinished} placeOf={runtimePlace} label={(dimension, id) => dimension === "machine" ? machineWithHub(id, machines) : id}
       renderRow={(session) => <WorkSessionRow session={session} name={machineWithHub(session.machine_id, machines)}
         active={activeSession?.machineId === session.machine_id && activeSession.sessionId === session.session_id}
         onSelect={onSelect} now={now} depth={0} />} />

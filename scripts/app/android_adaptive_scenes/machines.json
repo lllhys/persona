@@ -1,0 +1,249 @@
+{
+  "id": "machines-concern",
+  "description": "Concern ordering, adaptive machine rows and detail-agent expansion in one app process.",
+  "requires": {
+    "mockEnv": {
+      "MOCK_MACHINE_CONCERNS": "1"
+    },
+    "fields": [
+      "pid",
+      "route",
+      "selectedKey",
+      "firstVisibleKey",
+      "firstVisibleOffset",
+      "columns",
+      "detailAgentsExpanded"
+    ]
+  },
+  "steps": [
+    {
+      "launch": {
+        "name": "initial"
+      }
+    },
+    {
+      "open": {
+        "page": "machines",
+        "probePage": "Machines"
+      }
+    },
+    {
+      "wm-size": {
+        "width": 1080,
+        "height": 2400,
+        "density": 420
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machines"
+        },
+        "selectedKey": {
+          "equals": null
+        },
+        "firstVisibleKey": {
+          "equals": "machine-row|15:concern-pending"
+        },
+        "columns": {
+          "equals": 1
+        }
+      }
+    },
+    {
+      "capture": {
+        "name": "compact-single-column"
+      }
+    },
+    {
+      "freeform-resize": {
+        "widthDp": 1200,
+        "heightDp": 900
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machines"
+        },
+        "firstVisibleKey": {
+          "equals": "machine-row|15:concern-pending|15:concern-offline"
+        },
+        "columns": {
+          "equals": 2
+        }
+      }
+    },
+    {
+      "capture": {
+        "name": "expanded-two-columns"
+      }
+    },
+    {
+      "freeform-resize": {
+        "widthDp": 839,
+        "heightDp": 900
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machines"
+        },
+        "firstVisibleKey": {
+          "unchanged": true
+        },
+        "firstVisibleOffset": {
+          "unchanged": true
+        }
+      }
+    },
+    {
+      "freeform-resize": {
+        "widthDp": 840,
+        "heightDp": 900
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machines"
+        },
+        "firstVisibleKey": {
+          "unchanged": true
+        },
+        "firstVisibleOffset": {
+          "unchanged": true
+        }
+      }
+    },
+    {
+      "capture": {
+        "name": "freeform-boundary"
+      }
+    },
+    {
+      "posture": {
+        "state": 2
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machines"
+        },
+        "columns": {
+          "equals": 2
+        },
+        "firstVisibleKey": {
+          "unchanged": true
+        },
+        "firstVisibleOffset": {
+          "unchanged": true
+        }
+      }
+    },
+    {
+      "capture": {
+        "name": "book-safe-area"
+      }
+    },
+    {
+      "open": {
+        "page": "machine:concern-needs",
+        "probePage": "Waiting agents computer"
+      }
+    },
+    {
+      "tap": {
+        "text": "Show all 6"
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machine:concern-needs"
+        },
+        "selectedKey": {
+          "equals": "concern-needs"
+        },
+        "detailAgentsExpanded": {
+          "equals": true
+        }
+      }
+    },
+    {
+      "capture": {
+        "name": "detail-all-agents"
+      }
+    },
+    {
+      "rotate": {
+        "direction": "landscape"
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "route": {
+          "equals": "machine:concern-needs"
+        },
+        "selectedKey": {
+          "equals": "concern-needs"
+        },
+        "detailAgentsExpanded": {
+          "equals": true
+        },
+        "firstVisibleKey": {
+          "unchanged": true
+        },
+        "firstVisibleOffset": {
+          "unchanged": true
+        }
+      }
+    },
+    {
+      "capture": {
+        "name": "detail-all-agents-rotated"
+      }
+    },
+    {
+      "tap": {
+        "text": "Show less"
+      }
+    },
+    {
+      "assert": {
+        "pid": {
+          "unchanged": true
+        },
+        "selectedKey": {
+          "equals": "concern-needs"
+        },
+        "detailAgentsExpanded": {
+          "equals": false
+        }
+      }
+    }
+  ]
+}

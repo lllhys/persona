@@ -20,7 +20,10 @@ import persona.core.designsystem.icons.PhIcons
 // ① the providers to pick from, ② the key, ③ what now runs on it. The state is NewProviderModel.
 
 /** ①: the hub's providers in its order (a built-in one says who it is for; an extension's its kind and host), the gateway typed in last. */
-internal fun LazyListScope.pickStep(res: Resources, state: NewProviderState, onPick: (String?) -> Unit) {
+internal fun LazyListScope.pickStep(
+    res: Resources, state: NewProviderState, onPick: (String?) -> Unit,
+    onPaste: () -> Unit = {}, onAlias: (FoundAlias) -> Unit = {},
+) {
     item("pick-intro") { SettingsCaption(stringResource(R.string.settings_onb_pick_intro), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m)) }
     val rows = state.presets.size + 1
     itemsIndexed(state.presets, key = { _, it -> "pick-${it.id}" }) { index, p ->
@@ -36,6 +39,7 @@ internal fun LazyListScope.pickStep(res: Resources, state: NewProviderState, onP
                 subtitleLines = 3, onClick = { onPick(null) })
         }
     }
+    otherProviderWays(state, onPaste, onAlias)
     state.presetsError?.let { error -> item("pick-error") { JInlineStatus(error.text(), Modifier.padding(top = Tokens.Space.m), tone = InlineTone.Caution) } }
 }
 

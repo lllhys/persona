@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,17 +40,33 @@ type testNode struct {
 	refuseWatch map[string]int
 	// unknown: the methods it does not have (a node from before them).
 	unknown map[string]bool
+	// sessionsListHook can hold or fail the list response before the handler takes n.mu, forcing the manager to observe
+	// the call before its answer has landed.
+	sessionsListHook func() error
+	// fileStarted / fileCancelled hold one file call until its RPC context ends, for cancellation tests.
+	fileStarted, fileCancelled chan struct{}
 }
 
 func (n *testNode) dial(context.Context) (net.Conn, error) {
 	managerSide, nodeSide := net.Pipe()
 	p := rpc.New("n", nodeSide)
-	p.OnRequest = func(_ context.Context, method string, params json.RawMessage) (any, error) {
+	p.OnRequest = func(ctx context.Context, method string, params json.RawMessage) (any, error) {
+		if method == "sessions.list" && n.sessionsListHook != nil {
+			if err := n.sessionsListHook(); err != nil {
+				return nil, err
+			}
+		}
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		n.calls = append(n.calls, method+" "+string(params))
 		if n.unknown[method] {
 			return nil, errors.New("unknown method " + method)
+		}
+		if (method == "file.copy" || method == "file.zip") && n.fileStarted != nil {
+			close(n.fileStarted)
+			<-ctx.Done()
+			close(n.fileCancelled)
+			return nil, ctx.Err()
 		}
 		switch method {
 		case "node.info":
@@ -550,6 +567,124 @@ func TestAConnectionsCallFallsBackForAnOlderNode(t *testing.T) {
 	}
 	if len(newer.seen("launchers.catalog")) != 1 || len(newer.seen("launchers.managed")) != 0 {
 		t.Fatalf("newer node: %v", newer.seen(""))
+	}
+}
+
+// A BusUp while the connection's first sessions.list is still in flight must not turn an unknown list into an empty
+// replay. The connection's normal snapshot arrives once the node answers.
+func TestBusUpDoesNotInventSessionsBeforeTheFirstList(t *testing.T) {
+	d := newTestDevices(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce, releaseOnce sync.Once
+	releaseList := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseList)
+	n := &testNode{
+		sessions: []proto.Session{{SessionID: "s1"}},
+		sessionsListHook: func() error {
+			startOnce.Do(func() { close(started) })
+			<-release
+			return nil
+		},
+	}
+	m := newMachine(d, MachineConfig{ID: "box", Name: "box", Kind: "ssh"})
+	m.dialNode = n.dial
+	d.addEntry(m)
+	runMachine(t, m)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the initial sessions.list did not start")
+	}
+
+	f := d.host()
+	f.mu.Lock()
+	f.states, f.events, f.connected = nil, nil, nil
+	f.mu.Unlock()
+	configured := len(n.seen("node.configure"))
+	d.BusUp()
+	releaseList()
+	eventually(t, 3*time.Second, "the hub's part again", func() bool { return len(n.seen("node.configure")) > configured })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.events) == 0 || f.events[0].Event != "sessions.changed" || !strings.Contains(string(f.events[0].Params), `"s1"`) {
+		t.Fatalf("events %+v", f.events)
+	}
+}
+
+// A failed first list is still unknown, not an empty snapshot. Repeated BusUps keep it unknown; the existing Relist
+// path can later supply the real list, which subsequent BusUps replay.
+func TestBusUpKeepsFailedListsUnknown(t *testing.T) {
+	d := newTestDevices(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseList := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseList)
+	var calls atomic.Int32
+	n := &testNode{
+		sessions: []proto.Session{{SessionID: "s1"}},
+		sessionsListHook: func() error {
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+				return errors.New("the first list failed")
+			}
+			return nil
+		},
+	}
+	m := newMachine(d, MachineConfig{ID: "box", Name: "box", Kind: "ssh"})
+	m.dialNode = n.dial
+	d.addEntry(m)
+	runMachine(t, m)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the initial sessions.list did not start")
+	}
+
+	f := d.host()
+	f.mu.Lock()
+	f.states, f.events, f.connected = nil, nil, nil
+	f.mu.Unlock()
+	configured := len(n.seen("node.configure"))
+	d.BusUp()
+	releaseList()
+	eventually(t, 3*time.Second, "the rehook after the failed list", func() bool {
+		return len(n.seen("node.configure")) > configured
+	})
+	assertNoNodeEvents := func() {
+		t.Helper()
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if len(f.events) != 0 {
+			t.Fatalf("failed lists became events %+v", f.events)
+		}
+	}
+	assertNoNodeEvents()
+
+	configured = len(n.seen("node.configure"))
+	d.BusUp()
+	eventually(t, 3*time.Second, "another rehook with the list still unknown", func() bool {
+		return len(n.seen("node.configure")) > configured
+	})
+	assertNoNodeEvents()
+
+	if err := d.Relist(context.Background(), "box"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	f.events = nil // Relist forwarded too: the next event must come from BusUp's replay.
+	f.mu.Unlock()
+	configured = len(n.seen("node.configure"))
+	d.BusUp()
+	eventually(t, 3*time.Second, "the rehook after the existing Relist", func() bool {
+		return len(n.seen("node.configure")) > configured
+	})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.events) == 0 || f.events[0].Event != "sessions.changed" || !strings.Contains(string(f.events[0].Params), `"s1"`) {
+		t.Fatalf("events %+v", f.events)
 	}
 }
 

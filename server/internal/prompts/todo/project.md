@@ -5,4 +5,7 @@
 {{end}}{{if .Outcomes}}
 最近几件做完的事（新的在前）：
 {{range .Outcomes}}- {{.When}} 「{{.Title}}」{{.Text}}
-{{end}}{{end}}</persona-context>
+{{end}}{{end}}{{range .Extensions}}
+扩展「{{ctx .Name}}」为这个项目整理的背景：
+{{ctx .Text}}
+{{end}}</persona-context>

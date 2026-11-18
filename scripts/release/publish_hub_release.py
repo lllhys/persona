@@ -25,7 +25,7 @@ def credential_fields(credentials):
     values = {}
     for field in credentials['fields']:
         for key in (field.get('id'), field.get('label')):
-            if key in {'host', 'port', 'username', 'password'}:
+            if key in {'host', 'port', 'username', 'password', 'key_filename'}:
                 value = field.get('value', '')
                 if key in values and values[key] != value:
                     raise ValueError(f'Ambiguous SSH credential field: {key}')
@@ -33,9 +33,20 @@ def credential_fields(credentials):
     return values
 
 
+def authentication(credentials):
+    """Exactly one login method: a password, or the path of a private key file on this machine."""
+    password, key = credentials.get('password'), credentials.get('key_filename')
+    if bool(password) == bool(key):
+        raise ValueError('SSH credentials need exactly one of password or key_filename')
+    if key:
+        return {'password': None, 'key_filename': str(Path(key).expanduser())}
+    return {'password': password}
+
+
 def connect_publisher(cfg):
     """Open the configured publisher connection with existing host-key validation."""
     credentials = credential_fields(json.loads(subprocess.check_output(cfg['credentials_command'])))
+    login = authentication(credentials)
     client = paramiko.SSHClient()
     client.load_system_host_keys()
     sock = None
@@ -61,7 +72,7 @@ def connect_publisher(cfg):
                         sock.close()
                         raise OSError('SSH proxy refused CONNECT')
                 client.connect(credentials['host'], port=int(credentials.get('port', 22)),
-                               username=credentials['username'], password=credentials['password'],
+                               username=credentials['username'], **login,
                                look_for_keys=False, allow_agent=False, timeout=20, sock=sock)
                 client.get_transport().set_keepalive(KEEPALIVE_SECONDS)
                 break

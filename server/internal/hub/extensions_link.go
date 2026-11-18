@@ -25,6 +25,7 @@ import (
 	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/extwire"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/nodeproto"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -47,6 +48,11 @@ import (
 // extLink is what the hub keeps of the manager's extensions.
 type extLink struct {
 	report atomic.Pointer[extwire.Report] // the assistant's
+	// savePending is the latest assistant report not written yet. One save worker runs at a time, with at most one
+	// trailing report coalesced behind its write; the manager bus loop only replaces savePending.
+	saveMu      sync.Mutex
+	savePending *extwire.Report
+	saveRunning bool
 	// reports are the other managers' (manager_state.go).
 	reportsMu sync.Mutex
 	reports   map[string]*extwire.Report
@@ -54,6 +60,8 @@ type extLink struct {
 	kept      map[string]keptAnswer // GET path?query → its last answer
 	// calls are the requests being relayed, by caller, so a revoked device's end (extension_calls.go).
 	calls relayedCalls
+	// relays are the relay streams kept open to each manager between requests (extensions_relays.go).
+	relays relayPools
 }
 
 type keptAnswer struct {
@@ -89,9 +97,7 @@ func init() {
 		}
 		h.looksReported(before.Looks, after.Looks)               // the extensions' looks (looks.go)
 		if h.store != nil && from == assistantwire.AssistantID { // kept across a restart: the assistant's
-			if err := h.store.PutSetting(context.Background(), extReportKey, r); err != nil {
-				h.logf("extensions: keep the report: %v", err)
-			}
+			h.queueExtReportSave(r)
 		}
 	})
 }
@@ -107,6 +113,48 @@ func init() {
 
 // extReportKey keeps the manager's last report across a hub restart (the hub's own key).
 const extReportKey = "hub.extensions_report"
+
+// extReportStoreTimeout bounds one report write; the settings pool has no statement_timeout of its own.
+const extReportStoreTimeout = deviceStoreTimeout
+
+// queueExtReportSave persists only the assistant's latest report, after its in-memory changes and broadcasts were
+// made in the bus loop. While a write is out, every report replaces the one pending behind it: N reports make at most
+// that write and one trailing write. A failure is logged and dropped, not retried in a loop; the next report tries.
+func (h *Hub) queueExtReportSave(r extwire.Report) {
+	h.ext.saveMu.Lock()
+	h.ext.savePending = &r
+	if h.ext.saveRunning {
+		h.ext.saveMu.Unlock()
+		return
+	}
+	h.ext.saveRunning = true
+	h.nodeWorkers.Add(1)
+	h.ext.saveMu.Unlock()
+	go h.saveExtReports()
+}
+
+func (h *Hub) saveExtReports() {
+	defer h.nodeWorkers.Done()
+	for {
+		h.ext.saveMu.Lock()
+		r := h.ext.savePending
+		h.ext.savePending = nil
+		h.ext.saveMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), extReportStoreTimeout)
+		err := h.store.PutSetting(ctx, extReportKey, *r)
+		cancel()
+		if err != nil {
+			h.logf("extensions: keep the report: %v", err)
+		}
+		h.ext.saveMu.Lock()
+		if h.ext.savePending == nil {
+			h.ext.saveRunning = false
+			h.ext.saveMu.Unlock()
+			return
+		}
+		h.ext.saveMu.Unlock()
+	}
+}
 
 // loadExtReport is the report kept before the hub restarted, until the manager reports again.
 func (h *Hub) loadExtReport(ctx context.Context) {
@@ -137,21 +185,33 @@ func machineExtrasEqual(a, b map[string]extwire.MachineExtras) bool {
 // features are the hub's features with those of the extensions serving part of the API.
 func (h *Hub) features() []string {
 	out := append(slices.Clone(proto.Features), featureSessionsList, featureSessionsLookup, featureSessionsPaneSource, featureSessionsManager, featureSessionsPageCounts,
-		featureSessionsHierarchy, featureMachineRename)
+		featureSessionsSearch, featureAgentsPageCounts, featureSessionsHierarchy, featureSessionsCatalog, featureSessionsTodo, featureSessionsQuickFilters, featureSessionsJustFinished, featureSessionsAgentsOnly, featureMachineRename, featureDesktopUnregister, nodeproto.MCPWait)
 	out = append(out, h.agentSessionArchiveFeatures()...)
+	out = append(out, h.agentAutonameFeatures()...)
+	out = append(out, h.sessionsSideFoldFeatures()...)
 	out = append(out, h.meetingAttendanceFeatures()...)
 	out = append(out, h.meetingConversationFeatures()...)
 	out = append(out, h.meetingPhotosFeatures()...)
+	out = append(out, h.meetingLiveViewFeatures()...)
+	out = append(out, h.meetingHighlightsFeatures()...)
+	out = append(out, h.meetingNotesFeatures()...)
+	out = append(out, h.meetingEchoFeatures()...)
+	out = append(out, h.meetingTranscriptionFeatures()...)
 	out = append(out, h.recordingDayFeatures()...)
+	out = append(out, h.assistantSearchFeatures()...)
+	out = append(out, h.remoteImagesFeatures()...)
+	out = append(out, h.assistantStartServiceTierFeatures()...)
+	out = append(out, h.todoViewFeatures()...)
 	// The assistant's card interfaces, always on (docs/assistant/assistant-views.md, #5509): assistant_views is declarative
 	// actions (expected_version), live cards and transcript cards; assistant_html_bridge is …/html-actions. Neither says
 	// a client may run HTML: that is each platform's own security sign-off, else fallback.
 	out = append(out, "assistant_views", "assistant_html_bridge")
 	for _, f := range h.extReport().Features {
 		switch f {
-		case featureAgentSessionArchives, featureAgentSessionArchiveClose, featureMeetingAttendance, featureMeetingConversation,
-			featureMeetingPhotos, featureRecordingDay:
-			continue // only manager hello can promise fleet archive support, the meeting features and all-day recordings
+		case featureAgentSessionArchives, featureAgentSessionArchiveClose, featureAgentAutoname, featureMeetingAttendance, featureMeetingConversation,
+			featureMeetingPhotos, featureMeetingLiveView, featureMeetingHighlights, featureMeetingNotes, featureMeetingEcho, featureMeetingTranscription, featureRecordingDay,
+			featureAssistantSearch, featureAssistantStartServiceTier, featureSessionsSideFold, featureRemoteImages, featureTodoView, featureTodoPlaces:
+			continue // only manager hello can promise fleet archives, requested names, meetings, all-day recordings, chat search, start speed, the side-session fold, remote images and the To-dos view
 		}
 		if !slices.Contains(out, f) {
 			out = append(out, f)
@@ -324,9 +384,10 @@ func (h *Hub) relayToManager(w http.ResponseWriter, r *http.Request, admin bool)
 	}
 }
 
-// relayTo passes r on to manager id over a relay stream and streams its answer back. Who asked goes with it in the
-// hub's headers (any the client sent are dropped); the hub's credentials stay with the hub. While the manager is
-// away: 503 assistant_offline, or the last answer of a kept GET.
+// relayTo passes r on to manager id over one of its relay streams (a warm one when there is one:
+// extensions_relays.go) and streams its answer back. Who asked goes with it in the hub's headers (any the client sent
+// are dropped); the hub's credentials stay with the hub. While the manager is away: 503 assistant_offline, or the
+// last answer of a kept GET.
 func (h *Hub) relayTo(w http.ResponseWriter, r *http.Request, admin bool, id string) {
 	guardedApps, guardedRevoke, ok := computerAppsPrecondition(w, r, id)
 	if !ok {
@@ -383,6 +444,8 @@ func (h *Hub) relayTo(w http.ResponseWriter, r *http.Request, admin bool, id str
 	if changes {
 		h.inboxAnswers.changed(id)
 	}
+	pool := h.relayPool(id)
+	defer pool.settle()
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme, pr.Out.URL.Host = "http", "manager"
@@ -422,9 +485,7 @@ func (h *Hub) relayTo(w http.ResponseWriter, r *http.Request, admin bool, id str
 			}
 			return nil
 		},
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return h.dialManager(ctx, id)
-		}, DisableKeepAlives: true, ResponseHeaderTimeout: 5 * time.Minute},
+		Transport:     pool,
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if changes {
@@ -508,10 +569,12 @@ func (h *Hub) dialManager(ctx context.Context, id string) (net.Conn, error) {
 	}
 	cctx, cancel := context.WithCancel(context.Background())
 	nc := websocket.NetConn(cctx, taken.conn, websocket.MessageBinary)
-	return &relayConn{Conn: nc, done: func() {
+	rc := &relayConn{Conn: nc, done: func() {
 		cancel()
 		close(taken.done)
-	}}, nil
+	}}
+	go h.pingRelay(cctx, taken.conn, rc)
+	return rc, nil
 }
 
 // relayConn ends its relay when it is closed.
@@ -519,7 +582,13 @@ type relayConn struct {
 	net.Conn
 	once sync.Once
 	done func()
+	// uses counts the requests the transport gave it, idleAt is that count when it last went back to the pool idle
+	// (relayPool.RoundTrip): it waits there while they are equal.
+	uses, idleAt atomic.Uint64
 }
+
+// idle says whether c waits in its pool for a request.
+func (c *relayConn) idle() bool { return c.idleAt.Load() == c.uses.Load() }
 
 func (c *relayConn) Close() error {
 	err := c.Conn.Close()

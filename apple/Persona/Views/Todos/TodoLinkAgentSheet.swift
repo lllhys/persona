@@ -101,9 +101,7 @@ struct TodoLinkAgentSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.lineLimit(1).disabled(draft.busy)
-                }
+                SheetClose(disabled: draft.busy) { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(target.isSpace ? String(localized: "Add [Todo Link Agent Sheet ecf9c1]") : String(localized: "Link [Todo Link Agent Sheet 748cd8]")) {
                         submit { try await store.link(target, to: draft.selectedTodoID) }

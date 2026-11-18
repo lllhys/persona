@@ -57,3 +57,34 @@ func TestExtensionAssistantReadNeedsItsGrant(t *testing.T) {
 		t.Fatal("a switched-off extension still reads")
 	}
 }
+
+// assistant.memory: only with assistant.memory.read (assistant.read does not include it), forwarded unchanged.
+func TestExtensionAssistantMemoryNeedsItsGrant(t *testing.T) {
+	h := newTestManager(t)
+	granted := kbExtensionSpec(t, h, "example-memory", extension.Permissions{Hub: []string{extension.ScopeAssistantMemoryRead}})
+	reader := kbExtensionSpec(t, h, "example-reader", extension.Permissions{Hub: []string{extension.ScopeAssistantRead, extension.ScopeKBRead}})
+	var asked []string
+	h.opts.Assistant = func(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+		asked = append(asked, method+" "+string(params))
+		return json.RawMessage(`{"entries":[]}`), nil
+	}
+	params := json.RawMessage(`{"include_content":true}`)
+	_, err := reader.Handle(context.Background(), assistantwire.MethodAssistantMemory, params)
+	var re *rpc.Error
+	if !errors.As(err, &re) || re.Code != extension.CodePermissionDenied || !strings.Contains(string(re.Data), `"assistant.memory.read"`) {
+		t.Fatalf("assistant.read alone: %v", err)
+	}
+	if len(asked) != 0 {
+		t.Fatalf("a denied call reached the manager: %v", asked)
+	}
+	if _, err := granted.Handle(context.Background(), assistantwire.MethodAssistantMemory, params); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0] != "assistant.memory "+string(params) {
+		t.Fatalf("the manager got %v", asked)
+	}
+	// The memory grant opens no conversation.
+	if _, err := granted.Handle(context.Background(), assistantwire.MethodAssistantMessages, json.RawMessage(`{"id":"c1"}`)); !errors.As(err, &re) || re.Code != extension.CodePermissionDenied {
+		t.Fatalf("assistant.messages with the memory grant: %v", err)
+	}
+}

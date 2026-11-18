@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ func TestCodexRollout(t *testing.T) {
 		got = append(got, it.Role+":"+it.Kind+":"+it.ToolName)
 	}
 	want := []string{
-		"user:text:", "assistant:thinking:",
+		"user:text:", "assistant:text:",
 		"assistant:tool_use:Bash", "user:tool_result:", "assistant:tool_use:Bash", "user:tool_result:",
 		"assistant:tool_use:Edit", "user:tool_result:", "assistant:tool_use:mcp__cua__js", "user:tool_result:",
 		"assistant:text:", "system:notice:",
@@ -107,7 +108,7 @@ func TestHistoryMutationRollout(t *testing.T) {
 		got = append(got, it.Role+":"+it.Kind+":"+it.ToolName+":"+it.Text)
 	}
 	want := []string{
-		"user:text::build the proxy", "assistant:thinking::Checking the repo first.",
+		"user:text::build the proxy", "assistant:text::Checking the repo first.",
 		"assistant:tool_use:Bash:", "user:tool_result::a\n", "assistant:text::Done: the proxy runs.",
 	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
@@ -120,6 +121,33 @@ func TestHistoryMutationRollout(t *testing.T) {
 	_ = os.WriteFile(path, []byte(strings.Join(append(lines, `{"timestamp":"2026-10-28T08:43:51.000Z","ordinal":13,"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}`), "\n")+"\n"), 0o644)
 	if _, err := f.Refresh(); err != nil || f.Meta().TurnOpen {
 		t.Fatalf("turn still open after task_complete: %v", err)
+	}
+}
+
+func TestCodexCommentaryAnswersUserMidTurn(t *testing.T) {
+	const ts = `"timestamp":"2026-11-12T08:00:00.000Z"`
+	ev := func(payload string) string { return `{` + ts + `,"type":"event_msg","payload":` + payload + `}` }
+	item := func(it string) string { return ev(`{"type":"item_completed","item":` + it + `}`) }
+	lines := []string{
+		`{` + ts + `,"type":"session_meta","payload":{"id":"01a1","cwd":"/r/fake","cli_version":"0.159.2"}}`,
+		ev(`{"type":"task_started","turn_id":"t1"}`),
+		item(`{"type":"UserMessage","id":"u1","content":[{"type":"text","text":"What is the current status?"}]}`),
+		item(`{"type":"Reasoning","id":"r1","summary_text":["Checking the work already done."]}`),
+		item(`{"type":"CommandExecution","id":"e1","command":["git","status"],"status":"completed","aggregated_output":"ok\n","exit_code":0}`),
+		item(`{"type":"AgentMessage","id":"m1","phase":"commentary","content":[{"type":"Text","text":"The focused tests pass; the full run is next."}]}`),
+		item(`{"type":"CommandExecution","id":"e2","command":["go","test","./..."],"status":"completed","aggregated_output":"ok\n","exit_code":0}`),
+		ev(`{"type":"task_complete","turn_id":"t1"}`),
+	}
+	m := Meta{Codex: true}
+	var got []proto.Item
+	for i, line := range lines {
+		got = append(got, ParseLine(i+1, []byte(line), &m)...)
+	}
+	if len(got) != 7 || got[1].Kind != proto.KindThinking || got[4].Kind != proto.KindText || got[4].Text != "The focused tests pass; the full run is next." {
+		t.Fatalf("commentary must be text and Reasoning thinking: %+v", got)
+	}
+	if m.LastText != "The focused tests pass; the full run is next." {
+		t.Fatalf("the commentary answer is the latest text: %+v", m)
 	}
 }
 
@@ -217,5 +245,475 @@ func TestCodexContextWindow(t *testing.T) {
 	}
 	if m := f.Meta(); m.ContextWindow != 475000 || m.ContextTokens <= 0 || m.ContextTokens >= m.ContextWindow {
 		t.Fatalf("context %d of window %d", m.ContextTokens, m.ContextWindow)
+	}
+}
+
+// The backgrounded-command tests below use synthetic items only: a command starts in the background, then the rollout
+// records the same id as completed or failed when the process exits (#8868).
+const codexTestTS = "2026-11-16T08:00:00.000Z"
+
+const codexTestSession = `{"timestamp":"` + codexTestTS + `","type":"session_meta","payload":{"id":"01a1","cwd":"/r/fake","cli_version":"0.170.0"}}`
+
+func codexTestEvent(payload string) string {
+	return `{"timestamp":"` + codexTestTS + `","type":"event_msg","payload":` + payload + `}`
+}
+
+func codexTestItem(item string) string {
+	return codexTestEvent(`{"type":"item_completed","item":` + item + `}`)
+}
+
+func codexTestHistory(item string) string {
+	return `{"timestamp":"` + codexTestTS + `","type":"history_mutation","payload":{"display_completions":[{"item":` + item + `}]}}`
+}
+
+func codexTestUser(id, text string) string {
+	return `{"type":"UserMessage","id":"` + id + `","content":[{"type":"text","text":"` + text + `"}]}`
+}
+
+func codexCommandItem(t *testing.T, id, status, output string, exitCode int, secs int64) string {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{
+		"type":              "CommandExecution",
+		"id":                id,
+		"command":           []string{"go", "test", "./..."},
+		"status":            status,
+		"aggregated_output": output,
+		"exit_code":         exitCode,
+		"duration":          map[string]any{"secs": secs, "nanos": 0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func codexParseAll(t *testing.T, lines []string) ([]proto.Item, *Meta) {
+	t.Helper()
+	meta := &Meta{Codex: true}
+	var got []proto.Item
+	for i, line := range lines {
+		got = append(got, ParseLine(i+1, []byte(line), meta)...)
+	}
+	return got, meta
+}
+
+// A backgrounded command is a pending call until its terminal record: no result at the start, then exactly one result
+// under the same tool_use_id with the final output and the recorded outcome.
+func TestCodexBackgroundCommandCompletes(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "run the tests")),
+		codexTestItem(codexCommandItem(t, "async-1", "backgrounded", "tests started\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "async-1", "completed", "all tests passed\n", 0, 3)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+	}
+	got, meta := codexParseAll(t, lines)
+	if len(got) != 3 {
+		t.Fatalf("items: %d, want the user message and one call with its result: %+v", len(got), got)
+	}
+	use, res := got[1], got[2]
+	if use.Kind != proto.KindToolUse || use.ID != "async-1#0" || use.Seq != 4 || use.ToolUseID != "async-1" || use.ToolName != "Bash" {
+		t.Fatalf("pending call: %+v", use)
+	}
+	if res.Kind != proto.KindToolResult || res.ID != "async-1#1" || res.Seq != 5 || res.ToolUseID != "async-1" {
+		t.Fatalf("result: %+v", res)
+	}
+	if res.Text != "all tests passed\n" || res.IsError {
+		t.Fatalf("the final output is the result: %q isError=%v", res.Text, res.IsError)
+	}
+	if res.Outcome == nil || res.Outcome.Status != proto.OutcomeOK || res.Outcome.ExitCode == nil || *res.Outcome.ExitCode != 0 ||
+		res.Outcome.DurationMS == nil || *res.Outcome.DurationMS != 3000 {
+		t.Fatalf("outcome: %+v", res.Outcome)
+	}
+	if len(meta.codexPending) != 0 {
+		t.Fatalf("the terminal record must clear the pending id: %+v", meta.codexPending)
+	}
+}
+
+// A failure after the backgrounded record is reported as failed, not as the initial zero exit code.
+func TestCodexBackgroundCommandFails(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "run the tests")),
+		codexTestItem(codexCommandItem(t, "async-1", "backgrounded", "starting\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "async-1", "failed", "boom", 1, 2)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+	}
+	got, _ := codexParseAll(t, lines)
+	if len(got) != 3 {
+		t.Fatalf("items: %d, want the user message and one call with its result: %+v", len(got), got)
+	}
+	res := got[2]
+	if !res.IsError || res.Text != "boom\n(exit code 1)" {
+		t.Fatalf("a failed command: text %q isError=%v", res.Text, res.IsError)
+	}
+	if res.Outcome == nil || res.Outcome.Status != proto.OutcomeFailed || res.Outcome.ExitCode == nil || *res.Outcome.ExitCode != 1 ||
+		res.Outcome.DurationMS == nil || *res.Outcome.DurationMS != 2000 {
+		t.Fatalf("outcome: %+v", res.Outcome)
+	}
+}
+
+// The same backgrounded or terminal record repeated in event_msg and history_mutation is still one call and one result.
+func TestCodexBackgroundDuplicateRecords(t *testing.T) {
+	bg := codexCommandItem(t, "async-2", "backgrounded", "started\n", 0, 1)
+	done := codexCommandItem(t, "async-2", "completed", "done\n", 0, 2)
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(bg),
+		codexTestHistory(bg),
+		codexTestHistory(done),
+		codexTestItem(done),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+	}
+	got, meta := codexParseAll(t, lines)
+	if len(got) != 2 {
+		t.Fatalf("items: %d, want one call and one result: %+v", len(got), got)
+	}
+	if got[0].Kind != proto.KindToolUse || got[0].ID != "async-2#0" || got[0].Seq != 3 {
+		t.Fatalf("call: %+v", got[0])
+	}
+	if got[1].Kind != proto.KindToolResult || got[1].ID != "async-2#1" || got[1].Seq != 5 || got[1].Text != "done\n" {
+		t.Fatalf("result: %+v", got[1])
+	}
+	if len(meta.codexPending) != 0 {
+		t.Fatalf("the duplicate records must still clear the pending id: %+v", meta.codexPending)
+	}
+}
+
+// A command with no backgrounded record before it is a synchronous call: its line still gives the call and its result.
+func TestCodexSynchronousCommandsUnchanged(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "check")),
+		codexTestItem(codexCommandItem(t, "e1", "completed", "ok\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "e2", "failed", "boom", 1, 2)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+	}
+	got, _ := codexParseAll(t, lines)
+	if len(got) != 5 {
+		t.Fatalf("items: %d, want two calls with their results: %+v", len(got), got)
+	}
+	if got[1].Kind != proto.KindToolUse || got[2].Kind != proto.KindToolResult || got[2].Text != "ok\n" || got[2].IsError {
+		t.Fatalf("completed call: %+v %+v", got[1], got[2])
+	}
+	if got[3].Kind != proto.KindToolUse || got[4].Kind != proto.KindToolResult || got[4].Text != "boom\n(exit code 1)" || !got[4].IsError {
+		t.Fatalf("failed call: %+v %+v", got[3], got[4])
+	}
+}
+
+// An incremental refresh that reads the terminal record later gives the same items as a full read; a cold read opened
+// by its end and paged back agrees, and Full returns the result whole from its own line.
+func TestCodexBackgroundIncrementalAndCold(t *testing.T) {
+	defer func(w int64) { windowBytes = w }(windowBytes)
+	big := strings.Repeat("line of output\n", 400)
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t0"}`),
+		codexTestItem(codexTestUser("u0", "first")),
+		codexTestItem(codexCommandItem(t, "e0", "completed", "ok\n", 0, 1)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t0"}`),
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "second")),
+		codexTestItem(codexCommandItem(t, "e1", "completed", "ok\n", 0, 1)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+		codexTestEvent(`{"type":"task_started","turn_id":"t2"}`),
+		codexTestItem(codexTestUser("u2", "last")),
+		codexTestItem(codexCommandItem(t, "async-cold", "backgrounded", "started\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "async-cold", "completed", big, 0, 4)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t2"}`),
+	}
+	path := filepath.Join(t.TempDir(), "rollout-2026-11-16T08-00-00-01a1.jsonl")
+	if err := os.WriteFile(path, []byte(strings.Join(lines[:12], "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inc := NewFile(path)
+	before, err := inc.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) == 0 || before[len(before)-1].Kind != proto.KindToolUse || before[len(before)-1].ID != "async-cold#0" {
+		t.Fatalf("the backgrounded record is not a pending call: %+v", before)
+	}
+	for _, it := range before {
+		if it.Kind == proto.KindToolResult && it.ToolUseID == "async-cold" {
+			t.Fatalf("the backgrounded record claimed a result: %+v", it)
+		}
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := inc.Refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 1 || fresh[0].ID != "async-cold#1" || fresh[0].Kind != proto.KindToolResult || fresh[0].FullSize != len(big) {
+		t.Fatalf("the terminal record must give exactly one result with the final output: %+v", fresh)
+	}
+	if whole, err := inc.Full("async-cold#1"); err != nil || whole.Text != big {
+		t.Fatalf("Full after the incremental read: %d bytes, err %v", len(whole.Text), err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowBytes = 1 << 40
+	full := NewFile(path)
+	if _, err := full.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	all, _, _ := full.Page(0, 1<<30)
+	if len(all) != 9 {
+		t.Fatalf("a full read gives %d items, want 9", len(all))
+	}
+	windowBytes = int64(len(data)) / 4
+	cold := NewFile(path)
+	if _, err := cold.Refresh(); err != nil {
+		t.Fatal(err)
+	}
+	if cold.base == 0 {
+		t.Fatal("the file was not opened by its end: the test checks nothing")
+	}
+	var got []proto.Item
+	for before := 0; ; {
+		items, more, _ := cold.Page(before, 2)
+		got = append(append([]proto.Item(nil), items...), got...)
+		if !more || len(items) == 0 {
+			break
+		}
+		before = items[0].Seq
+	}
+	if !bytes.Equal(marshal(t, got), marshal(t, all)) {
+		t.Fatalf("a cold read gives %d items, a full read %d", len(got), len(all))
+	}
+	res, err := cold.Full("async-cold#1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != big {
+		t.Fatalf("Full gave %d bytes of the result, want %d", len(res.Text), len(big))
+	}
+	use, err := cold.Full("async-cold#0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if use.Kind != proto.KindToolUse || use.ToolName != "Bash" {
+		t.Fatalf("Full of the pending call: %+v", use)
+	}
+}
+
+// A command can finish in a later turn: the pending call stays visible across task_started and only the result arrives
+// in the new turn. A backgrounded record repeated after task_started is the same pending command, not a second call.
+func TestCodexBackgroundPendingAcrossTurns(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "first")),
+		codexTestItem(codexCommandItem(t, "async-x", "backgrounded", "started\n", 0, 1)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+		codexTestEvent(`{"type":"task_started","turn_id":"t2"}`),
+		codexTestItem(codexTestUser("u2", "second")),
+		codexTestItem(codexCommandItem(t, "async-x", "backgrounded", "started\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "async-x", "completed", "done\n", 0, 2)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t2"}`),
+	}
+	got, meta := codexParseAll(t, lines)
+	if len(got) != 4 {
+		t.Fatalf("items: %d, want two messages and the call with its result: %+v", len(got), got)
+	}
+	if got[1].Kind != proto.KindToolUse || got[1].ID != "async-x#0" || got[1].Seq != 4 {
+		t.Fatalf("pending call: %+v", got[1])
+	}
+	if got[2].Kind != proto.KindText || got[2].Text != "second" {
+		t.Fatalf("the new turn's message comes before the result: %+v", got[2])
+	}
+	if got[3].Kind != proto.KindToolResult || got[3].ID != "async-x#1" || got[3].Seq != 9 || got[3].Text != "done\n" {
+		t.Fatalf("result in the later turn: %+v", got[3])
+	}
+	if len(meta.codexPending) != 0 {
+		t.Fatalf("the later terminal record must clear the pending id: %+v", meta.codexPending)
+	}
+}
+
+// Once the terminal record is read, a later turn may use the id again: the pending state is gone, not a permanent
+// suppression of the id.
+func TestCodexBackgroundIDReusedAfterCompletion(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "first")),
+		codexTestItem(codexCommandItem(t, "e1", "backgrounded", "started\n", 0, 1)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+		codexTestEvent(`{"type":"task_started","turn_id":"t2"}`),
+		codexTestItem(codexTestUser("u2", "second")),
+		codexTestItem(codexCommandItem(t, "e1", "completed", "done\n", 0, 2)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t2"}`),
+		codexTestEvent(`{"type":"task_started","turn_id":"t3"}`),
+		codexTestItem(codexTestUser("u3", "third")),
+		codexTestItem(codexCommandItem(t, "e1", "completed", "again\n", 0, 1)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t3"}`),
+	}
+	got, _ := codexParseAll(t, lines)
+	if len(got) != 7 {
+		t.Fatalf("items: %d, want three messages, the pending call, its result and a reused synchronous call: %+v", len(got), got)
+	}
+	if got[3].Kind != proto.KindToolResult || got[3].ID != "e1#1" || got[3].Seq != 8 || got[3].Text != "done\n" {
+		t.Fatalf("result of the backgrounded call: %+v", got[3])
+	}
+	if got[5].Kind != proto.KindToolUse || got[5].ID != "e1#0" || got[5].Seq != 12 {
+		t.Fatalf("reused call: %+v", got[5])
+	}
+	if got[6].Kind != proto.KindToolResult || got[6].ID != "e1#1" || got[6].Seq != 12 || got[6].Text != "again\n" {
+		t.Fatalf("reused call's result: %+v", got[6])
+	}
+}
+
+// A backgrounded command whose pending state the cap evicted still keeps its final output: with no tracked call left,
+// its terminal record is a standalone call and result pair, as a synchronous command's line is.
+func TestCodexPendingEvictionKeepsResult(t *testing.T) {
+	meta := &Meta{Codex: true}
+	seq := 0
+	parse := func(line string) []proto.Item {
+		seq++
+		return ParseLine(seq, []byte(line), meta)
+	}
+	parse(codexTestEvent(`{"type":"task_started","turn_id":"t1"}`))
+	if got := parse(codexTestItem(codexCommandItem(t, "evicted", "backgrounded", "started\n", 0, 1))); len(got) != 1 || got[0].ID != "evicted#0" {
+		t.Fatalf("pending call: %+v", got)
+	}
+	for i := 0; i < codexPendingKept; i++ {
+		parse(codexTestItem(codexCommandItem(t, fmt.Sprintf("filler-%d", i), "backgrounded", "started\n", 0, 1)))
+	}
+	if meta.codexPending["evicted"] {
+		t.Fatalf("the cap must evict the oldest pending id")
+	}
+	got := parse(codexTestItem(codexCommandItem(t, "evicted", "completed", "final output\n", 0, 7)))
+	if len(got) != 2 {
+		t.Fatalf("an evicted command's terminal record must keep its call and result: %+v", got)
+	}
+	use, res := got[0], got[1]
+	if use.Kind != proto.KindToolUse || use.ID != "evicted#0" || use.Seq != seq || use.ToolUseID != "evicted" {
+		t.Fatalf("standalone call: %+v", use)
+	}
+	if res.Kind != proto.KindToolResult || res.ID != "evicted#1" || res.Seq != seq || res.Text != "final output\n" || res.IsError {
+		t.Fatalf("the final output must survive eviction: %+v", res)
+	}
+	if res.Outcome == nil || res.Outcome.DurationMS == nil || *res.Outcome.DurationMS != 7000 {
+		t.Fatalf("outcome: %+v", res.Outcome)
+	}
+}
+
+// The pending queue holds only live ids. An id that finished and is then reused must not be evicted by its old queue
+// entry: the oldest genuinely pending command is evicted instead, and the reused command's terminal record is still
+// only its result.
+func TestCodexPendingIDReusedWhileOtherPending(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "first")),
+		codexTestItem(codexCommandItem(t, "reused", "backgrounded", "started\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "reused", "completed", "first done\n", 0, 2)),
+		codexTestItem(codexCommandItem(t, "older", "backgrounded", "started\n", 0, 1)),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+		codexTestEvent(`{"type":"task_started","turn_id":"t2"}`),
+		codexTestItem(codexTestUser("u2", "second")),
+		codexTestItem(codexCommandItem(t, "reused", "backgrounded", "started again\n", 0, 1)),
+	}
+	got, meta := codexParseAll(t, lines)
+	if got[2].Kind != proto.KindToolResult || got[2].ID != "reused#1" || got[2].Text != "first done\n" {
+		t.Fatalf("the first completion: %+v", got[2])
+	}
+	if got[5].Kind != proto.KindToolUse || got[5].ID != "reused#0" || got[5].Seq != 10 {
+		t.Fatalf("the reused id must be a new pending call: %+v", got[5])
+	}
+	for i := 0; i < codexPendingKept-1; i++ {
+		bg := codexTestItem(codexCommandItem(t, fmt.Sprintf("filler-%d", i), "backgrounded", "started\n", 0, 1))
+		got = append(got, ParseLine(len(lines)+i+1, []byte(bg), meta)...)
+	}
+	if meta.codexPending["older"] {
+		t.Fatalf("the cap must evict the oldest genuinely pending command")
+	}
+	if !meta.codexPending["reused"] {
+		t.Fatalf("the reused pending id must not be evicted by a stale queue entry")
+	}
+	done := codexTestItem(codexCommandItem(t, "reused", "completed", "second done\n", 0, 3))
+	final := ParseLine(len(lines)+codexPendingKept, []byte(done), meta)
+	if len(final) != 1 || final[0].ID != "reused#1" || final[0].Kind != proto.KindToolResult || final[0].Text != "second done\n" {
+		t.Fatalf("the reused command's terminal record must be only its result: %+v", final)
+	}
+	calls := 0
+	for _, it := range got {
+		if it.Kind == proto.KindToolUse && it.ToolUseID == "reused" {
+			calls++
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("want the first call and the reused call, got %d", calls)
+	}
+}
+
+// A call with no result yet stays visible when the page is folded; once its result is there the call folds with the
+// work around it as any other finished call does.
+func TestCodexBackgroundFold(t *testing.T) {
+	lines := []string{
+		codexTestSession,
+		codexTestEvent(`{"type":"task_started","turn_id":"t1"}`),
+		codexTestItem(codexTestUser("u1", "run it")),
+		codexTestItem(`{"type":"Reasoning","id":"r1","summary_text":["checking"]}`),
+		codexTestItem(codexCommandItem(t, "async-fold", "backgrounded", "started\n", 0, 1)),
+		codexTestItem(codexCommandItem(t, "async-fold", "completed", "done\n", 0, 2)),
+		codexTestItem(`{"type":"AgentMessage","id":"m1","phase":"final_answer","content":[{"type":"Text","text":"done"}]}`),
+		codexTestEvent(`{"type":"task_complete","turn_id":"t1"}`),
+	}
+	got, _ := codexParseAll(t, lines)
+	if len(got) != 5 {
+		t.Fatalf("items: %d, want message, thinking, call, result, answer: %+v", len(got), got)
+	}
+	pending := foldWork([]proto.Item{got[2]}, false)
+	if len(pending) != 1 || pending[0].Kind != proto.KindToolUse {
+		t.Fatalf("a pending call stays visible: %+v", pending)
+	}
+	orphan := foldWork([]proto.Item{got[3]}, false)
+	if len(orphan) != 1 || orphan[0].Kind != proto.KindToolResult {
+		t.Fatalf("a result whose call is on an older page stays visible: %+v", orphan)
+	}
+	finished := foldWork([]proto.Item{got[1], got[2], got[3]}, false)
+	if len(finished) != 1 || finished[0].Kind != proto.KindFold || finished[0].Fold == nil || finished[0].Fold.Tools != 1 {
+		t.Fatalf("a finished call folds with the work around it: %+v", finished)
+	}
+}
+
+// The pending ids are bounded: a rollout that starts backgrounded commands and never records their end must not grow
+// the parser's state with every one, and the newest still gets its result once.
+func TestCodexPendingBounded(t *testing.T) {
+	meta := &Meta{Codex: true}
+	n := 2 * codexPendingKept
+	for i := 0; i < n; i++ {
+		started := codexTestEvent(fmt.Sprintf(`{"type":"task_started","turn_id":"t%d"}`, i))
+		bg := codexTestItem(codexCommandItem(t, fmt.Sprintf("async-%d", i), "backgrounded", "started\n", 0, 1))
+		ParseLine(2*i+1, []byte(started), meta)
+		ParseLine(2*i+2, []byte(bg), meta)
+	}
+	if len(meta.codexPending) > codexPendingKept {
+		t.Fatalf("the parser kept %d pending ids, bound is %d", len(meta.codexPending), codexPendingKept)
+	}
+	if len(meta.codexPendingIDs) != len(meta.codexPending) {
+		t.Fatalf("the queue holds %d entries for %d pending ids", len(meta.codexPendingIDs), len(meta.codexPending))
+	}
+	last := fmt.Sprintf("async-%d", n-1)
+	done := codexTestItem(codexCommandItem(t, last, "completed", "done\n", 0, 2))
+	got := ParseLine(2*n+1, []byte(done), meta)
+	if len(got) != 1 || got[0].ID != last+"#1" || got[0].Kind != proto.KindToolResult || got[0].Text != "done\n" {
+		t.Fatalf("the newest pending command's terminal record: %+v", got)
+	}
+	if meta.codexPending[last] {
+		t.Fatalf("the terminal record did not clear the pending id")
+	}
+	if len(meta.codexPendingIDs) != len(meta.codexPending) {
+		t.Fatalf("the queue holds %d entries for %d pending ids after completion", len(meta.codexPendingIDs), len(meta.codexPending))
 	}
 }

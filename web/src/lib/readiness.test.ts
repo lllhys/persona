@@ -125,9 +125,86 @@ describe("turn errors", () => {
   it("says what to fix for the user's codes only", () => {
     expect(turnErrorFix("not_logged_in")?.action).toBe("connect_model");
     expect(turnErrorFix("auth_failed")?.action).toBe("edit_provider");
-    expect(turnErrorFix("model_route")?.action).toBe("connect_model");
+    expect(turnErrorFix("model_route")?.action).toBe("pick_model");
+    expect(turnErrorFix("tool_search_unsupported")?.action).toBe("retry");
     expect(turnErrorFix("rate_limited")).toBeNull();
     expect(turnErrorFix(undefined)).toBeNull();
+  });
+
+  it("says a signed-out CLI is the one to sign in, not the desktop app, in every language (#9366)", async () => {
+    const words = {
+      en: ["Claude Code CLI", "Claude desktop app's sign-in doesn't count", "claude auth login", "API key"],
+      "zh-Hans": ["Claude Code 命令行", "Claude 桌面版登录了也不算", "claude auth login", "API Key"],
+      ja: ["Claude Code CLI", "Claude デスクトップアプリのログインはこれに含まれません", "claude auth login", "API キー"],
+    };
+    try {
+      for (const [lang, [cli, desktop, command, key]] of Object.entries(words)) {
+        await initI18n(lang);
+        const fix = turnErrorFix("not_logged_in")!;
+        expect(fix.title).toContain(cli);
+        expect(fix.detail).toContain(desktop);
+        expect(fix.detail).toContain(command);
+        expect(fix.detail).toContain(key);
+      }
+    } finally {
+      await initI18n("zh-Hans");
+    }
+  });
+
+  it("sends a model the chat can't run to the chat's own picker, never to the new-provider wizard (#10365)", () => {
+    const fix = turnErrorFix("model_route")!;
+    try {
+      history.replaceState(null, "", "/s/m/c");
+      const onPickModel = vi.fn(() => true);
+      runAction(fix.action, { onHelp: () => {}, onPickModel });
+      expect(onPickModel).toHaveBeenCalledTimes(1);
+      expect(location.pathname + location.search).toBe("/s/m/c");
+      // no picker on this page: model settings, still not the wizard
+      runAction(fix.action, { onHelp: () => {}, onPickModel: () => false });
+      expect(location.pathname + location.search).toBe("/settings?tab=models");
+      history.replaceState(null, "", "/s/m/c");
+      runAction(fix.action, { onHelp: () => {} });
+      expect(location.pathname + location.search).toBe("/settings?tab=models");
+      expect(location.search).not.toContain("add=1");
+      // signing in is still a new connection: the wizard
+      runAction(turnErrorFix("not_logged_in")!.action, { onHelp: () => {} });
+      expect(location.pathname + location.search).toBe(providersPath());
+    } finally {
+      history.replaceState(null, "", "/");
+    }
+  });
+
+  it("says a gateway that refused on-demand tools needs only a retry, in every language", async () => {
+    // The card can't tell whether the conversation's computer runs a node that now sends every tool there (an older one
+    // keeps tool search on), so its words promise only a retry; the hub's readiness step says more when it knows.
+    const words = {
+      en: ["load tools on demand", "Try again", "every tool"],
+      "zh-Hans": ["按需加载工具", "重试", "全部工具"],
+      ja: ["必要時読み込み", "再試行", "すべてのツール"],
+    };
+    try {
+      for (const [lang, [title, detail, promise]] of Object.entries(words)) {
+        await initI18n(lang);
+        const fix = turnErrorFix("tool_search_unsupported")!;
+        expect(fix.title).toContain(title);
+        expect(fix.detail).toContain(detail);
+        expect(fix.detail).not.toContain(promise);
+        expect(fix.action).toBe("retry");
+      }
+    } finally {
+      await initI18n("zh-Hans");
+    }
+  });
+
+  it("reads a gateway's tool-search refusal from its 400, for a hub that does not code it", () => {
+    // i18n-ignore: a gateway's words
+    const edge = "API Error: 400 request is not representable on this edge: ToolSearch is not supported on this endpoint (defer_loading:true, tool_search_*, tool_reference); resend with all tools loaded";
+    expect(parseAPIError(edge)).toMatchObject({ code: "tool_search_unsupported", status: 400, transient: false });
+    expect(parseAPIError("API Error: 400 tools.3.defer_loading: Extra inputs are not permitted")?.code).toBe("tool_search_unsupported");
+    // another 400, or a tool-search word outside a refused request, is not it
+    expect(parseAPIError("API Error: 400 invalid request")?.code).toBeUndefined();
+    expect(parseAPIError("API Error: 500 tool_reference upstream crashed")?.code).toBeUndefined();
+    expect(parseAPIError("API Error: 400 There's an issue with the selected model")?.code).toBe("model_route");
   });
 
   it("reads Claude Code's own refusals as model errors (the hub's markers)", () => {

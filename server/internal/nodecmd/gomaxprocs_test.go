@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/osproc/osproctest"
+	"github.com/nwverse/persona/server/internal/procs"
 )
 
 // procsEntryEnv runs the test binary as the command in its value (words split on spaces) with stdin closed, then
@@ -28,8 +29,8 @@ func procsEntry(args string) int {
 	return 0
 }
 
-// The node that serves a hub keeps at most nodeProcs Ps, unless GOMAXPROCS says otherwise; other commands keep the
-// runtime's value. (On a machine with nodeProcs CPUs or fewer the runtime's value is already that.)
+// The node that serves a hub keeps at most procs.Max Ps, unless GOMAXPROCS says otherwise; other commands keep the
+// runtime's value. (On a machine with procs.Max CPUs or fewer the runtime's value is already that.)
 func TestNodeCapsProcs(t *testing.T) {
 	for _, c := range []struct {
 		args, env string
@@ -54,7 +55,7 @@ func TestNodeCapsProcs(t *testing.T) {
 			}
 			want := before
 			if c.capped {
-				want = min(before, nodeProcs)
+				want = min(before, procs.Max)
 			}
 			if after != want {
 				t.Fatalf("%s with %q: GOMAXPROCS %d -> %d, want %d", c.args, c.env, before, after, want)

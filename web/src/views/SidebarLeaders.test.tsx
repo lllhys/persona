@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // The leader conversations in the sidebar (#3623, #4331): Persona chats are the main one (its row above) and the hub's
-// `assistant.leaders`, "常驻", in the hub's order under each one's name with what it has Working and Waiting on you
-// (the direction tree, GET /api/v1/assistant/directions/tree, #4352), then "最近", the newest of the user's other chats
-// (#4873; 15 by default, a setting, with Show more, #5146); every chat is under 全部对话. The hub's `directions` message makes an open sidebar read the tree
+// `assistant.leaders`, "常驻", in the hub's order under each one's name with what it has going: the working arc while
+// anything under it runs and its tasks Waiting on you (the direction tree, GET /api/v1/assistant/directions/tree, #4352,
+// its `running`, #6626), then "最近", the newest of the user's other chats
+// (#4873; 5 by default, a setting, with Show more, #5146; the scheduled tasks' chats stay out of it, #6228); every chat is under 全部对话. The hub's `directions` message makes an open sidebar read the tree
 // again (a leader made or ended anywhere).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -51,8 +52,9 @@ beforeEach(() => {
   leaders = ["lead-a", "lead-b"];
   posts = [];
   named = { leaders: [
-    { id: "lead-a", title: "1110 | explore | Growth", name: "Product", counts: { working: 2, needs_you: 1 } },
-    { id: "lead-b", title: "Payments", name: "Infrastructure", counts: { working: 0, needs_you: 0 } },
+    // lead-b has a task in the working state whose Agents all stopped: nothing runs under it (#6626)
+    { id: "lead-a", title: "1110 | explore | Growth", name: "Product", counts: { working: 2, needs_you: 1 }, running: true },
+    { id: "lead-b", title: "Payments", name: "Infrastructure", counts: { working: 1, needs_you: 0 }, running: false },
     { id: "old", title: "Old", name: "Ended one", ended: true },
   ] };
   vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
@@ -63,8 +65,9 @@ beforeEach(() => {
     }
     if ((path === "/api/v1/assistant/leaders" || path === "/api/v1/assistant/directions/tree") && named === undefined) return Promise.resolve(new Response("{}", { status: 404 }));
     if (path === "/api/v1/assistant/directions/tree") {
-      const list = (named as { leaders: { id: string; name?: string; ended?: boolean; counts?: unknown }[] }).leaders.filter((l) => !l.ended);
-      return Promise.resolve(new Response(JSON.stringify({ directions: [...list.map((l) => ({ id: l.id, name: l.name, counts: { stuck: 0, review: 0, ...(l.counts as object) }, tasks: [] })), { id: "main", name: "", secretary: true, counts: { working: 9, needs_you: 9, stuck: 0, review: 0 }, tasks: [] }] }), { headers: { "Content-Type": "application/json" } }));
+      const list = (named as { leaders: { id: string; name?: string; ended?: boolean; counts?: unknown; running?: boolean }[] }).leaders.filter((l) => !l.ended);
+      // `running` only where a case gives it: without it the tree is an older hub's
+      return Promise.resolve(new Response(JSON.stringify({ directions: [...list.map((l) => ({ id: l.id, name: l.name, counts: { stuck: 0, review: 0, ...(l.counts as object) }, ...(l.running === undefined ? {} : { running: l.running }), tasks: [] })), { id: "main", name: "", secretary: true, counts: { working: 9, needs_you: 9, stuck: 0, review: 0 }, tasks: [] }] }), { headers: { "Content-Type": "application/json" } }));
     }
     const body = path === "/api/v1/assistant" ? { machine_id: "hub", main: "main", leaders, conversations } : path === "/api/v1/assistant/leaders" ? named : path === "/api/v1/machines" ? { machines: [{ id: "hub", name: "Hub", online: true }] } : {};
     return Promise.resolve(new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }));
@@ -108,13 +111,75 @@ describe("the leader conversations in the sidebar", () => {
     expect(t("sidebar.directions")).toBe("常驻");
     expect(t("sidebar.recent_chats")).toBe("最近");
     expect(row("lead-a").textContent).toContain("Product");
-    expect(row("lead-a").textContent).toContain("在做 2 · 等你 1");
+    // what it has waiting on you in words; what runs under it is the arc alone, never "在做 N" as well (#6626)
+    expect(row("lead-a").textContent).toContain("等你 1");
+    expect(row("lead-a").textContent).not.toContain("在做");
     expect(row("lead-b").textContent).toContain("Infrastructure");
     expect(row("lead-b").textContent).not.toContain("在做");
-    // the pin icon on each, no other group, and none of the old words
+    // 常驻 is marked only by its heading and counts (#6214): a lead with nothing running draws the ordinary chat icon,
+    // the same one a 最近 row draws — no pin glyph that could read as a tappable button. (lead-a has Agents working, so
+    // it carries the working arc instead, asserted in the spin test below.)
+    const leadIcon = row("lead-b").querySelector("svg")!.outerHTML;
+    const recentIcon = row("newest").querySelector("svg")!.outerHTML;
+    expect(leadIcon).toBe(recentIcon);
+    // 常驻 is marked only by its heading and counts (#6214): no pin glyph on the row that could read as a button
     const allChats = host.querySelector<HTMLAnchorElement>('a[href="/history"]')!;
     expect(allChats.textContent).toContain(t("sidebar.all_chats"));
     expect(headings().join()).not.toMatch(/置顶|其他对话|方向/);
+  });
+
+  it("spin the one working mark while anything under them runs, even when their own conversation is idle (#6230, #6626)", async () => {
+    await renderSidebar();
+    // lead-a's own session is idle but Agents under it work (the tree's running): the row carries the working arc
+    const leadA = row("lead-a");
+    expect(leadA.querySelector('[data-shape="arc"][data-state="working"]')).not.toBeNull();
+    // lead-b counts a task in the working state, but nothing under it runs: no arc, the quiet chat icon stays
+    const leadB = row("lead-b");
+    expect(leadB.querySelector('[data-shape="arc"]')).toBeNull();
+  });
+
+  it("spin on what runs, not on the working count: a task that waits on you with an Agent still at work spins", async () => {
+    named = { leaders: [
+      { id: "lead-a", name: "Product", counts: { working: 0, needs_you: 1 }, running: true },
+      { id: "lead-b", name: "Infrastructure", counts: { working: 2, needs_you: 0 }, running: false },
+    ] };
+    await renderSidebar();
+    expect(row("lead-a").querySelector('[data-shape="arc"][data-state="working"]')).not.toBeNull();
+    expect(row("lead-a").textContent).toContain("等你 1");
+    expect(row("lead-b").querySelector('[data-shape="arc"]')).toBeNull();
+    expect(row("lead-b").textContent).not.toMatch(/在做|等你/);
+  });
+
+  it("spin on a working task from an older hub whose tree has no running", async () => {
+    named = { leaders: [
+      { id: "lead-a", name: "Product", counts: { working: 1, needs_you: 0 } },
+      { id: "lead-b", name: "Infrastructure", counts: { working: 0, needs_you: 0 } },
+    ] };
+    await renderSidebar();
+    expect(row("lead-a").querySelector('[data-shape="arc"][data-state="working"]')).not.toBeNull();
+    expect(row("lead-a").textContent).not.toContain("在做");
+    expect(row("lead-b").querySelector('[data-shape="arc"]')).toBeNull();
+  });
+
+  it("keep, folded, the arc while anything under a lead runs and the tasks waiting on you, never 在做 N", async () => {
+    localStorage.setItem("fold:persona", "1");
+    await renderSidebar();
+    const tally = host.querySelector<HTMLElement>("[data-sidebar-rows] [data-direction-counts]");
+    expect(tally).not.toBeNull();
+    expect(tally!.textContent).toBe("等你 1");
+    expect(tally!.querySelector('[data-shape="arc"][data-state="working"]')).not.toBeNull();
+  });
+
+  it("keep, folded, only the tasks waiting on you while nothing runs under any lead", async () => {
+    localStorage.setItem("fold:persona", "1");
+    named = { leaders: [
+      { id: "lead-a", name: "Product", counts: { working: 1, needs_you: 2 }, running: false },
+      { id: "lead-b", name: "Infrastructure", counts: { working: 0, needs_you: 1 }, running: false },
+    ] };
+    await renderSidebar();
+    const tally = host.querySelector<HTMLElement>("[data-sidebar-rows] [data-direction-counts]");
+    expect(tally!.textContent).toBe("等你 3");
+    expect(tally!.querySelector('[data-shape="arc"]')).toBeNull();
   });
 
   it("show their titles on a hub without the leaders list", async () => {
@@ -139,14 +204,15 @@ describe("the leader conversations in the sidebar", () => {
     expect(headings()).toEqual([t("sidebar.directions")]);
   });
 
-  describe("最近 (#5146)", () => {
+  describe("最近 (#5146, #6228)", () => {
     const pad = (d: number) => String(d).padStart(2, "0");
     // 20 older chats of the user's own, c20 the newest of them
     const older = Array.from({ length: 20 }, (_, i) => conversation(`c${pad(i + 1)}`, `Chat ${i + 1}`, `2026-10-${pad(i + 1)}T00:00:00Z`));
-    // every chat but the main one and the leaders, whoever opened it (#5195): the scheduled task's and the Inbox's lead
-    const own = ["task", "twin", "newest", "wx", "mine", ...older.map((c) => c.session_id).reverse()];
+    // the scheduled task's chat no longer takes a Recent row (#6228): the rest, whoever opened it, newest first
+    const own = ["twin", "newest", "wx", "mine", ...older.map((c) => c.session_id).reverse()];
     const button = (text: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === text);
-    const showMore = () => Array.from({ length: 15 }, (_, i) => button(t("sidebar.show_more", { count: i + 1 }))).find(Boolean);
+    const showMore = () => button(t("sidebar.show_more", { count: 5 }));
+    const recentHeading = () => [...host.querySelectorAll<HTMLElement>('[role="heading"] button')].find((b) => b.textContent?.includes(t("sidebar.recent_chats")));
     beforeEach(() => {
       conversations = [
         ...base,
@@ -157,47 +223,71 @@ describe("the leader conversations in the sidebar", () => {
       ];
     });
 
-    it("lists the newest 15 other chats whoever opened them, the hub's own with their origin's mark (#5195)", async () => {
+    it("lists the newest 5 other chats by default, never the scheduled task's chat, with the Inbox chat's origin mark", async () => {
       await renderSidebar();
-      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 15)]);
+      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 5)]);
+      expect(rowIds()).not.toContain("task");
       expect(host.querySelector('a[href="/history"]')!.textContent).toContain(String(conversations.length));
       const mark = (id: string) => row(id).querySelector("[data-origin-mark]");
-      expect(mark("task")?.getAttribute("data-origin-mark")).toBe("task");
-      expect(mark("task")?.getAttribute("aria-label")).toBe(t("assistant-conversations.origin_task"));
       expect(mark("twin")?.getAttribute("data-origin-mark")).toBe("inbox");
       for (const id of ["newest", "wx", "mine"]) expect(mark(id), id).toBeNull();
     });
 
-    it("shows 15 more for each Show more until none are left, Show less goes back, and a reload keeps what was open", async () => {
+    it("shows 5 more for each Show more until none are left, Show less goes back, and a reload keeps what was open", async () => {
       await renderSidebar();
       expect(button(t("sidebar.show_less"))).toBeUndefined();
-      act(() => button(t("sidebar.show_more", { count: 10 }))!.click());
-      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own]);
-      expect(button(t("sidebar.show_more", { count: 10 }))).toBeUndefined();
-      // a reload
+      act(() => showMore()!.click());
+      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 10)]);
+      act(() => button(t("sidebar.show_more", { count: 5 }))!.click());
+      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 15)]);
+      // a reload keeps Show more's state
       act(() => root.unmount());
       root = createRoot(host);
       await renderSidebar();
-      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own]);
-      act(() => button(t("sidebar.show_less"))!.click());
       expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 15)]);
+      act(() => button(t("sidebar.show_less"))!.click());
+      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 5)]);
       expect(button(t("sidebar.show_less"))).toBeUndefined();
     });
 
     it("lists as many as the setting says, and Show more adds as many again", async () => {
-      setRecentCount(5);
+      setRecentCount(10);
       await renderSidebar();
-      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 5)]);
-      act(() => button(t("sidebar.show_more", { count: 5 }))!.click());
       expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 10)]);
+      act(() => button(t("sidebar.show_more", { count: 10 }))!.click());
+      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 20)]);
     });
 
-    it("has no Show more when there are 15 or fewer", async () => {
+    it("has no Show more when the count covers every Recent chat", async () => {
       conversations = [...base, ...older.slice(0, 13)];
+      setRecentCount(25);
       await renderSidebar();
       expect(rowIds()).toHaveLength(2 + 15);
       expect(showMore()).toBeUndefined();
       expect(button(t("sidebar.show_less"))).toBeUndefined();
+    });
+
+    it("folds 最近 and keeps it folded after a reload; the open chat's row opens it by itself", async () => {
+      await renderSidebar();
+      const heading = recentHeading()!;
+      // the box that clips the recent rows: its grid row goes to 0fr at once when folded (the Collapse's inert follows the animation)
+      const recentBox = () => row("twin").closest(".grid") as HTMLElement;
+      expect(heading.getAttribute("aria-expanded")).toBe("true");
+      expect(recentBox().style.gridTemplateRows).toBe("1fr");
+      act(() => heading.click());
+      expect(heading.getAttribute("aria-expanded")).toBe("false");
+      expect(localStorage.getItem("fold:recent-chats")).toBe("1");
+      expect(recentBox().style.gridTemplateRows).toBe("0fr");
+      act(() => root.unmount());
+      root = createRoot(host);
+      await renderSidebar();
+      expect(recentHeading()!.getAttribute("aria-expanded")).toBe("false");
+      // folded from the start, its rows are not drawn at all (a folded group mounts no rows)
+      expect(rowIds()).toEqual(["lead-a", "lead-b"]);
+      // unfold again
+      act(() => recentHeading()!.click());
+      expect(rowIds()).toEqual(["lead-a", "lead-b", ...own.slice(0, 5)]);
+      expect(localStorage.getItem("fold:recent-chats")).toBe("0");
     });
   });
 
@@ -210,13 +300,24 @@ describe("the leader conversations in the sidebar", () => {
     expect(link!.parentElement!.textContent).toContain(t("sidebar.persona_chats"));
   });
 
-  it("are made and ended from the menu through the hub: 取消常驻 on one, never 置顶", async () => {
+  it("are made and ended from the menu through the hub: 取消常驻 asks again, never 置顶 (#6214)", async () => {
     await renderSidebar();
     act(() => row("lead-a").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 })));
     await flush();
-    const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')];
-    expect(items.some((el) => el.textContent?.includes("置顶"))).toBe(false);
-    act(() => items.find((el) => el.textContent?.includes("取消常驻"))!.click());
+    const unpin = () => [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')]
+      .find((el) => el.textContent?.includes("取消常驻"));
+    expect([...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')]
+      .some((el) => el.textContent?.includes("置顶"))).toBe(false);
+    // the first tap only arms the row and says what moves; nothing has reached the hub
+    act(() => unpin()!.click());
+    await flush();
+    const asking = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')]
+      .find((el) => el.textContent?.includes("确认取消常驻"));
+    expect(asking).toBeTruthy();
+    expect(asking!.textContent).toContain("最近");
+    expect(posts).toEqual([]);
+    // the second tap runs the end call
+    act(() => asking!.click());
     await flush();
     expect(posts).toEqual(["/api/v1/assistant/directions/lead-a/end"]);
   });
@@ -233,19 +334,19 @@ describe("the leader conversations in the sidebar", () => {
     expect(rowIds()).toEqual(["lead-a", "lead-b", "newest", "mine"]);
     // the secretary made "mine" a lead: the tree has it; no reload, no reconnect
     named = { leaders: [
-      { id: "lead-a", name: "Product", counts: { working: 0, needs_you: 3 } },
-      { id: "lead-b", name: "Infrastructure", counts: { working: 0, needs_you: 0 } },
-      { id: "mine", name: "Docs sync", counts: { working: 1, needs_you: 0 } },
+      { id: "lead-a", name: "Product", counts: { working: 0, needs_you: 3 }, running: false },
+      { id: "lead-b", name: "Infrastructure", counts: { working: 0, needs_you: 0 }, running: false },
+      { id: "mine", name: "Docs sync", counts: { working: 1, needs_you: 0 }, running: true },
     ] };
     push({ type: "directions" });
     await flush();
     expect(rowIds()).toEqual(["lead-a", "lead-b", "mine", "newest"]);
     expect(row("mine").textContent).toContain("Docs sync");
-    expect(row("mine").textContent).toContain("在做 1");
+    expect(row("mine").querySelector('[data-shape="arc"][data-state="working"]')).not.toBeNull();
     expect(row("lead-a").textContent).toContain("等你 3");
     // the secretary group's counts are never a lead's
-    expect(host.querySelector("[data-sidebar-rows]")!.textContent).not.toContain("在做 9");
-    named = { leaders: [{ id: "mine", name: "Docs sync", counts: { working: 1, needs_you: 0 } }] };
+    expect(host.querySelector("[data-sidebar-rows]")!.textContent).not.toContain("等你 9");
+    named = { leaders: [{ id: "mine", name: "Docs sync", counts: { working: 1, needs_you: 0 }, running: true }] };
     push({ type: "directions" });
     await flush();
     // the ended ones leave 常驻 and are back among 最近 by their time

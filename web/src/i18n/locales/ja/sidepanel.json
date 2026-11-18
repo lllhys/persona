@@ -1,4 +1,6 @@
 {
+  "conversation_tasks": "会話のタスク",
+  "conversation_tasks_empty": "この会話にはまだタスクがありません。",
   "resize_label": "ドラッグしてパネルの幅を調整",
   "resize_title": "ドラッグして幅を調整",
   "files": "ファイル",
@@ -6,8 +8,10 @@
   "close": "パネルを閉じる",
   "preview": "プレビュー",
   "review": "レビュー",
+  "changes": "変更",
   "team": "コラボ",
   "background": "バックグラウンドタスク",
   "task": "タスク",
-  "agent": "エージェント"
+  "agent": "エージェント",
+  "sides": "子セッション"
 }

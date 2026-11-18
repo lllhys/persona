@@ -49,6 +49,8 @@ private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: 
     val signIn = remember(connectors, connectorId, owner) { connectors?.let { ConnectorSignInModel(it, connectorId) } }
     val idle = remember { kotlinx.coroutines.flow.MutableStateFlow(ConnectorSignIn()) }
     val signInState by (signIn?.state ?: idle).collectAsState()
+    val github = remember(connectors, connectorId) { GitHubAuthSession(scope) { failureReasonText(it).resolve(res) } }
+    val inboxHolder = remember(connectors, connectorId) { GitHubInboxHolder() }
 
     fun load() {
         if (connectors == null) {
@@ -72,6 +74,15 @@ private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: 
         }
     }
 
+    if (connectors != null) {
+        github.fetch = { connectors.gitHubAuth() }
+        github.apply = { machine -> connectors.setGitHubAuth(machine) }
+        github.onApplied = {
+            signIn?.cancel()
+            load()
+        }
+    }
+
     LaunchedEffect(connectors, connectorId, owner) { load() }
     BackHandler(onBack = onBack)
     // A code on screen: ask the hub again on its own until it is scanned or entered, while the page is shown and for a
@@ -91,9 +102,32 @@ private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: 
         feedback?.notice(if (who.isBlank()) res.getString(R.string.settings_src_connector_signed_in) else res.getString(R.string.settings_src_connector_signed_in_as, who))
         signIn?.signedInShown()
         load()
+        if (connectorId == "github") github.refresh()
     }
 
     val c = connector
+    LaunchedEffect(c?.id, owner) {
+        if (c != null && c.id == "github" && ConnectorText.signsInHere(c)) github.refresh()
+    }
+    val parsedInbox = if (c != null && c.id == "github") GitHubInboxOptions.parse(c.options) else null
+    LaunchedEffect(parsedInbox, connectors) {
+        if (inboxHolder.editor == null && parsedInbox != null && connectors != null) {
+            inboxHolder.editor = GitHubInboxEditor(parsedInbox, scope, { failure ->
+                res.getString(R.string.settings_gh_couldnt_save, failureReasonText(failure).resolve(res))
+            }) { options ->
+                connector = connectors.setGitHubInboxOptions(options)
+            }
+        }
+    }
+    // Read in this function, not only inside the list, so a new source or a saved option redraws the page.
+    github.auth
+    github.choosing
+    github.error
+    github.loading
+    val inboxEditor = inboxHolder.editor
+    inboxEditor?.options
+    inboxEditor?.draft
+    inboxEditor?.error
     val title = c?.name ?: connectorId
     val stateLabel = c?.let { ConnectorText.state(res, it) } ?: stringResource(if (loading) R.string.settings_src_checking else R.string.settings_src_state_not_connected)
     val statusDot = c?.let { ConnectorText.status(it) } ?: Status.Offline
@@ -132,7 +166,8 @@ private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: 
             subscriptionsEntry(subscriptions, onSubscriptions)
 
             if (signIn != null && ConnectorText.signsInHere(c)) {
-                connectorSignIn(c, signInState.bind, signIn, scope, onSignOut = { confirmingLogout = true })
+                if (c.id == "github") gitHubSignIn(c, github, signIn, signInState.bind, scope)
+                else connectorSignIn(c, signInState.bind, signIn, scope, onSignOut = { confirmingLogout = true })
             }
 
             item("settings-header") { JSectionHeader(stringResource(R.string.settings_src_settings_header)) }
@@ -201,6 +236,7 @@ private fun HubConnectorDetails(connectors: ConnectorsManagement?, connectorId: 
                     }
                 }
             }
+            if (c.id == "github") inboxEditor?.let { gitHubInbox(it) }
         }
         error?.let { err ->
             item("error") {

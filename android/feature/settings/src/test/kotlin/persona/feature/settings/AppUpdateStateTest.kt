@@ -10,6 +10,7 @@ import org.junit.Test
 import org.junit.Before
 import org.junit.After
 import persona.core.contracts.api.AppUpdate
+import persona.core.contracts.api.AppUpdateLookup
 import persona.core.contracts.api.AppUpdates
 import java.io.IOException
 
@@ -45,7 +46,9 @@ class AppUpdateStateTest {
         var now = 1_000_000L
         var attempt = 0L
         var dismissed = 0L
-        fun state(api: AppUpdates) = AppUpdateState(api, 100, { now }, { attempt }, { attempt = it }, { dismissed }, { dismissed = it })
+        var result: AppUpdateState.Result? = null
+        fun state(api: AppUpdates) = AppUpdateState(api, 100, { now }, { attempt }, { attempt = it }, { dismissed }, { dismissed = it },
+            initialResult = result, saveResult = { result = it })
     }
 
     @Test fun onlyANewerReleaseOffersInstallation() = runTest {
@@ -56,8 +59,82 @@ class AppUpdateStateTest {
             assertEquals(code > 100, model.state.value.notice)
             assertEquals(if (code > 100) code else null, model.state.value.latest?.versionCode)
             assertEquals(if (code > 100) null else R.string.settings_update_none, model.state.value.message)
+            assertEquals(if (code > 100) AppUpdateState.Result.Available else AppUpdateState.Result.UpToDate, model.state.value.result)
+            assertEquals(1_000_000L, model.state.value.lastChecked)
             assertFalse(model.state.value.checking)
         }
+    }
+
+    @Test fun missingApkIsNotReportedAsUpToDateAndSurvivesRecreation() = runTest {
+        val api = object : AppUpdates {
+            override suspend fun check(): AppUpdate? = null
+            override suspend fun lookup(): AppUpdateLookup = AppUpdateLookup.NotPublished
+        }
+        val saved = Saved()
+        val model = saved.state(api)
+        model.check(manual = true)
+        assertEquals(AppUpdateState.Result.NoApk, model.state.value.result)
+        assertEquals(R.string.settings_update_no_apk, model.state.value.message)
+        assertNull(model.state.value.latest)
+        val restored = saved.state(api)
+        assertEquals(AppUpdateState.Result.NoApk, restored.state.value.result)
+        assertEquals(saved.now, restored.state.value.lastChecked)
+    }
+
+    @Test fun cachedMetadataRestoresFailureAndCompletedInstallation() = runTest {
+        val failed = AppUpdateState(Api(release), 100, lastAttempt = { 1_000_000L },
+            initialLatest = release, initialResult = AppUpdateState.Result.Failed)
+        assertEquals(AppUpdateState.Result.Failed, failed.state.value.result)
+        assertEquals(release, failed.state.value.latest)
+        assertEquals(1_000_000L, failed.state.value.lastChecked)
+
+        val installed = AppUpdateState(Api(release), 101, lastAttempt = { 1_000_000L },
+            initialLatest = release, initialResult = AppUpdateState.Result.Available)
+        assertEquals(AppUpdateState.Result.UpToDate, installed.state.value.result)
+        assertNull(installed.state.value.latest)
+        assertEquals(1_000_000L, installed.state.value.lastChecked)
+    }
+
+    @Test fun invalidSourceDoesNotRecordACheck() = runTest {
+        val saved = Saved()
+        val api = Api(release)
+        val model = AppUpdateState(api, 100, clock = { saved.now }, lastAttempt = { saved.attempt },
+            saveAttempt = { saved.attempt = it }, validSource = { false })
+        model.check(manual = true)
+        assertEquals(0, api.calls)
+        assertEquals(0L, saved.attempt)
+        assertNull(model.state.value.lastChecked)
+        assertEquals(AppUpdateState.Result.Unknown, model.state.value.result)
+    }
+
+    @Test fun incompatiblePackageAndSigningIdentityAreExplained() = runTest {
+        val certificate = "c".repeat(64)
+        val identified = release.copy(packageName = "app.example", certificateSha256 = certificate)
+        val wrongPackage = AppUpdateState(Api(identified), 100,
+            installedPackage = "app.other", installedCertificates = setOf(certificate))
+        wrongPackage.check(manual = true)
+        assertEquals(AppUpdateState.Result.PackageMismatch, wrongPackage.state.value.result)
+        assertEquals(R.string.settings_update_package_mismatch_detail, wrongPackage.state.value.message)
+        assertNull(wrongPackage.state.value.latest)
+
+        val wrongKey = AppUpdateState(Api(identified), 100,
+            installedPackage = "app.example", installedCertificates = setOf("d".repeat(64)))
+        wrongKey.check(manual = true)
+        assertEquals(AppUpdateState.Result.SignatureMismatch, wrongKey.state.value.result)
+        assertEquals(R.string.settings_update_signature_mismatch_detail, wrongKey.state.value.message)
+        assertNull(wrongKey.state.value.latest)
+    }
+
+    @Test fun installRefreshRefusesNewlyIncompatibleMetadata() = runTest {
+        val api = Api(release)
+        val model = AppUpdateState(api, 100, initialLatest = release,
+            installedPackage = "app.example", installedCertificates = setOf("c".repeat(64)))
+        api.latest = release.copy(packageName = "app.other", certificateSha256 = "c".repeat(64))
+        var downloads = 0
+        model.install { downloads++ }
+        assertEquals(0, downloads)
+        assertEquals(AppUpdateState.Result.PackageMismatch, model.state.value.result)
+        assertEquals(R.string.settings_update_package_mismatch_detail, model.state.value.message)
     }
 
     @Test fun automaticFailuresAreQuietManualFailuresAreActionableAndRetryWorks() = runTest {

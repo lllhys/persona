@@ -57,6 +57,10 @@
         <item quantity="other">このアシスタントの %1$d 台のコンピュータは hub 自身のアシスタントに戻ります。</item>
     </plurals>
     <string name="settings_managers_delete_sources">ソース（メールアカウントなど）はこのアシスタント自身のデータベースにあります。先に別のアシスタントへ移さないと、一緒に削除されます。</string>
+    <string name="settings_managers_show_in_switcher">切り替えに表示</string>
+    <string name="settings_managers_switcher_note">オフにすると、このアシスタントがデフォルトでなくコンピュータもないあいだ、切り替えに表示しません</string>
+    <string name="settings_managers_switcher_in_use">デフォルトか、コンピュータがあるため、切り替えに表示されています</string>
+    <string name="settings_managers_switcher_unsupported">このハブのバージョンではまだ切り替えから外せません。ハブをアップデートしてからもう一度開いてください</string>
     <string name="settings_managers_needs_update">要更新</string>
     <string name="settings_managers_needs_update_note">このアシスタントの personad は古く、自分の設定（manager.json）をまだ読まないため、組み込みの既定値で動いています。動いているコンピューターで personad を更新してください。</string>
     <string name="settings_switcher_line">%1$s · %2$s</string>

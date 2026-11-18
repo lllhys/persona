@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"github.com/nwverse/persona/server/internal/assistant/kbhistory"
 	"net/http/httptest"
 	"slices"
 	"strings"
@@ -219,11 +220,11 @@ func TestKBSelectionCandidates(t *testing.T) {
 // While the import is stopped, the candidates come from the plan's list without asking the source.
 func TestKBSelectionCandidatesWhileStopped(t *testing.T) {
 	s, fh, data := historyToolService(t, nil, []connectorwire.HistoryChat{{ID: "d1", Name: "Direct One", Kind: "dm"}})
-	p := &historyPlan{Source: "chat", Chats: []historyPlanChat{{ID: "d1", Name: "Direct One", Kind: "dm"}}}
-	if err := saveHistoryPlan(data, p); err != nil {
+	p := &kbhistory.Plan{Source: "chat", Chats: []kbhistory.PlanChat{{ID: "d1", Name: "Direct One", Kind: "dm"}}}
+	if err := kbhistory.SavePlan(data, p); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeHistoryStop(data, historyStop{By: "tool"}); err != nil {
+	if err := kbhistory.WriteStop(data, kbhistory.Stop{By: "tool"}); err != nil {
 		t.Fatal(err)
 	}
 	w := selectionCall(t, s, "GET", "/api/v1/kb/selection/candidates?source=chat", "", roleFull)

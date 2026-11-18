@@ -66,22 +66,25 @@ func ghRun(ctx context.Context, dir string, timeout time.Duration, args ...strin
 
 // GitPR is the branch's pull request as the panel shows it.
 type GitPR struct {
-	Number         int           `json:"number"`
-	URL            string        `json:"url"`
-	Title          string        `json:"title"`
-	State          string        `json:"state"` // OPEN, CLOSED, MERGED
-	Draft          bool          `json:"draft,omitempty"`
-	Base           string        `json:"base"`
-	Head           string        `json:"head"`
-	HeadOID        string        `json:"head_oid,omitempty"`
-	Mergeable      string        `json:"mergeable,omitempty"`       // MERGEABLE, CONFLICTING, UNKNOWN
-	MergeState     string        `json:"merge_state,omitempty"`     // gh's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY…
-	Review         string        `json:"review,omitempty"`          // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED
-	AutoMerge      bool          `json:"auto_merge,omitempty"`      // set to merge when ready
-	Checks         []GitCheck    `json:"checks"`                    // the head commit's checks
-	ChecksState    string        `json:"checks_state,omitempty"`    // passing, failing, pending ("" when there are none)
-	ChecksComplete bool          `json:"checks_complete,omitempty"` // every rollup context was returned and its status was checked
-	Threads        []GitPRThread `json:"threads"`                   // the open (unresolved) review threads
+	Number          int           `json:"number"`
+	URL             string        `json:"url"`
+	Title           string        `json:"title"`
+	State           string        `json:"state"` // OPEN, CLOSED, MERGED
+	Draft           bool          `json:"draft,omitempty"`
+	Base            string        `json:"base"`
+	Head            string        `json:"head"`
+	HeadOID         string        `json:"head_oid,omitempty"`
+	Mergeable       string        `json:"mergeable,omitempty"`   // MERGEABLE, CONFLICTING, UNKNOWN
+	MergeState      string        `json:"merge_state,omitempty"` // gh's mergeStateStatus: CLEAN, BLOCKED, BEHIND, DIRTY…
+	Review          string        `json:"review,omitempty"`      // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED
+	ReviewsComplete bool          `json:"reviews_complete,omitempty"`
+	LastReviewAt    *time.Time    `json:"last_review_at,omitempty"`
+	AutoMerge       bool          `json:"auto_merge,omitempty"`      // set to merge when ready
+	Checks          []GitCheck    `json:"checks"`                    // the head commit's checks
+	ChecksState     string        `json:"checks_state,omitempty"`    // passing, failing, pending ("" when there are none)
+	ChecksComplete  bool          `json:"checks_complete,omitempty"` // every rollup context was returned and its status was checked
+	Threads         []GitPRThread `json:"threads"`                   // the open (unresolved) review threads
+	ThreadsComplete bool          `json:"threads_complete,omitempty"`
 }
 
 type GitCheck struct {
@@ -117,7 +120,7 @@ func (n *Node) gitPR(ctx context.Context, cwd string) (map[string]any, error) {
 	}
 	branch = strings.TrimSpace(branch)
 	out, err := ghRun(ctx, dir, 30*time.Second, "pr", "view", branch, "--json",
-		"number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,statusCheckRollup")
+		"number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,reviews,autoMergeRequest,statusCheckRollup")
 	if e, ok := err.(*rpc.Error); ok && e.Code == gitCodeNoPR {
 		return map[string]any{"pr": nil, "branch": branch}, nil
 	}
@@ -125,17 +128,20 @@ func (n *Node) gitPR(ctx context.Context, cwd string) (map[string]any, error) {
 		return nil, err
 	}
 	var v struct {
-		Number           int             `json:"number"`
-		URL              string          `json:"url"`
-		Title            string          `json:"title"`
-		State            string          `json:"state"`
-		IsDraft          bool            `json:"isDraft"`
-		BaseRefName      string          `json:"baseRefName"`
-		HeadRefName      string          `json:"headRefName"`
-		HeadRefOID       string          `json:"headRefOid"`
-		Mergeable        string          `json:"mergeable"`
-		MergeStateStatus string          `json:"mergeStateStatus"`
-		ReviewDecision   string          `json:"reviewDecision"`
+		Number           int    `json:"number"`
+		URL              string `json:"url"`
+		Title            string `json:"title"`
+		State            string `json:"state"`
+		IsDraft          bool   `json:"isDraft"`
+		BaseRefName      string `json:"baseRefName"`
+		HeadRefName      string `json:"headRefName"`
+		HeadRefOID       string `json:"headRefOid"`
+		Mergeable        string `json:"mergeable"`
+		MergeStateStatus string `json:"mergeStateStatus"`
+		ReviewDecision   string `json:"reviewDecision"`
+		Reviews          []struct {
+			SubmittedAt time.Time `json:"submittedAt"`
+		} `json:"reviews"`
 		AutoMergeRequest json.RawMessage `json:"autoMergeRequest"`
 		Checks           []struct {
 			Name       string `json:"name"`
@@ -181,8 +187,17 @@ func (n *Node) gitPR(ctx context.Context, cwd string) (map[string]any, error) {
 		}
 	}
 	pr.ChecksState = checksState(pr.Checks)
-	if threads, err := prThreads(ctx, dir, pr.URL); err == nil {
-		pr.Threads = threads
+	pr.ReviewsComplete = v.Reviews != nil && len(v.Reviews) < 100
+	for _, review := range v.Reviews {
+		if review.SubmittedAt.IsZero() {
+			pr.ReviewsComplete = false
+		} else if pr.LastReviewAt == nil || review.SubmittedAt.After(*pr.LastReviewAt) {
+			at := review.SubmittedAt
+			pr.LastReviewAt = &at
+		}
+	}
+	if threads, complete, err := prThreads(ctx, dir, pr.URL); err == nil {
+		pr.Threads, pr.ThreadsComplete = threads, complete
 	}
 	return map[string]any{"pr": pr, "branch": branch}, nil
 }
@@ -211,14 +226,14 @@ const threadsQuery = `query($owner: String!, $name: String!, $number: Int!) {
 }`
 
 // prThreads are the pull request's unresolved review threads (prURL: https://<host>/<owner>/<repo>/pull/<n>).
-func prThreads(ctx context.Context, dir, prURL string) ([]GitPRThread, error) {
+func prThreads(ctx context.Context, dir, prURL string) ([]GitPRThread, bool, error) {
 	u, err := url.Parse(prURL)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) != 4 || parts[2] != "pull" {
-		return nil, fmt.Errorf("not a pull request URL: %s", prURL)
+		return nil, false, fmt.Errorf("not a pull request URL: %s", prURL)
 	}
 	args := []string{"api", "graphql", "-f", "query=" + threadsQuery, "-F", "owner=" + parts[0], "-F", "name=" + parts[1],
 		"-F", "number=" + parts[3]}
@@ -227,7 +242,7 @@ func prThreads(ctx context.Context, dir, prURL string) ([]GitPRThread, error) {
 	}
 	out, err := ghRun(ctx, dir, 30*time.Second, args...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var v struct {
 		Data struct {
@@ -255,7 +270,7 @@ func prThreads(ctx context.Context, dir, prURL string) ([]GitPRThread, error) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out, &v); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	threads := []GitPRThread{}
 	for _, t := range v.Data.Repository.PullRequest.ReviewThreads.Nodes {
@@ -271,7 +286,8 @@ func prThreads(ctx context.Context, dir, prURL string) ([]GitPRThread, error) {
 		}
 		threads = append(threads, th)
 	}
-	return threads, nil
+	nodes := v.Data.Repository.PullRequest.ReviewThreads.Nodes
+	return threads, nodes != nil && len(nodes) < 50, nil
 }
 
 // gitPRCreate opens a pull request for the current branch, which must be pushed with nothing left to push.

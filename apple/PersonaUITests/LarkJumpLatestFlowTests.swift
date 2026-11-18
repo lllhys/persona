@@ -33,7 +33,9 @@ final class LarkJumpLatestFlowTests: XCTestCase {
         let shows = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in chat.label.contains("28") == unread }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [shows], timeout: 15), .completed, "the list row is not up to date")
         chat.tapCenter()
+        app.buttons["lark.chat.more"].tapCenter()
         XCTAssertTrue(app.buttons["lark.pins.open"].waitForExistence(timeout: 15))
+        app.tap() // close the menu without leaving the chat
         XCTAssertTrue(row(app, unread ? 21 : 48).waitForExistence(timeout: 15))
     }
 

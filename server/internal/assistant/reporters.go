@@ -175,7 +175,10 @@ func (s *Service) stopReporting(ctx context.Context, sid, by string) (stopResult
 	}
 	if by == "app" {
 		res.Conversation = true
-	} else if c, ok := s.session(ctx, machine, sid); ok && (c.Status == proto.StatusWorking || c.Starting) {
+	} else if c, ok := s.session(ctx, machine, sid); ok && (c.Status == proto.StatusWorking || c.Starting || c.Assistant && backgroundRunning(c)) {
+		// An assistant conversation whose turn ended may still run background work, which wakes it again when it
+		// finishes: its interrupt stops its process, and the background commands (its children) with it (#8960). An
+		// idle TUI agent's interrupt is Escape in its terminal, which stops none of them (#3793).
 		if err := s.call(ctx, machine, "session.interrupt", map[string]any{"session_id": sid}, nil); err != nil {
 			return res, err
 		}

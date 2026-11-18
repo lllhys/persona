@@ -14,25 +14,124 @@ import (
 
 // ---- what the assistant sees ----
 
-// snapshotTasks are the tasks opened from assistant conversations that are going on or ended in the last day.
-func (s *Service) snapshotTasks(ctx context.Context, web string) []prompts.SnapshotTask {
-	var list []Todo
-	for _, t := range s.todosOf(ctx, "*") {
-		if t.Origin != "" && (t.DoneAt == nil || time.Since(*t.DoneAt) < 24*time.Hour) && time.Since(t.UpdatedAt) < 7*24*time.Hour {
+// snapshotOpenTodoLimit, snapshotTaskLimit: how many rows of the open to-do index and of the task details one
+// conversation's snapshot shows. The cached snapshot keeps them all, so a conversation's own come first whatever the
+// others have (scopeSnapshot).
+const (
+	snapshotOpenTodoLimit = 100
+	snapshotTaskLimit     = 12
+)
+
+// snapshotOpenTodos is the compact index that keeps every ordinary-sized open todo discoverable: all of them, newest
+// first, and how many (scopeSnapshot shows a conversation the first snapshotOpenTodoLimit of its own). A failed start
+// is open as long as the app's To-dos count it open (snapshotFailedStarts), and marked as one.
+func (s *Service) snapshotOpenTodos(ctx context.Context, web string) ([]prompts.SnapshotOpenTodo, int) {
+	if s.ensureTodosLoaded(ctx) != nil {
+		return nil, 0
+	}
+	asked := s.askedInSnapshot(ctx)
+	s.todos.mu.RLock()
+	list := make([]Todo, 0, len(s.todos.todos))
+	var failed []Todo
+	for _, t := range s.todos.todos {
+		switch {
+		case asked[t.ID]:
+		case t.DoneAt == nil:
+			list = append(list, copyTodoLocked(t))
+		case t.failedStart():
+			failed = append(failed, copyTodoLocked(t))
+		}
+	}
+	var all []listedTodo
+	if len(failed) > 0 { // what a failed start is superseded by is read across every to-do, as the app's triage reads it
+		all = make([]listedTodo, 0, len(s.todos.todos))
+		for _, t := range s.todos.todos {
+			all = append(all, listedTodo{Todo: copyTodoLocked(t)})
+		}
+	}
+	s.todos.mu.RUnlock()
+	open := snapshotFailedStarts(failed, all, time.Now())
+	for _, t := range failed {
+		if open[t.ID] {
 			list = append(list, t)
 		}
 	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].CreatedAt.Equal(list[j].CreatedAt) {
+			return list[i].ID < list[j].ID
+		}
+		return list[i].CreatedAt.After(list[j].CreatedAt)
+	})
+	out := make([]prompts.SnapshotOpenTodo, 0, len(list))
+	for _, t := range list {
+		out = append(out, prompts.SnapshotOpenTodo{ID: t.ID, Title: clip(oneLine(t.Title), 40), Link: todoLink(web, t.ID), Owner: todoOwner(t),
+			Failed: t.DoneAt != nil})
+	}
+	return out, len(out)
+}
+
+// snapshotFailedStarts are those of failed (failed starts) that the app's To-dos count open (triageCountsAsOpen): one
+// that still waits on the owner (rule 1, younger than triageShelveAfter) and whose row's work did not finish in a related
+// to-do (triageSupersededFailedStarts over all). The snapshot's open count is the app's, so a failed start no longer
+// takes one off it (#10365).
+func snapshotFailedStarts(failed []Todo, all []listedTodo, now time.Time) map[string]bool {
+	if len(failed) == 0 {
+		return nil
+	}
+	superseded := triageSupersededFailedStarts(all)
+	open := make(map[string]bool, len(failed))
+	for _, t := range failed {
+		l := listedTodo{Todo: t}
+		if triageCountsAsOpen(t, triageTodo(l, nil, now, time.Time{}, nil, superseded[t.ID])) {
+			open[t.ID] = true
+		}
+	}
+	return open
+}
+
+// askedInSnapshot are the question to-dos the snapshot's own line (snapshotAsked) shows. Only those stay out of the
+// roster and the task list: one whose ask record was pruned (askTodoKeep, askTodoMax), or that line no longer shows, is
+// an ordinary to-do and is listed like any other, so no open to-do drops out of both.
+func (s *Service) askedInSnapshot(ctx context.Context) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range s.snapshotAsked(ctx) {
+		out[a.TodoID] = true
+	}
+	return out
+}
+
+// snapshotTasks are the open todos plus recent conversation tasks that have ended, the highest-priority first: all of
+// them (scopeSnapshot shows a conversation the first snapshotTaskLimit of its own).
+func (s *Service) snapshotTasks(ctx context.Context, web string) []prompts.SnapshotTask {
+	var list []Todo
+	if s.ensureTodosLoaded(ctx) != nil {
+		return nil
+	}
+	asked := s.askedInSnapshot(ctx)
+	s.todos.mu.RLock()
+	for _, row := range s.todos.todos {
+		t := copyTodoLocked(row)
+		if asked[t.ID] {
+			continue // questions have their own line in the snapshot
+		}
+		if t.DoneAt == nil || (t.Origin != "" && time.Since(*t.DoneAt) < 24*time.Hour && time.Since(t.UpdatedAt) < 7*24*time.Hour) {
+			list = append(list, t)
+		}
+	}
+	s.todos.mu.RUnlock()
 	sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt.After(list[j].CreatedAt) })
 	type ranked struct {
 		task prompts.SnapshotTask
 		rank int
+		open bool
 	}
 	var all []ranked
 	now := time.Now()
+	lists := machineSessions{} // each machine listed once for all the tasks
 	for _, t := range list {
-		agents := s.taskAgents(ctx, t)
+		agents := s.taskAgentsIn(ctx, t, lists)
 		st := taskState(t, agents)
-		if st == "followup" && time.Since(t.UpdatedAt) > 24*time.Hour {
+		if t.DoneAt != nil && st == "followup" && time.Since(t.UpdatedAt) > 24*time.Hour {
 			continue
 		}
 		if st == "done" && t.DoneBy == db.DoneByAuto {
@@ -46,6 +145,10 @@ func (s *Service) snapshotTasks(ctx context.Context, web string) []prompts.Snaps
 		task.Delivery = clip(oneLine(deliverySummary(t)), 80)
 		var rank int
 		task.Health, rank = taskHealth(t, agents, now) // supervised tasks: what needs the assistant first (supervise.go)
+		if dismissed, err := s.decisionDismissed(ctx, t); err == nil && dismissed {
+			// The owner chose Don't handle on this decision: not theirs to answer now, so it is not raised again.
+			task.Health, rank = "你选了不处理这个决定", 6 // i18n-ignore: the snapshot's words, as taskHealth has them
+		}
 		if v := t.Supervision; v.state(t) == reviewParked {
 			task.Health = parkedHealth(v.parked(), s.location(ctx)) // until when, in the owner's zone (parked.go)
 		}
@@ -61,27 +164,38 @@ func (s *Service) snapshotTasks(ctx context.Context, web string) []prompts.Snaps
 				reported(&task, p, taskLead(st, agents), now)
 			}
 		}
-		all = append(all, ranked{task, rank})
-		if len(all) == 30 {
-			break
-		}
+		all = append(all, ranked{task: task, rank: rank, open: t.DoneAt == nil})
 	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].rank < all[j].rank })
+	sort.SliceStable(all, func(i, j int) bool {
+		if all[i].open != all[j].open {
+			return all[i].open
+		}
+		if all[i].rank != all[j].rank {
+			return all[i].rank < all[j].rank
+		}
+		return false // list was newest first, so ties keep that order
+	})
 	var out []prompts.SnapshotTask
 	for _, r := range all {
 		out = append(out, r.task)
-		if len(out) == 12 {
-			break
-		}
 	}
 	return out
+}
+
+// todoOwner is whose task t is in the snapshot: the conversation that handed it out and the one that supervises it.
+func todoOwner(t Todo) prompts.SnapshotOwner {
+	o := prompts.SnapshotOwner{Origin: t.Origin}
+	if t.Supervision != nil {
+		o.Supervisor = t.Supervision.Supervisor
+	}
+	return o
 }
 
 // snapshotTask is one task in the snapshot, in state st: its lead agent's (taskLead) last words, the step it is on
 // while it works (or has said nothing yet: an agent that only runs tools, #1583) and its running subagents, as the
 // task cards show them (docs/assistant/unified-entry.md "Task cards").
 func snapshotTask(t Todo, st string, agents []proto.Session, now time.Time) prompts.SnapshotTask {
-	task := prompts.SnapshotTask{ID: t.ID, Title: clip(oneLine(t.Title), 60), State: taskStateLabel(st)}
+	task := prompts.SnapshotTask{ID: t.ID, Title: clip(oneLine(t.Title), 60), State: taskStateLabel(st), Owner: todoOwner(t)}
 	last := taskLead(st, agents)
 	if last.SessionID == "" {
 		return task
@@ -162,7 +276,7 @@ func taskLead(st string, agents []proto.Session) proto.Session {
 // assistant: an agent a usage limit stopped until its reset (usage_limit.go) is not interrupted for the user to
 // continue. It waits for the reset (its CLI or the manager goes on then), and a "Continue" before it is refused at once.
 func taskState(t Todo, agents []proto.Session) string {
-	if t.DoneAt != nil && t.StartError != "" {
+	if t.failedStart() {
 		return "failed"
 	}
 	// A cancelled task is closed but did not finish: it reads as "cancelled", never "done", however its agents settle.

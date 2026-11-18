@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor
 struct RebuildTests {
@@ -72,7 +73,8 @@ struct RebuildTests {
         }
     }
 
-    @Test func supervisionAndMultiBlockInputsRebuildIncrementallyLikeAFullTranscript() {
+    /// A supervision round's input of a picture and two text blocks, then a queued message with its picture after its text.
+    static var multiBlockInputs: [Item] {
         var supervise = Self.item(3, "user", .text, text: "Fictional supervision", queued: true)
         supervise.id = "u3#1"
         supervise.injected = Injected(kind: "system", state: "supervise", line: "Check tasks", level: "triage")
@@ -86,15 +88,19 @@ struct RebuildTests {
         nextPhoto.id = "u6#1"
         var next = Self.item(6, "user", .text, text: "Next genuine queued input", queued: true)
         next.id = "u6#0"
-        let items = [Self.item(1, "user", .text, text: "First request"), Self.item(2, "assistant", .text, text: "First answer"),
-                     photo, supervise, extra, Self.item(4, "assistant", .text, text: "Supervision answer"),
-                     Self.item(5, "system", .recap, text: "Fictional recap"), next, nextPhoto,
-                     Self.item(7, "assistant", .text, text: "Next answer"), Self.item(8, "user", .text, text: "Last request")]
+        return [Self.item(1, "user", .text, text: "First request"), Self.item(2, "assistant", .text, text: "First answer"),
+                photo, supervise, extra, Self.item(4, "assistant", .text, text: "Supervision answer"),
+                Self.item(5, "system", .recap, text: "Fictional recap"), next, nextPhoto,
+                Self.item(7, "assistant", .text, text: "Next answer"), Self.item(8, "user", .text, text: "Last request")]
+    }
+
+    @Test func supervisionAndMultiBlockInputsRebuildIncrementallyLikeAFullTranscript() {
+        let items = Self.multiBlockInputs
         var settled: ChatStore.SettledRows?
         for count in 1...items.count {
             let prefix = Array(items.prefix(count))
             let built = ChatStore.rebuild(prefix, settled: settled)
-            let fullRows = ChatStore.buildRows(ChatStore.picturesAfterTheirText(prefix))
+            let fullRows = ChatStore.buildRows(prefix) // once, as a full build does (#8706)
             #expect(built.rows == fullRows, "\(count) items: rows")
             #expect(built.blocks == ChatBlock.build(fullRows), "\(count) items: blocks")
             settled = built.settled
@@ -179,5 +185,128 @@ extension RebuildTests {
         #expect(store.rows == expected)
         #expect(store.blocks == ChatBlock.build(expected))
         #expect(store.items.allSatisfy { $0.id.hasPrefix("replacement-") })
+    }
+}
+
+/// A picture sent before two text blocks of its message (#8706).
+extension RebuildTests {
+    private static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+
+    /// One entry of a picture and two text blocks: claude -p writes a message's pictures first.
+    static func pictureBeforeTwoTexts(_ seq: Int) -> [Item] {
+        var photo = item(seq, "user", .image)
+        photo.id = "u\(seq)#0"
+        photo.image = ImagePayload(mime: "image/png", data: "")
+        var first = item(seq, "user", .text, text: "Fictional first block")
+        first.id = "u\(seq)#1"
+        var second = item(seq, "user", .text, text: "Fictional second block")
+        second.id = "u\(seq)#2"
+        return [photo, first, second]
+    }
+
+    /// The picture goes after the first text block and stays there: `buildRows`, a full `rebuild` and an incremental one
+    /// draw the same rows. `rebuild` ordered the items and `buildRows` ordered them again, which moved it behind the second.
+    @Test func aPictureBeforeTwoTextBlocksStaysWithTheFirst() {
+        let entry = Self.pictureBeforeTwoTexts(5)
+        let kept = ["u5#1", "u5#0", "u5#2"]
+        func entryRows(_ rows: [ChatRow]) -> [String] { rows.map(\.id).filter { $0.hasPrefix("u5#") } }
+        #expect(ChatStore.picturesAfterTheirText(entry).map(\.id) == kept)
+        let before = [Self.item(1, "user", .text, text: "First request"), Self.item(2, "assistant", .text, text: "First answer"),
+                      Self.item(3, "user", .text, text: "Second request"), Self.item(4, "assistant", .text, text: "Second answer")]
+        let answer = [Self.item(6, "assistant", .text, text: "About the picture")]
+        let next = [Self.item(7, "user", .text, text: "Last request"), Self.item(8, "assistant", .text, text: "Last answer")]
+        // The message alone, last (its exchange is the tail), and settled before the next message.
+        for items in [entry, before + entry, before + entry + answer, before + entry + answer + next] {
+            let rows = ChatStore.buildRows(items)
+            #expect(entryRows(rows) == kept, "\(items.count) items: buildRows")
+            let full = ChatStore.rebuild(items, settled: nil)
+            #expect(entryRows(full.rows) == kept, "\(items.count) items: rebuild")
+            #expect(full.rows == rows && full.blocks == ChatBlock.build(rows), "\(items.count) items: rebuild")
+        }
+        // Incrementally, as the lines arrive.
+        var all = before
+        var settled = ChatStore.rebuild(all, settled: nil).settled
+        for more in [entry, answer, next] {
+            #expect(settled != nil, "\(all.count) items: settled")
+            all += more
+            let built = ChatStore.rebuild(all, settled: settled)
+            let rows = ChatStore.buildRows(all)
+            #expect(entryRows(built.rows) == kept, "\(all.count) items: incremental")
+            #expect(built.rows == rows && built.blocks == ChatBlock.build(rows), "\(all.count) items: incremental")
+            settled = built.settled
+        }
+    }
+
+    /// What the store publishes comes from `rebuild`: it settles on `buildRows` (#8705's replay saw it never did).
+    @Test func theStoreDrawsAPictureBeforeTwoTextBlocksWithTheFirst() async throws {
+        let store = ChatStore(key: SessionKey(machineID: "rebuild-tests", sessionID: UUID().uuidString))
+        store.merge([Self.item(1, "user", .text, text: "First request"), Self.item(2, "assistant", .text, text: "First answer")])
+        store.merge(Self.pictureBeforeTwoTexts(3) + [Self.item(4, "assistant", .text, text: "About the picture")])
+        let expected = ChatStore.buildRows(store.items)
+        #expect(expected.map(\.id).filter { $0.hasPrefix("u3#") } == ["u3#1", "u3#0", "u3#2"])
+        let deadline = ContinuousClock.now + .seconds(5)
+        while store.rows != expected && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(store.rows == expected)
+        #expect(store.blocks == ChatBlock.build(expected))
+    }
+
+    /// A second pass changes nothing: over the fixtures here, every `items` list of the lines corpus
+    /// (`spec/fixtures/lines`, its iOS cases too), and every run of up to five items made of two lines' pictures and
+    /// texts, an answer and a tool's picture.
+    @Test func picturesAfterTheirTextTwiceIsOnce() throws {
+        var fixtures: [[Item]] = (UInt64(1)...40).map { Self.session($0, count: 160) }
+        fixtures += [Self.multiBlockInputs, Self.pictureBeforeTwoTexts(5)]
+        let corpus = try Self.linesCorpusItems()
+        #expect(corpus.contains { $0.contains { $0.kind == .image && $0.toolUseID == nil } }, "the corpus has the user's pictures")
+        fixtures += corpus
+        var tool = Self.item(1, "user", .image, tool: "t1")
+        tool.toolName = nil
+        let pieces = [Self.item(1, "user", .image), Self.item(1, "user", .text, text: "one"), Self.item(2, "user", .image),
+                      Self.item(2, "user", .text, text: "two"), Self.item(1, "assistant", .text, text: "answer"), tool]
+        func runs(_ run: [Item], _ left: Int) {
+            if !run.isEmpty { fixtures.append(run) }
+            guard left > 0 else { return }
+            for piece in pieces {
+                var it = piece
+                it.id = "i\(piece.seq)#\(run.count)"
+                runs(run + [it], left - 1)
+            }
+        }
+        runs([], 5)
+        var moved = 0
+        var failures: [[String]] = []
+        for items in fixtures {
+            let once = ChatStore.picturesAfterTheirText(items)
+            if once != items { moved += 1 }
+            if ChatStore.picturesAfterTheirText(once) != once { failures.append(items.map { "\($0.id) \($0.role) \($0.kind)" }) }
+        }
+        #expect(moved > 0, "no picture moved in \(fixtures.count) runs")
+        #expect(failures.isEmpty, "\(failures.count) of \(fixtures.count), first: \(failures.prefix(3))")
+    }
+
+    /// Every `items` list in the lines corpus: the cases' inputs and their operations' pages.
+    static func linesCorpusItems() throws -> [[Item]] {
+        let dir = repo.appending(path: "spec/fixtures/lines")
+        let files = (FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? [])
+            .filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }
+        #expect(!files.isEmpty, "no corpus at \(dir.path)")
+        var out: [[Item]] = []
+        func walk(_ value: Any) throws {
+            if let object = value as? [String: Any] {
+                for (key, inner) in object {
+                    if key == "items", let list = inner as? [[String: Any]], list.first?["seq"] != nil {
+                        out.append(try JSON.decoder.decode([Item].self, from: JSONSerialization.data(withJSONObject: list)))
+                    } else {
+                        try walk(inner)
+                    }
+                }
+            } else if let array = value as? [Any] {
+                for inner in array { try walk(inner) }
+            }
+        }
+        for file in files { try walk(JSONSerialization.jsonObject(with: Data(contentsOf: file))) }
+        return out
     }
 }

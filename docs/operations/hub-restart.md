@@ -106,11 +106,14 @@ Now `personad hub run` (Linux, macOS) is an **edge**:
 - The edge forwards every connection byte for byte, first writing a PROXY v2 header stating the origin. So the slot's `RemoteAddr` / `LocalAddr` are still the client's address and the address it connected to,
   and trust decisions by origin (loopback, LAN, VPN interface, the user's own PROXY protocol upstream) work as before.
 - TLS certificates, public-key pinning and the database belong to the slot; the edge only forwards TCP.
+- On a machine with more than 4 cores the edge, the slot and the built-in manager keep at most 4 Ps (GOMAXPROCS), as the node does: they are I/O-bound, and every P costs threads and memory (#3533, `server/internal/procs/procs.go`). The edge caps itself and starts the slot with `GOMAXPROCS=4` and a marker, `PERSONA_GOMAXPROCS_CAP=4`; the slot starts the manager the same way; each takes both out of its environment at its start, so the node, Agents and tools they start never inherit them. A machine or container with 4 CPUs or fewer keeps the runtime's own value. To run the hub with another value, set `GOMAXPROCS` in its environment (its systemd unit, launchd plist or compose file): it wins and passes on unchanged.
 
 One switch (self-update, `personad hub switch`, deploy.sh), in order:
 
 1. The new binary starts as the **standby** slot: it reports its version and build number, self-checks the config, verifies it can reach the database (`db.Check`, no migration), then waits.
    Meanwhile the old slot keeps serving; if the version is wrong, it fails to start, or it cannot reach the database, the new one is killed and the old one keeps running with no interruption at all.
+   That holds however many switches fail in a row: a new slot takes the name (a or b) the slot that served last is not using, so a standby never shares the serving slot's sockets,
+   and when a slot exits the edge removes only socket files that slot left, never one that was already there when it started (#6024).
 2. The edge starts to **hold**: new connections queue at the edge instead of being refused. Then it tells the old slot to **release**, and it stops through the planned-shutdown flow: `hub_restarting`, hand over machines and the event log, 1001.
 3. It tells the new slot to **activate**: migrate the database, take over machines, start listening, report ready. The edge switches routing over and releases the queued connections to it.
 4. If the new slot fails to take over (migration failure, exit, timeout), it switches back to the previous version: `--prev`, or during self-update the edge swaps back the files recorded in the pending marker.
@@ -139,6 +142,8 @@ SIGTERM no longer cancels the hub's ctx directly; it runs `beginStop` first:
 2. Send every client `{"type":"hub_restarting","back_in_ms":3000}`, waiting up to 300 ms for it to go out;
 3. Hand the `NodeInfo` and session lists of the machines online at this moment, as the managers reported them, to the next hub (its own settings, `hub_settings` `hub.devices_warm`), and write what each manager has (`hub.machine_entries`; a machine connected at this moment is last seen now);
 4. Then cancel the ctx and stop in the original order: close the listener → close WebSockets with 1001 (reason changed to "hub restarting") → drain HTTP → wait for node connections → **hand over the event log** → close the database.
+
+The two machine writes form one bounded shutdown step. A stalled Store call or a wait for `reportedSave` cannot hold `beginStop` past the step and total shutdown budgets; the stop caller advances while an already-started Store call finishes with its context. If the handover was waiting for `reportedSave` when its context expired, it returns after acquiring the lock without starting another write. An already-running background machine-entries write keeps its own timeout and is not joined after the handover deadline.
 
 During shutdown, node connections drop, machines go offline and their interactions end; all of this is caused by the shutdown itself, so it is **no longer broadcast** (`detach` / `markOffline` check `stopping`).
 Previously clients received a string of "machine offline" and "interaction ended" just before being disconnected, then saw it all come back after reconnecting.
@@ -315,8 +320,8 @@ Socket activation caveats:
   signal-to-readiness is reported separately because preflight and idle-process drain happen while the old node still answers.
   Neither measurement claims that the active connection survives exec. Raw logs stay private; the last line is `PASS` / `FAIL` / `TIMEOUT`.
 - Blue-green switching:
-  - `internal/hubedge` tests (Linux / macOS): the test binary plays the slot itself. Covers source addresses, zero failed requests during switching, concurrency across 6 consecutive switches, a new version that cannot start,
-    rollback after failed takeover, a slot requesting its own switch, rejection of a wrong build number, rollback of an unconfirmed update, and restart after a crash.
+  - `internal/hubedge` tests (Linux / macOS): the test binary plays the slot itself. Covers source addresses, zero failed requests during switching, concurrency across 6 consecutive switches, a new version that cannot start
+    (also several times in a row, then a switch that succeeds), rollback after failed takeover, a slot requesting its own switch, rejection of a wrong build number, rollback of an unconfirmed update, and restart after a crash.
   - `TestUpdateHandsOverToTheEdge` and others in `hub`; `scripts/test/test_hub_switch_deploy.py` (hub-systemd.sh's three outcomes).
   - End-to-end test with real personad: private Postgres, v1 → `hub switch` → v2, with continuous requests to `/api/v1/health`, then try a binary that cannot start.
 - Unit / integration tests (`server/`): `TestEventLogSince`, `TestHelloResumes`, `TestStampEvent`, `TestListenInherited` (pass fd 3 to a child like systemd),

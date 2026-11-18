@@ -11,7 +11,7 @@ Lifecycle writes use the extension's owning manager and extension ID together. T
 ## Sections, in order
 
 1. **Enabled** — the first control, before setup and configuration.
-2. **Extension configuration** — setup/sign-in, declared settings, secrets and capability-specific controls, followed by that configuration's Save action. If there are no configurable fields, show **No configuration required**.
+2. **Extension configuration** — setup/sign-in, declared settings, secrets and capability-specific controls, followed by that configuration's Save action. If there are no configurable fields, show **No configuration required** under the section's heading. Otherwise every group in it (Pages, Settings, a form's own groups, Secrets) has a heading of its own and the section's heading is not shown; the section keeps its name for assistive technology (#8853).
 3. **Information** — a read-only identity and provenance summary.
 4. **Updates** — update availability, manual checks/review, automatic upgrades and rollback history.
 5. **Danger zone** — uninstall, last on the page, with explicit confirmation.
@@ -34,7 +34,8 @@ Canonical English wording is listed below; each client localizes it through its 
 
 ### Extension configuration
 
-- Label: **Extension configuration**.
+- Label: **Extension configuration**, shown only over **No configuration required** (see above). The form's ungrouped fields are headed **Settings**.
+- The header's **Still needs** line opens the secret it names: the first one not set that is required or whose title the line contains (the hub writes a missing secret's own title into `needs_setup`). Anything else it names (a dependency, a configuration an upgrade no longer takes) stays plain text, as does the line where the page offers no secrets to set (a read-only extension) (#8853).
 - Authentication, a connection test, choosing a computer and additional module-specific controls belong here. These are not lifecycle controls.
 - Save applies only configuration; toggling Enabled or Auto-upgrade must not submit a dirty configuration form.
 - Never return a stored secret to the client. Show its saved state, provide an empty replacement input and preserve it when left unchanged. Configuration validation and authentication errors stay inside this section.

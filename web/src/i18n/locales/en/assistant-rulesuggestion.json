@@ -1,0 +1,22 @@
+{
+  "label": "Suggested rule",
+  "always": "Always",
+  "not_now": "Not now",
+  "always_title": "Make this a rule",
+  "not_now_title": "Don't suggest this for 30 days",
+  "joined": "{first} {second}",
+  "list_separator": ", ",
+  "creates_plan_start": "Always remembers this kind of task: tasks that change files in {directory} and its subfolders on {machine} start without asking.",
+  "creates_standing": "Always adds a standing authorization for {directory} on {machine}: {action}.",
+  "creates_conditions": "Only when: {conditions}.",
+  "creates_quote": "Kept as your words: “{quote}”.",
+  "creates_delegate": "Always stores no rule and turns nothing on: it only puts this suggestion away for 30 days.",
+  "made_plan_start": "Remembered: tasks like this now start without asking.",
+  "made_standing": "Standing authorization added.",
+  "made_delegate": "No rule was stored and nothing was turned on.",
+  "where": "Listed and removed in Settings › {tab} › {list}.",
+  "where_delegate": "No app has a switch for this yet: it is turned on in the assistant's configuration file on the hub's computer ({setting}).",
+  "open_settings": "Open settings",
+  "hidden": "Not suggested again for 30 days.",
+  "failed": "Couldn't save your answer. {error}"
+}

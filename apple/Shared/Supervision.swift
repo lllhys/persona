@@ -76,15 +76,17 @@ nonisolated struct TaskSupervision: Codable, Hashable, Sendable {
     var round: Int
     var reviews: [Review]
     var updatedAt: Date?
+    /// When the task entered `pending_review`; nil in every other state, and from an older hub.
+    var pendingSince: Date?
     var progress: Progress?
 
     enum CodingKeys: String, CodingKey {
         case supervisor, state, round, reviews, progress
-        case doneWhen = "done_when", expectMinutes = "expect_minutes", updatedAt = "updated_at"
+        case doneWhen = "done_when", expectMinutes = "expect_minutes", updatedAt = "updated_at", pendingSince = "pending_since"
     }
 
     init(supervisor: String = "", doneWhen: [String] = [], expectMinutes: Int? = nil, state: String = "", round: Int = 0,
-         reviews: [Review] = [], updatedAt: Date? = nil, progress: Progress? = nil) {
+         reviews: [Review] = [], updatedAt: Date? = nil, pendingSince: Date? = nil, progress: Progress? = nil) {
         self.supervisor = supervisor
         self.doneWhen = doneWhen
         self.expectMinutes = expectMinutes
@@ -92,6 +94,7 @@ nonisolated struct TaskSupervision: Codable, Hashable, Sendable {
         self.round = round
         self.reviews = reviews
         self.updatedAt = updatedAt
+        self.pendingSince = pendingSince
         self.progress = progress
     }
 
@@ -104,6 +107,7 @@ nonisolated struct TaskSupervision: Codable, Hashable, Sendable {
         round = (try? c.decodeIfPresent(Int.self, forKey: .round)) ?? 0
         reviews = (try? c.decodeIfPresent([Review].self, forKey: .reviews)) ?? []
         updatedAt = try? c.decodeIfPresent(Date.self, forKey: .updatedAt)
+        pendingSince = try? c.decodeIfPresent(Date.self, forKey: .pendingSince)
         progress = try? c.decodeIfPresent(Progress.self, forKey: .progress)
     }
 
@@ -179,6 +183,10 @@ nonisolated struct ReviewBadge: Hashable, Sendable {
 
     /// "Rework round 1 · 1/2", or the label alone without criteria.
     var text: String { count.isEmpty ? label : "\(label) · \(count)" }
+
+    /// What a task's row among the tasks in progress says while its supervisor's review is under way and not yet the
+    /// owner's (docs/assistant/unified-entry.md "Needs you and In progress"); "Awaiting review" is the owner's.
+    static var supervisorReview: String { String(localized: "Supervisor reviewing") }
 }
 
 /// One criterion's line in the checklist.

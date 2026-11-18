@@ -40,7 +40,8 @@ struct MeetingThreadView: View {
     }
 
     @Environment(AppModel.self) private var model
-    @Environment(\.dynamicTypeSize) private var size
+    /// The size the lines' words read at: their layout follows it, not the interface's cap.
+    @Environment(\.readingTypeSize) private var reading
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var conversation = MeetingConversation.shared
     /// This view's hold on the conversations it shows (`AppModel.subscribe`).
@@ -96,7 +97,8 @@ struct MeetingThreadView: View {
             resubscribe()
         })
         .onChange(of: wanted) { resubscribe() }
-        .onChange(of: RoomInput(items: signature(roomKey), asks: meeting.asks, ended: !entry.active), initial: true) { rebuildRoom() }
+        .onChange(of: RoomInput(items: signature(roomKey), asks: meeting.asks, ended: !entry.active,
+                                presence: entry.attendance?.presence ?? []), initial: true) { rebuildRoom() }
         .onChange(of: signature(followupKey), initial: true) { rebuildFollowup() }
         .onChange(of: sends) { markDelivered() }
         .onChange(of: JustMeInput(asks: mine, chats: chatKeys(mine).map { signature($0) }), initial: true) { rebuildReplies() }
@@ -174,7 +176,7 @@ struct MeetingThreadView: View {
         }
         // While it records the meeting hasn't ended: a line from it with nothing after (a withdrawn photo's) is no end.
         roomEntries = MeetingThread.room(model.chat(key).items, recordingID: entry.id, asks: asks.map { MeetingThread.AskInfo($0) },
-                                         ended: !entry.active)
+                                         ended: !entry.active, presence: entry.attendance?.presence ?? [])
         roomRows = mode == .after ? MeetingThread.merged(roomEntries, asks: asks) : roomEntries.map { .entry($0) }
         let photos = Set(MeetingThread.photoIDs(roomEntries))
         if roomPhotos != photos { roomPhotos = photos }
@@ -281,7 +283,7 @@ struct MeetingThreadView: View {
             ForEach(apart, id: \.self) { photoID in photoRow(photoID, inRoom: false, roomReady: ready) }
         }
         if mode == .live {
-            if roomKey == nil, role.attends, meeting.room?.known == .starting {
+            if roomKey == nil, role.answers, meeting.room?.known == .starting {
                 HStack(spacing: Theme.Space.s) {
                     ProgressView()
                     Text("Persona is joining the meeting…").font(Theme.Font.secondary).foregroundStyle(.secondary)
@@ -295,7 +297,7 @@ struct MeetingThreadView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .surface(in: .rect(cornerRadius: Theme.Radius.card, style: .continuous))
             }
-            if roomKey != nil, meeting.room?.known == .ready, role.attends, local.isEmpty, !Self.asked(roomEntries) {
+            if roomKey != nil, meeting.room?.known == .ready, role.answers, local.isEmpty, !Self.asked(roomEntries) {
                 Text(role.speaks ? String(localized: "Ask Persona about the meeting. Answers may be heard by the room.")
                      : String(localized: "Ask Persona about the meeting. Answers are shown on this screen."))
                     .font(Theme.Font.secondary).foregroundStyle(.secondary)
@@ -444,22 +446,22 @@ struct MeetingThreadView: View {
         case .joined:
             quiet(String(localized: "Persona joined the meeting"))
                 .accessibilityIdentifier("meeting-thread-joined")
+        case .left:
+            quiet(String(localized: "Persona left the meeting"))
+                .accessibilityIdentifier("meeting-thread-left")
         case .ended:
             quiet(String(localized: "The meeting ended"))
                 .accessibilityIdentifier("meeting-thread-ended")
         case .lines(let id, _, let lines):
             let full = lines.count == 1 ? String(localized: "1 line from the meeting") : String(localized: "\(lines.count) lines from the meeting")
-            let short = lines.count == 1 ? String(localized: "1 line") : String(localized: "\(lines.count) lines")
-            fold(id, title: size.isAccessibilitySize ? short : full, spoken: full, symbol: Theme.Icon.quote) {
+            fold(id, title: full, spoken: full, symbol: Theme.Icon.quote) {
                 linesList(lines)
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("meeting-thread-lines")
         case .heard(let id, _, let clock, let lines, _):
             let full = clock.isEmpty ? String(localized: "What was just said") : String(localized: "What was just said (\(clock))")
-            // At accessibility sizes the time steps aside (its lines carry theirs): the capsule stays one line.
-            fold(id, title: size.isAccessibilitySize ? String(localized: "What was just said") : full, spoken: full,
-                 symbol: Theme.Icon.voiceListening) {
+            fold(id, title: full, spoken: full, symbol: Theme.Icon.voiceListening) {
                 linesList(lines)
             }
             .accessibilityElement(children: .combine)
@@ -551,7 +553,7 @@ struct MeetingThreadView: View {
     }
 
     /// A folded row: one line in a capsule, a tap opens what it holds under it. The capsule is a button, so its words
-    /// stay on one line at every size (shorter ones at accessibility sizes, `spoken` saying them whole).
+    /// stay on one line at every size (`spoken` says them whole).
     private func fold<Content: View>(_ id: String, title: String, spoken: String, symbol: String,
                                      @ViewBuilder content: () -> Content) -> some View {
         let isOpen = open.contains(id)
@@ -597,9 +599,9 @@ struct MeetingThreadView: View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             ForEach(lines.indices, id: \.self) { index in
                 let stamp = Text(lines[index].clock).font(Theme.Font.caption.monospacedDigit()).foregroundStyle(.secondary)
-                let words = Text(lines[index].text).font(Theme.Font.secondary).textSelection(.enabled)
+                let words = Text(lines[index].text).readingContent().font(Theme.Font.secondary).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                if size.isAccessibilitySize {
+                if reading?.isAccessibilitySize == true {
                     VStack(alignment: .leading, spacing: Theme.Space.xxs) { stamp; words }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) { stamp; words }
@@ -678,6 +680,7 @@ private struct RoomInput: Equatable {
     var items: String
     var asks: [MeetingAskWire.Ask]
     var ended: Bool
+    var presence: [RecordingPresence]
 }
 
 // MARK: Photos
@@ -708,8 +711,6 @@ private struct MeetingPhotoRow: View {
     @Binding var confirming: MeetingPhotoItem?
     @Binding var viewing: MeetingPhotoItem?
 
-    @Environment(\.dynamicTypeSize) private var size
-
     var body: some View {
         if let item = album.items[photoID] {
             row(item)
@@ -728,10 +729,8 @@ private struct MeetingPhotoRow: View {
     private func row(_ item: MeetingPhotoItem) -> some View {
         let busy = album.deleting.contains(item.photoID)
         let problem = album.problems[item.photoID]
-        let layout = size.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.Space.s))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: Theme.Space.m))
         return VStack(alignment: .leading, spacing: Theme.Space.s) {
-            layout {
+            HStack(alignment: .top, spacing: Theme.Space.m) {
                 Button { viewing = item } label: {
                     MeetingPhotoThumb(recording: recording, photoID: item.photoID, n: item.n, ready: item.hasImage)
                 }
@@ -831,9 +830,7 @@ private struct MeetingPhotoRow: View {
     /// A failed photo's buttons: Retry when sending it again can help, and Delete Photo, so a refusal the hub would give
     /// again never leaves the row with nothing to do but a hidden long press.
     private func failedControls(_ item: MeetingPhotoItem) -> some View {
-        let layout = size.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Theme.Space.s))
-            : AnyLayout(HStackLayout(spacing: Theme.Space.s))
-        return layout {
+        return HStack(spacing: Theme.Space.s) {
             if item.retryable, let local = item.local {
                 Button { MeetingPhotos.shared.retry(local.id) } label: { Label("Retry", systemImage: Theme.Icon.retry).lineLimit(1) }
                     .themedButton()
@@ -967,8 +964,8 @@ struct MeetingPhotoViewer: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .themedGroupedPage()
-                .overlay(alignment: .topTrailing) {
-                    RecordingSheetCloseButton(title: String(localized: "Done"), identifier: "meeting-photo-viewer-done") { dismiss() }
+                .overlay(alignment: .topLeading) {
+                    RecordingCornerButton(kind: .close, identifier: "meeting-photo-viewer-done") { dismiss() }
                         .padding(.horizontal, Theme.Space.page)
                 }
             }

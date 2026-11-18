@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 // Claude Code's ultracode switch on iOS, the Mac and the watch (#1307; the server is #3427, docs/protocol/protocol.md
 // "Claude Code ultracode"; the web's lib/ultracode.ts does the same): with it on, Claude runs every substantive task as a

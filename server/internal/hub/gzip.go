@@ -66,7 +66,7 @@ func encodable(r *http.Request) bool {
 	p := r.URL.Path
 	switch {
 	case r.Method == http.MethodHead, r.Method == http.MethodConnect,
-		r.Header.Get("Range") != "", r.Header.Get("Upgrade") != "", longLived(p),
+		r.Header.Get("Range") != "", r.Header.Get("Upgrade") != "", longLived(r),
 		p == "/admin", strings.HasPrefix(p, "/admin/"), strings.HasPrefix(p, "/api/v1/admin/"):
 		return false
 	}

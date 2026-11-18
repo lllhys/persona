@@ -80,6 +80,10 @@ func TestAssistantAgentCustomLaunchersStillUseProbe(t *testing.T) {
 }
 
 func TestAssistantAgentRuntimeCanOfferCodexLauncher(t *testing.T) {
+	// A shell launcher of the same name wins over the runtime (assistantRuntime), and the shell's list is a package
+	// cache: an earlier test that listed this computer's real shell (one with codex installed) left "codex" in it, so
+	// the test failed from its second run in a process on. It is about a shell without one.
+	shellLaunchers(t)
 	n, _ := runtimeNode(t)
 	hello := assistantRuntimeHello()
 	hello["launcher"] = "codex"

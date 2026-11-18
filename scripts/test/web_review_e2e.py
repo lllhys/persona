@@ -5,7 +5,7 @@ comment on a line and one on a range wait in the review as drafts at their lines
 them); a comment straight to the message box; lines hidden between hunks read from the file on disk; a file too big
 for the page is asked for on its own; a key it does not show; the summary and Send review send one message with every
 comment's block through the chat's message box; Add to message box puts them above it to edit first; and the states:
-nothing changed, not a repository, an old node, no default branch, a commit picked.
+nothing changed, not a repository, a folder that is gone, an old node, no default branch, a commit picked.
 
 Needs a running web page against the fake hub with MOCK_FILES=1 MOCK_REVIEW=1 (scripts/mock/mock_review.py: its GET
 /mock/review?mode= switches the state and lists the requests) and Playwright for Python:
@@ -223,7 +223,7 @@ def run(browser, base, hub, token, size, theme, shots, full):
     ok(f"{tag}: since a commit picked from the recent ones")
     shot("since")
 
-    for mode, text, name in (("clean", "没有未提交的改动", "clean"), ("nogit", "不是 Git 仓库", "nogit"), ("outdated", "更新这台电脑后才能评审改动", "outdated")):
+    for mode, text, name in (("clean", "没有未提交的改动", "clean"), ("nogit", "不是 Git 仓库", "nogit"), ("nofolder", "已经不在了", "nofolder"), ("outdated", "更新这台电脑后才能评审改动", "outdated")):
         page.evaluate("localStorage.setItem('persona.review.target:%s/%s', JSON.stringify({scope:'uncommitted'}))" % (MID, SID))
         open_panel(mode)
         expect(panel).to_contain_text(text)

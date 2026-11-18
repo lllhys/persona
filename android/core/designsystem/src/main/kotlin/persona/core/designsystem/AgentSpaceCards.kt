@@ -52,7 +52,7 @@ object AgentSpaceLayout {
 
 /**
  * The space page's first line (iOS `SpaceView`): the computer as an accent capsule with its device [icon], its name and,
- * when [onMachine] opens its page, a chevron; then the space's folder, already shortened with ~, cut at its start so
+ * when [onMachine] opens its projects (iOS `MachineSpacesView`, read as "All projects on <computer>"), a chevron; then the space's folder, already shortened with ~, cut at its start so
  * its end shows.
  */
 @Composable
@@ -70,7 +70,7 @@ fun AgentSpaceLocation(
         Row(
             Modifier.then(if (onMachine != null) Modifier.minimumInteractiveComponentSize() else Modifier)
                 .clip(CircleShape).background(accent.copy(alpha = SpaceCardTokens.machineFillAlpha))
-                .then(if (onMachine != null) Modifier.clickable(onClickLabel = stringResource(R.string.designsystem_machine_monitor), role = Role.Button, onClick = onMachine) else Modifier)
+                .then(if (onMachine != null) Modifier.clickable(onClickLabel = stringResource(R.string.designsystem_machine_projects, machine), role = Role.Button, onClick = onMachine) else Modifier)
                 .padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.sm),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.sm),
         ) {

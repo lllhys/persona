@@ -255,23 +255,20 @@ func photoQueued(rec kb.Recording, l kb.Live, now time.Time) bool {
 	return !ended
 }
 
-// roomPhotos gives recording id's ready room what it is to get of the photos, one message a look: first a photo the
-// owner deleted after it went in (withdrawn, also while the role is off), else, with forward (the room attends and the
-// meeting has not ended), the oldest photo queued for it: the image, its words and the request for
-// meeting_photo_note. An ask goes first (the caller's gate, and the room's one-ask slot held while it sends), and the
-// batches wait while the room's turn for it runs (the busy check). A message whose sends failed photoSendTries times
-// holds neither the batch nor the messages after it: it is tried again first at every look, then the next one goes.
-// When to look again; false when nothing was sent and the batch may go.
-func (s *Service) roomPhotos(ctx context.Context, e *kb.Engine, id string, r kb.Recording, now time.Time, forward bool) (time.Time, bool) {
-	queued, withdraw := e.PhotosForRoom(id)
-	if !forward {
-		queued = nil
-	}
+// roomPhotos gives recording id's ready room what it is to get of the photos (e.PhotosForRoom, the caller's read), one
+// message a look: first a photo the owner deleted after it went in (withdraw, also while the role is off), else the
+// oldest photo queued for it (queued, none unless the room attends and the meeting has not ended): the image, its words
+// and the request for meeting_photo_note. An ask goes first (the caller's gate, and the room's one-ask slot held while
+// it sends), and the batches wait while the room's turn for it runs (the busy check, on the room's row as rd has it, or
+// read now when nil). A message whose sends failed photoSendTries times holds neither the batch nor the messages after
+// it: it is tried again first at every look, then the next one goes. When to look again; false when nothing was sent
+// and the batch may go.
+func (s *Service) roomPhotos(ctx context.Context, e *kb.Engine, id string, r kb.Recording, now time.Time, queued []kb.Photo, withdraw []kb.PhotoRef, rd *roomRead) (time.Time, bool) {
 	if len(withdraw) == 0 && len(queued) == 0 {
 		return time.Time{}, false
 	}
 	room := r.Conv.Room
-	target, verdict := s.attendeeCheckFor(ctx, kb.SessionRef{MachineID: room.MachineID, SessionID: room.SessionID}, now, id)
+	target, verdict := s.attendeeCheckRead(ctx, kb.SessionRef{MachineID: room.MachineID, SessionID: room.SessionID}, now, id, rd)
 	switch verdict {
 	case "":
 	case attendeeBusy:

@@ -1,8 +1,8 @@
 // End-to-end check of the background supervisor on the web (#5082, docs/web/web.md "Background supervisor"): the
 // built-in conversation is listed with the scheduled tasks' chats under 全部对话 (never in the sidebar's 常驻 or 最近),
 // marked built in, with a menu that only copies its id; Settings › Assistant has its off switch, which saves on the hub
-// and goes back; Model settings lists its purpose after Main chat with what it is for; and the main chat shows a line
-// for each review it made, which opens the task.
+// and goes back; Model settings lists its purpose after Main chat with what it is for; and the main chat draws no line
+// for the reviews it made (#8237: how a task went is its row in the trays).
 //
 // Needs the web page against the fake hub with the background supervisor, and Chrome (or any Chromium through --executable):
 //
@@ -10,8 +10,8 @@
 //   (cd web && PERSONA_HUB_URL=http://127.0.0.1:18982 npx vite --port 5982 --strictPort &)
 //   node web/e2e/background-supervisor.mjs http://127.0.0.1:5982 [--shots <dir>] [--executable <chromium>] [--expect before]
 //
-// Runs wide (1280) in light and dark in English, and once each in 简体中文 and 日本語 for the strings, then the main chat's
-// review lines at a phone's width (390) in the same four; --shots saves each screen. --expect before only takes the screenshots (a build or a hub without the feature). Prints one line per check
+// Runs wide (1280) in light and dark in English, and once each in 简体中文 and 日本語 for the strings; --shots saves
+// each screen. --expect before only takes the screenshots (a build or a hub without the feature). Prints one line per check
 // and a verdict; exits 1 on a failure and after three minutes.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -53,7 +53,7 @@ if (!before && !bg) fail("the fake hub has no background supervisor (start it wi
 
 const WORDS = {
   en: { name: "Background supervisor", builtIn: "Built-in", scheduled: "Scheduled", setting: "The main chat supervises its own tasks", hint: "Off by default", follows: "Follows ", copy: "Copy session ID", accepted: "Accepted", more: "More" },
-  "zh-Hans": { name: "后台督办", builtIn: "内置", scheduled: "定时任务", setting: "主对话自己督办它派出的任务", hint: "默认关闭", follows: "跟随 ", copy: "拷贝会话 ID", accepted: "已验收", more: "更多" },
+  "zh-Hans": { name: "后台督办", builtIn: "内置", scheduled: "定时任务", setting: "主对话自己督办它派出的任务", hint: "默认关闭", follows: "跟随 ", copy: "复制会话 ID", accepted: "已验收", more: "更多" },
   ja: { name: "バックグラウンド監督", builtIn: "内蔵", scheduled: "定期タスク", setting: "メインチャットが自分のタスクを監督する", hint: "既定はオフ", follows: "に従う", copy: "セッションIDをコピー", accepted: "検収済み", more: "その他" },
 };
 
@@ -156,70 +156,16 @@ try {
       await page.keyboard.press("Escape");
     }
 
-    // 4. the main chat: a line for each review the background supervisor made
+    // 4. the main chat: no line for the reviews the background supervisor made (#8237: the task's row says how it went)
     await page.goto(`${base}/persona/${assistant.main}`);
     await page.waitForSelector("main", { timeout: 15000 });
-    const line = page.locator('[data-testid="review-line"]', { has: page.locator('[data-testid="review-by"]') });
+    await page.waitForTimeout(1500);
     if (!before) {
-      await line.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => fail(`${where}: the main chat has no line for a background supervisor's review`));
-      const accepted = line.filter({ hasText: w.accepted }).first();
-      check((await accepted.count()) === 1, `${where}: no line for the accepted review`);
-      // scrolled as a person does (the wheel): the chat keeps a programmatic scroll at the latest message
-      await page.mouse.move(800, 400);
-      const inView = () => accepted.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top > 160 && r.bottom < innerHeight - 260; });
-      for (let i = 0; i < 80 && !(await inView()); i++) {
-        await page.mouse.wheel(0, (await accepted.evaluate((el) => el.getBoundingClientRect().top)) < 160 ? -160 : 160);
-        await page.waitForTimeout(60);
-      }
-      check(await inView(), `${where}: the review's line could not be scrolled into view`);
-      check((await accepted.locator('[data-testid="review-by"]').textContent()).startsWith(w.name), `${where}: the line does not say who reviewed`);
-      await shot(page, `feed-${theme}-${lang}`);
-      await shot(page, `feed-line-${theme}-${lang}`, accepted);
-      const from = page.url();
-      await accepted.getByRole("button").first().click();
-      await page.waitForFunction((u) => location.href !== u, from, { timeout: 5000 }).catch(() => fail(`${where}: the line's task did not open`));
-      await shot(page, `feed-task-${theme}-${lang}`);
-      ok(`${where}: the main chat shows “${w.name} · task · ${w.accepted}”, and the task opens from it`);
-    } else {
-      await page.waitForTimeout(1500);
-      await shot(page, `feed-${theme}-${lang}`);
+      check((await page.locator('[data-testid="review-line"]').count()) === 0, `${where}: the main chat draws a line for a review`);
+      ok(`${where}: the main chat draws no review line`);
     }
+    await shot(page, `feed-${theme}-${lang}`);
     await ctx.close();
-  }
-  // 5. a phone's width (390): every line of the background supervisor's reviews stays inside itself and the screen,
-  // with its verdict whole and, when it has a note, the arrow that opens it
-  if (!before) {
-    for (const [theme, lang] of [["light", "en"], ["dark", "en"], ["light", "zh-Hans"], ["light", "ja"]]) {
-      const where = `390 ${theme} ${lang}`;
-      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: theme, reducedMotion: "reduce", hasTouch: true });
-      const page = await ctx.newPage();
-      await page.goto(`${base}/?token=mock`);
-      await page.waitForFunction(() => localStorage.getItem("persona.token"), null, { timeout: 15000 });
-      await page.evaluate(([t, l]) => {
-        localStorage.setItem("persona.theme", t);
-        localStorage.setItem("persona.language", l);
-      }, [theme, lang]);
-      await page.goto(`${base}/persona/${assistant.main}`);
-      const line = page.locator('[data-testid="review-line"]', { has: page.locator('[data-testid="review-by"]') });
-      await line.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => fail(`${where}: the main chat has no line for a background supervisor's review`));
-      await page.waitForTimeout(400);
-      const sizes = await line.evaluateAll((els) => els.map((el) => {
-        const row = el.firstElementChild;
-        const verdict = [...row.querySelectorAll("span")].find((x) => x.className.includes("font-semibold"));
-        const note = row.lastElementChild.children.length > 1;
-        return { text: el.textContent, right: el.getBoundingClientRect().right, over: row.scrollWidth - row.clientWidth, verdictRight: verdict.getBoundingClientRect().right, note, arrow: !!row.querySelector("svg.text-ink-3") };
-      }));
-      for (const z of sizes) {
-        check(z.over <= 0 && z.right <= 390 && z.verdictRight <= z.right, `${where}: the line “${z.text}” runs past itself or the screen (${JSON.stringify(z)})`);
-        check(!z.note || z.arrow, `${where}: the line “${z.text}” has a note and no arrow to open it`);
-      }
-      const last = line.last();
-      await last.scrollIntoViewIfNeeded();
-      await shot(page, `feed-390-${theme}-${lang}`);
-      for (let i = 0; i < sizes.length; i++) await shot(page, `feed-390-line${i}-${theme}-${lang}`, line.nth(i));
-      ok(`${where}: ${sizes.length} review line(s) fit the width, verdict whole`);
-      await ctx.close();
-    }
   }
   console.log(before ? "DONE screenshots only (--expect before)" : "PASS background supervisor on the web");
 } finally {

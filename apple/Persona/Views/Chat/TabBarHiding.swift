@@ -20,8 +20,9 @@ private struct TabBarHider: UIViewControllerRepresentable {
     func updateUIViewController(_ vc: Probe, context: Context) {}
 
     final class Probe: UIViewController {
-        /// Whether the bar was away already when the page came, to leave it so: a phone's tabs keep it hidden for good
-        /// (iPhone Duo open, `pageTabSwitch`, #2623), and putting it back here brought it down the side again on Back.
+        /// Whether the bar was away already when the page came, to leave it so: putting it back here brought it back
+        /// where the page under it kept it hidden (the open iPhone Duo's tabs before #7543, #2623: down the side again
+        /// on Back).
         private var wasHidden: Bool?
 
         override func viewWillAppear(_ animated: Bool) {

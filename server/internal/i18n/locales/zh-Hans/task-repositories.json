@@ -1,0 +1,20 @@
+{
+  "invalid": "无法读取仓库信息。请检查目录名、来源引用和 Issue/PR 链接；已保留输入。",
+  "limit": "最多关联 20 个仓库，每仓最多 50 个链接。",
+  "readonly": "此设备只能查看仓库关联。",
+  "not_found": "此助手中没有可用的待办或仓库。",
+  "store_unavailable": "无法确认仓库关联的读取或保存结果。请重新读取后再重试；更改可能已生效。",
+  "revision_conflict": "仓库关联已在其他地方更改。请重新读取并核对编辑内容。",
+  "catalog_conflict": "已保存的仓库列表已更改。请重新读取后再保存。",
+  "duplicate_repo": "每个仓库只能选择一次。",
+  "duplicate_alias": "请为各仓库选择不同的目录名。",
+  "duplicate_link": "此 Issue 或 PR 已关联。",
+  "link_repository_mismatch": "请使用属于此仓库的 Issue 或 PR 链接。",
+  "no_provider": "{provider} 没有安装。已保存的链接会保留；到「设置 › 扩展」安装后才能添加新链接。",
+  "provider_off": "{provider} 已关闭或没在运行。已保存的链接会保留；到「设置 › 扩展」打开后才能添加新链接。",
+  "provider_not_found": "{provider} 找不到这个 Issue 或 PR。请检查链接。",
+  "provider_not_signed_in": "{provider} 没有登录。请到「设置 › 扩展」检查它的设置。",
+  "provider_refused": "{provider} 拒绝了：{why}",
+  "provider_failed": "{provider} 无法查询这个链接：{why}",
+  "providers_starting": "扩展还在启动中，暂时无法查询新链接。已保存的链接会保留，请稍后重试。"
+}

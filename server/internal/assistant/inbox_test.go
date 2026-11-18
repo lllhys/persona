@@ -364,3 +364,27 @@ func TestInboxReplyInDoubtIsSentOnce(t *testing.T) {
 		t.Fatal("the app's own send id was not taken")
 	}
 }
+
+// The reply box's AI draft with nothing the hub can call for it: a coded 503 the apps can explain, saying where to set a
+// model up, not a bare 502 whose text never reaches the screen. With a model the draft comes back; an unknown item is 404.
+func TestInboxDraftRouteWithoutAModel(t *testing.T) {
+	h := agentHub(t)
+	it := actionItem("lark:f1:11", time.Now())
+	h.inbox.mu.Lock()
+	h.inbox.items[it.ID] = it
+	h.inbox.mu.Unlock()
+	code, out := inboxCall(t, h.routes(), "POST", "/api/v1/inbox/lark:f1:11/draft", `{}`)
+	if msg, _ := out["error"].(string); code != http.StatusServiceUnavailable || out["code"] != assistantwire.CodeModelUnavailable ||
+		!strings.Contains(msg, "设置 › 模型供应商") {
+		t.Fatalf("a draft with no model: %d %v", code, out)
+	}
+	h.in.mu.Lock()
+	h.in.models[purposeDraft] = fakeModel(t, "好的，周四给")
+	h.in.mu.Unlock()
+	if code, out := inboxCall(t, h.routes(), "POST", "/api/v1/inbox/lark:f1:11/draft", `{}`); code != http.StatusOK || out["text"] != "好的，周四给" {
+		t.Fatalf("a draft: %d %v", code, out)
+	}
+	if code, _ := inboxCall(t, h.routes(), "POST", "/api/v1/inbox/lark:f1:99/draft", `{}`); code != http.StatusNotFound {
+		t.Fatalf("an unknown item: %d", code)
+	}
+}

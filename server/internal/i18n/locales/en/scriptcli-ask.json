@@ -1,0 +1,9 @@
+{
+  "no_node": "No Persona node is running (the hub is not connected to this computer)",
+  "too_old": "The personad on this computer is too old to support ask",
+  "timeout": "Timed out; nobody answered on the phone",
+  "dismissed": "The phone handed the question back to the computer",
+  "dismissed_terminal": "The phone handed the question back to the computer; asking in the terminal",
+  "unreachable": "Cannot reach the phone: {reason}",
+  "unreachable_terminal": "Cannot reach the phone ({reason}); asking in the terminal"
+}

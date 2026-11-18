@@ -3,7 +3,7 @@
 // with its own width. Kept apart from the picture, so a picture edited in the composer opens again with its crop and
 // marks as they were, each still undoable, and the source is never written. Pure values and geometry; no DOM here.
 
-import { fitIn, fitRect } from "./image-zoom";
+import { fitIn, fitRect } from "./image-fit";
 
 export type MarkTool = "box" | "pen";
 
@@ -371,9 +371,9 @@ export function handleCursor(h: CropHandle | null): string {
 
 // ── on screen ──────────────────────────────────────────
 
-// fitIn and fitRect live in lib/image-zoom.ts: the image viewer on the first screen needs them, and importing them from
-// here would put this whole module, which only the lazy editor uses, on the first screen with them.
-export { fitIn, fitRect } from "./image-zoom";
+// fitIn and fitRect live in lib/image-fit.ts: the image viewer needs them too, and importing them from here would put
+// this whole module, which only the lazy editor uses, in the viewer's chunk with them.
+export { fitIn, fitRect } from "./image-fit";
 
 /** Where things are on screen. Marking, the crop fills the room; cropping, all of the turned picture shows, inset so the
  *  handles on its edges can be taken, the crop's frame over it. */

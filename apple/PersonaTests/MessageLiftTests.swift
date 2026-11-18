@@ -117,6 +117,32 @@ struct MessageLiftTests {
         #expect(speed(10, 0) == 0, "nothing shown, nothing to scroll")
     }
 
+    /// A finger that goes down on a selection's handle drags that end (#5982): since iOS 27 the selection changes only
+    /// once the finger lifts, so the handle is told by where the finger went down, the nearer knob within reach.
+    @Test func aFingerOnAHandleDragsThatEnd() {
+        let start = CGRect(x: 40, y: 100, width: 300, height: 22), end = CGRect(x: 0, y: 400, width: 120, height: 22)
+        func handle(_ x: CGFloat, _ y: CGFloat) -> LiftLayout.End? {
+            LiftLayout.handle(at: CGPoint(x: x, y: y), start: start, end: end, reach: 44)
+        }
+        #expect(handle(119, 426) == .end, "under the end's last word")
+        #expect(handle(40, 96) == .start, "over the start's first word")
+        #expect(handle(200, 250) == nil, "on the words between: no handle")
+        #expect(handle(120, 470) == nil, "past reach")
+        // The two knobs close together (a short selection): the nearer.
+        let near = CGRect(x: 60, y: 100, width: 40, height: 22)
+        #expect(LiftLayout.handle(at: CGPoint(x: 64, y: 104), start: near, end: near, reach: 44) == .start)
+        #expect(LiftLayout.handle(at: CGPoint(x: 98, y: 120), start: near, end: near, reach: 44) == .end)
+        #expect(LiftLayout.handle(at: CGPoint(x: 64, y: 104), start: nil, end: nil, reach: 44) == nil, "no selection")
+    }
+
+    /// A handle touched at an edge scrolls only once it has moved: touching it is no drag (#5982).
+    @Test func aHandleScrollsOnlyOnceItMoved() {
+        let down = CGPoint(x: 100, y: 700)
+        #expect(!LiftLayout.moved(down, from: down))
+        #expect(!LiftLayout.moved(CGPoint(x: 103, y: 704), from: down), "a finger's jitter")
+        #expect(LiftLayout.moved(CGPoint(x: 100, y: 690), from: down))
+    }
+
     /// The text view over selected words puts its lines on the chat's (#3188): each on the nearest row ahead, a line
     /// the chat has no row for passed over with the move before it, and after a picture the next line on the next row.
     @Test func theTextViewsLinesGoOnTheChats() {
@@ -186,5 +212,44 @@ struct MessageLiftTests {
         let out = LiftLayout.follow([WordBreaks(length: 9, at: [4])], paragraphs: [NSRange(location: 0, length: 10)])
         #expect(out.held.isEmpty)
         #expect(out.at.isEmpty)
+    }
+}
+
+/// A lifted long answer drawn in parts, its words selected (#5291): the parts laid out are found by their boxes, and
+/// the text view's lines in each start on that part's first row, wherever the parts before it left them.
+@MainActor
+struct LiftSegmentsTests {
+    private func line(_ y: CGFloat, glyphs: Int = 10) -> WordLine { WordLine(glyphs: glyphs, origin: CGPoint(x: 0, y: y - 15), minX: 0, baseline: y, maxX: 100) }
+
+    @Test func eachPartLaidOutIsASegmentOfWhatIsInItsBox() {
+        var w = ShownWords()
+        w.lines = [line(20), line(44), line(1_020), line(1_044), line(1_068)]
+        w.texts = [WordBreaks(length: 30, top: 5), WordBreaks(length: 50, top: 1_005)]
+        w.tables = [CGRect(x: 0, y: 1_100, width: 300, height: 90)]
+        w.parts = [7: CGRect(x: 0, y: 1_000, width: 360, height: 300), 2: CGRect(x: 0, y: 0, width: 360, height: 60)]
+        let s = w.segments
+        #expect(s.map(\.part) == [2, 7])
+        #expect(s[0].rows == [20, 44] && s[1].rows == [1_020, 1_044, 1_068])
+        #expect(s[0].texts.map(\.length) == [30] && s[1].texts.map(\.length) == [50])
+        #expect(s[0].tables.isEmpty && s[1].tables == [CGSize(width: 300, height: 90)])
+        #expect(s[1].box == 1_000...1_300)
+    }
+
+    @Test func wordsAllLaidOutAreOneSegment() {
+        var w = ShownWords()
+        w.lines = [line(20), line(44)]
+        w.tables = [CGRect(x: 0, y: 60, width: 200, height: 40)]
+        let s = w.segments
+        #expect(s.count == 1 && s[0].part == nil && s[0].box == nil)
+        #expect(s[0].rows == [20, 44] && s[0].tables == [CGSize(width: 200, height: 40)])
+    }
+
+    @Test func aPartsLinesStartOnItsFirstRowFromWhereverTheyWere() {
+        // The text view laid the parts before this one out shorter than the chat's lazy stack holds them: its lines are
+        // 900 points above their rows, far past the reach of the nearest row.
+        let lines = [LiftLayout.SnapLine(baseline: 120), LiftLayout.SnapLine(baseline: 144), LiftLayout.SnapLine(baseline: 168)]
+        let rows: [CGFloat] = [1_020, 1_044, 1_070]
+        #expect(LiftLayout.snap(lines, to: rows, reach: 10).map(\.at) == [120, 144, 168], "unmoved, they find no rows")
+        #expect(LiftLayout.snap(lines, to: rows, reach: 10, moved: 900).map(\.at) == rows)
     }
 }

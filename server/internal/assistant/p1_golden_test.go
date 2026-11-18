@@ -46,6 +46,7 @@ func TestLeaderStuckTellsTheMainConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := e.leaderTask("平板布局", "conv_lead_a")
+	e.worked(id)
 	later := time.Now().Add(3 * 24 * time.Hour)
 	var got []assistantwire.LeaderReportEvent
 	for _, r := range e.reports(later, true) {
@@ -141,6 +142,7 @@ func TestLeaderStuckOncePerDay(t *testing.T) {
 	e.leaders("conv_lead_a")
 	setSettings(t, e.s, func(v *Settings) { v.Main = "conv_main" })
 	id := e.leaderTask("平板布局", "conv_lead_a")
+	e.worked(id)
 	later := time.Now().Add(3 * 24 * time.Hour)
 	count := func(rs []assistantwire.LeaderReportEvent) int {
 		n := 0

@@ -193,9 +193,9 @@ func TestNotifyWSRecipientCounts(t *testing.T) {
 	build := func(i18n.Lang) map[string]any {
 		return notifyPayload(notifyRequest{Title: "Build finished", Level: levelActive}, "", "")
 	}
-	selected, reachable := h.notifyWSFrom("", kindAlert, build, pushWants{Kind: "input"}.fn(), quietNone)
-	if selected != 1 || reachable != 2 {
-		t.Fatalf("WebSocket counts = %d, %d; want 1, 2", selected, reachable)
+	reach := h.notifyWSFrom("", kindAlert, build, pushWants{Kind: "input"}.fn(), quietNone)
+	if reach.selected != 1 || reach.reachable != 2 {
+		t.Fatalf("WebSocket counts = %d, %d; want 1, 2", reach.selected, reach.reachable)
 	}
 	for c := range h.clients {
 		select {

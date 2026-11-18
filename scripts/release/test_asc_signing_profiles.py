@@ -112,5 +112,65 @@ class SigningProfileTests(unittest.TestCase):
         asc.get_all.assert_not_called()
 
 
+class SiriCallsSigningTests(unittest.TestCase):
+    """app.siri_calls (#9290): SIRIKIT and the SiriKit extension's App ID and profile are asked for only with the switch
+    on, so the release preflight (`--check`) of a build without it is what it was."""
+    bid = 'com.example.persona'
+    BEFORE = ['PUSH_NOTIFICATIONS', 'USERNOTIFICATIONS_TIMESENSITIVE', 'HEALTHKIT', 'APP_GROUPS']
+    signing = SigningProfileTests.signing
+
+    def run_main(self, signing, argv, bundle_id=lambda identifier, *_: identifier):
+        with patch.object(signing, 'certificate', return_value='certificate'), \
+                patch.object(signing, 'bundle_id', side_effect=bundle_id) as bundle, \
+                patch.object(signing, 'ensure_capability') as capability, patch.object(signing, 'profile') as profile, \
+                patch.object(sys, 'argv', ['asc_signing.py'] + argv), contextlib.redirect_stdout(io.StringIO()):
+            signing.main()
+        return bundle, capability, profile
+
+    def test_off_checks_what_it_always_did(self):
+        for value in (None, False, 'true'):
+            with self.subTest(value=value):
+                app = {'bundle_id': self.bid} if value is None else {'bundle_id': self.bid, 'siri_calls': value}
+                signing, _, asc = self.signing({'app': app})
+                self.assertEqual(signing.TARGETS[self.bid][2], self.BEFORE)
+                self.assertNotIn(self.bid + '.callintents', signing.TARGETS)
+                bundle, capability, profile = self.run_main(signing, ['--check'])
+                self.assertNotIn('SIRIKIT', {call.args[1] for call in capability.call_args_list})
+                self.assertEqual(profile.call_count, 6)
+                self.assertEqual(bundle.call_count, 6)
+                asc.create.assert_not_called()
+
+    def test_on_checks_sirikit_and_the_extension(self):
+        signing, config, asc = self.signing({'app': {'bundle_id': self.bid, 'siri_calls': True}})
+        self.assertEqual(signing.TARGETS[self.bid][2], self.BEFORE + ['SIRIKIT'])
+        bundle, capability, profile = self.run_main(signing, ['--check'])
+        capability.assert_any_call(self.bid, 'SIRIKIT', True)
+        bundle.assert_any_call(self.bid + '.callintents', 'Persona Call Intents', True)
+        self.assertEqual(profile.call_count, 7)
+        extension = [call for call in profile.call_args_list if call.args[0] == self.bid + '.callintents']
+        self.assertEqual(len(extension), 1)
+        self.assertEqual(extension[0].args[1], 'Persona Call Intents App Store')
+        self.assertIsNone(extension[0].kwargs['group'])
+        self.assertEqual({key: values[1] for key, values in signing.TARGETS.items()},
+                         config.provisioning_profiles({'app': {'bundle_id': self.bid, 'siri_calls': True}}))
+        asc.create.assert_not_called()
+
+    def test_the_maintainer_prepares_one_target_at_a_time(self):
+        # docs/operations/release.md "Siri calls": SIRIKIT on the app's App ID, then the extension's, each with --only.
+        signing, _, _ = self.signing({'app': {'bundle_id': self.bid, 'siri_calls': True}})
+        bundle, capability, profile = self.run_main(signing, ['--only', self.bid], bundle_id=lambda *_: 'app-resource')
+        bundle.assert_called_once_with(self.bid, 'Persona', False)
+        self.assertEqual([call.args[1] for call in capability.call_args_list], self.BEFORE + ['SIRIKIT'])
+        self.assertTrue(all(call.args[2] is False for call in capability.call_args_list))
+        profile.assert_called_once_with('app-resource', 'Persona App Store', 'certificate', check_only=False,
+                                        group=signing.GROUP)
+        bundle, capability, profile = self.run_main(signing, ['--only', self.bid + '.callintents'],
+                                                    bundle_id=lambda *_: 'extension-resource')
+        bundle.assert_called_once_with(self.bid + '.callintents', 'Persona Call Intents', False)
+        capability.assert_not_called()
+        profile.assert_called_once_with('extension-resource', 'Persona Call Intents App Store', 'certificate',
+                                        check_only=False, group=None)
+
+
 if __name__ == '__main__':
     unittest.main()

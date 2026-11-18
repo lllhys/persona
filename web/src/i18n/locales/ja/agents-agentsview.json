@@ -22,5 +22,6 @@
   "reacted": "リアクション",
   "no_detail": "詳細はありません",
   "composer_placeholder": "このエージェントにメッセージ（Enterで送信、Shift+Enterで改行）",
-  "send": "送信"
+  "send": "送信",
+  "restore": "元に戻す"
 }

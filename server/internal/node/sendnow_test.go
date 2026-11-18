@@ -40,6 +40,18 @@ const queuedScreenCtrlEnter = `  Running build.sh in the foreground · 10s
 ─────────────────────────────────────────────────────────────────────────────────
   ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt`
 
+// A Claude Code that labels the hint under its message "Queued ·" (2.1.326; testdata has one read off a herdr pane), as
+// one drew it fullscreen in a 93×21 terminal (2026-11-17, from the report): the node refused it as unrecognized and
+// pressed nothing.
+const queuedScreenQueuedLabel = `❯ 为啥要重建 es?
+  ⎿  Queued · ctrl+enter to send now
+· Waddling… (20m 25s · ↓ 76.8k tokens)
+────────
+❯ Press up to edit queued messages
+────────
+  Opus 5.5 (xhigh) … $17.32
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt`
+
 // A Claude Code whose send-now names keys a terminal can't press (made up: cmd is the Mac's command key).
 const queuedScreenOtherKeys = `❯ Also run the linter at the end.
   cmd+enter to send now
@@ -133,10 +145,12 @@ func TestSendQueuedNow(t *testing.T) {
 	}
 
 	for screen, want := range map[string]string{
-		queuedScreen:          "ctrl+x ctrl+s",
-		queuedScreenCtrlEnter: "ctrl+enter",
+		queuedScreen:                              "ctrl+x ctrl+s",
+		queuedScreenCtrlEnter:                     "ctrl+enter",
+		queuedScreenQueuedLabel:                   "ctrl+enter",
 		claudeScreen(t, "2.1.321-send-now-herdr"): "ctrl+enter",
 		claudeScreen(t, "2.1.321-send-now-tmux"):  "ctrl+x ctrl+s",
+		claudeScreen(t, "2.1.326-send-now-herdr"): "ctrl+enter",
 		// another binding, as the hint names it: pressed as named
 		"❯ Also run the linter.\n  ctrl+x ctrl+q to send now\n❯ Press up to edit queued messages": "ctrl+x ctrl+q",
 	} {
@@ -308,28 +322,42 @@ func TestSendNowOffer(t *testing.T) {
 		"❯ stop it with ctrl+c\n  ctrl+enter to send now": "ctrl+enter",
 		// output above quotes an older hint: the lowest is the one beside the queue
 		"  ⎿  ctrl+x ctrl+s to send now\n❯ x\n  ctrl+enter to send now": "ctrl+enter",
+		// a label before the keys (2.1.326), whatever it says or binds
+		queuedScreenQueuedLabel:                                  "ctrl+enter",
+		"❯ x\n  ⎿  Queued · ctrl+x ctrl+s to send now":           "ctrl+x ctrl+s",
+		"❯ x\n  ⎿  Queued · Ctrl+Enter to send now":              "ctrl+enter",
+		"❯ x\n  ⎿  Queued • ctrl+enter to send now":              "ctrl+enter",
+		"❯ x\n  ⎿  Waiting · ⌃⏎ to send now":                     "ctrl+enter",
+		"❯ x\n∷ Queued · ctrl+enter to send now":                 "ctrl+enter",
+		"❯ x\n  ⎿  Queued · ctrl+enter to send now  ":            "ctrl+enter",
+		"❯ fix the ctrl+c\n  ⎿  Queued · ctrl+enter to send now": "ctrl+enter",
 	} {
 		if _, keys := sendNowOffer(screen); strings.Join(keys, " ") != want {
 			t.Errorf("keys %q, want %q in\n%s", keys, want, screen)
 		}
 	}
 	for screen, want := range map[string]string{
-		queuedScreenOtherKeys:             "cmd+enter to send now",
-		"❯ x\n  click to send now":        "click to send now",
-		"❯ x\n  fn+enter to send now":     "fn+enter to send now",
-		"❯ x\n  ctrl+x cmd+s to send now": "ctrl+x cmd+s to send now",
+		queuedScreenOtherKeys:                      "cmd+enter to send now",
+		"❯ x\n  click to send now":                 "click to send now",
+		"❯ x\n  fn+enter to send now":              "fn+enter to send now",
+		"❯ x\n  ctrl+x cmd+s to send now":          "ctrl+x cmd+s to send now",
+		"❯ x\n  ⎿  Queued · click to send now":     "click to send now",
+		"❯ x\n  ⎿  Queued · cmd+enter to send now": "cmd+enter to send now",
 	} {
 		if hint, keys := sendNowOffer(screen); hint != want || keys != nil {
 			t.Errorf("unpressable: %q %q, want %q and no keys", hint, keys, want)
 		}
 	}
 	for _, screen := range []string{idleScreen, queuedScreenNoHint, "⏺ I am going to send now.",
-		"● Press ctrl+enter to send now", "● Use ctrl+enter to send now.", "❯ x\n  to send now", "❯ x\n  the end to send now"} {
+		"● Press ctrl+enter to send now", "● Use ctrl+enter to send now.", "❯ x\n  to send now", "❯ x\n  the end to send now",
+		// a label with no keys after it, or words between the separator and the keys
+		"❯ x\n  ⎿  Queued · to send now", "● Done · press ctrl+enter to send now"} {
 		if hint, keys := sendNowOffer(screen); hint != "" || keys != nil {
 			t.Errorf("no hint in %q: %q %q", screen, hint, keys)
 		}
 	}
-	if !offersSendNow(queuedScreen) || !offersSendNow(queuedScreenCtrlEnter) || offersSendNow(idleScreen) || offersSendNow(queuedScreenOtherKeys) {
+	if !offersSendNow(queuedScreen) || !offersSendNow(queuedScreenCtrlEnter) || !offersSendNow(queuedScreenQueuedLabel) ||
+		offersSendNow(idleScreen) || offersSendNow(queuedScreenOtherKeys) {
 		t.Fatal("the hint is what tells a queued message Persona can send")
 	}
 }

@@ -33,7 +33,7 @@ struct LauncherBlockedHelp: View {
                     HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
                         ThemedIcon(Theme.Icon.error).foregroundStyle(Theme.cautionText)
                         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                            Text(launcher.name).font(Theme.Font.heading.monospaced()).lineLimit(1).truncationMode(.middle)
+                            Text(launcher.title).font(Theme.Font.heading.monospaced()).lineLimit(1).truncationMode(.middle)
                             Text(block.reason).font(Theme.Font.secondary).foregroundStyle(Theme.cautionText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -104,9 +104,7 @@ struct LauncherBlockedHelp: View {
             .navigationTitle(block.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button { dismiss() } label: { Text("Done [Extension System Presentation c0b3fb]").lineLimit(1) }
-                }
+                SheetClose { dismiss() }
             }
         }
         .sheet(isPresented: $addingProvider) { ProviderWizard(start: .pick) }

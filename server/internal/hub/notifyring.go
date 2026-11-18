@@ -139,12 +139,13 @@ func (h *Hub) replayNotifyRing(c *client) {
 
 // ringNotify keeps a notify event for the remembered devices that have no ws_notify socket now (live), have the
 // capability it requires and no push route, and whose settings take it (wantsOn, the same decision a socket gets). msgIn
-// is the event in a language, encoded the event quiet or not. Called under h.mu by notifyWSFrom.
+// is the event in a language, encoded the event quiet or not. Called under h.mu by notifyWSFrom. It returns how many
+// devices kept it.
 func (h *Hub) ringNotify(live map[string]bool, required []string, wantsOn func(device string) (ok, quiet bool),
-	msgIn func(i18n.Lang) map[string]any, encoded func(l i18n.Lang, quiet bool) []byte) {
+	msgIn func(i18n.Lang) map[string]any, encoded func(l i18n.Lang, quiet bool) []byte) (kept int) {
 	r := &h.rings
 	if len(r.devices) == 0 {
-		return
+		return 0
 	}
 	now := r.clock()
 	for device, d := range r.devices {
@@ -161,5 +162,7 @@ func (h *Hub) ringNotify(live map[string]bool, required []string, wantsOn func(d
 		}
 		card, _ := msgIn(d.lang)["interaction_id"].(string)
 		d.add(ringedNotify{at: now, card: card, msg: msg})
+		kept++
 	}
+	return kept
 }

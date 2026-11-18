@@ -30,6 +30,7 @@
         "id": "model",
         "launcher": "claude",
         "machine": "mbp",
+        "occurrence": "",
         "state": "problem",
         "title": "The model is being used too fast"
       },
@@ -102,6 +103,7 @@
         "id": "model",
         "launcher": "claude",
         "machine": "mbp",
+        "occurrence": "",
         "state": "problem",
         "title": "モデルの利用が速すぎます"
       },
@@ -174,6 +176,7 @@
         "id": "model",
         "launcher": "claude",
         "machine": "mbp",
+        "occurrence": "",
         "state": "problem",
         "title": "模型用得太快了"
       },

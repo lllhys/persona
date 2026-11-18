@@ -17,9 +17,11 @@ import type { Item, ItemsPage } from "../../lib/types";
 import { NO_WORKFLOW_CALLS } from "../../lib/workflows";
 import { Button } from "../../ui/atoms";
 import { t } from "../../i18n";
+import { DayLine } from "../assistant/Tasks";
 import { ChatActionsContext, useChatActions, type ChatActions } from "./chat-actions";
 import { ChatContext, useChatContext, type ChatContextValue } from "./chat-context";
 import { ChatLineView } from "./Lines";
+import { dayRowKey, withDayDividers } from "./day-dividers";
 import type { EarlierStretch, StretchesHost } from "./useEarlierStretches";
 
 const PAGE = "turns=2&fold_work=1&lazy_images=1";
@@ -188,7 +190,29 @@ export default memo(function EarlierStretches({ mid, sid, scope, history, live, 
 
   // what the chat around them reads (useEarlierStretches): before paint, so it keeps its place as they come in above
   const hasMore = plan.next !== undefined;
-  useLayoutEffect(() => report(scope, { hasMore, loading, loadEarlier, stretches, due }), [report, scope, hasMore, loading, loadEarlier, stretches, due]);
+  // the lines each stretch draws and the divider days those rows actually carry. The live transcript's guard and the
+  // per-stretch skip set derive from these drawn rows, not the raw items: a day met only inside a folded tool run or a
+  // recap draws no divider, so it must not suppress a divider another stretch draws (#8160).
+  const stretchRows = useMemo(() => stretches.map((s) => {
+    const lines = chatLines(s.items).map((l) => ({ ...l, id: `${s.key}/${l.id}` }));
+    const days = withDayDividers(lines, Date.now(), { includeLeadingDay: true })
+      .map(dayRowKey)
+      .filter((d): d is string => d !== undefined);
+    return { lines, days };
+  }), [stretches]);
+  // the calendar days the drawn stretches put a divider on: the live transcript skips its own dividers for them
+  const dayKeys = useMemo(() => [...new Set(stretchRows.flatMap((r) => r.days))], [stretchRows]);
+  useLayoutEffect(() => report(scope, { hasMore, loading, loadEarlier, stretches, dayKeys, due }), [report, scope, hasMore, loading, loadEarlier, stretches, dayKeys, due]);
+
+  // days an older stretch already put a divider on: a later stretch never opens with a second one for the same day
+  const skipByStretch = useMemo(() => {
+    const seen = new Set<string>();
+    return stretchRows.map((r) => {
+      const skip = new Set(seen);
+      for (const d of r.days) seen.add(d);
+      return skip;
+    });
+  }, [stretchRows]);
 
   if (!stretches.length && !error) return null;
   return (
@@ -199,17 +223,21 @@ export default memo(function EarlierStretches({ mid, sid, scope, history, live, 
           <Button onClick={retry} icon="retry">{t("chat-chatview.retry")}</Button>
         </div>
       )}
-      {stretches.map((s) => <StretchLines key={s.key} mid={mid} stretch={s} offscreen={offscreen} />)}
+      {stretches.map((s, i) => <StretchLines key={s.key} mid={mid} stretch={s} lines={stretchRows[i].lines} skipDays={skipByStretch[i]} offscreen={offscreen} />)}
     </>
   );
 });
 
-const StretchLines = memo(function StretchLines({ mid, stretch, offscreen }: { mid: string; stretch: EarlierStretch; offscreen?: Offscreen }) {
+const StretchLines = memo(function StretchLines({ mid, stretch, lines, skipDays, offscreen }: { mid: string; stretch: EarlierStretch; lines: ChatLine[]; skipDays?: ReadonlySet<string>; offscreen?: Offscreen }) {
   const base = useChatContext();
   const actions = useChatActions();
   const { items, key, sid } = stretch;
-  // its own ids: an exchange of one stretch never takes another's place (the line's data-line, the open groups' keys)
-  const lines = useMemo(() => chatLines(items).map((l) => ({ ...l, id: `${key}/${l.id}` })), [items, key]);
+  // a DayLine over the first line of each day inside this stretch, its first line included (#8160); dividers for days
+  // an older stretch already covered are dropped, and day-only keys stay stable as its pages load
+  const dayRows = useMemo(() => withDayDividers(lines, Date.now(), { includeLeadingDay: true }).filter((row) => {
+    const d = dayRowKey(row);
+    return d === undefined || !skipDays?.has(d);
+  }), [lines, skipDays]);
   const tasks = useMemo(() => buildTaskIndex(items), [items]);
   const ctx = useMemo<ChatContextValue>(
     () => ({ tasks, subagents: NO_SUBAGENTS, scope: `${mid}/${sid}:${key}:`, workflowCalls: NO_WORKFLOW_CALLS, lineStyle: base.lineStyle }),
@@ -224,8 +252,10 @@ const StretchLines = memo(function StretchLines({ mid, stretch, offscreen }: { m
     <ChatContext.Provider value={ctx}>
       <ChatActionsContext.Provider value={readOnly}>
         <div className="contents" data-engine-stretch={sid}>
-          {lines.map((line) => (
-            <ChatLineView key={line.id} line={line} mid={mid} sid={sid} expandFold={stretch.expandFold} offscreen={offscreen?.(line)} />
+          {dayRows.map((row) => row.kind === "day" ? (
+            <div key={row.id} data-day-divider={row.id}><DayLine date={row.date} /></div>
+          ) : (
+            <ChatLineView key={row.line.id} line={row.line} mid={mid} sid={sid} expandFold={stretch.expandFold} offscreen={offscreen?.(row.line)} />
           ))}
         </div>
       </ChatActionsContext.Provider>

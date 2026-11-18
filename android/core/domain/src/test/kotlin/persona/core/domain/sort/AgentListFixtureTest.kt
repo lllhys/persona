@@ -39,7 +39,7 @@ class AgentListFixtureTest internal constructor(private val fixture: ListFixture
                     machineFilter = settings.string("machine_filter"), query = settings.string("query"),
                     kept = settings.strings("kept").toSet(), folded = settings.strings("folded").toSet(),
                     expandedIdle = settings.strings("expanded_idle").toSet(), expandedQuiet = settings.strings("expanded_quiet").toSet(),
-                ))
+                ), held = settings.optional("held"))
                 val output = linkedMapOf<String, Any?>(
                     "counts" to result.counts.filterKeys { it.source == null }.mapKeys { it.key.name.replaceFirstChar(Char::lowercase) },
                     "groups" to result.groups.map { group ->

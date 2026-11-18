@@ -235,8 +235,18 @@ var versionPattern = lazyre.New(`^v?(\d+)\.(\d+)\.(\d+)(?:-((?:alpha|beta|rc)[0-
 
 // parseVersion reads a release version or tag. A build from a branch (git describe: 0.3.0-12-gabc1234-…) is not
 // one: it is newer than the tag it starts with, so it cannot be compared.
-func parseVersion(s string) (version, bool) {
-	m := versionPattern.FindStringSubmatch(s)
+func parseVersion(s string) (version, bool) { return matchVersion(versionPattern, s) }
+
+// releasePrefix is the release a version starts with: the release itself (0.5.3), or the vX.Y.Z tag git describe
+// names a build after, the newest one its code contains (v0.5.3-150-gc0908bfa8-202611141806, deploy.sh).
+var releasePrefix = lazyre.New(`^v?(\d+)\.(\d+)\.(\d+)(?:-((?:alpha|beta|rc)[0-9.]*))?(?:-|$)`)
+
+// releaseIn reads the release a version starts with (releasePrefix); false for one that names none (dev-…,
+// master-<commit>-…).
+func releaseIn(s string) (version, bool) { return matchVersion(releasePrefix, s) }
+
+func matchVersion(pattern *lazyre.Regexp, s string) (version, bool) {
+	m := pattern.FindStringSubmatch(s)
 	if m == nil {
 		return version{}, false
 	}

@@ -46,7 +46,7 @@ public nonisolated enum CodeCopyMarkdown {
         let ns = line as NSString
         let code = PathMarkdown.codeSpans(Array(line.utf16))
         guard !code.isEmpty else { return line }
-        let links = PathMarkdown.protected.matches(in: line, range: NSRange(location: 0, length: ns.length)).map(\.range)
+        let links = PathMarkdown.protectedRanges(in: line)
             .filter { r in !code.contains { NSLocationInRange(r.location, $0.whole) } }
         var out = ""
         var at = 0

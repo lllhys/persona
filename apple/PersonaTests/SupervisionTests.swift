@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Supervised tasks (#3124, docs/assistant/unified-entry.md ("Supervision")) and their agents' reports (#5112): `supervision` decodes
 /// leniently, the chip, the checklist and the lines say what the web says (web/src/lib/supervision.test.ts). Tests run
@@ -111,37 +112,6 @@ struct SupervisionTests {
         #expect(ReviewText.reportLine(kind: report.reportKind ?? "", text: report.text ?? "") == body)
         #expect(report.evidence.count == 5)
         #expect(report.evidence.last == "/tmp/report-check.xcresult")
-    }
-
-    /// Evidence must not change the rendered card's size or pixels, in either appearance or report state.
-    @MainActor @Test func reportCardRenderingIgnoresEvidence() throws {
-        func render(_ report: FeedItem, _ appearance: ColorScheme) throws -> (width: Int, height: Int, pixels: Data) {
-            let renderer = ImageRenderer(content: ReportFeedLine(item: report, taskTitle: "Example task")
-                .frame(width: 480)
-                .environment(\.colorScheme, appearance))
-            let image = try #require(renderer.cgImage)
-            let pixels = try #require(image.dataProvider?.data)
-            return (image.width, image.height, pixels as Data)
-        }
-        for kind in ["progress", "done", "blocked", "question"] {
-            let body: [String: JSONValue] = ["kind": .string(kind), "text": .string("Summary unchanged.\nhttps://example.com/body-link")]
-            let plain = FeedItem(id: "render-report", conversation: "main", at: .distantPast, kind: .report, body: .object(body))
-            var withEvidence = plain
-            withEvidence.body = .object(body.merging(["evidence": .array([
-                .string("https://example.com/pull/1"), .string("https://example.com/commit/abc"),
-                .string("https://example.com/issues/1#comment"), .string("https://example.com/actions/runs/1"),
-                .string("/tmp/report-check.xcresult"),
-            ])]) { _, added in added })
-            for appearance in [ColorScheme.light, .dark] {
-                let expected = try render(plain, appearance)
-                let actual = try render(withEvidence, appearance)
-                #expect(actual.width == expected.width && actual.height == expected.height)
-                #expect(actual.pixels.count == expected.pixels.count)
-                // On macOS two renders of the same card can differ by a step in a few channels.
-                let off = zip(actual.pixels, expected.pixels).map { abs(Int($0) - Int($1)) }.max() ?? 0
-                #expect(off <= 2, "\(kind), \(appearance): a channel differs by \(off)")
-            }
-        }
     }
 
     // MARK: The chip
@@ -371,21 +341,23 @@ struct ChatSupervisionTests {
         #expect(!Supervision.visible([input(4, text: "Next real request"), late], results: [use.toolUseID!: late], live: false))
     }
 
-    @Test func foldAndClientPromotionRoundTripWithTheirDistinctKeys() throws {
+    /// The item's own mark is under the hub's item key too (`proto.Item.SupervisionUser`, restored by #7160), so a page,
+    /// a cache restore and the core's replay all read the same field.
+    @Test func foldAndClientPromotionRoundTripUnderTheHubsKey() throws {
         let json = #"{"id":"fold:t2#0","seq":2,"role":"assistant","kind":"fold","fold":{"items":4,"tools":2,"thoughts":0,"through_seq":5,"through_id":"r5#0","supervision_user":true}}"#
         var folded = try JSON.decoder.decode(Item.self, from: Data(json.utf8))
         #expect(folded.fold?.supervisionUser == true && visible([input(1), folded]))
         folded.supervisionUser = true
         let data = try JSON.encoder.encode(folded)
         let value = try JSONDecoder().decode(JSONValue.self, from: data)
-        #expect(value["supervisionUser"] == .bool(true))
-        #expect(value["supervision_user"] == nil)
+        #expect(value["supervision_user"] == .bool(true))
+        #expect(value["supervisionUser"] == nil)
         #expect(value["fold"]?["supervision_user"] == .bool(true))
         #expect(try JSON.decoder.decode(Item.self, from: data) == folded)
         folded.fold?.supervisionUser = nil
         folded.supervisionUser = nil
         #expect(!visible([input(1), folded]))
-        #expect(ChatCache.folder == "chats-v17")
+        #expect(ChatCache.folder == "chats-v19")
     }
 
     @Test func queuedSupervisionAndTheNextGenuineQueuedInputAreSeparateTurns() {

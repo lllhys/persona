@@ -150,26 +150,32 @@ func (b *BusHub) keep(ctx context.Context, id, kind string, body []byte) bool {
 func (b *BusHub) queued() bool { return b.out.waiting.Load() > 0 || !b.Connected() }
 
 // sendPush is notify.request, kept in the outbox while the hub is away (or while older ones wait there), and when the
-// call may not have reached it: the hub takes each notification id once.
-func (b *BusHub) sendPush(ctx context.Context, p NotifyRequest) error {
+// call may not have reached it: the hub takes each notification id once. A kept push answers Queued.
+func (b *BusHub) sendPush(ctx context.Context, p NotifyRequest) (NotifyResult, error) {
 	o, id := b.out, p.Notification.ID
 	var raw []byte
 	if o != nil && id != "" {
 		raw, _ = json.Marshal(p.Notification)
 	}
 	if raw != nil && b.queued() && b.keep(ctx, id, outboxPush, raw) {
-		return nil
+		return NotifyResult{OK: true, Queued: true}, nil
 	}
-	err := busError(b.client.Call(ctx, assistantwire.MethodNotify, p, nil))
+	var res NotifyResult
+	err := busError(b.client.Call(ctx, assistantwire.MethodNotify, p, &res))
 	if err != nil && !answered(err) && raw != nil && b.keep(ctx, id, outboxPush, raw) {
-		return nil
+		return NotifyResult{OK: true, Queued: true}, nil
 	}
-	return err
+	return res, err
 }
 
 // sendBroadcast is ws.broadcast, kept in the outbox while the hub is away (or while older ones wait there), and when
 // it could not be written.
 func (b *BusHub) sendBroadcast(ctx context.Context, m Broadcast) error {
+	if discard, err := b.deletedBroadcast(ctx, m.Message); err != nil {
+		return err
+	} else if discard {
+		return nil
+	}
 	o := b.out
 	if o != nil && b.queued() && b.keep(ctx, "bc_"+randomHex(8), outboxBroadcast, m.Message) {
 		return nil
@@ -262,6 +268,12 @@ func (b *BusHub) handOver(ctx context.Context) error {
 				}
 				w.Notification = &n
 			default:
+				if discard, err := b.deletedBroadcast(ctx, it.Body); err != nil {
+					return err
+				} else if discard {
+					stale = append(stale, it.ID)
+					continue
+				}
 				w.Message, keepFor = json.RawMessage(it.Body), broadcastKeep
 			}
 			if now.Sub(it.CreatedAt) > keepFor {
@@ -285,6 +297,28 @@ func (b *BusHub) handOver(ctx context.Context) error {
 			return errors.New("the hub took part of the outbox")
 		}
 	}
+}
+
+// Durable broadcasts can predate deletion, including a manager restart. Drop
+// their content before replay, even before the hub has its first fleet snapshot.
+func (b *BusHub) deletedBroadcast(ctx context.Context, raw []byte) (bool, error) {
+	var event struct {
+		Type         string `json:"type"`
+		Conversation string `json:"conversation"`
+	}
+	if json.Unmarshal(raw, &event) != nil || !conversationContentEvent(event.Type) {
+		return false, nil
+	}
+	s := b.service()
+	if s == nil {
+		return false, nil
+	}
+	err := s.conversationIDAvailable(ctx, event.Conversation)
+	var re *rpc.Error
+	if errors.As(err, &re) && re.Code == "conversation_deleted" {
+		return true, nil
+	}
+	return false, err
 }
 
 // deliverOutbox hands items to the hub: in one manager.outbox, or one by one to a hub from before it. It returns the

@@ -4,14 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/transcript"
 )
 
 // run is what runDue does for one due task: read it as it is now, then run it.
@@ -69,6 +74,98 @@ func TestATaskRunsInItsOwnConversation(t *testing.T) {
 	}
 	if v := n.lastSnapshot().Tasks; len(v) != 1 || v[0].RunSessionID != first.SessionID {
 		t.Fatalf("and the hub is told the task: %+v", v)
+	}
+}
+
+func TestAFreshRecurringTaskStartsNewChatsWithARetainedOrigin(t *testing.T) {
+	node := newFakeHub().withMachine()
+	h := newStorelessService(t, node)
+	setSettings(t, h, func(s *Settings) { s.Main, s.MachineID = "main", "server" })
+	const origin = "old-followup-chat"
+	setTasks(h, Task{ID: "followup", Title: "Patrol", Prompt: "Check the changes.",
+		Repeat: repeatOnce, At: time.Now().Add(time.Hour), Enabled: true, MachineID: "server", SessionID: origin})
+
+	// The task editor converts an existing follow-up to a recurring task with fresh chats.
+	update := func(fresh bool) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"title": "Patrol", "prompt": "Check the changes.", "repeat": repeatInterval, "every_minutes": 30,
+			"enabled": true, "session_id": origin, "fresh_each_run": fresh,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/assistant/tasks/followup", strings.NewReader(string(body))))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update task: %d %s", rec.Code, rec.Body)
+		}
+		saved, _ := taskByID(h, "followup")
+		if saved.Repeat != repeatInterval || saved.FreshEachRun != fresh || saved.SessionID != origin {
+			t.Fatalf("converted follow-up lost its origin or run preference: %+v", saved)
+		}
+	}
+	update(true)
+
+	first, err := runNow(t, h, "followup")
+	if err != nil || first.SessionID == "" || first.SessionID == origin {
+		t.Fatalf("first fresh run reused the origin: %+v, %v", first, err)
+	}
+	second, err := runNow(t, h, "followup")
+	if err != nil || second.SessionID == "" || second.SessionID == origin || second.SessionID == first.SessionID {
+		t.Fatalf("second fresh run did not start a separate conversation: %+v, %v", second, err)
+	}
+	if saved, _ := taskByID(h, "followup"); saved.SessionID != origin || saved.RunSessionID != second.SessionID {
+		t.Fatalf("fresh dispatch changed the stored origin or lost the last run: %+v", saved)
+	}
+
+	update(false)
+	continued, err := runNow(t, h, "followup")
+	if err != nil || continued.SessionID != origin {
+		t.Fatalf("turning off fresh runs did not restore the origin: %+v, %v", continued, err)
+	}
+}
+
+func TestFreshEachRunOnRescheduleUsesFinalRepeat(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		at    string
+		every string
+		want  string
+	}{
+		{name: "one-off", at: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), want: repeatOnce},
+		{name: "promoted to interval", every: "30m", want: repeatInterval},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := readyHub()
+			node.settings = &Settings{Main: "main", Timezone: "UTC"}
+			s := newStorelessService(t, node)
+			const origin = "origin-chat"
+			const prompt = "Check the renewal"
+			setTasks(s, Task{ID: "followup", Title: "Renewal", Prompt: prompt, Repeat: repeatOnce,
+				At: time.Now().Add(-time.Minute), MachineID: "server", SessionID: origin})
+			s.recordRun(ScheduleRun{RefID: "followup", Status: runOK, MachineID: "server", SessionID: origin})
+
+			args, err := json.Marshal(map[string]any{
+				"title": "Renewal", "prompt": prompt, "at": tc.at, "every": tc.every, "fresh_each_run": true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.toolScheduleFollowup(t.Context(), "server", origin, args); err != nil {
+				t.Fatal(err)
+			}
+			task, _ := taskByID(s, "followup")
+			if task.Repeat != tc.want || task.SessionID != origin || task.FreshEachRun != (tc.want != repeatOnce) {
+				t.Fatalf("rescheduled task: %+v", task)
+			}
+			if tc.want == repeatOnce {
+				sess, err := runNow(t, s, "followup")
+				if err != nil || sess.SessionID != origin {
+					t.Fatalf("one-off did not go back to its originating chat: %+v, %v", sess, err)
+				}
+			}
+		})
 	}
 }
 
@@ -523,6 +620,79 @@ func TestSilentRun(t *testing.T) {
 		if got := silentRun(c.items, task, c.ran); got != c.want {
 			t.Errorf("%s: silentRun = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// In a chat the task reuses, the node's one-turn page reaches back past this run's prompt (an injected one, not counted
+// as a turn) into the previous run, with its reply: the silent run is still found. Paged by the node's own reader
+// (transcript.PageTurns), not the fake hub, which counts every prompt as a turn (#8901).
+func TestSilentRunInAReusedChat(t *testing.T) {
+	task := Task{Title: "早报", Prompt: "给我今天的早报"}
+	at := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+	run := taskPrompt(task, at, at, time.UTC, false, false, true)
+	if prompts.ParseInjected(run) == nil {
+		t.Fatal("the run's prompt is not an injected one: the page would stop at it")
+	}
+	n := 0
+	line := func(b *strings.Builder, format string, args ...any) {
+		parent := "null"
+		if n > 0 {
+			parent = fmt.Sprintf(`"l%d"`, n)
+		}
+		n++
+		fmt.Fprintf(b, `{"uuid":"l%d","parentUuid":%s,"timestamp":"2026-11-16T08:%02d:00Z",`+format+"}\n", append([]any{n, parent, n}, args...)...)
+	}
+	user := func(b *strings.Builder, text string) {
+		line(b, `"type":"user","message":{"role":"user","content":%q}`, text)
+	}
+	reply := func(b *strings.Builder, text string) {
+		line(b, `"type":"assistant","message":{"role":"assistant","id":"m%d","content":[{"type":"text","text":%q}]}`, n+1, text)
+	}
+	tool := func(b *strings.Builder) {
+		line(b, `"type":"assistant","message":{"role":"assistant","id":"m%d","content":[{"type":"tool_use","id":"tu%d","name":"Read","input":{"file_path":"a.md"}}]}`, n+1, n+1)
+	}
+	end := func(b *strings.Builder) { line(b, `"type":"system","subtype":"turn_duration","durationMs":900`) }
+	page := func(build func(b *strings.Builder)) []proto.Item {
+		var b strings.Builder
+		build(&b)
+		p := filepath.Join(t.TempDir(), "s.jsonl")
+		if err := os.WriteFile(p, []byte(b.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f := transcript.NewFile(p)
+		if _, err := f.Refresh(); err != nil {
+			t.Fatal(err)
+		}
+		items, _, _ := f.PageTurns(0, 1, 2000)
+		return items
+	}
+	previous := func(b *strings.Builder) { user(b, run); reply(b, "今天三个会"); end(b) }
+	for _, c := range []struct {
+		name  string
+		build func(b *strings.Builder)
+		want  bool
+	}{
+		{"a fresh chat", func(b *strings.Builder) { user(b, run); end(b) }, true},
+		{"after a run that replied", func(b *strings.Builder) { previous(b); user(b, run); end(b) }, true},
+		{"after a run that replied, seen working only", func(b *strings.Builder) { previous(b); user(b, run) }, true},
+		{"this run replied", func(b *strings.Builder) { previous(b); user(b, run); reply(b, "今天两个会"); end(b) }, false},
+		{"this run called a tool", func(b *strings.Builder) { previous(b); user(b, run); tool(b); end(b) }, false},
+		{"the user wrote since", func(b *strings.Builder) {
+			previous(b)
+			user(b, run)
+			end(b)
+			user(b, "顺便看下明天的会")
+			end(b)
+		}, false},
+	} {
+		items := page(c.build)
+		if got := silentRun(items, task, true); got != c.want {
+			t.Errorf("%s: silentRun = %v, want %v (page %+v)", c.name, got, c.want, items)
+		}
+	}
+	// The page did reach back: without the split, the previous run's reply hid the silence.
+	if items := page(func(b *strings.Builder) { previous(b); user(b, run); end(b) }); !slices.ContainsFunc(items, func(it proto.Item) bool { return it.Text == "今天三个会" }) {
+		t.Fatalf("the page did not reach the previous run: %+v", items)
 	}
 }
 

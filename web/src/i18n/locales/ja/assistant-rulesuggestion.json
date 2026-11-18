@@ -1,0 +1,22 @@
+{
+  "label": "ルールの提案",
+  "always": "常に",
+  "not_now": "今はしない",
+  "always_title": "ルールにする",
+  "not_now_title": "30 日間は提案しない",
+  "joined": "{first}{second}",
+  "list_separator": "、",
+  "creates_plan_start": "「常に」を押すと、この種類のタスクを記憶します。{machine} の {directory} とそのサブフォルダでファイルを変更するタスクは確認なしで開始されます。",
+  "creates_standing": "「常に」を押すと、{machine} の {directory} に継続的な承認を追加します：{action}。",
+  "creates_conditions": "次の条件を満たす場合のみ：{conditions}。",
+  "creates_quote": "あなたの言葉として保存：「{quote}」。",
+  "creates_delegate": "「常に」を押してもルールは保存されず、設定もオンになりません。この提案を 30 日間表示しないだけです。",
+  "made_plan_start": "記憶しました。この種類のタスクは確認なしで開始されます。",
+  "made_standing": "継続的な承認を追加しました。",
+  "made_delegate": "ルールは保存されず、設定もオンになっていません。",
+  "where": "「設定 › {tab} › {list}」で確認・削除できます。",
+  "where_delegate": "このスイッチはまだどのアプリにもありません。ハブのコンピュータにあるアシスタントの設定ファイルでオンにします（{setting}）。",
+  "open_settings": "設定を開く",
+  "hidden": "30 日間は提案しません。",
+  "failed": "回答を保存できませんでした。{error}"
+}

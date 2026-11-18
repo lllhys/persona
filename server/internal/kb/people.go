@@ -81,6 +81,7 @@ func (e *Engine) WritePersonSummary(pid string) {
 	if p.Note != "" {
 		fmt.Fprintf(&b, "%s\n\n", p.Note)
 	}
+	b.WriteString(e.Store.profilesMarkdown(pid)) // the writers' profiles, each part under its own heading (profile.go)
 	if p.Importance != "" {
 		fmt.Fprintf(&b, "重要级 %s · 与我相关性 %d · %s\n\n", p.Importance, p.Relevance, strings.Join(p.Tags, " "))
 	}

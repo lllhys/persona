@@ -1,13 +1,17 @@
 import SwiftUI
 
-/// Watch recording does not depend on the hub connection: it saves without a network and sends back once near the phone.
-/// `startsMeeting`: opened as Meeting Recording (the home card, the complication), it starts at once, marked a meeting
-/// (docs/apple/recording.md「Apple Watch」); the phone names it after the calendar. While all-day recording runs it
-/// marks the meeting in the day instead (one microphone), and the page shows the all-day state in place of the clock.
+/// The watch's Recordings page (docs/apple/recording.md「Apple Watch」). Recording does not depend on the hub connection:
+/// it saves without a network and sends back once near the phone. One start, as on the iPhone (#5493, #5243): **Record**,
+/// always a meeting, which the phone names after the calendar, unless Note is picked under it for that one start; two
+/// start buttons looked alike and owners couldn't tell which to press. `startsMeeting`: opened by the Record complication,
+/// it starts a meeting at once. While all-day recording runs that marks the meeting in the day instead (one microphone),
+/// and the page shows the all-day state in place of the clock and Record.
 struct WatchRecordingView: View {
     var startsMeeting = false
     @State private var capture = RecordingCapture.shared
     @State private var startedMeeting = false
+    /// Meeting unless Note is picked here, for the next start only (as the iPhone's Type row): never remembered.
+    @State private var kind = WatchRecordingView.firstKind
     @State private var library = RecordingLibrary.shared
     @State private var transfer = WatchRecordingTransfer.shared
     /// Starts in the app's UI language; the button cycles through the three the recorder supports.
@@ -18,6 +22,16 @@ struct WatchRecordingView: View {
     @State private var allDay = WatchAllDay.shared
     /// The phone's `recordingDay`: absent from a phone that doesn't take day recordings, 0 until its user agrees.
     @AppStorage(WatchSync.phoneDayKey) private var phoneDay: Int?
+
+    #if DEBUG
+    /// `-showWatchNote YES`: the page with Note picked (screenshots).
+    private static let firstKind: RecordingKindChoice = UserDefaults.standard.bool(forKey: "showWatchNote") ? .note : .meeting
+    /// `-showRecordingEnd YES`: the page scrolled to its end (screenshots: a simulator's crown can't be turned from the
+    /// command line).
+    private static let showsEnd = UserDefaults.standard.bool(forKey: "showRecordingEnd")
+    #else
+    private static let firstKind = RecordingKindChoice.meeting
+    #endif
 
     /// The recorder's language for the app's UI language (also all-day recording's).
     static var defaultLocale: String {
@@ -55,11 +69,15 @@ struct WatchRecordingView: View {
                 }
             }.padding(Theme.Space.m)
         }
-        .navigationTitle("Record [Recordings Section ef2821]")
+        #if DEBUG
+        .defaultScrollAnchor(Self.showsEnd ? .bottom : nil)
+        #endif
+        // The page's name, as on the home row that opens it and on the iPhone (in zh-Hans and ja the same word as Record).
+        .navigationTitle("Recordings")
         .onAppear { transfer.start() }
         .task {
-            // Meeting Recording: one tap from the home list or the watch face; once, and never over a recording running.
-            // While all-day recording runs, the same tap marks the meeting in the day.
+            // The complication's Record: one tap from the watch face; once, and never over a recording running. While
+            // all-day recording runs, the same tap marks the meeting in the day.
             guard startsMeeting, !startedMeeting else { return }
             if capture.allDay {
                 startedMeeting = true
@@ -68,7 +86,7 @@ struct WatchRecordingView: View {
             }
             guard capture.state == .idle else { return }
             startedMeeting = true
-            await capture.start(locale: locale, meeting: RecordingMeeting())
+            await capture.start(locale: locale, meeting: RecordingKindChoice.meeting.watchMeeting)
         }
         .confirmationDialog("Rolling recording", isPresented: $confirmingRolling) {
             Button("Start Rolling") {
@@ -81,7 +99,8 @@ struct WatchRecordingView: View {
         }
     }
 
-    /// Every recording but all-day's: the clock, the start buttons, and the controls of the one running.
+    /// Every recording but all-day's: the clock, Record with the next start's settings under it (type, language) and the
+    /// other modes (rolling, all-day), and the controls of the one running.
     @ViewBuilder private var clip: some View {
         Text(RecordingFormat.clock(capture.elapsed))
             .font(Theme.Font.display.monospacedDigit())
@@ -91,10 +110,23 @@ struct WatchRecordingView: View {
                 .accessibilityIdentifier("watch-recording-meeting")
         }
         if capture.state == .idle {
-            Button { Task { await capture.start(locale: locale, meeting: RecordingMeeting()) } } label: {
-                Label("Meeting Recording", systemImage: Theme.Icon.recording).lineLimit(1)
+            Button(action: record) {
+                Label("Record [Recordings Section ef2821]", systemImage: Theme.Icon.recording).lineLimit(1)
             }
             .buttonStyle(.borderedProminent)
+            .recordingPrimaryGesture()
+            .accessibilityIdentifier("watch-recording-start")
+            // Meeting or Note for this start, under Record as its qualifier: a text button with the kind's mark (the
+            // iPhone's Type row shows it too), never a second start button; one tap switches it.
+            Button { kind = kind == .meeting ? .note : .meeting } label: {
+                Label(String(localized: "Type: \(kind.title)"), systemImage: kind.symbol).font(Theme.Font.secondary).lineLimit(1)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("watch-recording-kind")
+            if kind == .note {
+                Text("No minutes, and Persona stays out.").font(Theme.Font.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("watch-recording-kind-detail")
+            }
             Button {
                 let languages = ["zh-CN", "en-US", "ja-JP"]
                 let index = languages.firstIndex(of: locale) ?? 0
@@ -104,11 +136,6 @@ struct WatchRecordingView: View {
                     .font(Theme.Font.secondary).lineLimit(1)
             }
             .buttonStyle(.bordered)
-            Button { Task { await capture.start(locale: locale) } } label: {
-                Label("Start Recording", systemImage: Theme.Icon.recording).lineLimit(1)
-            }
-            .buttonStyle(.bordered)
-            .recordingPrimaryGesture()
             if phoneRolling {
                 Button {
                     if rollingConsent { Task { await capture.start(locale: locale, rolling: true) } }
@@ -140,6 +167,13 @@ struct WatchRecordingView: View {
                 Label("Stop & Save", systemImage: Theme.Icon.interrupt).lineLimit(1)
             }.tint(Theme.danger)
         }
+    }
+
+    /// Record: a meeting, or a note when Note is picked. The pick is for this start only.
+    private func record() {
+        let picked = kind
+        kind = .meeting
+        Task { await capture.start(locale: locale, meeting: picked.watchMeeting) }
     }
 
     /// All-Day Recording once the phone takes it: one tap starts it, or, until the user agreed on the iPhone, opens

@@ -7,13 +7,11 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // resumeCLI resolves its directory as Claude Code does: unset means ~/.claude, a set value (an empty one too) is the
 // directory. A resume whose transcript is not there fails the way Claude Code does.
-const resumeCLI = `if [ "${CLAUDE_CONFIG_DIR+set}" = set ]; then dir=$CLAUDE_CONFIG_DIR; printf 'set:%s\n' "$dir"; else dir=$HOME/.claude; printf 'unset\n'; fi > "$SDK_FAKE_DIR/cli-profile"
+const resumeCLI = `if [ "${CLAUDE_CONFIG_DIR+set}" = set ]; then dir=$CLAUDE_CONFIG_DIR; printf 'set:%s\n' "$dir"; else dir=$HOME/.claude; printf 'unset\n'; fi > "$CLI_FAKE_DIR/cli-profile"
 prev=
 for a in "$@"; do
   if [ "$prev" = --resume ] && ! ls "$dir"/projects/*/"$a.jsonl" >/dev/null 2>&1; then
@@ -28,11 +26,11 @@ while IFS= read -r line; do
 done
 `
 
-// resumeTest is sdkTest with resumeCLI as the machine's claude, a home reached through a symlink (as /home -> /data00/home)
+// resumeTest is cliTest with resumeCLI as the machine's claude, a home reached through a symlink (as /home -> /data00/home)
 // and no CLAUDE_CONFIG_DIR in the node's service environment.
-func resumeTest(t *testing.T) (*sdkFixture, string) {
+func resumeTest(t *testing.T) (*cliFixture, string) {
 	t.Helper()
-	f := sdkTest(t)
+	f := cliTest(t)
 	real := os.Getenv("HOME")
 	if err := os.WriteFile(filepath.Join(real, "bin", "claude"), []byte("#!/bin/sh\n"+resumeCLI), 0o700); err != nil {
 		t.Fatal(err)
@@ -102,78 +100,73 @@ func TestAssistantResumeFollowsTheTranscriptOverARecordedProfile(t *testing.T) {
 		"recorded-holds-older-copy-than-home", "recorded-holds-older-copy-than-other",
 		"recorded-shares-projects", "recorded-holds-newest-copy",
 	}
-	for _, runtime := range []string{"", proto.AssistantRuntimeAgentSDK} {
-		for _, scenario := range scenarios {
-			t.Run(runtime+"/"+scenario, func(t *testing.T) {
-				f, real := resumeTest(t)
-				n := f.n
-				id := "a5500000-0000-4000-8000-000000000102"
-				cwd := filepath.Join(n.dir, "assistant")
-				private := filepath.Join(n.dir, "profiles", "cc-old")
-				other := t.TempDir()
-				n.cdirs.known = []string{other}
-				want := private
-				switch scenario {
-				case "recorded-lacks-transcript":
-					want = other
-					writeProfileTranscript(t, other, cwd, id)
-				case "recorded-lacks-home-transcript": // e.g. a private-profile launcher, then the main chat's
-					want = "default"
-					writeProfileTranscript(t, filepath.Join(real, ".claude"), cwd, id)
-				case "recorded-holds-older-copy-than-home": // the rollback continued it in ~/.claude
-					want = "default"
-					writeProfileTranscript(t, private, cwd, id)
-					aged(t, private, id)
-					writeProfileTranscript(t, filepath.Join(real, ".claude"), cwd, id)
-				case "recorded-holds-older-copy-than-other":
-					want = other
-					writeProfileTranscript(t, private, cwd, id)
-					aged(t, private, id)
-					writeProfileTranscript(t, other, cwd, id)
-				case "recorded-holds-newest-copy":
-					writeProfileTranscript(t, other, cwd, id)
-					aged(t, other, id)
-					writeProfileTranscript(t, private, cwd, id)
-				case "recorded-shares-projects":
-					writeProfileTranscript(t, filepath.Join(real, ".claude"), cwd, id)
-					if err := os.MkdirAll(private, 0o700); err != nil {
-						t.Fatal(err)
-					}
-					if err := os.Symlink(filepath.Join(real, ".claude", "projects"), filepath.Join(private, "projects")); err != nil {
-						t.Fatal(err)
-					}
-				}
-				raw, _ := json.Marshal(map[string]any{"launcher": "cc-old", "cwd": cwd, "config_dir": private})
-				var st sessionState
-				if err := json.Unmarshal(raw, &st); err != nil {
+	for _, scenario := range scenarios {
+		t.Run(scenario, func(t *testing.T) {
+			f, real := resumeTest(t)
+			n := f.n
+			id := "a5500000-0000-4000-8000-000000000102"
+			cwd := filepath.Join(n.dir, "assistant")
+			private := filepath.Join(n.dir, "profiles", "cc-old")
+			other := t.TempDir()
+			n.cdirs.known = []string{other}
+			want := private
+			switch scenario {
+			case "recorded-lacks-transcript":
+				want = other
+				writeProfileTranscript(t, other, cwd, id)
+			case "recorded-lacks-home-transcript": // e.g. a private-profile launcher, then the main chat's
+				want = "default"
+				writeProfileTranscript(t, filepath.Join(real, ".claude"), cwd, id)
+			case "recorded-holds-older-copy-than-home": // the rollback continued it in ~/.claude
+				want = "default"
+				writeProfileTranscript(t, private, cwd, id)
+				aged(t, private, id)
+				writeProfileTranscript(t, filepath.Join(real, ".claude"), cwd, id)
+			case "recorded-holds-older-copy-than-other":
+				want = other
+				writeProfileTranscript(t, private, cwd, id)
+				aged(t, private, id)
+				writeProfileTranscript(t, other, cwd, id)
+			case "recorded-holds-newest-copy":
+				writeProfileTranscript(t, other, cwd, id)
+				aged(t, other, id)
+				writeProfileTranscript(t, private, cwd, id)
+			case "recorded-shares-projects":
+				writeProfileTranscript(t, filepath.Join(real, ".claude"), cwd, id)
+				if err := os.MkdirAll(private, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				n.state.put(id, st)
-				params := map[string]any{"launcher": "claude", "cwd": cwd, "text": "hello", "session_id": id, "runtime": runtime, "model_fingerprint": "resume-test"}
-				if _, err := nodeCall(t, n, "assistant.send", params); err != nil {
-					t.Fatalf("resume failed: %v (child saw %q)", err, f.file("cli-profile"))
+				if err := os.Symlink(filepath.Join(real, ".claude", "projects"), filepath.Join(private, "projects")); err != nil {
+					t.Fatal(err)
 				}
-				p := f.proc(id)
-				got, set := lookupEnv(p.cmd.Environ(), "CLAUDE_CONFIG_DIR")
-				if want == "default" && set || want != "default" && !sameScopePath(got, want) {
-					t.Fatalf("process profile %q (set %v), want %q", got, set, want)
-				}
-				if runtime == "" {
-					got := strings.TrimSuffix(f.file("cli-profile"), "\n")
-					if want == "default" && got != "unset" || want != "default" && !sameScopePath(strings.TrimPrefix(got, "set:"), want) {
-						t.Fatalf("CLI child profile %q, want %q", got, want)
-					}
-				}
-				if st, _ := n.state.get(id); st.ConfigDir != want && !sameScopePath(st.ConfigDir, want) {
-					t.Fatalf("recorded profile %q, want %q", st.ConfigDir, want)
-				}
-				// The recorded profile, asked for explicitly, is no move.
-				n.stopAssistant(id)
-				params["config_dir"] = want
-				if _, err := nodeCall(t, n, "assistant.send", params); err != nil {
-					t.Fatalf("resume naming its own profile: %v", err)
-				}
-			})
-		}
+			}
+			raw, _ := json.Marshal(map[string]any{"launcher": "cc-old", "cwd": cwd, "config_dir": private})
+			var st sessionState
+			if err := json.Unmarshal(raw, &st); err != nil {
+				t.Fatal(err)
+			}
+			n.state.put(id, st)
+			params := map[string]any{"launcher": "claude", "cwd": cwd, "text": "hello", "session_id": id, "model_fingerprint": "resume-test"}
+			if _, err := nodeCall(t, n, "assistant.send", params); err != nil {
+				t.Fatalf("resume failed: %v (child saw %q)", err, f.file("cli-profile"))
+			}
+			p := f.proc(id)
+			got, set := lookupEnv(p.cmd.Environ(), "CLAUDE_CONFIG_DIR")
+			if want == "default" && set || want != "default" && !sameScopePath(got, want) {
+				t.Fatalf("process profile %q (set %v), want %q", got, set, want)
+			}
+			if child := strings.TrimSuffix(f.file("cli-profile"), "\n"); want == "default" && child != "unset" || want != "default" && !sameScopePath(strings.TrimPrefix(child, "set:"), want) {
+				t.Fatalf("CLI child profile %q, want %q", child, want)
+			}
+			if st, _ := n.state.get(id); st.ConfigDir != want && !sameScopePath(st.ConfigDir, want) {
+				t.Fatalf("recorded profile %q, want %q", st.ConfigDir, want)
+			}
+			// The recorded profile, asked for explicitly, is no move.
+			n.stopAssistant(id)
+			params["config_dir"] = want
+			if _, err := nodeCall(t, n, "assistant.send", params); err != nil {
+				t.Fatalf("resume naming its own profile: %v", err)
+			}
+		})
 	}
 }

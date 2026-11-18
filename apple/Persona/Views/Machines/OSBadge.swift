@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// A machine's OS as a small mark (docs/server/machines.md「System information」): the Apple logo for macOS, each Linux distribution's
 /// own mark (Simple Icons, `Theme.Brand.os`) in its color, a generic Linux penguin for the rest.

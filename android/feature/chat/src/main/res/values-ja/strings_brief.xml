@@ -37,4 +37,7 @@
     <string name="chat_brief_stage_merge">マージ</string>
     <string name="chat_brief_stage_deploy">デプロイ</string>
     <string name="chat_brief_stage_verify">検証済み</string>
+    <string name="chat_brief_setup">おすすめの設定</string>
+    <string name="chat_brief_setup_intro">Persona 自身の過去 7 日間の記録から計算しました（期間を明記している項目を除く）。何も変更していません。以下はどれも、あなたが自分で変更するまで今のままです。</string>
+    <string name="chat_brief_setup_open">設定を開く</string>
 </resources>

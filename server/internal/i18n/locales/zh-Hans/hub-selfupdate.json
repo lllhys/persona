@@ -1,5 +1,6 @@
 {
   "err_no_update": "没有更新的版本",
+  "err_beta_channel": "Beta 更新需要官方 GitHub 发布源和有效的 Beta 清单；当前更新来源保持不变",
   "err_not_release": "这个 hub 不能自己更新",
   "err_busy": "助手和 Agent 一直在忙，这次没更新，稍后再试",
   "err_auto_off": "自动更新已关",
@@ -24,6 +25,7 @@
   "why_bad_source": "hub.json 里的 update.url 用不了：{error}",
   "why_dev": "开发版（{version}）",
   "err_no_binary": "这个版本没有 {platform} 的二进制",
+  "err_release_moved": "下载 {version} 期间发布了新版本 {newer}，这次没有装。再点「更新」就会装它",
   "busy_redeploying": "正在重新部署",
   "err_no_image": "不知道这个 hub 是哪个镜像：compose 没把 PERSONA_IMAGE 传进容器",
   "image_private": "查不了新镜像：{error}。在 .env 里设 PERSONA_REGISTRY_TOKEN（能读这个镜像的 token），或者把镜像改成公开",
@@ -31,5 +33,11 @@
   "err_no_start": "新版本没能启动，旧版本照常在跑：{error}",
   "reason_no_takeover": "新版本没能接手：{error}",
   "reason_not_confirmed": "新版本 3 分钟内没有确认",
-  "err_program_unreplaced": "版本 {version} 没有 {platform} 的 {program}，而 {service} 运行的就是它：装了会让 {program} 留在旧版本。等包含它的版本发布"
+  "err_program_unreplaced": "版本 {version} 没有 {platform} 的 {program}，而 {service} 运行的就是它：装了会让 {program} 留在旧版本。等包含它的版本发布",
+  "err_development_config": "请先在 hub 机器上配置备份时暂停、恢复写入的命令。",
+  "err_development_topology": "开发版更新需要 hub 内置子进程助手。由独立助手管理的电脑须使用其原有更新渠道。",
+  "err_computer_packages": "hub 已更新，但电脑程序包准备失败。暂存文件仍保留在 hub 机器上，请检查更新日志后再部署电脑。",
+  "err_development_recovery": "上次开发版更新中断，需要先恢复。请在 hub 机器上检查 update/development/adopting.json 和保留的快照，再更新或切换来源。",
+  "err_development_phase": "开发版更新准备失败。请在 hub 机器上检查 update/development/{phase}.log，原版本及有效快照仍保留。",
+  "err_development_backup": "此程序备份已不可用，请刷新历史备份版本。"
 }

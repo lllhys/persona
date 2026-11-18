@@ -16,12 +16,19 @@ import SwiftUI
 @MainActor @Observable final class RecordingLivePresenter {
     static let shared = RecordingLivePresenter()
     private(set) var serial = 0
+    /// The recording whose End was tapped on the Lock Screen or in the Dynamic Island (#8731 V4), lowercase: its page asks
+    /// "End the Meeting?" (or "Stop Recording?") once it shows, then `endAsked()` clears it.
+    private(set) var endAsking: String?
     @ObservationIgnored private var heldAt: Date?
 
-    func open() {
+    func open(askingEnd: String? = nil) {
         heldAt = nil
+        endAsking = askingEnd
         serial += 1
     }
+
+    /// The page asked (or the recording it named isn't the one running).
+    func endAsked() { endAsking = nil }
 
     func holdOnAppear(now: Date = .now) { heldAt = now }
 
@@ -50,7 +57,8 @@ private struct RecordingLiveSheetPresenter: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: $presented) { RecordingLiveSheet() }
+            // The meeting room is the whole screen (#8731 v2): a meeting app's, not a sheet over the page.
+            .fullScreenCover(isPresented: $presented) { RecordingLiveSheet() }
             // A hidden shell page never gets onDisappear: the tab-aware pair keeps one host presenting at a time.
             .onTabVisibility(appear: {
                 visible = true
@@ -93,28 +101,31 @@ struct RecordingLiveSheet: View {
             ZStack {
                 if wrapUp, let held {
                     if roomMeeting(held) {
+                        // After the meeting (#8731 V3) the page has the bar: its ✕ at the leading corner, its ⋯ (#9653).
                         MeetingPage(id: held, mode: .after, captureError: stopError, close: { dismiss() })
                             .transition(swap(arriving: true))
                     } else {
                         RecordingWrapUp(id: held, captureError: stopError, finish: { dismiss() })
+                            .toolbar(.hidden, for: .navigationBar)
                             .transition(swap(arriving: true))
                     }
                 } else if let held {
                     if roomMeeting(held) {
                         MeetingPage(id: held, mode: .live, exchanges: exchanges, close: { dismiss() })
+                            .toolbar(.hidden, for: .navigationBar)
                             .transition(swap(arriving: false))
                     } else {
                         RecordingLiveView(id: held, exchanges: exchanges, hide: { dismiss() })
+                            .toolbar(.hidden, for: .navigationBar)
                             .transition(swap(arriving: false))
                     }
                 }
             }
             .themedGroupedPage()
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .navigationBar)
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        // Dark while the meeting records (E1: as meeting apps are), the app's own look once it ended.
+        .preferredColorScheme(wrapUp ? nil : .dark)
         .onChange(of: capture.state, initial: true) { old, new in follow(from: old, to: new) }
         .onChange(of: capture.error, initial: true) { if capture.state != .idle { liveError = capture.error } }
         .onChange(of: ask.exchanges) { mirror() }
@@ -168,25 +179,23 @@ extension RecordingCapture.State {
     }
 }
 
-/// Hide and Done: a quiet text control at the sheet's top trailing corner, a finger tall without a pill around it.
-struct RecordingSheetCloseButton: View {
-    var title: String
+/// The way out of a recording page, first in its header as on every presented page (#9653): ✕ where the page is done
+/// (the wrap-up, a photo still loading), ⌄ where the recording goes on without it (Hide, as the room's own). A round chip a
+/// finger wide, its mark in the primary ink.
+struct RecordingCornerButton: View {
+    enum Kind { case close, hide }
+    var kind: Kind
     var identifier: String
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            // A finger tall and at least that wide, and as wide as its word: a fixed square (`tapTargetFrame`) cut
-            // "Hide" and "Done" to "…" at the largest text sizes. It grows with the text no further than the sheet's
-            // clock does, so the header row beside it keeps room for the time.
-            Text(title).font(Theme.Font.bodyStrong).foregroundStyle(Theme.accent).lineLimit(1)
-                .fixedSize()
-                .scaledFrame(minWidth: Theme.Size.tapTarget, minHeight: Theme.Size.tapTarget)
-                .frame(minWidth: Theme.Size.tapTarget, minHeight: Theme.Size.tapTarget)
-                .contentShape(.rect)
-                .dynamicTypeSize(...Theme.Recording.timerLargestSize)
+            ThemedIcon(kind == .close ? Theme.Icon.close : Theme.Icon.minimizeRoom).font(Theme.Font.heading).sheetBarLabel()
+                .scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
+                .background(Theme.Fill.chip, in: .circle)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(kind == .close ? Text("Close") : Text("Hide"))
         .accessibilityIdentifier(identifier)
     }
 }

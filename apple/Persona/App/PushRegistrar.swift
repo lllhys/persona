@@ -32,6 +32,8 @@ final class PushRegistrar {
     private(set) var registered = false
     /// The last ask or check: the next one waits for it, so a prompt still open is never answered twice.
     private var last: Task<Void, Never>?
+    /// The APNs token this process registered with, so a change of the urgent calls' PushKit token registers again.
+    private var lastToken: Data?
 
     init(system: System = .live, health: PushHealthStore = .shared) {
         self.system = system
@@ -66,6 +68,23 @@ final class PushRegistrar {
         }
     }
 
+    /// The way the hub at group pushes to this device now, as Settings › Devices reads it (`GET /api/v1/auth/tokens`):
+    /// Settings › Notifications asks when it opens (#1859). The registration's answer is kept from launch or pairing,
+    /// so pushes that started failing since (or stopped failing) showed only after the next launch, while Settings ›
+    /// Devices already said so. No entry for this credential: the hub has no push registration from it. A hub that sends
+    /// no routes (older) leaves what is known. A failed read says so instead of the older route; a cancelled one is no
+    /// answer.
+    func refreshRoute(group: String, tokens: () async throws -> APIClient.DeviceTokens) async {
+        do {
+            let r = try await tokens()
+            guard let routes = r.push, let current = r.current else { return }
+            health.update { $0.read(routes[current], group: group) }
+        } catch {
+            if error.isCancellation { return }
+            health.update { $0.readFailed(error.localizedDescription, group: group) }
+        }
+    }
+
     private func queue(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
         let previous = last
         let task = Task {
@@ -85,6 +104,7 @@ final class PushRegistrar {
     /// group's other hubs pass their pushes to it, one push per device), each group sealing to a key of its own
     /// (docs/protocol/multi-hub.md「Push and notifications」).
     func didRegister(token: Data) {
+        lastToken = token
         let hex = token.map { String(format: "%02x", $0) }.joined()
         let registry = HubStore.load()
         let clients = registry.groups.compactMap { g in registry.primary(g).map { (group: g, api: APIClient(config: $0.config, group: g)) } }
@@ -104,6 +124,11 @@ final class PushRegistrar {
         #endif
         let base = APIClient.DeviceBody(deviceID: Self.deviceID, name: UIDevice.current.name, kind: kind, apnsToken: hex,
                                         apnsEnv: env, topic: Bundle.main.bundleIdentifier, features: features)
+        #if os(iOS)
+        let voip = UrgentCallPush.shared.token // only while urgent calls are on
+        #else
+        let voip: String? = nil
+        #endif
         Task {
             // A hub without the app's APNs key pushes through the relay, sealed to this group's key (docs/operations/push-relay.md);
             // the notification service extension opens it. The hub decides: with its own key it ignores these.
@@ -120,6 +145,17 @@ final class PushRegistrar {
             }
             let relayError = PushHealth(relay: outcome).relayError
             await PushHealthStore.shared.update { $0.apnsError = nil; $0.relay = outcome }
+            // The urgent calls' PushKit token has a grant of its own, for the ".voip" topic (docs/operations/push-relay.md
+            // "VoIP pushes"); an older relay refuses it, and the hub then says this phone cannot be rung.
+            var voipGrant: String?
+            var voipError: String?
+            if let voip, let relay = PushRelay.url, let topic = base.topic {
+                do {
+                    voipGrant = try await PushRelay.grant(relay: relay, token: voip, env: env, topic: topic + ".voip", account: PushRelay.voipAccount)
+                } catch {
+                    voipError = PushHealth(relay: PushRelay.outcome(of: error)).relayError
+                }
+            }
             for c in clients {
                 var body = base
                 if let grant, let relay = PushRelay.url, let key = PushCrypto.ensureKey(group: c.group) {
@@ -129,12 +165,29 @@ final class PushRegistrar {
                 } else {
                     body.relayError = relayError
                 }
+                if let voip {
+                    body.voipToken = voip
+                    if let voipGrant, body.relayGrant != nil { body.voipGrant = voipGrant } else { body.voipError = voipError }
+                }
                 do {
-                    let route = try await c.api.register(device: body) // nil: an older hub, which does not say
-                    await PushHealthStore.shared.update { $0.routes[c.group] = route }
-                } catch {}
+                    let routes = try await c.api.registerRoutes(device: body) // nil routes: an older hub, which does not say
+                    let route = routes.push
+                    #if os(iOS)
+                    await MainActor.run { UrgentCallReach.shared.routes[c.group] = routes.call }
+                    #endif
+                    await PushHealthStore.shared.update { $0.read(route, group: c.group) }
+                } catch {
+                    // Not the previous route as if current: the page says it couldn't check (#1859).
+                    await PushHealthStore.shared.update { $0.readFailed(error.localizedDescription, group: c.group) }
+                }
             }
         }
+    }
+
+    /// The urgent calls' PushKit token came, changed or went: the hubs hear it with this device's other push fields.
+    func reregister() {
+        guard let lastToken else { return } // no APNs token yet: the first registration carries it
+        didRegister(token: lastToken)
     }
 
     /// APNs gave no token (no network, a build without the push entitlement): Settings › Notifications says so.

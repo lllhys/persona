@@ -12,16 +12,18 @@
     <string name="settings_ext_sandbox_off">Sandbox off</string>
     <string name="settings_ext_sandbox_title">Isolation</string>
     <string name="settings_ext_sandbox_note">The sandbox only isolates installed extensions the hub runs; the state above is what actually applies. Change it only on the hub machine or in the admin page.</string>
-    <string name="settings_ext_sandbox_egress">Through the egress proxy: %1$s · %2$s</string>
+    <string name="settings_ext_sandbox_footer">Allowing addresses and the sandbox switch are in the admin page, with the admin password.</string>
+    <string name="settings_ext_sandbox_network">Network</string>
     <plurals name="settings_ext_sandbox_allowed">
         <item quantity="one">%d allowed</item>
         <item quantity="other">%d allowed</item>
     </plurals>
-    <plurals name="settings_ext_sandbox_denied">
-        <item quantity="one">%d denied</item>
-        <item quantity="other">%d denied</item>
+    <plurals name="settings_ext_sandbox_blocked">
+        <item quantity="one">%d blocked</item>
+        <item quantity="other">%d blocked</item>
     </plurals>
-    <string name="settings_ext_sandbox_last_denied">Last denied: %1$s</string>
+    <string name="settings_ext_sandbox_blocked_sentence">%1$s tried to reach %2$s, which isn\'t among the addresses it asked for, so it was blocked.</string>
+    <string name="settings_ext_sandbox_go_admin">Allow in Admin Page</string>
     <string name="settings_ext_depends">Dependencies</string>
     <string name="settings_ext_pack_members">Pack members</string>
     <string name="settings_ext_pack_note">Members already installed at a recent enough version are not installed again; below are the extensions this installs or upgrades along with it.</string>
@@ -70,6 +72,7 @@
     <string name="settings_ext_state_error">Something went wrong</string>
     <string name="settings_ext_state_unknown">Unknown state</string>
     <string name="settings_ext_run_pack">A pack runs no program itself; its members are turned on, set up and removed on their own.</string>
+    <string name="settings_ext_run_pack_members_follow">A pack runs no program itself; its members are set up and removed on their own.</string>
     <string name="settings_ext_run_running">Running</string>
     <string name="settings_ext_run_idle">Not running yet; starts when needed</string>
     <string name="settings_ext_source_builtin">Built-in</string>
@@ -166,6 +169,12 @@
     <string name="settings_ext_read_only">This extension is set in its assistant\'s manager.json. Turn it on or off and change its settings there, then restart the assistant.</string>
     <string name="settings_ext_enabled">Enabled</string>
     <string name="settings_ext_enabled_note">When turned off, it stops running and the connectors and other things it provides turn off too. Its settings and secrets are kept.</string>
+    <string name="settings_ext_enable_footer_pack">Turning the pack off turns off its members too, and they stop running. Turning it back on turns on the members it turned off; a member you turn on or off yourself stays as you set it.</string>
+    <string name="settings_ext_enable_footer_pack_off">Turning the pack back on turns on %1$s again. A member you turn on or off yourself stays as you set it.</string>
+    <string name="settings_ext_enable_footer_pack_alone">Turning the pack off turns off only the pack itself. Turn each member on or off on its own page.</string>
+    <string name="settings_ext_disable_pack_title">Turn off “%1$s” and its members?</string>
+    <string name="settings_ext_disable_pack_body">Its members are turned off too: %1$s. They\'re only turned off, not removed; settings and data are kept. Turning the pack back on turns them on again.</string>
+    <string name="settings_ext_disable_all">Turn off all</string>
     <string name="settings_ext_unavailable">Unavailable</string>
     <string name="settings_ext_still_needed">Still needed: %1$s</string>
     <string name="settings_ext_channel_link">This is a chat channel</string>
@@ -237,6 +246,12 @@
     <string name="settings_ext_preview_again">Preview Again</string>
     <string name="settings_ext_uninstall_title">Remove %1$s?</string>
     <string name="settings_ext_uninstall_text">This stops it and deletes its settings and secrets; the connectors it provides go too.</string>
+    <string name="settings_ext_uninstall_keep_result">The package will be deleted too; the data folder will stay on the hub machine. Anything still needing manual cleanup will be listed after removal.</string>
+    <string name="settings_ext_uninstall_delete_data_result">The package and data folder will be deleted too. Anything still needing manual cleanup will be listed after removal.</string>
+    <string name="settings_ext_removal_warnings_text">Removed. A few things still need you to clean them up by hand.</string>
+    <string name="settings_ext_removal_warnings_header">Needs manual cleanup</string>
+    <string name="settings_ext_removal_copy">Copy warnings</string>
+    <string name="settings_ext_removal_done">OK</string>
     <string name="settings_ext_dependents_title">Switch off the extensions that depend on it?</string>
     <string name="settings_ext_dependents_text">Extensions that depend on %2$s will be switched off too: %1$s.</string>
     <string name="settings_ext_dependents_unnamed">Other extensions depend on %1$s and will be switched off too.</string>
@@ -381,4 +396,27 @@
     <string name="settings_subscriptions_counts_on">%1$d on</string>
     <string name="settings_subscriptions_counts_failing">%1$d on · %2$d failing</string>
     <string name="settings_subscriptions_counts_none">Available</string>
+    <string name="settings_ext_notification_expired">This notification has expired. Retry from the extension page.</string>
+    <string name="settings_ext_notification_wrong_scope">Can\'t find the original hub or assistant. Reconnect, then retry from the extension page.</string>
+    <string name="settings_ext_notification_unlock">Unlock your phone to run this notification action.</string>
+    <plurals name="settings_ext_node_running">
+        <item quantity="one">Running on %1$d machine</item>
+        <item quantity="other">Running on %1$d machines</item>
+    </plurals>
+    <plurals name="settings_ext_node_abnormal">
+        <item quantity="one">%1$d machine has an issue</item>
+        <item quantity="other">%1$d machines have an issue</item>
+    </plurals>
+    <plurals name="settings_ext_node_offline">
+        <item quantity="one">%1$d machine offline</item>
+        <item quantity="other">%1$d machines offline</item>
+    </plurals>
+    <plurals name="settings_ext_node_starting">
+        <item quantity="one">Starting on %1$d machine</item>
+        <item quantity="other">Starting on %1$d machines</item>
+    </plurals>
+    <plurals name="settings_ext_node_stopped">
+        <item quantity="one">Stopped on %1$d machine</item>
+        <item quantity="other">Stopped on %1$d machines</item>
+    </plurals>
 </resources>

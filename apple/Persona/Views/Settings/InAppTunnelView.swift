@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 #if !os(macOS)
 import UIKit
 import WebKit
@@ -208,11 +209,12 @@ struct InAppTunnelPanelSheet: View {
                 .navigationTitle(title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
+                    // ✕ at the leading corner, the page's own Reload at the trailing one (#9653).
+                    SheetClose { dismiss() }
+                    ToolbarItem(placement: .primaryAction) {
                         Button { store.reload() } label: { ThemedIcon(Theme.Icon.reload) }
                             .accessibilityLabel(String(localized: "Reload [Lark Chat Pins View 7bdd5c]"))
                     }
-                    ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1) }
                 }
         }
         .onChange(of: scenePhase) { _, phase in

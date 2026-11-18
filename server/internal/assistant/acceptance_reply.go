@@ -56,11 +56,14 @@ func (s *Service) acceptReply(ctx context.Context, messageID, text string, media
 				return true
 			}
 		}
-		if ok, err := s.acceptTry(ctx, id, ""); errors.Is(err, errAcceptStore) {
+		if result, err := s.acceptTry(ctx, id, ""); errors.Is(err, errAcceptStore) {
 			s.botNote(ctx, messageID, i18n.T(l, "http-status.unavailable"))
 		} else if err != nil { // the recommendation did not reach the agent: nothing recorded, "OK" can be said again
 			s.botNote(ctx, messageID, i18n.T(l, "assistant-reports.accept_not_taken", i18n.Args{"error": clip(oneLine(i18n.Localize(err, l)), 120)}))
-		} else if ok {
+		} else if result.undelivered != nil {
+			why := clip(oneLine(i18n.Localize(result.undelivered, l)), 120)
+			s.botNote(ctx, messageID, i18n.T(l, "assistant-reports.accept_decided_not_sent", i18n.Args{"error": why}))
+		} else if result.taken {
 			s.botNote(ctx, messageID, acceptedNote(l, &ask))
 		} else { // not this round that waits: answered as its button answers (feishu_card_actions.go), not swallowed
 			s.botNote(ctx, messageID, i18n.T(l, "assistant-feishu_cards.already_handled"))
@@ -106,13 +109,29 @@ func (s *Service) acceptReply(ctx context.Context, messageID, text string, media
 	}
 	if _, err := s.relayToTask(ctx, t.Origin, id, msg, nil); err != nil {
 		s.logf("task %s: acceptance to agent: %v", id, err)
-		s.botNote(ctx, messageID, withMediaDropped(l, i18n.T(l, "assistant-reports.accept_not_sent", i18n.Args{"error": clip(oneLine(err.Error()), 120)}), media))
+		why := clip(oneLine(err.Error()), 120)
+		if !decideAsk(&ask) {
+			s.botNote(ctx, messageID, withMediaDropped(l, i18n.T(l, "assistant-reports.accept_not_sent", i18n.Args{"error": why}), media))
+			return true
+		}
+		// A decision answered in words is made even when its agent cannot take it now: recorded above, its ask is answered,
+		// and its supervisor is told to pass it on. Never resent by the hub, so the agent cannot get it twice.
+		s.answeredInWords(ctx, id)
+		s.decisionNotDelivered(ctx, id, ask.AskedAt, text, err)
+		s.botNote(ctx, messageID, withMediaDropped(l, i18n.T(l, "assistant-reports.accept_decided_not_sent", i18n.Args{"error": why}), media))
 		return true
 	}
 	if decideAsk(&ask) {
 		s.userDecided(ctx, id) // decided: its agent's next stop goes back to the supervisor
 	}
-	// Changed again: the next deploy asks again. A decision is answered: its card stays known, and says so to a reply.
+	s.answeredInWords(ctx, id)
+	s.botNote(ctx, messageID, withMediaDropped(l, i18n.T(l, "assistant-reports.accept_sent"), media))
+	return true
+}
+
+// answeredInWords: the owner's words answered task id's ask. Changed again: the next deploy asks again. A decision is answered:
+// its card stays known, and says so to a reply.
+func (s *Service) answeredInWords(ctx context.Context, id string) {
 	b := &s.accept
 	b.mu.Lock()
 	if a := b.asks[id]; a != nil && decideAsk(a) {
@@ -122,8 +141,6 @@ func (s *Service) acceptReply(ctx context.Context, messageID, text string, media
 	}
 	s.saveAcceptLocked(ctx)
 	b.mu.Unlock()
-	s.botNote(ctx, messageID, withMediaDropped(l, i18n.T(l, "assistant-reports.accept_sent"), media))
-	return true
 }
 
 // withMediaDropped is note with, when the reply carried pictures or files, the line saying they did not go to the agent.
@@ -134,7 +151,27 @@ func withMediaDropped(l i18n.Lang, note string, media bool) string {
 	return note + "\n" + i18n.T(l, "assistant-reports.accept_media_dropped")
 }
 
-// acceptTry marks task id verified; false when already handled, never asked, or asked before the latest reopen. A
+// acceptResult is what came of one accept operation. The zero value means the round was not taken. undelivered is
+// non-nil only for a decision that was recorded and handed to its supervisor because no Agent could receive it.
+type acceptResult struct {
+	taken       bool
+	undelivered error
+}
+
+func acceptSucceeded() acceptResult { return acceptResult{taken: true} }
+
+// decisionNotDelivered finishes a recorded decision whose Agent could not take it. The supervisor gets one handoff per
+// ask round; the hub does not resend it. The caller owns the decision row and the ask's answered marker.
+func (s *Service) decisionNotDelivered(ctx context.Context, id string, askedAt time.Time, choice string, cause error) acceptResult {
+	l := s.botLang(ctx)
+	s.userDecided(ctx, id)
+	s.signal(superviseSignal{Todo: id, Kind: sigIdle, Key: "undelivered|" + askedAt.UTC().Format(time.RFC3339Nano),
+		Detail: i18n.T(l, "assistant-reports.decision_not_delivered", i18n.Args{"decision": clip(oneLine(choice), 200),
+			"error": clip(oneLine(i18n.Localize(cause, l)), 120)})})
+	return acceptResult{taken: true, undelivered: cause}
+}
+
+// acceptTry marks task id verified; result.taken is false when already handled, never asked, or asked before the latest
 // card-less ask (NoCard) can be accepted too, from the web app. card is the message pressed ("" from a reply, which
 // acceptFor already matched, from the web app, or when Feishu does not say): a card that is not this round's (an
 // earlier round's, once the next one has its own) accepts nothing (#4853). A decision (a conclusion that needs the
@@ -142,60 +179,74 @@ func withMediaDropped(l i18n.Lang, note string, media bool) string {
 // nothing recommended, or no longer waiting, takes nothing. The error is a decision's whose recommendation did not
 // reach the task's agent, or errAcceptStore when the asks cannot be read or the acceptance cannot be saved: either way
 // nothing was taken, the ask still waits, and the owner can try again.
-func (s *Service) acceptTry(ctx context.Context, id, card string) (bool, error) {
+func (s *Service) acceptTry(ctx context.Context, id, card string) (acceptResult, error) {
 	return s.acceptTryAs(ctx, id, card, false)
 }
 
 // acceptTryAs is acceptTry; byDefault: nobody answered decision id by its deadline and the hub takes its recommendation
 // (sweepTaskDeadlines), which only a reversible decision past its deadline allows.
-func (s *Service) acceptTryAs(ctx context.Context, id, card string, byDefault bool) (bool, error) {
+func (s *Service) acceptTryAs(ctx context.Context, id, card string, byDefault bool) (acceptResult, error) {
 	s.reviewDismissals.actions.acquire(id)
 	defer s.reviewDismissals.actions.release(id)
 	return s.acceptTryAsDismissalLocked(ctx, id, card, byDefault)
 }
 
 // acceptTryAsDismissalLocked holds only this task's action lock across its send, not the book mutex.
-func (s *Service) acceptTryAsDismissalLocked(ctx context.Context, id, card string, byDefault bool) (bool, error) {
+func (s *Service) acceptTryAsDismissalLocked(ctx context.Context, id, card string, byDefault bool) (acceptResult, error) {
 	t, todoOK := s.todoNow(id)
-	if todoOK {
+	if todoOK && byDefault { // Hidden is not answered: no default is taken for a dismissed round
 		if dismissed, err := s.decisionDismissed(ctx, t); err != nil || dismissed {
-			return false, err
+			return acceptResult{}, err
 		}
 	}
 	b := &s.accept
 	b.mu.Lock()
 	if !s.loadAcceptLocked(ctx) {
 		b.mu.Unlock()
-		return false, errAcceptStore
+		return acceptResult{}, errAcceptStore
 	}
 	a, ok := b.asks[id]
 	if !ok || a.AskedAt.IsZero() || !a.AcceptedAt.IsZero() || (todoOK && acceptAskStale(a, t)) || (card != "" && card != a.MessageID && !slices.Contains(a.Messages, card)) ||
 		decideAsk(a) && (a.Recommend == "" || todoOK && acceptAskEnded(a, t)) ||
 		byDefault && !(decideAsk(a) && a.Reversible && !a.Deadline.IsZero() && a.DueAt.IsZero() && !time.Now().Before(a.Deadline)) {
 		b.mu.Unlock()
-		return false, nil
+		return acceptResult{}, nil
 	}
+	completeDismissal := func() {}
+	if todoOK && !byDefault {
+		var err error
+		completeDismissal, err = s.prepareDismissalForAnswer(ctx, t)
+		if err != nil {
+			b.mu.Unlock()
+			return acceptResult{}, err
+		}
+	}
+	previousDueAt := a.DueAt
 	a.AcceptedAt = time.Now().UTC()
 	if byDefault {
 		a.ByDefault, a.DueAt = true, a.AcceptedAt
 	}
 	if err := s.saveAcceptErrLocked(ctx); err != nil {
 		// Kept only in memory, it would wait again after a restart: not accepted, and nothing that follows one runs.
-		a.AcceptedAt, a.ByDefault, a.DueAt = time.Time{}, false, time.Time{}
+		a.AcceptedAt, a.ByDefault, a.DueAt = time.Time{}, false, previousDueAt
 		b.mu.Unlock()
 		s.logf("task %s: acceptance: save: %v", id, err)
-		return false, fmt.Errorf("%w: %w", errAcceptStore, err)
+		return acceptResult{}, fmt.Errorf("%w: %w", errAcceptStore, err)
 	}
 	cp := *a
 	b.mu.Unlock()
 	s.askChanged(ctx) // it no longer waits
 	if !decideAsk(&cp) && !cp.Conclusion {
+		completeDismissal()
 		s.taskVerified(ctx, id, cp)
-		return true, nil
+		return acceptSucceeded(), nil
 	}
+	result := acceptSucceeded()
 	switch {
 	case decideAsk(&cp):
-		if err := s.takeRecommendation(ctx, id, cp); err != nil {
+		var err error
+		result, err = s.takeRecommendation(ctx, id, cp)
+		if err != nil {
 			// Not taken after all: the owner can take it again, and is told why it did not go.
 			b.mu.Lock()
 			if a := b.asks[id]; a != nil && a.AskedAt.Equal(cp.AskedAt) {
@@ -206,13 +257,14 @@ func (s *Service) acceptTryAsDismissalLocked(ctx context.Context, id, card strin
 			}
 			b.mu.Unlock()
 			s.askChanged(ctx)
-			return false, err
+			return acceptResult{}, err
 		}
 	case cp.Conclusion:
 		// Seen: the review already closed the task and told where it came from; "verified" is for deployed work.
 	}
+	completeDismissal()
 	s.updateAskCards(ctx, id, cp)
-	return true, nil
+	return result, nil
 }
 
 // taskVerified is what follows deployed task id's "Please verify" a passed (by the owner or its supervisor): the task is

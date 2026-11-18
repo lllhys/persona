@@ -19,6 +19,7 @@ func phoneWriteHub(t *testing.T) *Hub {
 	h := newTestHub(t)
 	h.store = setupTestDB(t)
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "known-phone", Tools: []proto.Tool{{Name: "phone_reminders_create", InputSchema: json.RawMessage(`{"type":"object"}`)}}})
+	waitHelloWrites(t, h)
 	return h
 }
 
@@ -387,6 +388,7 @@ func TestPhoneWriteQueueScanDoesNotBlockRegistration(t *testing.T) {
 	registered := make(chan struct{})
 	go func() {
 		h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "registration", Tools: []proto.Tool{{Name: "phone_reminders_create"}}})
+		h.waitHelloWrites()
 		close(registered)
 	}()
 	select {
@@ -445,6 +447,7 @@ func TestPhoneWriteQueueRequiresRegisteredProvider(t *testing.T) {
 		t.Fatalf("unregistered write = %+v", result)
 	}
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "calendar-phone", CredentialID: "calendar-credential", Tools: []proto.Tool{{Name: "phone_calendar_create_event"}}})
+	waitHelloWrites(t, h)
 	h.revoked("calendar-credential")
 	result = h.callPhone(context.Background(), "phone_calendar_create_event", args)
 	if !result.IsError || !strings.Contains(textOf(result), "registered provider") {

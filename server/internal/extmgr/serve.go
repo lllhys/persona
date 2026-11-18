@@ -122,6 +122,10 @@ func (h *Manager) registerRoutes(api *http.ServeMux) {
 	h.adminExtensionRoutes(api) // with the old /api/v1/admin/plugins paths
 	h.subscriptionRoutes(api)
 	api.HandleFunc("POST /api/v1/error-reports", h.postErrorReports)
+	// The assistant's WebSocket routes, relayed like the extensions' (a relay stream), are the assistant's to answer.
+	for _, pattern := range assistantwire.SocketRoutes {
+		api.HandleFunc(pattern, h.assistantSocket)
+	}
 	withMachine := func(fn func(http.ResponseWriter, *http.Request, *Machine)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			m := h.localMachine(r.PathValue("mid"))
@@ -137,6 +141,7 @@ func (h *Manager) registerRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/v1/machines/{mid}/computer/{action}", withMachine(h.postComputerJob))
 	api.HandleFunc("GET /api/v1/machines/{mid}/computer/clipboard", withMachine(h.computerClipboard))
 	api.HandleFunc("POST /api/v1/machines/{mid}/computer/clipboard", withMachine(h.computerClipboard))
+	api.HandleFunc("POST /api/v1/machines/{mid}/computer/phone-screen", withMachine(h.computerPhoneScreen))
 	api.HandleFunc("GET /api/v1/machines/{mid}/computer/apps", withMachine(h.getComputerApps))
 	api.HandleFunc("DELETE /api/v1/machines/{mid}/computer/apps/{bundle}", withMachine(h.deleteComputerApp))
 	api.HandleFunc("DELETE /api/v1/machines/{mid}/computer/apps/revoke/{bundle}", withMachine(h.revokeComputerApp))
@@ -151,6 +156,7 @@ func (h *Manager) registerRoutes(api *http.ServeMux) {
 	api.HandleFunc("POST /api/v1/machines/{mid}/iphone/{action}", withMachine(h.postIPhoneJob))
 	api.HandleFunc("GET /api/v1/iphone", h.getIPhoneList)
 	api.HandleFunc("PUT /api/v1/iphone/consent", h.putIPhoneConsent)
+	api.HandleFunc("POST /api/v1/iphone/try", h.postIPhoneTry)
 	if h.mail != nil {
 		api.Handle("/api/v1/mail/", h.mail.Handler())
 	} else {
@@ -160,11 +166,22 @@ func (h *Manager) registerRoutes(api *http.ServeMux) {
 	}
 }
 
+// assistantSocket hands one of assistantwire.SocketRoutes to the assistant in this process (Options.AssistantSocket).
+func (h *Manager) assistantSocket(w http.ResponseWriter, r *http.Request) {
+	if h.opts.AssistantSocket == nil {
+		writeErr(w, http.StatusNotFound, errors.New(http.StatusText(http.StatusNotFound)))
+		return
+	}
+	h.opts.AssistantSocket(w, r)
+}
+
 // ServeHTTP serves one request the hub relayed: who asked is in the hub's headers (principalFrom); the extensions'
 // parts of the API (extension_api.go) come before the rest, as at the hub.
 func (h *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.serving.Add(1)
-	defer h.serving.Add(-1)
+	if !isAssistantSocket(r) {
+		h.serving.Add(1)
+		defer h.serving.Add(-1)
+	}
 	if !h.ready(r.Context()) {
 		writeErrCode(w, http.StatusServiceUnavailable, assistantwire.CodeAssistantOffline, errAssistantOffline)
 		return
@@ -186,8 +203,25 @@ func (h *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Serving is how many requests the hub relayed to the extensions are being served now; a WebSocket (a voice call, an
-// extension's live view) counts for as long as it is open.
+// extension's live view) counts for as long as it is open. A meeting's audio socket (assistantwire.SocketRoutes) does
+// not: it is open for as long as the meeting records, and a redeploy may end it (the phone sends again from where the
+// hub's audio ends, docs/assistant/meeting-minutes.md "Audio from the phone").
 func (h *Manager) Serving() int64 { return h.serving.Load() }
+
+// socketRoutes matches assistantwire.SocketRoutes, as the manager's own mux does.
+var socketRoutes = sync.OnceValue(func() *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, pattern := range assistantwire.SocketRoutes {
+		mux.HandleFunc(pattern, func(http.ResponseWriter, *http.Request) {})
+	}
+	return mux
+})
+
+// isAssistantSocket says whether r is one of assistantwire.SocketRoutes.
+func isAssistantSocket(r *http.Request) bool {
+	_, pattern := socketRoutes().Handler(r)
+	return pattern != ""
+}
 
 // localeWriter lets apierr translate errors after the hub has relayed the request to this process.
 type localeWriter struct {
@@ -685,6 +719,23 @@ func (h *Manager) CallTool(ctx context.Context, machine, session, name string, a
 // ConnectorTool says whether name is a registered connector's tool (not Cua's or ego's).
 func (h *Manager) ConnectorTool(name string) bool {
 	return h.connectors != nil && h.connectors.Offers(name)
+}
+
+// ToolAccess classifies every tool CallTool can dispatch, without running it. Connector reads are declared by the
+// connector; its Actions are writes. Subscription dry runs only read, while save/run can change or notify. Computer,
+// browser and iPhone control are actions for this policy even when an individual invocation only observes.
+func (h *Manager) ToolAccess(name string) (known, readOnly bool) {
+	if h.connectors != nil && h.connectors.Offers(name) {
+		return true, h.connectors.ReadOnly(name)
+	}
+	switch {
+	case isComputerTool(name), isBrowserTool(name), isIPhoneTool(name):
+		return true, false
+	case isSubscriptionTool(name):
+		return true, name == "subscription_list" || name == "subscription_get" ||
+			name == "subscription_sources" || name == "subscription_dry_run"
+	}
+	return false, false
 }
 
 // AssistantSummary is the text a gated command's card shows, as its extension names what the ids are; false: none.

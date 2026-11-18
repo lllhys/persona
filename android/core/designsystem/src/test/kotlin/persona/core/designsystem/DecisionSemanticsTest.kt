@@ -121,6 +121,20 @@ class DecisionSemanticsTest {
         rule.onNodeWithText("滚动").assertExists()
     }
 
+    /** A place that says its count another way (Persona's task question, "N more") passes counted = false: no "N pending" there. */
+    @Test fun aPlaceThatIsNotCountedNeverSaysNPending() {
+        rule.setContent {
+            PersonaTheme(darkTheme = false, reduceMotion = true, style = AppStyle.Glass) {
+                DecisionStack(1, 100.dp, counted = false) { scrolling ->
+                    Text(if (scrolling) "滚动" else "放得下")
+                    Box(Modifier.fillMaxWidth().height(300.dp))
+                }
+            }
+        }
+        rule.onNodeWithText("滚动").assertExists() // taller than its place: it scrolls
+        rule.onNodeWithText("1 个待处理").assertDoesNotExist()
+    }
+
     // A long option is cut to 2 lines (label) and 3 (detail) in the card above the composer, and readable in full on the
     // full page, where it has to be read before it is picked (#2707). Lines are measured with real fonts (NATIVE).
     @GraphicsMode(GraphicsMode.Mode.NATIVE)

@@ -6,7 +6,7 @@
 
 ## Verification
 
-<!-- Commands you ran and their results; screenshots for UI changes (light and dark). Say what was not run. -->
+<!-- Commands you ran and their results; screenshots for UI changes (light and dark), shown here and not committed. Say what was not run. -->
 
 
 

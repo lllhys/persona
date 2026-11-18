@@ -138,6 +138,141 @@ func TestExplainConfiguredAddress(t *testing.T) {
 	}
 }
 
+// networkConfigDetail is the detail of the first "config:" line of lines ("" when there is none).
+func networkConfigDetail(lines []PermissionLine) string {
+	for _, l := range lines {
+		if l.Key == "network_config" {
+			return l.Detail
+		}
+	}
+	return ""
+}
+
+// writeConfiguredPackage is the example at version with network as its permissions.network and base_url, a uri with
+// no default, that a config: entry may name.
+func writeConfiguredPackage(t *testing.T, version string, network ...any) string {
+	t.Helper()
+	pkg := t.TempDir()
+	writePackage(t, pkg, func(m map[string]any) {
+		m["version"] = version
+		m["permissions"] = map[string]any{"network": network}
+		delete(m["configuration"].(map[string]any)["properties"].(map[string]any)["base_url"].(map[string]any), "default")
+	})
+	return pkg
+}
+
+// installConfigured installs the example at 1.2.0 with network, then saves base_url.
+func installConfigured(t *testing.T, r *Registry, baseURL string, network ...any) {
+	t.Helper()
+	ctx := context.Background()
+	pv, err := r.Preview(ctx, "dir:"+writeConfiguredPackage(t, "1.2.0", network...), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Install(ctx, pv.ID, pv.Digest, "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetConfig(ctx, "example-notes", json.RawMessage(`{"base_url":"`+baseURL+`"}`), "app"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An upgrade's preview names the address the installed extension's settings hold for a config: entry, in every
+// language it is shown in, as its settings page does; a fresh install of the same manifest has none yet (#8570).
+func TestUpgradePreviewNamesSavedAddress(t *testing.T) {
+	ctx := context.Background()
+	r, _, _ := newTestRegistry(t)
+	installConfigured(t, r, "https://gateway.example.com:8443/v1", "config:base_url")
+	next := writeConfiguredPackage(t, "1.3.0", "config:base_url")
+	up, err := r.Preview(ctx, "dir:"+next, "example-notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !up.Upgrade {
+		t.Fatalf("not an upgrade: %+v", up)
+	}
+	for _, c := range []struct {
+		name  string
+		lines []PermissionLine
+		want  string
+	}{
+		{"staged", up.Permissions, "当前：gateway.example.com:8443"},
+		{"zh-Hans", up.In(i18n.ZhHans).Permissions, "当前：gateway.example.com:8443"},
+		{"en", up.In(i18n.En).Permissions, "now: gateway.example.com:8443"},
+	} {
+		if d := networkConfigDetail(c.lines); !strings.Contains(d, c.want) {
+			t.Errorf("upgrade, %s: %q, want %q", c.name, d, c.want)
+		}
+	}
+
+	fresh, _, _ := newTestRegistry(t)
+	pv, err := fresh.Preview(ctx, "dir:"+next, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		lines []PermissionLine
+		want  string
+	}{
+		{"staged", pv.Permissions, "当前：未填"},
+		{"zh-Hans", pv.In(i18n.ZhHans).Permissions, "当前：未填"},
+		{"en", pv.In(i18n.En).Permissions, "now: not set"},
+	} {
+		if d := networkConfigDetail(c.lines); !strings.Contains(d, c.want) {
+			t.Errorf("fresh install, %s: %q, want %q", c.name, d, c.want)
+		}
+	}
+}
+
+// An upgrade that adds a config: entry for a field that already holds an address lists that address among the
+// permissions that grew (#8570).
+func TestUpgradeAddingConfigEntryShowsSavedValue(t *testing.T) {
+	ctx := context.Background()
+	r, _, _ := newTestRegistry(t)
+	installConfigured(t, r, "https://gateway.example.com:8443", "notes.example.com")
+	up, err := r.Preview(ctx, "dir:"+writeConfiguredPackage(t, "1.3.0", "notes.example.com", "config:base_url"), "example-notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !up.MorePermissions {
+		t.Fatal("adding config:base_url asks again")
+	}
+	for _, c := range []struct {
+		name  string
+		lines []PermissionLine
+		want  string
+	}{
+		{"staged", up.AddedPermissions, "当前：gateway.example.com:8443"},
+		{"zh-Hans", up.In(i18n.ZhHans).AddedPermissions, "当前：gateway.example.com:8443"},
+		{"en", up.In(i18n.En).AddedPermissions, "now: gateway.example.com:8443"},
+	} {
+		if d := networkConfigDetail(c.lines); !strings.Contains(d, c.want) {
+			t.Errorf("%s: %q, want %q", c.name, d, c.want)
+		}
+	}
+
+	// What the user saved, not the old version's default: the new one has none for the field, so after the upgrade
+	// one never filled in reaches nothing.
+	defaulted, _, _ := newTestRegistry(t)
+	pkg := t.TempDir()
+	writePackage(t, pkg, nil) // base_url defaults to https://notes.example.com
+	pv, err := defaulted.Preview(ctx, "dir:"+pkg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := defaulted.Install(ctx, pv.ID, pv.Digest, "cli"); err != nil {
+		t.Fatal(err)
+	}
+	up, err = defaulted.Preview(ctx, "dir:"+writeConfiguredPackage(t, "1.3.0", "notes.example.com", "config:base_url"), "example-notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := networkConfigDetail(up.In(i18n.En).AddedPermissions); !strings.Contains(d, "now: not set") {
+		t.Fatalf("never filled in: %q", d)
+	}
+}
+
 // settings_check: a change of a secret or the settings is checked by the extension with the values as they would be
 // after it; a refusal saves nothing (no secret row, no audit line); one without settings_check is never asked.
 func TestSettingsCheckBeforeSaving(t *testing.T) {

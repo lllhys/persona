@@ -10,6 +10,8 @@
   "rejected": "差し戻し",
   "rejected_feedback": "差し戻し：{feedback}",
   "allowed": "許可",
+  "allowed_edited": "許可（編集済み）",
+  "denied_reason": "拒否：{reason}",
   "always_allowed": "常に許可",
   "denied": "拒否",
   "handled": "対応済み",

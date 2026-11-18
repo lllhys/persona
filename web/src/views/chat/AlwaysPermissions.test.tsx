@@ -46,17 +46,17 @@ it("keeps the grant on failure and lets the user retry", async () => {
 it("keeps a restart warning when clearing the process failed", async () => {
   await render(); request.mockResolvedValueOnce({ restart_required: true });
   await act(async () => buttons()[0].click());
-  expect(host.querySelector('[role="status"]')?.textContent).toBe(t("chat-sessiondialogs.always_restart"));
+  expect(host.querySelector('[role="status"]')?.textContent).toBe(t("chat-sessioninfo.always_restart"));
   act(() => root.unmount()); root = createRoot(host);
   request.mockResolvedValue({ grants: [] }); await render();
-  expect(host.textContent).toContain(t("chat-sessiondialogs.always_restart"));
-  expect(host.textContent).toContain(t("chat-sessiondialogs.always_empty"));
+  expect(host.textContent).toContain(t("chat-sessioninfo.always_restart"));
+  expect(host.textContent).toContain(t("chat-sessioninfo.always_empty"));
 });
 
 it("shows a failed list separately from an empty list and retries the read", async () => {
   request.mockRejectedValueOnce(new Error("Cannot load")); await render();
   expect(host.textContent).toContain("Cannot load");
-  expect(host.textContent).not.toContain(t("chat-sessiondialogs.always_empty"));
+  expect(host.textContent).not.toContain(t("chat-sessioninfo.always_empty"));
   request.mockResolvedValueOnce({ grants: [] }); await act(async () => buttons()[0].click());
-  expect(host.textContent).toContain(t("chat-sessiondialogs.always_empty"));
+  expect(host.textContent).toContain(t("chat-sessioninfo.always_empty"));
 });

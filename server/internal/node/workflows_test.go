@@ -179,6 +179,87 @@ func TestWorkflowFromTranscript(t *testing.T) {
 	}
 }
 
+// A Workflow call with its script inline is as long as the script (a 42 KB one made a 94 KB launch line), and the
+// background scan skips lines over 64 KiB: the run is listed from its launch result, which is short, while it runs,
+// after it ends, and when the first read comes after it ended and runs in the background (#6003).
+func TestWorkflowLongLaunchLine(t *testing.T) {
+	const meta = "export const meta = {\n  name: 'area-audit',\n  phases: [{ title: 'Survey' }, { title: 'Fix' }],\n}\n"
+	for _, tc := range []struct {
+		name string
+		pad  int
+	}{{"short", 1 << 10}, {"over 64 KiB", 70 << 10}, {"over the read buffer", 300 << 10}} {
+		t.Run(tc.name, func(t *testing.T) {
+			n, parent, sess := workflowSession(t)
+			n.bgScans, n.metas = map[string]*bgScan{}, map[string]quickMeta{}
+			const run = "wf_0a1b2c3d-4e5"
+			writeRun(t, sess, run, `{"type":"started","agentId":"g1","label":"survey:a","phase":"Survey"}`+"\n", map[string]string{"g1": "…"}, time.Second)
+			script := filepath.Join(sess, "workflows", "scripts", "area-audit-"+run+".js")
+			if err := os.WriteFile(script, []byte(meta), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now().UTC().Format(time.RFC3339)
+			call, _ := json.Marshal(map[string]any{"type": "assistant", "uuid": "a1", "timestamp": at, "message": map[string]any{
+				"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "tu1", "name": "Workflow",
+					"input": map[string]any{"script": meta + "// " + strings.Repeat("x", tc.pad) + "\n"}}}}})
+			launch := "Workflow launched in background. Task ID: wg1\nSummary: Survey each area\n" +
+				"Transcript dir: " + filepath.Join(sess, "subagents", "workflows", run) + "\nScript file: " + script + "\n" +
+				"(Edit this file with Write/Edit and re-invoke Workflow with {scriptPath} to iterate.)\nRun ID: " + run + "\n\n" +
+				"You will be notified when it completes. Use /workflows to watch live progress."
+			result, _ := json.Marshal(map[string]any{"type": "user", "uuid": "u1", "timestamp": at, "message": map[string]any{
+				"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "tu1", "content": launch}}},
+				"toolUseResult": map[string]any{"status": "async_launched", "taskId": "wg1", "taskType": "local_workflow", "runId": run}})
+			tp := n.paths[parent]
+			if err := os.WriteFile(tp, []byte(string(call)+"\n"+string(result)+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			list := func(n *Node) proto.Session {
+				n.mu.Lock()
+				n.metas = map[string]quickMeta{} // read again now, not after metaMinInterval
+				n.mu.Unlock()
+				st, _ := os.Stat(tp)
+				s := proto.Session{SessionID: parent}
+				n.setBackground(&s, n.meta(tp, st))
+				return s
+			}
+			s := list(n)
+			if len(s.Workflows) != 1 || len(s.Background) != 1 || s.Background[0].Kind != "workflow" {
+				t.Fatalf("running: workflows %+v background %+v", s.Workflows, s.Background)
+			}
+			if w := s.Workflows[0]; !w.Running || w.TaskID != "wg1" || w.RunID != run || w.Name != "area-audit" ||
+				strings.Join(w.Phases, ",") != "Survey,Fix" || w.Phase != "Survey" || w.AgentsRunning != 1 || w.ToolUseID != "tu1" {
+				t.Fatalf("running: %+v", w)
+			}
+
+			note, _ := json.Marshal(map[string]any{"type": "queue-operation", "operation": "enqueue", "timestamp": at,
+				"content": "<task-notification>\n<task-id>wg1</task-id>\n<status>completed</status>\n<summary>Dynamic workflow \"area-audit\" completed</summary>\n</task-notification>"})
+			f, err := os.OpenFile(tp, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Write(append(note, '\n'))
+			f.Close()
+			if s := list(n); len(s.Workflows) != 1 || s.Workflows[0].Running || s.Workflows[0].Status != proto.WorkflowCompleted ||
+				s.Workflows[0].EndedAt == nil || len(s.Background) != 0 {
+				t.Fatalf("ended: workflows %+v background %+v", s.Workflows, s.Background)
+			}
+
+			// A node that starts after the run ended reads the whole transcript, in the background when it is big.
+			defer func(v int64) { bgSyncLimit = v }(bgSyncLimit)
+			bgSyncLimit = 1 << 10
+			fresh := &Node{home: n.home, paths: n.paths, bgScans: map[string]*bgScan{}}
+			deadline := time.Now().Add(5 * time.Second)
+			poll := time.NewTicker(10 * time.Millisecond)
+			defer poll.Stop()
+			for s = list(fresh); len(s.Workflows) == 0 && time.Now().Before(deadline); s = list(fresh) {
+				<-poll.C
+			}
+			if len(s.Workflows) != 1 || s.Workflows[0].Running || s.Workflows[0].Status != proto.WorkflowCompleted || s.Workflows[0].Name != "area-audit" {
+				t.Fatalf("first read after the end: %+v", s.Workflows)
+			}
+		})
+	}
+}
+
 func ptrTime(t time.Time) *time.Time { return &t }
 
 // expireWorkflow makes the next readWorkflow of the run in dir read it again, as if its last read were long ago.

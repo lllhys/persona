@@ -140,8 +140,9 @@ export function fileSize(v: unknown): string {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
   if (!Number.isFinite(n) || n <= 0) return "";
   if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  // The unit follows the number as it is shown: 1023.5 KB and up would read "1024 KB", 1023.95 MB and up "1024.0 MB".
+  if (n < 1023.5 * 1024) return `${Math.round(n / 1024)} KB`;
+  if (n < 1023.95 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 

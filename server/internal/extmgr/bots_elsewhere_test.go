@@ -285,7 +285,7 @@ func TestAISourcesAreBoundedAndGoWithTheOwner(t *testing.T) {
 		t.Fatalf("unpaired, the sources stay: %d / %d", len(w.settings().AISources), len(saved.AISources))
 	}
 	// And the settings can never carry a reply rule for a source with no owner.
-	if _, found, _ := aiSourceReply(FeishuBotSettings{AISources: []BotAISource{{ChatID: askChat, MessageID: "om_a"}}}, "", "om_a", "x", time.Now()); found {
+	if _, found, _ := aiSourceReply(FeishuBotSettings{AISources: []BotAISource{{ChatID: askChat, MessageID: "om_a"}}}, "", "om_a", "x", time.Now(), false); found {
 		t.Fatal("a source counts with no owner")
 	}
 }
@@ -535,5 +535,54 @@ func TestReactionsOnlyWhereTheBotMayWrite(t *testing.T) {
 	}
 	if err := w.sendErr(assistantwire.FeishuReact, map[string]any{"emoji": "OnIt"}); err == nil {
 		t.Fatal("a reaction with no message")
+	}
+}
+
+func TestSourceAnswerTargetsOnlyTheOriginalRequest(t *testing.T) {
+	w := newBotWorld(t)
+	w.pair(t)
+	w.send(t, askEvent("om_answer_source", "ou_me", "@_user_1 /ai Check the release notes", atBot, nil))
+	eventually(t, 5*time.Second, "taken", func() bool { return len(w.handed()) == 1 })
+	text := "Final answer\n\n- Item one\n- Item two"
+	params := map[string]any{"chat_id": askChat, "reply_to": "om_answer_source", "text": text, "full_answer": true, "uuid": "sr:answer"}
+	before := w.api.total()
+	assertDenied := func(p map[string]any) {
+		t.Helper()
+		var re *rpc.Error
+		if err := w.sendErr(assistantwire.FeishuText, p); !errors.As(err, &re) || re.Code != assistantwire.CodeChatDenied {
+			t.Fatalf("expected a refused send, got %v", err)
+		}
+	}
+	assertDenied(params)
+	if code, _ := w.do(t, "PUT", "/api/v1/bots/feishu", `{"source_report_full_reply":true}`); code != 200 {
+		t.Fatal(code)
+	}
+	assertDenied(map[string]any{"chat_id": askChat, "text": text, "full_answer": true})
+	assertDenied(map[string]any{"chat_id": askChat, "reply_to": "om_other", "text": text, "full_answer": true})
+	assertDenied(map[string]any{"chat_id": topicOther, "reply_to": "om_answer_source", "text": text, "full_answer": true})
+	if sent := w.api.since(before); strings.Contains(sent, "POST /open-apis/im/v1/messages") {
+		t.Fatalf("sent an unauthorized answer: %s", sent)
+	}
+	if err := w.sendErr(assistantwire.FeishuText, params); err != nil {
+		t.Fatal(err)
+	}
+	w.api.find(t, "POST /open-apis/im/v1/messages/om_answer_source/reply", `"msg_type":"post"`, `"uuid":"sr:answer"`, "- Item two")
+	if code, _ := w.do(t, "PUT", "/api/v1/bots/feishu", `{"source_report_full_reply":false}`); code != 200 {
+		t.Fatal(code)
+	}
+	assertDenied(params)
+	if code, _ := w.do(t, "PUT", "/api/v1/bots/feishu", `{"source_report_full_reply":true}`); code != 200 {
+		t.Fatal(code)
+	}
+
+	w.api.mu.Lock()
+	w.api.rejectReply = 230011 // the original was withdrawn
+	w.api.mu.Unlock()
+	before = w.api.total()
+	if err := w.sendErr(assistantwire.FeishuText, params); !feishubot.MessageGone(err) {
+		t.Fatalf("expected a missing parent error, got %v", err)
+	}
+	if sent := w.api.since(before); strings.Contains(sent, "receive_id_type=chat_id") {
+		t.Fatalf("the full answer detoured to the group: %s", sent)
 	}
 }

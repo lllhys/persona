@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/compat"
@@ -169,7 +170,7 @@ func InHealthSpace(path string) bool {
 	if path == "" {
 		return false
 	}
-	for p := filepath.Clean(path); ; {
+	for p := filepath.Clean(NodePath(path)); ; {
 		if isManagerStateDir(p, SpaceHealth) {
 			return true
 		}
@@ -191,15 +192,30 @@ func CardCwd(home, here string) string {
 	return home
 }
 
+// NodePath is a directory a node reported, made readable for filepath here. On a hub that is not Windows, a Windows
+// node's path (with a drive letter, C:\…, or on a share, \\server\…) gets forward slashes: filepath there splits only
+// at /, so C:\Users\me\.persona\assistant read as one name and the hub missed that computer's assistant and health
+// directories (#6419). Any other path, and every path on Windows, where filepath takes both, stays as it is.
+func NodePath(path string) string {
+	if runtime.GOOS == "windows" || !strings.Contains(path, `\`) {
+		return path
+	}
+	letter := len(path) > 0 && ('a' <= path[0]|0x20 && path[0]|0x20 <= 'z')
+	if letter && len(path) >= 2 && path[1] == ':' || strings.HasPrefix(path, `\\`) {
+		return strings.ReplaceAll(path, `\`, "/")
+	}
+	return path
+}
+
 // isManagerStateDir: path is the directory base, or base-<id> (IsManagerDirName), in the state directory.
 func isManagerStateDir(path, base string) bool {
-	name := filepath.Base(filepath.Clean(path))
+	name := filepath.Base(filepath.Clean(NodePath(path)))
 	return IsManagerDirName(name, base) && isStateDir(path, name)
 }
 
 // isStateDir recognizes a directory under .persona or the configured PERSONA_HOME.
 func isStateDir(path, name string) bool {
-	path = filepath.Clean(path)
+	path = filepath.Clean(NodePath(path))
 	if filepath.Base(path) != name {
 		return false
 	}

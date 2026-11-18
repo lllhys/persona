@@ -43,6 +43,33 @@ class AgentMarkTest {
         assertEquals("DSH", session("dsh", label = "DSH").agentMark?.name)
     }
 
+    /**
+     * #8143: Paseo calls every provider but Claude Code and Codex "paseo"; one whose launcher or label names a mark the
+     * design system has draws it, any other its own name's letter, never the engine's.
+     */
+    @Test fun aPaseoProviderTakesTheMarkItsLauncherOrLabelNames() {
+        fun paseo(label: String?, launcher: String?) =
+            Session(sessionId = "paseo-1", agent = "paseo", agentLabelHint = label, launcher = launcher, sourceKind = "runtime").agentMark!!
+        assertEquals(AgentMarkSpec(AgentMarkKind.Trae, "TRAE CLI", null), paseo("TRAE CLI", "traecli"))
+        assertEquals(AgentMarkKind.Trae, paseo(null, "traecli").kind)
+        assertEquals(AgentMarkKind.Trae, paseo("Trae Agent", "my-agent").kind)
+        assertEquals(AgentMarkKind.Claude, paseo("Claude Code (ACP)", "claude-acp").kind)
+        val grok = paseo("My Grok", "grok")
+        assertNull(grok.kind)
+        assertEquals("My Grok", grok.name)
+        assertEquals("grok", paseo("Paseo", "grok").name)
+        // Its Claude Code and Codex providers are those agents'.
+        assertEquals(AgentMarkKind.Claude, Session(sessionId = "s", agent = "claude", launcher = "my-claude", sourceKind = "runtime").agentMark?.kind)
+        assertEquals(AgentMarkKind.Codex, Session(sessionId = "s", agent = "codex", launcher = "my-codex", sourceKind = "runtime").agentMark?.kind)
+    }
+
+    @Test fun knownMarksGoByTheFirstWordOfAnyName() {
+        assertEquals(listOf(AgentMarkKind.Claude, AgentMarkKind.Claude, AgentMarkKind.Codex, AgentMarkKind.Trae, AgentMarkKind.Trae, AgentMarkKind.Trae),
+            listOf("claude", "Claude-Code", "codex", "TRAE CLI", "trae_cli", " traecli ").map(::knownAgentMark))
+        assertEquals(listOf(null, null, null, null, null),
+            listOf(null, "", "traex", "grok", "-trae").map(::knownAgentMark))
+    }
+
     @Test fun theClientComesFromAgentSurface() {
         assertEquals(AgentSurface.Cli, session("claude", "cli").agentMark?.surface)
         assertEquals(AgentSurface.Desktop, session("codex", "desktop").agentMark?.surface)

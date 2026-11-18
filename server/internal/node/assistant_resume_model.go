@@ -41,7 +41,7 @@ func (n *Node) resumeModel(launcher, cwd, settings, configDir string) string {
 func (n *Node) resumeModelOf(launcher, cwd, settings, configDir string) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	p, err := n.launcherProbe(ctx, launcher)
+	p, err := n.keptProbe(ctx, launcher) // the probe the message's checks just read (#9097)
 	if err != nil || p.Agent != "claude" || p.Shell == nil {
 		return "", false
 	}

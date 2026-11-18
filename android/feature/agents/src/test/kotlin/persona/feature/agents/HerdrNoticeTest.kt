@@ -29,6 +29,46 @@ class HerdrNoticeTest {
             assertFalse(engine, stopped.copy(engine = engine).herdrStopped(off))
     }
 
+    /** The empty host set keeps `engine` herdr; the choice is "No terminal engine", so no stopped-herdr notice and no start button. */
+    @Test fun aMachineWithNoTerminalEngineNeverOffersToStartHerdr() {
+        val none = stopped.copy(engine = "herdr", engineHosts = emptyList())
+        assertFalse(none.usesHerdr)
+        assertFalse(none.herdrStopped(off))
+        assertFalse(none.copy(engine = "herdr-both").herdrStopped(off))
+        // A hub with no host sets (an older one) and a set that has an engine are read as before.
+        assertTrue(stopped.copy(engine = "herdr", engineHosts = null).herdrStopped(off))
+        assertTrue(stopped.copy(engine = "herdr", engineHosts = listOf("herdr")).herdrStopped(off))
+        assertTrue(stopped.copy(engine = "herdr", engineHosts = listOf("herdr", "orca")).herdrStopped(off))
+    }
+
+    @Test fun choosingNoEngineHidesTheNoticeAndPickingHerdrBringsItBack() = runTest {
+        val api = Api()
+        val repository = Repository(stopped.copy(engine = "herdr", engineHosts = listOf("herdr")))
+        val starter = HerdrStarter(api, repository, Connection(), HubGroups.None, backgroundScope) { fail(it.toString()) }
+        starter.refresh()
+        val machine = { repository.machines.value.single() }
+        assertTrue(machine().herdrStopped(starter.states.value["desk"]))
+        // No terminal engine: herdr's last answer is still kept, but it no longer shows and cannot be started.
+        repository.machines.value = listOf(machine().copy(engineHosts = emptyList()))
+        assertFalse(machine().herdrStopped(starter.states.value["desk"]))
+        starter.start("desk"); runCurrent()
+        assertTrue(api.calls.isEmpty())
+        assertTrue(starter.starting.value.isEmpty())
+        // Back to the engine it had: the notice is there again.
+        repository.machines.value = listOf(machine().copy(engineHosts = listOf("herdr")))
+        starter.refresh()
+        assertTrue(machine().herdrStopped(starter.states.value["desk"]))
+    }
+
+    @Test fun herdrIsNotReadForAMachineWithNoTerminalEngine() = runTest {
+        val api = Api()
+        val repository = Repository(stopped.copy(engine = "herdr", engineHosts = emptyList()))
+        val starter = HerdrStarter(api, repository, Connection(), HubGroups.None, backgroundScope) { fail(it.toString()) }
+        starter.refresh()
+        assertTrue(starter.states.value.isEmpty())
+        assertTrue(api.reads.isEmpty())
+    }
+
     private class Repository(machine: Machine) : SessionsRepository {
         override val machines = MutableStateFlow(listOf(machine))
         override val sessions = MutableStateFlow<List<Session>>(emptyList())

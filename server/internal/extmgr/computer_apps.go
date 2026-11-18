@@ -197,9 +197,9 @@ func (h *Manager) approveApps(ctx context.Context, m *Machine, by asker, tool st
 		shown = append(shown, i18n.T(l, "hub-computer_apps.app", i18n.Args{"name": name}))
 	}
 	appList := strings.Join(shown, i18n.T(l, "hub-computer_apps.list_sep"))
-	summary := i18n.T(l, "hub-computer_apps.ask_apps", i18n.Args{"machine": m.cfg.Name, "apps": appList})
+	summary := i18n.T(l, "hub-computer_apps.ask_apps", i18n.Args{"machine": m.name(), "apps": appList})
 	if len(need) == 0 {
-		summary = i18n.T(l, "hub-computer_apps.ask_run", i18n.Args{"machine": m.cfg.Name})
+		summary = i18n.T(l, "hub-computer_apps.ask_run", i18n.Args{"machine": m.name()})
 	}
 	if !whole {
 		summary = i18n.T(l, "hub-computer_apps.ask_unknown", i18n.Args{"summary": summary})

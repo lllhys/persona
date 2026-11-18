@@ -60,7 +60,7 @@ func inheritedListeners() []net.Listener {
 			closeOnExec(fd)
 			inherited.files = append(inherited.files, f)
 			inherited.fds = append(inherited.fds, fd)
-			if ln, err := net.FileListener(f); err == nil { // a dup; f stays for execListenEnv
+			if ln, err := osproc.FileListener(f); err == nil { // a dup; f stays for execListenEnv
 				inherited.lns = append(inherited.lns, ln)
 			}
 		}
@@ -127,7 +127,7 @@ func listenTCP(addr string) (net.Listener, bool, error) {
 		}
 	}
 	inherited.mu.Unlock()
-	ln, err := net.Listen("tcp", addr)
+	ln, err := osproc.Listen("tcp", addr)
 	return ln, false, err
 }
 

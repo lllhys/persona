@@ -3,5 +3,6 @@
   "menu_empty": "選択肢がありません",
   "close": "閉じる",
   "copied": "コピーしました",
-  "copy_failed": "コピーできませんでした"
+  "copy_failed": "コピーできませんでした",
+  "about": "「{name}」について"
 }

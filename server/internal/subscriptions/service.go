@@ -117,7 +117,8 @@ type Service struct {
 	gates    map[string]*gate
 	busy     map[string]bool // connectors whose subscriptions are running now
 	running  int
-	asked    map[string]bool // subscriptions asked to run now
+	asked    map[string]bool      // subscriptions asked to run now
+	kicked   map[string]time.Time // when a connector's changed event makes each of its subscriptions due (ConnectorChanged)
 	wake     chan struct{}
 
 	// Push sources (push.go): one push at a time, and each device's items in the last hour.
@@ -161,7 +162,7 @@ func New(o Options) *Service {
 		o.Delivered = func(Subscription) {}
 	}
 	return &Service{o: o, catalogs: map[string]catalogEntry{}, reading: map[string]bool{}, gates: map[string]*gate{},
-		busy: map[string]bool{}, asked: map[string]bool{}, wake: make(chan struct{}, 1), pushed: map[string][]time.Time{}}
+		busy: map[string]bool{}, asked: map[string]bool{}, kicked: map[string]time.Time{}, wake: make(chan struct{}, 1), pushed: map[string][]time.Time{}}
 }
 
 func (s *Service) now() time.Time { return s.o.Clock.Now().UTC() }
@@ -169,7 +170,7 @@ func (s *Service) now() time.Time { return s.o.Clock.Now().UTC() }
 // shown is s as the API shows it: off while both destinations are off, its floor of intervals filled in.
 func shown(sub Subscription) Subscription {
 	sub.State = cmpOr(sub.RunState, StateOK)
-	if !sub.ToInbox && !sub.ToKB {
+	if !on(sub) {
 		sub.State = StateOff
 	}
 	sub.MinIntervalSeconds = floorOf(sub.Recipe.Mode, sub.SourceMin)
@@ -179,7 +180,13 @@ func shown(sub Subscription) Subscription {
 	return sub
 }
 
-func on(sub Subscription) bool { return sub.ToInbox || sub.ToKB }
+// on says whether sub is pulled: a destination is on, or it is a built-in's Inbox feed now (Migrated, #6265).
+func on(sub Subscription) bool { return sub.ToInbox || sub.ToKB || sub.Migrated != nil }
+
+// pullScheduled distinguishes ordinary polling from a finite continuation explicitly started by Run Now while off.
+func pullScheduled(sub Subscription) bool {
+	return on(sub) || sub.Continuation != nil && sub.Continuation.Manual
+}
 
 func floorOf(mode string, sourceMin int) int {
 	f := max(minInterval, sourceMin)
@@ -316,7 +323,7 @@ func (s *Service) catalog(ctx context.Context, c ConnectorInfo, fresh time.Durat
 	}
 	cctx, cancel := context.WithTimeout(ctx, catalogWait)
 	defer cancel()
-	sources, err := connector.ReadCatalog(cctx, c.Conn)
+	sources, err := connector.ReadCatalog(cctx, withInboxThings(c.Conn)) // with the generic inbox_things (#6381)
 	s.mu.Lock()
 	kept := c
 	kept.Conn = nil
@@ -392,12 +399,17 @@ func catalogOf(c ConnectorInfo, sources []connector.CatalogSource, err error, al
 		return out
 	}
 	for _, src := range sources {
+		tools := peopleTools(src.Tools)
+		if len(tools) == 0 && len(src.Tools) > 0 {
+			continue // only the Inbox's own rows (#6381): no source of people's
+		}
+		recipes := slices.DeleteFunc(slices.Clone(src.Recipes), func(r Recipe) bool { return r.Tool == InboxThingsTool })
 		cs := CatalogSource{ID: src.ID, Name: src.Name, Icon: src.Icon, Service: src.Service, MinIntervalSeconds: src.MinIntervalSeconds,
-			MaxCallsPerHour: src.MaxCallsPerHour, Tools: []CatalogTool{}, Recipes: slices.Clone(src.Recipes), Subscriptions: []string{}}
+			MaxCallsPerHour: src.MaxCallsPerHour, Tools: []CatalogTool{}, Recipes: recipes, Subscriptions: []string{}}
 		if cs.Recipes == nil {
 			cs.Recipes = []Recipe{}
 		}
-		for _, t := range src.Tools {
+		for _, t := range tools {
 			ct := CatalogTool{Name: t.Name, Title: t.Title, Description: t.Description, InputSchema: t.InputSchema, Refused: refusal(t)}
 			ct.Subscribable = ct.Refused == nil
 			cs.Tools = append(cs.Tools, ct)
@@ -515,7 +527,7 @@ func (s *Service) check(ctx context.Context, c ConnectorInfo, sourceID string, r
 	if sub != nil && sub.SinceAt != nil {
 		since = sub.SinceAt.Add(-overlap)
 	}
-	args, err := fillArgs(t.recipe.Args, vars(since, loc))
+	args, err := fillPullArgs(t.recipe, since, loc, nil)
 	if err == nil {
 		err = checkArgs(tool.InputSchema, args)
 	}
@@ -537,14 +549,14 @@ func (s *Service) check(ctx context.Context, c ConnectorInfo, sourceID string, r
 	if sub != nil {
 		label = sub.Label
 	}
-	pl := pull(ctx, c.Conn, sourceID, t.recipe, since, loc, label)
+	pl := pull(ctx, withInboxThings(c.Conn), sourceID, t.recipe, since, s.now(), loc, label, nil, t.tool.InputSchema)
 	dr.Shape, dr.ItemsPath = pl.shape, pl.itemsPath
 	if t.recipe.ItemsPath == "" && t.recipe.Mode != wire.ConnectorSubscriptionModeSnapshot {
 		t.recipe.ItemsPath = pl.itemsPath // saved as found: later runs read the same place
 	}
 	if pl.problem != nil {
 		switch pl.problem.Code {
-		case CodeNoList, CodeTextNeedsSnap:
+		case CodeNoList, CodeTextNeedsSnap, CodePagination, CodeBadThing:
 			dr.Checks[2].Error = pl.problem
 		case CodeBadArgs:
 			dr.Checks[1].OK, dr.Checks[1].Error = false, pl.problem
@@ -597,7 +609,8 @@ func (s *Service) check(ctx context.Context, c ConnectorInfo, sourceID string, r
 		}
 		dr.Warnings = append(dr.Warnings, emptyFieldWarnings(t.recipe.Fields, pl.items)...)
 		limit := pageLimit(pl.args)
-		dr.MaybeMore = limit > 0 && len(pl.items) >= limit && len(fresh) == len(pl.items)
+		dr.MaybeMore = pl.continuation != nil || !cursorPagination(t.recipe) && !pagePagination(t.recipe) &&
+			limit > 0 && len(pl.items) >= limit && len(fresh) == len(pl.items)
 	}
 	dr.OK = true
 	for _, ch := range dr.Checks {
@@ -656,9 +669,15 @@ func (s *Service) Create(ctx context.Context, in CreateRequest, by Actor) (Subsc
 	if !ok {
 		return Subscription{}, notFound("connector")
 	}
+	if in.Recipe != nil && in.Recipe.Tool == InboxThingsTool {
+		return Subscription{}, inboxThingsOnly()
+	}
 	dr, t := s.check(ctx, c, in.Source, in.Recipe, nil, -1, "")
 	if !dr.OK {
 		return Subscription{}, refused(dr)
+	}
+	if t.recipe.Tool == InboxThingsTool {
+		return Subscription{}, inboxThingsOnly()
 	}
 	now := s.now()
 	origin := OriginExtension
@@ -708,6 +727,9 @@ func withRecipe(sub Subscription, t target, dr DryRun, origin string, now time.T
 	next.ToolFingerprint, next.WeakDedup, next.Shape = fingerprint(t.tool), dr.WeakDedup, dr.Shape
 	next.SourceMin, next.MaxCallsPerHour = intOr(t.source.MinIntervalSeconds), intOr(t.source.MaxCallsPerHour)
 	next.RunState, next.Error, next.FailCount, next.FailingSince, next.ShapeMisses = StateOK, nil, 0, nil, 0
+	if !SameRecipe(t.recipe, sub.Recipe) {
+		next.Continuation = nil
+	}
 	if t.recipe.Mode != sub.Recipe.Mode {
 		next.SnapshotHash = ""
 		next.IntervalSeconds = defaultIntervalOf(t.recipe.Mode, next.SourceMin)
@@ -775,6 +797,9 @@ func (s *Service) Update(ctx context.Context, id string, p Patch, by Actor) (Sub
 	}
 	if IsPush(*cur) && (p.Recipe != nil || p.IntervalSeconds != nil || p.DailyAt != nil) {
 		return Subscription{}, pushOnly("recipe or schedule")
+	}
+	if p.Recipe != nil && (p.Recipe.Tool == InboxThingsTool || IsMigration(cur.ID)) {
+		return Subscription{}, inboxThingsOnly() // a built-in's rows: its default subscription's recipe is the manager's
 	}
 	if p.Existing != "" && (p.Recipe == nil || !slices.Contains([]string{ExistingDigest, ExistingBaseline, ExistingDeliver}, p.Existing)) {
 		return Subscription{}, errorf(http.StatusBadRequest, CodeBadRequest, "existing is digest, baseline or deliver, with a recipe")
@@ -857,9 +882,16 @@ func (s *Service) Update(ctx context.Context, id string, p Patch, by Actor) (Sub
 	if p.Recipe != nil {
 		next = rebased(next, *cur, p.Existing, now)
 	}
+	if next.ToKB && next.Recipe.Mode == wire.ConnectorSubscriptionModeThings {
+		// Its rows are the Inbox's; the knowledge base reads the source itself (#6296).
+		return Subscription{}, errorf(http.StatusBadRequest, CodeBadRequest, "a things subscription's rows go to the Inbox only")
+	}
 	switch {
 	case !on(next):
 		next.NextRunAt = nil
+		if wasOn {
+			next.Continuation = nil // off and on again starts a fresh pull, also out of a page that keeps failing (#6310)
+		}
 	case !wasOn || p.Recipe != nil || turnedOn: // a new recipe or destination runs soon, also after needs_recipe stopped it
 		next.NextRunAt = &now
 	case schedule:
@@ -926,10 +958,66 @@ func (s *Service) RunNow(ctx context.Context, id string, by Actor) (Subscription
 	return out, nil
 }
 
+// changedGap is the least time between a subscription's last run and one its connector's changed event starts (#6247).
+const changedGap = time.Minute
+
+// changedDebounce is how long after a connector's changed event a switched built-in's default subscription runs
+// (#6381): as the Inbox's own kick of the built-in (extmgr's inboxDebounce), so a burst of events runs it once.
+const changedDebounce = 3 * time.Second
+
+// ConnectorChanged runs soon the subscriptions of connector id that are on and pull items on a schedule: the connector
+// said it has something new, as it kicks the Inbox for its own (#6247). A subscription is run so at most once a
+// changedGap after its last run, and never sooner than its source's own minimum; the connector's call gap, hourly
+// budget and pauses hold as for any run, and a run they hold back is left to the schedule. A snapshot keeps its
+// schedule. The run is a scheduled one brought forward.
+func (s *Service) ConnectorChanged(ctx context.Context, id string) {
+	all, err := s.o.Store.ListSubscriptions(ctx)
+	if err != nil {
+		s.o.Logf("subscriptions: %s changed: %v", id, err)
+		return
+	}
+	now, kicked, later := s.now(), false, false
+	s.mu.Lock()
+	for _, sub := range all {
+		if sub.Connector != id || IsPush(sub) || !on(sub) || sub.Recipe.Mode == wire.ConnectorSubscriptionModeSnapshot {
+			continue
+		}
+		if _, switched := MigratedFrom(sub); switched {
+			// The built-in's own feed now (#6381): as fast as its kick of the Inbox, a burst once.
+			if at, pending := s.kicked[sub.ID]; !pending || !at.After(now) {
+				s.kicked[sub.ID], later = now.Add(changedDebounce), true
+			}
+			continue
+		}
+		if last := sub.LastRunAt; last != nil && now.Sub(*last) < max(changedGap, time.Duration(sub.SourceMin)*time.Second) {
+			continue
+		}
+		s.kicked[sub.ID], kicked = now, true
+	}
+	s.mu.Unlock()
+	if kicked {
+		s.poke()
+	}
+	if later {
+		time.AfterFunc(changedDebounce, s.poke)
+	}
+}
+
 // Delete removes a subscription with its dedup keys and pending items. withData also has the destinations remove what
 // they took from it (#2039): its destinations are switched off first, so they take nothing more meanwhile; when the
 // removal fails the subscription stays (off), and deleting again finishes it. It is recorded either way.
 func (s *Service) Delete(ctx context.Context, id string, withData bool, by Actor) error {
+	return s.delete(ctx, id, withData, by, nil)
+}
+
+// DeleteAt is Delete with an optimistic-concurrency predicate. A clarified
+// approval uses it so an update between its final state check and the delete
+// cannot be removed under a stale proposal.
+func (s *Service) DeleteAt(ctx context.Context, id string, revision int64, withData bool, by Actor) error {
+	return s.delete(ctx, id, withData, by, &revision)
+}
+
+func (s *Service) delete(ctx context.Context, id string, withData bool, by Actor, expected *int64) error {
 	sub, err := s.o.Store.GetSubscription(ctx, id)
 	if err != nil {
 		return err
@@ -937,16 +1025,41 @@ func (s *Service) Delete(ctx context.Context, id string, withData bool, by Actor
 	if sub == nil {
 		return notFound("subscription")
 	}
+	if expected != nil && sub.Revision != *expected {
+		return conflictWith(sub)
+	}
 	if withData && s.o.Forget != nil {
 		if sub, err = s.switchOff(ctx, *sub); err != nil {
 			return err
+		}
+		if expected != nil && sub.Revision != *expected {
+			// switchOff had to change the revision before the destinations could
+			// forget their data; the delete predicate follows that fresh revision.
+			expected = new(int64)
+			*expected = sub.Revision
 		}
 		if err := s.o.Forget(ctx, *sub); err != nil {
 			s.o.Logf("subscription %s: delete its data: %v", id, err)
 			return err
 		}
 	}
-	if err := s.o.Store.DeleteSubscription(ctx, id); err != nil {
+	if expected == nil {
+		err = s.o.Store.DeleteSubscription(ctx, id)
+	} else {
+		var ok bool
+		ok, err = s.o.Store.DeleteSubscriptionAt(ctx, id, *expected)
+		if err == nil && !ok {
+			cur, getErr := s.o.Store.GetSubscription(ctx, id)
+			if getErr != nil {
+				return getErr
+			}
+			if cur == nil {
+				return notFound("subscription")
+			}
+			return conflictWith(cur)
+		}
+	}
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -967,7 +1080,7 @@ func (s *Service) switchOff(ctx context.Context, sub Subscription) (*Subscriptio
 		}
 		next, prev := sub, sub.Revision
 		next.ToInbox, next.ToKB, next.InboxFrom, next.InboxCatchup, next.KBFrom, next.NextRunAt = false, false, nil, nil, nil, nil
-		next.CatchupFrom = nil
+		next.CatchupFrom, next.Migrated = nil, nil // a built-in's feed switched to it goes back to the built-in (#6265)
 		next.Revision, next.UpdatedAt = prev+1, s.now()
 		ok, err := s.o.Store.UpdateSubscription(ctx, next, prev)
 		if err != nil {

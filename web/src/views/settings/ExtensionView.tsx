@@ -6,19 +6,19 @@
 // browser's back pops it on a full page); the view's search box and filter and a section's "Load more" go to the
 // extension; extension_ui {invalidate} draws the view on screen again (one off screen when it comes back). A view with
 // refresh_after is drawn again while it is on screen. Logic in lib/extension-ui.ts.
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ApiError, credentialOwner, errorText, getToken } from "../../lib/api";
 import { extIdOf } from "../../lib/extension-api";
 import { openLink } from "../../lib/links";
 import {
-  actUI, fieldValues, isUnsupported, numberProblem, outcome, pushPage, refreshDelay, renderUI, submitValues, uiPlaces,
+  actUI, fieldValues, isUnsupported, numberProblem, outcome, pushPage, refreshDelay, renderUI, submitValues, uiPlaces, UI_VERSION,
   type UIAction, type UIContext, type UIItem, type UIMore, type UIPage, type UIPlace, type UIPush, type UITabs, type UIView,
 } from "../../lib/extension-ui";
 import { navigate } from "../../lib/router";
 import { isResumed } from "../../lib/reconnect";
 import { appSocketReady, onAppSocket, onHubEvent } from "../../lib/store";
 import { wideView } from "../../lib/code-view";
-import { ViewSections } from "../extensions/ViewBody";
+import { INERT, ViewSections } from "../extensions/ViewBody";
 import { Button, cx, Dialog, Loading, Spinner, toast } from "../../ui/atoms";
 import { keepLoaded, patchView } from "../../lib/code-review";
 import { KeysHelp, ReviewBar, ReviewKeys, ReviewProvider, ReviewToolbar, reviewing } from "../extensions/DiffReview";
@@ -27,9 +27,10 @@ import { useStore } from "../../lib/store";
 import { canTryUIStream } from "../../lib/extension-ui-stream-gate";
 import { lazyPage } from "../../lib/lazy-page";
 import { PageBoundary } from "../PageBoundary";
-import { otherManager, useLinkManager } from "../../lib/manager-choice";
+import { defaultKnown, defaultManager, otherManager, useKnownDefault, useLinkManager } from "../../lib/manager-choice";
+import { keepView, NATIVE_UI_VERSION, readKeptView } from "../../lib/extension-view-cache";
 import type { UIRowControl } from "../../lib/extension-ui-v6";
-import { t } from "../../i18n";
+import { currentLanguage, t } from "../../i18n";
 import { SUBSCRIPTIONS_UI } from "../../lib/subscriptions-ui";
 
 const inputClass =
@@ -144,8 +145,13 @@ export function pageHref(extension: string, ui: string, state?: string): string 
 const HELLO_NEGOTIATION_MS = 5000;
 // The native stream page and its schema validator are a chunk of their own: most pages are drawn over HTTP and never need it.
 const NativeExtensionUI = lazyPage(() => import("./NativeExtensionUI").then((m) => m.NativeExtensionUI));
-export function ExtensionUI(props: Parameters<typeof LegacyExtensionUI>[0]) {
+export function ExtensionUI({ remember, ...props }: Parameters<typeof LegacyExtensionUI>[0] & {
+  /** A full page: drawn at once from its last view while the extension draws it again (lib/extension-view-cache.ts). */
+  remember?: boolean;
+}) {
   const supported = useStore((s) => canTryUIStream(s.features));
+  const known = useStore((s) => s.features.length > 0);
+  const defaultId = useKnownDefault();
   const group = useStore((s) => s.mesh?.find((h) => h.self)?.hub_id) ?? (typeof location !== "undefined" ? location.origin : "offline");
   const owner = typeof localStorage !== "undefined" ? credentialOwner() : "offline";
   const ready = useSyncExternalStore(onAppSocket, appSocketReady, appSocketReady);
@@ -158,23 +164,62 @@ export function ExtensionUI(props: Parameters<typeof LegacyExtensionUI>[0]) {
     const timer = setTimeout(() => setLegacyNegotiation(true), HELLO_NEGOTIATION_MS);
     return () => clearTimeout(timer);
   }, [waitingHello, legacyNegotiation]);
-  // Bound initial negotiation when HTTP works but WebSocket upgrades do not. Once HTTP
-  // mounts, retain it even if a late hello arrives: never allocate a second source page.
-  if (waitingHello && !legacyNegotiation) return <Loading />;
   // System/embedded slots remain full fitted snapshots. Old hubs keep the exact existing component.
   // Another manager's extension draws over HTTP, which names its manager on each request (docs/assistant/managers.md "Clients").
   // The subscription pages (#2041) are the manager's, drawn over HTTP only.
-  if (legacyNegotiation || !supported || props.embedded || props.compact || otherManager(props.manager) || props.extension === SUBSCRIPTIONS_UI) return <LegacyExtensionUI {...props} />;
+  const http = legacyNegotiation || !supported || props.embedded || props.compact || otherManager(props.manager) || props.extension === SUBSCRIPTIONS_UI;
+  // The page's last view, until it is drawn again: one drawn with a UI version it may be drawn with now (before the hello
+  // either; over the socket also HTTP's, which a page the socket cannot draw falls back to) by the default's extension
+  // (before the roster, the last one drawn).
+  const page = remember ? JSON.stringify([props.extension, props.ui, props.state ?? "", currentLanguage()]) : "";
+  const httpOnly = known && http;
+  const kept = useMemo(() => {
+    if (!page) return null;
+    const [extension, ui, state, language] = JSON.parse(page) as string[];
+    return readKeptView({ extension, ui, state, language }, httpOnly ? [UI_VERSION] : [NATIVE_UI_VERSION, UI_VERSION], defaultId || undefined);
+  }, [page, httpOnly, defaultId]);
+  const placeholder = kept ? <KeptView view={kept.view} native={kept.key.version === NATIVE_UI_VERSION} onWide={props.onWide} /> : undefined;
+  const onView = useCallback((view: UIView, version: number, manager = defaultKnown() ? defaultManager() : "") => {
+    if (!page || !manager) return;
+    const [extension, ui, state, language] = JSON.parse(page) as string[];
+    keepView({ extension, ui, state, language, version, manager }, view);
+  }, [page]);
+  const keeps = page ? { placeholder, onView } : {};
+  // Bound initial negotiation when HTTP works but WebSocket upgrades do not. Once HTTP
+  // mounts, retain it even if a late hello arrives: never allocate a second source page.
+  if (waitingHello && !legacyNegotiation) return placeholder ?? <Loading />;
+  if (http) return <LegacyExtensionUI {...props} {...keeps} />;
   return (
     <PageBoundary page={`extension:${props.extension}/${props.ui}`}>
-      <Suspense fallback={<Loading />}>
-        <NativeExtensionUI key={JSON.stringify([owner, group, props.extension, props.ui, props.state ?? ""])} {...props} legacy={(page) => <LegacyExtensionUI {...page} />} />
+      <Suspense fallback={placeholder ?? <Loading />}>
+        <NativeExtensionUI key={JSON.stringify([owner, group, props.extension, props.ui, props.state ?? ""])} {...props} {...keeps} legacy={(page) => <LegacyExtensionUI {...page} />} />
       </Suspense>
     </PageBoundary>
   );
 }
+
+/** The page's last view while its extension draws it again (docs/web/web.md "Extension pages on reload"): as it was, as
+ *  wide, but nothing in it can be pressed or focused, and a quiet "Updating" in the page's top margin, so nothing moves
+ *  when the drawing replaces it. `native`: drawn over the socket, which titles the page itself. */
+function KeptView({ view, native, onWide }: { view: UIView; native: boolean; onWide?: (wide: boolean) => void }) {
+  const wide = wideView(view);
+  useEffect(() => onWide?.(wide), [wide, onWide]);
+  return (
+    <div className="relative" data-kept-view>
+      <p role="status" className="absolute right-1 -top-5 flex items-center gap-1.5 text-label text-ink-3">
+        <Spinner size={10} />
+        {t("settings-extensionview.updating")}
+      </p>
+      <div inert aria-busy="true" className={native ? "flex min-w-0 flex-col gap-4 text-sm text-ink" : "flex flex-col gap-6"}>
+        {native && view.title !== undefined && <h2 className="text-xl font-semibold text-ink">{view.title}</h2>}
+        <ViewSections view={view} {...INERT} />
+      </div>
+    </div>
+  );
+}
 export function LegacyExtensionUI({
-  extension, ui, context, embedded, compact, bare, title, onUnsupported, onMissing, onFailed, revision, onOpenSource, pages, history: withHistory, state: firstState, onWide, navigation, active = true, manager,
+  extension, ui, context, embedded, compact, bare, title, onUnsupported, onMissing, onFailed, revision, onOpenSource, pages, history: withHistory, state: firstState, onWide, onDepth, navigation, active = true, manager,
+  placeholder, onView,
 }: {
   extension: string; ui: string; context?: UIContext; embedded?: boolean; compact?: boolean; bare?: boolean; title?: string;
   /** Whose extension it is (another manager's inbox item or computer, docs/assistant/managers.md "Clients"); none: the default's. */
@@ -186,6 +231,12 @@ export function LegacyExtensionUI({
   active?: boolean;
   /** The view drawn needs a wide page (UI version 4: split, code, diffs) or not. */
   onWide?: (wide: boolean) => void;
+  /** How many pages deep its stack is, whenever that changes (Inbox Sources keeps its List / Relationships switch on the first). */
+  onDepth?: (depth: number) => void;
+  /** Drawn instead of the loading state until the first view is (the page's last view, ExtensionUI's `remember`). */
+  placeholder?: ReactNode;
+  /** The first page drew a view not typed into, asked with UI `version` (by `manager`'s extension; none: the default's). */
+  onView?: (view: UIView, version: number, manager?: string) => void;
 }) {
   const [stack, setStack] = useState<UIPage[]>(() => [{ ui, ...(firstState ? { state: firstState } : {}) }]);
   const linkManager = useLinkManager();
@@ -196,7 +247,8 @@ export function LegacyExtensionUI({
   const [loading, setLoading] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
-  const [confirming, setConfirming] = useState<{ action: UIAction; destructive: boolean; values?: Record<string, string>; control?: { c: UIRowControl; value: string } } | null>(null);
+  // `done`: told whether the action asked about was done (a code component's act waits for it)
+  const [confirming, setConfirming] = useState<{ action: UIAction; destructive: boolean; values?: Record<string, string>; control?: { c: UIRowControl; value: string }; done?: (ok: boolean) => void } | null>(null);
   // UI version 6: a control's value the user chose, by its name, shown until the extension's answer is drawn; the ones on
   // their way more than a second (a small spinner); each control's request on its way and the latest change made meanwhile
   const [controls, setControls] = useState<Record<string, string>>({});
@@ -210,6 +262,7 @@ export function LegacyExtensionUI({
   const mode = pages ?? (compact || embedded ? "open" : "stack");
   const depth = stack.length;
   const pageKey = `${depth}\n${top.ui}`;
+  useEffect(() => onDepth?.(depth), [depth, onDepth]);
 
   // the first page follows the props (a different extension or page opened in the same place)
   useEffect(() => {
@@ -267,6 +320,13 @@ export function LegacyExtensionUI({
   useEffect(() => {
     if (view) onWide?.(wide);
   }, [wide, view, onWide]);
+  // the first page as the extension drew it, unless its fields hold what was typed and not sent (a redraw keeps them)
+  const valuesNow = useRef(values);
+  valuesNow.current = values;
+  useEffect(() => {
+    const start = fieldValues(view);
+    if (view && depth === 1 && Object.entries(start).every(([k, v]) => (valuesNow.current[k] ?? v) === v)) onView?.(view, UI_VERSION, manager);
+  }, [view, depth, onView, manager]);
   useRefresh(active ? refreshDelay(view) : 0, drawnAt, () => {
     if (!busy) load(true);
   });
@@ -309,10 +369,11 @@ export function LegacyExtensionUI({
     else setStack((s) => s.slice(0, -1));
   };
 
-  const run = async (action: UIAction, extra?: Record<string, string>) => {
+  // resolves to whether the action was done: false when it did not go (a field not a number) or failed
+  const run = async (action: UIAction, extra?: Record<string, string>): Promise<boolean> => {
     if (action.push) {
       push(action.push);
-      return;
+      return true;
     }
     // the fields' values (when it submits), what the component sends, then what the action carries (UI version 4)
     const merged = { ...(action.submit ? submitValues(view, values) : {}), ...extra, ...action.values };
@@ -321,7 +382,7 @@ export function LegacyExtensionUI({
       const bad = view.sections.flatMap((s) => s.items).find((it) => it.type === "field" && it.kind === "number" && it.name && numberProblem(sent[it.name] ?? ""));
       if (bad) {
         toast(t("settings-extensionview.not_a_number", { field: bad.label || bad.name || "" }), "error");
-        return;
+        return false;
       }
     }
     setBusy(action.id);
@@ -342,11 +403,13 @@ export function LegacyExtensionUI({
       if (r.push) push(r.push);
       if (r.pop) pop();
       if (r.reload) load();
+      return true;
     } catch (e) {
       // an older one's "unsupported" does not take away a view drawn since; a press that failed still says so
       if (isUnsupported(e)) {
         if (mine === asked.current) (setUnsupported(true), onUnsupported?.());
       } else toast(t("settings-extensionview.action_failed", { error: errorText(e) }), "error");
+      return false;
     } finally {
       setBusy("");
     }
@@ -435,11 +498,16 @@ export function LegacyExtensionUI({
     else void run(action);
   };
   // a code hosting component's action (UI version 4): with its own values (a path, a line, a comment), confirmed first
-  // when it says so
-  const act = (action: UIAction, extra?: Record<string, string>) => {
-    if (busy) return;
-    if (action.confirm?.trim()) setConfirming({ action, destructive: false, values: extra });
-    else void run(action, extra);
+  // when it says so. It resolves to whether it was done (false: busy, cancelled at the confirmation or failed), so a
+  // box clears what was typed only once the extension has taken it.
+  const act = (action: UIAction, extra?: Record<string, string>): Promise<boolean> => {
+    if (busy) return Promise.resolve(false);
+    if (action.confirm?.trim()) return new Promise((done) => setConfirming({ action, destructive: false, values: extra, done }));
+    return run(action, extra);
+  };
+  const cancelConfirm = () => {
+    confirming?.done?.(false);
+    setConfirming(null);
   };
   // a segmented acts as soon as another choice is made: its own value goes along (the rest only when it submits)
   const choose = (item: UIItem, value: string) => {
@@ -556,11 +624,11 @@ export function LegacyExtensionUI({
           {busy && <Spinner />}
         </div>
       )}
-      {!view && !error && (
+      {!view && !error && (placeholder ?? (
         <div className={cx(compact ? "px-4 py-3" : embedded ? "py-2" : "rounded-card bg-surface px-4 py-3 shadow-card")}>
           <Loading />
         </div>
-      )}
+      ))}
       {error && compact && (
         <div className="flex items-center gap-2 px-4 py-2.5">
           <p className="min-w-0 flex-1 truncate text-[12px] text-red" title={error}>
@@ -614,21 +682,21 @@ export function LegacyExtensionUI({
       {confirming && (
         <Dialog
           open
-          onClose={() => setConfirming(null)}
+          onClose={cancelConfirm}
           width={400}
           title={t("settings-extensionview.confirm_title")}
           footer={
             <>
-              <Button tone="quiet" onClick={() => setConfirming(null)}>
+              <Button tone="quiet" onClick={cancelConfirm}>
                 {t("common.cancel")}
               </Button>
               <Button
                 tone={confirming.destructive ? "danger" : "primary"}
                 onClick={() => {
-                  const { action: a, values: v, control } = confirming;
+                  const { action: a, values: v, control, done } = confirming;
                   setConfirming(null);
                   if (control) applyControl(control.c, control.value);
-                  else void run(a, v);
+                  else void run(a, v).then((ok) => done?.(ok));
                 }}
               >
                 {t("settings-extensionview.ok")}
@@ -715,8 +783,8 @@ function LauncherSection({ place, launcher, machine }: { place: UIPlace; launche
 }
 
 /** Sends the subscription pages' Set Up with … text to the assistant's main conversation (Ask Persona), loading the
- *  outbox only then; a conversation that can't start says so. */
-function askAssistant(text: string) {
+ *  outbox only then; a conversation that can't start says so. Inbox Sources' relationship view sends the same. */
+export function askAssistant(text: string) {
   void import("../../lib/outbox")
     .then((m) => m.askPersona(text))
     .catch((e: unknown) => toast(t("settings-extensionview.action_failed", { error: errorText(e) }), "error"));

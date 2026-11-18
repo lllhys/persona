@@ -5,6 +5,7 @@ import Foundation
 /// The hub has it when its hello's features list `git_review`.
 nonisolated struct GitReview: Decodable, Sendable, Equatable {
     struct Base: Decodable, Sendable, Equatable {
+        /// "" before the first commit (`empty`): the node leaves it out then.
         var hash: String
         var short: String?
         var subject: String?
@@ -21,6 +22,7 @@ nonisolated struct GitReview: Decodable, Sendable, Equatable {
     }
 
     struct Hunk: Decodable, Sendable, Equatable {
+        /// The function the hunk is in, "" when Git names none: the node leaves it out then (every new file's hunks).
         var header: String
         var oldStart: Int
         var newStart: Int
@@ -66,6 +68,31 @@ nonisolated struct GitReview: Decodable, Sendable, Equatable {
     var files: [File]
     /// Only the first files came.
     var truncated: Bool?
+}
+
+// The node leaves out an empty `header` and a missing base's `hash` (`omitempty`, server/internal/proto/review.go): read
+// them as "" rather than refuse the whole review (#8733; spec/fixtures/review holds the node's real answers).
+nonisolated extension GitReview.Base {
+    private enum CodingKeys: String, CodingKey { case hash, short, subject, ref, empty }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hash = try c.decodeIfPresent(String.self, forKey: .hash) ?? ""
+        short = try c.decodeIfPresent(String.self, forKey: .short)
+        subject = try c.decodeIfPresent(String.self, forKey: .subject)
+        ref = try c.decodeIfPresent(String.self, forKey: .ref)
+        empty = try c.decodeIfPresent(Bool.self, forKey: .empty)
+    }
+}
+
+nonisolated extension GitReview.Hunk {
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        header = try c.decodeIfPresent(String.self, forKey: .header) ?? ""
+        oldStart = try c.decode(Int.self, forKey: .oldStart)
+        newStart = try c.decode(Int.self, forKey: .newStart)
+        lines = try c.decodeIfPresent([String].self, forKey: .lines) ?? []
+    }
 }
 
 /// What a review compares the files on disk with.

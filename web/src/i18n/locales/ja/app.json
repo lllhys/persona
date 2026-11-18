@@ -14,6 +14,7 @@
   "title_settings": "設定",
   "title_agents": "個人エージェント",
   "title_extension": "拡張機能",
+  "title_not_found": "ページが見つかりません",
   "title_home": "概要",
   "sidebar": "サイドバー",
   "reconnecting": "ハブに接続できません。再試行中…",
@@ -30,5 +31,7 @@
   "title_agent_archives": "アーカイブしたエージェント",
   "title_subscriptions": "購読",
   "new_version": "新しいバージョンがあります",
-  "new_version_reload": "再読み込み"
+  "new_version_reload": "再読み込み",
+  "title_request": "リクエスト",
+  "title_compare_runs": "実行を比較"
 }

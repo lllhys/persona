@@ -12,7 +12,7 @@ data class AssistantConversation(val foreground: List<ChatLine>, val background:
         /**
          * [folding]: the main conversation folds its background rounds (#4314, [BackgroundFolding]); null leaves every
          * round as it was. [inline] (Glass, #4339 C13, iOS `ChatLines.lines`): a quiet round stays in the conversation
-         * rather than going to the background record: a supervision round folds into one "Supervision record" line
+         * rather than going to the background record: a supervision round folds into one "Handled in the background" line
          * (with [folding]), and the scheduled and follow-up rounds read as they are unless the background rounds fold.
          */
         fun project(lines: List<ChatLine>, items: List<Item>, folding: BackgroundFolding? = null, inline: Boolean = false): AssistantConversation {

@@ -40,10 +40,20 @@ const (
 	AgentUnavailable = "unavailable" // sandbox-exec or bwrap is missing or will not take the rules
 )
 
-// AgentStatus is what happened to one agent start.
+// AgentStatus is what happened to one agent start. Reason is additive metadata for newly persisted records; old
+// readers ignore it, and records written before it retain their original Why bytes when displayed in any language.
 type AgentStatus struct {
-	State string `json:"state"`
-	Why   string `json:"why,omitempty"`
+	State  string        `json:"state"`
+	Why    string        `json:"why,omitempty"`
+	Reason *StatusReason `json:"reason,omitempty"`
+}
+
+// WhyIn renders a Persona-owned reason in lang. Legacy and external diagnostics have no metadata and stay verbatim.
+func (s AgentStatus) WhyIn(lang i18n.Lang) string { return statusWhy(lang, s.Why, s.Reason) }
+
+func agentStatusReason(state, key string, args i18n.Args) AgentStatus {
+	reason := NewStatusReason(key, args)
+	return AgentStatus{State: state, Why: reason.Error(), Reason: reason}
 }
 
 // AgentPlan is one agent start in the sandbox.
@@ -58,8 +68,10 @@ type AgentPlan struct {
 	// the rest of the folder not.
 	LauncherSettings []string
 	// Inner says why the agent's own sandbox would clash with this one ("" when it has none): nested sandboxes can
-	// fail, so such a start is not wrapped.
-	Inner string
+	// fail, so such a start is not wrapped. InnerReason is Persona's structured form; external callers may keep Inner
+	// as an opaque string. When both are set, InnerReason supplies both the canonical Why and its localized rendering.
+	Inner       string
+	InnerReason *StatusReason
 	// Probe is what this machine can do (nil: AgentProbe); Check tries a profile (nil: the platform's sandbox runs
 	// true under it). On Linux the profile is an opaque NUL-separated bwrap command prefix; callers must not parse it.
 	Probe func() Support
@@ -84,14 +96,14 @@ func AgentSupport(sup Support) AgentStatus {
 	switch sup.OS {
 	case "darwin":
 		if !sup.SandboxExec {
-			return AgentStatus{AgentUnavailable, sup.Why}
+			return AgentStatus{State: AgentUnavailable, Why: sup.Why, Reason: sup.Reason}
 		}
 	case "linux":
 		if sup.Bwrap == "" {
-			return AgentStatus{AgentUnavailable, sup.Why}
+			return AgentStatus{State: AgentUnavailable, Why: sup.Why, Reason: sup.Reason}
 		}
 	default:
-		return AgentStatus{AgentUnsupported, i18n.T(i18n.Default, "extension-sandbox.agent_unsupported", i18n.Args{"os": sup.OS})}
+		return agentStatusReason(AgentUnsupported, "extension-sandbox.agent_unsupported", i18n.Args{"os": sup.OS})
 	}
 	return AgentStatus{State: AgentActive}
 }
@@ -103,10 +115,10 @@ func AgentSupport(sup Support) AgentStatus {
 // namespace, so both pids stay visible to the node.
 func WrapAgent(plan AgentPlan, argv, env []string) ([]string, []string, AgentStatus) {
 	if envValue(env, AgentEnv) == "1" {
-		return argv, env, AgentStatus{AgentActive, i18n.T(i18n.Default, "extension-sandbox.agent_nested", nil)}
+		return argv, env, agentStatusReason(AgentActive, "extension-sandbox.agent_nested", nil)
 	}
 	if len(argv) == 0 {
-		return argv, env, AgentStatus{AgentSkipped, i18n.T(i18n.Default, "extension-sandbox.agent_no_command", nil)}
+		return argv, env, agentStatusReason(AgentSkipped, "extension-sandbox.agent_no_command", nil)
 	}
 	probe := plan.Probe
 	if probe == nil {
@@ -116,8 +128,11 @@ func WrapAgent(plan AgentPlan, argv, env []string) ([]string, []string, AgentSta
 	if st := AgentSupport(sup); st.State != AgentActive {
 		return argv, env, st
 	}
+	if plan.InnerReason != nil {
+		return argv, env, AgentStatus{State: AgentSkipped, Why: plan.InnerReason.Error(), Reason: plan.InnerReason}
+	}
 	if plan.Inner != "" {
-		return argv, env, AgentStatus{AgentSkipped, plan.Inner}
+		return argv, env, AgentStatus{State: AgentSkipped, Why: plan.Inner}
 	}
 
 	var profile string
@@ -141,14 +156,19 @@ func WrapAgent(plan AgentPlan, argv, env []string) ([]string, []string, AgentSta
 		}
 	}
 	if err != nil {
-		return argv, env, AgentStatus{AgentSkipped, err.Error()}
+		st := AgentStatus{State: AgentSkipped, Why: err.Error()}
+		var reason *StatusReason
+		if errors.As(err, &reason) {
+			st.Reason = reason
+		}
+		return argv, env, st
 	}
 	if err := check(profile); err != nil {
 		key := "extension-sandbox.agent_profile_refused"
 		if sup.OS == "linux" {
 			key = "extension-status.sandbox_bwrap_start"
 		}
-		return argv, env, AgentStatus{AgentUnavailable, i18n.T(i18n.Default, key, i18n.Args{"err": err.Error()})}
+		return argv, env, agentStatusReason(AgentUnavailable, key, i18n.Args{"err": err.Error()})
 	}
 	if sup.OS == "linux" {
 		prefix = append(prefix, "--")
@@ -209,20 +229,20 @@ func DarwinAgent(plan AgentPlan) (string, error) {
 		}
 	}
 	if len(dirs) == 0 {
-		return "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_no_data_dir", nil))
+		return "", NewStatusReason("extension-sandbox.agent_no_data_dir", nil)
 	}
 	for _, d := range dirs {
 		if strings.ContainsAny(d, "\"\n\\") {
-			return "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_bad_path", i18n.Args{"dir": d}))
+			return "", NewStatusReason("extension-sandbox.agent_bad_path", i18n.Args{"dir": d})
 		}
 		if home != "" && (d == home || within(home, d)) {
-			return "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_home", i18n.Args{"dir": d}))
+			return "", NewStatusReason("extension-sandbox.agent_home", i18n.Args{"dir": d})
 		}
 		if cwd != "" && (cwd == d || within(cwd, d)) {
 			rel, _ := filepath.Rel(d, cwd)
 			first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
 			if !slices.Contains(agentWorkspaces, first) {
-				return "", errors.New(i18n.T(i18n.Default, "extension-sandbox.agent_cwd_inside", i18n.Args{"cwd": cwd}))
+				return "", NewStatusReason("extension-sandbox.agent_cwd_inside", i18n.Args{"cwd": cwd})
 			}
 		}
 	}

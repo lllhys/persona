@@ -1,13 +1,16 @@
 import Foundation
+import PersonaWire
 
-/// The knowledge base under the hub's ~/.persona/data (docs/assistant/knowledge.md): projects, chats, people, docs, meetings and
-/// events, each ranked by importance (P0–P3) and relevance to the user, with free tags.
+/// The knowledge base under the hub's ~/.persona/data (docs/assistant/knowledge.md): projects, topics, chats, people, docs,
+/// meetings and events, each ranked by importance (P0–P3) and relevance to the user, with free tags. Topics (#3783, #7251)
+/// are what Persona curated by subject out of the projects and chats: knowledge points under subtopics.
 nonisolated enum KBKind: String, CaseIterable, Identifiable, Sendable {
-    case projects, chats, people, docs, meetings, events, recordings
+    case projects, topics, chats, people, docs, meetings, events, recordings
     var id: String { rawValue }
     var title: String {
         switch self {
         case .projects: String(localized: "Project")
+        case .topics: String(localized: "Topic [Knowledge]")
         case .chats: String(localized: "Session")
         case .people: String(localized: "People")
         case .docs: String(localized: "Document")
@@ -19,6 +22,7 @@ nonisolated enum KBKind: String, CaseIterable, Identifiable, Sendable {
     var symbol: String {
         switch self {
         case .projects: Theme.Icon.space
+        case .topics: Theme.Icon.topic
         case .chats: Theme.Icon.feishuChats
         case .people: Theme.Icon.people
         case .docs: Theme.Icon.document
@@ -27,6 +31,12 @@ nonisolated enum KBKind: String, CaseIterable, Identifiable, Sendable {
         case .recordings: Theme.Icon.recording
         }
     }
+
+    /// The kinds Knowledge offers as chips: recordings are listed under meetings (#8731, "one home for meetings"), with
+    /// the meetings imported from connected apps, so there is one place for meetings and notes.
+    static var listed: [KBKind] { allCases.filter { $0 != .recordings } }
+    /// The list that shows this kind's entries: recordings' is meetings'.
+    var listedAs: KBKind { self == .recordings ? .meetings : self }
 }
 
 nonisolated struct KBEntry: Codable, Identifiable, Hashable, Sendable {
@@ -39,11 +49,35 @@ nonisolated struct KBEntry: Codable, Identifiable, Hashable, Sendable {
     var tags: [String]?
     var updated: Date?
     var extra: String?
+    /// A recording's kind: meeting, note or day (#8870); nil on other kinds and from a hub before it.
+    var recordingKind: String?
+    /// A chat's source; a document's, meeting's or event's connector (#8872); nil from a hub before it.
+    var source: String?
+    /// A recording's imported meeting: the id of the meetings item it overlaps, as the meetings list has it (#8872).
+    var meetingID: String?
+    /// In the meetings list, a recording that stands for an imported meeting too: that meeting (`KBList.meetings`).
+    var imported: KBImportedMeeting? = nil
 
     enum CodingKeys: String, CodingKey {
-        case kind, id, name, importance, relevance, tags, updated, extra
+        case kind, id, name, importance, relevance, tags, updated, extra, source
         case oneLine = "one_line"
+        case recordingKind = "recording_kind"
+        case meetingID = "meeting_id"
     }
+
+    /// The pill a recording's row carries in the meetings list: notes and all-day recordings are the exceptions among
+    /// meetings, so only they are marked; a meeting, an imported one, or a recording from an older hub, none.
+    var recordingTag: String? {
+        guard kind == KBKind.recordings.rawValue else { return nil }
+        switch recordingKind {
+        case "note": return String(localized: "Note [Recording Kind]")
+        case "day": return String(localized: "All-Day")
+        default: return nil
+        }
+    }
+
+    /// The phone's own recording this entry is, when it has it: its page opens instead of the hub's copy.
+    var localRecording: UUID? { kind == KBKind.recordings.rawValue ? UUID(uuidString: id) : nil }
 
     /// Projects: "short · active" → Short-term / Long-term and the status.
     var projectKind: String? {
@@ -51,6 +85,8 @@ nonisolated struct KBEntry: Codable, Identifiable, Hashable, Sendable {
         return extra.hasPrefix("long") ? String(localized: "Long-term") : String(localized: "Short-term")
     }
     var projectDone: Bool { kind == KBKind.projects.rawValue && (extra ?? "").hasSuffix("done") }
+    /// A topic's knowledge points, as the list's `extra` counts them (nil for other kinds).
+    var topicPoints: Int? { kind == KBKind.topics.rawValue ? Int(extra ?? "") : nil }
     /// Marked "not a project" (by hand, or because it only came from notifications).
     var projectIgnored: Bool { kind == KBKind.projects.rawValue && (extra ?? "").hasSuffix("ignored") }
 }
@@ -58,6 +94,36 @@ nonisolated struct KBEntry: Codable, Identifiable, Hashable, Sendable {
 nonisolated struct KBList: Decodable, Sendable {
     var items: [KBEntry]
     var tags: [String]?
+
+    /// The meetings list (#8731): the meetings imported from connected apps and the recordings made in Persona, with
+    /// each tag once. A meeting both recorded and imported is one row (#8872): the recording's, which carries the
+    /// imported meeting (`imported`), and the imported meeting's own row goes.
+    static func meetings(_ meetings: KBList, recordings: KBList) -> KBList {
+        var tags: [String] = []
+        for t in (meetings.tags ?? []) + (recordings.tags ?? []) where !tags.contains(t) { tags.append(t) }
+        let byID = Dictionary(meetings.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var covered = Set<String>()
+        let recs = recordings.items.map { r -> KBEntry in
+            guard let id = r.meetingID, let m = byID[id] else { return r }
+            covered.insert(m.id)
+            var r = r
+            r.imported = KBImportedMeeting(id: m.id, url: KBImportedMeeting.link(m.extra), source: m.source)
+            return r
+        }
+        return KBList(items: meetings.items.filter { !covered.contains($0.id) } + recs, tags: tags)
+    }
+
+    /// Newest first, entries with no time last; otherwise in the order given.
+    static func newestFirst(_ items: [KBEntry]) -> [KBEntry] {
+        items.enumerated().sorted { a, b in
+            switch (a.element.updated, b.element.updated) {
+            case let (x?, y?) where x != y: x > y
+            case (.some, nil): true
+            case (nil, .some): false
+            default: a.offset < b.offset
+            }
+        }.map(\.element)
+    }
 }
 
 nonisolated struct KBDetail: Decodable, Sendable {
@@ -71,6 +137,61 @@ nonisolated struct KBDetail: Decodable, Sendable {
     var links: [KBEntry]?
     /// A project's Moments posts (the hub's LinkMoments), newest first.
     var moments: [KBMomentRef]?
+    /// A topic's knowledge points (docs/assistant/knowledge.md "Topics").
+    var points: [KBTopicPoint]?
+
+    /// A recording's imported meeting (#8872): `meta.imported_meeting` and the link the hub resolves for it; nil without
+    /// one, or with nothing to open.
+    var importedMeeting: KBImportedMeeting? {
+        guard kind == KBKind.recordings.rawValue else { return nil }
+        return KBImportedMeeting.of(meta, links: links)
+    }
+}
+
+/// The meeting imported from a connected app that a recording stands for too (#8872): its id, its notes' link and the
+/// connector it came from.
+nonisolated struct KBImportedMeeting: Codable, Hashable, Sendable {
+    var id: String
+    var url: URL?
+    var source: String?
+
+    /// A meetings item's `extra` as a link: its notes in the app, nil when it has none.
+    static func link(_ extra: String?) -> URL? {
+        guard let s = extra?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
+        return URL(string: s)
+    }
+
+    /// From a recording's detail: `meta.imported_meeting`, with its notes' link and connector from the link the hub
+    /// resolves for it; nil without one, or with no link to open.
+    static func of(_ meta: JSONValue?, links: [KBEntry]?) -> KBImportedMeeting? {
+        of(id: meta?["imported_meeting"]?["id"]?.string, links: links)
+    }
+
+    /// The imported meeting `id` among a detail's `links`, with its notes' link; nil without either.
+    static func of(id: String?, links: [KBEntry]?) -> KBImportedMeeting? {
+        guard let id, let link = (links ?? []).first(where: { $0.kind == KBKind.meetings.rawValue && $0.id == id }),
+              let url = Self.link(link.extra) else { return nil }
+        return KBImportedMeeting(id: id, url: url, source: link.source)
+    }
+}
+
+/// One knowledge point of a topic: what it is (`kind`), the text, the reason or cause (`why`), the subtopics it is under
+/// (outermost first, 0–2), the entries it came from and the day it was last confirmed (YYYY-MM-DD).
+nonisolated struct KBTopicPoint: Decodable, Identifiable, Hashable, Sendable {
+    var id: String
+    var path: [String]?
+    var kind: String
+    var text: String
+    var why: String?
+    var sources: [KBTopicSource]?
+    var when: String?
+}
+
+/// An entry a knowledge point came from (a project or a chat), and the day.
+nonisolated struct KBTopicSource: Decodable, Hashable, Sendable {
+    var kind: String
+    var id: String
+    var day: String?
 }
 
 /// A Moments post a project shows: who, when, how many comments, the text clipped, how it bears on the project.
@@ -264,6 +385,14 @@ nonisolated struct KBLogLine: Hashable, Sendable {
     }
 }
 
+/// A deleted project as the trash keeps it (docs/assistant/knowledge.md "Deleting a project"): the trash entry's id
+/// is what restoring names.
+nonisolated struct KBTrashEntry: Decodable, Sendable {
+    var id: String
+    var slug: String?
+    var name: String?
+}
+
 extension APIClient {
     func kbList(_ kind: KBKind, tag: String? = nil) async throws -> KBList {
         try await get("/api/v1/kb/\(kind.rawValue)", query: tag.map { ["tag": $0] } ?? [:])
@@ -288,6 +417,15 @@ extension APIClient {
     }
     func kbUpdate(_ kind: String, id: String, _ u: KBUpdate) async throws {
         _ = try await request("PUT", "/api/v1/kb/\(kind)/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(["/"])) ?? id)", body: u)
+    }
+    /// Deletes a project softly: it goes to the trash, from where `kbRestore` brings it back.
+    func kbDeleteProject(_ id: String) async throws -> KBTrashEntry {
+        let data = try await request("DELETE", "/api/v1/kb/projects/\(Self.kbID(id))")
+        return try JSON.decoder.decode(KBTrashEntry.self, from: data)
+    }
+    /// 409 when a project with the same slug was made since.
+    func kbRestore(_ trashID: String) async throws {
+        _ = try await request("POST", "/api/v1/kb-trash/\(Self.kbID(trashID))/restore")
     }
     func kbSearch(_ q: String) async throws -> [KBHit] {
         struct R: Decodable { var hits: [KBHit] }

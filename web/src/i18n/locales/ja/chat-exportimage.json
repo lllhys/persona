@@ -1,0 +1,13 @@
+{
+  "copied": "画像をコピーしました",
+  "copy_failed": "画像をコピーできませんでした",
+  "copy_image": "画像をコピー",
+  "download": "PNG をダウンロード",
+  "download_n": "{count} 枚をダウンロード",
+  "failed": "画像を作成できませんでした",
+  "retry": "再試行",
+  "page_of": "{count} 枚中 {n} 枚目",
+  "page_alt": "{n} 枚目",
+  "include_detail": "各回答の前の質問も一緒に含めます",
+  "title_and_date": "タイトルと日付"
+}

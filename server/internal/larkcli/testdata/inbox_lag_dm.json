@@ -13,7 +13,7 @@
       {
         "message_id": "om_lag_old",
         "msg_type": "text",
-        "create_time": "2029-12-31T22:00:00Z",
+        "create_time": "2029-12-31T21:58:00Z",
         "sender": {"id": "ou_lag_peer", "id_type": "open_id", "sender_type": "user", "name": "Lag Peer"},
         "content": "Older than the direct-chat lookback",
         "chat_id": "oc_lag_dm"

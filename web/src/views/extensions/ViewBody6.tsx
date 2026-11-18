@@ -3,11 +3,11 @@
 // and carousels of tiles, sparklines, a named color's badge, and the new fields (date, time, datetime, multichoice,
 // multiline). The readings and the arithmetic are in lib/extension-ui-v6.ts; what a control's change does (shown at
 // once, put back when it fails) is settings/ExtensionView.tsx's.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { rowIcon, type UIAction, type UIItem } from "../../lib/extension-ui";
 import {
   aspectRatio, colorOf, controlText, controlValue, hue, hueTint, imageSrc, isHubImage, multilineRows, multiText, multiValues, sliderStep, snap, sparkColor, sparkPoints,
-  type UIImageSource, type UIRowAction, type UIRowControl, type UISpark, type UITile,
+  type UIGauge, type UIImageSource, type UIRowAction, type UIRowControl, type UISpark, type UITile,
 } from "../../lib/extension-ui-v6";
 import { t } from "../../i18n";
 import { cx, Dialog, Button, Menu, Spinner } from "../../ui/atoms";
@@ -16,10 +16,18 @@ import { SearchField } from "../../ui/SearchField";
 import { contextMenuProps } from "../../ui/context-menu";
 import type { MenuAt, MenuItem } from "../../ui/menu-model";
 import { Pill, Switch } from "../settings/SettingsParts";
-import { ImageViewer } from "../chat/ImageViewer";
 import { Slider } from "../../ui/Slider";
 import { scrollBehavior } from "../../ui/stream/motion";
 import { NEW_ICON_GLYPH } from "./icon-map";
+import { lazyPage } from "../../lib/lazy-page";
+
+// A picture opens the image viewer from its own chunk, on the first open: this renderer is fetched by the idle preload
+// (view-sections-lazy.tsx), and the viewer need not come with it. As with the renderer's charts, lazyPage under a
+// Suspense, which adds no module to this chunk's imports (LazyImageViewer.tsx is the chat's).
+const ImageViewer = lazyPage(() => import("../chat/ImageViewer").then((m) => m.ImageViewer));
+// A tile's gauge (UI version 9, ViewBody9.tsx) is a chunk of its own too, loaded with the first tile that has one: the
+// tile keeps the ring's space meanwhile, and is read out as it will be.
+const GaugeFace = lazyPage<{ tile: UITile; compact?: boolean }>(() => import("./ViewBody9").then((m) => m.GaugeFace));
 
 /** What UI version 6's components are drawn with, besides a view's handlers. */
 export interface V6Handlers {
@@ -288,7 +296,11 @@ export function ImageItem({ item, compact, onImageFailed }: { item: UIItem; comp
         )}
       </div>
       {item.caption && <figcaption className="mt-1.5 text-[11.5px] leading-relaxed break-words text-ink-3">{item.caption}</figcaption>}
-      {open && src && <ImageViewer images={[{ id: item.key ?? src, src, label: alt }]} start={0} onClose={() => setOpen(false)} />}
+      {open && src && (
+        <Suspense fallback={null}>
+          <ImageViewer images={[{ id: item.key ?? src, src, label: alt }]} start={0} onClose={() => setOpen(false)} />
+        </Suspense>
+      )}
     </figure>
   );
 }
@@ -308,6 +320,19 @@ export function useImage(src: UIImageSource | undefined, onImageFailed?: () => v
 }
 
 // ── grid, carousel, tile ────────────────────────────────
+
+/** A gauge's ratio as a whole percentage, 0 to 100: what its ring shows and is read out as (the hub's downgrade too). */
+export const gaugePercent = (ratio: number) => Math.round(Math.min(1, Math.max(0, ratio)) * 100);
+
+/** A gauge's unit when it is a word ("" otherwise): readView keeps the gauge as sent. */
+export const gaugeUnit = (g: UIGauge) => (typeof g.unit === "string" ? g.unit : "");
+
+/** What a gauge tile is read out as, as a chart's title and text: "5 hours: 4.69 USD, 94%", or "Disk: 50%" without a value. */
+function gaugeLabel(tile: UITile): string {
+  const g = tile.gauge!;
+  const text = [tile.value && [tile.value, gaugeUnit(g)].filter(Boolean).join(" "), `${gaugePercent(g.ratio)}%`].filter(Boolean).join(t("extensions-viewbody.read_sep"));
+  return t("extensions-extensionchart.titled", { title: tile.title, text });
+}
 
 type TileHandlers = V6Handlers & {
   glyphs: Record<string, IconName>;
@@ -406,7 +431,8 @@ export function Carousel({ item, compact, ...h }: TileHandlers & { item: UIItem;
 
 /**
  * A tile: its picture across the top (16:9) or its icon in its color, the title, a state line, a value, a spark;
- * pressing it does its action. One that is on lays its color under it and around it; the text stays in the ink.
+ * pressing it does its action. One that is on lays its color under it and around it; the text stays in the ink. One with
+ * a gauge (UI version 9) is its ring instead (ViewBody9.tsx), read out as a meter when it does not press.
  */
 function TileView({ tile, compact, glyphs, busy, onPress, canPress, ...h }: TileHandlers & { tile: UITile; compact?: boolean }) {
   const pic = useImage(tile.image, h.onImageFailed);
@@ -415,8 +441,13 @@ function TileView({ tile, compact, glyphs, busy, onPress, canPress, ...h }: Tile
   const on = !!tile.active || (tile.control ? shownValue(tile.control, h) === "true" : false);
   const color = colorOf(tile.color) ? tile.color : undefined;
   const pressable = !!tile.action && (canPress ? canPress(tile.action) : true);
-  const label = [tile.title, tile.subtitle, tile.value, on ? t("extensions-viewbody.tile_on") : ""].filter(Boolean).join(t("extensions-viewbody.read_sep"));
-  const body = (
+  const gauge = tile.gauge;
+  const label = (gauge ? [gaugeLabel(tile), tile.subtitle] : [tile.title, tile.subtitle, tile.value]).concat(on ? t("extensions-viewbody.tile_on") : "").filter(Boolean).join(t("extensions-viewbody.read_sep"));
+  const body = gauge ? (
+    <Suspense fallback={<span className={cx("m-3 self-center", compact ? "size-20" : "size-24")} />}>
+      <GaugeFace tile={tile} compact={compact} />
+    </Suspense>
+  ) : (
     <>
       {tile.image && (
         <span className="block aspect-video w-full overflow-hidden bg-inset">
@@ -460,7 +491,12 @@ function TileView({ tile, compact, glyphs, busy, onPress, canPress, ...h }: Tile
           {body}
         </button>
       ) : (
-        <div aria-label={label} role="group" className="flex h-full w-full flex-col whitespace-nowrap">
+        <div
+          aria-label={label}
+          role={gauge ? "meter" : "group"}
+          {...(gauge ? { "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": gaugePercent(gauge.ratio) } : {})}
+          className="flex h-full w-full flex-col whitespace-nowrap"
+        >
           {body}
         </div>
       )}

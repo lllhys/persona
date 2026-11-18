@@ -105,6 +105,7 @@ type assistantKeeper struct {
 	procs          map[string]*assistantProc
 	recoveryOwners map[string]*Node              // each session's previous Node, holding its recovery under that Node's mu
 	fallbacks      map[string]*assistantFallback // the conversations' holds on a fallback (assistant_fallback_hold.go)
+	unavailable    map[string]time.Time          // models a recovery found the gateway does not serve, by launcher
 	// gp is the process's gate proxy: the conversations kept hold their addresses at it (Node.gates, gateproxy.go).
 	gp *gateProxy
 }
@@ -134,19 +135,25 @@ func (k *assistantKeeper) keep(owner *Node, procs map[string]*assistantProc, rec
 	return stop
 }
 
-// keepFallbacks takes an ended connection's holds on a fallback for the next one: a hub restart does not move the
-// conversations back onto the model that refused them. The caller holds the owner's mu (the order keep takes them in).
-func (k *assistantKeeper) keepFallbacks(fallbacks map[string]*assistantFallback) {
-	if len(fallbacks) == 0 {
+// keepFallbacks takes an ended connection's holds on a fallback, and the models found unavailable, for the next one:
+// a hub restart does not move the conversations back onto a model that refused them or does not exist. The caller holds the owner's mu (the order keep takes them in).
+func (k *assistantKeeper) keepFallbacks(fallbacks map[string]*assistantFallback, unavailable map[string]time.Time) {
+	if len(fallbacks) == 0 && len(unavailable) == 0 {
 		return
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if k.fallbacks == nil {
+	if len(fallbacks) > 0 && k.fallbacks == nil {
 		k.fallbacks = map[string]*assistantFallback{}
 	}
 	for id, f := range fallbacks {
 		k.fallbacks[id] = f
+	}
+	if len(unavailable) > 0 && k.unavailable == nil {
+		k.unavailable = map[string]time.Time{}
+	}
+	for key, until := range unavailable {
+		k.unavailable[key] = until
 	}
 }
 
@@ -169,9 +176,19 @@ func (k *assistantKeeper) adopt(n *Node) []*assistantProc {
 	k.procs = map[string]*assistantProc{}
 	recoveryOwners := k.recoveryOwners
 	k.recoveryOwners = map[string]*Node{}
-	fallbacks := k.fallbacks
-	k.fallbacks = nil
+	fallbacks, unavailable := k.fallbacks, k.unavailable
+	k.fallbacks, k.unavailable = nil, nil
 	k.mu.Unlock()
+	if len(unavailable) > 0 {
+		n.mu.Lock()
+		if n.unavailable == nil {
+			n.unavailable = map[string]time.Time{}
+		}
+		for key, until := range unavailable {
+			n.unavailable[key] = until
+		}
+		n.mu.Unlock()
+	}
 	if len(fallbacks) > 0 {
 		n.mu.Lock()
 		if n.fallbacks == nil {
@@ -335,8 +352,8 @@ func (n *Node) handOverAssistants() {
 	}
 	n.mu.Lock()
 	stop := n.keeper.keep(n, n.procs, n.recoveries)
-	n.keeper.keepFallbacks(n.fallbacks)
-	n.fallbacks = nil
+	n.keeper.keepFallbacks(n.fallbacks, n.unavailable)
+	n.fallbacks, n.unavailable = nil, nil
 	n.procs = map[string]*assistantProc{}
 	n.akeys = map[string]*assistantProc{}
 	n.mu.Unlock()

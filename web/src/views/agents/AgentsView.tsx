@@ -20,15 +20,17 @@ import {
   type AgentMessage,
   type Outgoing,
 } from "../../lib/agents";
-import { errorText } from "../../lib/api";
+import { ApiError, errorText } from "../../lib/api";
 import { ago, clock, uuid } from "../../lib/format";
-import { href, onLinkClick } from "../../lib/router";
+import { href, navigate, onLinkClick } from "../../lib/router";
 import { Button, Collapse, cx, EASE, IconButton, Loading, Spinner } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
+import { Empty } from "../session/files/parts";
 import { SearchField } from "../../ui/SearchField";
 import { formatDate, t } from "../../i18n";
 import { composing } from "../../lib/send-history";
+import { storedPageDraft, storePageDraft } from "../../lib/drafts";
 import { fetchHiddenSessions, personalHideDeps, personalOrder, personalSessions, restoreAgentSession, type AgentSession } from "../../lib/agents";
 import { SESSIONS_LIST_FEATURE } from "../../lib/session-list";
 import { useStore } from "../../lib/store";
@@ -123,7 +125,7 @@ export function RemovedAgents() {
               <div key={s.id} className={SESSION_LIST_STYLE.personalRow}>
                 <AgentAvatar s={s} size={SESSION_LIST_METRICS.avatar} />
                 <span className="min-w-0 flex-1 truncate text-[13px] text-ink-2">{s.title || t("lib-format.untitled_session")}</span>
-                <Button tone="quiet" onClick={() => void restoreAgentSession(s, personalHideDeps).then((ok) => ok && setList((x) => x.filter((y) => y.id !== s.id)))}>{t("lib-agents.restore")}</Button>
+                <Button tone="quiet" onClick={() => void restoreAgentSession(s, personalHideDeps).then((ok) => ok && setList((x) => x.filter((y) => y.id !== s.id)))}>{t("agents-agentsview.restore")}</Button>
               </div>
             ))}
           </div>
@@ -196,6 +198,8 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
   const [hasMore, setHasMore] = useState(false);
   const [older, setOlder] = useState(false);
   const [error, setError] = useState("");
+  // the hub has no such conversation (an old or mistyped link, or one removed since): said plainly, with the way back
+  const [missing, setMissing] = useState(false);
   const [out, setOut] = useState<Outgoing[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -214,12 +218,14 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
           setHasMore(p.hasMore);
         }
         setError("");
+        setMissing(false);
         const tail = p.messages.at(-1)?.externalId ?? "";
         if (first || tail !== readTail.current) {
           readTail.current = tail;
           void markRead(id).then(() => setLocalRead(id)).catch(() => {});
         }
       } catch (e) {
+        if (e instanceof ApiError && e.status === 404) setMissing(true);
         setError(errorText(e));
       }
     },
@@ -274,6 +280,7 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
   };
 
   const canSend = session?.canSend ?? false;
+  if (missing && !session) return <MissingAgent onToggleSidebar={onToggleSidebar} />;
   return (
     <div className="flex h-full flex-col">
       <Header title={session?.title || t("lib-format.untitled_session")} sub={session ? providerLabel(session.provider) : undefined} avatar={session ?? undefined} onToggleSidebar={onToggleSidebar} />
@@ -315,7 +322,27 @@ function AgentSessionView({ id, onToggleSidebar }: { id: string; onToggleSidebar
           ))}
         </div>
       </div>
-      <AgentComposer disabled={!canSend} reason={session ? t("agents-agentsview.cannot_send") : t("agents-agentsview.loading")} onSend={(text) => void deliver({ clientId: uuid(), text, at: Date.now(), status: "sending" })} />
+      <AgentComposer id={id} disabled={!canSend} reason={session ? t("agents-agentsview.cannot_send") : t("agents-agentsview.loading")} onSend={(text) => void deliver({ clientId: uuid(), text, at: Date.now(), status: "sending" })} />
+    </div>
+  );
+}
+
+/** A personal agent's link to a conversation the hub doesn't have: what happened in plain words and the way back to the
+ *  list, as a computer's page that isn't there does (machines/MachineDetail.tsx), with no box that waits forever. */
+function MissingAgent({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+  return (
+    <div className="flex h-full flex-col">
+      {/* as a space that is gone (SpacePage): the header names where this is (the list's name), the shared empty state
+          says what is missing once, with the way back, and there is no composer */}
+      <Header title={t("agents-agentsview.title")} onToggleSidebar={onToggleSidebar} />
+      <div className="flex min-h-0 flex-1 flex-col pb-[10vh]" role="status">
+        <Empty
+          icon="chat"
+          title={t("not-found.agent_title")}
+          detail={t("not-found.agent_detail")}
+          action={<Button tone="secondary" icon="arrowLeft" onClick={() => navigate({ name: "agents" })}>{t("not-found.agent_back")}</Button>}
+        />
+      </div>
     </div>
   );
 }
@@ -357,13 +384,23 @@ function MessageRow({ m }: { m: AgentMessage }) {
   );
 }
 
-export function AgentComposer({ disabled, reason, onSend }: { disabled: boolean; reason: string; onSend: (text: string) => void }) {
-  const [text, setText] = useState("");
+/** The draft key for a personal agent's box: stable while its rows are recreated, and shaped so no sidebar row reads it
+ *  (the draft indicator only asks for `draft:<machine>/<session>` keys). */
+const agentDraftKey = (id: string) => `agent:${id}`;
+
+export function AgentComposer({ id, disabled, reason, onSend }: { id: string; disabled: boolean; reason: string; onSend: (text: string) => void }) {
+  const draftKey = agentDraftKey(id);
+  const [text, setText] = useState(() => storedPageDraft(draftKey));
+  useEffect(() => {
+    storePageDraft(draftKey, text);
+  }, [draftKey, text]);
   const submit = () => {
     const body = text.trim();
     if (!body || disabled) return;
     onSend(body);
     setText("");
+    // even if the send navigates away before the effect above runs, no words stay stored
+    storePageDraft(draftKey, "");
   };
   return (
     <div className="shrink-0 border-t border-line px-3 py-3 sm:px-4">

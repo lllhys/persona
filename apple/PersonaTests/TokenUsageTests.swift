@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Token counts in K / M / B, the same rules as the web's formatTokens (#4973), and the usage API's shapes.
 struct TokenUsageTests {
@@ -29,9 +30,28 @@ struct TokenUsageTests {
         let u = try JSONDecoder().decode(R.self, from: Data(json.utf8)).usage
         #expect(u.points.count == 2 && u.points[1].gap && !u.points[0].gap)
         #expect(u.total.total == 305 && u.total.hitRate == 0.9)
-        #expect(u.minutesPerStep == 10 && UsageChartData.perMinute(u.points[0].tokens.total, u) == 31)
+        #expect(u.minutesPerStep == 10 && UsageChartData.perMinute(u.points[0].tokens.total, u, at: u.points[0].t) == 31)
         #expect(!u.launchersKnown && MachineUsageSection.launcherName(u.launchers[0].name) != "")
         #expect(UsageChartData.offline(u).count == 1)
+    }
+
+    /// The step under way covers only what had passed when the report came (#9205): 3 minutes into a 10-minute step its
+    /// sums are 3 minutes' worth, so its rate is a whole step's at the same pace, and the 1h view's minutes'. The web's
+    /// stepMinutes has the same cases (web/src/lib/tokens.test.ts).
+    @Test func theStepUnderWayIsDividedByThePartThatHasPassed() {
+        let series = { (step: Int, at: TimeInterval?) in
+            MachineUsageSeries(machineID: "m", online: true, range: "24h", step: step, points: [], total: UsageTokens(), models: [], launchers: [],
+                               launchersKnown: true, receivedAt: at.map { Date(timeIntervalSince1970: $0) })
+        }
+        let ten = series(600, 6_000 + 180)
+        #expect(ten.minutes(at: 6_000) == 3) // 3 minutes in
+        #expect(UsageChartData.perMinute(3_000, ten, at: 6_000) == 1_000)
+        #expect(ten.minutes(at: 5_400) == 10) // the step before: whole
+        #expect(series(600, 6_000 + 20).minutes(at: 6_000) == 1) // at least a minute
+        #expect(series(600, 5_900).minutes(at: 6_000) == 1) // this device's clock behind the hub's
+        #expect(series(3_600, 7_200 + 1_800).minutes(at: 7_200) == 30) // half an hour of an hourly step
+        #expect(series(60, 6_030).minutes(at: 6_000) == 1) // the 1h view's minutes, as before
+        #expect(series(600, nil).minutes(at: 6_000) == 10) // no arrival time: whole steps
     }
 
     @Test func hitRateBreaksWhereThereAreTooFewReplies() {

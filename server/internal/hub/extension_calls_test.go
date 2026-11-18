@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,12 +28,19 @@ import (
 )
 
 // relayingExt is the manager's extensions faked (fakeExt) that also serves what the hub relays to it, as the manager
-// does: on extensions.accept it dials the relay stream and serves HTTP on it with serve.
+// does: on extensions.accept it dials the relay stream and serves HTTP on it with serve. It numbers the streams from
+// 1 (accepted; a request's context has its stream's number under relayNumber{}) and sends each one's number on ended,
+// when set, once it is over.
 type relayingExt struct {
 	*fakeExt
-	serve http.Handler
-	dial  func(ctx context.Context, query string) (*websocket.Conn, error)
+	serve    http.Handler
+	dial     func(ctx context.Context, query string) (*websocket.Conn, error)
+	accepted atomic.Int64
+	ended    chan int64
 }
+
+// relayNumber keys the number of the relay stream a request came on (relayingExt).
+type relayNumber struct{}
 
 func (x *relayingExt) Request(ctx context.Context, method string, params json.RawMessage) (any, bool, error) {
 	switch method {
@@ -47,6 +55,7 @@ func (x *relayingExt) Request(ctx context.Context, method string, params json.Ra
 		if err != nil {
 			return nil, true, err
 		}
+		n := x.accepted.Add(1)
 		// As the manager serves the relay (extmgr Accept): over a pipe, whose deadlines the server may set.
 		nc := websocket.NetConn(context.Background(), conn, websocket.MessageBinary)
 		mine, theirs := net.Pipe()
@@ -58,7 +67,14 @@ func (x *relayingExt) Request(ctx context.Context, method string, params json.Ra
 			go func() { _, _ = io.Copy(nc, theirs); done <- struct{}{} }()
 			<-done
 		}()
-		go func() { _ = (&http.Server{Handler: x.serve}).Serve(newOneConnListener(mine)) }()
+		go func() {
+			_ = (&http.Server{Handler: x.serve, ConnContext: func(ctx context.Context, _ net.Conn) context.Context {
+				return context.WithValue(ctx, relayNumber{}, n)
+			}}).Serve(newOneConnListener(mine))
+			if x.ended != nil {
+				x.ended <- n
+			}
+		}()
 		return map[string]any{}, true, nil
 	case extwire.MethodAuthorize:
 		// The manager judges /api/v1/extensions/<id>/… by its own route (extmgr authorize).
@@ -158,6 +174,22 @@ func (m *relayedManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // routes with a relayedManager; the apps reach it at the server returned.
 func relayTestHub(t *testing.T) (*Hub, *relayedManager, *fakeExt, *httptest.Server) {
 	t.Helper()
+	m := &relayedManager{ended: make(chan string, 8)}
+	h, fx, srv := relayTestHubServing(t, m)
+	return h, m, fx, srv
+}
+
+// relayTestHubServing is relayTestHub with the manager serving what the hub relays to it with serve.
+func relayTestHubServing(t *testing.T, serve http.Handler) (*Hub, *fakeExt, *httptest.Server) {
+	t.Helper()
+	h, x, srv := relayTestHubVia(t, serve, nil)
+	return h, x.fakeExt, srv
+}
+
+// relayTestHubVia is relayTestHubServing with the manager reaching the hub (its bus and its relay streams) at the
+// address via makes of the hub's (nil: directly), and the manager's extensions returned.
+func relayTestHubVia(t *testing.T, serve http.Handler, via func(hubURL string) string) (*Hub, *relayingExt, *httptest.Server) {
+	t.Helper()
 	h := newTestHub(t)
 	h.store = &pairStore{tokenStore: tokenStore{memStore: *newMemStore(), rows: map[string]db.DeviceToken{}, rev: map[string]bool{}},
 		pairs: map[string]db.PairToken{}}
@@ -168,16 +200,19 @@ func relayTestHub(t *testing.T) (*Hub, *relayedManager, *fakeExt, *httptest.Serv
 	h.busRoutes(busMux)
 	busSrv := httptest.NewServer(busMux)
 	t.Cleanup(busSrv.Close)
-	m := &relayedManager{ended: make(chan string, 8)}
+	hubURL := busSrv.URL
+	if via != nil {
+		hubURL = via(hubURL)
+	}
 	var token string
-	x := &relayingExt{fakeExt: fakeExtOf(h), serve: m, dial: func(ctx context.Context, query string) (*websocket.Conn, error) {
-		return bus.DialAt(ctx, busSrv.URL, token, busSrv.Client(), devicewire.RelayPath, query)
+	x := &relayingExt{fakeExt: fakeExtOf(h), serve: serve, dial: func(ctx context.Context, query string) (*websocket.Conn, error) {
+		return bus.DialAt(ctx, hubURL, token, busSrv.Client(), devicewire.RelayPath, query)
 	}}
-	a := dialAssistant(t, h, busSrv.URL, false, func(o *assistant.BusOptions) { o.Extensions = x })
+	a := dialAssistant(t, h, hubURL, false, func(o *assistant.BusOptions) { o.Extensions = x })
 	token = a.token
 	srv := httptest.NewServer(h.routes())
 	t.Cleanup(srv.Close)
-	return h, m, x.fakeExt, srv
+	return h, x, srv
 }
 
 // relayDevice makes a device token of kind ("phone": full, "watch": answer-only) with by's credential.

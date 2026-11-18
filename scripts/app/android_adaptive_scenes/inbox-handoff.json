@@ -1,0 +1,107 @@
+{
+  "id": "inbox-handoff",
+  "description": "Exercise the Inbox event hand-off bar, local Undo, IME input, rotation and the existing Draft Reply sheet in one app process.",
+  "requires": {
+    "mockEnv": {
+      "MOCK_INBOX_EVENTS": "1",
+      "MOCK_NO_LARK": "1"
+    },
+    "fields": [
+      "pid"
+    ]
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "page": "inbox",
+      "probePage": "Inbox"
+    },
+    {
+      "step": "capture",
+      "name": "00-inbox-list"
+    },
+    {
+      "step": "tap",
+      "text": "Agents waiting on you"
+    },
+    {
+      "step": "tap",
+      "text": "Lark"
+    },
+    {
+      "step": "tap",
+      "text": "合同续签"
+    },
+    {
+      "step": "capture",
+      "name": "01-event-bar"
+    },
+    {
+      "step": "tap",
+      "text": "Main chat"
+    },
+    {
+      "step": "capture",
+      "name": "02-target-menu"
+    },
+    {
+      "step": "key",
+      "key": "BACK"
+    },
+    {
+      "step": "tap",
+      "text": "Summarize & suggest reply"
+    },
+    {
+      "step": "capture",
+      "name": "03-queued-undo-view"
+    },
+    {
+      "step": "tap",
+      "text": "Hand to AI…"
+    },
+    {
+      "step": "text",
+      "text": "Investigate this event and suggest next steps"
+    },
+    {
+      "step": "key",
+      "key": "TAB"
+    },
+    {
+      "step": "tap",
+      "content-desc": "Send"
+    },
+    {
+      "step": "tap",
+      "text": "Undo"
+    },
+    {
+      "step": "rotate",
+      "orientation": "landscape",
+      "timeout": 60
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "05-landscape-input"
+    },
+    {
+      "step": "capture",
+      "name": "07-undo-restored"
+    },
+    {
+      "step": "tap",
+      "text": "Draft reply"
+    },
+    {
+      "step": "capture",
+      "name": "08-draft-reply"
+    }
+  ]
+}

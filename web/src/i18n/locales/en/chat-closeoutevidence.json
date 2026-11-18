@@ -1,0 +1,15 @@
+{
+  "title": "Command evidence",
+  "loading": "Loading command evidence…",
+  "claimed": "Claimed",
+  "recorded": "Recorded",
+  "exit": "Exit code {code}",
+  "is_error": "is_error: {value}",
+  "no_exit": "No numeric exit result recorded",
+  "background": "Background",
+  "running": "Running in background",
+  "not_found": "No matching command in this closeout's work record",
+  "unavailable": "Evidence unavailable",
+  "no_result": "No tool result recorded",
+  "truncated": "Evidence unavailable: the record is truncated"
+}

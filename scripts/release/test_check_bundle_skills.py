@@ -28,7 +28,13 @@ class CheckBundleSkillsTests(unittest.TestCase):
         self.assertEqual(len(problems), 1)
         self.assertIn("copied-skill", problems[0])
 
-    def test_no_skill_at_all_fails(self):
+    def test_runtime_memory_frontmatter_is_not_a_bundled_skill(self):
+        note = (b"---\ntitle: User preferences and corrections\n"
+                b"description: Background summary of stable user preferences and corrections\n"
+                b"metadata:\n  type: user\n---\n\n")
+        self.assertEqual(cbs.check(skill("persona-office") + note, {"persona-office"}), [])
+        self.assertEqual(len(cbs.check(note + skill("copied-skill"), {"persona-office"})), 1)
+
         self.assertEqual(len(cbs.check(b"\x00nothing here\x00", {"persona-office"})), 1)
 
 

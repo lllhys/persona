@@ -184,7 +184,7 @@ func TestBriefAcceptAfterARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.s.accept.loaded, e.s.accept.asks = false, nil
-	if ok, _ := e.s.acceptTryFromBrief(context.Background(), "todo_v1", asked.Format(timeKeyLayout)); !ok {
+	if ok, _ := e.s.acceptTryFromBrief(context.Background(), "todo_v1", asked.Format(timeKeyLayout)); !ok.taken {
 		t.Fatal("the button of the round that waits was refused before the asks were read")
 	}
 }

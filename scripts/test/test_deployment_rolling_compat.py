@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from compose_cli import skip_without_compose
 from test_persona_install import PersonaInstallTests
 from test_persona_script_identity import identity, executable, environment
 
@@ -282,9 +283,6 @@ remote_state() { eval "$2"; }
                     self.assertTrue(old.samefile(current))
 
     def test_compose_config_offline_uses_one_project_database_and_both_environment_names(self):
-        import shutil
-        if not shutil.which('docker'):
-            self.skipTest('Docker Compose is unavailable; no containers are started by this check')
         for canonical in (False, True):
             with self.subTest(canonical=canonical), tempfile.TemporaryDirectory() as directory:
                 env = {'PATH': os.environ['PATH'], 'HOME': directory,
@@ -292,13 +290,12 @@ remote_state() { eval "$2"; }
                        PREFIX + 'PUBLIC_URL': 'https://old.example.test', PREFIX + 'PORT': '19060'}
                 if os.environ.get('PERSONA_TEST_DOCKER_CONFIG'):
                     env['DOCKER_CONFIG'] = os.environ['PERSONA_TEST_DOCKER_CONFIG']
+                skip_without_compose(self, env)
                 if canonical:
                     env.update(PERSONA_IMAGE='example.invalid/fixture-new:2', PERSONA_DB_PASSWORD='new456',
                                PERSONA_PUBLIC_URL='https://new.example.test', PERSONA_PORT='19061')
                 result = subprocess.run(['docker', 'compose', '-f', str(ROOT / 'deploy/docker/compose.yaml'),
                                          'config', '--format', 'json'], env=env, capture_output=True, text=True, timeout=15)
-                if 'is not a docker command' in result.stderr:
-                    self.skipTest('Docker Compose is unavailable')
                 self.assertEqual(result.returncode, 0, result.stderr)
                 config = json.loads(result.stdout)
                 self.assertEqual(config['name'], FORMER)
@@ -312,9 +309,6 @@ remote_state() { eval "$2"; }
                 self.assertEqual(hub['image'], 'example.invalid/fixture-new:2' if canonical else 'example.invalid/fixture-old:1')
 
     def test_compose_config_needs_one_image_spelling(self):
-        import shutil
-        if not shutil.which('docker'):
-            self.skipTest('Docker Compose is unavailable; no containers are started by this check')
         for image in ('example.invalid/fixture-new:2', None):
             with self.subTest(image=image), tempfile.TemporaryDirectory() as directory:
                 env = {'PATH': os.environ['PATH'], 'HOME': directory,
@@ -323,10 +317,9 @@ remote_state() { eval "$2"; }
                     env['DOCKER_CONFIG'] = os.environ['PERSONA_TEST_DOCKER_CONFIG']
                 if image:
                     env['PERSONA_IMAGE'] = image
+                skip_without_compose(self, env)
                 result = subprocess.run(['docker', 'compose', '-f', str(ROOT / 'deploy/docker/compose.yaml'),
                                          'config', '--format', 'json'], env=env, capture_output=True, text=True, timeout=15)
-                if 'is not a docker command' in result.stderr:
-                    self.skipTest('Docker Compose is unavailable')
                 if image:
                     # The former spelling unset: Compose before 5.0.2 still evaluated a required check inside the default.
                     self.assertEqual(result.returncode, 0, result.stderr)

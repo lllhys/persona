@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/nwverse/persona/server/internal/proto"
 )
 
 // The MCP tools the hub offers, as they go over the wire (json.Marshal compacts the schemas; the golden is indented
@@ -12,8 +14,9 @@ import (
 // connectors', Cua's and ego's are the manager's (extmgr's connector_tools goldens, its answer to
 // extensions.hub_call connector_tools); the hub lists them with its own and the assistant's, in the same order.
 func TestGoldenMCPTools(t *testing.T) {
-	show := func(v any) string {
-		b, err := json.MarshalIndent(v, "", "  ")
+	show := func(tools []proto.Tool) string {
+		assertNoEmptyToolEnums(t, tools)
+		b, err := json.MarshalIndent(tools, "", "  ")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,4 +55,57 @@ func TestGoldenMCPTools(t *testing.T) {
 	manager("assistant_with_imessage")
 	golden(t, "mcp_tools.assistant_with_imessage", show(h.mcpTools(true)))
 	golden(t, "mcp_tools.agent", show(h.mcpTools(false)))
+}
+
+func assertNoEmptyToolEnums(t *testing.T, tools []proto.Tool) {
+	t.Helper()
+	var walk func(node any, path string)
+	walk = func(node any, path string) {
+		obj, ok := node.(map[string]any)
+		if !ok {
+			return
+		}
+		if raw, has := obj["enum"]; has {
+			vals, ok := raw.([]any)
+			if !ok || len(vals) == 0 {
+				t.Errorf("%s.enum must be a non-empty array, got %#v", path, raw)
+			}
+			for _, v := range vals {
+				if s, ok := v.(string); ok && s == "" {
+					t.Errorf(`%s.enum contains an empty string ""`, path)
+				}
+			}
+		}
+		for k, v := range obj {
+			switch k {
+			case "enum":
+				continue
+			case "properties", "$defs", "definitions", "patternProperties":
+				if m, ok := v.(map[string]any); ok {
+					for ck, cv := range m {
+						walk(cv, path+"."+k+"."+ck)
+					}
+				}
+			default:
+				switch x := v.(type) {
+				case map[string]any:
+					walk(x, path+"."+k)
+				case []any:
+					for _, item := range x {
+						walk(item, path+"."+k+"[]")
+					}
+				}
+			}
+		}
+	}
+	for _, tl := range tools {
+		if len(tl.InputSchema) == 0 {
+			continue
+		}
+		var schema any
+		if err := json.Unmarshal(tl.InputSchema, &schema); err != nil {
+			t.Fatalf("%s: invalid input_schema: %v", tl.Name, err)
+		}
+		walk(schema, tl.Name)
+	}
 }

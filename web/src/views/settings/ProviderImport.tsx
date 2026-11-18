@@ -3,7 +3,7 @@
 // model whether each alias becomes a provider of its own, and import them (POST), optionally hiding the imported aliases in
 // Persona. The keys never come to the browser: the hub reads them again from that computer and keeps them sealed. Opened
 // for one alias the wizard found (#5193), it starts on that alias's computer and reads only that alias (`alias` on both).
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import {
   importBrings,
@@ -47,7 +47,15 @@ export function ProviderImport({ open, onClose, onImported, machine: start, alia
   const [split, setSplit] = useState<Set<string>>(new Set());
   const [hide, setHide] = useState(true);
   const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
+  const view = useRef<{ open: boolean } | null>(null);
   const hideId = useId();
+
+  // Settings keeps this mounted across openings. Only the requesting view may close or show an inline error.
+  useLayoutEffect(() => {
+    view.current = { open };
+    return () => { view.current = null; };
+  }, [open, machine, alias, start]);
 
   useEffect(() => {
     if (!open) return;
@@ -93,7 +101,11 @@ export function ProviderImport({ open, onClose, onImported, machine: start, alia
   const merges = importMerges(items, picked, split);
 
   const confirm = async () => {
-    if (busy || count === 0) return;
+    const from = view.current;
+    if (pending.current || !from?.open || count === 0) return;
+    const computer = machines.find((m) => m.id === machine)?.name || machine;
+    // Closing or changing the preview does not cancel the POST. Keep one import in flight until it settles.
+    pending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -109,12 +121,14 @@ export function ProviderImport({ open, onClose, onImported, machine: start, alia
         },
       });
       toast(importSummary(r), "ok");
-      onImported();
-      onClose();
+      if (view.current) onImported();
+      if (view.current === from) onClose();
     } catch (e) {
-      setError(importErrorText(e));
+      if (view.current === from) setError(importErrorText(e));
+      else toast(t("settings-providerimport.failed_from", { computer, error: importErrorText(e) }), "error");
     } finally {
-      setBusy(false);
+      pending.current = false;
+      if (view.current) setBusy(false);
     }
   };
 

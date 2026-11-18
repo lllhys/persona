@@ -12,6 +12,9 @@ import (
 // progName is a command line's program as the scans compare it (isClaudeCmd, agentOfCmd): its base name.
 func progName(argv0 string) string { return filepath.Base(argv0) }
 
+// msysCmdLine: only Windows passes a command line to a program as one string (shell_windows.go).
+func msysCmdLine(*exec.Cmd) {}
+
 // scanOrcaProcsOS and scanClaudeProcessesOS are Windows' scans; macOS and Linux use ps and /proc.
 func scanOrcaProcsOS() (map[string][]orcaProc, error) { return nil, errors.New("no process scan here") }
 
@@ -26,6 +29,17 @@ func scanOpenRolloutsOS([]codexProcess) (map[int][]string, bool) { return nil, f
 // codexStartProgram: a launcher off Windows is run as it is (codex_procs_windows.go).
 func codexStartProgram(path string, _ bool, env []string) (string, []string, error) {
 	return path, env, nil
+}
+
+// codexStartShellProgram loads a native launcher's functions from the user's supported login shell, even if another
+// shell's rc file exists. Unknown or unavailable shells retain the general launcher's supported-shell fallback.
+func codexStartShellProgram() string {
+	if sh := userLoginShell(); sh == "bash" || sh == "zsh" {
+		if _, err := exec.LookPath(sh); err == nil {
+			return sh
+		}
+	}
+	return loginShellProgram()
 }
 
 // loginShellProgram is the interactive shell loginShell runs scripts in: zsh, so ~/.zshrc functions and PATH are

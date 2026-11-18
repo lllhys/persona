@@ -295,6 +295,10 @@ func StripAssistantFields(v *View) []string {
 		drop("assistant_action")
 		v.Filter = nil
 	}
+	if v.Tabs != nil && AssistantOnlyAction(&v.Tabs.Action) {
+		drop("assistant_action")
+		v.Tabs = nil
+	}
 	sections := make([]Section, 0, len(v.Sections))
 	for i := range v.Sections {
 		s := &v.Sections[i]
@@ -302,6 +306,10 @@ func StripAssistantFields(v *View) []string {
 		if s.More != nil && AssistantOnlyAction(&s.More.Action) {
 			drop("assistant_action")
 			s.More = nil
+		}
+		if s.Link != nil && AssistantOnlyAction(&s.Link.Action) {
+			drop("assistant_action")
+			s.Link = nil
 		}
 		items := make([]Component, 0, len(s.Items))
 		for _, e := range s.Items {

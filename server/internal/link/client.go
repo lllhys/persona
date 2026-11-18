@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -13,30 +12,35 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // NodeDownMarker is in the error a computer's link reports when its resident node is not running (nodeMissing,
 // listen.go): the hub reads it as error_code node_service_down (hub/machine_trust.go machineErrorCode). An older link
 // says it the same way, so it is kept as it is.
-const NodeDownMarker = "常驻 node 没在运行"
+const NodeDownMarker = "常驻 node 没在运行" // i18n-ignore: the hub recognizes this exact peer-facing marker
 
 // NodeDownSelf comes right before NodeDownMarker in nodeMissing: the link's own computer. The hub swaps it for the
 // computer's name on the machine's page (devices nodeUnavailable, #4080).
-const NodeDownSelf = "本机的"
+const NodeDownSelf = "本机的" // i18n-ignore: the manager recognizes this exact peer-facing prefix
 
 // nodeMissing says the resident node is not answering at target, and how this computer runs it (docs/operations/link.md "Installing
 // the node service"): the hub shows it on the machine's page.
 func nodeMissing(goos, target string) error {
-	how := "让 personad node --attach 一直跑"
+	how := "link-errors.node_how_other"
 	switch goos {
 	case "windows":
-		how = "persona-link install --personad <personad.exe 的路径> 装成登录时启动的计划任务（docs/operations/windows.md）"
+		how = "link-errors.node_how_windows"
 	case "darwin":
-		how = "菜单栏 App「Persona Link」里的「安装本机 node 服务」，或者 persona-link node install"
+		how = "link-errors.node_how_darwin"
 	case "linux":
-		how = "persona-link node install（systemd 用户服务）"
+		how = "link-errors.node_how_linux"
 	}
-	return fmt.Errorf("%s%s（%s 连不上）：%s", NodeDownSelf, NodeDownMarker, target, how)
+	return newTextError("link-errors.node_missing", nil, i18n.Args{
+		"self": newTextError("link-errors.node_down_self", nil), "marker": newTextError("link-errors.node_down_marker", nil),
+		"target": target, "how": newTextError(how, nil),
+	})
 }
 
 // These are settings, not measurements.
@@ -54,12 +58,13 @@ const (
 var errPairedAgain = errors.New("paired again meanwhile")
 
 var (
-	errPin    = errors.New("TLS 公钥指纹和配对时的不一样，不是那台 hub")
-	errRedial = errors.New("手动重连")
+	errPin    = newTextError("link-errors.pin_mismatch", nil)
+	errRedial = newTextError("link-errors.manual_reconnect", nil)
 	// errRepaired: link.json was paired again while the link was up; it reconnects at once with the new pairing.
-	errRepaired = errors.New("重新配对了，用新凭据重连")
-	// errDirectReady: while connected over SSH without Always, a direct hub address answered again.
-	errDirectReady = errors.New("直连地址通了，切回直连")
+	errRepaired = newTextError("link-errors.repaired", nil)
+	// errDirectReady: while connected over SSH without Always, a direct WebSocket connected and passed validation;
+	// serve transfers that exact candidate together with this cause.
+	errDirectReady = newTextError("link-errors.direct_ready", nil)
 )
 
 // Status is what persona-link reports: Run hands one to Options.Status every time something changes, and
@@ -137,6 +142,8 @@ type Options struct {
 	DirectRetryEvery time.Duration
 	PairCheck        time.Duration
 	SSHBin           string
+	// directReady observes candidate publication in package tests; production leaves it nil.
+	directReady chan *directHandoff
 	// limiter replaces passive mode's (tests).
 	limiter *authLimiter
 }
@@ -307,12 +314,29 @@ func runActive(ctx context.Context, o Options, rep *reporter) {
 		if err != nil {
 			end = err
 		} else {
-			lastSSH = l.ep.Kind == KindSSH
-			start := time.Now()
-			rep.links++
-			l.gen = rep.links
-			end = l.serve(ctx, c, o, rep)
-			if time.Since(start) > time.Minute {
+			for {
+				lastSSH = l.ep.Kind == KindSSH
+				start := time.Now()
+				rep.links++
+				l.gen = rep.links
+				var handoff *directHandoff
+				handoff, end = l.serve(ctx, c, o, rep)
+				if time.Since(start) > time.Minute {
+					b = backoff{}
+				}
+				if handoff == nil {
+					break
+				}
+				if ctx.Err() != nil {
+					// Direct-ready may have won just before the run itself was cancelled. Ownership has transferred, so
+					// close the accepted candidate rather than leaving it for the next run iteration.
+					handoff.candidate.closeNow()
+					return
+				}
+				// Serve the exact socket the SSH probe connected, under the configuration that validated it. A redial
+				// here would both lose that ownership and reintroduce the gap that dropped working SSH links.
+				l, c = handoff.candidate, handoff.config
+				lastSSH = false
 				b = backoff{}
 			}
 			// The link writes link.json itself (the hub's addresses and names): from here only a new credential or tunnel
@@ -336,18 +360,18 @@ func runActive(ctx context.Context, o Options, rep *reporter) {
 			b, wait = backoff{}, 0
 		case errors.As(end, &he) && (he.status == http.StatusUnauthorized || he.status == http.StatusForbidden):
 			state, wait = "refused", refusedWait
-			end = errors.New("hub 不认这台的凭据（可能撤销了）：重新配对")
+			end = newTextError("link-errors.credential_refused", nil)
 		case errors.As(end, &he) && he.status == http.StatusTooManyRequests:
 			wait = max(wait, he.retry)
 		case websocket.CloseStatus(end) == CloseReplaced:
 			wait = replaceWait
-			end = errors.New("这台电脑在别处又连了一条链路（同一个凭据开了两个 Persona Link？）")
+			end = newTextError("link-errors.replaced", nil)
 		case websocket.CloseStatus(end) == CloseRevoked:
 			state, wait = "refused", refusedWait
-			end = errors.New("凭据被撤销了：重新配对")
+			end = newTextError("link-errors.credential_revoked", nil)
 		}
 		retry := time.Now().Add(wait)
-		o.Logf("link: %v; next attempt in %s", end, wait.Round(time.Second))
+		o.Logf("link: %s; next attempt in %s", ErrorText(i18n.En, end), wait.Round(time.Second))
 		rep.set(func(s *Status) {
 			*s = Status{State: state, Machine: c.Machine, HubName: c.HubName, MachineName: c.MachineName, Error: summary(end),
 				SSHError: sshStatusOf(end), Retry: &retry, Trust: trustOf(c), Endpoints: ranked(c.Endpoints), SSH: cloneSSH(c.SSH)}

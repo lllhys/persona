@@ -153,6 +153,8 @@ class HubWays(
     private val recent = HashSet<Pair<String, TunnelKind>>()
     /** A failure only the user can fix, with the settings it happened with: not dialled again until they change. */
     private val blocked = HashMap<Pair<String, TunnelKind>, Pair<HubTunnel, TunnelProblem>>()
+    /** The epoch of each key's last explicit unblock. Ordinary closes do not fence late host-key failures. */
+    private val unblocks = HashMap<Pair<String, TunnelKind>, Int>()
 
     private val _states = MutableStateFlow<Map<Pair<String, TunnelKind>, TunnelState>>(emptyMap())
     /** By hub id and kind; a closed tunnel has none. */
@@ -170,6 +172,7 @@ class HubWays(
     suspend fun open(tunnel: HubTunnel): String {
         val key = tunnel.key
         val task = synchronized(lock) {
+            blocked[key]?.let { (way, problem) -> if (way.sameWay(tunnel)) throw TunnelException(problem) else blocked.remove(key) }
             val pending = starting[key]
             if (pending != null && pending.epoch == epochs[key] && pending.tunnel.sameWay(tunnel)) pending.task
             else {
@@ -203,7 +206,19 @@ class HubWays(
                     HubTunnel.baseUrl(tunnel.hubAddress, reuse.ssh?.localPort ?: reuse.forward!!.localPort)
                 }
             }
-            val ssh = tunnel.ssh?.let { SshTunnel(it, identity(), sshTimings) }
+            val ssh = tunnel.ssh?.let {
+                SshTunnel(it, identity(), sshTimings) { problem ->
+                    // The rejection is a fact about these settings even if the waiting start was cancelled. Keep it
+                    // until the user changes them, without overwriting the state of a newer attempt (#10101). An
+                    // explicit unblock instead fences every failure from the attempts which preceded it.
+                    synchronized(lock) {
+                        if ((unblocks[key] ?: -1) <= epoch) {
+                            if (blocked[key]?.first?.sameWay(tunnel) != true) blocked[key] = tunnel to problem
+                            if (running[key]?.tunnel?.sameWay(tunnel) == true) setState(key, TunnelState.Down(problem))
+                        }
+                    }
+                }
+            }
             val forward = tunnel.proxy?.let { LocalProxyForward(LocalProxyForward.Dial.of(it, tunnel.hubAddress)) }
             val handle = Running(tunnel, ssh, forward)
             made = handle
@@ -235,6 +250,16 @@ class HubWays(
             val detail = error.message ?: error.javaClass.simpleName
             val problem = (error as? TunnelException)?.problem
                 ?: if (tunnel.ssh != null) TunnelProblem.SshUnreachable(detail) else TunnelProblem.ProxyUnreachable(detail)
+            // A changed key must block every concurrent retry, not just opens which arrive after this coroutine finishes.
+            // Publish it before removing the pending start or closing its session, so no caller can redial in that window.
+            if (problem.needsUser) {
+                synchronized(lock) {
+                    if ((epochs[key] ?: 0) == epoch) {
+                        blocked[key] = tunnel to problem
+                        setState(key, TunnelState.Down(problem))
+                    }
+                }
+            }
             val stale = synchronized(lock) {
                 val handle = made
                 if (handle != null && running[key] === handle) running.remove(key)
@@ -293,6 +318,10 @@ class HubWays(
      */
     fun unblock(hubId: String, kind: TunnelKind) = synchronized(lock) {
         val key = hubId to kind
+        // The user acted on the visible failure while its start may still be unwinding. Invalidate that attempt before
+        // clearing it, so neither its catch nor its late JSch callback can restore the failure and prevent every redial.
+        bump(key)
+        unblocks[key] = epochs[key] ?: 0
         blocked -= key
         if (_states.value[key] is TunnelState.Down) setState(key, null)
     }

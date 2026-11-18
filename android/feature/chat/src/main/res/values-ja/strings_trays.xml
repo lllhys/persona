@@ -23,7 +23,7 @@
     <string name="chat_tray_waiting">待機中</string>
     <string name="chat_tray_background_tasks_running">バックグラウンドタスク %1$d 件が実行中</string>
     <string name="chat_tray_subagents_running">サブエージェント %1$d 件が実行中</string>
-    <string name="chat_tray_background_running">バックグラウンドで作業中</string>
+    <string name="chat_tray_background_running">作業中（バックグラウンド）</string>
     <string name="chat_tray_background_workflow">バックグラウンドワークフロー</string>
     <string name="chat_tray_workflow_more">ほか %1$d 件</string>
     <string name="chat_tray_expanded">展開済み</string>
@@ -43,10 +43,13 @@
     <string name="chat_tray_accept_changed">確認依頼が更新されました。最新の内容を確認してください。</string>
     <string name="chat_tray_cancelled">キャンセル済み</string>
     <string name="chat_tray_stopped_state">停止中</string>
+    <string name="chat_tray_supervisor_review">監督の確認待ち</string>
     <string name="chat_tray_stopped">止まったまま未完了</string>
     <string name="chat_tray_stopped_reason">止まったまま未完了 · %1$s</string>
     <string name="chat_tray_pr_number">PR #%1$s</string>
     <string name="chat_tray_done">完了</string>
+    <string name="chat_tray_just_finished">完了したばかり</string>
+    <string name="chat_tray_finished_done">完了</string>
     <string name="chat_tray_accepted">検収済み</string>
     <string name="chat_tray_in_progress">進行中</string>
     <string name="chat_tasks_dismiss_draft">対応しない</string>
@@ -56,4 +59,16 @@
     <plurals name="chat_stack_more">
         <item quantity="other">ほか%1$d件</item>
     </plurals>
+    <string name="chat_tray_held_entry">保留された通知</string>
+    <string name="chat_tray_held_title">今日保留された通知</string>
+    <string name="chat_tray_held_explanation">P1は確認が必要です。P2は通知されず、折りたたまれています。</string>
+    <string name="chat_tray_held_p1">P1・要確認（%1$d）</string>
+    <string name="chat_tray_held_p2">P2・通知なし（%1$d）</string>
+    <string name="chat_tray_held_empty">今日保留された通知はありません。</string>
+    <string name="chat_tray_held_untitled">概要なし</string>
+    <string name="chat_tray_held_reason_p1">ブリーフィングへ</string>
+    <string name="chat_tray_held_reason_p2">通知せずに記録</string>
+    <string name="chat_tray_held_reason_dedup">関連する通知は過去12時間以内に送信済みです</string>
+    <string name="chat_tray_held_load_failed">保留された通知を読み込めませんでした。接続を確認して再試行してください。</string>
+    <string name="chat_tray_held_p2_toggle">通知なしの項目を展開または折りたたむ</string>
 </resources>

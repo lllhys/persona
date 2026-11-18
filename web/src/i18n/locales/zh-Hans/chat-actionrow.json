@@ -38,10 +38,5 @@
   "status_running": "进行中",
   "status_error": "出错",
   "status_done": "完成",
-  "no_content": "没有内容",
-  "changes": "改动",
-  "changes_in": "{name} 的改动",
-  "open_file": "打开文件",
-  "close": "关闭",
-  "show_rest_other": "展开其余 {count} 行"
+  "no_content": "没有内容"
 }

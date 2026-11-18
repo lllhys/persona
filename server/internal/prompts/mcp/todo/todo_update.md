@@ -1,13 +1,15 @@
-Change one of the user's Persona to-dos: its title, notes, due date, reminder, priority or project. Only what you give changes; "" clears notes, due, remind or project. A new reminder time is pushed again even when the old one already was. Done at once, nothing to confirm, also for a task's to-do. To mark it done or open it again use todo_complete / todo_reopen.
+Update supplied title, notes, due/reminder, priority, project, part_of or after immediately, including task to-dos; no confirmation. Omitted fields stay; "" clears notes/due/remind/project/part_of, [] clears after. New reminder times notify again. Completion/reopening uses todo_complete/todo_reopen.
 
 ```json
 {
   "type": "object",
-  "required": ["id"],
+  "required": [
+    "id"
+  ],
   "properties": {
     "id": {
       "type": "string",
-      "description": "the to-do's id (todo_…), as todo_list gives it"
+      "description": "To-do id from todo_list."
     },
     "title": {
       "type": "string",
@@ -15,23 +17,38 @@ Change one of the user's Persona to-dos: its title, notes, due date, reminder, p
     },
     "notes": {
       "type": "string",
-      "description": "the new notes (they replace the old ones: keep what should stay); \"\" clears them"
+      "description": "Replacement notes; retain anything still needed. \"\" clears."
     },
     "due": {
       "type": "string",
-      "description": "the new due date: a day (2026-11-15) or a moment (2026-11-15 18:00 in the user's time zone, RFC 3339); \"\" clears it"
+      "description": "New due date YYYY-MM-DD or datetime (user's time zone/RFC3339); \"\" clears."
     },
     "remind": {
       "type": "string",
-      "description": "the new reminder: a moment (2026-11-14 09:00, RFC 3339) or 30m / 2h / 1d from now, not in the past; \"\" clears it"
+      "description": "New reminder datetime (user's time zone/RFC3339) or relative 30m/2h/1d; never past. \"\" clears."
     },
     "priority": {
       "type": "string",
-      "enum": ["high", "normal", "low"]
+      "enum": [
+        "high",
+        "normal",
+        "low"
+      ]
     },
     "project": {
       "type": "string",
-      "description": "the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project; \"\" takes it out of its project"
+      "description": "Existing knowledge-base project slug/name (kb_list projects), preferably a long-term work area. Set only when clear; do not invent near-duplicates. \"\" clears."
+    },
+    "part_of": {
+      "type": "string",
+      "description": "Request to-do this is a piece of; changing clears after."
+    },
+    "after": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Sibling piece ids it waits for; replaces old."
     }
   }
 }

@@ -6,7 +6,9 @@
   the Live Activity's,
 - creates (or rebuilds) the "Persona App Store" / "Persona Watch App Store" / "Persona Live Activity App Store" /
   "Persona Notify App Store" profiles
-  with the team's distribution certificate and installs them where Xcode looks.
+  with the team's distribution certificate and installs them where Xcode looks,
+- with config.json app.siri_calls on (docs/operations/release.md "Siri calls"): also SIRIKIT on the iPhone App ID and the
+  SiriKit extension's bundle id and "Persona Call Intents App Store" profile; off, none of them is asked for.
 
 The API key's role (App Manager) can't use cloud-managed signing, so release builds sign manually with
 the "Apple Distribution" identity in the login keychain (see docs/operations/release.md).
@@ -41,16 +43,23 @@ WATCH_WIDGETS = persona_config.watch_widget_bundle_id(CONFIG)
 LIVE = APP + ".liveactivity"  # the widget extension drawing the lock screen / Dynamic Island activity
 NOTIFY = APP + ".notify"  # the notification service extension opening relayed pushes (docs/operations/push-relay.md)
 SHARE = APP + ".share"  # the share extension sending to Persona's main conversation (#4586)
+# The SiriKit extension handing "call Persona using Persona" to the app (#9290, apple/siri-calls.yml): only in a build
+# with app.siri_calls on, which also signs the app with the Siri entitlement (SIRIKIT on its App ID).
+SIRI_CALLS = persona_config.opted_in(CONFIG, "app.siri_calls")
+CALL_INTENTS = persona_config.call_intents_bundle_id(CONFIG)
 # bundle identifier -> (App ID name, profile name, capabilities)
 PROFILES = persona_config.provisioning_profiles(CONFIG)
 TARGETS = {
-    APP: ("Persona", PROFILES[APP], ["PUSH_NOTIFICATIONS", "USERNOTIFICATIONS_TIMESENSITIVE", "HEALTHKIT", "APP_GROUPS"]),
+    APP: ("Persona", PROFILES[APP], ["PUSH_NOTIFICATIONS", "USERNOTIFICATIONS_TIMESENSITIVE", "HEALTHKIT", "APP_GROUPS"]
+          + (["SIRIKIT"] if SIRI_CALLS else [])),
     WATCH: ("Persona Watch", PROFILES[WATCH], ["APP_GROUPS"]),
     WATCH_WIDGETS: ("Persona Watch Widgets", PROFILES[WATCH_WIDGETS], ["APP_GROUPS"]),
     LIVE: ("Persona Live Activity", PROFILES[LIVE], ["APP_GROUPS"]),
     NOTIFY: ("Persona Notify", PROFILES[NOTIFY], []),
     SHARE: ("Persona Share", PROFILES[SHARE], []),
 }
+if SIRI_CALLS:
+    TARGETS[CALL_INTENTS] = ("Persona Call Intents", PROFILES[CALL_INTENTS], [])
 # The App Group the app shares the Live Activity's persona with the widget extension through (docs/apple/live-activity.md).
 GROUP = persona_config.app_group(CONFIG)
 WATCH_GROUP = persona_config.watch_app_group(CONFIG)

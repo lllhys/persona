@@ -22,6 +22,7 @@ final class RecordingTranscription {
     }
 
     nonisolated static func onDevice(_ url: URL, _ locale: Locale) async throws -> [RecordingSentence] {
+        guard #available(iOS 26.0, *) else { throw RecordingSpeechError.needsNewerSystem }
         guard let (engine, resolved) = await RecordingAnalyzerEngine.best(for: locale) else {
             throw RecordingSpeechError.unsupportedLanguage
         }
@@ -157,11 +158,42 @@ final class RecordingTranscription {
                 try library.save(saved)
             } catch is CancellationError { return }
             catch {
+                // A hub-transcribed segment (#9491): the hub's final pass transcribes its own copy of the audio, so the
+                // phone's failure (no model for the language, a format it can't read) leaves the segment with no text of
+                // its own rather than holding the recording's `complete: true`, and with it the minutes, for 12 hours.
+                if Self.hubTranscribes(segment, of: entry) {
+                    library.change(id) { e in
+                        if let i = e.segments.firstIndex(where: { $0.index == segment.index }) { e.segments[i].sentences = [] }
+                    }
+                    if library.entry(id)?.segments.first(where: { $0.index == segment.index })?.sentences != nil { continue }
+                }
                 errors[id] = error.localizedDescription
                 return
             }
         }
     }
+
+    /// Whether the hub transcribes `segment`'s audio (#9491, pure, for the tests): a meeting that asked for hub
+    /// transcription and was never rolled back, whose hub-mode time (`RecordingAttendance.hubStretches`: none recorded as
+    /// a Note, none after hub transcription stopped) holds the whole segment. Only such a segment may go without the
+    /// phone's text; a device-mode meeting needs it for every segment.
+    nonisolated static func hubTranscribes(_ segment: RecordingSegment, of entry: RecordingEntry) -> Bool {
+        guard let attendance = entry.attendance, attendance.transcription == .hub, !attendance.hubRolledBack else { return false }
+        let end = segment.start + segment.duration
+        // Stretches that meet (a Note turned back into a meeting at once) cover what they hold together.
+        var covered: [(from: Double, to: Double)] = []
+        for s in attendance.hubStretches(until: max(entry.duration, end)).sorted(by: { $0.from < $1.from }) {
+            if let last = covered.last, s.from <= last.to + slack {
+                covered[covered.count - 1].to = max(last.to, s.to)
+            } else {
+                covered.append(s)
+            }
+        }
+        return covered.contains { $0.from <= segment.start + slack && end <= $0.to + slack }
+    }
+
+    /// How far apart two times may be and still meet (a segment's edge against a stretch's): a sample's rounding.
+    nonisolated static let slack = 0.01
 }
 
 extension RecordingEntry {

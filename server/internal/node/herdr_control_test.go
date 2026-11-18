@@ -27,6 +27,13 @@ func startHerdr(f *fakeHerdr, pane, status string) {
 	f.reply("session.snapshot", snapshot(nil, nil, nil, nil))
 }
 
+// agentEnvParam is the env an Agent's new tab starts with (startShellEnv: the Agent mark and the startup switches), as
+// herdr's tab.create / workspace.create take it.
+var agentEnvParam = map[string]any{
+	"PERSONA_AGENT": "1", "DISABLE_AUTO_UPDATE": "true", "DISABLE_UPDATE_PROMPT": "true",
+	"POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD": "true",
+}
+
 // startCmd is the command a Claude start types into its herdr pane (and herdr's resume of it evals): the node's
 // directory in front and the assistant's environment left out (agentenv.go), herdr told the agent is Claude
 // (HERDR_AGENT), then the launcher with Persona's flags.
@@ -93,6 +100,13 @@ func waitCalls(t *testing.T, f *fakeHerdr, method string, n int) {
 	}
 }
 
+// waitReports waits until the resume report for pane has completed its per-pane turn. It follows the actual
+// asynchronous work rather than sleeping for a guessed amount of time before asserting that nothing was sent.
+func waitReports(n *Node, pane string) {
+	unlock := n.resumes.lock(pane)
+	unlock()
+}
+
 func personaDir(home string) string { return filepath.Join(home, ".persona") }
 
 func mkdir(t *testing.T, p string) string {
@@ -134,7 +148,7 @@ func TestHerdrStartInTheProjectsWorkspace(t *testing.T) {
 	assertTrace(t, f.trace(), []string{
 		call("workspace.list", nil),
 		call("session.snapshot", nil),
-		call("tab.create", map[string]any{"workspace_id": "w1", "cwd": cwd, "label": "agent-2", "focus": false}),
+		call("tab.create", map[string]any{"workspace_id": "w1", "cwd": cwd, "label": "agent-2", "focus": false, "env": agentEnvParam}),
 		markTab("w1:p2", startID),
 		call("pane.send_input", map[string]any{"pane_id": "w1:p2", "keys": []string{"Enter"},
 			"text": startCmd("claude", "--session-id "+startID+" --permission-mode plan --effort high", personaDir(home))}),
@@ -184,7 +198,7 @@ func TestHerdrStartCreatesTheWorkspaceAndResumes(t *testing.T) {
 	}
 	assertTrace(t, f.trace(), []string{
 		call("workspace.list", nil),
-		call("workspace.create", map[string]any{"cwd": cwd, "label": "fresh", "focus": false}),
+		call("workspace.create", map[string]any{"cwd": cwd, "label": "fresh", "focus": false, "env": agentEnvParam}),
 		call("tab.rename", map[string]any{"tab_id": "w7:t1", "label": "fix the build"}),
 		markTab("w7:p1", startID),
 		call("pane.send_input", map[string]any{"pane_id": "w7:p1", "keys": []string{"Enter"},
@@ -245,7 +259,7 @@ func TestHerdrStartIntoAGivenWorkspaceReturnsOnABlockedClaude(t *testing.T) {
 	waitCalls(t, f, "session.snapshot", 2)
 	assertTrace(t, f.trace(), []string{
 		call("session.snapshot", nil),
-		call("tab.create", map[string]any{"workspace_id": "w2", "cwd": home, "label": "a very long tab name that goes p", "focus": false}),
+		call("tab.create", map[string]any{"workspace_id": "w2", "cwd": home, "label": "a very long tab name that goes p", "focus": false, "env": agentEnvParam}),
 		markTab("w2:p5", startID),
 		// A managed launcher's start gets Persona's settings with its gateway merged in (#1336).
 		call("pane.send_input", map[string]any{"pane_id": "w2:p5", "keys": []string{"Enter"},
@@ -264,7 +278,7 @@ func TestHerdrStartIntoAGivenWorkspaceReturnsOnABlockedClaude(t *testing.T) {
 		call("session.snapshot", nil),
 	})
 	f.reply("session.snapshot", snapshot(nil, nil, []any{claudeAgent(startID, proto.StatusIdle, "w2:p5", "w2:t5", "w2", home, "")}, nil))
-	if l := listSessions(t, n); len(l) != 1 || l[0].Status != proto.StatusBlocked || l[0].AttentionReason != lostDialog {
+	if l := listSessions(t, n); len(l) != 1 || l[0].Status != proto.StatusBlocked || l[0].AttentionReason != lostDialogHeld {
 		t.Errorf("listed %+v", l)
 	}
 }
@@ -295,7 +309,7 @@ func TestHerdrStartNamesTheTabOnceItExists(t *testing.T) {
 	waitCalls(t, f, "session.snapshot", 2)
 	assertTrace(t, f.trace(), []string{
 		call("session.snapshot", nil),
-		call("tab.create", map[string]any{"workspace_id": "w2", "cwd": home, "label": "agent-1", "focus": false}),
+		call("tab.create", map[string]any{"workspace_id": "w2", "cwd": home, "label": "agent-1", "focus": false, "env": agentEnvParam}),
 		markTab("w2:p6", startID),
 		call("tab.rename", map[string]any{"tab_id": "w2:t6", "label": "named early"}),
 		call("pane.send_input", map[string]any{"pane_id": "w2:p6", "keys": []string{"Enter"},
@@ -318,7 +332,7 @@ func TestHerdrStartFailsWhenTheTabCannotBeMade(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitCalls(t, f, "tab.create", 1)
-	assertTrace(t, f.trace(), []string{call("session.snapshot", nil), call("tab.create", map[string]any{"workspace_id": "w9", "cwd": home, "label": "agent-1", "focus": false})})
+	assertTrace(t, f.trace(), []string{call("session.snapshot", nil), call("tab.create", map[string]any{"workspace_id": "w9", "cwd": home, "label": "agent-1", "focus": false, "env": agentEnvParam})})
 	var s proto.Session
 	deadline := time.Now().Add(10 * time.Second)
 	for s.StartError == "" {
@@ -334,13 +348,14 @@ func TestHerdrStartFailsWhenTheTabCannotBeMade(t *testing.T) {
 		t.Errorf("listed %+v", s)
 	}
 	trace := slices.DeleteFunc(f.trace(), func(c string) bool { return c == call("session.snapshot", nil) })
-	assertTrace(t, trace, []string{call("tab.create", map[string]any{"workspace_id": "w9", "cwd": home, "label": "agent-1", "focus": false})})
+	assertTrace(t, trace, []string{call("tab.create", map[string]any{"workspace_id": "w9", "cwd": home, "label": "agent-1", "focus": false, "env": agentEnvParam})})
 }
 
 // withStartWaits shortens how long n's starts wait for the shell to run claude, then for claude's input box. Set on n
 // before its first start, not on package variables: a start another test left running still reads its own node's.
 func withStartWaits(n *Node, start, ready time.Duration) {
 	n.claudeStart, n.claudeReady = start, ready
+	n.readyPoll = 0 // timing-sensitive tests keep the production cadence
 }
 
 // A busy machine's shell takes longer than claude's whole ready wait to run claude (#1396: ~/.zshrc took 54 s with a
@@ -531,10 +546,22 @@ func TestHerdrStartOfALiveSessionAndWithoutHerdr(t *testing.T) {
 }
 
 // session.send to an agent herdr does not prompt (agent.prompt: *_not_found, as for a compatible CLI): the text is typed and
-// enter pressed; other errors are returned as they are. A Codex pane is checked with one colored read of its end
-// (codexReady: a pane scrolled back reads the same).
+// enter pressed; other errors are returned as they are. A Codex pane is checked before typing and after submission
+// with colored reads of its end (a pane scrolled back reads the same).
 func TestHerdrSendFallsBackToTyping(t *testing.T) {
 	n, f, _ := herdrNode(t)
+	for _, pane := range []string{"w1:p1", "w1:p2"} {
+		f.setScreen(pane, cxEmpty)
+	}
+	f.after(func(c herdrCall) {
+		pane := str(c.Params["pane_id"])
+		switch {
+		case c.Method == "pane.send_text":
+			f.setScreen(pane, cxBox(unpaste(str(c.Params["text"]))))
+		case isKeys("enter")(c):
+			f.setScreen(pane, cxEmpty)
+		}
+	})
 	f.reply("pane.process_info", foreground([2]string{"zsh", "-zsh"}, [2]string{"node", "traex"}))
 	seedAgents(t, n, f,
 		agentOf("codex", sidA, proto.StatusIdle, "w1:p1", "w1:t1", "w1", "/tmp/c", ""),
@@ -568,11 +595,13 @@ func TestHerdrSendFallsBackToTyping(t *testing.T) {
 		call("pane.process_info", map[string]any{"pane_id": "w1:p1"}),
 		call("pane.send_text", map[string]any{"pane_id": "w1:p1", "text": pasteStart + "line one\nline two" + pasteEnd}),
 		sendKeys("w1:p1", "enter"),
+		readCodexEnd("w1:p1"),
 		readCodexEnd("w1:p2"),
 		call("agent.prompt", map[string]any{"target": "w1:p2", "text": "x"}),
 		call("pane.process_info", map[string]any{"pane_id": "w1:p2"}),
 		call("pane.send_text", map[string]any{"pane_id": "w1:p2", "text": pasteStart + "x" + pasteEnd}),
 		sendKeys("w1:p2", "enter"),
+		readCodexEnd("w1:p2"),
 		readCodexEnd("w1:p3"),
 		call("agent.prompt", map[string]any{"target": "w1:p3", "text": "y"}),
 	})
@@ -639,7 +668,7 @@ func TestHerdrSendResumesAnOfflineSession(t *testing.T) {
 	assertTrace(t, f.trace(), []string{
 		call("session.snapshot", nil), // is it running?
 		call("workspace.list", nil),
-		call("workspace.create", map[string]any{"cwd": cwd, "label": "proj", "focus": false}),
+		call("workspace.create", map[string]any{"cwd": cwd, "label": "proj", "focus": false, "env": agentEnvParam}),
 		call("tab.rename", map[string]any{"tab_id": "w7:t1", "label": "agent-1"}),
 		markTab("w7:p1", sidA),
 		call("pane.send_input", map[string]any{"pane_id": "w7:p1", "keys": []string{"Enter"},

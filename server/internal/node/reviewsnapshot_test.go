@@ -101,3 +101,51 @@ func TestWorktreeSnapshot(t *testing.T) {
 		t.Fatalf("not a repository: %v", err)
 	}
 }
+
+// On a computer whose engine is Paseo the reviewer's copy is still a plain worktree in the node's own checkouts folder,
+// and worktree.remove (the manager names no engine) takes it away as one (#8135). Through Paseo, which made no
+// workspace of it, it was refused as not_our_worktree, which the manager reads as gone already: the copy stayed. A
+// worktree Paseo made is still Paseo's, whatever its name.
+func TestReviewCopyRemovedOnAPaseoComputer(t *testing.T) {
+	r := runtimeRepoNode(t)
+	ctx := context.Background()
+	if err := os.WriteFile(filepath.Join(r.repo, "app.txt"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	made, err := request(t, r.n, "worktree.snapshot", map[string]any{"cwd": r.repo, "name_hint": "Fix the login crash"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyPath, _ := made["path"].(string)
+	if !r.n.isReviewCopy(ctx, "", copyPath) || within(copyPath, r.trees) {
+		t.Fatalf("the copy %s is not the node's", copyPath)
+	}
+	if _, err := request(t, r.n, "worktree.remove", map[string]any{"path": copyPath, "force": true}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, err := os.Stat(copyPath); !os.IsNotExist(err) {
+		t.Fatalf("the copy is still on the disk: %v", err)
+	}
+	if got := r.rt.got("workspace.archive"); len(got) != 0 {
+		t.Fatalf("Paseo was asked to archive it: %s", got)
+	}
+	if b, _ := os.ReadFile(filepath.Join(r.repo, "app.txt")); string(b) != "changed\n" {
+		t.Fatalf("the agent's tree changed: %q", b)
+	}
+
+	// Paseo's worktree named like a copy is in Paseo's folder: not the node's copy, so its removal still goes through
+	// Paseo (runtimeworkspaces_manage_test.go has it archived there once its Agent is closed).
+	paseo, err := request(t, r.n, "worktree.create", map[string]any{"workspace_id": "wks_main", "kind": "paseo", "branch": "review-x",
+		"path": filepath.Join(r.trees, "review-x")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := paseo["path"].(string); p == "" || r.n.isReviewCopy(ctx, "", p) {
+		t.Fatalf("Paseo's worktree %v taken for a copy", paseo)
+	}
+	for _, p := range []string{r.repo, filepath.Join(r.repo, "review-notes"), "review-x", ""} {
+		if r.n.isReviewCopy(ctx, "", p) {
+			t.Fatalf("%q taken for a copy", p)
+		}
+	}
+}

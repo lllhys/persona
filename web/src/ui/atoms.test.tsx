@@ -192,11 +192,11 @@ describe("menu with the new row kinds", () => {
     expect(html).not.toContain("menuitem");
     expect(html.match(/data-menu-note/g)).toHaveLength(2);
     expect(html).toContain("78K / 200K tokens");
-    expect(render([{ key: "a", label: "拷贝目录", onSelect: () => {} }])).toContain('role="menu"');
+    expect(render([{ key: "a", label: "复制目录", onSelect: () => {} }])).toContain('role="menu"');
   });
 
   it("is the same markup as before for a plain row", () => {
-    const html = render([{ key: "a", label: "拷贝目录", icon: "folder", onSelect: () => {} }]);
+    const html = render([{ key: "a", label: "复制目录", icon: "folder", onSelect: () => {} }]);
     expect(html).not.toContain("aria-haspopup");
     expect(html).not.toContain("aria-keyshortcuts");
     expect(html).not.toContain("bg-red-tint");
@@ -211,7 +211,7 @@ describe("menu with the new row kinds", () => {
     expect(html).toMatch(/class="block break-words">Plan only</);
     expect(html).not.toContain("truncate");
     // a row without a detail keeps its one truncating line and no description
-    const plain = render([{ key: "a", label: "拷贝目录", hint: "⌘C", checked: false, onSelect: () => {} }]);
+    const plain = render([{ key: "a", label: "复制目录", hint: "⌘C", checked: false, onSelect: () => {} }]);
     expect(plain).toContain("truncate");
     expect(plain).not.toContain("aria-describedby");
   });

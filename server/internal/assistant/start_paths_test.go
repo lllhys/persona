@@ -36,8 +36,11 @@ var supervisedStarts = map[string]string{
 	"toolConversationNew": "toolConversationNew", // conversation_new: followed until it reports back (spawned.go, #4669)
 	"runTool":             "quietAgentTask",      // agent_start: a quiet task of the main conversation, or of assistant.agent_tasks (#3638, #3617)
 	"dispatchStart":       "superviseDispatched", // dispatch_start: adopted as the main conversation's task (#3442)
+	"taskSpawn":           "taskSpawn",           // joins the caller's verified task and keeps its existing ledger
 	// a task whose agents all stopped goes on with a new agent on the same task, its ledger kept (#4754)
 	"startTaskSuccessor": "startTaskSuccessor",
+	// agent_send's resume of a stopped agent: on an open task of the caller's, or the task the send made (#8099)
+	"resumeAndSend": "resumeAndSend",
 }
 
 // startOptOuts are the start paths that stay unsupervised on purpose, with why. Each is the user's own conversation or
@@ -59,7 +62,7 @@ var startOptOuts = map[string]string{
 }
 
 // supervisionCalls make or keep a ledger.
-var supervisionCalls = []string{"superviseTodo", "updateSupervision", "adoptAgent", "adoptAgentAs", "quietAgentTask", "ensureSupervisor"}
+var supervisionCalls = []string{"superviseTodo", "supervisePlanTask", "updateSupervision", "adoptAgent", "adoptAgentAs", "quietAgentTask", "ensureSupervisor"}
 
 func TestEveryStartPathIsSupervisedOrOptedOut(t *testing.T) {
 	funcs := parsePackageFuncs(t)

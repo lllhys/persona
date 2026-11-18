@@ -5,6 +5,7 @@
   "computer": "コンピューター",
   "computer_hint": "このコンピューターの~/.zshrc、~/.bashrc、~/.bash_aliasesにあるclaudeを呼び出すaliasを読み込み、URLとKeyごとにまとめます。キーはハブがコンピューターから読み込み、ブラウザーは経由しません。",
   "offline_suffix": "（オフライン）",
+  "failed_from": "{computer}からのインポートに失敗しました：{error}",
   "empty": "このコンピューターの~/.zshrc、~/.bashrc、~/.bash_aliasesにインポートできるclaudeのaliasはありません。",
   "list_label": "インポートできるプロバイダー",
   "merge_note": "統合すると、新しいモデルだけが既存のプロバイダーに追加されます。ほかの設定は変わりません。",

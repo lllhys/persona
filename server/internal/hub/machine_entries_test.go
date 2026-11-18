@@ -191,11 +191,13 @@ type entriesFailStore struct {
 	*meshStore
 	mu    sync.Mutex
 	fails int
+	reads int
 }
 
 func (s *entriesFailStore) Setting(ctx context.Context, key string, out any) (bool, error) {
 	if key == machineEntriesKey {
 		s.mu.Lock()
+		s.reads++
 		fail := s.fails > 0
 		if fail {
 			s.fails--
@@ -206,6 +208,12 @@ func (s *entriesFailStore) Setting(ctx context.Context, key string, out any) (bo
 		}
 	}
 	return s.meshStore.Setting(ctx, key, out)
+}
+
+func (s *entriesFailStore) readCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
 }
 
 // A hub that could not read what the managers reported as it started reads it before it writes: the managers that

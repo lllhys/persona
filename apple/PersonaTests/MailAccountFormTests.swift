@@ -44,6 +44,15 @@ import Testing
         #expect(f.codeGuide == nil, "servers typed: they may not be QQ's")
     }
 
+    /// Gmail and iCloud addresses get where to make their app password (#9389).
+    @Test func gmailAndICloudAddressesGetTheAppPasswordGuide() {
+        var f = MailAccountForm(kind: .imap, email: "me@Gmail.com")
+        #expect(f.codeGuide?.provider == .gmail && f.codeGuide?.webMail.absoluteString == "https://myaccount.google.com/apppasswords")
+        f.email = "me@icloud.com"
+        #expect(f.codeGuide?.provider == .icloud && f.codeGuide?.webMail.absoluteString == "https://account.apple.com")
+        #expect(CodeGuide.gmailAppPassword.provider == .gmail)
+    }
+
     /// On a hub without google.client_id, Gmail is added with an app password, Google's servers spelled out so a Google
     /// Workspace address (its own domain) works too (#2442).
     @Test func gmailWithAppPasswordOnHubWithoutGoogleSignIn() {

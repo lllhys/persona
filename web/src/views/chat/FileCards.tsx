@@ -8,18 +8,40 @@ import { usePathLinks } from "../../lib/path-presence";
 import { bytes } from "../../lib/format";
 import { openPanel } from "../../lib/panel";
 import { formatDuration, mediaKindOf, replyPaths, type AttachedFile } from "../../lib/turns";
+import { cx } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
 import { MediaPlayer } from "../../ui/Media";
 import { FileGlyph } from "../session/files/parts";
 import { edgeMask, useEdgeFade } from "./edge-fade";
+import { t } from "../../i18n";
+
+/** A message of yours with more files than this folds to `FOLDED` and a row that opens the rest (iOS AttachedFileCards). */
+const FOLD_AT = 4;
+const FOLDED = 3;
 
 export function FileCards({ files, mid, align = "end" }: { files: AttachedFile[]; mid: string; align?: "start" | "end" }) {
+  const [all, setAll] = useState(false);
   if (!files.length) return null;
+  // the files sent with your message (#8361): past four, three and "N more files", opened and folded in place
+  const folds = align === "end" && files.length > FOLD_AT;
+  const shown = folds && !all ? files.slice(0, FOLDED) : files;
   return (
     <div className={align === "end" ? "flex max-w-full flex-col items-end gap-1.5" : "flex max-w-full flex-col items-start gap-1.5"}>
-      {files.map((f) => (
+      {shown.map((f) => (
         <FileCard key={f.path} f={f} mid={mid} />
       ))}
+      {folds && (
+        <button
+          type="button"
+          aria-expanded={all}
+          onClick={() => setAll((v) => !v)}
+          className="flex max-w-[360px] min-w-0 items-center gap-1.5 rounded-[12px] bg-inset px-3 py-2 text-meta text-accent shadow-hairline hover:bg-hover"
+          data-testid="file-cards-more"
+        >
+          {all ? t("chat-attachedphotos.files_less") : t("chat-attachedphotos.files_more", { count: files.length - FOLDED })}
+          <Icon name="chevron" size={12} className={cx(all && "rotate-180")} />
+        </button>
+      )}
     </div>
   );
 }

@@ -38,6 +38,17 @@ describe("lazyPage", () => {
     expect(renderToStaticMarkup(<Suspense fallback={<p>loading</p>}><Lazy /></Suspense>)).toBe("<p>page</p>");
   });
 
+  it("loads its chunk on preload, once, so a later render draws the page at once (#8139)", async () => {
+    const Page = () => <p>page</p>;
+    const load = vi.fn(() => Promise.resolve(Page));
+    const Lazy = lazyPage(load);
+    expect(Lazy.ready()).toBe(false);
+    await Promise.all([Lazy.preload(), Lazy.preload()]);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(Lazy.ready()).toBe(true);
+    expect(renderToStaticMarkup(<Suspense fallback={<p>loading</p>}><Lazy /></Suspense>)).toBe("<p>page</p>");
+  });
+
   it("loads a route's page once as the pointer, the focus or a finger reaches a link to it, and not with Data Saver", () => {
     const settings = vi.fn(() => Promise.resolve(() => null));
     const kb = vi.fn(() => Promise.resolve(() => null));

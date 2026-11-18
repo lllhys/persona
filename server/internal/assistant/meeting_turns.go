@@ -46,7 +46,7 @@ const (
 )
 
 // meetingTurnTools are the hub's tools a meeting turn may call: they only read.
-var meetingTurnTools = []string{"kb_search", "kb_list", "kb_get", "todo_list", "todo_get", "agents_list", "agent_read",
+var meetingTurnTools = []string{"kb_search", "kb_list", "kb_get", "todo_list", "todo_get", "todo_repositories_get", "agents_list", "agent_read",
 	"conversations_list", "conversation_read", "machines_list", "list_followups"}
 
 // meetingTurn is one session's mark.

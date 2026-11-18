@@ -22,10 +22,20 @@ data class MergedTaskCard(
     }
 }
 
-/** One task a reply dispatched (#3700): its to-do, null when the hub could not start it, and its title. */
-data class DispatchedTask(val todoId: String?, val title: String)
+/**
+ * One task a reply dispatched (#3700, #5110): its to-do (null when the hub could not start it), the title to show until
+ * the to-do arrives, the plan task's [error], and a standalone task item's [wake] (`active` / `resumed`; null is New).
+ * [key] keeps the card stable across title changes.
+ */
+data class DispatchedTask(
+    val todoId: String?,
+    val title: String,
+    val error: String? = null,
+    val wake: String? = null,
+    val key: String? = null,
+)
 
-/** The line under a reply that dispatched work: the tasks themselves, in plan order, each opening its own task. */
+/** The hand-off cards under a reply that dispatched work: the tasks, in plan order. Each card opens its Agent. */
 data class DispatchHint(val tasks: List<DispatchedTask>) : AssistantExtra {
     val count: Int get() = tasks.size
 }
@@ -33,11 +43,23 @@ data class DispatchHint(val tasks: List<DispatchedTask>) : AssistantExtra {
 object AssistantTaskCards {
     private val lifecycle = setOf("plan", "task", "receipt", "review", "report")
 
+    /** Not drawn in an assistant conversation (#8312, #8237). The feed list keeps them: the trays still read them. */
+    private val notDrawn = setOf("receipt", "report", "review")
+
+    /**
+     * The feed items an assistant conversation draws (#8237, docs/assistant/unified-entry.md "Receipts"): a task's card
+     * comes once, when it is handed out. Receipts, reports and reviews stay in [feed] for the trays and are left out
+     * here, history included, in every style.
+     */
+    fun drawnFeed(feed: List<FeedItem>): List<FeedItem> = feed.filter { it.kind !in notDrawn }
+
     /**
      * Explicit hub housekeeping, drafts and assistant-to-Agent instructions live behind the trays. With [inline] (Glass,
-     * #4339 C13) the conversation draws the hub's records as iOS's `FeedLine` does: receipts, reviews, reports, Persona's
-     * hand-offs to tasks, message cards and the hub's notice lines are lines of it, and only plans and task cards stay
-     * behind (the dispatched line, [DispatchHint], and Needs you stand for them).
+     * #4339 C13) the conversation draws Persona's hand-offs, message cards and the hub's notice lines, and only plans
+     * and task cards stay behind (the dispatched line, [DispatchHint]). Receipts, reviews and reports are not drawn
+     * ([drawnFeed]): not among the lines, and not in the background sheet. iOS `FeedLine` and the web's `FeedLineView`
+     * leave those records out of the conversation, and neither keeps a sheet that still lists them. [lines] still draws a plan the user has not
+     * started ([drawnPlans]).
      */
     fun isBackgroundEvent(item: FeedItem, inline: Boolean = false): Boolean = if (inline) item.kind in inlineHidden
         else (item.kind in lifecycle && !interruptShown(item) && !isBackgroundSupervisorReview(item)) ||
@@ -60,7 +82,19 @@ object AssistantTaskCards {
      *  or a pending one; a batch's other receipts are drawn inside its head. */
     private fun interruptShown(item: FeedItem): Boolean = InterruptLook.of(item).let { it != null && it != InterruptLook.Hidden }
 
-    fun backgroundFeed(feed: List<FeedItem>, inline: Boolean = false): List<FeedItem> = feed.filter { isBackgroundEvent(it, inline) }
+    fun backgroundFeed(feed: List<FeedItem>, inline: Boolean = false): List<FeedItem> =
+        drawnFeed(feed).filter { isBackgroundEvent(it, inline) }
+
+    /**
+     * The feed items of the plans the conversation draws itself with [inline] (Glass, #4339 C13, iOS `FeedLine`'s `PlanCard`): a
+     * plan nobody started yet, whatever came of it, in the place of its item. An open one is the card with Start, Edit and Don't
+     * start; a dismissed one reads "Not started · N tasks". A started plan is the dispatched line ([DispatchHint]) instead, as
+     * iOS's `DispatchedTasks.entries` makes it; a plan the app has no body for leaves nothing to draw.
+     */
+    fun drawnPlans(feed: List<FeedItem>, plans: Map<String, TaskPlan>, dispatched: Set<String>): Set<String> =
+        feed.filter { item ->
+            item.kind == "plan" && (item.ref?.let(plans::get) ?: item.plan)?.let { it.id !in dispatched } == true
+        }.mapTo(HashSet()) { it.id }
 
     /** Pure fallback for older hubs, also joining live events to incremental server projection upserts. */
     fun merge(feed: List<FeedItem>, plans: Map<String, TaskPlan>, todos: List<Todo>, projected: List<AssistantTaskCard> = emptyList()): List<MergedTaskCard> {
@@ -138,12 +172,19 @@ object AssistantTaskCards {
         }
         val payloads = dispatched.mapValues { (_, group) ->
             DispatchHint(group.sortedBy { it.identity.index ?: Int.MAX_VALUE }.map { card ->
+                val planned = card.identity.index?.let { card.plan?.tasks?.getOrNull(it) }
                 // the to-do's current title, the plan's until the to-do arrives
                 DispatchedTask(card.todo?.id ?: card.identity.todoId,
-                    card.todo?.title ?: card.identity.index?.let { card.plan?.tasks?.getOrNull(it)?.title }.orEmpty())
+                    card.todo?.title ?: planned?.title.orEmpty(),
+                    error = planned?.error,
+                    // A plan's tasks are New. A standalone task item's wake is the badge (#5110).
+                    wake = if (card.identity.index == null) card.records.lastOrNull { it.kind == "task" }?.field("wake") else null,
+                    key = card.identity.id)
             })
         }
-        val combined = feed.filterNot { isBackgroundEvent(it, inline) } + dispatched.map { (id, group) ->
+        val drawn = if (inline) drawnPlans(feed, plans, dispatched.keys) else emptySet()
+        val visible = drawnFeed(feed)
+        val combined = visible.filterNot { isBackgroundEvent(it, inline) && it.id !in drawn } + dispatched.map { (id, group) ->
             FeedItem(id, at = group.first().identity.at, kind = "unknown")
         }
         return AssistantLines.lines(lines, combined.sortedWith(compareBy({ AssistantLines.time(it.at) }, { it.id }))).map { line ->

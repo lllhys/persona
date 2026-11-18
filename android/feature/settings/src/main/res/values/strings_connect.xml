@@ -16,7 +16,7 @@
     <string name="settings_pairing_welcome_assistant_title">Persona assistant</string>
     <string name="settings_pairing_welcome_assistant">Works with your knowledge base. Phone data is asked for separately when needed.</string>
     <string name="settings_pairing_welcome_push">Notifications work without Google services: the phone gets the hub\'s messages over a persistent connection.</string>
-    <string name="settings_pairing_welcome_connect">Connect hub</string>
+    <string name="settings_pairing_welcome_guide">No hub yet?</string>
     <string name="settings_pairing_failed_title">Couldn\'t connect</string>
     <string name="settings_pairing_failed_body">Follow the tip below, then try again.</string>
     <string name="settings_pairing_stopped_at">Stopped at \"%1$s\"</string>
@@ -140,7 +140,6 @@
     <string name="settings_hub_update_turn_off">Turn off</string>
     <string name="settings_hub_update_got_it">Got it</string>
     <string name="settings_hub_update_auto">Update hub automatically</string>
-    <string name="settings_hub_update_retry">Retry</string>
     <string name="settings_hub_update_now_title">Update now?</string>
     <string name="settings_hub_update_now">Update now</string>
     <string name="settings_hub_update_now_more">Update now…</string>

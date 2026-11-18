@@ -44,6 +44,94 @@ struct SessionRefreshTests {
         SessionListCounts(total: 100, machine: [:], project: [:], group: [:], state: [:], revision: "counts")
     }
 
+    /// A clock the test moves: `sleep` records what it was asked for and returns only when the test lets it.
+    @MainActor private final class FakeClock {
+        var now = ContinuousClock.now
+        private(set) var asked: [Duration] = []
+        private var sleepers: [CheckedContinuation<Void, any Error>] = []
+        var sleeping: Int { sleepers.count }
+        var length = HintWindow.length
+        func window() -> HintWindow {
+            HintWindow(length: { [unowned self] in length }, now: { [unowned self] in now }, sleep: { [unowned self] wait in
+                asked.append(wait)
+                try await withCheckedThrowingContinuation { sleepers.append($0) }
+                now = now.advanced(by: wait)
+            })
+        }
+        func wake() { let all = sleepers; sleepers = []; for s in all { s.resume() } }
+        func cancel() { let all = sleepers; sleepers = []; for s in all { s.resume(throwing: CancellationError()) } }
+    }
+
+    @Test func aHintWindowLetsTheFirstReadGoAndHoldsTheNextToItsEnd() async throws {
+        let clock = FakeClock()
+        let window = clock.window()
+        try await window.enter()
+        #expect(clock.asked.isEmpty, "the first read after a quiet spell starts at once")
+        clock.now = clock.now.advanced(by: .milliseconds(500))
+        #expect(window.remaining == .milliseconds(1500))
+        let second = Task { try await window.enter() }
+        try await waitForRefreshTest { clock.sleeping == 1 }
+        #expect(clock.asked == [.milliseconds(1500)])
+        clock.wake()
+        try await second.value
+        clock.now = clock.now.advanced(by: .seconds(3))
+        try await window.enter()
+        #expect(clock.asked.count == 1, "a read a whole window after the last waits for nothing")
+        window.reset()
+        try await window.enter()
+        #expect(clock.asked.count == 1, "a new query starts its own windows")
+    }
+
+    /// The hub's lists read at most once a window for hints (#9487, the web's #9042): a burst inside the window shares
+    /// one read at its end.
+    @Test func hintsInsideAWindowShareOneReadAtItsEnd() async throws {
+        let clock = FakeClock()
+        var reads: [String?] = []
+        let list = SessionListModel<Row>(id: { $0.id }, removalID: { $0 }, fetch: { _, _, since in
+            reads.append(since)
+            return page("r\(reads.count)", revision: "r\(reads.count)", more: false)
+        }, counts: { _ in counts() }, waitForHints: {}, hintWindow: clock.window())
+        defer { list.cancel(); clock.cancel() }
+        await list.load()
+        #expect(reads == [nil])
+        list.invalidate(revision: "h1")
+        try await waitForRefreshTest { reads.count == 2 }
+        #expect(clock.asked.isEmpty, "the first hint reads at once")
+        for i in 2...20 { list.invalidate(revision: "h\(i)") }
+        try await waitForRefreshTest { clock.sleeping == 1 }
+        #expect(reads.count == 2, "hints inside the window wait for its end")
+        clock.wake()
+        try await waitForRefreshTest { reads.count == 3 }
+        await Task.yield()
+        #expect(reads == [nil, "r1", "r2"], "one read for the window's 19 hints, from the last revision held")
+        #expect(clock.asked.count == 1)
+    }
+
+    /// An Agents list in sight reads every hint as before (the window's length is zero then), and one that comes into
+    /// sight lets a read waiting for its window go at once (docs/apple/ios-state.md "Timely").
+    @Test func aListInSightReadsAsHintsComeAndComingIntoSightReleasesTheWait() async throws {
+        let clock = FakeClock()
+        var reads = 0
+        let list = SessionListModel<Row>(id: { $0.id }, removalID: { $0 }, fetch: { _, _, _ in
+            reads += 1
+            return page("r\(reads)", revision: "r\(reads)", more: false)
+        }, counts: { _ in counts() }, waitForHints: {}, hintWindow: clock.window())
+        defer { list.cancel(); clock.cancel() }
+        await list.load()
+        clock.length = .zero // in sight
+        for i in 1...3 {
+            list.invalidate(revision: "h\(i)")
+            try await waitForRefreshTest { reads == 1 + i }
+        }
+        #expect(clock.asked.isEmpty)
+        clock.length = HintWindow.length // out of sight: the next hint inside the window waits
+        list.invalidate(revision: "h4")
+        try await waitForRefreshTest { clock.sleeping == 1 }
+        #expect(reads == 4)
+        list.releaseHintWindow() // in sight again
+        try await waitForRefreshTest { reads == 5 }
+    }
+
     @Test func aBurstDuringALegacyReadProducesOnlyOneTrailingRead() async throws {
         let gate = Gate()
         var hints = 0

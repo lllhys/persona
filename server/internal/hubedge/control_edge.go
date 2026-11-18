@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/acceptloop"
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // listenControl serves `personad hub switch` on the control socket: owner only (0600 in a 0700 directory), the same
@@ -21,7 +22,7 @@ func (e *edge) listenControl() (net.Listener, error) {
 		return nil, errors.New("another edge answers on " + e.o.Control)
 	}
 	_ = os.Remove(e.o.Control)
-	ln, err := net.Listen("unix", e.o.Control)
+	ln, err := osproc.Listen("unix", e.o.Control)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,32 @@
+/* The island at the MacBook notch (#7669). Always dark, as the notch and the iPhone's Dynamic Island are; the state
+   colors are the iPhone island's (Needs you red, Working amber, Unread green, apple/LiveActivity). */
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, sans-serif;
+  --needs-you: #ff453a;
+  --working: #ff9f0a;
+  --unread: #30d158;
+  --ink: #ffffff;
+  --ink-2: rgb(255 255 255 / 0.62);
+  --row-hover: rgb(255 255 255 / 0.1);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; -webkit-user-select: none; }
+.symbols { position: absolute; width: 0; height: 0; }
+#island { position: absolute; inset: 0 0 auto 0; height: 100%; background: #000; color: var(--ink); border-radius: 0 0 0.8rem 0.8rem; cursor: default; }
+#island[data-open="yes"] { border-radius: 0 0 1.2rem 1.2rem; }
+.bar { display: flex; align-items: center; height: var(--bar, 2rem); padding: 0 0.9rem; }
+.notch { flex: 1 1 auto; }
+.side { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82rem; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.side[data-state="needs_you"], .row[data-state="needs_you"] { --tone: var(--needs-you); }
+.side[data-state="working"], .row[data-state="working"] { --tone: var(--working); }
+.side[data-state="unread"], .row[data-state="unread"] { --tone: var(--unread); }
+.mark { width: 0.95rem; height: 0.95rem; flex: none; fill: var(--tone); }
+.side .count { color: var(--tone); }
+.list { display: flex; flex-direction: column; padding: 0.25rem 0.45rem 0.625rem; }
+.row { display: flex; align-items: center; gap: 0.6rem; width: 100%; height: 3rem; flex: none; padding: 0.35rem 0.55rem; border: 0; border-radius: 0.7rem; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.row:hover, .row:focus-visible { background: var(--row-hover); outline: none; }
+.words { display: flex; flex-direction: column; min-width: 0; gap: 0.1rem; }
+.title { font-size: 0.82rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta { font-size: 0.74rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.label { color: var(--tone); }

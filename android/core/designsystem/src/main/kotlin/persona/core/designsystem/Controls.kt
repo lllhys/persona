@@ -59,6 +59,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.node.requireDensity
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import persona.core.designsystem.icons.PhIcon
@@ -137,7 +142,21 @@ fun JButton(
     val shape = RoundedCornerShape(if (style == AppStyle.Board) shapes.button else size.height / 2)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed && style == AppStyle.Glass && !PersonaTheme.reduceMotion) 0.96f else 1f, label = "press")
+    val reduceMotion = PersonaTheme.reduceMotion
+    // Layout width, not snapshot state. Reading it from composition made every Brief and Board button recompose once
+    // after the first layout. It is read only while a Glass button is pressed; scale does not change the layout width.
+    val widthPx = remember { floatArrayOf(0f) }
+    val growthPx = with(LocalDensity.current) { PageTransitionTokens.pressGrowthDp.dp.toPx() }
+    val glassPress = pressed && style == AppStyle.Glass && !reduceMotion
+    val scale by animateFloatAsState(
+        targetValue = if (glassPress) glassPressTarget(true, true, false, widthPx[0], growthPx) else 1f,
+        animationSpec = if (pressed) {
+            IosSpring(PageTransitionTokens.glassPressDurationMs, PageTransitionTokens.glassPressBounce).spec()
+        } else {
+            IosSpring(PageTransitionTokens.glassReleaseDurationMs, PageTransitionTokens.glassReleaseBounce).spec()
+        },
+        label = "press",
+    )
     val (fill, content) = when (kind) {
         JButtonKind.Primary -> palette.action to palette.onAction
         JButtonKind.Secondary -> (if (style == AppStyle.Board) palette.surface else palette.surfaceStrong) to palette.ink
@@ -152,7 +171,9 @@ fun JButton(
     }
     val busy = loading
     Row(
-        modifier.heightIn(min = size.height).minimumInteractiveComponentSize().scale(scale).then(frame)
+        modifier.heightIn(min = size.height).minimumInteractiveComponentSize().scale(scale)
+            .onSizeChanged { if (style == AppStyle.Glass && !reduceMotion) widthPx[0] = it.width.toFloat() }
+            .then(frame)
             .clickable(interaction, indication = androidx.compose.material3.ripple(), enabled = enabled && !busy, role = Role.Button, onClick = onClick)
             .stableAlpha(if (enabled || busy) 1f else 0.4f)
             .padding(horizontal = if (kind == JButtonKind.Quiet) 8.dp.dense else size.padding),
@@ -177,7 +198,11 @@ fun JButton(
 fun JTextButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, icon: PhIcon? = null) =
     JButton(text, onClick, modifier, kind = JButtonKind.Quiet, size = JButtonSize.Medium, icon = icon, enabled = enabled)
 
-/** Plain icons sit in bars; [raised] ones are standalone controls (a glass circle, a wash disc, a bordered square). */
+/**
+ * Plain icons sit in bars; [raised] ones are standalone controls (a glass circle, a wash disc, a bordered square).
+ * [badge] is the needs-you dot at the top end; [count], when above 0, a neutral count capsule at the bottom end (how many
+ * a control holds, never how many need the user: that is [JBadge]'s, in the needs-you color).
+ */
 @Composable
 fun JIconButton(
     icon: PhIcon,
@@ -189,6 +214,26 @@ fun JIconButton(
     tint: Color? = null,
     badge: Boolean = false,
     selected: Boolean = false,
+    count: Int = 0,
+) {
+    if (count <= 0) JIconButtonBox(icon, contentDescription, onClick, modifier, enabled, raised, tint, badge, selected)
+    else Box(modifier) {
+        // The circle clips the button's ripple; the capsule hangs over its edge, so it sits outside that clip.
+        val palette = PersonaTheme.palette
+        val label = if (count > 99) "99+" else "$count"
+        JIconButtonBox(icon, contentDescription, onClick, Modifier, enabled, raised, tint, badge, selected)
+        Text(label, style = PersonaTheme.type.micro.copy(fontWeight = FontWeight.SemiBold),
+            color = palette.ink2, maxLines = 1,
+            modifier = Modifier.align(Alignment.BottomEnd).clearAndSetSemantics {}.stableAlpha(if (enabled) 1f else 0.4f)
+                .clip(CircleShape).background(palette.surfaceOpaque).border(Tokens.Size.line, palette.line, CircleShape)
+                .padding(horizontal = SectionHeaderTokens.countPadding, vertical = SectionHeaderTokens.countPaddingVertical))
+    }
+}
+
+@Composable
+private fun JIconButtonBox(
+    icon: PhIcon, contentDescription: String?, onClick: () -> Unit, modifier: Modifier, enabled: Boolean, raised: Boolean,
+    tint: Color?, badge: Boolean, selected: Boolean,
 ) {
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
@@ -241,6 +286,8 @@ fun JTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     /** False keeps the field out of Autofill: nothing is filled into it, nothing typed is offered to be saved. */
     autofill: Boolean = true,
+    /** Configuration and code use the design system's code type scale, never a page-local font. */
+    monospace: Boolean = false,
 ) {
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
@@ -260,10 +307,10 @@ fun JTextField(
         BasicTextField(
             value = value, onValueChange = onValueChange, enabled = enabled, singleLine = singleLine,
             minLines = minLines, maxLines = maxLines, interactionSource = interaction,
-            textStyle = PersonaTheme.type.body.copy(color = palette.ink), cursorBrush = SolidColor(palette.accent.takeIf { style != AppStyle.Brief } ?: palette.ink),
+            textStyle = (if (monospace) PersonaTheme.type.code else PersonaTheme.type.body).copy(color = palette.ink), cursorBrush = SolidColor(palette.accent.takeIf { style != AppStyle.Brief } ?: palette.ink),
             keyboardOptions = keyboardOptions, keyboardActions = keyboardActions, visualTransformation = visualTransformation,
             // On the text field's own semantics node: Autofill reads the node it would fill, not its parents.
-            modifier = if (autofill) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().semantics { contentDataType = ContentDataType.None },
+            modifier = (if (autofill) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().semantics { contentDataType = ContentDataType.None }).hardwareShortcutTextInput(),
             decorationBox = { field ->
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 48.dp.row).clip(shape).background(fill)
@@ -273,7 +320,7 @@ fun JTextField(
                 ) {
                     leading?.let { JIcon(it, null, size = 20.dp, tint = palette.ink3); Spacer(Modifier.width(10.dp.dense)) }
                     Box(Modifier.weight(1f)) {
-                        if (value.isEmpty() && placeholder != null) Text(placeholder, style = PersonaTheme.type.body, color = palette.ink3, maxLines = if (singleLine) 1 else maxLines, overflow = TextOverflow.Ellipsis)
+                        if (value.isEmpty() && placeholder != null) Text(placeholder, style = if (monospace) PersonaTheme.type.code else PersonaTheme.type.body, color = palette.ink3, maxLines = if (singleLine) 1 else maxLines, overflow = TextOverflow.Ellipsis)
                         field()
                     }
                     trailing?.let { Spacer(Modifier.width(6.dp.dense)); it() }
@@ -406,42 +453,95 @@ fun JRadio(selected: Boolean, onClick: (() -> Unit)?, modifier: Modifier = Modif
 
 // ------------------------------------------------------------------ segmented filters and chips
 
-data class JSegment(val label: String, val count: Int? = null, val status: Status? = null)
+/**
+ * One choice of [JSegmented]. [countTone]: the [count] in a capsule of that state's colours ([JToneCount]: none at 0,
+ * 99+ past 99) after the label, spoken with it ("Needs you, 12"); none: the count follows the label as plain text.
+ */
+data class JSegment(val label: String, val count: Int? = null, val status: Status? = null, val countTone: Status? = null)
 
 /**
- * A small set of mutually exclusive filters: a sliding pill in glass, underlined text tabs in brief, a ruled
- * strip of cells on the board.
+ * A small set of mutually exclusive filters. On Glass one pill slides to the chosen segment
+ * (`GlassSlidingPill`, `Theme.Motion.state`) and the label colour fades with it. An index outside
+ * the list draws no pill. Brief keeps underlined text tabs and Board a ruled strip of cells.
+ * [compact] reduces spacing only; text keeps the ambient font scale. [revealIn]: the [modifier]'s sideways scroll, in
+ * which the selected option is kept whole in sight ([revealWhenSelected]), [revealMargin] clear of an edge with more past
+ * it (where a fade covers it).
  */
 @Composable
-fun JSegmented(options: List<JSegment>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+fun JSegmented(options: List<JSegment>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, compact: Boolean = false,
+               revealIn: androidx.compose.foundation.ScrollState? = null, revealMargin: Dp = Tokens.Space.flush) =
+    JSegmentedStrip(options, selected, onSelect, modifier, compact, revealIn, revealMargin)
+
+/**
+ * Brief's tabs scrolling in a strip [viewport] px wide that fades at an edge with more past it: when the edge falls between
+ * two tabs, or shows less than [peek] of the next, their gaps narrow, to no less than [JSegmented]'s compact gap, so that
+ * much of the next one shows under the fade ([peekGap]).
+ */
+internal data class TabPeek(val viewport: Int, val peek: Dp)
+
+/** [JSegmented], and in Brief with [peek] its tabs spaced so the next one past the edge shows ([TabPeek]). */
+@Composable
+internal fun JSegmentedStrip(options: List<JSegment>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier, compact: Boolean = false,
+                             revealIn: androidx.compose.foundation.ScrollState? = null, revealMargin: Dp = Tokens.Space.flush, peek: TabPeek? = null) {
     val palette = PersonaTheme.palette
     val type = PersonaTheme.type
     fun text(segment: JSegment) = segment.label + (segment.count?.let { " $it" } ?: "")
     when (PersonaTheme.style) {
-        AppStyle.Glass -> Row(
-            modifier.clipDrawing(CircleShape).background(palette.surface)
-                .border(1.dp, Brush.verticalGradient(listOf(palette.strokeTop, palette.strokeBottom)), CircleShape).padding(4.dp.dense),
-        ) {
-            options.forEachIndexed { index, segment ->
-                val on = index == selected
-                Box(
-                    Modifier.clip(CircleShape).background(if (on) palette.action else Color.Transparent)
-                        .clickable(role = Role.Tab) { onSelect(index) }.semantics { this.selected = on }
-                        .padding(horizontal = 16.dp.dense, vertical = 9.dp.dense),
-                    contentAlignment = Alignment.Center,
-                ) { Text(text(segment), style = type.labelSmall, color = if (on) palette.onAction else palette.ink2, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+        // One pill, not a background on each segment. iOS: the system's sliding thumb (`Picker` `.segmented`).
+        AppStyle.Glass -> GlassSlidingPill(
+            selected = selected,
+            count = options.size,
+            color = palette.action,
+            modifier = modifier.clipDrawing(CircleShape).background(palette.surface)
+                .border(1.dp, Brush.verticalGradient(listOf(palette.strokeTop, palette.strokeBottom)), CircleShape)
+                .padding(if (compact) Tokens.Space.xxs else 4.dp.dense),
+            segmentModifier = { index -> Modifier.revealWhenSelected(revealIn, index == selected, revealMargin) },
+        ) { index ->
+            val segment = options[index]
+            val on = index == selected
+            val spoken = segment.countTone?.let { spokenCount(segment.label, segment.count) }
+            Box(
+                Modifier.clip(CircleShape)
+                    .clickable(role = Role.Tab) { onSelect(index) }.semantics { this.selected = on; spoken?.let { contentDescription = it } }
+                    .padding(horizontal = if (compact) Tokens.Space.s else 16.dp.dense, vertical = 9.dp.dense),
+                contentAlignment = Alignment.Center,
+            ) {
+                // One weight, as this row always had. Only the colour fades (`GlassSegmentLabel`).
+                val label: @Composable (String) -> Unit = {
+                    GlassSegmentLabel(
+                        it, selected = on, selectedColor = palette.onAction, idleColor = palette.ink2,
+                        style = type.labelSmall, softWrap = false,
+                    )
+                }
+                if (segment.countTone == null) label(text(segment))
+                else TonedSegmentLabel(segment, type.labelSmall, if (on) palette.onAction else palette.ink2, onFill = on, label = label)
             }
         }
-        AppStyle.Brief -> Row(modifier, horizontalArrangement = Arrangement.spacedBy(22.dp.dense)) {
-            options.forEachIndexed { index, segment ->
-                val on = index == selected
-                Column(
-                    Modifier.clickable(role = Role.Tab) { onSelect(index) }.semantics { this.selected = on }.padding(vertical = 6.dp.dense),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Text(text(segment), style = type.label, color = if (on) palette.ink else palette.ink3, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(6.dp.dense))
-                    Box(Modifier.size(20.dp, 2.5.dp).clip(CircleShape).background(if (on) palette.ink else Color.Transparent))
+        AppStyle.Brief -> {
+            val gap = if (compact) Tokens.Space.s else JSegmentedBriefGap
+            val tabs: @Composable () -> Unit = {
+                options.forEachIndexed { index, segment ->
+                    val on = index == selected
+                    val spoken = segment.countTone?.let { spokenCount(segment.label, segment.count) }
+                    Column(
+                        Modifier.revealWhenSelected(revealIn, on, revealMargin).clickable(role = Role.Tab) { onSelect(index) }.semantics { this.selected = on; spoken?.let { contentDescription = it } }.padding(vertical = 6.dp.dense),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        if (segment.countTone == null) Text(text(segment), style = type.label, color = if (on) palette.ink else palette.ink3, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                        else TonedSegmentLabel(segment, type.label, if (on) palette.ink else palette.ink3)
+                        Spacer(Modifier.height(6.dp.dense))
+                        Box(Modifier.size(20.dp, 2.5.dp).clip(CircleShape).background(if (on) palette.ink else Color.Transparent))
+                    }
+                }
+            }
+            if (peek == null) Row(modifier, horizontalArrangement = Arrangement.spacedBy(gap)) { tabs() }
+            else androidx.compose.ui.layout.Layout(tabs, modifier) { measurables, constraints ->
+                val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(maxHeight = constraints.maxHeight)) }
+                val spacing = peekGap(placeables.map { it.width }, peek.viewport, gap.roundToPx(), peek.peek.roundToPx(), Tokens.Space.s.roundToPx())
+                val width = placeables.sumOf { it.width } + spacing * (placeables.size - 1).coerceAtLeast(0)
+                layout(width, placeables.maxOfOrNull { it.height } ?: 0) {
+                    var x = 0
+                    placeables.forEach { it.placeRelative(x, 0); x += it.width + spacing }
                 }
             }
         }
@@ -452,25 +552,153 @@ fun JSegmented(options: List<JSegment>, selected: Int, onSelect: (Int) -> Unit, 
                 val on = index == selected
                 if (index > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(palette.line))
                 val accent = palette.accent
+                val spoken = segment.countTone?.let { spokenCount(segment.label, segment.count) }
                 Box(
-                    Modifier.weight(1f, fill = false)
+                    Modifier.weight(1f, fill = false).revealWhenSelected(revealIn, on, revealMargin)
                         // The selected one's underline is drawn, not laid out: a fillMaxWidth line widened that segment to
                         // its whole share of the row (the image editor's "Pen" took the row's width, "Box" stayed small).
                         .drawWithContent {
                             drawContent()
                             if (on) drawRect(accent, Offset(0f, size.height - 2.dp.toPx()), Size(size.width, 2.dp.toPx()))
                         }
-                        .clickable(role = Role.Tab) { onSelect(index) }.semantics { this.selected = on },
+                        .clickable(role = Role.Tab) { onSelect(index) }.semantics { this.selected = on; spoken?.let { contentDescription = it } },
                 ) {
-                    Text(
-                        text(segment), style = type.labelSmall.copy(fontWeight = if (on) FontWeight.Bold else FontWeight.Medium),
+                    val padding = Modifier.padding(horizontal = if (compact) Tokens.Space.s else 14.dp.dense, vertical = 10.dp.dense)
+                    val style = type.labelSmall.copy(fontWeight = if (on) FontWeight.Bold else FontWeight.Medium)
+                    if (segment.countTone == null) Text(
+                        text(segment), style = style,
                         color = if (on) palette.ink else palette.ink2, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(horizontal = 14.dp.dense, vertical = 10.dp.dense),
+                        modifier = padding,
                     )
+                    else TonedSegmentLabel(segment, style, if (on) palette.ink else palette.ink2, padding)
                 }
             }
         }
     }
+}
+
+/** The room between two of Brief's tabs ([JSegmented]); a bar that splits its tabs in two keeps it between the parts. */
+internal val JSegmentedBriefGap: Dp get() = 22.dp.dense
+
+/**
+ * The gap between tabs of [widths] in a strip [viewport] wide ([TabPeek]): [gap] while they fit or while the edge shows at
+ * least [peek] of the first tab past it; else the narrowest gap, down to [least], that brings [peek] of that tab into sight,
+ * and [gap] again when even [least] can't.
+ */
+internal fun peekGap(widths: List<Int>, viewport: Int, gap: Int, peek: Int, least: Int): Int {
+    if (widths.size < 2 || viewport <= 0 || widths.sum() + gap * (widths.size - 1) <= viewport) return gap
+    var before = 0
+    for ((index, width) in widths.withIndex()) {
+        val start = before + gap * index
+        if (start + width > viewport) {
+            if (index == 0 || viewport - start >= peek) return gap
+            val narrower = (viewport - peek - before) / index
+            return if (narrower >= least) minOf(narrower, gap) else gap
+        }
+        before += width
+    }
+    return gap
+}
+
+/**
+ * A [JSegment] with a toned count: its label, then the count's capsule (none at 0); [onFill]: on the selected pill's fill.
+ * [label] draws the label (Glass's fades with its sliding pill).
+ */
+@Composable
+private fun TonedSegmentLabel(segment: JSegment, style: androidx.compose.ui.text.TextStyle, color: Color, modifier: Modifier = Modifier,
+                              onFill: Boolean = false,
+                              label: @Composable (String) -> Unit = { Text(it, style = style, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        label(segment.label)
+        val tone = segment.countTone ?: return@Row
+        segment.count?.takeIf { it > 0 }?.let { Spacer(Modifier.width(JChipTokens.countGap)); JToneCount(it, tone, onFill = onFill) }
+    }
+}
+
+/**
+ * While [selected], a choice in a row that scrolls sideways with [scroll] is scrolled whole into sight, by as little as it
+ * takes, when it is first placed and whenever it becomes selected (a search or a link choosing it, not only a tap); one
+ * already in sight stays where it is. [margin]: it stays that far from an edge the row can still scroll past, clear of
+ * a fade there. Only that row moves, never the page around it. Null [scroll]: nothing.
+ */
+fun Modifier.revealWhenSelected(scroll: androidx.compose.foundation.ScrollState?, selected: Boolean, margin: Dp = Tokens.Space.flush): Modifier =
+    if (scroll == null) this else this.then(RevealWhenSelected(scroll, selected, margin))
+
+private data class RevealWhenSelected(val scroll: androidx.compose.foundation.ScrollState, val selected: Boolean, val margin: Dp) :
+    androidx.compose.ui.node.ModifierNodeElement<RevealNode>() {
+    override fun create() = RevealNode(scroll, selected, margin)
+    override fun update(node: RevealNode) = node.update(scroll, selected, margin)
+    override fun androidx.compose.ui.platform.InspectorInfo.inspectableProperties() {
+        name = "revealWhenSelected"
+        properties["selected"] = selected
+        properties["margin"] = margin
+    }
+}
+
+private class RevealNode(private var scroll: androidx.compose.foundation.ScrollState, private var selected: Boolean, private var margin: Dp) :
+    Modifier.Node(), androidx.compose.ui.node.LayoutAwareModifierNode {
+    /** Where it sits along the row's content, from its last placement. */
+    private var start = -1
+    private var end = -1
+    private var pending = selected
+
+    override fun onPlaced(coordinates: androidx.compose.ui.layout.LayoutCoordinates) {
+        start = coordinates.positionInParent().x.toInt()
+        end = start + coordinates.size.width
+        if (pending) reveal()
+    }
+
+    fun update(scroll: androidx.compose.foundation.ScrollState, selected: Boolean, margin: Dp) {
+        this.scroll = scroll
+        this.margin = margin
+        if (selected && !this.selected) pending = true
+        this.selected = selected
+        if (pending) reveal()
+    }
+
+    private fun reveal() {
+        if (start < 0 || !isAttached) return
+        pending = false
+        if (!selected) return
+        coroutineScope.launch {
+            // Once the frame that placed it is done: a scroll written while the row is still being placed (its first
+            // frame, a choice made from outside) was taken but never moved the row.
+            androidx.compose.runtime.withFrameNanos { }
+            val viewport = scroll.viewportSize
+            // Clear of a fade at an edge with more past it; the row stops at its ends, where nothing fades.
+            val inset = with(requireDensity()) { margin.roundToPx() }.coerceAtMost((viewport - (end - start)) / 2).coerceAtLeast(0)
+            val target = when {
+                !selected || viewport <= 0 -> return@launch
+                start - inset < scroll.value -> start - inset
+                end + inset > scroll.value + viewport -> end + inset - viewport
+                else -> return@launch
+            }
+            scroll.scrollTo(target.coerceIn(0, scroll.maxValue))
+        }
+    }
+}
+
+/** What TalkBack hears for a choice with a toned count: its name and the exact number ("Needs you, 12"), the name alone at 0. */
+@Composable
+internal fun spokenCount(label: String, count: Int?): String =
+    count?.takeIf { it > 0 }?.let { stringResource(R.string.designsystem_count_spoken, label, it) } ?: label
+
+/** A count's words in a badge: "99+" past 99 (iOS `CountBadge.text`). */
+internal fun countBadgeText(count: Int): String = if (count > 99) "99+" else "$count"
+
+/**
+ * A count in a capsule of [tone]'s colours, as [JSectionHeader]'s `countTone` draws it (iOS `CountBadge`: Needs you's look
+ * for what waits for the user, [Status.Idle]'s for a neutral total): nothing at 0, "99+" past 99. Pass the exact number
+ * in the control's spoken name ([spokenCount]).
+ */
+@Composable
+internal fun JToneCount(count: Int, tone: Status, modifier: Modifier = Modifier, onFill: Boolean = false) {
+    if (count <= 0) return
+    val colors = PersonaTheme.palette.status(tone)
+    // On a selected chip's fill the tint alone could vanish (a grey on black): it sits on the page's opaque surface.
+    Text(countBadgeText(count), modifier.clip(CircleShape).then(if (onFill) Modifier.background(PersonaTheme.palette.surfaceOpaque) else Modifier).background(colors.tint)
+        .padding(horizontal = SectionHeaderTokens.countPadding, vertical = SectionHeaderTokens.countPaddingVertical),
+        style = PersonaTheme.type.micro.copy(fontWeight = FontWeight.SemiBold), color = colors.text, maxLines = 1, softWrap = false)
 }
 
 /**
@@ -495,7 +723,8 @@ object JChipTokens {
  * A filter or a fact. With [onClick] it toggles; without, it is a quiet label. [onLongClick] (with [onClick]) is a long
  * press for more (a menu of other ways to use it); the chip looks the same. [dot] is a plain colored mark in the place
  * of a [status] dot, for a category rather than a state. Pass [Role.Button] as [role] for an action instead of a toggle.
- * [trailingIcon] adds a compact affordance such as an expansion chevron.
+ * [trailingIcon] adds a compact affordance such as an expansion chevron. [breathes]: false keeps a Needs You [status] dot
+ * still, as iOS's quick filters draw it ([JStatusDot]).
  */
 @Composable
 fun JChip(
@@ -519,10 +748,17 @@ fun JChip(
      *  tappable one, so the × has its full touch target. */
     onRemove: (() -> Unit)? = null,
     removeLabel: String? = null,
+    /** Bounds the label inside a weighted chip while keeping its icons and count visible. */
+    boundedLabel: Boolean = false,
+    breathes: Boolean = true,
+    /** The [count] in a capsule of this state's colours ([JToneCount]: none at 0, 99+ past 99), spoken with the text
+     *  ("Needs you, 12"): the Inbox's section bar (#9053). None: quiet digits, as before. */
+    countTone: Status? = null,
 ) {
     val palette = PersonaTheme.palette
     val style = PersonaTheme.style
     val shape = RoundedCornerShape(PersonaTheme.shapes.chip)
+    val spoken = countTone?.let { spokenCount(text, count) }
     val edgeless = Color.Transparent
     val (fill, plainInk, border) = when {
         accent && !selected -> Triple(palette.accentSoft, palette.accent, if (style == AppStyle.Board) palette.line else edgeless)
@@ -544,16 +780,26 @@ fun JChip(
                     .semantics { if (role == Role.Checkbox) this.selected = selected }
                 else -> Modifier
             })
+            .then(if (spoken != null) Modifier.semantics { contentDescription = spoken } else Modifier)
             .padding(start = JChipTokens.horizontalPadding, end = if (onRemove != null) Tokens.Space.xs else JChipTokens.horizontalPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        status?.let { JStatusDot(it, size = JChipTokens.dotSize); Spacer(Modifier.width(JChipTokens.dotGap)) }
+        status?.let { JStatusDot(it, size = JChipTokens.dotSize, breathes = breathes); Spacer(Modifier.width(JChipTokens.dotGap)) }
         if (status == null) dot?.let { Box(Modifier.size(JChipTokens.dotSize).clip(CircleShape).background(it)); Spacer(Modifier.width(JChipTokens.dotGap)) }
         icon?.let { JIcon(it, null, size = JChipTokens.iconSize, tint = ink); Spacer(Modifier.width(JChipTokens.iconGap)) }
-        // With a ×, a long text gives way to it rather than pushing it out of the chip.
-        Text(text, if (onRemove != null) Modifier.weight(1f, fill = false) else Modifier,
-            style = PersonaTheme.type.labelSmall.copy(fontWeight = FontWeight.Medium), color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        count?.let {
+        // With a × or a bounded label, long text gives way instead of pushing out the rest of the chip.
+        Text(
+            text,
+            modifier = if (onRemove != null || boundedLabel) Modifier.weight(1f, fill = false) else Modifier,
+            style = PersonaTheme.type.labelSmall.copy(fontWeight = FontWeight.Medium),
+            color = ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (countTone != null) count?.takeIf { it > 0 }?.let {
+            Spacer(Modifier.width(JChipTokens.countGap))
+            JToneCount(it, countTone, onFill = selected && style != AppStyle.Board)
+        } else count?.let {
             Spacer(Modifier.width(JChipTokens.countGap))
             Text("$it", style = PersonaTheme.type.micro, color = if (selected && style != AppStyle.Board) ink else palette.ink3, maxLines = 1, softWrap = false)
         }
@@ -631,18 +877,27 @@ private val TagPadding = PaddingValues(horizontal = 6.dp.dense, vertical = 2.dp.
 
 // ------------------------------------------------------------------ progress
 
-/** The style's spinner: an ink arc in brief, an accent arc elsewhere. Static when motion is reduced. */
+/** Fixed stroke widths for [JSpinner], independent of the page's spacing density. */
+object SpinnerTokens {
+    val compactStroke = Tokens.Android.Size.spinnerStroke
+}
+
+/**
+ * The style's spinner: an ink arc in brief, an accent arc elsewhere. Static when motion is reduced. It reads its angle only while
+ * drawing, so a turn draws the arc again and recomposes nothing (iOS's spinners turn off the main thread).
+ */
 @Composable
 fun JSpinner(modifier: Modifier = Modifier, color: Color = if (PersonaTheme.style == AppStyle.Brief) PersonaTheme.palette.ink else PersonaTheme.palette.accent, stroke: Dp = 2.2.dp) {
     val turning = !PersonaTheme.reduceMotion
     val loading = stringResource(R.string.designsystem_loading)
-    val angle = if (turning) rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "angle").value else 0f
+    // Read while drawing only, never while composing: each frame draws the arc again and composes nothing.
+    val angle = if (turning) rememberInfiniteTransition(label = "spin").animateFloat(0f, 360f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "angle") else null
     Canvas(modifier.size(20.dp).clearAndSetSemantics { contentDescription = loading }) {
         val width = stroke.toPx()
         val inset = width / 2
         val arcSize = Size(size.width - width, size.height - width)
         drawArc(color.copy(alpha = 0.2f), 0f, 360f, false, Offset(inset, inset), arcSize, style = Stroke(width))
-        drawArc(color, angle - 90f, 100f, false, Offset(inset, inset), arcSize, style = Stroke(width, cap = StrokeCap.Round))
+        drawArc(color, (angle?.value ?: 0f) - 90f, 100f, false, Offset(inset, inset), arcSize, style = Stroke(width, cap = StrokeCap.Round))
     }
 }
 

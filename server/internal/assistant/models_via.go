@@ -23,8 +23,12 @@ import (
 // manager still builds every request and reads every answer (internal/ai: the gate, the stream parsing, the errors);
 // only the network hop moves to that computer's node (model.http). The key goes in that one call's headers.
 
-// aiClient is the client for connection c: through c.ViaMachine's node when it names one, else this machine's network.
+// aiClient is the client for connection c: through c.ViaMachine's node when it names one, else this machine's network;
+// a launcher's run there for c.RunLauncher.
 func (s *Service) aiClient(c ai.Config) *ai.Client {
+	if c.RunLauncher != "" { // no HTTP at all: the launcher's CLI there answers (models_run.go)
+		return s.runClient(c)
+	}
 	if c.ViaMachine == "" {
 		return ai.New(c)
 	}

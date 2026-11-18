@@ -1,4 +1,7 @@
+import MarkdownUI
+import PersonaKit
 import SwiftUI
+import PersonaWire
 
 // A chat app's conversation opened from the inbox (Telegram's), laid out like the Feishu chat page: others on the
 // left, (in a group) the name over the first of a run and the avatar beside its last, mine on the right; a time
@@ -252,7 +255,11 @@ struct ConnectorThreadRow: View {
                         }
                 }
                 if !words.isEmpty {
-                    StampedText(text: words, stamp: stamp)
+                    if let rich = ThreadRichText.of(words, markdown: m.format == "markdown", larkCard: connector == "larkcli", image: String(localized: "[Image]")) {
+                        ThreadRichTextView(text: rich, stamp: stamp)
+                    } else {
+                        StampedText(text: words, stamp: stamp)
+                    }
                 } else if !pictureLast {
                     Text(stamp).font(Theme.Font.caption).monospacedDigit().foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -371,6 +378,33 @@ struct ThreadMediaView: View {
 
 /// A message's words with its time in the corner, as Telegram: after the last line when it fits there, else on a line
 /// of its own at the right. A clear copy of the time ends the words, so they leave it room; the shown one sits over it.
+/// Words drawn from their Markdown (ThreadRichText): a Lark card under its title, the time under them on the right.
+struct ThreadRichTextView: View {
+    var text: ThreadRichText
+    var stamp: String
+    /// Parsed Markdown per body: MarkdownUI parses in `Markdown.init`, on every redraw of the row (MarkdownMemo's rule).
+    private static let memo = TextMemo<MarkdownContent>(limit: 128)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            if let title = text.cardTitle {
+                Label(title.isEmpty ? String(localized: "Message card") : title, systemImage: Theme.Icon.cardView)
+                    .font(Theme.Font.labelStrong)
+                    .foregroundStyle(.secondary)
+                Divider()
+            }
+            // Read line by line as written, as a chat's reply is (ReplyBreaks): a Lark post is one line per paragraph.
+            Markdown(Self.memo(text.body) { MarkdownContent(CJKEmphasis.apply(InlineCodeGap.apply(ReplyBreaks.apply($0)))) })
+                .markdownSoftBreakMode(.lineBreak)
+                .markdownTheme(.persona)
+                .asksBeforePictures() // other people wrote it (#9474)
+                .textSelection(.enabled)
+            Text(stamp).font(Theme.Font.caption).monospacedDigit().foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+}
+
 struct StampedText: View {
     var text: String
     var stamp: String

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end check of the web visual polish (#3475): reduced motion keeps the busy signal (a spinner and the working dot
 go on at ~2.4s, the other animations are stripped), the sidebar's count columns share one right edge whatever the row
-(the ⋯ overlays instead of reserving width; touch screens show it always), the context meter has a red tier from 90%
-used, and toasts show the warning icon for errors and a close button.
+(the ⋯ overlays instead of reserving width; touch screens show it always), the context meter shows used context and amber caution from 80%, and toasts show the warning icon for errors and a close button.
 
 Needs a running web page (the Vite dev server: the toast check imports the app's own module from it) against the fake
 hub with MOCK_SPLIT_TABS=1 MOCK_SOURCES=1 MOCK_CONTEXT_DANGER=1, and Playwright for Python:
@@ -17,13 +16,14 @@ browser is the installed Chromium (PERSONA_E2E_CHROMIUM) or Chrome.
 """
 import argparse
 import os
+import re
 
 from playwright.sync_api import expect, sync_playwright
 
 TESTS_SID = "5b1170b5-0000-4000-8000-000000000001"  # 92% used in the fake hub with MOCK_SPLIT_TABS and MOCK_CONTEXT_DANGER
 PHOTOS_SID = "5b1170b5-0000-4000-8000-000000000002"  # 86% used
 WARNING_PATH = "M10.29 3.86"
-METER = "[role=progressbar][aria-label*=上下文]"  # the session header's context bar (the sidebar footer has other bars)
+METER = "[data-composer-usage] [role=progressbar]"
 SIZES = {"wide": (1280, 820), "narrow": (390, 844)}
 ROWS = ("服务器", "app", "docs")  # a machine, two of its workspaces
 
@@ -276,26 +276,23 @@ def context_tiers(browser, base, token, theme, size, shots):
     page.set_default_timeout(10000)
     sign_in(page, base, token)
     page.goto(f"{base}/s/server/{TESTS_SID}")
-    page.wait_for_selector(METER)
-    bar = page.locator(f"{METER} > div")
-    assert "bg-red" in bar.get_attribute("class"), bar.get_attribute("class")
-    label = page.locator(f"{METER} + span")
-    assert "text-red" in label.get_attribute("class") and label.inner_text() == "8%", label.inner_text()
-    red = label.evaluate("(e) => getComputedStyle(e).color")
-    ok(f"[{theme}-{size}] 92% used: the header's bar and 8% are red ({red})")
+    meter = page.locator(METER)
+    expect(meter).to_have_attribute("aria-valuenow", "92")
+    expect(meter.locator(".bg-orange")).to_have_attribute("style", re.compile(r"width:\s*92%"))
+    expect(page.locator(f"{METER} + span")).to_have_text("上下文 92%")
+    ok(f"[{theme}-{size}] the context bar shows 92% used in amber")
     if shots:
-        page.screenshot(path=os.path.join(shots, f"context-red-{theme}-{size}.png"))
+        page.screenshot(path=os.path.join(shots, f"context-caution-{theme}-{size}.png"))
     page.goto(f"{base}/s/server/{PHOTOS_SID}")
-    page.wait_for_selector(METER)
-    assert "bg-orange" in page.locator(f"{METER} > div").get_attribute("class")
-    orange = page.locator(f"{METER} + span").evaluate("(e) => getComputedStyle(e).color")
-    assert orange != red
-    ok(f"[{theme}-{size}] 86% used stays orange ({orange})")
+    expect(meter).to_have_attribute("aria-valuenow", "86")
+    expect(meter.locator(".bg-orange")).to_be_visible()
+    expect(page.locator(f"{METER} + span")).to_have_text("上下文 86%")
+    ok(f"[{theme}-{size}] the context bar shows 86% used in amber")
     open_drawer(page, size)
-    rows = page.locator("aside a", has_text="8%")
+    rows = page.locator("aside a", has_text="上下文 92%")
     if rows.count():
-        assert "text-red" in rows.first.locator("span.text-red").first.get_attribute("class")
-        ok(f"[{theme}-{size}] the sidebar row's context text is red at 92% used")
+        expect(rows.first.locator("span.text-orange", has_text="上下文 92%")).to_be_visible()
+        ok(f"[{theme}-{size}] the sidebar also shows 92% used in amber")
     ctx.close()
 
 

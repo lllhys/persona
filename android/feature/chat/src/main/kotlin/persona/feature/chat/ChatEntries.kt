@@ -39,6 +39,8 @@ interface ChatServices {
     fun sessions(): SessionsRepository
     fun chatWiring(): ChatWiringSource
     fun inboxTrays(): AssistantInboxTrays
+    /** The current assistant's snapshot, whose `leaders` drive the leader-conversation background fold (#6595). */
+    fun assistantRepository(): AssistantRepository
 }
 
 /** Every service in a binding belongs to the same pairing generation. */
@@ -118,6 +120,7 @@ class ChatDraftEditor(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { error.value = R.string.chat_draft_read_failed }
             ready.value = true
+            state.draftLoaded = true
             // What was typed before the draft arrived was not saved then: it is now (it replaces the draft).
             if (touched) changes.trySend(state.draft)
             val versions = sessionVersions?.let { flow -> launch {
@@ -177,21 +180,41 @@ fun ChatDestination(
     historyReadOnly: Boolean = false, onHistoryBack: (() -> Unit)? = null,
     historyFooter: (@Composable () -> Unit)? = null,
     historySession: Session? = null,
+    /** A Health conversation identified by its host even while its live session row is still loading. */
+    healthChat: Boolean = false,
 ) {
     val context = LocalContext.current.applicationContext
     val services = remember(context) { EntryPointAccessors.fromApplication(context, ChatServices::class.java) }
-    val session = SessionKey(route.machineId, route.sessionId)
-    val wiring by remember(services, session) { services.chatWiring().bindingsFor(session) }.collectAsStateWithLifecycle()
+    val requested = SessionKey(route.machineId, route.sessionId)
+    val wiring by remember(services, requested) { services.chatWiring().bindingsFor(requested) }.collectAsStateWithLifecycle()
     if (wiring == null) { androidx.compose.material3.CircularProgressIndicator(); return }
     val metadata by services.sessions().sessions.collectAsStateWithLifecycle()
+    val routingState = wiring?.connection?.state?.collectAsStateWithLifecycle()?.value
+    val features = wiring?.connection?.lastHello?.features.orEmpty()
+    val home = rememberChildSessionHome(requested, metadata, wiring?.actions, features,
+        routingState == ConnectionState.Online, side = route.side)
+    // A link to a side session (#7944) opens its parent, then the side's own chat over it, once.
+    val landedSide = remember(home, metadata, features) { home.shownSide(metadata, features)?.takeUnless { historyReadOnly } }
+    var sideShown by androidx.compose.runtime.saveable.rememberSaveable(route.machineId, route.sessionId) { mutableStateOf(false) }
+    LaunchedEffect(landedSide) {
+        val side = landedSide ?: return@LaunchedEffect
+        if (sideShown) return@LaunchedEffect
+        sideShown = true
+        navigator.navigate(ChatRoute(side.machineId, side.sessionId, persona.core.navigation.ConversationKind.Agent, side = true))
+    }
+    val session = home.key
+    val shownMetadata = metadata + home.rows
     val managerChoice by AssistantManagerChoice.current.collectAsStateWithLifecycle()
-    val managerId = metadata.firstOrNull { it.key == session }?.manager ?: managerChoice.shown
+    val managerId = shownMetadata.firstOrNull { it.key == session }?.manager ?: managerChoice.shown
     val assistantManagement = remember(wiring?.assistantManagement, managerId) {
         wiring?.assistantManagement?.forManager(managerId)
     }
+    // The hub's leader conversations fold their background rounds in the Assistant tab too (#6595): the repository's
+    // snapshot follows the selected manager, the same one this assistant surface belongs to.
+    val assistantSnapshot by services.assistantRepository().assistant.collectAsStateWithLifecycle()
     val style = renderStyle ?: if (route.kind == persona.core.navigation.ConversationKind.Assistant ||
-        metadata.any { it.key == session && it.assistant }) ChatRenderStyle.Assistant else ChatRenderStyle.Agent
-    val sharingManager = metadata.firstOrNull { it.key == session }?.manager?.takeIf { it.isNotBlank() }
+        shownMetadata.any { it.key == session && it.assistant }) ChatRenderStyle.Assistant else ChatRenderStyle.Agent
+    val sharingManager = shownMetadata.firstOrNull { it.key == session }?.manager?.takeIf { it.isNotBlank() }
     val sharing = remember(wiring?.agentShares, sharingManager, session) {
         wiring?.agentShares?.let { provider -> sharingManager?.let { owner -> { provider.forSession(session, owner) } } }
     }?.takeIf { style == ChatRenderStyle.Agent }
@@ -206,20 +229,27 @@ fun ChatDestination(
         ChatScreen(session, services.chats(), services.messages(),
             services.interactions(), services.sessions(), onBack = onHistoryBack ?: navigator::back,
             onTerminal = onTerminal ?: { navigator.navigate(TerminalRoute(it.machineId, it.sessionId)) },
+            onResumeInTerminal = { navigator.navigate(TerminalRoute(it.machineId, it.sessionId, resume = true)) },
             chrome = ChatChromeBindings(actions = wiring?.actions.takeUnless { historyReadOnly }, connection = wiring?.connection,
+                childSessionId = home.childSessionId.takeIf { landedSide == null },
+                lookupRows = home.rows,
                 worktrees = wiring?.worktrees.takeUnless { historyReadOnly },
                 onOpenSession = { navigator.navigate(ChatRoute(it.machineId, it.sessionId)) },
+                onOpenSide = if (historyReadOnly) null else ({ navigator.navigate(ChatRoute(it.machineId, it.sessionId,
+                    persona.core.navigation.ConversationKind.Agent, side = true)) }),
                 onOpenAssistant = { navigator.navigate(conversationRoute(it, assistant = true)) },
                 onConnectionDetails = { navigator.navigate(SettingsPageRoute(SettingsPage.Diagnostics)) },
                 files = wiring?.files, ports = wiring?.ports, onHandToPersona = handToPersona,
                 tasks = wiring?.tasks?.takeIf { style == ChatRenderStyle.Assistant && !historyReadOnly },
                 assistantManagement = assistantManagement,
+                leaderConversations = assistantSnapshot.leaders.toSet(),
                 agentShares = sharing,
                 inboxTrays = services.inboxTrays(), inboxScope = wiring?.scope?.path,
                 waiting = elsewhere?.waiting.orEmpty(), onOpenRequest = elsewhere?.open),
             renderStyle = style,
             embedded = embedded, showTopBar = showTopBar,
             historyReadOnly = historyReadOnly, historyFooter = historyFooter, historySession = historySession,
+            healthChat = healthChat,
             composerState = composer, onDraftChanged = editor?.let { it::changed },
             composerService = wiring?.composer.takeUnless { historyReadOnly },
             statusBindings = ChatStatusBindings(recovery = wiring?.recovery.takeUnless { historyReadOnly }, draftSaveError = error?.let { stringResource(it) }),

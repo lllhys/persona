@@ -1,19 +1,33 @@
 import SwiftUI
 
 extension SettingsPage {
-    var belongsToCurrentAssistant: Bool {
+    @MainActor func belongsToCurrentAssistant(in model: AppModel) -> Bool {
         switch self {
-        case .models, .agents, .assistant, .claude, .codex, .modelConfiguration, .triage, .connectors, .plugins, .channels,
-             .mail, .feishu, .feishuBot, .sent, .skills,
-             .knowledgeSelection, .pluginMarket, .marketExtension, .pluginMarkets, .subscriptions, .inboxSources, .computers:
+        case .models, .agents, .assistant, .claude, .codex, .modelConfiguration, .triage, .standingAuthorizations, .agentFollowUp,
+             .connectors, .plugins, .channels,
+             .mail, .feishuBot, .sent, .skills,
+             .knowledgeSelection, .pluginMarket, .marketExtension, .pluginMarkets, .inboxSources, .sourcesGraph, .computers:
             true
-        case .connector(_, let manager), .plugin(_, let manager), .pluginPage(_, _, _, let manager), .channel(_, let manager):
-            manager == nil
+        case .connector(_, let manager), .plugin(_, let manager), .pluginPage(_, _, _, let manager), .channel(_, let manager),
+             .subscriptions(_, let manager), .feishu(let manager):
+            manager == nil || model.settingsRoute(manager) == nil
         #if os(iOS)
         case .meetings: true
         #endif
         default: false
         }
+    }
+}
+
+extension AppModel {
+    /// The manager a Settings route names for a page stamped `manager`, as its requests name it. A route that names none opens
+    /// the current assistant's copy (`ExtensionDetailView`, `HubConnectorView`, …), so with multiple assistants the current
+    /// assistant's route names none and another assistant's names its owner. Explicit manager ids normalize the same way; with
+    /// one assistant or a hub without a roster, every route names none.
+    func settingsRoute(_ manager: String?) -> String? {
+        guard let roster = managerRoster, roster.isMulti else { return nil }
+        let owner = roster.owner(manager)
+        return owner == roster.owner(assistantManagerID) ? nil : owner
     }
 }
 
@@ -74,6 +88,10 @@ enum SettingsCatalog {
                   aliases: String(localized: "settings.search.devices")),
             .init(id: "triage", title: String(localized: "Session Triage"), symbol: Theme.Icon.triage, group: .assistant, page: .triage,
                   aliases: String(localized: "settings.search.triage")),
+            .init(id: "standing-authorizations", title: String(localized: "Standing Authorizations"), symbol: Theme.Icon.standingAuthorization,
+                  group: .assistant, page: .standingAuthorizations, aliases: String(localized: "settings.search.standing_authorizations")),
+            .init(id: "agent-follow-up", title: String(localized: "Agent Follow-Up"), symbol: Theme.Icon.supervised, group: .assistant,
+                  page: .agentFollowUp, aliases: String(localized: "settings.search.agent_follow_up")),
             .init(id: "claude", title: String(localized: "Claude Code Settings"), symbol: Theme.Icon.options, group: .assistant, page: .claude,
                   aliases: "Claude Code"),
             .init(id: "codex", title: String(localized: "Codex Settings"), symbol: Theme.Icon.options, group: .assistant, page: .codex,
@@ -93,6 +111,8 @@ enum SettingsCatalog {
                   aliases: String(localized: "settings.search.knowledge")),
             .init(id: "meetings", title: String(localized: "Meetings"), symbol: Theme.Icon.meeting, group: .assistant, page: .meetings,
                   aliases: String(localized: "settings.search.meetings")),
+            .init(id: "live-screen", title: String(localized: "Live Screen"), symbol: Theme.Icon.screen, group: .device, page: .liveScreen,
+                  aliases: String(localized: "settings.search.live_screen")),
             .init(id: "layout", title: String(localized: "Agents List Layout"), symbol: Theme.Icon.listView, group: .device, page: .layout,
                   aliases: String(localized: "settings.search.layout")),
             .init(id: "health", title: String(localized: "Health"), symbol: Theme.Icon.health, group: .device, page: .health,
@@ -128,6 +148,7 @@ struct SettingsAboutPage: View {
     var body: some View {
         SettingsForm {
             Section { LabeledContent("Version", value: version) }
+            DevModeSection()
             Section {
                 DisclosureGroup("Diagnostics") {
                     LabeledContent("Build") { Text(commit).font(Theme.Font.code).textSelection(.enabled) }

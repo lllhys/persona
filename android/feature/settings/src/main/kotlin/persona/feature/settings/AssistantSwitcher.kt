@@ -33,6 +33,7 @@ import persona.core.designsystem.InlineTone
 import persona.core.designsystem.JAction
 import persona.core.designsystem.JAssistantSwitcherHeader
 import persona.core.designsystem.JAssistantSwitcherRow
+import persona.core.designsystem.JDefaultManagerFace
 import persona.core.designsystem.JInlineStatus
 import persona.core.designsystem.JManagerAvatar
 import persona.core.designsystem.JMenu
@@ -125,7 +126,7 @@ fun AssistantSwitcher(
 /**
  * The switcher as drawn for [roster] with [shown] current at [now] (the pictures draw this with fixed data): the head,
  * and while [expanded] the roster in a menu under it ([JMenu]: as wide as the switcher, closed by a tap outside, scrolled
- * when it does not fit), then New assistant and Manage assistants….
+ * when it does not fit; [ManagerRoster.switcherRows]), then New assistant and Manage assistants….
  */
 @Composable
 internal fun AssistantSwitcherContent(
@@ -137,16 +138,22 @@ internal fun AssistantSwitcherContent(
     val res = LocalResources.current
     val density = LocalDensity.current
     val default = roster.defaultManagerId
-    val current = roster.manager(shown)?.takeIf { !it.isInstalling } ?: roster.installed.first()
+    val current = roster.manager(shown)?.takeIf { !it.isInstalling && !it.hidden } ?: roster.installed.first()
     val others = waiting.any { (id, count) -> count > 0 && id != current.id }
-    // The installed ones, the default first, then the ones still installing, as the roster orders them.
-    val list = roster.installed + roster.managers.filter { it.isInstalling }
+    // The installed ones, the default first, then the ones still installing, as the roster orders them; not the hub's
+    // own assistant while it is kept out (`hidden`).
+    val list = roster.switcherRows
     val listLabel = stringResource(R.string.settings_managers_title)
     var width by remember { mutableStateOf(Dp.Unspecified) }
     Box(modifier.fillMaxWidth().onSizeChanged { width = with(density) { it.width.toDp() } }) {
         if (head != null) head(current, current.id == default, expanded, onToggle)
         else JAssistantSwitcherHeader(current.shownName, switcherLine(res, current, now), expanded, onToggle, headModifier,
-            avatar = { JManagerAvatar(current, current.id == default, presence = true, alert = others && !expanded) }, trailing = trailing,
+            // The default assistant shows the look's face (one identity with its main conversation, #6401);
+            // any other keeps its first-letter monogram.
+            avatar = {
+                if (current.id == default) JDefaultManagerFace(current, presence = true, alert = others && !expanded)
+                else JManagerAvatar(current, false, presence = true, alert = others && !expanded)
+            }, trailing = trailing,
             othersWaiting = others && !expanded)
         JMenu(expanded, onDismiss, listOf(
             JAction(stringResource(R.string.settings_managers_new), PhIcons.Plus, onClick = onNew),

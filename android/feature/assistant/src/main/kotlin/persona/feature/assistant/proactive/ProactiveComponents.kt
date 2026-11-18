@@ -70,8 +70,8 @@ internal fun UpcomingRow(item: Upcoming, now: Instant, zone: ZoneId, position: G
 }
 
 /**
- * A repeating task: its rule in words, the next and last run, what it runs with when that is not the default, "Push alerts only"
- * when "Push when done" is only its alerts, who set it up, and its switch. The picture carries a mark when the last run failed (danger) or when Persona made it.
+ * A repeating task: its rule in words, the next and last run, what it runs with when that is not the default, its push and Inbox choices,
+ * who set it up, and its switch. The picture carries a mark when the last run failed (danger) or when Persona made it.
  */
 @Composable
 internal fun TaskRow(
@@ -82,11 +82,12 @@ internal fun TaskRow(
     val failed = lastRun?.failed == true
     val title = task.displayTitle(say)
     val lines = listOfNotNull(
-        say.rule(task, now, zone),
+        listOfNotNull(say.rule(task, now, zone),
+            stringResource(R.string.assistant_proactive_push_asked_mark).takeIf { task.pushesOnlyAsked },
+            taskInboxMark(task)).joinToString(" · "),
         task.nextLine(say, now, zone),
         lastRun?.line(say, now, zone),
         task.runsWith(say),
-        stringResource(R.string.assistant_proactive_push_asked_mark).takeIf { task.pushesOnlyAsked },
         stringResource(R.string.assistant_proactive_made_by_assistant).takeIf { task.byAssistant },
     )
     JGroupItem(position) {
@@ -112,6 +113,14 @@ internal fun TaskRow(
     }
 }
 
+/** The Inbox setting beside the push mark; null for Don't or a value this app does not know. */
+@Composable
+private fun taskInboxMark(task: ScheduledTask): String? = when (task.inbox) {
+    ScheduledTask.INBOX_WORTHY -> stringResource(R.string.assistant_proactive_inbox_worthy_mark)
+    ScheduledTask.INBOX_EVERY -> stringResource(R.string.assistant_proactive_inbox_every_mark)
+    else -> null
+}
+
 /** A one-off Persona scheduled (or the user did): when, where it goes, what it will do. ⋯ holds "Run now" and "Delete". */
 @Composable
 internal fun OneOffRow(
@@ -126,6 +135,7 @@ internal fun OneOffRow(
         task.prompt.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.takeIf { it != title },
         task.runsWith(say),
         stringResource(R.string.assistant_proactive_push_asked_mark).takeIf { task.pushesOnlyAsked },
+        taskInboxMark(task),
     )
     JGroupItem(position) {
         JRow(

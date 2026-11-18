@@ -55,9 +55,20 @@ type Machine struct {
 	lastSeen  time.Time
 	// sessions is the manager's last list. A list once kept is never changed in place, only replaced (a change copies
 	// it first): keptSessions hands it out without a copy, to be read after m.mu is let go.
-	sessions []proto.Session
+	sessions             []proto.Session
+	deletedConversations map[string]proto.Session // Permanent manager tombstones, overlaid on delayed inventories; guarded by mu.
+	responseMu           sync.Mutex
+	responseFences       map[string]*conversationResponseFence
 	// lists decodes the manager's lists (fleet.sessions), only the sessions whose bytes changed (fleet_link.go).
 	lists proto.SessionListDecoder
+	// archived are the archived rows the manager archivedBy tells apart from its list (fleet.archived, #6836), in the
+	// order told, and archivedAt each one's index by id. The apps never get them (Hub.shown leaves archived rows out);
+	// everything else that read the manager's list when they were in it reads them too (session, sessionList,
+	// keptWhole), so a row answers the same either way (a port it listens on, a lookup by id, a busy agent). Replaced
+	// whole, never changed in place.
+	archived   []proto.Session
+	archivedAt map[string]int
+	archivedBy string
 	// raws are the bytes each session of the list rawsOf names came in, by id ("" for an id the list names twice),
 	// when that list was decoded from them: a list kept any other way since has none (rawsFor). Never changed: a new
 	// list gets a new map.
@@ -74,12 +85,17 @@ type Machine struct {
 	// session is neither subscribed nor watched on the node (dropWatchSlot).
 	watchMu   map[string]*watchSlot
 	nodeWatch map[string]nodeWatchState
-	// The web panels' open folders on this machine (fswatch.go): fswMu orders the fs.watch calls, fswSent says the
-	// node was given a non-empty set, fswWarned that a failure was logged (a node without fs.watch).
-	fswMu     sync.Mutex
-	fswSent   bool
-	fswWarned bool
-	lastSeq   map[string]int // session id -> highest item seq seen
+	// The web panels' open folders on this machine (fswatch.go): fswMu guards the fields below. One worker syncs the
+	// node at a time, with fswPending coalescing changes made while it is out; fswForce resends even an empty set on a
+	// new connection. fswSent says an empty set must still be sent (the node has a non-empty one, or a forced one
+	// failed), fswWarned that a failure was logged.
+	fswMu      sync.Mutex
+	fswSent    bool
+	fswWarned  bool
+	fswRunning bool
+	fswPending bool
+	fswForce   bool
+	lastSeq    map[string]int // session id -> highest item seq seen
 	// derived: a computer only a member hub has in hub.json; the center reaches it through that hub.
 	derived bool
 
@@ -224,6 +240,9 @@ func (m *Machine) reconnect() {
 }
 
 func (m *Machine) call(ctx context.Context, method string, params any, out any) error {
+	if err := m.deletedCall(method, params); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	p := m.peer
 	info := m.info
@@ -251,7 +270,10 @@ func (m *Machine) call(ctx context.Context, method string, params any, out any) 
 		return fmt.Errorf("%s: %w", m.name(), errOffline)
 	default:
 	}
-	return p.Call(ctx, method, params, out)
+	if err := p.Call(ctx, method, params, out); err != nil {
+		return err
+	}
+	return m.deletedCall(method, params)
 }
 
 // reachable: a call would go out now (call answers errOffline otherwise).
@@ -285,12 +307,13 @@ func (m *Machine) notify(event string, params any) error {
 	return p.Notify(event, params)
 }
 
+// sessionList is a copy of the manager's whole list: its list, then the archived rows it told apart (archived).
+// What the apps get leaves archived rows out (Hub.shown) either way.
 func (m *Machine) sessionList() []proto.Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make([]proto.Session, len(m.sessions))
-	copy(out, m.sessions)
-	return out
+	out := make([]proto.Session, 0, len(m.sessions)+len(m.archived))
+	return append(append(out, m.sessions...), m.archived...)
 }
 
 // keptSessions is the machine's list itself, not a copy: only to be read (Machine.sessions). The pushes read a busy
@@ -301,6 +324,16 @@ func (m *Machine) keptSessions() []proto.Session {
 	return m.sessions
 }
 
+// keptWhole is keptSessions and the archived rows told apart (archived), neither copied, only to be read: the
+// manager's whole list, for what reads every row it listed rather than what the apps get (port access, busy agents,
+// space names).
+func (m *Machine) keptWhole() (list, archived []proto.Session) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sessions, m.archived
+}
+
+// session is session id as the manager listed it: in its list, else among its archived rows (archived).
 func (m *Machine) session(id string) (proto.Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -309,26 +342,78 @@ func (m *Machine) session(id string) (proto.Session, bool) {
 			return m.sessions[i], true
 		}
 	}
+	if i, ok := m.archivedAt[id]; ok {
+		return m.archived[i], true
+	}
 	return proto.Session{}, false
 }
 
-func (m *Machine) addWatcher(ctx context.Context, id string) {
+// setArchived keeps list as the archived rows manager told apart (fleet.archived).
+func (m *Machine) setArchived(manager string, list []proto.Session) {
+	at := archivedIndex(list)
+	m.mu.Lock()
+	m.archived, m.archivedAt, m.archivedBy = list, at, manager
+	m.mu.Unlock()
+}
+
+// archivedIndex is each row's index in list by id, the first for an id listed twice, as a lookup in the list finds it.
+func archivedIndex(list []proto.Session) map[string]int {
+	at := make(map[string]int, len(list))
+	for i := range list {
+		if _, ok := at[list[i].SessionID]; !ok {
+			at[list[i].SessionID] = i
+		}
+	}
+	return at
+}
+
+// archivedOnlyOf drops the archived rows unless manager told them: a list from another manager (the machine moved to
+// one that tells them in its list) has its own.
+func (m *Machine) archivedOnlyOf(manager string) {
+	m.mu.Lock()
+	if m.archivedBy != manager {
+		m.archived, m.archivedAt, m.archivedBy = nil, nil, ""
+	}
+	m.mu.Unlock()
+}
+
+// watcherJoined counts one more app subscribed to session id, watcherLeft one fewer. Neither tells the node: the
+// caller syncs the node's watch afterwards (syncWatch, syncUnwatch). An app's connection counts in its read loop, in
+// the order its messages came, and syncs from a goroutine: the node may take up to watchCallTimeout to answer, and
+// nothing else the app sends is read while its read loop waits (#5915). Counting cannot move to the goroutine
+// too: a leave that ran ahead of its join would find nothing to take away, and the join would then stay for good.
+func (m *Machine) watcherJoined(id string) {
 	m.mu.Lock()
 	m.watchers[id]++
 	m.mu.Unlock()
-	m.syncWatch(ctx, id)
 }
 
-func (m *Machine) removeWatcher(id string) {
+func (m *Machine) watcherLeft(id string) {
 	m.mu.Lock()
 	m.watchers[id]--
 	if m.watchers[id] <= 0 {
 		delete(m.watchers, id)
 	}
 	m.mu.Unlock()
+}
+
+// syncUnwatch syncs session id's watch after an app left it, not on that app's connection, which may be gone.
+func (m *Machine) syncUnwatch(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), watchCallTimeout)
 	defer cancel()
 	m.syncWatch(ctx, id)
+}
+
+// addWatcher is a join and its sync in one call, removeWatcher a leave and its sync: for a caller that may wait for
+// the node, which a connection's read loop may not (watcherJoined).
+func (m *Machine) addWatcher(ctx context.Context, id string) {
+	m.watcherJoined(id)
+	m.syncWatch(ctx, id)
+}
+
+func (m *Machine) removeWatcher(id string) {
+	m.watcherLeft(id)
+	m.syncUnwatch(id)
 }
 
 // setSessionList keeps list as the sessions the node has now, and drops the highest item seq of those it no longer
@@ -341,7 +426,30 @@ func (m *Machine) setSessionList(list []proto.Session) { m.setSessionListRaws(li
 // came in (proto.SessionListDecoder), by which a push tells which sessions' rows it can send again (encodeKept); nil
 // for a list that came another way.
 func (m *Machine) setSessionListRaws(list []proto.Session, raws []string) {
+	var newDeletions []string
+	for _, row := range list {
+		if row.IsDeleted() && !m.conversationDeleted(row.SessionID) {
+			newDeletions = append(newDeletions, row.SessionID)
+		}
+	}
+	slices.Sort(newDeletions)
+	newDeletions = slices.Compact(newDeletions)
+	for _, id := range newDeletions {
+		defer m.lockConversationResponse(id)()
+	}
 	m.mu.Lock()
+	for _, row := range list {
+		if row.IsDeleted() {
+			if m.deletedConversations == nil {
+				m.deletedConversations = map[string]proto.Session{}
+			}
+			m.deletedConversations[row.SessionID] = row
+		}
+	}
+	if len(m.deletedConversations) > 0 {
+		list = m.overlayDeletedLocked(list)
+		raws = nil // A delayed row's original bytes must not bypass the tombstone.
+	}
 	m.sessions = list
 	m.raws, m.rawsOf = nil, keptList{}
 	if len(raws) == len(list) && len(list) > 0 {
@@ -360,14 +468,22 @@ func (m *Machine) setSessionListRaws(list []proto.Session, raws []string) {
 	for _, s := range list {
 		listed[s.SessionID] = true
 	}
+	// An archived row told apart (archived) is still the manager's, as when it came in the list.
+	gone := func(id string) bool {
+		if listed[id] {
+			return false
+		}
+		_, archived := m.archivedAt[id]
+		return !archived
+	}
 	for id := range m.lastSeq {
-		if !listed[id] && !m.watchStateInUseLocked(id) {
+		if gone(id) && !m.watchStateInUseLocked(id) {
 			delete(m.lastSeq, id)
 		}
 	}
 	var unsettled []string
 	for id, state := range m.nodeWatch {
-		if state == nodeWatchUnknown && !listed[id] && m.watchers[id] <= 0 {
+		if state == nodeWatchUnknown && gone(id) && m.watchers[id] <= 0 {
 			unsettled = append(unsettled, id)
 		}
 	}
@@ -428,14 +544,16 @@ func (m *Machine) settleEnded(id string) {
 	delete(m.lastSeq, id)
 }
 
-// listsLocked reports whether the node's last list has session id; m.mu is held.
+// listsLocked reports whether the node's last list has session id, among the archived rows told apart too
+// (archived); m.mu is held.
 func (m *Machine) listsLocked(id string) bool {
-	for _, s := range m.sessions {
-		if s.SessionID == id {
+	for i := range m.sessions {
+		if m.sessions[i].SessionID == id {
 			return true
 		}
 	}
-	return false
+	_, ok := m.archivedAt[id]
+	return ok
 }
 
 // watchStateInUseLocked reports whether an app watches session id or the node may be watching it; m.mu is held.
@@ -621,6 +739,16 @@ func (m *Machine) onEvent(event string, params json.RawMessage) {
 			// (encodeKept): the sessions whose rev changed are encoded again, the others' rows still hold.
 			m.rawsOf = keptListOf(m.sessions)
 		}
+		// An archived row told apart (archived) takes its rev as it did in the list: a lookup by id reads it.
+		cloned := false
+		for id, r := range p.Revs {
+			if i, ok := m.archivedAt[id]; ok {
+				if !cloned {
+					m.archived, cloned = slices.Clone(m.archived), true // replaced whole, never changed in place
+				}
+				m.archived[i].Rev = r
+			}
+		}
 		m.mu.Unlock()
 		// Every app, not only those watching: this is what lets them pull a session before it is opened.
 		m.hub.broadcast(map[string]any{"type": "revs", "machine_id": m.cfg.ID, "revs": p.Revs})
@@ -703,6 +831,10 @@ func (m *Machine) onEvent(event string, params json.RawMessage) {
 			m.hub.toSubscribers(m.cfg.ID, p.SessionID, deltaPush{Type: "delta", MachineID: m.cfg.ID, SessionID: p.SessionID, Text: p.Text})
 		}
 	case "codex.inventory":
+		if !m.codexInventoryHanded() {
+			m.hub.logf("[%s] Codex inventory from a connection the hub has not handed its own yet: not kept", m.cfg.ID)
+			return
+		}
 		m.rememberCodexInventory(params)
 	case "session.echo":
 		m.recordEcho(params)

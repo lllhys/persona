@@ -30,11 +30,14 @@ type fakeAppServer struct {
 	mu      sync.Mutex
 	got     []codexMessage // requests and notifications from the node
 	replies map[string]codexMessage
+	waiting map[string]chan codexMessage
+	ended   chan struct{}
 	results map[string]any    // method → result
 	errors  map[string]string // method → error message, instead of a result
 }
 
 func (f *fakeAppServer) serve(r io.Reader) {
+	defer close(f.ended)
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 16<<20)
 	for sc.Scan() {
@@ -45,6 +48,12 @@ func (f *fakeAppServer) serve(r io.Reader) {
 		f.mu.Lock()
 		if m.Method == "" { // the node answering one of our requests
 			f.replies[string(m.ID)] = m
+			if waiting := f.waiting[string(m.ID)]; waiting != nil {
+				select {
+				case waiting <- m:
+				default: // a duplicate response cannot hold the fixture's reader
+				}
+			}
 			f.mu.Unlock()
 			continue
 		}
@@ -65,9 +74,13 @@ func (f *fakeAppServer) serve(r io.Reader) {
 	}
 }
 
-func (f *fakeAppServer) push(v any) {
-	b, _ := json.Marshal(v)
-	_, _ = f.out.Write(append(b, '\n'))
+func (f *fakeAppServer) push(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = f.out.Write(append(b, '\n'))
+	return err
 }
 
 func (f *fakeAppServer) sent(method string) []codexMessage {
@@ -85,19 +98,53 @@ func (f *fakeAppServer) sent(method string) []codexMessage {
 // request sends a request to the node and waits for its answer.
 func (f *fakeAppServer) request(id int, method string, params any) map[string]any {
 	f.t.Helper()
-	f.push(map[string]any{"id": id, "method": method, "params": params})
-	key, _ := json.Marshal(id)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r, err := f.requestReply(ctx, id, method, params)
+	if err != nil {
+		f.t.Fatalf("%s not answered: %v", method, err)
+	}
 	var res map[string]any
-	waitFor(f.t, method+" answered", func() bool {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		r, ok := f.replies[string(key)]
-		if ok {
-			_ = json.Unmarshal(r.Result, &res)
-		}
-		return ok
-	})
+	_ = json.Unmarshal(r.Result, &res)
 	return res
+}
+
+// requestReply observes the actual response, including an error, without a polling
+// timer. Register before writing so a response that arrives at once cannot be lost.
+func (f *fakeAppServer) requestReply(ctx context.Context, id int, method string, params any) (codexMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return codexMessage{}, err
+	}
+	key, _ := json.Marshal(id)
+	waiting := make(chan codexMessage, 1)
+	f.mu.Lock()
+	if f.waiting[string(key)] != nil {
+		f.mu.Unlock()
+		return codexMessage{}, fmt.Errorf("fixture request %d is already waiting", id)
+	}
+	f.waiting[string(key)] = waiting
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		delete(f.waiting, string(key))
+		f.mu.Unlock()
+	}()
+	if err := f.push(map[string]any{"id": id, "method": method, "params": params}); err != nil {
+		return codexMessage{}, err
+	}
+	select {
+	case reply := <-waiting:
+		return reply, nil
+	case <-ctx.Done():
+		return codexMessage{}, ctx.Err()
+	case <-f.ended:
+		select { // the final response is still usable when EOF immediately follows it
+		case reply := <-waiting:
+			return reply, nil
+		default:
+			return codexMessage{}, io.EOF
+		}
+	}
 }
 
 func newFakeCodex(t *testing.T, n *Node, cwd string) (*assistantProc, *codexConn, *fakeAppServer) {
@@ -109,10 +156,11 @@ func newFakeCodex(t *testing.T, n *Node, cwd string) (*assistantProc, *codexConn
 	c := &codexConn{n: n, p: p, key: "proc-test", pending: map[int64]chan codexReply{}, asks: map[string]context.CancelFunc{},
 		files: map[string][]string{}}
 	p.cx = c
-	f := &fakeAppServer{t: t, out: outW, replies: map[string]codexMessage{}, results: map[string]any{}}
+	f := &fakeAppServer{t: t, out: outW, replies: map[string]codexMessage{}, results: map[string]any{},
+		waiting: map[string]chan codexMessage{}, ended: make(chan struct{})}
 	go f.serve(inR)
 	go c.read(outR)
-	t.Cleanup(func() { _ = inW.Close(); _ = outW.Close() })
+	t.Cleanup(func() { _ = inW.Close(); _ = outW.Close(); <-f.ended })
 	return p, c, f
 }
 
@@ -129,6 +177,20 @@ type fakeHub struct {
 	mcp       []map[string]any      // the mcp.tools / mcp.call params relayed ("method" says which)
 	onModel   func()                // called as assistant.model is asked, before it answers (model_restore_test.go)
 	onContext func(context.Context) // optional isolated snapshot delay (assistant_send_latency_test.go)
+	pushed    map[string][]pushRow  // each row the node pushed (sessions.changed), by session id
+}
+
+// pushRow is a row's status in one sessions.changed push, and when it came.
+type pushRow struct {
+	status string
+	at     time.Time
+}
+
+// rows are conversation id's rows in the node's pushes so far, in order.
+func (h *fakeHub) rows(id string) []pushRow {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]pushRow(nil), h.pushed[id]...)
 }
 
 func (h *fakeHub) interactions() []proto.Interaction {
@@ -219,6 +281,21 @@ func withFakeHub(t *testing.T, n *Node) *fakeHub {
 		return map[string]any{}, nil
 	}
 	hub.OnEvent = func(event string, params json.RawMessage) {
+		if event == "sessions.changed" {
+			var p struct {
+				Sessions []proto.Session `json:"sessions"`
+			}
+			_ = json.Unmarshal(params, &p)
+			fh.mu.Lock()
+			if fh.pushed == nil {
+				fh.pushed = map[string][]pushRow{}
+			}
+			for _, s := range p.Sessions {
+				fh.pushed[s.SessionID] = append(fh.pushed[s.SessionID], pushRow{s.Status, time.Now()})
+			}
+			fh.mu.Unlock()
+			return
+		}
 		if event != "session.delta" {
 			return
 		}
@@ -236,7 +313,7 @@ func withFakeHub(t *testing.T, n *Node) *fakeHub {
 	return fh
 }
 
-func codexTestNode(t *testing.T) *Node {
+func codexTestNode(t testing.TB) *Node {
 	n, _ := testNode(t)
 	n.akeys = map[string]*assistantProc{}
 	n.modes = map[string]sessionModes{}
@@ -279,6 +356,8 @@ func TestCodexTurnWithoutEffortOnAuto(t *testing.T) {
 
 func TestCodexStartAndTurns(t *testing.T) {
 	n := codexTestNode(t)
+	// Notifications read this directory too; configure it before starting the transport.
+	n.dir = t.TempDir()
 	fh := withFakeHub(t, n)
 	cwd := t.TempDir()
 	rollout := filepath.Join(t.TempDir(), "rollout-2026-11-01T01-27-25-"+testThread+".jsonl")
@@ -374,7 +453,6 @@ func TestCodexStartAndTurns(t *testing.T) {
 	})
 
 	// A photo goes in as a local file the rollout records (and the app shows as a thumbnail).
-	n.dir = t.TempDir()
 	if err := c.deliver(ctx, "", "", []proto.Image{{Mime: "image/png", Data: "iVBORw0KGgo="}}); err != nil {
 		t.Fatal(err)
 	}
@@ -620,6 +698,20 @@ func TestCodexSharesTheAssistantMemory(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(codexArgs("/bin/personad", "k"), " "), "features.memories=false") {
 		t.Fatal("Codex's own memories not turned off")
+	}
+}
+
+// The ChatGPT apps of the machine's Codex sign-in are declared in full in every request (#10275): the assistant's
+// Codex starts without them, whichever MCP namespaces and compaction window it gets.
+func TestCodexAssistantStartsWithoutChatGPTApps(t *testing.T) {
+	for _, args := range [][]string{
+		codexArgs("/bin/personad", "k"),
+		codexArgs("/bin/personad", "k", 400000),
+		codexArgsForHome("/bin/personad", "k", "/home/me/.persona", false),
+	} {
+		if !slices.Contains(args, "features.apps=false") {
+			t.Fatalf("ChatGPT apps not turned off: %q", args)
+		}
 	}
 }
 

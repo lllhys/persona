@@ -24,6 +24,7 @@ fun Session.keepingDetails(old: Session?): Session {
         queued = queued ?: old.queued,
         ports = ports ?: old.ports,
         suggestion = suggestion ?: old.suggestion,
+        suggestionRisky = if (suggestion == null) old.suggestionRisky else suggestionRisky,
         codexRoute = codexRoute ?: old.codexRoute,
         codexRouteNote = codexRouteNote ?: old.codexRouteNote,
         runtime = runtime ?: old.runtime,

@@ -121,3 +121,11 @@ func TestValues(t *testing.T) {
 		t.Fatal("an unknown zone is UTC")
 	}
 }
+
+func TestToolImage(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	img := ToolImage(png, "00:12")
+	if img.Mime != "image/png" || img.Caption != "00:12" || img.Data != base64.StdEncoding.EncodeToString(png) {
+		t.Fatalf("%+v", img)
+	}
+}

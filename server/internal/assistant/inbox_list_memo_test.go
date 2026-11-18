@@ -193,16 +193,19 @@ func TestInboxChangesAreListedBeforeTheirSave(t *testing.T) {
 		{"event moved by a group append", func(t *testing.T, h *inboxHub, c *replyRacingConnector, it *InboxItem, listed func() InboxItem) InboxItem {
 			listed()
 			moved := thing("b", time.Now())
-			moved.ID, moved.Title = it.ID, "Moved"
+			moved.ID, moved.Preview = it.ID, "Moved"
 			h.putEvent(assistantwire.InboxSource{ID: it.Source, Name: "Example"}, moved.Thread, plannedEvent{messages: []string{"b"}}, moved, false)
 			return listed()
-		}, func(x InboxItem) bool { return x.Title == "Moved" }},
+		}, func(x InboxItem) bool { return x.Preview == "Moved" }},
 		{"Agent a handed-off conversation started", func(t *testing.T, h *inboxHub, c *replyRacingConnector, it *InboxItem, listed func() InboxItem) InboxItem {
 			listed()
 			h.handoffAgentStarted(&handoffStart{item: it.ID}, "m1", "sess-handed", "look into it")
 			return listed()
 		}, chained(ChainAgent, "sess-handed")},
 		{"event's conversation being started", func(t *testing.T, h *inboxHub, c *replyRacingConnector, it *InboxItem, listed func() InboxItem) InboxItem {
+			// Like a handling pass, own starts while observing them; collection can now queue a pass with the twin off.
+			h.inbox.handing.Lock()
+			defer h.inbox.handing.Unlock()
 			h.setConfig(func(c *assistantwire.InboxConfig) { c.Agent.Enabled = true })
 			h.inbox.mu.Lock()
 			it.Agent = &InboxAgent{State: AgentQueued, Task: "look"}

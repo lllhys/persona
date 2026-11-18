@@ -17,9 +17,7 @@ jobs:
         with:
           node-version-file: web/.nvmrc
           cache: npm
-          cache-dependency-path: |
-            sdk/ts/package-lock.json
-            integrations/agent-sdk/package-lock.json
+          cache-dependency-path: sdk/ts/package-lock.json
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.2'

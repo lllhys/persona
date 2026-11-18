@@ -74,11 +74,10 @@ func peerItem(mk func(int, string, string) proto.Item, text, name, body string) 
 	} else if !ok {
 		from = FromSession
 	}
-	// The user's own message from the phone, through the session's peer inbox (node/claudepeer.go): its words, without
-	// what Persona told the model about where they came from.
 	if from == PersonaPeer {
-		if words, ok := prompts.PeerMessageBody(tagged); ok {
-			tagged = strings.TrimSpace(words)
+		tagged = personaWords(tagged)
+		if tagged == strings.TrimSpace(prompts.PeerStop()) {
+			tagged = StoppedFromPhone
 		}
 	}
 	if tagged == "" {
@@ -88,6 +87,20 @@ func peerItem(mk func(int, string, string) proto.Item, text, name, body string) 
 	it.Text, it.From = clip(tagged), from
 	return it, true
 }
+
+// personaWords is the user's own words in a message from the phone through the session's peer inbox
+// (node/claudepeer.go), without what Persona told the model about where they came from.
+func personaWords(body string) string {
+	if words, ok := prompts.PeerMessageBody(body); ok {
+		return strings.TrimSpace(words)
+	}
+	return body
+}
+
+// StoppedFromPhone is how the chat shows the phone's Stop of a session outside Persona's terminals: a message through
+// its peer inbox asking the model to stop (prompts.PeerStop, node/claudebg.go interruptOutside) reads as the stop it
+// is, not as those words (the hub puts it in the reader's language, hub/transcript_text.go).
+const StoppedFromPhone = "在手机上点了停止"
 
 // PersonaPeer is the sender name node signs the messages it sends through a claude's peer inbox with (the user's
 // own words from the phone, node/claudepeer.go peerSender).

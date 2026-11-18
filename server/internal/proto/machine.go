@@ -76,6 +76,9 @@ type Machine struct {
 	// FileTransfer: whether files may be sent to this computer to keep and between it and others (#3065,
 	// docs/protocol/file-transfer.md). Always set by a manager that knows the feature; nil (from an older one) is off.
 	FileTransfer *MachineFileTransfer `json:"file_transfer,omitempty"`
+	// ClaudePlugin: the Persona plugin for Claude Code on it, as its node last said (docs/operations/link.md "Claude
+	// Code plugin"); nil from an older node or one that has not checked.
+	ClaudePlugin *ClaudePlugin `json:"claude_plugin,omitempty"`
 	// Hub mesh (docs/server/mesh.md): the hub that connects to this machine (its owner), its name, the machine's own id
 	// (~/.persona/machine-uid, empty for an old node or one never reached) and how the hub the client talks to gets
 	// there. A hub without peers fills them in for its own machines too.
@@ -159,6 +162,13 @@ type NodeInfo struct {
 	// Clipboard: whether the node reaches a clipboard where it runs (clipboard.get / clipboard.set, capability
 	// clipboard). An older node leaves it out.
 	Clipboard *ClipboardSupport `json:"clipboard,omitempty"`
+	// HomeReal is Home with its links followed, when that is another path (a home reached through a symlink, such as
+	// /home/me -> /data/home/me): the hub cannot resolve another computer's links, and a directory named either way
+	// is the same one (remembered kinds of tasks, #8095). Older nodes, and homes that are no link, leave it out.
+	HomeReal string `json:"home_real,omitempty"`
+	// ClaudePlugin is the Persona plugin for Claude Code there (claudeplugin.go): nil from older nodes and from a
+	// node that has not checked yet.
+	ClaudePlugin *ClaudePlugin `json:"claude_plugin,omitempty"`
 }
 
 // System is what a machine is: OS, hardware, since when it runs (sysmon; docs/server/machines.md). Read once when the node

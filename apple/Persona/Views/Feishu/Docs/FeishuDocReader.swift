@@ -1,6 +1,7 @@
 import MarkdownUI
 import PersonaKit
 import SwiftUI
+import PersonaWire
 
 // The native document reader: Markdown export first (fast, faithful tables and lists); when the owner forbids export,
 // the JSON node tree rendered natively. Around the text: title, where it lives, who edited it, read count, the cached
@@ -643,7 +644,7 @@ struct FeishuDocsOutlineSheet: View {
             .listStyle(.plain)
             .navigationTitle("Folder [Task Views 52daa7]")
             .navigationBarTitleDisplayMode(.inline)
-            .macSheetDone { dismiss() }
+            .sheetDone { dismiss() }
         }
     }
 }

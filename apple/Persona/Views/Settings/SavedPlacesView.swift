@@ -222,13 +222,7 @@ struct SavedPlaceEditor: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheetCancel(unsaved: draft != opened, when: creating) { dismiss() }
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button { Task { await persist() } } label: {
-                    if saving { ProgressView() } else { Text(creating ? String(localized: "Add [Beautiful U I Bridge 7a8a11]") : String(localized: "Save")).lineLimit(1) }
-                }
-                .disabled(!canSave || saving)
-                .accessibilityIdentifier("saved-place-save")
-            }
+            SheetConfirm(id: "saved-place-save", disabled: !canSave, busy: saving) { Task { await persist() } }
         }
         .interactiveDismissDisabled(saving)
         .onAppear {

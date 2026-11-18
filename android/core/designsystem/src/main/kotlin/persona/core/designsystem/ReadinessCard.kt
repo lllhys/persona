@@ -175,4 +175,4 @@ fun ReadinessHelpDialog(
 
 /** What to type on the computer (the same lines the web's help shows). */
 private const val InstallCommand = "curl -fsSL https://claude.ai/install.sh | bash"
-private const val LoginCommand = "claude"
+private const val LoginCommand = "claude auth login"

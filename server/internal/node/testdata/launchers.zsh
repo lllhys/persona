@@ -62,6 +62,14 @@ cc_exports() {
 	)
 }
 
+# The gateway and model resolved into arrays first, then `command env` (a launcher catalog's generated function).
+cc_command_env() {
+	local model="vendor/model-e"
+	local -a flags=(-u ANTHROPIC_API_KEY)
+	local -a kv=(ANTHROPIC_BASE_URL="https://gw.example.com/e" ANTHROPIC_AUTH_TOKEN="sk-fake-command-env-0123456789")
+	command env "${flags[@]}" "${kv[@]}" claude --dangerously-skip-permissions --model "$model" "$@"
+}
+
 # Codex, not Claude.
 cx() {
 	OPENAI_BASE_URL="https://gw.example.com/openai" OPENAI_API_KEY="sk-fake-codex-0123456789" codex -m gpt-x -c model_reasoning_effort=high "$@"

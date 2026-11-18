@@ -13,6 +13,30 @@ export interface FsEntry {
   mtime?: string;
   /** Git ignores it (the tree dims it); only set inside a repository. */
   ignored?: boolean;
+  /** A symlink's text and whether it leads nowhere (hub feature `file_info`, docs/protocol/protocol.md "File details and links"). */
+  link_target?: string;
+  link_broken?: boolean;
+}
+
+/** One path's details (`/stat?detail=1`, the Info dialog); an older node sends only path, kind and size. */
+export interface FileInfo {
+  path: string;
+  /** file, dir, link (a broken symlink), denied, missing */
+  kind: string;
+  size?: number;
+  /** Permission bits as chmod takes them. */
+  mode?: number;
+  owner?: string;
+  group?: string;
+  mtime?: string;
+  ctime?: string;
+  birthtime?: string;
+  items?: number;
+  items_more?: boolean;
+  symlink?: boolean;
+  link_target?: string;
+  link_real?: string;
+  link_broken?: boolean;
 }
 
 export interface FsListing {
@@ -96,15 +120,33 @@ export function joinPath(dir: string, name: string): string {
   return dir.replace(/\/+$/, "") + "/" + name.replace(/^\/+/, "");
 }
 
+// A path from a Windows computer: a drive letter or a UNC share, the same test as baseName's in lib/format.ts. Only
+// there is a backslash a separator (the node answers such paths with backslashes); in any other path it is a character
+// of a name.
+const WINDOWS_PATH = /^[A-Za-z]:[\\/]|^\\\\/;
+
+/** `p` without separators at its end, and where its last separator is now (-1: none). */
+function lastPart(p: string): { t: string; at: number } {
+  if (!WINDOWS_PATH.test(p)) {
+    const t = p.replace(/\/+$/, "");
+    return { t, at: t.lastIndexOf("/") };
+  }
+  const t = p.replace(/[\\/]+$/, "");
+  return { t, at: Math.max(t.lastIndexOf("/"), t.lastIndexOf("\\")) };
+}
+
+/** The folder `p` is in: "/" for a file at the root, a Windows drive's root with its separator (`C:\`), "" for a bare name. */
 export function dirName(p: string): string {
-  const t = p.replace(/\/+$/, "");
-  const i = t.lastIndexOf("/");
-  return i < 0 ? "" : i === 0 ? "/" : t.slice(0, i);
+  const { t, at } = lastPart(p);
+  if (at < 0) return "";
+  if (at === 0) return "/";
+  const dir = t.slice(0, at);
+  return /^[A-Za-z]:$/.test(dir) ? t.slice(0, at + 1) : dir;
 }
 
 export function fileName(p: string): string {
-  const t = p.replace(/\/+$/, "");
-  return t.slice(t.lastIndexOf("/") + 1) || p;
+  const { t, at } = lastPart(p);
+  return t.slice(at + 1) || p;
 }
 
 /** The folders of `path` below `root` (["a", "b"] for root/a/b), [] for root itself, null when it is not inside. */
@@ -122,7 +164,22 @@ export function resolveRef(baseDir: string, ref: string): string {
   if (!src || !isMachineRef(ref)) return "";
   const path = decodeURIComponentSafe(src);
   if (path.startsWith("~") || path.startsWith("/")) return normalizePath(path);
+  if (WINDOWS_PATH.test(baseDir)) return windowsResolve(baseDir, path);
   return normalizePath(joinPath(baseDir, path));
+}
+
+/** `rel` inside a Windows computer's folder `dir`, either separator, in backslashes; ".." never goes above the drive or
+ *  the UNC share. */
+function windowsResolve(dir: string, rel: string): string {
+  const unc = dir.startsWith("\\\\");
+  const out = dir.split(/[\\/]+/).filter(Boolean);
+  const root = unc ? 2 : 1; // the drive, or the server and its share
+  for (const part of rel.split(/[\\/]+/)) {
+    if (!part || part === ".") continue;
+    if (part !== "..") out.push(part);
+    else if (out.length > root) out.pop();
+  }
+  return (unc ? "\\\\" : "") + out.join("\\") + (out.length === root && !unc ? "\\" : "");
 }
 
 /** A reference that points into the machine (relative, absolute or ~/), not a URL or an in-page anchor. */
@@ -250,6 +307,21 @@ export function parseDiff(diff: string): DiffLine[] {
   return out;
 }
 
+/** Git C-quotes special path bytes even with core.quotepath off (node gitCmd / gitQuote). */
+function unquoteGitPath(path: string): string | null {
+  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+  const bytes: number[] = [];
+  for (const token of path.match(/\\(?:[0-7]{1,3}|.)|[^\\]+/g) ?? []) {
+    if (!token.startsWith("\\")) bytes.push(...new TextEncoder().encode(token));
+    else {
+      const byte = /^[0-7]/.test(token[1]) ? parseInt(token.slice(1), 8) : escapes[token[1]];
+      if (byte === undefined || byte > 255) return null;
+      bytes.push(byte);
+    }
+  }
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(new Uint8Array(bytes));
+}
+
 /** A multi-file diff (git show) cut into one diff per file, keyed by the new path. */
 export function splitDiff(diff: string): Record<string, string> {
   const res: Record<string, string> = {};
@@ -262,9 +334,10 @@ export function splitDiff(diff: string): Record<string, string> {
     if (line.startsWith("diff --git ")) {
       flush();
       buf = [];
-      // diff --git a/x b/x → x (b/ taken from the end, so paths with spaces work)
+      // The -z file list uses raw paths; the diff headers may quote the same names.
+      const quoted = / "b\/((?:[^"\\]|\\.)*)"$/.exec(line);
       const i = line.lastIndexOf(" b/");
-      path = i >= 0 ? line.slice(i + 3) : null;
+      path = quoted ? unquoteGitPath(quoted[1]) : i >= 0 ? line.slice(i + 3) : null;
     }
     buf.push(line);
   }

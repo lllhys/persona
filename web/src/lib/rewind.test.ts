@@ -42,14 +42,14 @@ describe("rewindBlock", () => {
   it("is off with the reason", () => {
     expect(rewindBlock(session(), false)).toBe("");
     expect(rewindBlock(session({ agent: undefined }), false)).toBe("");
-    expect(rewindBlock(session({ agent: "codex" }), false)).toBe("仅 Claude");
-    expect(rewindBlock(session({ source_kind: "claude_bg" }), false)).toBe("仅 Claude");
-    expect(rewindBlock(session({ assistant: true }), false)).toBe("仅 Claude");
+    expect(rewindBlock(session({ agent: "codex" }), false)).toBe("不支持回退");
+    expect(rewindBlock(session({ source_kind: "claude_bg" }), false)).toBe("不支持回退");
+    expect(rewindBlock(session({ assistant: true }), false)).toBe("不支持回退");
     expect(rewindBlock(session({ state: "working" }), false)).toBe("工作中");
     expect(rewindBlock(session(), true)).toBe("工作中");
     expect(rewindBlock(session({ state: "needs_you" }), false)).toBe("需要你");
     expect(rewindBlock(session({ status: "offline" }), false)).toBe("未运行");
-    expect(rewindBlock(undefined, false)).toBe("仅 Claude");
+    expect(rewindBlock(undefined, false)).toBe("不支持回退");
   });
 });
 
@@ -119,5 +119,18 @@ describe("the request", () => {
     expect(rewindDone(res, "conversation").text).toBe("已回退对话");
     expect(rewindDone(res, "code_and_conversation").text).toContain("没有代码改动");
     expect(rewindDone({ ...res, restore: "code_and_conversation", code_restored: true }, "code_and_conversation").text).toBe("已回退代码和对话");
+  });
+});
+
+
+describe("native rewind capabilities", () => {
+  it.each(["codex", "agy"])("enables conversation rewind for %s with explicit support", (agent) => {
+    const native = session({ agent, source_kind: agent === "codex" ? "codex_app_server" : "runtime", capabilities: { rewind: true, rewind_code: false } });
+    expect(rewindBlock(native, false)).toBe("");
+    expect(rewindBlock(native, true)).toBe("工作中");
+    expect(rewindBlock({ ...native, pending_interactions: 1 }, false)).toBe("需要你");
+  });
+  it("respects an explicit refusal and preserves older Claude controls", () => {
+    expect(rewindBlock(session({ capabilities: { rewind: false } }), false)).toBe("不支持回退");
   });
 });

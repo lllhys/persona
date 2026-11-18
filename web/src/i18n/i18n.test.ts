@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { currentLanguage, formatList, formatLocale, hasKey, i18nRest, LANG_MATCHES, LANG_NAMES, LANGS, initI18n, interpolate, resolveLanguage, startI18n, t, type CatalogLoaders, type CatalogModule } from "./index";
 import { flatten } from "./locales/flatten";
 import startupNamespaces from "./startup-namespaces.json";
+import { startupMatcher } from "./startup-keys";
 
 // First in the file: en's rest is not loaded yet here (the setup loads zh-Hans), so it is still on its way when
 // startI18n resolves.
@@ -10,8 +11,15 @@ describe("startI18n", { timeout: 30_000 }, () => {
 
   it("starts on the first screen's part of the catalog, and reads the rest once it is in", async () => {
     const files = import.meta.glob<Record<string, string>>("./locales/en/*.json", { import: "default" });
-    const file = Object.keys(files).find((p) => !/\/(?:_|admin-)/.test(p) && !startupNamespaces.includes(p.slice("./locales/en/".length, -".json".length)))!;
+    const inStartup = startupMatcher(startupNamespaces);
+    const keysOf = async (ns: string) => Object.keys(flatten({ [`./${ns}.json`]: await files[`./locales/en/${ns}.json`]() }));
+    // a namespace the list leaves out whole, and one it takes some keys of: its listed key and another
+    const file = Object.keys(files).find((p) => !/\/(?:_|admin-)/.test(p) && !startupNamespaces.some((e) => e.split(".")[0] === p.slice("./locales/en/".length, -".json".length)))!;
     const key = Object.keys(flatten({ [`./${file.split("/").pop()}`]: await files[file]() }))[0];
+    const listed = startupNamespaces.find((e) => e.includes("."))!;
+    const splitKeys = await keysOf(listed.split(".")[0]);
+    const kept = splitKeys.find(inStartup)!;
+    const deferred = splitKeys.find((k) => !inStartup(k))!;
     await startI18n("en");
     const rest = i18nRest();
     expect(rest).toBeInstanceOf(Promise);
@@ -25,7 +33,10 @@ describe("startI18n", { timeout: 30_000 }, () => {
     // In the build, a module reading it now would have run ahead of its lazy import's wait.
     expect(() => t(key)).toThrow(/startup-namespaces\.json/);
     expect(() => hasKey(key)).toThrow(/startup-namespaces\.json/);
+    expect(t(kept)).not.toBe(kept);
+    expect(() => t(deferred)).toThrow(/startup-namespaces\.json/);
     await rest;
+    expect(t(deferred)).not.toBe(deferred);
     expect(i18nRest()).toBeUndefined();
     expect(t(key)).not.toBe(key);
     expect(t("chat-chatsearch.title")).toBe(t("chat-chatview.search_menu"));
@@ -63,6 +74,20 @@ describe("t", { timeout: 30_000 }, () => {
 
   it("leaves a placeholder with no value visible", () => {
     expect(interpolate("{a} and {b}", { a: 1 })).toBe("1 and {b}");
+  });
+
+  // A whole sentence filled into a longer one (a hub refusal as the reason) keeps one full stop, not "。），" (#6822).
+  it("drops a filled-in sentence's full stop before the text's own punctuation", () => {
+    const refusal = "这个会话正在 Claude 桌面版里开着。这次没有发送。";
+    expect(interpolate("这条没发出去（{error}），字还在输入框里", { error: refusal })).toBe("这条没发出去（这个会话正在 Claude 桌面版里开着。这次没有发送），字还在输入框里");
+    expect(interpolate("不能开始：{error}。重试", { error: "电脑没连上。 " })).toBe("不能开始：电脑没连上。重试");
+    expect(interpolate("Not sent ({error}).", { error: "Nothing was sent." })).toBe("Not sent (Nothing was sent).");
+    // kept: before plain text, at the end, an ellipsis, and any other mark
+    expect(interpolate("{a} 再试", { a: "没连上。" })).toBe("没连上。 再试");
+    expect(interpolate("没发出去：{error}", { error: "这次没有发送。" })).toBe("没发出去：这次没有发送。");
+    expect(interpolate("（{a}）", { a: "等一下..." })).toBe("（等一下...）");
+    expect(interpolate("（{a}）", { a: "真的吗？" })).toBe("（真的吗？）");
+    expect(interpolate("（{a}）", { a: 1.5 })).toBe("（1.5）");
   });
 
   // formatList keeps the system's region when the system is in the interface language, and Node's navigator reports the

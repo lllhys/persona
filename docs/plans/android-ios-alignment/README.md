@@ -51,6 +51,8 @@ The phases compare the platforms by kind of work. Two primary screens differ in 
 | The Agents page | #4338 | [Agents page](agents-page.md) | Needs You by session, the groupings in the iOS shapes, kept folds, the iOS rows and headers, search |
 | The Agent chat and the assistant chat | #4339 | [Chats](chats.md) | Tool names, subagents, the header, the work summary, the composer's model button, the assistant conversation's requests, records and history |
 
+The Agents page area closed on 2026-11-12 and the chats area on 2026-11-13; each document lists what still differs ("Left at closing").
+
 Phase 0 and the token pipeline in phase 1 come first. The paired screenshots from phase 4 should exist before the large changes in phases 2 and 3 and in the areas, because reviewing those depends on them. Phases 2 and 3 and the two areas can run side by side.
 
 ## Intentional differences so far
@@ -66,6 +68,7 @@ Phase 0 and the token pipeline in phase 1 come first. The paired screenshots fro
 | Launcher shortcuts and Quick Settings tiles instead of Siri, Control Center, Watch and CarPlay | Platform features |
 | A foreground service instead of push | The app doesn't depend on Google services |
 | The right-edge scrubber, the recent-photos grid, the blurred lift-up menu, in-app speech recognition | See [phase 2](phase-2-interactions.md) |
+| No Personal Agents entry or page on the Agents page, for now | Deferred on 2026-11-12: few people use personal agents ([Agents page](agents-page.md), A11) |
 
 ## Out of scope
 

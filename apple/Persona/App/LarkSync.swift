@@ -1,5 +1,6 @@
 import Foundation
 import PersonaKit
+import PersonaWire
 
 /// Keeps Feishu current while the app is open and online. Push: the hub relays the Lark gateway's realtime events as
 /// `lark` (which conversations changed); the inbox and an open chat refresh on them instead of waiting for a poll.

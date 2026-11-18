@@ -1,0 +1,30 @@
+{
+  "title": "Gateway quota",
+  "refresh_after": 300,
+  "sections": [
+    {
+      "key": "status",
+      "items": [
+        {"type": "grid", "key": "status", "tiles": [
+          {"key": "state", "title": "Gateway", "value": "Online", "icon": "wifi", "color": "green"},
+          {"key": "keys", "title": "Keys", "subtitle": "1 paused", "value": "3", "icon": "lock"},
+          {"key": "requests", "title": "Requests today", "value": "1,284", "icon": "chart", "spark": {"values": [820, 960, 1010, 1284], "color": "blue"}},
+          {"key": "errors", "title": "Errors", "value": "0.4%", "icon": "warning", "badge": {"text": "Low", "color": "green"}}
+        ]}
+      ]
+    },
+    {
+      "key": "quota",
+      "title": "Quota left",
+      "footer": "5 hours resets in 1 h 49 min · this week resets in 1 d 16 h",
+      "items": [
+        {"type": "grid", "key": "rings", "max_columns": 3, "tiles": [
+          {"key": "five_hours", "title": "5 hours", "value": "4.69", "gauge": {"ratio": 0.94, "unit": "USD", "color": "green"}},
+          {"key": "week", "title": "This week", "value": "38.20", "gauge": {"ratio": 0.76, "unit": "USD", "color": "green"}},
+          {"key": "fable_week", "title": "Fable this week", "value": "0.62", "badge": {"text": "Low", "color": "amber"},
+            "gauge": {"ratio": 0.12, "unit": "USD", "color": "amber"}, "action": {"id": "open_limit", "values": {"limit": "fable_week"}}}
+        ]}
+      ]
+    }
+  ]
+}

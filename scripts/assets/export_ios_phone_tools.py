@@ -10,8 +10,9 @@ PhoneToolCatalogTest compares against.
     python3 scripts/assets/export_ios_phone_tools.py --check   # exit 1 if the fixture is out of date
 
 Tools of iOS-only sources (reminders and the iPhone system integrations: alarms, messages, calls, shortcuts, media,
-home), write-only health tools (phone_health_write_sample) and the iPhone-only calendar, contacts and maps tools of
-#2276 / #2281 / #2286 (Android has none yet) are left out.
+home), write-only health tools (phone_health_write_sample), and the iPhone-only maps and place-search tools are left
+out. Descriptions are exported verbatim: any sentence an iPhone declares that Android does not yet is listed by name
+in PhoneToolCatalogTest, never trimmed here.
 """
 import argparse
 import json
@@ -25,8 +26,6 @@ FIXTURE = os.path.join(ROOT, "android", "platform", "phonetools", "src", "test",
 IOS_ONLY = {"reminders", "alarms", "messages", "calls", "shortcuts", "media", "home"}
 IOS_ONLY_TOOLS = {
     "phone_health_write_sample",
-    "phone_calendar_update_event", "phone_calendar_delete_event",
-    "phone_contacts_create", "phone_contacts_update",
     "phone_maps_search_nearby", "phone_maps_navigate", "phone_maps_route",
     # Android has no place search yet (the fixture never had it; --check failed on main before #2281).
     "phone_location_search",
@@ -80,6 +79,12 @@ def multiline(body):
 
 
 def schema_property(call):
+    if call == "LabeledEntry.schema":
+        # Parsed from the Swift struct, so a change on iOS shows up in --check instead of being frozen here.
+        text = open(os.path.join(SOURCES, "ContactsTool.swift"), encoding="utf-8").read()
+        at = text.index("Schema.object(", text.index("static var schema: JSONValue"))
+        properties, required = schema_object(text[at:matching(text, text.index("(", at))])
+        return {"type": "object", "additionalProperties": False, "properties": properties, "required": required}
     if call.startswith("Schema.array("):
         m = re.match(r'^Schema\.array\(\s*("""[\s\S]*?"""|"(?:[^"\\]|\\.)*")\s*,\s*of:\s*(.*)\)$', call, re.S)
         if not m:
@@ -97,14 +102,35 @@ def schema_property(call):
         bound = re.search(r'\b%s:\s*(-?[\d_]+)' % key, rest)
         if bound:
             prop["minimum" if key == "min" else "maximum"] = int(bound.group(1).replace("_", ""))
+    literal_values = re.search(r'\bvalues:\s*(\[[^\]]*\])', rest)
+    if literal_values:
+        prop["enum"] = json.loads(literal_values.group(1))
     val_m = re.search(r'\bvalues:\s*(\w+)', rest)
-    if val_m:
+    if re.search(r'\bvalues:\s*WorkoutReader\.activities\.keys\.sorted\(\)', rest):
+        prop["enum"] = workout_activity_keys()
+    elif val_m:
         val_name = val_m.group(1)
         if val_name == "metricNames":
-            prop["enum"] = ["steps", "distance", "active_energy", "heart_rate", "resting_heart_rate", "sleep", "weight"]
+            prop["enum"] = ["steps", "distance", "active_energy", "heart_rate", "resting_heart_rate", "sleep", "weight",
+                            "dietary_energy", "protein", "carbs", "fat", "resting_energy"]
         else:
             raise ValueError("enum values are not exported yet: %s" % call)
     return prop
+
+
+def workout_activity_keys():
+    """Sorted keys of WorkoutReader.activities, read from its dictionary literal (WorkoutTool.swift)."""
+    text = open(os.path.join(SOURCES, "WorkoutTool.swift"), encoding="utf-8").read()
+    start = re.search(r'static let activities\b[^=]*=\s*\[', text)
+    if not start:
+        raise ValueError("WorkoutReader.activities not found in WorkoutTool.swift")
+    open_at = start.end() - 1
+    body = text[open_at:matching(text, open_at)]
+    # Each entry is "key": [types]; match anywhere, so several entries on one line are all kept.
+    keys = re.findall(r'"(\w+)"\s*:\s*\[', body)
+    if not keys:
+        raise ValueError("WorkoutReader.activities has no entries the exporter can read")
+    return sorted(keys)
 
 
 def schema_object(call):

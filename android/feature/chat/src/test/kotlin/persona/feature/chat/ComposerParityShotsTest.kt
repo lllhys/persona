@@ -45,7 +45,7 @@ import java.io.File
 
 /**
  * The composer's parity pieces (#2976) as they draw, in every style and appearance: the @ menu with a quote and the
- * host's failure note over it; the "/" list with /model and /loop, and the /loop line; the mic beside send with a draft.
+ * host's failure note over it; the Agent and main-chat "/" lists, and the /loop line; the mic beside send with a draft.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -53,7 +53,7 @@ import java.io.File
 class ComposerParityShotsTest {
     @get:Rule val rule = createComposeRule()
 
-    private enum class Scene { Mentions, Slash, Loop, Dictation }
+    private enum class Scene { Mentions, Slash, MainSlash, Loop, Dictation }
 
     private val session = Session(machineId = "box", sessionId = "s1", title = "修复登录", cwd = "/w/app", status = "idle",
         state = "unread", failureReason = "⚠️ 模型接口连续报错，已停下这一轮", externalUrl = "https://applink.example.com/thread", updatedAt = "2026-11-05T10:00:00Z")
@@ -79,7 +79,7 @@ class ComposerParityShotsTest {
             ChatComposerState().apply {
                 val text = when (scene) {
                     Scene.Mentions -> "看下 @"
-                    Scene.Slash -> "/"
+                    Scene.Slash, Scene.MainSlash -> "/"
                     Scene.Loop -> "/loop 10m 看下 CI 有没有过"
                     Scene.Dictation -> "先跑一遍测试，然后"
                 }
@@ -87,14 +87,16 @@ class ComposerParityShotsTest {
             }
         }
         val quote = ChatLinkContext.quote("登录页在弱网下会一直转圈，重试按钮没有反应。", "Claude", "m1")
-        Column(Modifier.fillMaxSize()) {
-            Spacer(Modifier.weight(1f))
-            if (scene == Scene.Mentions) ChatHostNote(session, retried = null, canRetry = true, retryEnabled = true, onRetry = {})
-            ChatComposer(session.key, state, working = false, sending = false, canClear = true, service = null,
-                onSend = {}, onCommand = {}, onNotice = {},
-                accessory = if (scene == Scene.Mentions) ({ ChatContextCard(quote) {} }) else null,
-                mentions = ComposerMentions(chatFiles(files), session.cwd, listOf(session) + others, session.key),
-                onModel = {}, loop = true)
+        CompositionLocalProvider(LocalMainChatClear provides (if (scene == Scene.MainSlash) MainChatClear { } else null)) {
+            Column(Modifier.fillMaxSize()) {
+                Spacer(Modifier.weight(1f))
+                if (scene == Scene.Mentions) ChatHostNote(session, retried = null, canRetry = true, retryEnabled = true, onRetry = {})
+                ChatComposer(session.key, state, working = false, sending = false, canClear = true, service = null,
+                    onSend = {}, onCommand = {}, onNotice = {}, assistantChat = scene == Scene.MainSlash,
+                    accessory = if (scene == Scene.Mentions) ({ ChatContextCard(quote) {} }) else null,
+                    mentions = ComposerMentions(chatFiles(files), session.cwd, listOf(session) + others, session.key),
+                    onModel = {}, loop = true)
+            }
         }
     }
 
@@ -130,6 +132,14 @@ class ComposerParityShotsTest {
                     rule.onNodeWithContentDescription("引用文件或会话").assertExists()
                 }
                 Scene.Slash -> { rule.onNodeWithText("/model").assertExists(); rule.onNodeWithText("/loop").assertExists() }
+                Scene.MainSlash -> {
+                    rule.onNodeWithText("/clear").assertExists()
+                    rule.onNodeWithText("清空对话，从头开始").assertExists()
+                    rule.onNodeWithText("/compact").assertDoesNotExist()
+                    rule.onNodeWithText("/model").assertDoesNotExist()
+                    rule.onNodeWithText("/loop").assertDoesNotExist()
+                    rule.onNodeWithText("/继续").assertDoesNotExist()
+                }
                 Scene.Loop -> rule.onNodeWithText("每 10 分钟重复：看下 CI 有没有过").assertExists()
                 Scene.Dictation -> rule.onNodeWithContentDescription("听写").assertExists()
             }

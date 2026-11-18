@@ -1,6 +1,7 @@
 import LocalAuthentication
 import Security
 import SwiftUI
+import PersonaWire
 
 /// A Mac's Screen Sharing account and password remembered on this device (#1322, 「在这台手机上记住」), by machine: in
 /// the keychain under a service of their own, readable only while the device is unlocked and never leaving it (not in

@@ -44,10 +44,7 @@ struct ReviewPage: View {
             .navigationTitle(Text("Review Changes"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { dismiss() } label: { Text("Close").lineLimit(1) }
-                        .accessibilityIdentifier("review.close")
-                }
+                SheetClose(id: "review.close") { dismiss() }
                 ToolbarItem(placement: .principal) { title }
             }
             .safeAreaInset(edge: .bottom) { bottomBar }
@@ -139,12 +136,24 @@ struct ReviewPage: View {
             .navigationTitle(Text("Pick a Commit"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button { pickingCommit = false } label: { Text("Cancel").lineLimit(1) } }
+                SheetClose { pickingCommit = false }
             }
-            .overlay { if review.commits.isEmpty { ProgressView() } }
+            .overlay { commitsState }
         }
         .task { await review.loadCommits() }
         .presentationDetents([.medium, .large])
+    }
+
+    /// The commit list until it has rows: reading, why it can't be read (the web's toast), or no commit yet.
+    @ViewBuilder private var commitsState: some View {
+        if let why = review.commitsFailure {
+            EmptyStateView(symbol: Theme.Icon.error, title: String(localized: "Couldn't read the commits"), message: why,
+                           action: (String(localized: "Retry"), { Task { await review.loadCommits() } }), tint: Theme.caution)
+        } else if !review.commitsRead {
+            ProgressView()
+        } else if review.commits.isEmpty {
+            EmptyStateView(symbol: Theme.Icon.commit, title: String(localized: "No commits yet"), message: "")
+        }
     }
 
     private var staleBar: some View {
@@ -202,11 +211,20 @@ struct ReviewPage: View {
             .padding(.top, Theme.Space.xxl)
     }
 
+    /// Each refusal in words of its own, as the web's Review panel says it (#8733): the folder named when it is the
+    /// reason, the scope that still works offered, Retry only when trying again can help.
     private func failed(_ code: String?, _ message: String) -> some View {
         let title: String
+        var detail = ""
         var offer: (String, GitReviewScope)?
+        var retry = false
         switch code {
-        case "not_git": title = String(localized: "This folder isn't a Git repository")
+        case "not_git":
+            title = String(localized: "This folder isn't a Git repository")
+            detail = MentionRows.shortPath(review.cwd)
+        case "no_folder":
+            title = String(localized: "This folder is no longer there")
+            detail = MentionRows.shortPath(review.cwd)
         case "node_outdated": title = String(localized: "Update this computer to review changes")
         case "no_default_branch":
             title = String(localized: "No default branch to compare with")
@@ -214,17 +232,21 @@ struct ReviewPage: View {
         case "no_merge_base":
             title = String(localized: "This branch has nothing in common with the default branch")
             offer = (String(localized: "Review Uncommitted"), .uncommitted)
-        case "bad_base": title = String(localized: "That commit isn't in this repository")
-        default: title = String(localized: "Couldn't read the changes")
+        case "bad_base":
+            title = String(localized: "That commit isn't in this repository")
+            offer = (String(localized: "Review Uncommitted"), .uncommitted)
+        default:
+            title = String(localized: "Couldn't read the changes")
+            detail = message
+            retry = true
         }
-        let retry = !["not_git", "node_outdated"].contains(code ?? "")
         var action: (title: String, run: () -> Void)?
         if let offer {
             action = (offer.0, { reselect(offer.1) })
         } else if retry {
             action = (String(localized: "Retry"), { reload() })
         }
-        return EmptyStateView(symbol: Theme.Icon.error, title: title, message: code == nil ? message : "", action: action, tint: Theme.caution)
+        return EmptyStateView(symbol: Theme.Icon.error, title: title, message: detail, action: action, tint: Theme.caution)
             .padding(.top, Theme.Space.xxl)
     }
 
@@ -414,7 +436,7 @@ struct ReviewPage: View {
             .navigationTitle(Text("Finish Review"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button { finishing = false } label: { Text("Cancel").lineLimit(1) } }
+                SheetClose { finishing = false }
             }
         }
         .presentationDetents([.medium, .large])

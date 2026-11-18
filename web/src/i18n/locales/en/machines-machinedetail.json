@@ -18,6 +18,9 @@
   "last_seen": "Last seen: {when}",
   "no_agents": "No agents running",
   "agents_offline": "The machine is offline. Its agents show up once it's back",
+  "agents_loading": "Loading agents…",
+  "agents_failed": "Couldn't load agents",
+  "agents_failed_detail": "Couldn't load this computer's agents. Trying again in a moment.",
   "engine": "Engine",
   "monitoring": "Monitoring",
   "range": "Time range",
@@ -61,5 +64,7 @@
   "rename_hint": "Shown in every app and on this computer's Persona Link. Leave it empty to use the id; the id stays the same.",
   "renamed": "Renamed to “{name}”",
   "screen": "View screen",
-  "screen_hint": "Open this Mac's live screen (Screen Sharing)"
+  "screen_hint": "Open this Mac's live screen (Screen Sharing)",
+  "files": "Files",
+  "files_hint": "Browse this computer’s files from its home folder"
 }

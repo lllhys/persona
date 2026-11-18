@@ -14,6 +14,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -71,14 +78,36 @@ fun ExpandedComposer(
     send: @Composable RowScope.() -> Unit,
 ) {
     val palette = PersonaTheme.palette
+    val hardware = LocalComposerHardware.current
     val focus = remember { FocusRequester() }
+    val hardwareModifier = if (hardware == null) Modifier else Modifier.onPreviewKeyEvent { event ->
+        if (value.composition != null) return@onPreviewKeyEvent false
+        when {
+            event.key == Key.Escape -> {
+                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                    val collapse = hardware.collapseForEscape
+                    if (collapse != null) collapse(onCollapse) else onCollapse()
+                }
+                true
+            }
+            (event.key == Key.Enter || event.key == Key.NumPadEnter) && (event.isCtrlPressed || event.isMetaPressed) -> {
+                if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && hardware.send != null) {
+                    val collapse = hardware.collapseForSend
+                    if (collapse != null) collapse(onCollapse) else onCollapse()
+                    hardware.send.invoke()
+                }
+                true
+            }
+            else -> false
+        }
+    }
     JFullScreen(onCollapse) {
         Column(Modifier.fillMaxSize().systemBarsPadding().imePadding().testTag("composer-expanded")) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp.dense), horizontalArrangement = Arrangement.End) {
                 ComposerExpandButton(expanded = true, onClick = onCollapse)
             }
             BasicTextField(
-                value, onValueChange, Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp.dense).focusRequester(focus),
+                value, onValueChange, Modifier.then(hardwareModifier).weight(1f).fillMaxWidth().padding(horizontal = 20.dp.dense).focusRequester(focus).hardwareShortcutTextInput().testTag("composer-expanded-input"),
                 enabled = enabled, textStyle = PersonaTheme.type.body.copy(color = palette.ink), cursorBrush = SolidColor(palette.ink),
                 decorationBox = { field ->
                     Box {

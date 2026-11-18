@@ -527,7 +527,7 @@ func TestCronInTheTools(t *testing.T) {
 	f.settings = &Settings{Timezone: "Asia/Taipei"}
 	h := newStorelessService(t, f)
 	ctx := context.Background()
-	out, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"title":"月报","prompt":"写月报","cron":"0 10 1 * *"}`))
+	out, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"title":"月报","prompt":"写月报","cron":"0 10 1 * *"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,19 +545,19 @@ func TestCronInTheTools(t *testing.T) {
 		t.Fatalf("list_followups: %s", h.describeSchedule(ctx, ""))
 	}
 	// Back to a time of day by id; a bad expression changes nothing and says why.
-	if _, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"id":"`+r.ID+`","time":"09:00"}`)); err != nil {
+	if _, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"id":"`+r.ID+`","time":"09:00"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if r2, _ := taskByID(h, r.ID); r2.Repeat != repeatDaily || r2.Cron != "" || r2.Time != "09:00" {
 		t.Fatalf("back to daily: %+v", r2)
 	}
-	if _, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"id":"`+r.ID+`","cron":"0 9 31 2 *"}`)); err == nil || !strings.Contains(err.Error(), "never runs") {
+	if _, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"id":"`+r.ID+`","cron":"0 9 31 2 *"}`)); err == nil || !strings.Contains(err.Error(), "never runs") {
 		t.Fatalf("never: %v", err)
 	}
 	if r2, _ := taskByID(h, r.ID); r2.Repeat != repeatDaily {
 		t.Fatalf("a refused change is not saved: %+v", r2)
 	}
-	if _, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"title":"x","prompt":"y","cron":"0 9 * * *","time":"09:00"}`)); err == nil {
+	if _, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"title":"x","prompt":"y","cron":"0 9 * * *","time":"09:00"}`)); err == nil {
 		t.Fatal("cron and time together are refused")
 	}
 

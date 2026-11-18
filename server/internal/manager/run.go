@@ -13,6 +13,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistant"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/bus"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/managerconf"
 	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/update"
@@ -26,11 +27,11 @@ var restart = reexec
 func cmdRun(ctx context.Context, e *env, build update.Build, args []string) error {
 	fs := flag.NewFlagSet("manager run", flag.ContinueOnError)
 	fs.SetOutput(e.stdout)
-	dir := fs.String("dir", "", "管理者的目录（这台只有一个管理者时可以不写）")
-	join := fs.Bool("join", false, "目录里还没有 manager.json 时，先用后面的 <hub 地址> <安装码> 换码")
-	dbURL := fs.String("database-url", "", "和 --join 一起：它自己的 Postgres 库（容器里经环境变量 "+databaseEnv+" 给，不放命令行）")
-	fp := fs.String("fingerprint", "", "和 --join 一起：hub 的 TLS 指纹")
-	plain := fs.Bool("allow-plaintext", false, "和 --join 一起：允许公网上的明文 http hub 地址")
+	dir := fs.String("dir", "", i18n.T(e.l(), "manager-cli.flag_dir"))
+	join := fs.Bool("join", false, i18n.T(e.l(), "manager-cli.flag_run_join"))
+	dbURL := fs.String("database-url", "", i18n.T(e.l(), "manager-cli.flag_run_database_url", i18n.Args{"env": databaseEnv}))
+	fp := fs.String("fingerprint", "", i18n.T(e.l(), "manager-cli.flag_run_fingerprint"))
+	plain := fs.Bool("allow-plaintext", false, i18n.T(e.l(), "manager-cli.flag_run_allow_plaintext"))
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
@@ -44,13 +45,13 @@ func cmdRun(ctx context.Context, e *env, build update.Build, args []string) erro
 		if dbAt == "" {
 			dbAt = e.getenv(databaseEnv)
 		}
-		joined, _, err := Join(ctx, JoinOptions{Hub: pos[0], Code: pos[1], Dir: d, DatabaseURL: dbAt, Fingerprint: *fp,
+		joined, _, err := Join(ctx, JoinOptions{Hub: pos[0], Code: pos[1], Lang: e.l(), Dir: d, DatabaseURL: dbAt, Fingerprint: *fp,
 			CheckDocker: e.dockerProblem, Warn: e.stdout, AllowPlaintext: *plain})
 		var ce ConfigError
 		switch {
 		case err == nil:
 			d = joined
-			fmt.Fprintf(e.stdout, "加入了 hub，目录 %s\n", d)
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.run_joined", i18n.Args{"directory": d}))
 		case errors.As(err, &ce) && d == "":
 			// No directory to wait on: watching for "the one manager of this computer" would take up another
 			// manager's directory when there is exactly one. A container always names its --dir; anyone else gets the
@@ -60,18 +61,17 @@ func cmdRun(ctx context.Context, e *env, build update.Build, args []string) erro
 			// The same command can't do better next time (a used or expired code, a refused plaintext join, no
 			// database it can have), and a container's --restart unless-stopped starts it again on any exit, exit 2 too: wait,
 			// not dialing, until a join run by hand into the directory writes manager.json, as after a revoke.
-			fmt.Fprintf(e.stdout, "manager: 没加入 hub，同样的命令再试也不会成：%v。在等：在 App 里拿一个新安装码，"+
-				"再运行一次新的安装命令（没加入过的容器会用新码重建），或者运行 personad manager join <hub 地址> <安装码> --dir %s\n", err, shellQuote(d))
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.run_join_waiting", i18n.Args{"error": err, "directory": shellQuote(d)}))
 			if err = waitJoined(ctx, d); err != nil {
 				return err
 			}
-			fmt.Fprintf(e.stdout, "manager: 有了 manager.json，目录 %s\n", d)
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.run_joined_config_ready", i18n.Args{"directory": d}))
 		default:
 			return err
 		}
 	}
 	if d == "" {
-		if d, err = onlyManager(); err != nil {
+		if d, err = onlyManager(e.l()); err != nil {
 			return err
 		}
 	}
@@ -108,9 +108,8 @@ func (e *env) runManager(ctx context.Context, build update.Build, dir string) er
 		if before != nil {
 			id = before.ID
 		}
-		fmt.Fprintf(out, "manager: [%s] hub 不再认这个管理者的 token（在 App 里删掉了，或者在别处重新装了）：先不连 hub，每 %s 再试一次。"+
-			"要接着用这个目录：在 App 里给它拿一个新安装码，运行 personad manager join <hub 地址> <安装码> --dir %s\n", id, revokedRetry, shellQuote(dir))
-		if err := awaitRestart(ctx, dir, before, out); err != nil {
+		fmt.Fprint(out, i18n.T(e.l(), "manager-cli.run_token_revoked", i18n.Args{"id": id, "retry": revokedRetry, "directory": shellQuote(dir)}))
+		if err := awaitRestartLang(ctx, e.l(), dir, before, out); err != nil {
 			return err
 		}
 		if restart != nil {
@@ -130,6 +129,7 @@ func (e *env) runManager(ctx context.Context, build update.Build, dir string) er
 // starts again in place on a new file where it runs from, one that runs, once it is idle (binaryWatch): nothing else
 // restarts its service after an update.
 func RunBuiltin(ctx context.Context, build update.Build, out io.Writer) error {
+	l := i18n.Terminal()
 	env := os.Environ()
 	home := dataDir()
 	// One at a time: a second one on the same binding would take turns on the bus with the first, both running the
@@ -188,7 +188,7 @@ func RunBuiltin(ctx context.Context, build update.Build, out io.Writer) error {
 			"starts it itself again): not connecting, trying the same token every %s. To bind it again: persona-hub "+
 			"manager-code on the hub's machine, then persona-manager join --builtin <hub address> <code>\n", revokedRetry)
 		c := &assistant.ManagerConfig{ID: assistantwire.AssistantID, Hub: before.Hub, Token: before.Token, Fingerprint: before.Fingerprint}
-		if err := awaitRestartWith(ctx, c, builtinToken(home), out); err != nil {
+		if err := awaitRestartWithLang(ctx, l, c, builtinToken(home), out); err != nil {
 			return err
 		}
 		if restart != nil {

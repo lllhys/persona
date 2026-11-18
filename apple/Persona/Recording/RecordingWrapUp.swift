@@ -42,14 +42,14 @@ struct RecordingWrapUp: View {
             }
             .safeAreaInset(edge: .top, spacing: Theme.Space.flush) {
                 HStack {
+                    RecordingCornerButton(kind: .close, identifier: "recording-wrapup-done") { finish() }
                     Spacer(minLength: Theme.Space.flush)
-                    RecordingSheetCloseButton(title: String(localized: "Done"), identifier: "recording-wrapup-done") { finish() }
                 }
                 .padding(.horizontal, Theme.Space.page)
             }
             .safeAreaInset(edge: .bottom, spacing: Theme.Space.flush) { buttons(phase, entry: entry) }
             .navigationDestination(isPresented: $opening) { RecordingDetailView(id: id) }
-            .task(id: "\(entry.revision)|\(minutes.round)|\(entry.transcribedAll)") { await followMinutes() }
+            .tabActiveTask(id: "\(entry.revision)|\(minutes.round)|\(entry.transcribedAll)") { await followMinutes() }
             .onChange(of: phase) { old, new in announce(from: old, to: new) }
         }
     }

@@ -67,23 +67,14 @@ func (n *Node) setCodexSetting(key string, value any) error {
 		return err
 	}
 	path := n.codexConfigPath()
+	agentConfigMu.Lock()
+	defer agentConfigMu.Unlock()
 	b, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	text := tomlSet(string(b), key, value)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	mode := os.FileMode(0o600)
-	if st, err := os.Stat(path); err == nil {
-		mode = st.Mode().Perm()
-	}
-	tmp := path + ".persona.tmp"
-	if err := os.WriteFile(tmp, []byte(text), mode); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeConfigFile(path, []byte(text), 0o600)
 }
 
 // checkSettingValue: a value of the option's type (nil = back to the default).

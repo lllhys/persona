@@ -17,6 +17,45 @@ import (
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
+func TestRunRemovesPostgresVolumeOnStartFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "personad"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(root, "docker-calls")
+	for name, script := range map[string]string{
+		"go": "#!/bin/sh\nexit 0\n",
+		"docker": `#!/bin/sh
+printf '%s\n' "$*" >> "$FLEETSOAK_TEST_DOCKER_CALLS"
+if [ "$1" = run ]; then exit 23; fi
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FLEETSOAK_TEST_DOCKER_CALLS", log)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	o := options{tree: root, out: filepath.Join(root, "out")}
+	if _, err := run(ctx, &o); err == nil || !strings.Contains(err.Error(), "docker run:") {
+		t.Fatalf("run error = %v, want docker run failure", err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(calls) != 2 || !strings.Contains(calls[0], "--name "+o.pgc) || calls[1] != "rm -fv "+o.pgc {
+		t.Fatalf("Docker calls = %q, want creation followed by rm -fv of the same container", calls)
+	}
+}
+
 // A computer's list changes one session at a time: a turn starts, then the same session ends it with new last words;
 // the list is what a node's sessions.changed carries, and its ids are the ones the apps subscribe to.
 func TestFakeNodeChangesOneSessionAtATime(t *testing.T) {

@@ -358,9 +358,14 @@ func herdrNode(t *testing.T) (*Node, *fakeHerdr, string) {
 	resetGlobalCaches()
 	t.Cleanup(resetGlobalCaches)
 	withFirstPromptWaits(t, 400*time.Millisecond, 3*time.Second)
-	t.Cleanup(n.firstWait.Wait) // before the waits are put back: a check still going reads them
-	t.Cleanup(n.engLists.Wait)  // before the caches are reset: an engine switch's list, still being built, reads them
-	t.Cleanup(n.starts.close)   // before firstWait, caches and the fake socket: starts can still use all of them
+	ctx, cancel := context.WithCancel(context.Background())
+	n.firstPromptParent = ctx
+	t.Cleanup(n.engLists.Wait) // a prompt check can still request a list before it stops
+	t.Cleanup(func() {
+		cancel()           // assertions are finished; do not wait out recovery on a fake that never writes a transcript
+		n.firstWait.Wait() // before restoring waits or closing the socket used by an in-flight check
+	})
+	t.Cleanup(n.starts.close) // before firstWait, caches and the fake socket: starts can still use all of them
 	return n, f, home
 }
 
@@ -375,11 +380,17 @@ func withFirstPromptWaits(t *testing.T, wait, recover time.Duration) {
 // request runs one hub request through the node's handler; the result comes back as decoded JSON.
 func request(t *testing.T, n *Node, method string, params map[string]any) (map[string]any, error) {
 	t.Helper()
+	return requestCtx(t, context.Background(), n, method, params)
+}
+
+// requestCtx is request with ctx as the hub's call (its deadline, as the hub gives it).
+func requestCtx(t *testing.T, ctx context.Context, n *Node, method string, params map[string]any) (map[string]any, error) {
+	t.Helper()
 	b, err := json.Marshal(params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := n.handle(context.Background(), method, b)
+	res, err := n.handle(ctx, method, b)
 	out := map[string]any{}
 	if res != nil {
 		rb, _ := json.Marshal(res)

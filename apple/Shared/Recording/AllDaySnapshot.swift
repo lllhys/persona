@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// What the watch app last knew about all-day recording (docs/assistant/day-recap.md), for the All-Day Recording
 /// complication (`AllDayRecordingComplication`). The app writes it into the watch App Group on every change of state
@@ -111,7 +112,7 @@ nonisolated struct AllDaySnapshot: Codable, Equatable, Sendable {
     /// The widget provider's read; the app never reads it back (it knows its own state).
     static func read() -> AllDaySnapshot? {
         guard let url = directory?.appending(path: fileName),
-              let data = try? Data(contentsOf: url) else { return nil } // perf-ok: the widget provider's own queue, never the app's main thread
+              let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(AllDaySnapshot.self, from: data)
     }
 
@@ -130,7 +131,7 @@ nonisolated struct AllDaySnapshot: Codable, Equatable, Sendable {
 }
 
 /// The links the All-Day Recording complication opens (`persona://allday?action=start|continue|open`), and how the
-/// watch app reads them. A host of its own: `persona://record` is the Meeting Recording complication's.
+/// watch app reads them. A host of its own: `persona://record` is the Record complication's.
 nonisolated enum AllDayLink {
     nonisolated enum Action: String, Sendable {
         case start

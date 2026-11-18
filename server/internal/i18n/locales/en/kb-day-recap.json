@@ -1,0 +1,21 @@
+{
+  "title": "Day recap · {day}",
+  "covers": "Recorded: {from}–{to}",
+  "so_far": " (so far)",
+  "not_recorded": "Not recorded: {gaps}",
+  "list_sep": ", ",
+  "gap": "{from}–{to} ({reason})",
+  "gap_paused": "paused",
+  "gap_interrupted": "interrupted",
+  "gap_stopped": "stopped",
+  "gap_pending": "not uploaded yet",
+  "gap_lost": "lost",
+  "gap_erased": "erased",
+  "gap_unknown": "reason unknown",
+  "meetings": "Meetings",
+  "outside": "Outside meetings",
+  "actions": "Suggested to-dos",
+  "aside": " ({text})",
+  "owner": "{who}: ",
+  "partial": "This day was too long: some of its middle is not in this recap."
+}

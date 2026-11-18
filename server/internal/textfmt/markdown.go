@@ -1,7 +1,9 @@
 package textfmt
 
 import (
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/html"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 var plainParser = goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser()
@@ -22,6 +25,12 @@ var danglingMarks = lazyre.New("\\*{2,}|_{2,}|~{2,}|`+")
 // PlainMarkdown is md without its markup, for places that show text as it is (a push, a one-line preview): a line per
 // block, emphasis and code without their marks, a link as its text. Marks a clip left unpaired are dropped too.
 func PlainMarkdown(md string) string { return plain(md, true, false) }
+
+// SearchMarkdown keeps visible words inside HTML folds (such as details) as
+// well as ordinary Markdown. Unlike PushText it does not reinterpret flattened
+// tables. Scripts, styles, attributes and comments are not searchable prose.
+// PlainMarkdown's existing preview/title behavior remains unchanged.
+func SearchMarkdown(md string) string { return plain(md, true, true) }
 
 // PushText is PlainMarkdown for a finished turn's push, whose text node already flattened to one line (snippet): a
 // table run into one line says its cells ("item · status · build · passed"), and an answer folded in an HTML block
@@ -85,30 +94,42 @@ func oneLineTables(md string) string {
 	return strings.Join(lines, "\n")
 }
 
-// htmlText is an HTML block's words: its text, unescaped, without tags, comments, or what script and style hold.
-func htmlText(block string) string {
-	z := html.NewTokenizer(strings.NewReader(block))
+// htmlText is an HTML fragment's visible words. hidden carries an inline script or style across Markdown AST nodes:
+// Goldmark represents its opening and closing tags separately, with the content parsed as ordinary Markdown.
+func htmlText(block string, hidden *string) string {
+	// A fragment can start inside an element opened in an earlier AST node. Restore tokenizer raw-text mode so,
+	// for example, a closing </script> inside what Markdown calls an HTML comment still closes the HTML script.
+	prefix := ""
+	if *hidden != "" {
+		prefix = "<" + *hidden + ">"
+	}
+	z := html.NewTokenizer(strings.NewReader(prefix + block))
+	if prefix != "" {
+		z.Next() // the synthetic opener only restores the tokenizer's state
+	}
 	var b strings.Builder
-	skip := 0
 	for {
 		switch z.Next() {
-		case html.ErrorToken: // the end, or nothing more it can read
+		case html.ErrorToken:
 			return b.String()
-		case html.TextToken: // unescaped by the tokenizer (&lt; is <); comments are their own tokens, left out
-			if skip == 0 {
+		case html.TextToken:
+			if *hidden == "" {
 				b.Write(z.Text())
 				b.WriteByte(' ')
 			}
-		case html.StartTagToken:
-			if name, _ := z.TagName(); string(name) == "script" || string(name) == "style" {
-				skip++
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, _ := z.TagName()
+			if *hidden == "" && (string(name) == "script" || string(name) == "style") {
+				*hidden = string(name) // in HTML, even <script/> begins a non-void element
 			}
 			b.WriteByte(' ')
 		case html.EndTagToken:
-			if name, _ := z.TagName(); (string(name) == "script" || string(name) == "style") && skip > 0 {
-				skip--
+			name, _ := z.TagName()
+			if string(name) == *hidden {
+				*hidden = ""
+			} else if *hidden == "" {
+				b.WriteByte(' ')
 			}
-			b.WriteByte(' ')
 		}
 	}
 }
@@ -119,26 +140,31 @@ func plain(md string, dropDangling, htmlWords bool) string {
 	md = wire.AssistantCardText(md)
 	src := []byte(md)
 	var b strings.Builder
+	hidden := ""
 	_ = ast.Walk(plainParser.Parse(text.NewReader(src)), func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		switch n := n.(type) {
 		case *ast.Text:
-			if entering {
-				b.Write(n.Segment.Value(src))
+			if entering && hidden == "" {
+				if p := n.Parent(); p != nil && p.Kind() == ast.KindCodeSpan {
+					b.Write(n.Segment.Value(src)) // code is its source text
+				} else {
+					writeResolved(&b, n.Segment.Value(src))
+				}
 				if n.SoftLineBreak() || n.HardLineBreak() {
 					b.WriteByte(' ')
 				}
 			}
 		case *ast.String:
-			if entering {
+			if entering && hidden == "" {
 				b.Write(n.Value)
 			}
 		case *ast.AutoLink:
-			if entering {
+			if entering && hidden == "" {
 				b.Write(n.URL(src))
 			}
 			return ast.WalkSkipChildren, nil
 		case *ast.FencedCodeBlock, *ast.CodeBlock:
-			if entering {
+			if entering && hidden == "" {
 				lines := n.Lines()
 				for i := 0; i < lines.Len(); i++ {
 					seg := lines.At(i)
@@ -153,11 +179,21 @@ func plain(md string, dropDangling, htmlWords bool) string {
 					seg := lines.At(i)
 					raw.Write(seg.Value(src))
 				}
-				b.WriteString(strings.ReplaceAll(htmlText(raw.String()), "\n", " "))
+				if n.HasClosure() {
+					raw.Write(n.ClosureLine.Value(src))
+				}
+				b.WriteString(strings.ReplaceAll(htmlText(raw.String(), &hidden), "\n", " "))
 				b.WriteByte('\n')
 			}
 			return ast.WalkSkipChildren, nil
 		case *ast.RawHTML:
+			if entering && htmlWords {
+				wasHidden := hidden != ""
+				visible := htmlText(string(n.Segments.Value(src)), &hidden)
+				if wasHidden && hidden == "" && strings.TrimSpace(visible) != "" {
+					b.WriteString(visible)
+				}
+			}
 			return ast.WalkSkipChildren, nil
 		}
 		if !entering && n.Type() == ast.TypeBlock {
@@ -175,6 +211,66 @@ func plain(md string, dropDangling, htmlWords bool) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// writeResolved writes a text node's source the way a CommonMark renderer does: a backslash before ASCII punctuation
+// gives the punctuation, and a character reference (&amp;, &#39;, &#x27;) the character it stands for. An escaped &
+// starts no reference; a backslash before anything else, an unknown name and a bare & stay as written.
+func writeResolved(b *strings.Builder, src []byte) {
+	for i := 0; i < len(src); i++ {
+		switch c := src[i]; {
+		case c == '\\' && i+1 < len(src) && util.IsPunct(src[i+1]):
+			i++
+			b.WriteByte(src[i])
+		case c == '&':
+			if n, r := characterReference(src[i:]); n > 0 {
+				b.WriteString(r)
+				i += n - 1
+			} else {
+				b.WriteByte(c)
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+}
+
+// characterReference reads the reference at the start of s (which starts with &): its length and the text it stands
+// for, or 0 when s starts with none. Like a renderer, it takes decimal references of up to 7 digits, hexadecimal ones
+// of up to 6 and the HTML5 entity names; a code point that is no character is U+FFFD.
+func characterReference(s []byte) (int, string) {
+	if len(s) < 3 {
+		return 0, ""
+	}
+	if s[1] == '#' {
+		base, digits, from := 10, util.IsNumeric, 2
+		if s[2] == 'x' || s[2] == 'X' {
+			base, digits, from = 16, util.IsHexDecimal, 3
+		}
+		end := from
+		for end < len(s) && digits(s[end]) {
+			end++
+		}
+		if n := end - from; n == 0 || n > 7 || base == 16 && n > 6 || end >= len(s) || s[end] != ';' {
+			return 0, ""
+		}
+		v, err := strconv.ParseUint(string(s[from:end]), base, 32)
+		if err != nil || v == 0 || !utf8.ValidRune(rune(v)) {
+			return end + 1, string(utf8.RuneError)
+		}
+		return end + 1, string(rune(v))
+	}
+	end := 1
+	for end < len(s) && util.IsAlphaNumeric(s[end]) {
+		end++
+	}
+	if end == 1 || end >= len(s) || s[end] != ';' {
+		return 0, ""
+	}
+	if entity, ok := util.LookUpHTML5EntityByName(string(s[1:end])); ok {
+		return end + 1, string(entity.Characters)
+	}
+	return 0, ""
 }
 
 // PlanTitle is what a plan card is called where it shows in one line (a push, the live activity, a row in the Agent

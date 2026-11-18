@@ -21,6 +21,11 @@ only extensions may name). A hit says what kind of value matched and where it co
 `machines.id`, private-words.txt, CLAUDE.local.md, the home directory), never the value. Install as a hook:
 scripts/hooks/pre-commit (docs/operations/testing.md).
 
+Values match as substrings, ignoring case, with two narrower rules: a short value (under six letters and digits) only as
+a word of its own, and an app identifier (a reverse-DNS value held only under a `bundle_id`, `application_id` or
+`app_group` key) only as a whole identifier, so what is derived from it with dots (group.<id>, <id>.widgets) matches
+and a longer identifier that merely starts the same way (<id>d, <id>-node) does not (#9461).
+
 Not private: loopback addresses (127.0.0.0/8, ::1, also with a port or as a URL's host) even when the config or
 CLAUDE.local.md holds one, hosts under the example domains (RFC 2606, RFC 6761: example and example.com/.net/.org,
 and the .test, .invalid and .localhost TLDs) held there as placeholders, the documentation and IETF protocol ranges
@@ -31,14 +36,17 @@ private-words.txt takes back (an ordinary word, a machine id named after a room)
 names the GitHub owner),
 CLAUDE.local.md spans that only name repo files, commands or config keys, a listed word of one case run where the text
 spells it only across a camel-case join ("fooBar", only_in_camel_joins), and in site/ and the public installation docs
-the contact address and domain the App Store and the OAuth consent screen publish anyway.
+the contact address and domain the App Store and the OAuth consent screen publish anyway. Generic email-pattern
+hits are also exempt only in the hash-pinned Harmony SSH third-party license bundle; config values, private words,
+banned names and private IPs still scan.
 """
-import ast, io, ipaddress, json, os, plistlib, re, subprocess, sys
+import ast, hashlib, io, ipaddress, json, os, plistlib, re, stat, subprocess, sys
 from functools import lru_cache
+from pathlib import PurePosixPath
 from urllib.parse import unquote, urlsplit
 from xml.parsers.expat import ExpatError
 
-ROOT = subprocess.run(["git", "-C", os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+ROOT = subprocess.run(["git", "-C", os.environ.get("PERSONA_PRIVACY_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
 HOME = os.path.expanduser("~")
 # Environment variables that name a build config, current name first (config_values reads each one set).
@@ -47,6 +55,17 @@ CONFIG_ENV = ("PERSONA_CONFIG", "JARVIS_CONFIG")
 IGNORE = {"darwin", "linux", "local", "ssh", "true", "false", "server", "localhost"}
 # Files that may hold placeholders that look like the real thing.
 SKIP_FILES = {"scripts/privacy_check.py"}
+PUBLIC_ATTRIBUTION_MANIFEST = "harmony/native/ssh/licenses/public-attribution.json"
+PUBLIC_ATTRIBUTION_INVENTORIES = (
+    "harmony/native/ssh/licenses/locked-inventory.json",
+    "harmony/native/ssh/licenses/sdk-runtime/supplemental-inventory.json",
+)
+PUBLIC_ATTRIBUTION_HTML = "harmony/entry/src/main/resources/rawfile/native-ssh-licenses.html"
+PUBLIC_ATTRIBUTION_SUPPORT = (PUBLIC_ATTRIBUTION_MANIFEST, *PUBLIC_ATTRIBUTION_INVENTORIES,
+                              PUBLIC_ATTRIBUTION_HTML)
+SHA256 = re.compile(r"[0-9a-f]{64}")
+PUBLIC_CRATE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+PUBLIC_CRATE_VERSION = re.compile(r"[0-9][A-Za-z0-9.+-]*")
 # Config keys whose values are published on purpose (App Store contact, the site's address, where personad is published):
 # fine in PUBLIC_DIRS.
 PUBLIC_KEYS = {"feedback_email", "privacy_url", "site_url"}
@@ -81,7 +100,7 @@ def strings(o, key=()):
 
 def example_values():
     try:
-        return {v for _, v in strings(json.load(open(os.path.join(ROOT, "config.example.json"))))}
+        return {v for _, v in strings(json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.example.json"))))}
     except (OSError, ValueError):
         return set()
 
@@ -206,6 +225,18 @@ WAIVABLE = re.compile(r"[A-Za-z]+")
 # bundle ids), or one that is itself a private value, shows as `*`: the report never carries a value.
 KEY_NAME = re.compile(r"[a-z][a-z0-9_]*")
 
+# App identifiers (#9461): a config value held only under one of these keys (app.bundle_id,
+# app.watch_widget_bundle_id, android.application_id, app.app_group, …) and shaped like a reverse-DNS id. Everything
+# the apps derive from one adds dot-separated parts (group.<id>, <id>.watchkitapp.widgets, <TEAM ID>.<id>), so it is
+# matched as a whole identifier: not continued by a letter, digit, `_` or `-`. A substring match also flagged another
+# identifier that only starts the same way, a public default committed on purpose, failing every whole-repo scan.
+APP_ID_KEY = re.compile(r"(?:[a-z0-9_]*_)?(?:bundle_id|application_id|app_group)")
+REVERSE_DNS = re.compile(r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+
+
+class AppIdentifier(str):
+    """A private value problems() matches as a whole identifier (APP_ID_KEY); otherwise the plain value."""
+
 
 def word_list():
     """The listed words, each with the file that lists it, and the config values `!word` lines take back (lowercase)."""
@@ -306,6 +337,11 @@ def term_sources():
         found.setdefault(v, set()).update(files)
     found = {v: where for v, where in found.items()
              if len(v) >= 4 and v.lower() not in IGNORE and not loopback(v) and not reserved(v)}
+    # held only under app-identifier keys and not also listed plainly: matched as a whole identifier (#9461)
+    app_ids = {v for v, paths in config.items()
+               if v in found and v.lower() not in plain and REVERSE_DNS.fullmatch(v)
+               and all(path and APP_ID_KEY.fullmatch(path[-1]) for path in paths)}
+    found = {(AppIdentifier(v) if v in app_ids else v): where for v, where in found.items()}
     user = os.path.basename(HOME)
     if len(user) >= 3:
         for v in ("/Users/" + user, "/home/" + user):
@@ -396,7 +432,7 @@ IPV4_HINT = re.compile(r"\d\.\d")
 EMAIL_HINT = re.compile(r"[A-Za-z0-9._%+-]@[A-Za-z0-9-]")
 # Placeholders (example domains, public mail providers, noreply) are fine; so are made-up TLDs (the fixture redactor
 # scrambles domains): only addresses at a real-looking domain of somebody's are flagged.
-OK_EMAIL_DOMAINS = re.compile(r"(^|\.)(example(\.(com|org|net))?|test|invalid|localhost|users\.noreply\.github\.com|anthropic\.com|moonshot\.cn|moonshot\.ai|bytedance\.com|"
+OK_EMAIL_DOMAINS = re.compile(r"(^|\.)(example(\.(com|org|net))?|test|invalid|localhost|users\.noreply\.github\.com|anthropic\.com|"
                               r"apple\.com|gmail\.com|googlemail\.com|outlook\.com|hotmail\.com|icloud\.com|yahoo\.com|"
                               r"qq\.com|163\.com|126\.com|foxmail\.com|yeah\.net|188\.com|"
                               r"substack\.com|beehiiv\.com|"  # newsletter platforms (kb tests that their senders are not people)
@@ -440,9 +476,13 @@ def problems(text, words, emails=True):
     found = []
     low = text.lower()
     for w in words:
+        if isinstance(w, AppIdentifier):
+            # a whole identifier, with what is derived from it by dot-separated parts (#9461)
+            if re.search(r"(?<![a-z0-9_-])" + re.escape(w.lower()) + r"(?![a-z0-9_-])", low):
+                found.append(w)
         # Short values (a name of 4–5 letters) only as a word of their own: inside identifiers ("inboxItem") they
         # matched by accident and flagged whole files.
-        if len(w) < 6 and w.isalnum():
+        elif len(w) < 6 and w.isalnum():
             if re.search(r"(?<![a-z0-9])" + re.escape(w.lower()) + r"(?![a-z0-9])", low):
                 found.append(w)
         elif w.lower() in low and not only_in_camel_joins(text, w):
@@ -611,6 +651,200 @@ def git_file_data(files, prefix):
     return data
 
 
+def safe_public_path(value):
+    if (not isinstance(value, str) or not value or "\\" in value or
+            any(ord(char) < 32 or ord(char) == 127 for char in value)):
+        return None
+    path = PurePosixPath(value)
+    if (str(path) != value or path.is_absolute() or
+            any(part in ("", ".", "..") for part in path.parts)):
+        return None
+    return path
+
+
+def inventory_notice_records(data, inventory_path):
+    """Read only the pinned notice paths and hashes from the two exact SSH attribution inventories."""
+    try:
+        inventory = json.loads(data)
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+        return None
+    expected = {}
+    if inventory_path == PUBLIC_ATTRIBUTION_INVENTORIES[0]:
+        if not isinstance(inventory, list) or not inventory:
+            return None
+        entries = inventory
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return None
+            name, version = entry.get("name"), entry.get("version")
+            if (not isinstance(name, str) or not PUBLIC_CRATE_NAME.fullmatch(name) or
+                    not isinstance(version, str) or not PUBLIC_CRATE_VERSION.fullmatch(version)):
+                return None
+            identity = name + "-" + version
+            prefix = "licenses/" + identity + "/"
+            notices = entry.get("notices")
+            if not isinstance(notices, list) or not notices:
+                return None
+            for notice in notices:
+                if not isinstance(notice, dict):
+                    return None
+                raw_path, digest = notice.get("path"), notice.get("sha256")
+                relative = safe_public_path(raw_path)
+                if (relative is None or len(relative.parts) < 3 or relative.parts[0] != "licenses" or
+                        relative.parts[1] != identity or not raw_path.startswith(prefix) or
+                        not isinstance(digest, str) or not SHA256.fullmatch(digest)):
+                    return None
+                path = "harmony/native/ssh/" + raw_path
+                if path in expected:
+                    return None
+                expected[path] = digest
+    elif inventory_path == PUBLIC_ATTRIBUTION_INVENTORIES[1]:
+        if (not isinstance(inventory, dict) or type(inventory.get("schema_version")) is not int or
+                inventory.get("schema_version") != 1 or not isinstance(inventory.get("items"), list) or
+                not inventory["items"]):
+            return None
+        for entry in inventory["items"]:
+            if not isinstance(entry, dict) or not isinstance(entry.get("notices"), list) or not entry["notices"]:
+                return None
+            for notice in entry["notices"]:
+                if not isinstance(notice, dict):
+                    return None
+                raw_path, digest = notice.get("path"), notice.get("sha256")
+                relative = safe_public_path(raw_path)
+                if (relative is None or len(relative.parts) < 3 or
+                        relative.parts[:2] != ("licenses", "sdk-runtime") or
+                        not isinstance(digest, str) or not SHA256.fullmatch(digest)):
+                    return None
+                path = "harmony/native/ssh/" + raw_path
+                if path in expected:
+                    return None
+                expected[path] = digest
+    else:
+        return None
+    return expected or None
+
+
+def public_attribution_records(manifest_data, support_data):
+    """Validate the fixed public bundle and return only its exact, inventory-backed files."""
+    try:
+        manifest = json.loads(manifest_data)
+    except (UnicodeDecodeError, ValueError, TypeError, RecursionError):
+        return {}
+    if (not isinstance(manifest, dict) or type(manifest.get("schema_version")) is not int or
+            manifest.get("schema_version") != 1 or
+            set(manifest) != {"schema_version", "inventories", "notices", "generated_html"}):
+        return {}
+
+    inventory_records = manifest.get("inventories")
+    if not isinstance(inventory_records, list) or len(inventory_records) != len(PUBLIC_ATTRIBUTION_INVENTORIES):
+        return {}
+    inventory_hashes = {}
+    for record in inventory_records:
+        if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+            return {}
+        path, digest = record.get("path"), record.get("sha256")
+        if path not in PUBLIC_ATTRIBUTION_INVENTORIES or not isinstance(digest, str) or not SHA256.fullmatch(digest):
+            return {}
+        if path in inventory_hashes:
+            return {}
+        data = support_data.get(path)
+        if not isinstance(data, bytes) or hashlib.sha256(data).hexdigest() != digest:
+            return {}
+        inventory_hashes[path] = digest
+    if set(inventory_hashes) != set(PUBLIC_ATTRIBUTION_INVENTORIES):
+        return {}
+
+    html_record = manifest.get("generated_html")
+    if not isinstance(html_record, dict) or set(html_record) != {"path", "sha256"}:
+        return {}
+    if html_record.get("path") != PUBLIC_ATTRIBUTION_HTML:
+        return {}
+    html_hash = html_record.get("sha256")
+    html_data = support_data.get(PUBLIC_ATTRIBUTION_HTML)
+    if (not isinstance(html_hash, str) or not SHA256.fullmatch(html_hash) or not isinstance(html_data, bytes) or
+            hashlib.sha256(html_data).hexdigest() != html_hash):
+        return {}
+
+    expected_notices = {}
+    for path in PUBLIC_ATTRIBUTION_INVENTORIES:
+        expected = inventory_notice_records(support_data[path], path)
+        if expected is None or expected_notices.keys() & expected.keys():
+            return {}
+        expected_notices.update(expected)
+    manifest_notices = manifest.get("notices")
+    if not isinstance(manifest_notices, list) or not manifest_notices:
+        return {}
+    noticed = {}
+    paths = []
+    for record in manifest_notices:
+        if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+            return {}
+        path, digest = record.get("path"), record.get("sha256")
+        relative = safe_public_path(path)
+        if (relative is None or not path.startswith("harmony/native/ssh/licenses/") or
+                path == PUBLIC_ATTRIBUTION_MANIFEST or not isinstance(digest, str) or not SHA256.fullmatch(digest) or
+                path in noticed):
+            return {}
+        noticed[path] = digest
+        paths.append(path)
+    if paths != sorted(paths) or noticed != expected_notices:
+        return {}
+
+    return {**noticed, **inventory_hashes, PUBLIC_ATTRIBUTION_HTML: html_hash}
+
+
+def repo_regular_file(path):
+    """Whether a safe repository path is a regular, nonsymlink worktree file."""
+    relative = safe_public_path(path)
+    if relative is None:
+        return False
+    current = ROOT
+    try:
+        for part in relative.parts:
+            current = os.path.join(current, part)
+            mode = os.lstat(current).st_mode
+            if stat.S_ISLNK(mode):
+                return False
+        return stat.S_ISREG(mode)
+    except OSError:
+        return False
+
+
+def git_regular_files(files, prefix):
+    """The regular-file paths in the same index or commit snapshot as a staged/range scan."""
+    if not files:
+        return set()
+    if prefix == ":":
+        output = git("ls-files", "--stage", "-z", "--", *files)
+        groups = {}
+        for record in output.split(b"\0"):
+            if not record:
+                continue
+            header, separator, raw_path = record.partition(b"\t")
+            fields = header.split()
+            if not separator or len(fields) != 3:
+                raise ValueError("invalid staged file mode output")
+            name = raw_path.decode("utf-8")
+            groups.setdefault(name, []).append((fields[0], fields[2]))
+        return {name for name, entries in groups.items()
+                if len(entries) == 1 and entries[0][0] in (b"100644", b"100755") and entries[0][1] == b"0"}
+    if not prefix.endswith(":"):
+        raise ValueError("invalid attribution snapshot")
+    head = prefix[:-1]
+    output = git("ls-tree", "-r", "-z", "--full-tree", head, "--", *files)
+    regular = set()
+    for record in output.split(b"\0"):
+        if not record:
+            continue
+        header, separator, raw_path = record.partition(b"\t")
+        fields = header.split()
+        if not separator or len(fields) != 3:
+            raise ValueError("invalid commit file mode output")
+        if fields[0] in (b"100644", b"100755") and fields[1] == b"blob":
+            regular.add(raw_path.decode("utf-8"))
+    return regular
+
+
 GIT_OID = re.compile(rb"[0-9a-f]{40}|[0-9a-f]{64}")
 # Git's empty tree, by object id length (SHA-1, SHA-256): the base of a range whose two ends share no history.
 EMPTY_TREE = {40: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
@@ -732,10 +966,44 @@ def main():
     snapshots = {}
     if from_git:
         try:
-            snapshots = git_file_data(from_git, span[1] + ":" if span and not staged else ":")
+            snapshot_prefix = span[1] + ":" if span and not staged else ":"
+            snapshots = git_file_data(list(dict.fromkeys(from_git + list(PUBLIC_ATTRIBUTION_SUPPORT))), snapshot_prefix)
         except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             sys.exit("privacy_check: cannot read Git objects; scan did not complete")
     from_git = set(from_git)
+
+    snapshot_prefix = span[1] + ":" if span and not staged else ":"
+    if staged or span:
+        attribution_support = {path: snapshots.get(path) for path in PUBLIC_ATTRIBUTION_INVENTORIES +
+                              (PUBLIC_ATTRIBUTION_HTML,)}
+        attribution_manifest = snapshots.get(PUBLIC_ATTRIBUTION_MANIFEST)
+    else:
+        attribution_support = {}
+        for path in PUBLIC_ATTRIBUTION_INVENTORIES + (PUBLIC_ATTRIBUTION_HTML,):
+            if repo_regular_file(path):
+                try:
+                    with open(os.path.join(ROOT, path), "rb") as source:
+                        attribution_support[path] = source.read()
+                except OSError:
+                    pass
+        attribution_manifest = None
+        if repo_regular_file(PUBLIC_ATTRIBUTION_MANIFEST):
+            try:
+                with open(os.path.join(ROOT, PUBLIC_ATTRIBUTION_MANIFEST), "rb") as source:
+                    attribution_manifest = source.read()
+            except OSError:
+                pass
+    attribution = public_attribution_records(attribution_manifest, attribution_support)
+    if attribution:
+        try:
+            regular_paths = git_regular_files(list(attribution) + [PUBLIC_ATTRIBUTION_MANIFEST], snapshot_prefix) \
+                if staged or span else {
+                    path for path in list(attribution) + [PUBLIC_ATTRIBUTION_MANIFEST] if repo_regular_file(path)
+                }
+        except (OSError, UnicodeDecodeError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            regular_paths = set()
+        if regular_paths != (set(attribution) | {PUBLIC_ATTRIBUTION_MANIFEST}):
+            attribution = {}
     bad, hit = [], set()
 
     def report(f, where, w):
@@ -776,9 +1044,10 @@ def main():
         if modules:
             text = modules.sub("", text)
         published_lines = governance if f in from_git or not os.path.islink(path) else {}
+        public_attribution = (f in attribution and hashlib.sha256(data).hexdigest() == attribution[f])
         for n, line in enumerate(text.splitlines(), 1):
             line_words = governance_words(f, line, allowed, sources, published_lines)
-            for w in problems(line, line_words, emails=not public):
+            for w in problems(line, line_words, emails=not public and not public_attribution):
                 report(f, n, w)
     if span:
         try:

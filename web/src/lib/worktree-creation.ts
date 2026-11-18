@@ -36,6 +36,12 @@ export function samePlacement(source: WorktreeTarget, parent: WorkspaceTarget): 
   return parent.machineId === source.mid && parent.host === source.host && parent.owner === source.owner && parent.manager === source.manager;
 }
 
+export function unsupportedWorktreeParent(draft: CreationDraft, info: WorktreePrepare): boolean {
+  const { source, parent } = draft;
+  return parent !== undefined && !info.choose_parent
+    && !(parent && samePlacement(source, parent) && parent.workspaceId === source.workspaceId);
+}
+
 export function creationBody(draft: CreationDraft, info: WorktreePrepare): WorktreeCreateBody {
   const { source, parent } = draft;
   const repo = repositoryDraft(draft);
@@ -62,11 +68,11 @@ export function creationBody(draft: CreationDraft, info: WorktreePrepare): Workt
   }
   // Never downgrade an advanced choice into a different legacy checkout.
   if (draft.name.trim() || draft.note.trim() || repo.baseRef || repo.preset || repo.provider) unsupported();
-  if (parent !== undefined && !info.choose_parent) unsupported();
+  if (unsupportedWorktreeParent(draft, info)) unsupported();
   if (draft.automaticName && !info.automatic_name) unsupported();
   const legacyForm = { ...draft, path: draft.pathEdited ? draft.path : suggestedPath(info.path, draft.branch) };
   if (!draft.automaticName) { const problem = formProblem(legacyForm); if (problem) throw new Error(problem); }
-  return { workspace_id: source.workspaceId, ...(source.host ? { kind: source.host } : {}), ...parentBody,
+  return { workspace_id: source.workspaceId, ...(source.host ? { kind: source.host } : {}), ...(info.choose_parent ? parentBody : {}),
     ...(draft.automaticName ? { auto_name: true as const } : { branch: draft.branch.trim(), path: legacyForm.path.trim() }) };
 }
 

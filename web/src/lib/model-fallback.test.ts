@@ -15,7 +15,9 @@ vi.mock("./api", async (importOriginal) => ({
   },
 }));
 
-const { fallbackView, refusalFacts, restoreErrorText, restoreModel } = await import("./model-fallback");
+const { fallbackView, recoveryCause, recoveryExhausted, recoveryReturning, refusalFacts } = await import("./model-fallback");
+const { restoreErrorText, restoreModel } = await import("./model-restore");
+const { usageLimitClock } = await import("./usage-limit");
 
 const fallback = {
   subtype: "model_refusal_fallback",
@@ -99,5 +101,82 @@ describe("refusalFacts", () => {
     const old = { ...fallback, raw: `{"syntheticHidden":{"nested":"${MARKER}"}}`, extra: { deeper: MARKER } } as unknown as typeof fallback;
     expect(JSON.stringify(refusalFacts(old))).not.toContain(MARKER);
     expect(refusalFacts(old).text).toBe("Synthetic refusal words");
+  });
+});
+
+// #7824: the node's bounded recovery adds the exhausted-chain view, the plain-words cause and the returning line.
+// A runtime-written record carries none of the new fields and must keep rendering exactly as before.
+const recovery = {
+  ...fallback,
+  category: "quota_exhausted",
+  recovery_reset: "2026-11-15T07:30:00Z",
+  recovery_exhausted: false,
+  recovery_returning: false,
+  recovery_tried: "primary-model -> fallback-model",
+};
+const NOW = Date.parse("2026-11-15T06:00:00Z");
+
+describe("recoveryCause", () => {
+  it("maps the node's five recovery categories to plain words and leaves anything else alone", () => {
+    expect(recoveryCause("safeguards_refusal")).toBe("模型拒绝了这次请求");
+    expect(recoveryCause("quota_exhausted")).toBe("额度用尽");
+    expect(recoveryCause("rate_limited")).toBe("被限流");
+    expect(recoveryCause("server_error")).toBe("服务出错");
+    expect(recoveryCause("model_unavailable")).toBe("模型不可用");
+    // runtime-written records and unknown categories keep their existing wording
+    expect(recoveryCause("synthetic-policy")).toBeUndefined();
+    expect(recoveryCause(undefined)).toBeUndefined();
+  });
+});
+
+describe("recoveryExhausted", () => {
+  it("is null without the exhausted marker", () => {
+    expect(recoveryExhausted({ model_fallback: fallback })).toBeNull();
+    expect(recoveryExhausted({})).toBeNull();
+  });
+  it("names the cause, the reset time in the user's clock and every model tried", () => {
+    const v = recoveryExhausted({ model_fallback: { ...recovery, recovery_exhausted: true } }, NOW);
+    expect(v).toEqual({
+      cause: "额度用尽",
+      reset: usageLimitClock("2026-11-15T07:30:00Z", NOW),
+      tried: "primary-model -> fallback-model",
+    });
+    expect(v!.reset.length).toBeGreaterThan(0);
+  });
+  it("keeps an unknown category and a missing reset as empty values, and still carries the tried list", () => {
+    const v = recoveryExhausted(
+      { model_fallback: { subtype: "model_refusal_fallback", recovery_exhausted: true, category: "something-new", recovery_tried: "a -> b" } },
+      NOW,
+    );
+    expect(v).not.toBeNull();
+    expect(v!).toEqual({ cause: "", reset: "", tried: "a -> b" });
+  });
+  it("treats an unparsable reset time as absent", () => {
+    const v = recoveryExhausted(
+      { model_fallback: { subtype: "model_refusal_fallback", recovery_exhausted: true, recovery_reset: "not-a-time" } },
+      NOW,
+    );
+    expect(v?.reset).toBe("");
+  });
+});
+
+describe("recoveryReturning", () => {
+  it("names the configured model only once a probe was answered", () => {
+    expect(recoveryReturning({ model_fallback: { ...recovery, recovery_returning: true } })).toBe("primary-model");
+    expect(recoveryReturning({ model_fallback: recovery })).toBeUndefined();
+    expect(recoveryReturning({})).toBeUndefined();
+  });
+});
+
+describe("fallbackView with the node's recovery marker", () => {
+  it("appends the plain-words cause and names the returning model", () => {
+    const v = fallbackView({ model_fallback: { ...recovery, recovery_returning: true } });
+    expect(v?.cause).toBe("额度用尽");
+    expect(v?.returning).toBe("primary-model");
+  });
+  it("leaves a runtime-written record's view without cause or returning", () => {
+    const v = fallbackView({ model_fallback: fallback });
+    expect(v?.cause).toBeUndefined();
+    expect(v?.returning).toBeUndefined();
   });
 });

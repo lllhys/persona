@@ -15,6 +15,7 @@ class InboxSelectionTest {
 
     @Test fun mailSelectionUsesItemIdentityWithoutSelectingLarkRows() {
         assertTrue(isInboxItemSelected(MailRoute("item"), "item", null))
+        assertTrue(isInboxItemSelected(MailRoute("item", 3), "item", null))
         assertFalse(isInboxItemSelected(MailRoute("other-item"), "item", null))
         assertFalse(isInboxItemSelected(MailRoute("item"), "item", "feed"))
         assertFalse(isInboxItemSelected(null, "item", null))

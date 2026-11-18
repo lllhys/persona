@@ -17,7 +17,7 @@ vi.mock("../../lib/feed", async (orig) => ({
 }));
 
 const { getState } = await import("../../lib/store");
-const { PlanCard, TaskCard, TaskLine } = await import("./Tasks");
+const { PlanCard } = await import("./Tasks");
 const { TodosView } = await import("../Todos");
 beforeAll(() => loadPages(), 60_000);
 
@@ -156,21 +156,6 @@ describe("ultracode on to-dos", () => {
     agents: [{ machine_id: "m1", session_id: "s1", linked_at: new Date().toISOString() }], ...o,
   });
   const marks = () => document.querySelectorAll("[data-ultracode-mark]").length;
-
-  it("puts the mark on the task card while its agent runs with it, not once it is off", async () => {
-    seed({ todos: [todo()], sessions: { m1: [session({ ultracode: true })] } });
-    await render(<TaskCard todoId="t1" conversation="c1" />);
-    expect(marks()).toBe(1);
-    await act(async () => seed({ sessions: { m1: [session({ ultracode: false })] } }));
-    await render(<TaskCard todoId="t1" conversation="c1" />);
-    expect(marks()).toBe(0);
-  });
-
-  it("puts the mark on another day's folded task line too", async () => {
-    seed({ todos: [todo()], sessions: { m1: [session({ ultracode: true })] } });
-    await render(<TaskLine todoId="t1" />);
-    expect(marks()).toBe(1);
-  });
 
   it("puts the mark on the to-do's row on the to-dos page", async () => {
     seed({ todos: [todo()], todosLoaded: true, sessions: { m1: [session({ ultracode: true })] } });

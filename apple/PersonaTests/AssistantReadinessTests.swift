@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The main conversation's readiness (docs/assistant/onboarding.md 4.4, 5.1, 5.2; docs/protocol/protocol.md「Main chat readiness」) against FakeHub:
 /// decoding, the step a card shows, what holds the send button, warm's answer, dismiss, coded refusals as cards.
@@ -66,6 +67,92 @@ struct AssistantReadinessTests {
         #expect(ReadinessRoute.sendTitle(.init(id: "model", state: "problem", code: "auth_failed")) == "先接上模型")
         // chat_only (P1): sends as before
         #expect(steps([("computer", "todo", "no_machine")], mode: "chat_only").blockingStep == nil)
+    }
+
+    @Test func usageLimitCardDismissalSurvivesTheSameReadinessRefresh() throws {
+        let limited = try decode(#"""
+        {"version":1,"mode":"full","ready":true,"launcher":"claude","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"ok"},
+          {"id":"model","state":"problem","code":"rate_limited","launcher":"claude","title":"Claude is limited","detail":"Try again after the reset."}
+        ]}
+        """#)
+        let m = AssistantReadinessModel()
+        m.reset(limited)
+        #expect(m.homeCardStep?.code == "rate_limited")
+
+        m.dismissHomeCard()
+        #expect(m.homeCardStep == nil)
+        #expect(m.current?.cardStep?.code == "rate_limited", "dismissal must not erase the recorded launcher failure")
+        m.land(limited) // the production refresh path repeats the same failure occurrence
+        #expect(m.homeCardStep == nil)
+    }
+
+    @Test func aLaterOccurrenceIsANewFailureWithoutObservedRecovery() throws {
+        let limited = try decode(#"""
+        {"version":1,"mode":"full","ready":true,"launcher":"claude","checked_at":"2026-11-06T09:00:00Z","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"ok"},
+          {"id":"model","state":"problem","code":"rate_limited","launcher":"claude","title":"Claude is limited","detail":"Same words.","occurrence":"2026-11-06T08:59:00Z"}
+        ]}
+        """#)
+        let m = AssistantReadinessModel()
+        m.reset(limited)
+        m.dismissHomeCard()
+        var refreshed = limited
+        refreshed.checkedAt = "2026-11-06T09:01:00Z"
+        m.land(refreshed) // checked_at advances on every read; the evidence is the same occurrence.
+        #expect(m.homeCardStep == nil)
+        var newer = refreshed
+        newer.checkedAt = "2026-11-06T09:02:00Z"
+        newer.steps[2] = try decode(#"""
+        {"mode":"full","steps":[{"id":"model","state":"problem","code":"rate_limited","launcher":"claude","title":"Claude is limited","detail":"Same words.","occurrence":"2026-11-06T09:02:00Z"}]}
+        """#).steps[0]
+        m.land(newer) // No recovery was observed, but this is genuinely newer evidence with the same words.
+        #expect(m.homeCardStep?.code == "rate_limited")
+    }
+
+    @Test func recoveryAllowsANewUsageLimitOccurrenceAndAnotherLauncherDoesNotInheritDismissal() throws {
+        let limited = try decode(#"""
+        {"version":1,"mode":"full","ready":true,"launcher":"claude","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"ok"},
+          {"id":"model","state":"problem","code":"rate_limited","launcher":"claude","title":"Claude is limited","detail":"Try again after the reset."}
+        ]}
+        """#)
+        let recovered = try decode(#"""
+        {"version":1,"mode":"full","ready":true,"launcher":"claude","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"ok"},{"id":"model","state":"ok","launcher":"claude"}
+        ]}
+        """#)
+        let m = AssistantReadinessModel()
+        m.reset(limited)
+        m.dismissHomeCard()
+        m.land(recovered)
+        #expect(m.homeCardStep == nil)
+        m.land(limited) // the same words after a real recovery are a new occurrence, not a repeated read
+        #expect(m.homeCardStep?.code == "rate_limited")
+
+        m.land(limited)
+        m.dismissHomeCard()
+        var codex = limited
+        codex.launcher = "codex"
+        codex.steps[2].launcher = "codex"
+        codex.steps[2].title = "Codex is limited"
+        m.land(codex)
+        #expect(m.homeCardStep?.launcher == "codex")
+    }
+
+    @Test func usageLimitCardExplainsDefaultAndActiveLaunchers() throws {
+        let limited = try decode(#"""
+        {"version":1,"mode":"full","ready":true,"launcher":"claude","steps":[
+          {"id":"computer","state":"ok"},{"id":"claude","state":"ok"},
+          {"id":"model","state":"problem","code":"rate_limited","launcher":"claude","title":"Claude is limited","detail":"Try again after the reset."}
+        ]}
+        """#)
+        let step = try #require(limited.step("model"))
+        let scoped = ReadinessHomeCard.scopedDetail(step, activeLauncher: "codex")
+        let scope = String(localized: "This warning is for the default model connection. This conversation uses another model connection.")
+        #expect(scoped == "Try again after the reset.\n" + scope)
+        #expect(scoped?.contains("claude") == false && scoped?.contains("codex") == false, "everyday copy must not expose raw launcher IDs")
+        #expect(ReadinessHomeCard.scopedDetail(step, activeLauncher: "claude") == step.detail)
     }
 
     @Test func refreshAndProbeAndDismissRequests() async throws {
@@ -225,6 +312,8 @@ struct AssistantReadinessTests {
 
     @Test func turnErrorCodesBecomeFixes() throws {
         #expect(TurnErrorFix(code: "not_logged_in")?.action == "connect_model")
+        // The CLI's own sign-in, which the Claude desktop app's does not give, in every language (#9366).
+        #expect(TurnErrorFix(code: "not_logged_in")?.detail.contains("claude auth login") == true)
         #expect(TurnErrorFix(code: "auth_failed")?.action == "edit_provider")
         #expect(TurnErrorFix(code: "model_route")?.action == "connect_model")
         #expect(TurnErrorFix(code: "rate_limited") == nil && TurnErrorFix(code: nil) == nil)

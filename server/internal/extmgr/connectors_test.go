@@ -215,7 +215,7 @@ func TestConnectorsListTheSameCapabilities(t *testing.T) {
 	want := []string{
 		"mail tools,actions,archive hosts=[] options=false",
 		"github status,tools,actions,events,hosts,inbox,archive,login,options,threads hosts=[github.com] options=true",
-		"imessage status,tools,events,inbox,archive hosts=[] options=false",
+		"imessage status,tools,catalog,events,inbox,archive hosts=[] options=false", // catalog: inbox_things (#6317)
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

@@ -189,6 +189,7 @@ func TestTodosCRUDAndPatch(t *testing.T) {
 		if patched.Todo.DoneAt != nil || patched.Todo.ReopenedAt == nil {
 			t.Fatalf("reopened = %+v", patched.Todo)
 		}
+		todosTold(t, e.s)
 		if got := e.f.eventTypes(); !strings.Contains(got, "todos") {
 			t.Fatalf("the apps were not told: %q", got)
 		}

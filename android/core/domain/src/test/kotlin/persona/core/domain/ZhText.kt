@@ -26,19 +26,39 @@ internal fun CoreText.zh(): String = when (key) {
 }
 
 private object ZhStrings {
-    val table: Map<String, String> by lazy {
-        val file = generateSequence(File("").absoluteFile) { it.parentFile }
-            .map { File(it, "core/designsystem/src/main/res/values-zh/strings_core.xml") }.first { it.exists() }
-        val root = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file).documentElement
-        val out = mutableMapOf<String, String>()
-        val nodes = root.childNodes
-        for (i in 0 until nodes.length) {
-            val node = nodes.item(i) as? org.w3c.dom.Element ?: continue
-            val text = if (node.tagName == "plurals") node.getElementsByTagName("item").item(0).textContent else node.textContent
-            out[node.getAttribute("name")] = text.replace("\\n", "\n").replace("\\'", "'").replace("\\\"", "\"").replace("\\@", "@").replace("\\?", "?")
-        }
-        out
+    val table: Map<String, String> by lazy { stringsOf("values-zh") }
+}
+
+/** [CoreText] in Japanese, from core/designsystem's values-ja/strings_core.xml (as [zh] does for Simplified Chinese). */
+internal fun CoreText.ja(): String = when (key) {
+    CoreText.Key.Verbatim -> args.first().toString()
+    CoreText.Key.Joined -> args.drop(1).map { (it as CoreText).ja() }.filter(String::isNotEmpty)
+        .joinToString(args.first().let { if (it is CoreText) it.ja() else it.toString() })
+    else -> {
+        val name = "designsystem_core_" + key.name.replace(Regex("(?<!^)(?=[A-Z])"), "_").lowercase()
+        val text = JaStrings.table[name] ?: error("no ja string $name")
+        val values = args.map { if (it is CoreText) it.ja() else it }.toTypedArray()
+        if (values.isEmpty()) text else String.format(text, *values)
     }
+}
+
+private object JaStrings {
+    val table: Map<String, String> by lazy { stringsOf("values-ja") }
+}
+
+/** core/designsystem's strings_core.xml of one language, a plural by its first item (Chinese and Japanese have only "other"). */
+private fun stringsOf(dir: String): Map<String, String> {
+    val file = generateSequence(File("").absoluteFile) { it.parentFile }
+        .map { File(it, "core/designsystem/src/main/res/$dir/strings_core.xml") }.first { it.exists() }
+    val root = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(file).documentElement
+    val out = mutableMapOf<String, String>()
+    val nodes = root.childNodes
+    for (i in 0 until nodes.length) {
+        val node = nodes.item(i) as? org.w3c.dom.Element ?: continue
+        val text = if (node.tagName == "plurals") node.getElementsByTagName("item").item(0).textContent else node.textContent
+        out[node.getAttribute("name")] = text.replace("\\n", "\n").replace("\\'", "'").replace("\\\"", "\"").replace("\\@", "@").replace("\\?", "?")
+    }
+    return out
 }
 
 /** [zh] through lists and nulls, for assertions on values that may be [CoreText]. */

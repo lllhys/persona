@@ -1,10 +1,13 @@
+import PersonaKit
 import SwiftUI
 
 // The row above the assistant's composer on iPhone, iPad and Mac (#3393, docs/assistant/unified-entry.md "Needs you and In
 // progress: each thing once"): two entries, Needs You and In Progress, each thing in exactly one of them. The split is
 // `AssistantEntries`, a port of the web's `assistantEntries` (web/src/lib/assistant-entries.ts, Android's
 // AssistantEntries.kt, #3387) replaying the shared fixture spec/fixtures/entries/cases.json. Each entry opens a tray above
-// the bar, one at a time; the entries are drawn as the old dock's capsules (`DockCapsule`), so the bar is as low.
+// the bar, one at a time; the entries are drawn as the old dock's capsules (`DockCapsule`), so the bar is as low. In the
+// main conversation with low-distraction mode on, Held Pushes (#7782, PushInterceptsView.swift) comes after them, and its
+// tray opens in the same place (#8223).
 
 /// One of the bar's entries, and the tray it opens.
 nonisolated enum ActionTray: String, CaseIterable, Identifiable, Sendable {
@@ -78,6 +81,10 @@ nonisolated enum AssistantEntries {
         var running: [Row] = []
         /// Open tasks with no progress for 48 hours and nothing running: folded under In Progress, not counted.
         var shelved: [Row] = []
+        /// Handed-out tasks that finished in the last 24 hours and that the owner has not opened since (the To-dos page's
+        /// Just Finished, `TodoTriageLogic`), newest first: a group under In Progress, not counted (#8237). How a task
+        /// ended is told here, not by a card in the chat.
+        var justFinished: [Row] = []
     }
 
     /// A task's status, failed too when only its plan says the start failed (a hub from before #1077): the web's
@@ -116,6 +123,13 @@ nonisolated enum AssistantEntries {
         return .followUp
     }
 
+    /// A task's status when some of its Agents ask under another task (`own`: its status from its own Agents alone): it
+    /// does not wait on the user for them, so a Needs You that only those bring is the task at work instead (the web's
+    /// `withNeeds`).
+    static func withNeeds(_ all: Status, own: Status) -> Status {
+        all == .needsYou && own != .needsYou ? (own == .notStarted ? .working : own) : all
+    }
+
     /// The open ask, as the web reads it (`openAsk`): one with a verdict and a time.
     static func openAsk(_ todo: TodoItem) -> TodoAsk? {
         guard let a = todo.ask, !(a.verdict ?? "").isEmpty, !a.askedAt.isEmpty else { return nil }
@@ -128,12 +142,34 @@ nonisolated enum AssistantEntries {
         return resting && (todo.reviewState == .pendingReview || openAsk(todo) != nil) ? 2 : status.rank
     }
 
-    /// The task waits for the user's decision or review: an open ask (a decided one only while the task is open), or its
-    /// supervisor's `pending_review` / `needs_user` on an open task (the web's `taskAwaitsDecision`).
-    static func awaitsDecision(_ todo: TodoItem) -> Bool {
+    /// How long a task's review is its supervisor's alone (docs/assistant/unified-entry.md "Needs you and In progress"):
+    /// past it the review is overdue and the task is the owner's, under Needs You. The web's `REVIEW_OVERDUE_MS`.
+    static let reviewOverdueAfter: TimeInterval = 60 * 60
+
+    /// The task waits for its supervisor's review, which is not the owner's to do yet (the web's `supervisorReviewing`):
+    /// open, in `pending_review` for less than `reviewOverdueAfter`. False past that, and when the hub does not say since
+    /// when (an older hub): the review is then the owner's, as it was. An open ask or an asking Agent is the owner's
+    /// whatever this says.
+    static func supervisorReviewing(_ todo: TodoItem, now: Date) -> Bool {
+        guard todo.doneAt == nil, todo.supervision?.state == "pending_review", let since = todo.supervision?.pendingSince else { return false }
+        return now.timeIntervalSince(since) < reviewOverdueAfter
+    }
+
+    /// The task waits for the user's decision or review (the web's `taskAwaitsDecision`): an open ask (a decided one only
+    /// while the task is open), or its supervisor's `needs_user` on an open task, or a `pending_review` that is the
+    /// owner's: one waiting an hour or more, or one the hub gives no start for. A younger review is its supervisor's.
+    static func awaitsDecision(_ todo: TodoItem, now: Date) -> Bool {
         if let ask = openAsk(todo) { return !(todo.doneAt != nil && ask.outcome == "decide") }
+        guard todo.doneAt == nil else { return false }
         let state = todo.supervision?.state
-        return todo.doneAt == nil && (state == "pending_review" || state == "needs_user")
+        return state == "needs_user" || (state == "pending_review" && !supervisorReviewing(todo, now: now))
+    }
+
+    /// The task's row among the tasks in progress says its supervisor is reviewing it: nothing of it runs or asks, and
+    /// the review is not the owner's (the web's `supervisorReview`).
+    static func saysSupervisorReview(_ todo: TodoItem, status: Status, now: Date) -> Bool {
+        let resting = status == .followUp || status == .unread || status == .notStarted
+        return resting && !awaitsDecision(todo, now: now) && supervisorReviewing(todo, now: now)
     }
 
     /// The message card still waits for Send by the hub's fields alone: not sent, not filed (the web's `messageWaits`).
@@ -143,12 +179,14 @@ nonisolated enum AssistantEntries {
 
     /// Splits a conversation's things into the two entries (the web's `assistantEntries`). `main`: the main
     /// conversation's id (it watches every task and the Agents opened by hand); `messageWaits`: whether a message card
-    /// still waits for Send (the app adds the inbox's word and Later); `restored`: tasks brought back from shelved;
+    /// still waits for Send (the app adds the inbox's word and Later); `decisionHidden`: a decision put off with Later or
+    /// taken out with Don't handle (the web's `deferred` and `dismissal_id`); `restored`: tasks brought back from shelved;
     /// `going`: the agents going on (`AppModel.goingAgents`), else read from `sessions`, which then must be every session.
     @MainActor static func split(conversation: String, main: String?, group: String = "", todos: [TodoItem], sessions: [Session],
                                  interactions: [Interaction], plans: [String: TaskPlan], feed: [FeedItem], now: Date = .now,
                                  restored: [String: Date] = [:], going: [DockAgent]? = nil,
-                                 messageWaits: (FeedItem) -> Bool = AssistantEntries.messageWaits) -> Result {
+                                 messageWaits: (FeedItem) -> Bool = AssistantEntries.messageWaits,
+                                 decisionHidden: (TodoItem) -> Bool = { _ in false }) -> Result {
         let lookup = TodosLogic.makeSessionLookup(sessions)
         let isMain = !(main ?? "").isEmpty && main == conversation
         // A function, not a closure value: Swift 6.2.4 (Xcode 26.3) rejects capturing a closure value in the `listed`
@@ -160,10 +198,13 @@ nonisolated enum AssistantEntries {
         }
 
         // The conversation's tasks (the web's `taskCardSlots`): the main conversation's every to-do, another's the ones it
-        // dispatched, plus those its plans and feed name. `at` is when its card came: its plan's, else the to-do's.
-        var at: [String: Date] = [:]
+        // dispatched, plus those its plans and feed name. `at` is when its card came: its plan's, else the to-do's; `slot`
+        // is the web's slot id, `plan:<plan>:<index>` for a plan's task (its place in the plan), else `task:<to-do>`.
+        var at: [String: Date] = [:], slot: [String: String] = [:]
         for plan in plans.values.sorted(by: { $0.id < $1.id }) where plan.conversation == conversation {
-            for t in plan.tasks { if let id = t.todoID, at[id] == nil { at[id] = plan.createdAt ?? .distantPast } }
+            for (index, t) in plan.tasks.enumerated() {
+                if let id = t.todoID, at[id] == nil { at[id] = plan.createdAt ?? .distantPast; slot[id] = "plan:\(plan.id):\(index)" }
+            }
         }
         let byID = Dictionary(todos.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         for item in feed where [.task, .receipt, .review, .report].contains(item.kind) {
@@ -173,28 +214,56 @@ nonisolated enum AssistantEntries {
             at[todo.id] = todo.createdAt ?? .distantPast
         }
 
+        // One home per request (docs/design/DESIGN_SYSTEM.md 4.8, the web's #7490): an Agent several of these tasks list
+        // asks under one of them, the task the hub ties its session to (`Session.todo`) when it lists it, else the first
+        // that lists it in the web's slot order (oldest card first, then slot id: one plan's tasks in the plan's order).
+        // The others neither repeat its cards nor wait on the user for them.
+        var home: [String: String] = [:]
+        let slotOrder = todos.compactMap { t in at[t.id].map { (todo: t, at: $0, slot: slot[t.id] ?? "task:" + t.id) } }
+            .sorted { ($0.at, $0.slot) < ($1.at, $1.slot) }
+        for (todo, _, _) in slotOrder where todo.doneAt == nil {
+            for a in todo.activeAgents {
+                let k = pair(a.machineID, a.sessionID)
+                if home[k] == nil || lookup(a.machineID, a.sessionID)?.todo?.id == todo.id { home[k] = todo.id }
+            }
+        }
+
         typealias Ranked = (row: Row, rank: Double, at: Date)
         /// The agents of the tasks listed as rows: folded into them, never rows of their own, whoever made the to-do.
         var folded = Set<String>()
         var asking: [(row: Row, first: Date?)] = []
-        var deciding: [Ranked] = [], open: [Ranked] = [], shelved: [Ranked] = []
+        var deciding: [Ranked] = [], open: [Ranked] = [], shelved: [Ranked] = [], finished: [(row: Row, at: Date)] = []
         // failed starts whose work finished in a related to-do: closed, as the To-dos page has them (#3713)
         let superseded = TodoTriageLogic.supersededFailedStarts(todos)
         for todo in todos {
             guard let when = at[todo.id] else { continue }
-            let status = status(todo, lookup: lookup, plans: plans)
             let active = todo.doneAt != nil ? [] : todo.activeAgents
-            let asks = active.flatMap { asksOf[pair($0.machineID, $0.sessionID)] ?? [] }
+            let own = active.filter { home[pair($0.machineID, $0.sessionID)] == todo.id }
+            let all = Self.status(todo, lookup: lookup, plans: plans)
+            // what the task waits on the user for is its own Agents' (an Agent another task holds asks there)
+            var mine = todo
+            mine.agents = own
+            let status = own.count < active.count ? withNeeds(all, own: todoStatus(mine, lookup: lookup)) : all
+            let asks = own.flatMap { asksOf[pair($0.machineID, $0.sessionID)] ?? [] }
             let row = Row.task(id: todo.id, status: status, agents: active.count)
             let listed = { folded.formUnion(active.map { pair($0.machineID, $0.sessionID) }) }
-            let bucket = TodoTriageLogic.bucket(todo, lookup: lookup, now: now, restoredAt: restored[todo.id],
+            let triage = TodoTriageLogic.triage(todo, lookup: lookup, now: now, restoredAt: restored[todo.id],
                                                 superseded: superseded.contains(todo.id))
+            let bucket = TodoTriageLogic.bucket(todo, triage)
             // a failed start carries done_at (the hub ends it), yet it is the user's to retry while its bucket says open
             let waits = status == .failed ? bucket == .open : todo.doneAt == nil && (status == .needsYou || status == .interrupted)
+            let decision = awaitsDecision(todo, now: now)
             if !asks.isEmpty { asking.append((row, asks.map { $0.createdAt ?? .distantPast }.min())); listed() }
-            else if waits || awaitsDecision(todo) { deciding.append((row, rank(todo, status), when)); listed() }
-            else if bucket == .open { open.append((row, rank(todo, status), when)); listed() }
+            else if waits || decision {
+                // Only the review decision is put off or dismissed (Later / Don't handle); a live Agent question keeps its home.
+                if !(status != .needsYou && decision && decisionHidden(todo)) { deciding.append((row, rank(todo, status), when)) }
+                listed()
+            }
+            // its supervisor's review is under way (not the owner's yet): in progress, whatever the To-dos page files it under
+            else if bucket == .open || supervisorReviewing(todo, now: now) { open.append((row, rank(todo, status), when)); listed() }
             else if bucket == .shelved { shelved.append((row, rank(todo, status), when)); listed() }
+            // finished work handed out by a conversation (a failed start that a related to-do finished is history, not news)
+            else if triage.section == .justDone, status != .failed, !(todo.origin ?? "").isEmpty { finished.append((row, triage.last)) }
         }
 
         // Agents that belong to no task, the main conversation's only: asking ones wait on the user, working ones run. The
@@ -231,7 +300,8 @@ nonisolated enum AssistantEntries {
         }.map(\.row)
         return Result(needsYou: byAsk + waitingPlans + stable(deciding, newest).map(\.row) + messages,
                       running: stable(open, newest).map(\.row) + running,
-                      shelved: stable(shelved, newest).map(\.row))
+                      shelved: stable(shelved, newest).map(\.row),
+                      justFinished: stable(finished) { a, b in a.at != b.at ? a.at > b.at : nil }.map(\.row))
     }
 }
 
@@ -269,6 +339,8 @@ nonisolated struct ActionTrayContent: Equatable, Sendable {
     var running: [Row] = []
     /// Folded under In Progress, not counted.
     var shelved: [AssistantEntries.Row] = []
+    /// Under In Progress in a group of their own, not counted (`AssistantEntries.Result.justFinished`).
+    var justFinished: [AssistantEntries.Row] = []
     /// Needs You's rows grouped by supervising conversation (`grouped`); empty when the tray is one list, as it always
     /// was. Grouping never changes the rows or the count.
     var needsYouGroups: [NeedsYouGroup] = []
@@ -279,6 +351,7 @@ nonisolated struct ActionTrayContent: Equatable, Sendable {
         needsYou = asks.map(Row.ask) + entries.needsYou.map(Row.entry)
         running = entries.running.map(Row.entry)
         shelved = entries.shelved
+        justFinished = entries.justFinished
     }
 
     func rows(_ tray: ActionTray) -> [Row] {
@@ -348,17 +421,49 @@ struct AssistantActionBar: View {
     /// The open tray's rows, measured: the tray is as tall as they are, up to its cap.
     @State private var listHeight: CGFloat = 0
     @State private var removing: TodoItem?
+    /// Needs You's rows opened in place into their answerable card (`Row.id`), and the ones whose card was drawn once:
+    /// a card stays in the tree (folded to nothing) after it closes, so a PlanCard's remember choice and a MessageCard's
+    /// edit are still there when the row opens again.
+    @State private var expanded: Set<String> = []
+    @State private var drawn: Set<String> = []
+    /// What the user picked on each plan row's card; the tray draws Start, Edit and Don't Start of the open one under its
+    /// list (`PlanActions`), so a tall card never scrolls them away.
+    @State private var planChoices: [String: PlanChoices] = [:]
+    /// Bumped once a minute while the bar is in front, so the split reads the clock again: a supervisor's review turns
+    /// the owner's at the hour while nothing else changes (`AssistantEntries.reviewOverdueAfter`; the web and Android
+    /// tick the same way).
+    @State private var minute = 0
+    /// The main conversation's held pushes (#7782), made the first time the bar reads them there, and whether their tray
+    /// is the one open: in the trays' place, so never with `open` (#8223).
+    @State private var held: PushInterceptsModel?
+    @State private var heldOpen = false
     private var store: TasksStore { .shared }
 
+    private var entryRow: AnyLayout { AnyLayout(HStackLayout(spacing: Theme.Space.s)) }
+
     var body: some View {
+        let _ = minute
         let content = Self.content(conversation, key: key)
+        let row = entryRow
+        let inMain = conversation == AppModel.shared.assistantMain?.sessionID && AppModel.shared.api != nil
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             if let open {
                 tray(open, content)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if heldOpen, let held {
+                PushInterceptsTray(model: held) { withAnimation(Theme.Motion.state) { heldOpen = false } }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            HStack(spacing: Theme.Space.s) {
+            row {
                 ForEach(ActionTray.allCases) { entry($0, count: content.count($0)) }
+                if inMain, let held {
+                    PushInterceptsEntry(model: held, open: heldOpen) {
+                        withAnimation(Theme.Motion.state) {
+                            open = nil
+                            heldOpen.toggle()
+                        }
+                    }
+                }
                 if ComputerActivityPill.shows(computer) {
                     ComputerActivityPill(activity: computer).background(Theme.pageBackground, in: .capsule) // as the entries
                 }
@@ -370,15 +475,47 @@ struct AssistantActionBar: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         // No fade of its own: the chat runs on behind the bar and fades out there (`FooterFog`, #3696).
-        .onChange(of: conversation) { open = nil }
+        .onChange(of: conversation) { open = nil; expanded = []; drawn = []; planChoices = [:] }
+        // One tray at a time: Needs You's or In Progress' opening closes the held pushes'.
+        .onChange(of: open) { if open == nil { expanded = []; drawn = []; planChoices = [:] } else { heldOpen = false } }
+        // The held pushes are read in the main conversation while its tab is in front, every 30 s, with ln mode off too,
+        // so the entry comes when the mode is turned on; the bar reads none of the model's values itself.
+        .tabActiveTask(id: inMain) {
+            guard inMain, let api = AppModel.shared.api else { return }
+            let model = held ?? PushInterceptsModel(api: api)
+            if held == nil { held = model }
+            await model.run()
+        }
+        .onChange(of: inMain) { _, inMain in if !inMain { held = nil; heldOpen = false } }
         #if DEBUG
         .onAppear {
             if let value = UserDefaults.standard.string(forKey: "showActionTray"), let tray = ActionTray(rawValue: value) {
                 open = tray
             }
         }
+        // -openNeedsRow <Row.id prefix, e.g. plan: or task:>: opens the tray's first row of that kind in place, once the
+        // tasks and plans it lists have come in.
+        .task {
+            guard let prefix = UserDefaults.standard.string(forKey: "openNeedsRow") else { return }
+            for _ in 0..<60 {
+                if let first = Self.content(conversation, key: key).needsYou.map(\.id).first(where: { $0.hasPrefix(prefix) }) {
+                    open = .needsYou
+                    drawn.insert(first)
+                    expanded.insert(first)
+                    planChoices[first] = PlanChoices()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
         #endif
         .confirmTaskRemoval($removing)
+        .tabActiveTask {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                minute &+= 1
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("action-bar")
     }
@@ -396,9 +533,10 @@ struct AssistantActionBar: View {
             feed: store.feed(conversation), restored: TodoRestores.load(), going: model.goingAgents,
             // the hub's fields, the inbox's word on the item, and Later
             messageWaits: { item in
-                guard item.kind == .message, let id = item.ref, !store.laterMessages.contains(item.id) else { return false }
+                guard item.kind == .message, let id = item.ref, !store.isLater(item) else { return false }
                 return store.messageState(item, itemID: id) == .open
-            })
+            },
+            decisionHidden: { store.decisionHidden($0) })
         let asks = (key.map { model.interactions(for: $0) } ?? []).sorted { ($0.createdAt ?? .distantPast) < ($1.createdAt ?? .distantPast) }
         var content = ActionTrayContent(entries, asks: asks.map { .init(id: $0.id, title: $0.askLine(includeToolName: false) ?? $0.title) })
         // The main conversation, while it folds background rounds, groups Needs You by supervising conversation.
@@ -441,7 +579,7 @@ struct AssistantActionBar: View {
             HStack(spacing: Theme.Space.s) {
                 Text(tray.title).font(Theme.Font.sectionHeader).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: Theme.Space.s)
-                // Finished things are in neither tray: the board has everything.
+                // The board has everything; of what finished, the trays list only what just finished (Just Finished).
                 Button {
                     open = nil
                     store.showBoard = true
@@ -467,13 +605,15 @@ struct AssistantActionBar: View {
             }
             // No vertical padding: the 44 pt targets are the row's height, as the capsule and its padding were.
             .padding(.leading, Theme.Space.m)
-            if rows.isEmpty && (tray == .needsYou || content.shelved.isEmpty) {
+            if rows.isEmpty && (tray == .needsYou || content.shelved.isEmpty && content.justFinished.isEmpty) {
                 Text(tray.empty).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(2)
                     .padding(.horizontal, Theme.Space.m)
                     .padding(.bottom, Theme.Space.m)
                     .accessibilityIdentifier("action-tray.empty")
             } else {
+                let cap = min(listHeight, listCap(pinned: tray == .needsYou && pinnedPlan(rows) != nil))
                 // As tall as its rows; past the cap they scroll inside the tray, the bar stays where it is.
+                ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if tray == .needsYou, !content.needsYouGroups.isEmpty {
@@ -492,12 +632,32 @@ struct AssistantActionBar: View {
                             ForEach(rows) { row($0) }
                         }
                         if tray == .running, !content.shelved.isEmpty { shelvedLine(content.shelved.count) }
+                        if tray == .running, !content.justFinished.isEmpty { justFinished(content.justFinished) }
                     }
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
                 }
                 .scrollBounceBehavior(.basedOnSize)
-                .frame(height: min(listHeight, Theme.Size.box280))
+                // A row that opened in place scrolls to the top of the tray: its card is taller than the tray.
+                .onChange(of: expanded) { old, new in
+                    guard let id = new.subtracting(old).first else { return }
+                    withAnimation(Theme.Motion.state) { proxy.scrollTo(id, anchor: .top) }
+                }
+                .frame(height: cap)
+                // a row the cap cuts fades out above the bar instead of being sliced
+                .mask {
+                    let fade = listHeight > cap && cap > 0 ? min(1, Theme.Space.xxl / cap) : 0
+                    LinearGradient(stops: [.init(color: .black, location: 1 - fade), .init(color: .black.opacity(fade == 0 ? 1 : 0), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                }
                 .padding(.bottom, Theme.Space.xs)
+                if tray == .needsYou, let (plan, choices) = pinnedPlan(rows) {
+                    Divider().padding(.horizontal, Theme.Space.m)
+                    PlanActions(plan: plan, choices: choices)
+                        .padding(.horizontal, Theme.Space.l)
+                        .padding(.vertical, Theme.Space.s)
+                        .accessibilityIdentifier("action-tray.plan-actions")
+                }
             }
         }
         .surface(in: .rect(cornerRadius: Theme.Radius.panel, style: .continuous))
@@ -512,7 +672,7 @@ struct AssistantActionBar: View {
             Button {
                 withAnimation(Theme.Motion.state) { open = nil }
             } label: {
-                line(title: ask.title, detail: StateName.needsYou.text, waiting: true) {
+                line(title: ask.title, detail: StateName.needsYou.text, tint: AgentState.needsYou.tone.text, trail: .open) {
                     ThemedIcon(Theme.Icon.askFirst).font(Theme.Font.labelStrong).foregroundStyle(AgentState.needsYou.tone.text)
                 }
             }
@@ -523,6 +683,65 @@ struct AssistantActionBar: View {
         }
     }
 
+    /// Folded rows get a short list; an opened card a taller one, and with the plan bar under it room for the next row whole.
+    private func listCap(pinned: Bool) -> CGFloat {
+        expanded.isEmpty ? Theme.Size.box280 : Theme.Size.box380 + (pinned ? Theme.Size.box56 : 0)
+    }
+
+    /// The open plan whose row is opened (only one is at a time): its buttons stay under the list.
+    private func pinnedPlan(_ rows: [ActionTrayContent.Row]) -> (TaskPlan, PlanChoices)? {
+        for row in rows {
+            guard case .entry(.plan(let id)) = row, expanded.contains("plan:" + id), let choices = planChoices["plan:" + id],
+                  let plan = store.plans[id], plan.state == .open else { continue }
+            return (plan, choices)
+        }
+        return nil
+    }
+
+    /// A Needs You row that opens in place: folded it is a line (mark, words, a chevron), opened it is the card that answers
+    /// it, right under the line. Another row opening does not close it (except a plan, there is one plan bar), and a message or
+    /// brief card drawn once stays in the tree, folded to nothing, so its edit is still there.
+    private func opening<Mark: View, Card: View>(_ id: String, title: String, detail: String, subtitle: String?,
+                                                 @ViewBuilder mark: () -> Mark, @ViewBuilder card: () -> Card) -> some View {
+        let isOpen = expanded.contains(id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                Haptics.tap()
+                if !isOpen {
+                    drawn.insert(id)
+                    if id.hasPrefix("plan:"), planChoices[id] == nil { planChoices[id] = PlanChoices() }
+                }
+                withAnimation(Theme.Motion.state) {
+                    if isOpen {
+                        expanded.remove(id)
+                        // a plan card is not kept: its choices are in `planChoices`, and a folded card would go on reading the stores
+                        if id.hasPrefix("plan:") { drawn.remove(id) }
+                    } else {
+                        // one plan at a time: its Start / Edit / Don't Start are the bar under the list, and there is one bar
+                        if id.hasPrefix("plan:") {
+                            for other in expanded where other.hasPrefix("plan:") { expanded.remove(other); drawn.remove(other) }
+                        }
+                        expanded.insert(id)
+                    }
+                }
+            } label: {
+                line(title: title, detail: detail, tint: AgentState.needsYou.tone.text, subtitle: isOpen ? nil : subtitle, trail: isOpen ? .expanded : .folded, mark: mark)
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isOpen ? String(localized: "Expanded") : String(localized: "Collapsed"))
+            .accessibilityIdentifier(isOpen ? "action-tray.row.open" : "action-tray.row")
+            if drawn.contains(id) {
+                card()
+                    .frame(height: isOpen ? nil : 0, alignment: .top)
+                    .clipped()
+                    .opacity(isOpen ? 1 : 0)
+                    .allowsHitTesting(isOpen)
+                    .accessibilityHidden(!isOpen)
+            }
+        }
+        .id(id)
+    }
+
     @ViewBuilder private func entry(_ row: AssistantEntries.Row) -> some View {
         switch row {
         case .task(let id, let status, let agents):
@@ -530,30 +749,50 @@ struct AssistantActionBar: View {
                 let state = status.taskState
                 let activity = AssistantTrayActivity(sessions: store.sessions(todo))
                 if let ask = todo.openAsk, todo.doneAt == nil {
-                    BriefAcceptRow(row: ask.row(for: todo), group: AppModel.shared.hub?.group ?? "")
-                        .padding(.horizontal, Theme.Space.m)
+                    // an owner decision or a to-do to verify: folded to a line, opened it is its Accept row, or the answerable
+                    // decision row when the hub sent its options (`TodoAskRow`)
+                    let brief = ask.row(for: todo)
+                    opening(row.id, title: todo.title, detail: brief.isDecision ? String(localized: "Decision") : String(localized: "To Verify"),
+                            subtitle: ask.verdict, mark: { TaskMark(state: .needsYou) }) {
+                        TodoAskRow(todo: todo, ask: ask, group: AppModel.shared.hub?.group ?? "", deferrable: true, showsTitle: false)
+                            .padding(.horizontal, Theme.Space.m)
+                    }
                 } else {
-                    Button {
-                        open = nil
-                        store.detailTask = id
-                    } label: {
-                        line(title: todo.title,
-                             detail: activity.isActive && status == .waiting ? StateName.working.text : detail(todo, status: status, agents: agents),
-                             waiting: open == .needsYou, activity: activity) {
-                            if open != .needsYou && (activity.isActive || status == .working) {
-                                WorkingIndicator().accessibilityIdentifier("action-tray.working-mark")
-                            } else if status == .waiting {
-                                ThemedIcon(Theme.Icon.backgroundWaiting).font(Theme.Font.labelStrong)
-                                    .foregroundStyle(StatusPalette.backgroundWaiting.dot)
-                                    .accessibilityIdentifier("action-tray.waiting-mark")
-                            } else {
-                                TaskMark(state: state)
+                    let lead = store.leadSession(todo)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Button {
+                            open = nil
+                            store.detailTask = id
+                        } label: {
+                            line(title: todo.title,
+                                 detail: activity.isActive && status == .waiting ? StateName.working.text : detail(todo, status: status, agents: agents),
+                                 tint: tint(status), subtitle: subtitle(todo, status: status, lead: lead, activity: activity),
+                                 subtitleTint: status == .failed || status == .interrupted ? Theme.danger : nil,
+                                 trail: .open, activity: activity) {
+                                if open != .needsYou && (activity.isActive || status == .working) {
+                                    WorkingIndicator().accessibilityIdentifier("action-tray.working-mark")
+                                } else if status == .waiting {
+                                    ThemedIcon(Theme.Icon.backgroundWaiting).font(Theme.Font.labelStrong)
+                                        .foregroundStyle(StatusPalette.backgroundWaiting.dot)
+                                        .accessibilityIdentifier("action-tray.waiting-mark")
+                                } else if status == .usageLimit {
+                                    ThemedIcon(Theme.Icon.backgroundWaiting).font(Theme.Font.labelStrong).foregroundStyle(Theme.caution)
+                                        .accessibilityIdentifier("action-tray.limit-mark")
+                                } else if status == .interrupted {
+                                    ThemedIcon(Theme.Icon.infoFilled).font(Theme.Font.labelStrong).foregroundStyle(Theme.danger)
+                                        .accessibilityIdentifier("action-tray.interrupted-mark")
+                                } else if status == .notStarted {
+                                    StartingMark().accessibilityIdentifier("action-tray.starting-mark")
+                                } else {
+                                    TaskMark(state: state)
+                                }
                             }
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("action-tray.task")
+                        .contextMenu { TaskRemoveMenuItem(todo: todo, state: state, pending: $removing) }
+                        actions(todo, status: status, lead: lead)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("action-tray.task")
-                    .contextMenu { TaskRemoveMenuItem(todo: todo, state: state, pending: $removing) }
                 }
             }
         case .agent(let agent):
@@ -563,7 +802,7 @@ struct AssistantActionBar: View {
             } label: {
                 line(title: agent.title,
                      detail: agent.isWaiting ? StateName.needsYou.text : (agent.backgroundWaiting && !agent.activity.isActive ? StateName.taskWaiting.text : StateName.working.text),
-                     waiting: agent.isWaiting, activity: agent.activity) {
+                     tint: agent.isWaiting ? AgentState.needsYou.tone.text : nil, trail: .open, activity: agent.activity) {
                     if !agent.isWaiting && (agent.activity.isActive || !agent.backgroundWaiting) {
                         WorkingIndicator().accessibilityIdentifier("action-tray.working-mark")
                     } else {
@@ -575,20 +814,28 @@ struct AssistantActionBar: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("action-tray.agent")
         case .plan(let id):
-            // the plan card itself: Start, Edit and Don't Start are right here
-            if let plan = store.plans[id] {
-                PlanCard(plan: plan)
-                    .padding(.horizontal, Theme.Space.s)
-                    .padding(.bottom, Theme.Space.s)
-                    .accessibilityIdentifier("action-tray.plan")
+            // folded to a line; opened it is the plan card itself: Start, Edit and Don't Start are right there
+            if let plan = store.plans[id], let first = plan.tasks.first {
+                opening(row.id, title: first.title, detail: plan.tasks.count > 1 ? String(localized: "\(plan.tasks.count) tasks") : String(localized: "Plan"),
+                        subtitle: [TaskPlace.machineName(first.machine), first.project].filter { !$0.isEmpty }.joined(separator: " · "),
+                        mark: { ThemedIcon(Theme.Icon.taskPlan).font(Theme.Font.labelStrong).foregroundStyle(Theme.accent) }) {
+                    PlanCard(plan: plan, choices: planChoices[row.id], actionsPinned: planChoices[row.id] != nil)
+                        .padding(.horizontal, Theme.Space.s)
+                        .padding(.bottom, Theme.Space.s)
+                        .accessibilityIdentifier("action-tray.plan")
+                }
             }
         case .message(let feedID, let itemID):
-            // the message card itself: Send, Edit and Later are right here
+            // folded to a line; opened it is the message card itself: Send, Edit and Later are right there
             if let item = store.feed(conversation).first(where: { $0.id == feedID }) {
-                MessageCard(item: item, itemID: itemID)
-                    .padding(.horizontal, Theme.Space.s)
-                    .padding(.bottom, Theme.Space.s)
-                    .accessibilityIdentifier("action-tray.message")
+                opening(row.id, title: [item.sender, item.chat].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · "),
+                        detail: String(localized: "Draft Reply"), subtitle: (item.text ?? "").split(separator: "\n").first.map(String.init),
+                        mark: { ThemedIcon(item.source == "mail" ? Theme.Icon.mail : Theme.Icon.groupChat).font(Theme.Font.labelStrong).foregroundStyle(Theme.loop) }) {
+                    MessageCard(item: item, itemID: itemID)
+                        .padding(.horizontal, Theme.Space.s)
+                        .padding(.bottom, Theme.Space.s)
+                        .accessibilityIdentifier("action-tray.message")
+                }
             }
         }
     }
@@ -599,7 +846,7 @@ struct AssistantActionBar: View {
             open = nil
             store.showBoard = true
         } label: {
-            line(title: String(localized: "Shelved"), detail: "\(count)", waiting: false) {
+            line(title: String(localized: "Shelved"), detail: "\(count)", trail: .none) {
                 ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.labelStrong).foregroundStyle(.tertiary)
             }
             .foregroundStyle(.secondary)
@@ -616,6 +863,7 @@ struct AssistantActionBar: View {
         var parts: [String]
         if status == .interrupted { parts = [String(localized: "Interrupted [Chat Layout]")] }
         else if status == .usageLimit { parts = [String(localized: "Usage Limit")] }
+        else if AssistantEntries.saysSupervisorReview(todo, status: status, now: .now) { parts = [ReviewBadge.supervisorReview] }
         else if resting, review == .pendingReview || review == .needsUser { parts = [todo.reviewBadge?.label ?? status.taskState.label] }
         else { parts = [status.taskState.label] }
         if status == .waiting, let waits = store.waitLine(todo) { parts.append(waits) }
@@ -623,8 +871,142 @@ struct AssistantActionBar: View {
         return parts.joined(separator: " · ")
     }
 
-    private func line<Mark: View>(title: String, detail: String, waiting: Bool,
-                                  activity: AssistantTrayActivity = .init(), @ViewBuilder mark: () -> Mark) -> some View {
+    /// A task row's status word colour: red when it needs a retry or a continue, orange on a usage limit, the Needs You
+    /// colour while it waits for the user (and everything in that tray does); nil is secondary.
+    private func tint(_ status: AssistantEntries.Status) -> Color? {
+        switch status {
+        case .failed, .interrupted: Theme.danger
+        case .usageLimit: Theme.cautionText
+        case .needsYou: AgentState.needsYou.tone.text
+        default: open == .needsYou ? AgentState.needsYou.tone.text : nil
+        }
+    }
+
+    /// The row's second line (docs/design/task-cards.md §3.2): why a stopped task stopped and when it goes on, what a
+    /// starting one is doing, what a waiting one waits for, else its last words; nil when there is nothing to add.
+    private func subtitle(_ todo: TodoItem, status: AssistantEntries.Status, lead: Session?, activity: AssistantTrayActivity) -> String? {
+        func one(_ text: String?) -> String? {
+            let t = Fmt.plain(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return t.isEmpty ? nil : t
+        }
+        switch status {
+        case .usageLimit:
+            let reason = one(lead?.turnError)
+            let when = lead?.usageLimitWhen()
+            return [reason, when].compactMap { $0 }.joined(separator: " · ").nilIfEmpty
+        case .interrupted:
+            return one(lead?.turnError.flatMap { TurnErrorReason.of($0) ?? $0 })
+        case .notStarted:
+            return String(localized: "Starting the agent")
+        case .failed:
+            // in plain words; the raw error is the task's details' (#8237)
+            return store.startFailure(todo).map(StartFailureWords.rowLine)
+        case .needsYou:
+            return TaskAsk.waitingLine(store.interactions(todo))
+        case .working, .waiting:
+            return activity.isActive ? nil : one(TaskNow(lead: lead, working: status == .working)?.text)
+        case .unread, .followUp:
+            // stopped short of done: what the completion check said is missing (#3180), else the Agent's last words
+            if let why = todo.stoppedReason(working: false) {
+                return why.isEmpty ? String(localized: "Stopped, not done yet") : String(localized: "Stopped, not done yet · \(why)")
+            }
+            return one(lead?.lastText)
+        case .done:
+            return one(lead?.lastText)
+        }
+    }
+
+    /// What a row offers right under its words (#8237; the receipt card's buttons until then): Retry and Remove for a start
+    /// that failed, Continue for a turn the model service cut off (or a usage limit nothing continues by itself).
+    @ViewBuilder private func actions(_ todo: TodoItem, status: AssistantEntries.Status, lead: Session?) -> some View {
+        let retry = status == .failed && store.state(todo) == .failed
+        let resume = status == .interrupted || status == .usageLimit && lead.map { !$0.usageLimitContinues } == true
+        if retry || resume || status == .failed {
+            let busy = store.busyRetries.contains(todo.id)
+            HStack(spacing: Theme.Space.s) {
+                // under the words: as wide as the row's mark and the gap after it
+                Color.clear.scaledFrame(width: Theme.Size.markM, height: 0).accessibilityHidden(true)
+                if retry || resume {
+                    Button { Task { await store.retry(todo) } } label: {
+                        Text(retry ? String(localized: "Retry") : String(localized: "Continue")).lineLimit(1)
+                            .opacity(busy ? 0 : 1).overlay { if busy { ProgressView().controlSize(.small) } }
+                    }
+                    .themedButton(prominent: true)
+                    .disabled(busy)
+                    .accessibilityIdentifier(retry ? "action-tray.retry" : "action-tray.continue")
+                }
+                if status == .failed {
+                    Button { store.askRemove(todo, pending: $removing) } label: {
+                        Text("Remove [Task Sheets 6135d4]").lineLimit(1)
+                    }
+                    .themedButton()
+                    .accessibilityIdentifier("action-tray.remove")
+                }
+            }
+            .font(Theme.Font.captionStrong)
+            .padding(.horizontal, Theme.Space.m)
+            .padding(.bottom, Theme.Space.s)
+        }
+    }
+
+    /// Handed-out tasks that just finished, under In Progress (#8237): a group header and a row each, with what it did;
+    /// opening one shows its details and counts as seeing it, so it leaves the group, as on the To-dos page (#5707).
+    @ViewBuilder private func justFinished(_ rows: [AssistantEntries.Row]) -> some View {
+        HStack(spacing: Theme.Space.s) {
+            Text(TodoSection.justDone.title).lineLimit(1)
+            Spacer(minLength: Theme.Space.s)
+            Text(rows.count, format: .number).monospacedDigit().lineLimit(1).fixedSize()
+        }
+        .font(Theme.Font.sectionHeader).foregroundStyle(.secondary)
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.top, Theme.Space.s)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("action-tray.just-finished")
+        ForEach(rows) { row in
+            if case .task(let id, _, _) = row, let todo = store.todos[id] {
+                Button {
+                    open = nil
+                    store.detailTask = id
+                    see(todo)
+                } label: {
+                    line(title: todo.title, detail: TaskState.done.label, subtitle: finishedLine(todo), trail: .open) {
+                        TaskMark(state: .done)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("action-tray.finished")
+                .contextMenu { TaskRemoveMenuItem(todo: todo, state: .done, pending: $removing) }
+            }
+        }
+    }
+
+    /// What a finished task did, in a line (the web's finished row): its accepting review's note, why it closed, its
+    /// receipt's summary, else its Agent's last words.
+    private func finishedLine(_ todo: TodoItem) -> String? {
+        let receipt = store.feed(todo.origin ?? conversation).last { $0.kind == .receipt && $0.ref == todo.id && !$0.failed }?.summary
+        for text in [todo.supervision?.latestReview?.note, todo.doneReason, receipt, store.leadSession(todo)?.lastText] {
+            let t = Fmt.plain(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { return t }
+        }
+        return nil
+    }
+
+    /// Opening a Just Finished row counts as seeing it (#5707), where the hub keeps seen marks; a failure leaves it there.
+    private func see(_ todo: TodoItem) {
+        guard AppModel.shared.hubFeatures.contains(TodoSeen.feature) else { return }
+        // the task's own Agents, as the row has them: the bar never reads every session (AllSessionsReadersTests)
+        let t = TodoTriageLogic.triage(todo, lookup: TodosLogic.makeSessionLookup(store.sessions(todo)), now: .now)
+        guard t.section == .justDone else { return }
+        Task { try? await TodoStore.shared.setSeen(id: todo.id, true, after: t.last) }
+    }
+
+    /// What follows a row's words on the right.
+    private enum Trail { case none, open, folded, expanded }
+
+    private func line<Mark: View>(title: String, detail: String, tint: Color? = nil, subtitle: String? = nil, subtitleTint: Color? = nil,
+                                  trail: Trail = .open, activity: AssistantTrayActivity = .init(),
+                                  @ViewBuilder mark: () -> Mark) -> some View {
         HStack(spacing: Theme.Space.s) {
             mark().scaledFrame(width: Theme.Size.markM)
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
@@ -632,11 +1014,21 @@ struct AssistantActionBar: View {
                     Text(title).font(Theme.Font.body).lineLimit(1)
                     Spacer(minLength: Theme.Space.s)
                     Text(detail).font(Theme.Font.caption).lineLimit(1).fixedSize()
-                        .foregroundStyle(waiting ? AnyShapeStyle(AgentState.needsYou.tone.text) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
+                }
+                if let subtitle {
+                    Text(subtitle).font(Theme.Font.caption).lineLimit(1)
+                        .foregroundStyle(subtitleTint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
+                        .accessibilityIdentifier("action-tray.subtitle")
                 }
                 if activity.isActive {
                     AssistantTrayActivityLine(activity: activity)
                 }
+            }
+            if trail != .none {
+                ThemedIcon(trail == .expanded ? Theme.Icon.expand : Theme.Icon.disclosure)
+                    .font(Theme.Font.labelStrong).foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, Theme.Space.m)
@@ -644,6 +1036,20 @@ struct AssistantActionBar: View {
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
     }
+}
+
+/// A task whose Agent is on its way up: a hollow circle with the caution dot in it.
+private struct StartingMark: View {
+    var body: some View {
+        Circle().strokeBorder(.secondary, lineWidth: Theme.Size.lineMedium)
+            .scaledFrame(width: Theme.Size.dotL, height: Theme.Size.dotL)
+            .overlay { Circle().fill(Theme.caution).scaledFrame(width: Theme.Size.dotXS, height: Theme.Size.dotXS) }
+            .accessibilityLabel(String(localized: "Starting [Task Views d14c3a]"))
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 extension AssistantTrayActivity {

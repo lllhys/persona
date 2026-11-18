@@ -21,6 +21,37 @@ nonisolated enum QuestionSteps {
         return labels.isEmpty ? nil : labels.joined(separator: ", ")
     }
 
+    /// How long a single-select pick waits before it moves on: long enough to see its tick land. `-showQuestionStepPause
+    /// <ms>` (DEBUG) stretches it, so a UI test can tap again within it.
+    static var pause: Duration {
+        #if DEBUG
+        let ms = UserDefaults.standard.integer(forKey: "showQuestionStepPause")
+        if ms > 0 { return .milliseconds(ms) }
+        #endif
+        return .milliseconds(250)
+    }
+
+    /// A single-select pick's step, `pause` after it (#6549), in place of the step still `pending`: a second pick within
+    /// the pause starts the pause again, so the card steps once, a whole pause after the last pick, and that pick's tick
+    /// is seen. Previous / Next cancel it. `go` runs only if the pause ran out uncancelled.
+    @MainActor static func step(replacing pending: Task<Void, Never>?, after pause: Duration = QuestionSteps.pause,
+                                _ go: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        pending?.cancel()
+        return Task { @MainActor in
+            guard (try? await Task.sleep(for: pause)) != nil else { return } // cancelled: a newer pick, or Previous / Next
+            go()
+        }
+    }
+
+    /// Where a single-select pick made on page `from` steps once its pause is over (#6549): to the next question, only
+    /// while the card is still on `from` (`now`), never past the last one. A newer pick or Previous / Next cancels the
+    /// step first (`step(replacing:)`); this is the check behind that. Each pick used to step on its own, so a second tap
+    /// within the pause skipped a question, or took the card past the last one onto a page with none.
+    static func next(after from: Int, now: Int, count: Int) -> Int? {
+        guard from >= 0, now == from, from + 1 < count else { return nil } // no step from a page that isn't one
+        return from + 1
+    }
+
     /// The review: a row per question, its header (else the question itself) and its answer, nil when it has none.
     static func rows(_ questions: [Question], answers: [Int: String]) -> [ScreenReviewRow] {
         questions.enumerated().map { i, q in

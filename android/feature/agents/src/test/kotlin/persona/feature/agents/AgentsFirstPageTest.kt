@@ -64,8 +64,9 @@ class AgentsFirstPageTest {
         placeholders.assertIsDisplayed().assertHasNoClickAction().assertContentDescriptionEquals("Loading")
         rule.onAllNodesWithContentDescription("Loading").assertCountEquals(1)
         val placeholdersTop = placeholders.fetchSemanticsNode().boundsInRoot.top
-        for (label in listOf("All", "By repository")) {
-            val control = rule.onNodeWithText(label).assertIsDisplayed()
+        for ((label, control) in listOf("All" to rule.onNodeWithTag("agents-status-0"),
+            "Grouping" to rule.onNodeWithTag("agents-grouping"))) {
+            control.assertIsDisplayed()
             assertTrue("placeholders appear below \"$label\"", control.fetchSemanticsNode().boundsInRoot.bottom <= placeholdersTop)
         }
         listOf("No computers yet", "Start your first coding session").forEach {
@@ -136,6 +137,8 @@ class AgentsFirstPageTest {
             status.value = SessionListStatus(loaded = true, total = 1)
         }
 
+        // The page says loaded once it is built from the loaded status: one more pass of the main looper after the status.
+        rule.waitForIdle()
         rule.waitUntil(5_000) { model.page.value.loaded }
         rule.onNodeWithText("Recovered task").assertIsDisplayed()
         placeholders.assertDoesNotExist()

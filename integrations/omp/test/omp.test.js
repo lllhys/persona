@@ -33,7 +33,14 @@ test('the agent directory is omp\'s own unless PI_CODING_AGENT_DIR names one', (
 })
 
 test('a one-shot run is left alone', () => {
-  for (const argv of [['omp', '-p', 'hi'], ['omp', '--print'], ['omp', '--mode', 'json'], ['omp', '--mode=json']]) {
+  for (const argv of [
+    ['omp', '-p', 'hi'],
+    ['omp', '--print'],
+    ['omp', '--print=true', 'hi'],
+    ['omp', '--print=false', 'hi'],
+    ['omp', '--mode', 'json'],
+    ['omp', '--mode=json'],
+  ]) {
     assert.equal(oneShot(argv), true, argv.join(' '))
   }
   for (const argv of [['omp'], ['omp', 'hi'], ['omp', 'explain this json']]) assert.equal(oneShot(argv), false, argv.join(' '))

@@ -9,6 +9,7 @@ import { settingsHref } from "./nav";
 import { SUPERVISE_PURPOSE } from "../../lib/background-supervisor";
 import { api, credentialOwner, enc, errorText, subscribeCredentialOwner } from "../../lib/api";
 import { MANAGER_HEADER } from "../../lib/manager-choice";
+import { mainRuntimeDetails, type MainExecution } from "../../lib/main-runtime";
 import { PERMISSION_MODES } from "../../lib/session-actions";
 import { ConfigurationManager } from "./ConfigurationManager";
 import { AgentAutoNaming, supportsAgentAutoNaming, type AgentAutoNamingState } from "./AgentAutoNaming";
@@ -27,6 +28,7 @@ import { lazyPage } from "../../lib/lazy-page";
 import { Tag, textareaClass } from "../assistant/parts";
 import { PersonaAvatar, usePersona } from "../assistant/Persona";
 import { TaskTrust } from "./TaskTrust";
+import { DirectionNotes, directionNotesDeps } from "./DirectionNotes";
 import { PageBoundary } from "../PageBoundary";
 
 const StandingAuthorizations = lazyPage(() => import("./StandingAuthorizations").then((m) => m.StandingAuthorizations));
@@ -35,7 +37,11 @@ const Repositories = lazyPage(() => import("./Repositories").then((m) => m.Repos
 interface AssistantState extends AgentAutoNamingState {
   manager?: string;
   default_permission_mode?: string;
+  readonly_mode?: "sandbox" | "prompt";
   machine_id?: string;
+  /** The main chat and the node it is routed through (not where it runs: `MainExecution`'s location). */
+  main?: string;
+  main_machine_id?: string;
   launcher?: string;
   cwd?: string;
   timezone?: string;
@@ -49,6 +55,9 @@ interface AssistantState extends AgentAutoNamingState {
   task_workspace_preference?: "prefer-existing" | "prefer-new";
   /** "Fold background rounds" (#4314, docs/assistant/assistant.md "Background rounds"): on by default; unset from a hub before it (on). */
   main_background_folded?: boolean;
+  /** "Show scheduled task chats" in the sidebar's Recent (#8324): off by default, one value for all of the user's
+   *  devices; unset from a hub before it (no switch). All chats' ⋯ menu has the same switch (lib/recent-task-chats.ts). */
+  recent_task_chats?: boolean;
   /** The role a meeting recording pre-selects (#2981, docs/assistant/meeting-minutes.md "Attendance fields"); only from a hub
    *  that attends meetings. */
   meeting_attendance_default?: string;
@@ -59,6 +68,7 @@ interface AssistantState extends AgentAutoNamingState {
   /** "Follow up every agent Persona starts" (#3617, docs/assistant/unified-entry.md "Agent tasks"): off by default; unset
    *  from a hub before it. */
   agent_tasks?: boolean;
+  close_ended_terminals?: boolean;
   /** "Tell supervisors about new messages" (#4293, docs/assistant/unified-entry.md "Supervision (#3124)"): off
    *  by default; unset from a hub before it. */
   inbox_signals?: boolean;
@@ -97,9 +107,13 @@ export function AssistantSettings({ bare }: { /** Without its header (the profil
 function AssistantSettingsForManager({ manager, owner, bare }: { manager: string; owner: string; bare?: boolean }) {
   const [notesSaves] = useState(() => aboutMeSaves(manager, owner));
   const scopedApi: typeof api = (path, init) => api(path, { ...init, headers: { ...Object.fromEntries(new Headers(init?.headers)), [MANAGER_HEADER]: manager } });
+  const [directionNotes] = useState(() => directionNotesDeps(scopedApi));
   const persona = usePersona();
   const machines = useStore((s) => s.machines);
   const [info, setInfo] = useState<AssistantState | null>(null);
+  // where and with what the main chat runs (docs/assistant/assistant.md "Main conversation execution on the web"): kept
+  // here, out of the Assistant screen's line (audit item 80); nothing when the hub does not report it
+  const [execution, setExecution] = useState<MainExecution | null>(null);
   const [error, setError] = useState("");
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [files, setFiles] = useState<MemoryFile[] | null>(null);
@@ -107,8 +121,10 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
   const [open, setOpen] = useState<{ file: MemoryFile; index?: boolean } | null>(null);
   const [quietBusy, setQuietBusy] = useState(false);
   const [foldBusy, setFoldBusy] = useState(false);
+  const [recentBusy, setRecentBusy] = useState(false);
   const [startBusy, setStartBusy] = useState(false);
   const [permissionBusy, setPermissionBusy] = useState(false);
+  const [readonlyBusy, setReadonlyBusy] = useState(false);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const setWorkspacePreference = async (value: "prefer-existing" | "prefer-new") => {
     setWorkspaceBusy(true);
@@ -129,6 +145,16 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
     } catch (e) {
       toast(t("settings-assistantsettings.save_failed", { error: errorText(e) }), "error");
     } finally { setPermissionBusy(false); }
+  };
+  const setReadonlyMode = async (mode: "sandbox" | "prompt") => {
+    setReadonlyBusy(true);
+    try {
+      const r = await scopedApi<AssistantState>("/assistant", { method: "PUT", json: { readonly_mode: mode } });
+      if (r.manager !== manager || r.readonly_mode !== mode) throw new Error(t("settings-assistantsettings.readonly_mode_unconfirmed"));
+      setInfo((i) => i ? { ...i, readonly_mode: r.readonly_mode } : i);
+    } catch (e) {
+      toast(t("settings-assistantsettings.save_failed", { error: errorText(e) }), "error");
+    } finally { setReadonlyBusy(false); }
   };
   const [meetingBusy, setMeetingBusy] = useState(false);
   const setMeetingRole = async (role: string) => {
@@ -188,6 +214,22 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
     }
   };
 
+  const setRecentTaskChats = async (on: boolean) => {
+    setRecentBusy(true);
+    setInfo((i) => (i ? { ...i, recent_task_chats: on } : i));
+    try {
+      const r = await scopedApi<AssistantState>("/assistant", { method: "PUT", json: { recent_task_chats: on } });
+      setInfo((i) => (i ? { ...i, recent_task_chats: r.recent_task_chats ?? on } : i));
+      // the sidebar reads it from the store's /assistant answer
+      void refreshAssistant().catch(() => {});
+    } catch (e) {
+      setInfo((i) => (i ? { ...i, recent_task_chats: !on } : i));
+      toast(t("settings-assistantsettings.save_failed", { error: errorText(e) }), "error");
+    } finally {
+      setRecentBusy(false);
+    }
+  };
+
   const setQuiet = async (on: boolean) => {
     setQuietBusy(true);
     setInfo((i) => (i ? { ...i, main_tasks_quiet: on } : i));
@@ -204,16 +246,16 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
 
   const [agentsBusy, setAgentsBusy] = useState(false);
   // One field of the Agents group (#3617, #3618, #4293, #5082): shown as chosen at once, taken back with the reason when the hub refuses.
-  const setAgents = async (patch: { agent_tasks: boolean } | { inbox_signals: boolean } | { main_supervises_own_tasks: boolean } | { archive_closed_days: number } | { idle_close_hours: number }) => {
+  const setAgents = async (patch: { agent_tasks: boolean } | { close_ended_terminals: boolean } | { inbox_signals: boolean } | { main_supervises_own_tasks: boolean } | { archive_closed_days: number } | { idle_close_hours: number }) => {
     const before = info;
     setAgentsBusy(true);
     setInfo((i) => (i ? { ...i, ...patch } : i));
     try {
       const r = await scopedApi<AssistantState>("/assistant", { method: "PUT", json: patch });
       // what the hub saved, when it says
-      setInfo((i) => (i ? { ...i, agent_tasks: r.agent_tasks ?? i.agent_tasks, inbox_signals: r.inbox_signals ?? i.inbox_signals, main_supervises_own_tasks: r.main_supervises_own_tasks ?? i.main_supervises_own_tasks, archive_closed_days: r.archive_closed_days ?? i.archive_closed_days, idle_close_hours: r.idle_close_hours ?? i.idle_close_hours } : i));
+      setInfo((i) => (i ? { ...i, agent_tasks: r.agent_tasks ?? i.agent_tasks, close_ended_terminals: r.close_ended_terminals ?? i.close_ended_terminals, inbox_signals: r.inbox_signals ?? i.inbox_signals, main_supervises_own_tasks: r.main_supervises_own_tasks ?? i.main_supervises_own_tasks, archive_closed_days: r.archive_closed_days ?? i.archive_closed_days, idle_close_hours: r.idle_close_hours ?? i.idle_close_hours } : i));
     } catch (e) {
-      setInfo((i) => (i && before ? { ...i, agent_tasks: before.agent_tasks, inbox_signals: before.inbox_signals, main_supervises_own_tasks: before.main_supervises_own_tasks, archive_closed_days: before.archive_closed_days, idle_close_hours: before.idle_close_hours } : i));
+      setInfo((i) => (i && before ? { ...i, agent_tasks: before.agent_tasks, close_ended_terminals: before.close_ended_terminals, inbox_signals: before.inbox_signals, main_supervises_own_tasks: before.main_supervises_own_tasks, archive_closed_days: before.archive_closed_days, idle_close_hours: before.idle_close_hours } : i));
       toast(t("settings-assistantsettings.save_failed", { error: errorText(e) }), "error");
     } finally {
       setAgentsBusy(false);
@@ -248,6 +290,7 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
   const load = () => {
     setError("");
     scopedApi<AssistantState>("/assistant").then(setInfo, (e) => setError(errorText(e)));
+    scopedApi<MainExecution>("/assistant?view=main-runtime").then(setExecution, () => setExecution(null));
     scopedApi<{ tasks: Task[] }>("/assistant/tasks").then((r) => setTasks(r.tasks ?? []), () => setTasks([]));
     void loadMemory();
   };
@@ -255,6 +298,9 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
 
   const machine = machines.find((m) => m.id === info?.machine_id);
   const machineName = machine?.name || info?.machine_id || "";
+  // a report routed through another node than the main chat's is not this main chat's (MainRuntimeBadge's rule)
+  const routed = info?.main_machine_id && execution?.machine_id && execution.machine_id !== info.main_machine_id;
+  const runtime = routed ? {} : mainRuntimeDetails(info?.main, execution ?? undefined);
   const entries = useMemo(() => memoryEntries(files ?? []), [files]);
   const index = files?.find((f) => f.name === MEMORY_INDEX);
   const on = tasks?.filter((task) => task.enabled).length ?? 0;
@@ -286,6 +332,7 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
 
       <Group title={t("settings-assistantsettings.proactive_title")} footer={t("settings-assistantsettings.proactive_footer")}>
         <Row
+          anchor="routines"
           label={t("settings-assistantsettings.routines")}
           hint={tasks === null ? undefined : next ? t("settings-assistantsettings.next_task", { when: momentLabel(next.at, new Date()), title: next.title }) : t("settings-assistantsettings.nothing_scheduled")}
           onClick={() => navigate({ name: "routines" })}
@@ -295,7 +342,7 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
       </Group>
 
       <Group title={t("settings-assistantsettings.notifications_title")} footer={t("settings-assistantsettings.notifications_footer")}>
-        <Row label={t("settings-assistantsettings.quiet_tasks")}>
+        <Row label={t("settings-assistantsettings.quiet_tasks")} anchor="quiet-tasks">
           <Switch on={info?.main_tasks_quiet ?? true} onChange={(on) => void setQuiet(on)} disabled={!info || quietBusy} label={t("settings-assistantsettings.quiet_tasks")} />
         </Row>
       </Group>
@@ -305,6 +352,15 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
           <Switch on={info?.main_background_folded ?? true} onChange={(on) => void setFolded(on)} disabled={!info || foldBusy} label={t("settings-assistantsettings.background_folded")} />
         </Row>
       </Group>
+
+      {/* Show scheduled task chats in the sidebar's Recent (#8324): only from a hub that has the setting */}
+      {typeof info?.recent_task_chats === "boolean" && (
+        <Group title={t("settings-assistantsettings.recent_task_chats_title")} footer={t("settings-assistantsettings.recent_task_chats_footer")} anchor="recent-task-chats">
+          <Row label={t("settings-assistantsettings.recent_task_chats")}>
+            <Switch on={info.recent_task_chats} onChange={(on) => void setRecentTaskChats(on)} disabled={recentBusy} label={t("settings-assistantsettings.recent_task_chats")} />
+          </Row>
+        </Group>
+      )}
 
       {/* The next-message suggestion for chats without one of their own (#4644): only from a hub that has the setting */}
       {typeof info?.next_suggestions === "boolean" && (
@@ -316,10 +372,10 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
       )}
 
       <Group title={t("settings-assistantsettings.start_title")} footer={t("settings-assistantsettings.start_footer")}>
-        <Row label={t("settings-assistantsettings.start_requested")}>
+        <Row label={t("settings-assistantsettings.start_requested")} anchor="start-requested">
           <Switch on={info?.start_requested_tasks ?? true} onChange={(on) => void setStartRequested(on)} disabled={!info || startBusy} label={t("settings-assistantsettings.start_requested")} />
         </Row>
-        <Row label={t("settings-assistantsettings.workspace_preference")} hint={t("settings-assistantsettings.workspace_hint")} wrapHint stackOnNarrow>
+        <Row label={t("settings-assistantsettings.workspace_preference")} hint={t("settings-assistantsettings.workspace_hint")} wrapHint stackOnNarrow anchor="workspace-preference">
           <select aria-label={t("settings-assistantsettings.workspace_preference")} value={info?.task_workspace_preference ?? "prefer-existing"}
             disabled={!info || info.manager !== manager || workspaceBusy}
             className="w-full min-w-0 max-w-full rounded-control bg-field px-3 py-2 text-[13px] text-ink shadow-inset-field sm:w-auto [@media(pointer:coarse)]:min-h-11"
@@ -332,7 +388,7 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
       </Group>
 
       {/* Who follows up the main chat's tasks (#5082), following up agents, their tasks' new messages, stopping idle ones and tidying closed ones (#3617, #4293, #4754, #3618): each row only from a hub that has its setting */}
-      {(supportsAgentAutoNaming(info) || typeof info?.main_supervises_own_tasks === "boolean" || typeof info?.agent_tasks === "boolean" || typeof info?.inbox_signals === "boolean" || typeof info?.idle_close_hours === "number" || typeof info?.archive_closed_days === "number") && info && (
+      {(supportsAgentAutoNaming(info) || typeof info?.main_supervises_own_tasks === "boolean" || typeof info?.agent_tasks === "boolean" || typeof info?.close_ended_terminals === "boolean" || typeof info?.inbox_signals === "boolean" || typeof info?.idle_close_hours === "number" || typeof info?.archive_closed_days === "number") && info && (
         <Group anchor="agents" title={t("settings-assistantsettings.agents_title")}>
           {supportsAgentAutoNaming(info) && <AgentAutoNaming info={info} manager={manager} owner={owner}
             onSaved={(patch) => setInfo((current) => current ? { ...current, ...patch } : current)} />}
@@ -344,6 +400,12 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
           {typeof info.agent_tasks === "boolean" && (
             <Row label={t("settings-assistantsettings.agent_tasks")} hint={t("settings-assistantsettings.agent_tasks_hint")} wrapHint>
               <Switch on={info.agent_tasks} onChange={(on) => void setAgents({ agent_tasks: on })} disabled={agentsBusy} label={t("settings-assistantsettings.agent_tasks")} />
+            </Row>
+          )}
+          {/* closing an Agent's terminal when its session ends (#10355): off by default, only from a hub that has it */}
+          {typeof info.close_ended_terminals === "boolean" && (
+            <Row label={t("settings-assistantsettings.close_ended_terminals")} hint={t("settings-assistantsettings.close_ended_terminals_hint")} wrapHint>
+              <Switch on={info.close_ended_terminals} onChange={(on) => void setAgents({ close_ended_terminals: on })} disabled={agentsBusy} label={t("settings-assistantsettings.close_ended_terminals")} />
             </Row>
           )}
           {typeof info.inbox_signals === "boolean" && (
@@ -382,12 +444,21 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
       </Group>
 
       <Group title={t("settings-assistantsettings.default_permissions")} footer={t("settings-assistantsettings.default_permissions_hint")}>
-        <Row label={t("settings-assistantsettings.default_permissions")}>
+        <Row label={t("settings-assistantsettings.default_permissions")} anchor="default-permissions">
           <select aria-label={t("settings-assistantsettings.default_permissions")} value={info?.default_permission_mode ?? ""} disabled={!info || info.manager !== manager || permissionBusy}
             className="min-w-0 max-w-full rounded-control bg-field px-3 py-2 text-[13px] text-ink shadow-inset-field"
             onChange={(e) => void setPermission(e.target.value)}>
             <option value="" disabled>{t("settings-assistantsettings.default_permissions_unset")}</option>
             {PERMISSION_MODES.map((mode) => <option key={mode.id} value={mode.id}>{mode.title}</option>)}
+          </select>
+        </Row>
+        <Row label={t("settings-assistantsettings.readonly_mode")} hint={t("settings-assistantsettings.readonly_mode_hint")} wrapHint stackOnNarrow anchor="readonly-mode">
+          <select aria-label={t("settings-assistantsettings.readonly_mode")} value={info?.readonly_mode ?? "sandbox"}
+            disabled={!info || info.manager !== manager || readonlyBusy}
+            className="min-w-0 max-w-full rounded-control bg-field px-3 py-2 text-meta text-ink shadow-inset-field pointer-coarse:min-h-11"
+            onChange={(e) => void setReadonlyMode(e.target.value as "sandbox" | "prompt")}>
+            <option value="sandbox">{t("settings-assistantsettings.readonly_mode_sandbox")}</option>
+            <option value="prompt">{t("settings-assistantsettings.readonly_mode_prompt")}</option>
           </select>
         </Row>
       </Group>
@@ -424,7 +495,7 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
         </Group>
       )}
 
-      <Group title={t("settings-assistantsettings.knows_title")} footer={t("settings-assistantsettings.knows_footer")}>
+      <Group anchor="knows" title={t("settings-assistantsettings.knows_title")} footer={t("settings-assistantsettings.knows_footer")}>
         {info && <AboutMe notesSaves={notesSaves} info={info} onSaved={(notes) => setInfo((i) => (i ? { ...i, notes, notes_effective: notes.trim() } : i))} />}
         <div className="flex items-center gap-2 px-4 pt-3 pb-1.5">
           <span className="flex-1 text-[13px] font-medium text-ink">{t("settings-assistantsettings.memory")}</span>
@@ -451,6 +522,8 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
         )}
       </Group>
 
+      <DirectionNotes deps={directionNotes} />
+
       <PageBoundary page="repositories">
         <Suspense fallback={<Group title={t("settings-repositories.title")}><Loading /></Group>}>
           <Repositories manager={manager} owner={owner} />
@@ -460,13 +533,24 @@ function AssistantSettingsForManager({ manager, owner, bare }: { manager: string
       <SkillsGroup manager={manager} />
 
       <Group
+        anchor="runs-on"
         title={t("settings-assistantsettings.runs_on_title")}
         footer={machineName ? t("settings-assistantsettings.runs_on_footer", { machine: machineName }) : t("settings-assistantsettings.runs_on_none")}
       >
-        <Row label={t("settings-assistantsettings.machine")}>
+        <Row label={t("settings-assistantsettings.machine")} anchor="runs-on-machine">
           <span className="max-w-[220px] truncate">{machineName || t("settings-assistantsettings.machine_none")}</span>
         </Row>
-        <Row label={t("settings-assistantsettings.cwd")} mono>
+        {runtime.place && (
+          <Row label={t("settings-assistantsettings.main_place")}>
+            <span data-main-runtime-place className="max-w-[220px] truncate" title={runtime.place}>{runtime.place}</span>
+          </Row>
+        )}
+        {runtime.runtime && (
+          <Row label={t("settings-assistantsettings.main_runtime")}>
+            <span data-main-runtime-tool className="max-w-[220px] truncate">{runtime.runtime}</span>
+          </Row>
+        )}
+        <Row label={t("settings-assistantsettings.cwd")} mono anchor="runs-on-cwd">
           <span className="max-w-[300px] truncate" title={info?.cwd}>{info?.cwd || "~/.persona/assistant"}</span>
         </Row>
         {info?.timezone && <Row label={t("settings-assistantsettings.timezone")}>{info.timezone}</Row>}

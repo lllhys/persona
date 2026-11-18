@@ -179,10 +179,16 @@ extension LanguageStore {
 /// the unit-test host. A `LocalizedStringResource` parameter, so the compiler still extracts the literals passed in.
 nonisolated func interfaceText(_ resource: LocalizedStringResource) -> String {
     var resource = resource
-    #if WIDGET_EXTENSION
-    resource.locale = LanguageStore.drawingLocale
-    #else
-    resource.locale = .interface
-    #endif
+    resource.locale = interfaceTextLocale
     return String(localized: resource)
+}
+
+/// The locale `interfaceText(_:)` resolves words in. Words kept once per locale (docs/apple/performance.md P4) key on it,
+/// so a change of language resolves them again.
+nonisolated var interfaceTextLocale: Locale {
+    #if WIDGET_EXTENSION
+    LanguageStore.drawingLocale
+    #else
+    .interface
+    #endif
 }

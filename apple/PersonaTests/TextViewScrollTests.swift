@@ -4,6 +4,70 @@ import UIKit
 
 /// A field that grew taller must not stay scrolled down a line, showing only its last line (#909).
 @MainActor struct TextViewScrollTests {
+    @Test func layoutRefreshesLeaveAManuallyScrolledDraftAtTheFirstLine() async {
+        let view = draftView()
+        view.selectedRange = NSRange(location: (view.text as NSString).length, length: 0)
+        view.setContentOffset(.zero, animated: false)
+        for _ in 0..<20 {
+            TextViewScroll.scheduleSettling(view)
+            await nextMainQueueTurn()
+            #expect(view.contentOffset.y == 0)
+        }
+        #expect(view.caretReveals == 0)
+    }
+
+    @Test func typingCanRevealTheCaretAfterLayout() async {
+        let view = draftView()
+        view.selectedRange = NSRange(location: (view.text as NSString).length, length: 0)
+        view.setContentOffset(.zero, animated: false)
+        TextViewScroll.scheduleSettling(view, revealCaret: true)
+        await nextMainQueueTurn()
+        #expect(view.caretReveals == 1)
+        #expect(view.contentOffset.y > 0)
+    }
+
+    @Test func aManualScrollCancelsAlreadyQueuedCaretFollowing() async {
+        let view = draftView()
+        view.selectedRange = NSRange(location: (view.text as NSString).length, length: 0)
+        view.setContentOffset(CGPoint(x: 0, y: 40), animated: false)
+        TextViewScroll.scheduleSettling(view, revealCaret: true)
+        view.setContentOffset(.zero, animated: false)
+        await nextMainQueueTurn()
+        #expect(view.contentOffset.y == 0)
+        #expect(view.caretReveals == 0)
+    }
+
+    @Test func aLaterSelectionCancelsStaleCaretWork() async {
+        let view = draftView()
+        view.selectedRange = NSRange(location: (view.text as NSString).length, length: 0)
+        TextViewScroll.scheduleSettling(view, revealCaret: true)
+        view.selectedRange = NSRange(location: 0, length: 0)
+        await nextMainQueueTurn()
+        #expect(view.caretReveals == 0)
+    }
+
+    private func draftView() -> DraftView {
+        let view = DraftView(frame: CGRect(x: 0, y: 0, width: 200, height: 80))
+        view.font = .systemFont(ofSize: 17)
+        view.text = (1...20).map { "Draft line \($0)" }.joined(separator: "\n")
+        view.layoutIfNeeded()
+        return view
+    }
+
+    private func nextMainQueueTurn() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    private final class DraftView: UITextView {
+        var caretReveals = 0
+        override func scrollRangeToVisible(_ range: NSRange) {
+            caretReveals += 1
+            super.scrollRangeToVisible(range)
+        }
+    }
+
     @Test func anOffsetWithinTheContentIsKept() {
         // Eight lines shown of ten, scrolled to the end: that is where the caret is.
         #expect(TextViewScroll.settled(offset: 48, content: 240, height: 192, insetTop: 0, insetBottom: 0) == 48)

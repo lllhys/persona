@@ -24,8 +24,8 @@ final class AssistantIdentityUITests: XCTestCase {
         app.staticTexts.matching(NSPredicate(format: "identifier == %@ AND label == %@", "assistant-sidebar", "Persona")).firstMatch
     }
 
-    /// The sidebar's head with several assistants: the current one's switcher (`AssistantSwitcherHeader`, the default
-    /// assistant here). The drawer's identifier can cover its own on a phone (`drawerSettingsButton`).
+    /// The sidebar's current-assistant switcher (`AssistantSwitcherHeader`, the default assistant here). The drawer's
+    /// identifier can cover its own on a phone (`drawerSettingsButton`).
     @MainActor private func switcherHeader(_ app: XCUIApplication) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "identifier == %@ OR (identifier == %@ AND label BEGINSWITH %@)",
                                          "assistant-switcher", "assistant-sidebar", "助手")).firstMatch
@@ -39,9 +39,27 @@ final class AssistantIdentityUITests: XCTestCase {
         sidebar.tap()
         XCTAssertTrue(app.drawerSettingsButton.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.drawerNewChatButton.exists)
-        XCTAssertTrue(identityHeading(app).waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertFalse(switcherHeader(app).exists, "one assistant: no switcher")
+        let header = switcherHeader(app)
+        XCTAssertTrue(header.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertFalse(identityHeading(app).exists, "the switcher replaces the old plain-text heading")
         XCTAssertTrue(app.buttons["sidebar-main"].label.contains("Persona"))
+
+        header.tap()
+        let row = app.descendants(matching: .any).matching(identifier: "assistant-switcher-row-assistant").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), app.debugDescription)
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "assistant-switcher-row-"))
+        XCTAssertEqual(rows.count, 1, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "assistant-switcher-row-m-3fa21c").firstMatch.exists)
+        XCTAssertFalse(row.label.contains("默认"), "one assistant needs no Default mark: \(row.label)")
+        let create = app.descendants(matching: .any).matching(identifier: "assistant-switcher-new").firstMatch
+        let manage = app.descendants(matching: .any).matching(identifier: "assistant-switcher-manage").firstMatch
+        XCTAssertTrue(create.exists && manage.exists, app.debugDescription)
+        create.tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 10), "no name alert after the list closed:\n\(app.debugDescription)")
+        alert.buttons["取消"].tap()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: alert)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 10), .completed, "Cancel left the name alert open")
     }
 
     @MainActor private func shot(_ app: XCUIApplication, name: String) throws {
@@ -81,13 +99,8 @@ final class AssistantIdentityUITests: XCTestCase {
                 try shot(chat, name: "iphone-\(count)-chat-\(look)")
                 chat.buttons["assistant-sidebar-button"].tap()
                 XCTAssertTrue(chat.drawerSettingsButton.waitForExistence(timeout: 10), chat.debugDescription)
-                if count == "single" {
-                    XCTAssertTrue(identityHeading(chat).waitForExistence(timeout: 10), chat.debugDescription)
-                    XCTAssertFalse(switcherHeader(chat).exists)
-                } else {
-                    XCTAssertFalse(identityHeading(chat).exists)
-                    XCTAssertTrue(switcherHeader(chat).waitForExistence(timeout: 20))
-                }
+                XCTAssertTrue(switcherHeader(chat).waitForExistence(timeout: 20), chat.debugDescription)
+                XCTAssertFalse(identityHeading(chat).exists)
                 try shot(chat, name: "iphone-\(count)-sidebar-\(look)")
                 chat.terminate()
                 let app = try launch(hubKey, extra: ["-ui.scheme", look, "-showVoiceSample", "speaking"] + onDefault)
@@ -106,6 +119,17 @@ final class AssistantIdentityUITests: XCTestCase {
                 app.terminate()
             }
         }
+    }
+
+    @MainActor func testLegacyHubKeepsOldHeaderWithoutSwitcher() throws {
+        guard env["PERSONA_IDENTITY_LEGACY_HUB"] != nil else {
+            throw XCTSkip("needs scripts/mock/mock_hub.py with MOCK_MANAGERS=0 (PERSONA_IDENTITY_LEGACY_HUB)")
+        }
+        let app = try launch("PERSONA_IDENTITY_LEGACY_HUB")
+        app.buttons["assistant-sidebar-button"].tap()
+        XCTAssertTrue(app.drawerSettingsButton.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(identityHeading(app).waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(switcherHeader(app).exists, "a hub without a roster keeps the old Persona header")
     }
 
     @MainActor func testMultipleAssistantsKeepIdentityAndSwitching() throws {

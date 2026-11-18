@@ -1,6 +1,6 @@
 import XCTest
 
-/// A routine's facts card, the `brief` feed item (#2320), against scripts/mock/mock_hub.py with MOCK_TASKS=1
+/// A routine's facts card, the `brief` feed item (#2320), against scripts/mock/mock_hub.py with MOCK_TASKS=1 MOCK_MANAGERS=0
 /// MOCK_TASKS_NO_ASKS=1 (PERSONA_MOCK_HUB): the mock's item is the main conversation's newest line. On an iPhone the done
 /// and failed rows fold into their totals until the heading is tapped; Accept and Handled turn into what happened, and a
 /// waiting card's Open goes to the chat it came from. With PERSONA_SHOTS set it writes the card there

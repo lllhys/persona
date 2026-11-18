@@ -1,5 +1,6 @@
 {
   "err_no_update": "新しいバージョンはありません",
+  "err_beta_channel": "Betaの更新には公式GitHubリリースソースと有効なBetaマニフェストが必要です。現在の更新元は変更されていません",
   "err_not_release": "このハブは自動で更新できません",
   "err_busy": "アシスタントとエージェントがずっと作業中だったため、更新しませんでした。後でもう一度お試しください",
   "err_auto_off": "自動更新はオフです",
@@ -24,6 +25,7 @@
   "why_bad_source": "hub.json の update.url を使えません：{error}",
   "why_dev": "開発版（{version}）",
   "err_no_binary": "このバージョンには{platform}用のバイナリがありません",
+  "err_release_moved": "{version}のダウンロード中に新しいバージョン{newer}が公開されたため、更新しませんでした。もう一度「アップデート」するとインストールします",
   "busy_redeploying": "再デプロイ中",
   "err_no_image": "このハブのイメージがわかりません：composeがPERSONA_IMAGEをコンテナに渡していません",
   "image_private": "新しいイメージを確認できません：{error}。.envでPERSONA_REGISTRY_TOKEN（このイメージを読めるトークン）を設定するか、イメージを公開にしてください",
@@ -31,5 +33,11 @@
   "err_no_start": "新しいバージョンが起動しなかったため、旧バージョンがそのまま動いています：{error}",
   "reason_no_takeover": "新しいバージョンが引き継げませんでした：{error}",
   "reason_not_confirmed": "新しいバージョンが3分以内に確認されませんでした",
-  "err_program_unreplaced": "バージョン{version}には{platform}用の{program}がありませんが、{service}がそれを実行しています。インストールすると{program}が古いバージョンのまま残ります。{program}を含むリリースを待ってください"
+  "err_program_unreplaced": "バージョン{version}には{platform}用の{program}がありませんが、{service}がそれを実行しています。インストールすると{program}が古いバージョンのまま残ります。{program}を含むリリースを待ってください",
+  "err_development_config": "先にhub側でバックアップ時の書き込み停止・再開コマンドを設定してください。",
+  "err_development_topology": "開発版の更新にはhub内蔵の子プロセス型アシスタントが必要です。独立したアシスタントのコンピューターは元の更新経路を使用してください。",
+  "err_computer_packages": "hubは更新されましたが、コンピューター用パッケージを準備できませんでした。hub側に一時ファイルを保持しています。更新ログを確認してから再デプロイしてください。",
+  "err_development_recovery": "中断した開発版更新の復旧が必要です。hub側のupdate/development/adopting.jsonと保持したスナップショットを確認してから更新元を変更・更新してください。",
+  "err_development_phase": "開発版更新の準備に失敗しました。hub側のupdate/development/{phase}.logを確認してください。元のビルドと検証済みスナップショットは保持しています。",
+  "err_development_backup": "このプログラムバックアップは利用できません。バックアップ一覧を更新してください。"
 }

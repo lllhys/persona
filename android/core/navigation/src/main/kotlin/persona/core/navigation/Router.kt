@@ -28,6 +28,8 @@ class ResolvedRoute(
     val pairingLink: String? = null,
     val focusComposer: Boolean = false,
     val card: RequestRef? = null,
+    /** An explicit secondary parent when a management entry has no stack to infer it from. */
+    val parent: NavKey? = null,
 )
 
 /** The launcher's "Ask Persona": the Persona tab with the cursor in its composer, cold start or not. */
@@ -58,6 +60,7 @@ class Router(
         ConnectionSettingsRoute -> resolve(SettingsPageRoute(SettingsPage.Diagnostics))
         PairingRoute, is SettingsPageRoute -> ResolvedRoute(AppTab.Persona, key)
         is ExtensionUiRoute -> key.takeIf { it.extensionId.isNotBlank() && it.uiId.isNotBlank() }?.let { ResolvedRoute(AppTab.Persona, it) }
+        is ExtensionRoute -> key.takeIf { it.extensionId.isNotBlank() }?.let { ResolvedRoute(AppTab.Persona, it) }
         is InboxItemRoute -> key.takeIf { it.itemId.isNotBlank() }?.let { ResolvedRoute(AppTab.Persona, it) }
         is LarkChatRoute -> key.takeIf { it.chatId.isNotBlank() }?.let { ResolvedRoute(AppTab.Persona, it) }
         is ChatRoute -> normalizedChat(key)?.let { ResolvedRoute(it.kind.tab, it) }
@@ -111,8 +114,15 @@ class Router(
                     InteractionRoute(chat, request ?: return null)
                 else chat
             }
-            "extension" -> ExtensionUiRoute(parameters["extension"] ?: return null, parameters["ui"] ?: return null,
-                parameters["title"].orEmpty(), parameters["state"])
+            "extension" -> {
+                val extension = parameters["extension"] ?: return null
+                val ui = parameters["ui"]
+                if (ui == null) {
+                    if (parameters["trigger"] != "content") return null
+                    ExtensionRoute(extension, manager = parameters["manager"])
+                } else ExtensionUiRoute(extension, ui, parameters["title"].orEmpty(), parameters["state"],
+                    manager = parameters["manager"], notificationActionToken = parameters["notification"])
+            }
             "inbox" -> InboxItemRoute(parameters["item"] ?: return null)
             "new-todo" -> NewTodoRoute
             "lark" -> LarkChatRoute(parameters["chat"] ?: return null)
@@ -181,6 +191,7 @@ fun ResolvedRoute.restore(stacks: Map<AppTab, MutableList<NavKey>>, newTodo: New
             stack[existing] = key
         }
     }
+    if (parent != null && !stack.contains(parent)) stack.add(stack.lastIndex, parent)
     // Keep the serialized Sent key compatible, but make its parent explicit for links and history restores.
     restoreSecondaryParents(stack)
     // The list kept from an earlier use keeps its state too: its sheet opens on this request, each time.
@@ -197,9 +208,11 @@ fun restoreSecondaryParents(stack: MutableList<NavKey>) {
     while (index < stack.size) {
         val key = stack[index]
         val parent = when (key) {
-            PairingRoute, ConnectionSettingsRoute, is SettingsPageRoute, is ExtensionUiRoute, is ExtensionRoute,
+            PairingRoute, ConnectionSettingsRoute, is SettingsPageRoute, is ExtensionRoute,
             is ModelProviderRoute, is ChannelRoute, is ManagerRoute, is ConnectorRoute,
             ExtensionMarketRoute, ExtensionMarketsRoute, is ExtensionCatalogRoute -> SettingsRoute.takeUnless { hasSettings }
+            // An extension page keeps the Assistant, Inbox or Settings stack it was opened from.
+            is ExtensionUiRoute -> null
             is InboxItemRoute, is InboxItemUiRoute, is LarkChatRoute -> InboxRoute.takeUnless { hasInbox }
             else -> null
         }
@@ -229,7 +242,8 @@ fun restoreConnectorParents(stack: MutableList<NavKey>) {
 }
 
 private fun sameTarget(left: NavKey, right: NavKey): Boolean = when {
-    left is ChatRoute && right is ChatRoute -> left.machineId == right.machineId && left.sessionId == right.sessionId
+    // A side session's own chat (#7944) sits over the page a link to it opened, its parent's: two pages.
+    left is ChatRoute && right is ChatRoute -> left.machineId == right.machineId && left.sessionId == right.sessionId && left.side == right.side
     // One conversation is one page, whichever of its requests it was opened at.
     left is InteractionRoute -> sameTarget(left.chat, right)
     right is InteractionRoute -> sameTarget(left, right.chat)

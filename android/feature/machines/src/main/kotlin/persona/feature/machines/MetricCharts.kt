@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.drawText
@@ -24,7 +25,8 @@ import persona.core.contracts.MetricPoint
 import persona.core.designsystem.currentLocale
 import java.util.Locale
 import persona.core.designsystem.JCard
-import persona.core.designsystem.PersonaPalette
+import persona.core.designsystem.MetricColor
+import persona.core.designsystem.MetricPalette
 import persona.core.designsystem.PersonaTheme
 import kotlin.math.max
 import persona.core.designsystem.dense
@@ -33,9 +35,9 @@ import persona.core.designsystem.dense
 internal enum class MetricKind(@StringRes val label: Int, val percent: Boolean = false) {
     Cpu(R.string.machines_metric_cpu, percent = true), Memory(R.string.machines_metric_memory), Rx(R.string.machines_metric_rx),
     Tx(R.string.machines_metric_tx), Load(R.string.machines_metric_load), Disk(R.string.machines_metric_disk, percent = true);
-    fun color(palette: PersonaPalette) = when (this) {
-        Cpu -> palette.working.dot; Memory -> palette.done.dot
-        Rx -> palette.needsYou.dot; Tx -> palette.accent; Load -> palette.ink2; Disk -> palette.ink3
+    fun color(palette: MetricPalette) = when (this) {
+        Cpu -> palette.cpu; Memory -> palette.mem
+        Rx -> palette.rx; Tx -> palette.tx; Load -> palette.load; Disk -> palette.disk
     }
     fun value(point: MetricPoint): Double? = when (this) {
         Cpu -> point.cpu; Memory -> point.mem; Rx -> point.rx; Tx -> point.tx; Load -> point.load; Disk -> point.disk
@@ -48,21 +50,26 @@ internal enum class MetricKind(@StringRes val label: Int, val percent: Boolean =
     }
 }
 
+private fun selectedMetricPoint(points: List<MetricPoint>, time: Long, step: Int, kinds: List<MetricKind>): MetricPoint? =
+    selectedPoint(points, time, step) { point -> kinds.any { kind -> kind.value(point)?.isFinite() == true } }
+
 @Composable
 internal fun MetricChart(
     title: String, points: List<MetricPoint>, kinds: List<MetricKind>, nowValues: List<Double?>,
     end: Long, span: Long, step: Int, selection: Long?, onSelect: (Long?) -> Unit,
     reference: Double? = null,
 ) {
-    val picked = remember(points, selection, step) { selection?.let { selectedPoint(points, it, step) } }
+    val picked = remember(points, kinds, selection, step) { selection?.let { selectedMetricPoint(points, it, step, kinds) } }
     val locale = currentLocale
+    val metricColors = MetricColor.current
     JCard(Modifier.fillMaxWidth().padding(bottom = 12.dp.dense)) {
         Text(title, style = PersonaTheme.type.title, color = PersonaTheme.palette.ink)
-        Text(selection?.let { MetricFormat.time(it, locale) } ?: stringResource(R.string.machines_now), style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3)
+        Text(selection?.let { MetricFormat.time(it, locale) } ?: stringResource(R.string.machines_now),
+            Modifier.testTag("metric-selection-${kinds.first().name}"), style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3)
         kinds.forEachIndexed { index, kind ->
             val value = if (selection != null) picked?.let(kind::value) else nowValues.getOrNull(index)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp.dense)) {
-                Box(Modifier.padding(top = 6.dp.dense).size(8.dp).background(kind.color(PersonaTheme.palette), PersonaTheme.shapes.controlShape))
+                Box(Modifier.padding(top = 6.dp.dense).size(8.dp).background(kind.color(metricColors), PersonaTheme.shapes.controlShape))
                 Text("${stringResource(kind.label)} ${kind.format(value, locale)}", style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink)
             }
         }
@@ -74,7 +81,8 @@ internal fun MetricChart(
             val peak = points.filter { !it.gap && it.t in (end - span)..end }.mapNotNull(kind::value).maxOrNull()
             stringResource(R.string.machines_chart_summary, stringResource(kind.label), kind.format(nowValues.getOrNull(index), locale), kind.format(peak, locale))
         }.joinToString(separator)
-        Plot(points, kinds, end, span, step, Modifier.fillMaxWidth().height(180.dp).semantics { contentDescription = summary },
+        Plot(points, kinds, end, span, step, Modifier.fillMaxWidth().height(180.dp)
+            .testTag("metric-plot-${kinds.first().name}").semantics { contentDescription = summary },
             axes = true, reference = reference, selection = selection, onSelect = onSelect)
         if (points.none { !it.gap && it.t in (end - span)..end && kinds.any { kind -> kind.value(it) != null } }) {
             Text(stringResource(R.string.machines_chart_empty), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3)
@@ -92,7 +100,7 @@ internal fun Plot(
     val start = end - span
     val maximum = if (kinds.all { it.percent }) 100.0 else max(1.0,
         max(reference ?: 0.0, runs.flatten().flatten().filter { it.t in start..end }.maxOfOrNull { it.value } ?: 0.0) * 1.1)
-    val palette = PersonaTheme.palette
+    val metricColors = MetricColor.current
     val axis = PersonaTheme.palette.ink3
     val grid = PersonaTheme.palette.line
     val measure = rememberTextMeasurer()
@@ -107,8 +115,9 @@ internal fun Plot(
             val width = (size.width - right).coerceAtLeast(1f)
             latestSelect(start + (x / width).coerceIn(0f, 1f).times(span).toLong())
         }
-        detectDragGesturesAfterLongPress(onDragStart = { pick(it.x) }, onDragEnd = { latestSelect(null) },
-            onDragCancel = { latestSelect(null) }) { change, _ -> change.consume(); pick(change.position.x) }
+        detectDragGesturesAfterLongPress(onDragStart = { pick(it.x) }, onDragEnd = {}, onDragCancel = {}) { change, _ ->
+            change.consume(); pick(change.position.x)
+        }
     }
     Canvas(modifier.then(input)) {
         val width = (size.width - right).coerceAtLeast(1f)
@@ -132,7 +141,7 @@ internal fun Plot(
             reference?.let { drawLine(axis, Offset(0f, y(it)), Offset(width, y(it)), strokeWidth = 1.dp.toPx(),
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))) }
             runs.forEachIndexed { index, series ->
-                val color = kinds[index].color(palette)
+                val color = kinds[index].color(metricColors)
                 series.forEach { run ->
                     val line = Path().apply {
                         run.forEachIndexed { i, point -> if (i == 0) moveTo(x(point.t), y(point.value)) else lineTo(x(point.t), y(point.value)) }
@@ -147,9 +156,9 @@ internal fun Plot(
             }
             selection?.let { time ->
                 drawLine(axis, Offset(x(time), 0f), Offset(x(time), height), 1.dp.toPx())
-                selectedPoint(points, time, step)?.let { point ->
+                selectedMetricPoint(points, time, step, kinds)?.let { point ->
                     kinds.forEach { kind -> kind.value(point)?.takeIf(Double::isFinite)?.let {
-                        drawCircle(kind.color(palette), 4.dp.toPx(), Offset(x(point.t), y(it)))
+                        drawCircle(kind.color(metricColors), 4.dp.toPx(), Offset(x(point.t), y(it)))
                     } }
                 }
             }

@@ -18,5 +18,20 @@
   "route_to_persona": "To Persona",
   "route_to_agent": "To {agent}",
   "route_from_to_agent_on": "From {from} · to {agent} on {machine}",
-  "route_to_agent_on": "To {agent} on {machine}"
+  "route_to_agent_on": "To {agent} on {machine}",
+  "select_messages": "Select messages…",
+  "selection": "Selected messages",
+  "selected_one": "{count} selected",
+  "selected_other": "{count} selected",
+  "remove_group": "Remove forwarded messages",
+  "at_most": "Up to {count} messages at a time",
+  "group_heading_chat_one": "{count} forwarded message · {chat}",
+  "group_heading_chat_other": "{count} forwarded messages · {chat}",
+  "line": "{who}: {text}",
+  "more_one": "{count} more",
+  "more_other": "{count} more",
+  "include_questions": "Include questions",
+  "export_image": "Export image",
+  "copied_author": "{author}:",
+  "goes_with_answer": "goes with its answer"
 }

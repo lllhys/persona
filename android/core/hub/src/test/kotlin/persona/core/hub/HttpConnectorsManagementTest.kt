@@ -5,9 +5,14 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import persona.core.hub.ProtocolCompatibilityMockServer as MockWebServer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.*
 import org.junit.Test
 import persona.core.contracts.api.AddMailAccountRequest
+import persona.core.contracts.api.GitHubInboxOptions
 import persona.core.contracts.api.GoogleFinish
 
 class HttpConnectorsManagementTest {
@@ -86,6 +91,56 @@ class HttpConnectorsManagementTest {
         assertEquals("PUT", (req.method).zhAny())
         assertTrue(req.body.readUtf8().contains("\"enabled\":true"))
         assertEquals(true, result.enabled)
+    }
+
+    @Test
+    fun gitHubAuthPutOmitsMachineForDeviceCodeAndSendsItForAComputer() = withHub { server, api ->
+        val auth = """{"source":"device","machines":[{"id":"studio","name":"Studio","state":"not_signed_in"}],"scopes_known":false}"""
+        server.enqueue(MockResponse().setBody(auth))
+        val loaded = api.gitHubAuth()
+        val get = server.takeRequest()
+        assertEquals("GET", (get.method).zhAny())
+        assertEquals("/api/v1/connectors/github/auth", (get.path).zhAny())
+        assertEquals("device", (loaded.source).zhAny())
+        assertEquals("not_signed_in", (loaded.machines.single().state).zhAny())
+
+        server.enqueue(MockResponse().setBody("""{"source":"device","machines":[]}"""))
+        api.setGitHubAuth(null)
+        val device = server.takeRequest()
+        assertEquals("PUT", (device.method).zhAny())
+        assertEquals("/api/v1/connectors/github/auth", (device.path).zhAny())
+        val deviceBody = Json.parseToJsonElement(device.body.readUtf8()).jsonObject
+        assertEquals("device", (deviceBody.getValue("source").jsonPrimitive.content).zhAny())
+        assertFalse(deviceBody.containsKey("machine"))
+
+        server.enqueue(MockResponse().setBody("""{"source":"machine","machine":"studio","machines":[{"id":"studio","name":"Studio","state":"signed_in"}]}"""))
+        val chosen = api.setGitHubAuth("studio")
+        val computer = server.takeRequest()
+        val computerBody = Json.parseToJsonElement(computer.body.readUtf8()).jsonObject
+        assertEquals("machine", (computerBody.getValue("source").jsonPrimitive.content).zhAny())
+        assertEquals("studio", (computerBody.getValue("machine").jsonPrimitive.content).zhAny())
+        assertEquals("studio", (chosen.machine).zhAny())
+    }
+
+    @Test
+    fun gitHubInboxOptionsPutKeepsDefaultsAndOmitsNullBranches() = withHub { server, api ->
+        server.enqueue(MockResponse().setBody("""{"id":"github","name":"GitHub","status":"ok","options":{"ci":"off","muted_repos":["acme/app"]}}"""))
+        val saved = api.setGitHubInboxOptions(GitHubInboxOptions(ci = "off", mutedRepos = listOf("acme/app")))
+        val req = server.takeRequest()
+        assertEquals("PUT", (req.method).zhAny())
+        assertEquals("/api/v1/connectors/github/settings", (req.path).zhAny())
+        val options = Json.parseToJsonElement(req.body.readUtf8()).jsonObject.getValue("options").jsonObject
+        assertEquals("off", (options.getValue("ci").jsonPrimitive.content).zhAny())
+        assertEquals(listOf("acme/app"), (options.getValue("muted_repos").jsonArray.map { it.jsonPrimitive.content }).zhAny())
+        assertFalse(options.containsKey("ignore_branches"))
+        assertEquals("off", (GitHubInboxOptions.parse(saved.options)?.ci).zhAny())
+
+        server.enqueue(MockResponse().setBody("""{"id":"github","name":"GitHub","status":"ok"}"""))
+        api.setGitHubInboxOptions(GitHubInboxOptions(ci = "mine", mutedRepos = emptyList(), ignoreBranches = listOf("train/*")))
+        val again = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject.getValue("options").jsonObject
+        assertEquals("mine", (again.getValue("ci").jsonPrimitive.content).zhAny())
+        assertEquals(emptyList<String>(), (again.getValue("muted_repos").jsonArray.map { it.jsonPrimitive.content }).zhAny())
+        assertEquals("train/*", (again.getValue("ignore_branches").jsonArray.single().jsonPrimitive.content).zhAny())
     }
 
     @Test

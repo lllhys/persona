@@ -25,6 +25,7 @@ import persona.core.designsystem.PersonaTheme
 import persona.core.designsystem.Tokens
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.tasks.TodoListFilter
+import persona.core.domain.tasks.TodoListGrouping
 import persona.core.domain.tasks.TodoListSort
 
 // The To-dos list's filter and sort (#3740, docs/assistant/todos.md "List filter and sort"), beside List | Calendar as
@@ -42,7 +43,17 @@ internal class TodoListPrefs(context: Context) {
     var sort: TodoListSort
         get() = TodoListSort.of(prefs.getString("sort", null))
         set(value) = prefs.edit().putString("sort", value.key).apply()
+
+    /** Status sections (the default) or one per direction of the hub's tree (#4352). */
+    var grouping: TodoListGrouping
+        get() = TodoListGrouping.of(prefs.getString("group", null))
+        set(value) = prefs.edit().putString("group", value.key).apply()
 }
+
+internal val TodoListGrouping.title: String @Composable get() = stringResource(when (this) {
+    TodoListGrouping.Status -> R.string.agents_todos_group_status
+    TodoListGrouping.Direction -> R.string.agents_todos_group_direction
+})
 
 internal val TodoListFilter.title: String @Composable get() = stringResource(when (this) {
     TodoListFilter.All -> R.string.agents_todos_filter_all
@@ -69,7 +80,7 @@ internal val TodoListFilter.emptyTitle: String @Composable get() = stringResourc
 /**
  * The list's controls at the end of the List | Calendar row: "This week ×" while a filter is on (a tap clears it), then
  * the filter button, filled while the filter or the sort is not the default. Its menu: Show (each choice with how many
- * it would show, [counts]) and Sort by.
+ * it would show, [counts]) and Sort by; with [onGrouping] (a hub with the direction tree, #4352) Group by first: Status | Pinned.
  */
 @Composable
 internal fun TodoListControls(
@@ -79,9 +90,11 @@ internal fun TodoListControls(
     onFilter: (TodoListFilter) -> Unit,
     onSort: (TodoListSort) -> Unit,
     modifier: Modifier = Modifier,
+    grouping: TodoListGrouping = TodoListGrouping.Status,
+    onGrouping: ((TodoListGrouping) -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
-    val active = filter != TodoListFilter.All || sort != TodoListSort.Recent
+    val active = filter != TodoListFilter.All || sort != TodoListSort.Recent || grouping != TodoListGrouping.Status
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
         if (filter != TodoListFilter.All) {
             val clear = stringResource(R.string.agents_todos_filter_clear, filter.title)
@@ -91,6 +104,10 @@ internal fun TodoListControls(
         Box {
             JIconButton(PhIcons.FunnelSimple, stringResource(R.string.agents_todos_filter_button), { open = true }, selected = active,
                 tint = if (active) PersonaTheme.palette.accent else null, modifier = Modifier.testTag("todos-filter"))
+            val groupBy = stringResource(R.string.agents_todos_group_by)
+            val groupings = if (onGrouping == null) emptyList() else TodoListGrouping.entries.mapIndexed { i, g ->
+                JAction(g.title, checked = g == grouping, section = if (i == 0) groupBy else null) { onGrouping(g) }
+            }
             val show = stringResource(R.string.agents_todos_filter_show)
             val sortBy = stringResource(R.string.agents_todos_sort_by)
             val filters = TodoListFilter.entries.mapIndexed { i, f ->
@@ -101,7 +118,7 @@ internal fun TodoListControls(
             val sorts = TodoListSort.entries.mapIndexed { i, s ->
                 JAction(s.title, checked = s == sort, section = if (i == 0) sortBy else null) { onSort(s) }
             }
-            JMenu(open, { open = false }, filters + sorts)
+            JMenu(open, { open = false }, groupings + filters + sorts)
         }
     }
 }

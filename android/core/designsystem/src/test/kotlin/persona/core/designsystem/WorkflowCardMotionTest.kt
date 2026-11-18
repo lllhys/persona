@@ -36,8 +36,9 @@ import java.time.Instant
 
 /**
  * The workflow card moves only when a value changes (#3435, as the web's #3434): nothing on the first draw, a count
- * counts to its new value, a phase opens and folds over the style's size motion, and with reduced motion every new value
- * shows at once. Frames of one change (before, mid-way, after) go to `build/workflow-motion-shots/`.
+ * counts to its new value. A phase opens and closes as the chat's unfolding (#9574): full height on the first frame,
+ * gone at once when it closes (#3005). With reduced motion every new value shows at once. Frames of one change
+ * (before, mid-way, after) go to `build/workflow-motion-shots/`.
  */
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -120,22 +121,28 @@ class WorkflowCardMotionTest {
         assertEquals(0, rule.onAllNodesWithTag("workflow-agent:v5").fetchSemanticsNodes().size)
     }
 
-    @Test fun aPhaseFoldsOverTheStylesSizeMotion() {
+    @Test fun aPhaseClosesAtOnceAndOpensAtFullHeight() {
         rule.mainClock.autoAdvance = false
         draw(reduce = false, first = run())
         rule.mainClock.advanceTimeByFrame()
         val full = rule.onNodeWithTag("workflow-phase:Verify").fetchSemanticsNode().size.height
         rule.onNodeWithText("Verify").performClick()
         Snapshot.sendApplyNotifications()
-        repeat(4) { rule.mainClock.advanceTimeByFrame() }
-        // mid-way: still there, the block shorter than open but taller than folded
-        val mid = rule.onNodeWithTag("workflow-phase:Verify").fetchSemanticsNode().size.height
-        assertEquals(1, rule.onAllNodesWithTag("workflow-agent:v5").fetchSemanticsNodes().size)
-        assertTrue("$mid of $full", mid < full)
-        rule.mainClock.advanceTimeBy(2_000)
+        rule.mainClock.advanceTimeByFrame()
+        // Closed on the next frame: the agents are gone, and a later frame is no shorter.
         assertEquals(0, rule.onAllNodesWithTag("workflow-agent:v5").fetchSemanticsNodes().size)
         val folded = rule.onNodeWithTag("workflow-phase:Verify").fetchSemanticsNode().size.height
-        assertTrue("$folded < $mid", folded < mid)
+        assertTrue("$folded < $full", folded < full)
+        rule.mainClock.advanceTimeBy(140)
+        assertEquals(folded, rule.onNodeWithTag("workflow-phase:Verify").fetchSemanticsNode().size.height)
+        rule.onNodeWithText("Verify").performClick()
+        Snapshot.sendApplyNotifications()
+        rule.mainClock.advanceTimeByFrame()
+        assertEquals(1, rule.onAllNodesWithTag("workflow-agent:v5").fetchSemanticsNodes().size)
+        val reopened = rule.onNodeWithTag("workflow-phase:Verify").fetchSemanticsNode().size.height
+        rule.mainClock.advanceTimeBy(2_000)
+        assertEquals(full, reopened)
+        assertEquals(reopened, rule.onNodeWithTag("workflow-phase:Verify").fetchSemanticsNode().size.height)
     }
 
     @Test fun framesOfAChangeLight() = frames(dark = false)

@@ -26,7 +26,8 @@ export interface MenuItem {
   /** A short note at the row's end that never wraps (a count, a unit, a shortcut). A sentence goes in `detail`. */
   hint?: string;
   /** A sentence under the label that explains the choice (#5584): it wraps at word breaks instead of crowding the
-   *  label off the row, and screen readers read it as the row's description. */
+   *  label off the row, and screen readers read it as the row's description. A line break in it starts a new line
+   *  (a project's directories, one to a line). */
   detail?: string;
   /** What the row means, shown only as its tooltip (the composer's permission picker, #5324): a choice whose name says
    *  enough at a glance and whose explanation is there on hover. */

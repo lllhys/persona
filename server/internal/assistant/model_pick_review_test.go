@@ -48,7 +48,7 @@ func TestStartWithOnlyAnEffortKeepsNoPick(t *testing.T) {
 func TestAPickWithoutAModelRunsLikeTheStart(t *testing.T) {
 	s, f := pickFixture(t)
 	setModel(t, s, "assistant", ModelBinding{Provider: "launcher.gw", Model: "cfg-1"})
-	code, sess := startConv(t, s, `{"prompt":"hi","launcher":"gw"}`)
+	code, sess := startConv(t, s, `{"prompt":"hi","main":true,"launcher":"gw"}`)
 	if code != 200 || sess.ModelPick == nil || f.lastSend(t)["model"] != "cfg-1" {
 		t.Fatalf("start: %d %+v %v", code, sess.ModelPick, f.lastSend(t))
 	}
@@ -79,11 +79,11 @@ func (d *modesDevices) Request(_ context.Context, method string, _ json.RawMessa
 	return nil, false, nil
 }
 
-// An effort set on a picked conversation through POST …/modes (the apps' effort chip) becomes the pick's, so the next
-// message runs on it instead of putting the pick's back.
+// An effort set on a conversation with a pick through POST …/modes (the apps' effort chip) becomes the pick's, so the
+// next message runs on it instead of putting the pick's back. A modes effort on one without a pick makes none.
 func TestModesEffortBecomesThePicks(t *testing.T) {
 	s, _ := pickFixture(t)
-	if r := putPick(t, s, "side", `{"launcher":"claude","model":"opus","effort":"high"}`); r.Code != 200 {
+	if r := putPick(t, s, "main", `{"launcher":"claude","model":"opus","effort":"high"}`); r.Code != 200 {
 		t.Fatal(r.Body.String())
 	}
 	b := &BusHub{svc: s, helloed: make(chan struct{}), opts: BusOptions{Devices: &modesDevices{}}}
@@ -97,20 +97,30 @@ func TestModesEffortBecomesThePicks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	call("side", "session.modes", map[string]any{"permission_mode": "plan"}) // no effort: the pick's stays
-	if p, _ := s.modelPickOf(context.Background(), "server", "side"); p.Effort != "high" {
+	call("main", "session.modes", map[string]any{"permission_mode": "plan"}) // no effort: the pick's stays
+	if p, _ := s.modelPickOf(context.Background(), "server", "main"); p.Effort != "high" {
 		t.Fatalf("a mode alone changed the effort: %+v", p)
 	}
-	call("side", "session.modes", map[string]any{"effort": "low"})
-	if p, _ := s.modelPickOf(context.Background(), "server", "side"); p.Effort != "low" || p.Launcher != "claude" || p.Model != "opus" {
+	call("main", "session.modes", map[string]any{"effort": "low"})
+	if p, _ := s.modelPickOf(context.Background(), "server", "main"); p.Effort != "low" || p.Launcher != "claude" || p.Model != "opus" {
 		t.Fatalf("pick: %+v", p)
 	}
-	if p, err := send(t, s, "side", map[string]any{}); err != nil || p["effort"] != "low" {
+	if p, err := send(t, s, "main", map[string]any{}); err != nil || p["effort"] != "low" {
 		t.Fatalf("next message: %v %v", p, err)
 	}
-	call("main", "session.modes", map[string]any{"effort": "max"}) // no pick there: none is made
-	if _, ok := s.modelPickOf(context.Background(), "server", "main"); ok {
-		t.Fatal("a pick was made for a conversation without one")
+	call("side", "session.modes", map[string]any{"effort": "max"}) // no pick there: none is made, nothing changes
+	if _, ok := s.modelPickOf(context.Background(), "server", "side"); ok {
+		t.Fatal("a side conversation got a pick through session.modes")
+	}
+	if p, _ := s.modelPickOf(context.Background(), "server", "main"); p.Effort != "low" {
+		t.Fatalf("the main pick changed: %+v", p)
+	}
+	if r := putPick(t, s, "side", `{"launcher":"claude","model":"opus","effort":"high"}`); r.Code != 200 { // another conversation with a pick
+		t.Fatal(r.Body.String())
+	}
+	call("side", "session.modes", map[string]any{"effort": "max"})
+	if p, _ := s.modelPickOf(context.Background(), "server", "side"); p.Effort != "max" {
+		t.Fatalf("the side pick's effort: %+v", p)
 	}
 }
 
@@ -200,7 +210,7 @@ func TestModelPickErrorsAreTranslated(t *testing.T) {
 	st := s.store().(*memStore)
 	st.failKey(modelPicksKey, errors.New("database down"))
 	s.modelPicks = modelPickBook{}
-	if r := appRequest(t, s, "PUT", "/api/v1/assistant/conversations/side/model", `{"launcher":"claude"}`, "zh-Hans"); r.Code != http.StatusInternalServerError || !strings.Contains(r.Body.String(), "模型") {
+	if r := appRequest(t, s, "PUT", "/api/v1/assistant/conversations/main/model", `{"launcher":"claude"}`, "zh-Hans"); r.Code != http.StatusInternalServerError || !strings.Contains(r.Body.String(), "模型") {
 		t.Fatalf("unreadable book: %d %s", r.Code, r.Body.String())
 	}
 }
@@ -229,11 +239,11 @@ func TestPicksReadWhileOneIsWritten(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- s.setModelPick(context.Background(), "side", &modelPick{MachineID: "server", Launcher: "claude", At: time.Now()})
+		done <- s.setModelPick(context.Background(), "main", &modelPick{MachineID: "server", Launcher: "claude", At: time.Now()})
 	}()
 	<-st.entered
 	read := make(chan struct{})
-	go func() { s.modelPicksSet(); s.modelPickOf(context.Background(), "server", "side"); close(read) }()
+	go func() { s.modelPicksSet(); s.modelPickOf(context.Background(), "server", "main"); close(read) }()
 	select {
 	case <-read:
 	case <-time.After(2 * time.Second):
@@ -244,7 +254,7 @@ func TestPicksReadWhileOneIsWritten(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := s.modelPickOf(context.Background(), "server", "side"); !ok || p.Launcher != "claude" {
+	if p, ok := s.modelPickOf(context.Background(), "server", "main"); !ok || p.Launcher != "claude" {
 		t.Fatalf("after the write: %+v %v", p, ok)
 	}
 }

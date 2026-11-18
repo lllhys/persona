@@ -1,6 +1,7 @@
 import Foundation
 @testable import Persona
 import Testing
+import PersonaWire
 
 /// The iPhone preview's logic (#150, docs/web/preview.md "iPhone"): the servers it offers, the command Start shows, the
 /// address and `Page:` of a forwarded page, and a picked element as the same element comment the web writes (the cases
@@ -29,6 +30,19 @@ struct PreviewLogicTests {
         #expect(PreviewLogic.problems(Self.res).map(\.name) == ["staging"])
         #expect(PreviewLogic.options(nil, ports: []).isEmpty)
         #expect(PreviewLogic.options(nil, ports: [ListeningPort(port: 9000)]).map(\.name) == [":9000"])
+    }
+
+    /// Start… needs a workspace and a terminal to run the server in (the web's `startable`): a Paseo session names its
+    /// runtime's workspace, which has none.
+    @Test func startsOnlyWhereThereIsATerminal() throws {
+        func session(_ fields: String) throws -> Session {
+            try JSON.decoder.decode(Session.self, from: Data(#"{"machine_id":"mac","session_id":"s1","status":"idle"\#(fields)}"#.utf8))
+        }
+        #expect(PreviewLogic.canStart(try session(#","workspace_id":"w1","pane_id":"w1:p1""#)))
+        let paseo = try session(#","workspace_id":"wks_1","source_kind":"runtime","host":"paseo","capabilities":{"read":true,"send":true,"terminal":false}"#)
+        #expect(!PreviewLogic.canStart(paseo))
+        #expect(!PreviewLogic.canStart(try session(#","pane_id":"w1:p1""#))) // no workspace
+        #expect(!PreviewLogic.canStart(nil))
     }
 
     @Test func showsTheCommandAsTheNodeRunsIt() {

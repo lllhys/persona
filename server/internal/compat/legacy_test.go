@@ -21,7 +21,7 @@ func TestInstalledServiceAndProbeBytesStayStable(t *testing.T) {
 }
 
 func TestExactRuntimeAliasesPreserveCustomNames(t *testing.T) {
-	for _, pair := range [][2]string{{"jarvis-dsh-runtime", "persona-dsh-runtime"}, {"jarvis-pi-runtime", "persona-pi-runtime"}, {"jarvis-paseo-runtime", "persona-paseo-runtime"}, {"jarvis-agent-sdk-runtime", "persona-agent-sdk-runtime"}} {
+	for _, pair := range [][2]string{{"jarvis-dsh-runtime", "persona-dsh-runtime"}, {"jarvis-pi-runtime", "persona-pi-runtime"}, {"jarvis-paseo-runtime", "persona-paseo-runtime"}} {
 		if RuntimePackage(pair[0]) != pair[1] || LegacyRuntimePackage(pair[1]) != pair[0] {
 			t.Fatal(pair)
 		}

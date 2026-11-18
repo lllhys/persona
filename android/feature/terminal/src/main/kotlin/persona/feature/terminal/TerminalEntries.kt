@@ -37,7 +37,13 @@ fun EntryProviderScope<NavKey>.terminalEntries(navigator: Navigator, transport: 
             TerminalViewModel(key, routed(key) ?: transport ?: requireNotNull(services).terminal(),
                 preferences = SharedTerminalPreferences(context), resumer = resumer)
         }
-        TerminalScreen(model, navigator::back, route.title.ifEmpty { null } ?: title(model.key) ?: model.key.sessionId)
+        TerminalPage(
+            model,
+            navigator::back,
+            route.title.ifEmpty { null } ?: title(model.key) ?: model.key.sessionId,
+            grab = null,
+            resumeOnOpen = route.resume,
+        )
     }
     if (panes != null && sessions != null) entry<TerminalPanesRoute> {
         val model = viewModel(key = "terminal-panes:${System.identityHashCode(panes)}:${System.identityHashCode(sessions)}") {

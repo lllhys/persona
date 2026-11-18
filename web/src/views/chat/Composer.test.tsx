@@ -3,20 +3,29 @@
 // conversation (#2378), including ones still being read or a send that fails after the box moved on.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadPages } from "../../lib/lazy-page";
 import { addQuote, getQuotes, sendDraft, setQuotes } from "../../lib/drafts";
 import { toast } from "../../ui/atoms";
 import { Composer, type Outgoing } from "./Composer";
+import { onPermissionPicker } from "../../lib/permissions-command";
 import { t } from "../../i18n";
 
 // imagePayload decodes on a canvas, which jsdom has not: each read waits on a promise the test settles
 const reads: ((p: { mime: string; data: string }) => void)[] = [];
-// a file upload waits on a promise the test settles too, with the path the machine stored it at
+// a file upload (lib/composer-files.ts) waits on a promise the test settles too, with the path the machine stored it at
 const uploads: ((path: string) => void)[] = [];
+const failures: ((e: Error) => void)[] = [];
 vi.mock("../../lib/attachments", async (orig) => ({
   ...(await orig<typeof import("../../lib/attachments")>()),
   imagePayload: () => new Promise<{ mime: string; data: string }>((resolve) => reads.push(resolve)),
-  sendFile: () => new Promise<string>((resolve) => uploads.push(resolve)),
+}));
+vi.mock("../../lib/file-ops", () => ({
+  uploadAttachment: (_mid: string, file: File) =>
+    new Promise((resolve, reject) => {
+      uploads.push((path) => resolve({ path, name: path.split("/").pop(), size: file.size }));
+      failures.push(reject);
+    }),
 }));
 
 vi.mock("../../ui/atoms", async (orig) => ({ ...(await orig<typeof import("../../ui/atoms")>()), toast: vi.fn() }));
@@ -29,10 +38,15 @@ const revoke = vi.fn();
 let host: HTMLDivElement;
 let root: Root;
 
+beforeAll(async () => {
+  await loadPages();
+});
+
 beforeEach(() => {
   urls = 0;
   reads.length = 0;
   uploads.length = 0;
+  failures.length = 0;
   create.mockClear();
   revoke.mockClear();
   URL.createObjectURL = create;
@@ -242,57 +256,75 @@ describe("Composer image object URLs", () => {
 
 // A file sent to the machine puts its path into the draft of the conversation it was picked in, not into the one
 // the box shows when the upload finishes.
-describe("Composer file upload that finishes after the box moved on", () => {
+// Files picked for a message are tiles above the input, never words in it (#8361): they upload for their own
+// conversation, hold the message until they are there, and go with it as <persona-file> tags after the words.
+describe("Composer files", () => {
   const box = () => host.querySelector("textarea")!;
-  const renderOn = (draftKey: string) => act(() => root.render(<Composer draftKey={draftKey} machineId="m1" placeholder="" onSend={async () => true} />));
-  const spinning = () => !host.querySelector("button[data-composer-plus] svg");
+  const tiles = () => Array.from(host.querySelectorAll<HTMLElement>("[data-testid=composer-files] > span"));
+  const renderOn = (draftKey: string, onSend: (m: Outgoing) => Promise<boolean> = async () => true) =>
+    act(() => root.render(<Composer draftKey={draftKey} machineId="m1" placeholder="" onSend={onSend} />));
   const pickNotes = async () => {
     await pickFile(new File(["notes"], "notes.txt", { type: "text/plain" }));
-    expect(uploads).toHaveLength(1);
+    await until(() => expect(uploads).toHaveLength(1));
   };
+  const sendButton = () => host.querySelector<HTMLButtonElement>('button[aria-label="发送"]');
+  const forget = () => tiles().forEach((t) => act(() => t.querySelector<HTMLButtonElement>("button[data-remove]")!.click()));
 
-  it("goes into its own conversation's draft, not into the one the box shows now", async () => {
+  afterEach(() => {
+    renderOn("a");
+    forget();
+    renderOn("b");
+    forget();
+  });
+
+  it("puts nothing in the words and sends the file as a tag after them", async () => {
+    const send = vi.fn(async () => true);
+    renderOn("a", send);
+    act(() => void sendDraft("a", { type: "replace", text: "look at" }));
+    await pickNotes();
+    expect(tiles().map((t) => t.dataset.state)).toEqual(["uploading"]);
+    expect(sendButton()?.disabled ?? true).toBe(true); // holds the message while it uploads
+    await act(async () => uploads[0]("/home/me/.persona/uploads/2026-11-15/notes.txt"));
+    expect(box().value).toBe("look at");
+    expect(tiles().map((t) => t.dataset.state)).toEqual(["ready"]);
+    await act(async () => sendButton()!.click());
+    expect(send).toHaveBeenCalledWith({
+      text: 'look at\n\n<persona-file kind="file" path="/home/me/.persona/uploads/2026-11-15/notes.txt" name="notes.txt" size="5"/>',
+      images: [],
+    });
+    expect(tiles()).toEqual([]);
+  });
+
+  it("goes on uploading for its own conversation while the box shows another, and is there when it comes back", async () => {
     renderOn("a");
     await pickNotes();
-    expect(spinning()).toBe(true);
     renderOn("b");
-    expect(spinning()).toBe(false); // b has nothing uploading
-    await act(async () => uploads[0]("/tmp/notes.txt"));
+    expect(tiles()).toEqual([]);
+    await act(async () => uploads[0]("/u/notes.txt"));
     expect(box().value).toBe("");
-    expect(localStorage.getItem("draft:a")).toBe("/tmp/notes.txt");
     renderOn("a");
-    expect(box().value).toBe("/tmp/notes.txt");
+    expect(tiles().map((t) => t.dataset.state)).toEqual(["ready"]);
+    expect(box().value).toBe("");
   });
 
-  it("shows its spinner again when the box comes back to its conversation before it finishes", async () => {
+  it("keeps a failed one as a tile to try again", async () => {
     renderOn("a");
     await pickNotes();
-    renderOn("b");
-    renderOn("a");
-    expect(spinning()).toBe(true);
-    await act(async () => uploads[0]("/tmp/notes.txt"));
-    expect(spinning()).toBe(false);
-    expect(box().value).toBe("/tmp/notes.txt");
+    await act(async () => failures[0](new Error("no space left on device")));
+    expect(tiles().map((t) => t.dataset.state)).toEqual(["failed"]);
+    expect(toast).toHaveBeenCalled();
+    act(() => tiles()[0].querySelector<HTMLButtonElement>("button")!.click());
+    await until(() => expect(uploads).toHaveLength(2));
+    await act(async () => uploads[1]("/u/notes.txt"));
+    expect(tiles().map((t) => t.dataset.state)).toEqual(["ready"]);
   });
 
-  it("is kept for the conversation when the box went away before it finished", async () => {
-    renderOn("a");
+  it("puts the files back over the box when the send does not go", async () => {
+    renderOn("a", async () => false);
     await pickNotes();
-    act(() => root.unmount());
-    root = createRoot(host);
-    await act(async () => uploads[0]("/tmp/notes.txt"));
-    expect(localStorage.getItem("draft:a")).toBe("/tmp/notes.txt");
-    renderOn("a");
-    expect(box().value).toBe("/tmp/notes.txt");
-  });
-
-  it("goes under what the conversation's draft already holds", async () => {
-    localStorage.setItem("draft:a", "see");
-    renderOn("a");
-    await pickNotes();
-    renderOn("b");
-    await act(async () => uploads[0]("/tmp/my notes.txt"));
-    expect(localStorage.getItem("draft:a")).toBe("see\n'/tmp/my notes.txt'");
+    await act(async () => uploads[0]("/u/notes.txt"));
+    await act(async () => sendButton()!.click());
+    expect(tiles().map((t) => t.dataset.state)).toEqual(["ready"]);
   });
 });
 
@@ -734,7 +766,7 @@ describe("the / palette", () => {
     typeInto("/co");
     await until(() => expect(rows()).toEqual(["compact", "context"]));
     typeInto("/");
-    expect(rows()).toHaveLength(9); // with /workflows (#5421)
+    expect(rows()).toHaveLength(10); // with /workflows (#5421) and /permissions (#6476)
     expect(palette()!.textContent).not.toContain("Esc");
   });
 
@@ -774,10 +806,41 @@ describe("the / palette", () => {
     render("p");
     typeInto("/");
     await until(() => expect(palette()).not.toBeNull());
+    act(() => box().dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(palette()).not.toBeNull();
     act(() => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
     expect(palette()).toBeNull();
     typeInto("/c");
     expect(palette()).not.toBeNull();
+  });
+
+  // #6476: /permissions opens the conversation's permission menu, picked in the palette or typed and sent; with no
+  // picker to open (an agent without modes), the words go as they are
+  it("opens the permission menu for /permissions instead of sending it", async () => {
+    const onSend = vi.fn(async () => true);
+    const opened = vi.fn();
+    const off = onPermissionPicker("perm", opened);
+    render("perm", onSend);
+    typeInto("/perm");
+    await until(() => expect(rows()).toEqual(["permissions"]));
+    key("Enter");
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(box().value).toBe("");
+    expect(palette()).toBeNull();
+    typeInto("/permissions");
+    key("Escape");
+    await act(async () => {
+      box().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(opened).toHaveBeenCalledTimes(2);
+    expect(onSend).not.toHaveBeenCalled();
+    off();
+    typeInto("/permissions");
+    key("Escape");
+    await act(async () => {
+      box().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ text: "/permissions" }));
   });
 
   it("is not offered where there are no commands", async () => {
@@ -788,4 +851,89 @@ describe("the / palette", () => {
     });
     expect(palette()).toBeNull();
   });
+
+  it("keeps command rows and picks usable while the assistant skill chunk is pending and after it fails", async () => {
+    const chunk = { calls: 0, fail: (_error: Error) => {} };
+    const held = new Promise<void>((_, reject) => { chunk.fail = reject; });
+    void held.catch(() => {}); // every consumer still receives the rejection
+    vi.resetModules();
+    vi.doMock("./AssistantComposerPanel", async () => {
+      chunk.calls++;
+      await held;
+      return vi.importActual<typeof import("./AssistantComposerPanel")>("./AssistantComposerPanel");
+    });
+    try {
+      const { initI18n } = await import("../../i18n");
+      await initI18n("zh-Hans");
+      const { Composer: DeferredComposer } = await import("./Composer");
+      await act(async () => {
+        root.render(<DeferredComposer
+          draftKey="assistant-chunk"
+          placeholder=""
+          mention={{ files: () => [], skills: { manager: "assistant", environment: "test" } }}
+          machineId="computer"
+          commands={[{ word: "/alpha", desc: "First", text: "/alpha" }, { word: "/beta", desc: "Second", text: "/beta" }]}
+          onSend={async () => true}
+        />);
+      });
+      typeInto("/");
+      await vi.waitFor(() => expect(chunk.calls).toBe(1));
+      await vi.waitFor(() => expect(rows()).toEqual(["alpha", "beta"]));
+      key("ArrowDown");
+      expect(focused()).toBe("beta");
+      key("Enter");
+      await vi.waitFor(() => expect(box().value).toBe("/beta"));
+      expect(palette()).toBeNull();
+
+      typeInto("/");
+      await vi.waitFor(() => expect(rows()).toEqual(["alpha", "beta"]));
+      await act(async () => {
+        chunk.fail(new Error("stale assistant chunk"));
+        await Promise.resolve();
+      });
+      await vi.waitFor(() => expect(rows()).toEqual(["alpha", "beta"]));
+      expect(palette()).not.toBeNull();
+      key("ArrowDown");
+      expect(focused()).toBe("beta");
+      key("Enter");
+      await vi.waitFor(() => expect(box().value).toBe("/beta"));
+      expect(palette()).toBeNull();
+    } finally {
+      vi.doUnmock("./AssistantComposerPanel");
+    }
+  }, 20_000);
+});
+
+describe("Composer suggestion chunk", () => {
+  it("appears and fills the box after its chunk resolves", async () => {
+    const chunk = { calls: 0, open: () => {} };
+    vi.resetModules();
+    vi.doMock("./ComposerOverlays", async () => {
+      chunk.calls++;
+      await new Promise<void>((resolve) => { chunk.open = resolve; });
+      return vi.importActual<typeof import("./ComposerOverlays")>("./ComposerOverlays");
+    });
+    try {
+      const { initI18n } = await import("../../i18n");
+      await initI18n("zh-Hans");
+      const { Composer: DeferredComposer } = await import("./Composer");
+      await act(async () => {
+        root.render(<DeferredComposer draftKey="deferred-pill" placeholder="" suggestion="late suggestion" onSend={async () => true} />);
+      });
+      const pill = () => host.querySelector('[data-testid="composer-suggestion"]');
+      expect(pill()).toBeNull();
+      await vi.waitFor(() => expect(chunk.calls).toBe(1));
+
+      await act(async () => { chunk.open(); });
+      await vi.waitFor(async () => {
+        await act(async () => { await Promise.resolve(); });
+        expect(pill()).not.toBeNull();
+      }, { timeout: 10_000 });
+      act(() => pill()!.querySelector("button")!.click());
+      expect(host.querySelector("textarea")!.value).toBe("late suggestion");
+      expect(pill()).toBeNull();
+    } finally {
+      vi.doUnmock("./ComposerOverlays");
+    }
+  }, 20_000);
 });

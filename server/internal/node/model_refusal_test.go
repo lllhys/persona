@@ -66,6 +66,44 @@ func TestModelRefusalMetaSurvivesTailAndRestart(t *testing.T) {
 	}
 }
 
+func TestQuickMetaRewindKeepsPreTailModelFallback(t *testing.T) {
+	visibleReply := strings.Replace(nodeRefusalSuccess, `"uuid":"a1"`, `"uuid":"a1","parentUuid":"f1"`, 1)
+	hiddenPrompt := strings.Replace(strings.Replace(nodeRefusalPrompt, `"uuid":"u1"`, `"uuid":"u2"`, 1), `"parentUuid":null`, `"parentUuid":"d1"`, 1)
+	hiddenFallback := strings.Replace(strings.Replace(strings.Replace(nodeRefusalFallback,
+		`"uuid":"f1"`, `"uuid":"f2"`, 1), `"parentUuid":"u1"`, `"parentUuid":"u2"`, 1), `"fallbackModel":"fallback-model"`, `"fallbackModel":"hidden-fallback"`, 1)
+	for _, tc := range []struct {
+		name       string
+		hiddenTurn []string
+	}{
+		{"a hidden reply clears the fallback", []string{
+			hiddenPrompt,
+			`{"type":"assistant","uuid":"b1","parentUuid":"u2","timestamp":"2026-01-01T12:01:01Z","message":{"model":"primary-model","role":"assistant","content":[{"type":"text","text":"B succeeded"}]}}`,
+			`{"type":"system","subtype":"turn_duration","uuid":"d2","parentUuid":"b1","timestamp":"2026-01-01T12:01:02Z","durationMs":10}`,
+		}},
+		{"a hidden turn replaces the fallback", []string{
+			hiddenPrompt, hiddenFallback,
+			`{"type":"assistant","uuid":"b1","parentUuid":"f2","timestamp":"2026-01-01T12:01:01Z","message":{"model":"hidden-fallback","role":"assistant","content":[{"type":"text","text":"B succeeded"}]}}`,
+			`{"type":"system","subtype":"turn_duration","uuid":"d2","parentUuid":"b1","timestamp":"2026-01-01T12:01:02Z","durationMs":10}`,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "session.jsonl")
+			lines := []string{nodeRefusalPrompt, nodeRefusalFallback, visibleReply,
+				`{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"a1","timestamp":"2026-01-01T12:00:05Z","durationMs":10}`,
+				`{"type":"api-request-blob","content":"` + strings.Repeat("x", quickTail+1) + `"}`}
+			st := writeLines(t, path, lines)
+			prev := readQuickMeta(path, st)
+			prev.modelFallback = &proto.ModelRefusal{OriginalModel: "primary-model", FallbackModel: "fallback-model", Scope: "session"}
+			lines = append(lines, tc.hiddenTurn...)
+			lines = append(lines, `{"type":"system","subtype":"away_summary","uuid":"s1","parentUuid":"d1","timestamp":"2026-01-01T12:02:00Z","content":"recap"}`)
+			m := readQuickMetaSince(path, writeLines(t, path, lines), prev)
+			if got := m.modelFallback; got == nil || got.FallbackModel != "fallback-model" {
+				t.Fatalf("hidden turn changed the pre-tail fallback: %+v", got)
+			}
+		})
+	}
+}
+
 func TestModelRefusalMetaFollowsSessionAndClears(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	n := refusalMetaNode()

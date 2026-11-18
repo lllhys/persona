@@ -1,0 +1,402 @@
+{
+  "schema_version": 1,
+  "domain": "lines",
+  "description": "Current iOS (apple/) only: a frozen view cut inside a tool run, with results after the cut. Not part of the shared corpus that Android's LinesFixtureTest replays; the iOS replay in ../README.md checks these cases exactly.",
+  "cases": [
+    {
+      "name": "frozen_cut_between_parallel_calls_leaves_later_results_out",
+      "description": "A frozen view cut between two parallel calls of one entry: only the first call is in, its result after the cut is not paired and it stays running; the second call and the answer wait until the view thaws.",
+      "source": [
+        "apple/Persona/Views/Chat/ChatView.swift: currentLines (frozen cut by (seq, part)) / prefixCount",
+        "apple/Shared/ChatStore.swift: rebuild / buildRows (results pair within the items given)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: frozenChatCountsItemsUpToTheSnapshot"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "检查两个示例文件",
+            "ts": "2026-01-01T00:00:00Z"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read",
+            "ts": "2026-01-01T00:00:05Z"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "a 文件没问题",
+            "tool_use_id": "call_a",
+            "ts": "2026-01-01T00:00:06Z"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read",
+            "ts": "2026-01-01T00:00:10Z"
+          },
+          {
+            "id": "4#1",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_c",
+            "tool_name": "Read",
+            "ts": "2026-01-01T00:00:10Z"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "b 文件没问题",
+            "tool_use_id": "call_b",
+            "ts": "2026-01-01T00:00:12Z"
+          },
+          {
+            "id": "5#1",
+            "seq": 5,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "c 文件没问题",
+            "tool_use_id": "call_c",
+            "ts": "2026-01-01T00:00:12Z"
+          },
+          {
+            "id": "6#0",
+            "seq": 6,
+            "role": "assistant",
+            "kind": "text",
+            "text": "三个文件都没问题",
+            "ts": "2026-01-01T00:00:15Z"
+          }
+        ],
+        "frozen": {
+          "seq": 4,
+          "part": 0,
+          "live_turn_id": "1#0"
+        },
+        "now": "2026-01-01T00:00:30Z",
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "检查两个示例文件",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "30 秒",
+            "elapsed_seconds": 30,
+            "end": "2026-01-01T00:00:10Z",
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": true,
+            "open": false,
+            "start": "2026-01-01T00:00:00Z",
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": "3#0",
+                "result_text": "a 文件没问题",
+                "running": false,
+                "type": "tool"
+              },
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "4#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 2"
+            ],
+            "summary_short": [
+              "工具 2"
+            ],
+            "thoughts": 0,
+            "tools": 2,
+            "type": "work",
+            "unresolved_tools": 1
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": "2026-01-01T00:00:10Z",
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": "2026-01-01T00:00:00Z",
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 2,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    },
+    {
+      "name": "frozen_cut_keeps_an_earlier_exchanges_late_result_out",
+      "description": "A frozen view cut at the next exchange's call: the earlier exchange's late result is after the cut, so its call stays without a result, and its finished work line does not turn live.",
+      "source": [
+        "apple/Persona/Views/Chat/ChatView.swift: currentLines (frozen cut by (seq, part)) / prefixCount",
+        "apple/Shared/ChatStore.swift: rebuild / buildRows (results pair within the items given)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: frozenChatCountsItemsUpToTheSnapshot"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "后台跑示例构建"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Bash"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "assistant",
+            "kind": "text",
+            "text": "构建在跑，先处理别的"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "user",
+            "kind": "text",
+            "text": "顺便检查文档"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          },
+          {
+            "id": "6#0",
+            "seq": 6,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "构建成功",
+            "tool_use_id": "call_a"
+          },
+          {
+            "id": "7#0",
+            "seq": 7,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "文档没问题",
+            "tool_use_id": "call_b"
+          },
+          {
+            "id": "8#0",
+            "seq": 8,
+            "role": "assistant",
+            "kind": "text",
+            "text": "构建成功，文档也没问题"
+          }
+        ],
+        "frozen": {
+          "seq": 5,
+          "part": 0,
+          "live_turn_id": "4#0"
+        },
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "后台跑示例构建",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Bash",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "text": "构建在跑，先处理别的",
+            "type": "reply"
+          },
+          {
+            "id": "4#0",
+            "is_input": true,
+            "text": "顺便检查文档",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-4#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": true,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "5#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": null,
+                "result_text": null,
+                "running": true,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 1
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": "3#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0",
+              "3#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "4#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "4#0",
+              "tools-5#0"
+            ],
+            "process_ids": [
+              "tools-5#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "4#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    }
+  ]
+}

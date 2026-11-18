@@ -26,7 +26,9 @@ final class LarkHistoryFlowTests: XCTestCase {
         app.buttons["shell-feishu"].firstMatch.tapCenter()
         XCTAssertTrue(app.buttons["feishu-chat-" + feed].waitForExistence(timeout: 20))
         app.buttons["feishu-chat-" + feed].tapCenter()
+        app.buttons["lark.chat.more"].tapCenter()
         XCTAssertTrue(app.buttons["lark.pins.open"].waitForExistence(timeout: 15))
+        app.tap() // close the menu without leaving the chat
         // At the largest text sizes, messages other suites left in this simulator's outbox can fill the whole screen
         // under the newest one: the chat being open is enough there, the test scrolls up itself.
         if size == "UICTContentSizeCategoryL" { XCTAssertTrue(row(app, newest).waitForExistence(timeout: 15)) }

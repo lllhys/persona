@@ -11,10 +11,16 @@ import Synchronization
 ///
 /// Its source is a layer of the Mac's screen of a normal size (#1839: a 2×2 one in a window that went away never
 /// started), in the app's main window behind its content: in a window, not hidden, not seen. It is fed samples on the
-/// host clock and has a timebase of its own. Until the Mac's picture comes it shows a card (VNCPiPCard: Connecting…, or why
+/// host clock and has a timebase of its own. The system's transition starts and ends at that layer's frame, so it lies
+/// over the page's picture while the page is up, and the page hands its picture over as the small window starts
+/// (VNCPiPPlacement, #6333). Until the Mac's picture comes it shows a card (VNCPiPCard: Connecting…, or why
 /// not and how to try again), so a machine's VNC starts the small window in the tap and the picture follows in it; the
 /// page makes it ready as soon as it shows a Mac, so that Picture in Picture (a tap) and going home start it at once. When the system
 /// will not start it, the page opens saying why (VNCPiPLog, Picture in Picture Diagnostics).
+///
+/// In Phone Screen (#9659) the source shows only the portrait display, at its own pixels (RFBSession.smallWindowPart), so the
+/// small window is portrait and sharp; the page's Phone Screen session stays on the Mac while the small window has it,
+/// and goes back to the page on Restore.
 @MainActor final class VNCPiP: NSObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
     static let shared = VNCPiP()
     nonisolated static let log = Logger(subsystem: "persona", category: "vnc")
@@ -38,6 +44,13 @@ import Synchronization
     private var drawing: Task<Void, Never>?
     /// It could not connect: the small window shows ▶, which connects again. The system asks off the main actor.
     private nonisolated let paused = Mutex(false)
+    /// Where the page draws the Mac's picture, in screen points, while it is up (#6333): the source lies over the part
+    /// the small window shows.
+    private var page: VNCPagePicture?
+    /// Phone Screen, kept on the Mac while the small window has it (the page went into it); the page takes it back.
+    private var phone: PhoneScreenLink?
+    /// Restore waits for the page's picture before the system grows the small window back into it.
+    private let restore = VNCPiPRestore()
 
     static var supported: Bool { AVPictureInPictureController.isPictureInPictureSupported() || showsSource }
     var active: Bool { controller?.isPictureInPictureActive == true }
@@ -64,23 +77,25 @@ import Synchronization
         }
         end()
         guard Self.supported else { return note(String(localized: "This device doesn't support Picture in Picture")) }
-        let audio = AVAudioSession.sharedInstance()
-        do {
-            try audio.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-            try audio.setActive(true)
-        } catch {
-            note(String(localized: "Couldn't start the audio session: \(error.localizedDescription)"))
+        // A live system call keeps its audio session (docs/apple/calls.md): the playback category would cut the call's
+        // microphone. The small window still gets its source; whether the system offers it then is its own call.
+        if !LiveCallGate.callIsLive {
+            let audio = AVAudioSession.sharedInstance()
+            do {
+                try audio.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+                try audio.setActive(true)
+            } catch {
+                note(String(localized: "Couldn't start the audio session: \(error.localizedDescription)"))
+            }
         }
         guard let window = Self.mainWindow() else { return note(String(localized: "Can't find the app's main window")) }
         let session = VNC.hold(ref)
-        let size = Self.size(session.size, width: Theme.Size.pictureInPictureSource)
-        let v = VNCScreenUIView(frame: CGRect(x: 0, y: window.bounds.maxY - size.height, width: size.width, height: size.height))
+        let v = VNCScreenUIView(frame: .zero)
         v.session = session
         v.isUserInteractionEnabled = false
         Self.giveTimebase(v.display)
         session.show(in: v.display, timed: true)
         if Self.showsSource {
-            v.frame.origin = CGPoint(x: window.bounds.maxX - size.width - Theme.Space.page, y: window.safeAreaInsets.top + Theme.Space.xxl)
             v.accessibilityIdentifier = "vnc-pip-source"
             v.accessibilityLabel = String(localized: "Picture in Picture: live screen") // until the card says otherwise (draw)
             window.addSubview(v)
@@ -91,6 +106,8 @@ import Synchronization
         self.ref = ref
         self.from = from
         host = v
+        place()
+        let size = v.frame.size
         // Where there is no picture in picture (-showPiPSource on a simulator) its initializer gives back nil, which
         // Swift takes for an object: the source only.
         if AVPictureInPictureController.isPictureInPictureSupported() {
@@ -167,6 +184,7 @@ import Synchronization
     /// asks for a new one (with the app in front; else the card says so).
     private func draw() {
         guard let ref, let host, let session = VNC.current(ref) else { return }
+        followCut(session, host)
         let now = VNCPiPCard.State(session.phase, pictured: session.pictured), was = card
         card = now
         if now != was {
@@ -187,10 +205,67 @@ import Synchronization
         guard now != was || (now == .connecting && (wanted || active)) else { return }
         cardFrames += 1
         let name = AppModel.shared.machine(ref)?.name ?? ref.id
-        let size = Self.size(session.size, width: Theme.Size.pictureInPictureCard)
+        let size = VNCPiPPlacement.size(session.smallWindowPart?.size ?? session.size, width: Theme.Size.pictureInPictureCard)
         if let pb = VNCPiPCard.frame(now, name: name, size: size, turn: Double(cardFrames % 12) / 12) {
             RFBFrameSink.show(pb, in: host.display)
         }
+    }
+
+    /// The page drew the Mac's picture here (screen points), or went (nil): the source follows it (#6333). Waiting to
+    /// restore, the page is back: once this layout is done, the system may grow the small window into it.
+    func pagePicture(_ picture: VNCPagePicture?) {
+        guard picture != page else { return }
+        page = picture
+        // The page closing as the small window starts (or is up): the source stays where the picture went from, not
+        // moved under the system's transition; the page coming back on Restore moves it again.
+        if picture == nil, starting || active { return }
+        place()
+        if picture != nil, restore.pending {
+            VNCPiPLog.add("整页画好了，小窗长回去") // i18n-ignore
+            DispatchQueue.main.async { [weak self] in self?.restore.finish() }
+        }
+    }
+
+    /// The source over the page's picture (the part the small window shows), or (no page) where the small window comes up.
+    private func place() {
+        guard let host, let window = host.window, let ref else { return }
+        let screen: UICoordinateSpace = window.windowScene?.screen.coordinateSpace ?? window
+        let cut = host.framesCut
+        let over = VNCPiPPlacement.page(page, cut: cut != nil).map { window.convert($0, from: screen) }
+        let size = VNCPiPPlacement.size(cut?.size ?? VNC.current(ref)?.size ?? .zero, width: Theme.Size.pictureInPictureSource)
+        let frame = VNCPiPPlacement.source(page: over, in: window.bounds, safeTop: window.safeAreaInsets.top, size: size, margin: Theme.Space.page)
+        guard host.frame != frame else { return }
+        UIView.performWithoutAnimation { host.frame = frame }
+    }
+
+    /// The source shows what the small window should: Phone Screen's display alone while the page cut it so (the
+    /// session's frames for it come cut), else all of the picture. It moves only while the system is not using it.
+    private func followCut(_ session: RFBSession, _ host: VNCScreenUIView) {
+        let part = session.smallWindowPart
+        guard host.framesCut != part else { return }
+        host.framesCut = part
+        VNCPiPLog.add(part.map { "小窗只显示手机屏：\(Int($0.width))×\(Int($0.height)) 像素" } ?? "小窗显示整个屏幕") // i18n-ignore
+        if !starting, !active { place() }
+    }
+
+    /// Phone Screen as the page goes: kept on the Mac while the small window has this Mac (it shows the portrait display,
+    /// and the page takes it back on Restore), else ended (the Mac puts its windows back). Whether it was kept.
+    @discardableResult func keepPhone(_ link: PhoneScreenLink) -> Bool {
+        guard link.ref == ref, wanted || starting || active, link.phase != .off else {
+            link.stop()
+            return false
+        }
+        if let phone, phone !== link { phone.stop() }
+        phone = link
+        VNCPiPLog.add("手机屏留给小窗") // i18n-ignore
+        return true
+    }
+
+    /// The page's Phone Screen, kept while the small window had the Mac (nil: none kept, the page starts its own).
+    func takePhone(_ ref: MachineRef) -> PhoneScreenLink? {
+        guard let link = phone, link.ref == ref else { return nil }
+        phone = nil
+        return link
     }
 
     /// The small window's ▶ after it could not connect: again (the card turns again).
@@ -235,8 +310,15 @@ import Synchronization
         drawing = nil
         card = nil
         paused.withLock { $0 = false }
+        restore.finish()
         watching = nil
         wanted = false
+        // Phone Screen kept for the small window ends with it: the Mac puts its windows back, the small window's cut goes.
+        if let link = phone {
+            phone = nil
+            link.stop()
+            if let ref { VNC.current(ref)?.cutSmallWindow(nil) }
+        }
         if let ref, let host { VNC.current(ref)?.hide(from: host.display) }
         host?.removeFromSuperview()
         host = nil
@@ -258,12 +340,6 @@ import Synchronization
         return scene?.windows.first { $0.windowLevel == .normal && !$0.isHidden && $0.rootViewController != nil }
     }
 
-    /// This wide in the Mac's proportions (16:10 before it is known).
-    private static func size(_ mac: CGSize, width: CGFloat) -> CGSize {
-        let ratio = mac.width > 1 && mac.height > 1 ? mac.height / mac.width : 10.0 / 16
-        return CGSize(width: width, height: (width * ratio).rounded())
-    }
-
     /// The layer's own clock, the host's, running: the samples' times (RFBFrameSink) are shown as they come.
     private static func giveTimebase(_ layer: AVSampleBufferDisplayLayer) {
         var timebase: CMTimebase?
@@ -280,7 +356,15 @@ import Synchronization
         MainActor.assumeIsolated {
             wanted = true // also when it starts by itself, the app going to the background with the page up
             starting = true
+            #if canImport(PersonaScreenKit)
+            // The small window shows RFB's picture (its source is prepared under the page all along, so this, not that,
+            // is when video steps aside, #3954).
+            if let ref { VNC.current(ref)?.video.hold("small window", true) }
+            #endif
             VNCPiPLog.add("小窗要开了") // i18n-ignore
+            // The picture goes into the small window now: the page hands it over and closes with the transition, not
+            // after it (#6333), so the picture never shows twice.
+            AppModel.shared.vncPiP = ref
         }
     }
 
@@ -295,14 +379,17 @@ import Synchronization
 
     nonisolated func pictureInPictureController(_ c: AVPictureInPictureController,
                                                 restoreUserInterfaceForPictureInPictureStopWithCompletionHandler done: @escaping (Bool) -> Void) {
+        nonisolated(unsafe) let done = done
         MainActor.assumeIsolated {
-            // Restore (or a tap on it): the full page, which holds the session before this lets go.
+            // Restore (or a tap on it): the full page, which holds the session before this lets go. The system grows the
+            // small window back into the source once `done` is called: when the page has drawn its picture and the
+            // source lies over it, or after a moment at the latest (#6333).
             VNCPiPLog.add("还原成整页") // i18n-ignore
+            restore.arm { done($0) }
             restoring = true
             if let ref { AppModel.shared.openScreen(ref, from: from) }
             restoring = false
         }
-        done(true)
     }
 
     nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ c: AVPictureInPictureController) {
@@ -310,9 +397,12 @@ import Synchronization
             VNCPiPLog.add("小窗关了") // i18n-ignore
             wanted = false
             starting = false
+            #if canImport(PersonaScreenKit)
+            if let ref { VNC.current(ref)?.video.hold("small window", false) }
+            #endif
             AppModel.shared.vncPiP = nil
-            // Ready again under the page when it is up (and by itself again when the app goes to the background);
-            // else the connection goes.
+            // Ready again under the page when it is up (and by itself again when the app goes to the background); else
+            // the connection goes.
             if let ref, AppModel.shared.screenOpen?.machine == ref {
                 controller?.canStartPictureInPictureAutomaticallyFromInline = true
                 return
@@ -326,6 +416,9 @@ import Synchronization
         MainActor.assumeIsolated {
             starting = false
             guard let ref else { return }
+            #if canImport(PersonaScreenKit)
+            VNC.current(ref)?.video.hold("small window", false)
+            #endif
             fallBack(ref, from, why: String(localized: "The system didn't allow it (\(error.localizedDescription))"))
         }
     }

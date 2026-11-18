@@ -1,0 +1,133 @@
+{
+ "title": "Atlas 发布评审 / Atlas release review",
+ "glossary": [
+  "Atlas",
+  "export cap",
+  "TestFlight",
+  "Alice",
+  "Bo"
+ ],
+ "lines": [
+  {
+   "voice": "F",
+   "lang": "zh",
+   "text": "好，人都到齐了，我们开始今天的发布评审。"
+  },
+  {
+   "voice": "M",
+   "lang": "mixed",
+   "text": "先说 iOS 这边，离线编辑基本做完了，现在在修 sync conflict 的问题。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "The backend merge API now returns the conflicting paragraphs, so the client can show them to the user."
+  },
+  {
+   "voice": "F",
+   "lang": "mixed",
+   "text": "那 export cap 这次还是保持在 4 MB 吗？"
+  },
+  {
+   "voice": "M",
+   "lang": "zh",
+   "text": "对，这个版本先不动，下个版本再评估。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "I'd like to push the beta to TestFlight on Wednesday and the public release a week later."
+  },
+  {
+   "voice": "F",
+   "lang": "mixed",
+   "text": "周三有点紧，regression test 至少要留两天。"
+  },
+  {
+   "voice": "M",
+   "lang": "zh",
+   "text": "那我们把离线编辑做成一个开关，默认关闭，先灰度给一小部分用户。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "That works for me. Alice can own the rollout plan and the release notes."
+  },
+  {
+   "voice": "F",
+   "lang": "mixed",
+   "text": "好的，Bo 负责在周五之前把 crash rate 的 dashboard 搭起来。"
+  },
+  {
+   "voice": "P",
+   "lang": "zh",
+   "text": "上次会议决定 export cap 保持在四兆。",
+   "echo": true
+  },
+  {
+   "voice": "M",
+   "lang": "mixed",
+   "text": "对了，Android 那边的 build 昨天挂了，是 Gradle cache 的问题。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "I already filed a fix, it should land before the end of the day."
+  },
+  {
+   "voice": "F",
+   "lang": "zh",
+   "text": "那测试环境的全文搜索索引上线了吗？"
+  },
+  {
+   "voice": "M",
+   "lang": "mixed",
+   "text": "上线了，search latency 比之前快了差不多一半。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "Great. Can we also check the memory usage when large images are compressed?"
+  },
+  {
+   "voice": "F",
+   "lang": "mixed",
+   "text": "可以，我让 Bo 跑一下 profiling，看看是不是 decoder 的问题。"
+  },
+  {
+   "voice": "M",
+   "lang": "zh",
+   "text": "还有一件事，市场部想在发布的时候做一个推广活动。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "Let's keep the landing page on the web, so it doesn't need another App Review."
+  },
+  {
+   "voice": "F",
+   "lang": "mixed",
+   "text": "同意，pricing 的 tiers 我们下周一再单独开会讨论。"
+  },
+  {
+   "voice": "M",
+   "lang": "zh",
+   "text": "最后确认一下，下周三提交审核，周四之前回归测试结束。"
+  },
+  {
+   "voice": "E",
+   "lang": "en",
+   "text": "Agreed. Beta on Wednesday, public release the following Wednesday."
+  },
+  {
+   "voice": "F",
+   "lang": "mixed",
+   "text": "OK，那 action items 我整理一下，会后发给大家。"
+  },
+  {
+   "voice": "M",
+   "lang": "zh",
+   "text": "好，今天就到这里，谢谢大家。"
+  }
+ ]
+}

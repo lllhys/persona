@@ -16,25 +16,61 @@ import (
 // inbox's triage settings templates.
 
 // SkillItem is a contribution to skills: a directory of the package with SKILL.md, put in with the assistant's skills
-// (the same as an assistant contribution's skills).
+// (the same as an assistant contribution's skills). With Source "data", Dir is in the extension's data directory and
+// each of its subdirectories with a SKILL.md is one skill the extension writes at run time
+// (docs/extensions/extensions.md "Assistant content from the data directory").
 type SkillItem struct {
-	ID  string `json:"id"`
-	Dir string `json:"dir"`
+	ID     string `json:"id"`
+	Dir    string `json:"dir"`
+	Source string `json:"source,omitempty"`
 }
 
 // Prompt kinds.
 const (
-	PromptInstructions = "instructions" // a .md of the package added to the assistant's CLAUDE.md
+	PromptInstructions = "instructions" // a .md of the package (or of the data directory) added to the assistant's CLAUDE.md
 	PromptQuick        = "quick"        // a template the apps offer in the message box
+	// PromptProjectContext: a directory of the data directory with "<project slug>.md" files, each added to the
+	// project background a new Agent in that project gets.
+	PromptProjectContext = "project_context"
+	// PromptInboxContext: a .md of the data directory added to the Inbox's triage and draft prompts, with an optional
+	// never_quote file of sentences a draft must not repeat word for word.
+	PromptInboxContext = "inbox_context"
+)
+
+// Where a skill's or a prompt's files are: the package (SourcePackage, also when left out) or the extension's data
+// directory, which its program writes and upgrades keep (SourceData).
+const (
+	SourcePackage = "package"
+	SourceData    = "data"
 )
 
 // PromptItem is a contribution to prompts.
 type PromptItem struct {
-	ID    string `json:"id"`
-	Kind  string `json:"kind"`
-	File  string `json:"file,omitempty"`  // instructions
-	Title string `json:"title,omitempty"` // quick
-	Text  string `json:"text,omitempty"`  // quick
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Source     string `json:"source,omitempty"`      // instructions: package (default) or data; project_context, inbox_context: data
+	File       string `json:"file,omitempty"`        // instructions, inbox_context
+	Dir        string `json:"dir,omitempty"`         // project_context
+	NeverQuote string `json:"never_quote,omitempty"` // inbox_context
+	Title      string `json:"title,omitempty"`       // quick
+	Text       string `json:"text,omitempty"`        // quick
+}
+
+// FromData says whether the files are in the extension's data directory rather than its package: project and Inbox
+// context always are.
+func (p PromptItem) FromData() bool {
+	return p.Source == SourceData || p.Kind == PromptProjectContext || p.Kind == PromptInboxContext
+}
+
+// FromData says whether the skills are in the extension's data directory rather than its package.
+func (s SkillItem) FromData() bool { return s.Source == SourceData }
+
+// checkSource is a contribution's source: package (or none) or data.
+func checkSource(s string) error {
+	if s != "" && s != SourcePackage && s != SourceData {
+		return fmt.Errorf("source %q: package or data", s)
+	}
+	return nil
 }
 
 // ThemeRoles are the colors a theme may give: the design system's role colors, nothing else (no sizes, fonts or
@@ -70,6 +106,9 @@ func init() {
 		if !idPattern.MatchString(s.ID) {
 			return s.ID, fmt.Errorf("skill id %q: a-z0-9_-", s.ID)
 		}
+		if err := checkSource(s.Source); err != nil {
+			return s.ID, fmt.Errorf("skill %s: %v", s.ID, err)
+		}
 		if err := checkPackagePath(s.Dir); err != nil {
 			return s.ID, fmt.Errorf("skill %s: dir: %v", s.ID, err)
 		}
@@ -83,12 +122,40 @@ func init() {
 		if !idPattern.MatchString(p.ID) {
 			return p.ID, fmt.Errorf("prompt id %q: a-z0-9_-", p.ID)
 		}
+		if err := checkSource(p.Source); err != nil {
+			return p.ID, fmt.Errorf("prompt %s: %v", p.ID, err)
+		}
+		if p.Kind != PromptProjectContext && p.Dir != "" || p.Kind != PromptInboxContext && p.NeverQuote != "" {
+			return p.ID, fmt.Errorf("prompt %s: dir is for project_context, never_quote for inbox_context", p.ID)
+		}
 		switch p.Kind {
 		case PromptInstructions:
 			if err := checkPackagePath(p.File); err != nil || !strings.HasSuffix(p.File, ".md") || p.Title != "" || p.Text != "" {
-				return p.ID, fmt.Errorf("prompt %s: instructions is a .md file inside the package (file), nothing else", p.ID)
+				return p.ID, fmt.Errorf("prompt %s: instructions is a .md file inside the package or the data directory (file), nothing else", p.ID)
+			}
+		case PromptProjectContext:
+			if p.Source == SourcePackage {
+				return p.ID, fmt.Errorf("prompt %s: project_context is in the data directory (source data)", p.ID)
+			}
+			if err := checkPackagePath(p.Dir); err != nil || p.File != "" || p.Title != "" || p.Text != "" {
+				return p.ID, fmt.Errorf("prompt %s: project_context is a directory of the data directory (dir), nothing else", p.ID)
+			}
+		case PromptInboxContext:
+			if p.Source == SourcePackage {
+				return p.ID, fmt.Errorf("prompt %s: inbox_context is in the data directory (source data)", p.ID)
+			}
+			if err := checkPackagePath(p.File); err != nil || !strings.HasSuffix(p.File, ".md") || p.Title != "" || p.Text != "" {
+				return p.ID, fmt.Errorf("prompt %s: inbox_context is a .md file of the data directory (file)", p.ID)
+			}
+			if p.NeverQuote != "" {
+				if err := checkPackagePath(p.NeverQuote); err != nil {
+					return p.ID, fmt.Errorf("prompt %s: never_quote: %v", p.ID, err)
+				}
 			}
 		case PromptQuick:
+			if p.Source != "" {
+				return p.ID, fmt.Errorf("prompt %s: a quick prompt has no source", p.ID)
+			}
 			if n := utf8.RuneCountInString(strings.TrimSpace(p.Title)); n == 0 || n > 40 || p.File != "" {
 				return p.ID, fmt.Errorf("prompt %s: a quick prompt has a title (1 to 40 characters) and a text, no file", p.ID)
 			}
@@ -96,7 +163,7 @@ func init() {
 				return p.ID, fmt.Errorf("prompt %s: text: 1 to 4000 characters", p.ID)
 			}
 		default:
-			return p.ID, fmt.Errorf("prompt %s: kind %q: instructions or quick", p.ID, p.Kind)
+			return p.ID, fmt.Errorf("prompt %s: kind %q: instructions, quick, project_context or inbox_context", p.ID, p.Kind)
 		}
 		return p.ID, nil
 	}}
@@ -172,19 +239,60 @@ func (m *Manifest) TriageTemplates() []TriageTemplateItem {
 	return out
 }
 
-// AssistantParts are what the assistant gets of the manifest: its assistant contributions, and the declarative skills
-// and instructions as if they were assistant contributions without a gate ("skills/<id>", "prompts/<id>").
+// AssistantParts are what the assistant gets of the manifest's package: its assistant contributions, and the
+// declarative skills and instructions as if they were assistant contributions without a gate ("skills/<id>",
+// "prompts/<id>"). Those from the data directory are not here (DataSkills, DataPrompts): the package has no such files.
 func (m *Manifest) AssistantParts() []AssistantItem {
 	out := m.Assistants()
 	for _, s := range m.Skills() {
-		out = append(out, AssistantItem{ID: "skills/" + s.ID, Skills: []string{s.Dir}})
+		if !s.FromData() {
+			out = append(out, AssistantItem{ID: "skills/" + s.ID, Skills: []string{s.Dir}})
+		}
 	}
 	for _, p := range m.Prompts() {
-		if p.Kind == PromptInstructions {
+		if p.Kind == PromptInstructions && !p.FromData() {
 			out = append(out, AssistantItem{ID: "prompts/" + p.ID, Instructions: p.File})
 		}
 	}
 	return out
+}
+
+// DataSkills are the manifest's skills contributions whose skills are in the data directory.
+func (m *Manifest) DataSkills() []SkillItem {
+	var out []SkillItem
+	for _, s := range m.Skills() {
+		if s.FromData() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// DataPrompts are the manifest's prompts contributions of kind whose files are in the data directory.
+func (m *Manifest) DataPrompts(kind string) []PromptItem {
+	var out []PromptItem
+	for _, p := range m.Prompts() {
+		if p.Kind == kind && p.FromData() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// HasDataContent says whether the manifest adds content its program writes at run time to what the assistant reads
+// (DataSkills, DataPrompts): the install screen says so.
+func (m *Manifest) HasDataContent() bool {
+	for _, s := range m.Skills() {
+		if s.FromData() {
+			return true
+		}
+	}
+	for _, p := range m.Prompts() {
+		if p.FromData() {
+			return true
+		}
+	}
+	return false
 }
 
 // ThemeProblems are the roles of th whose color does not stand out enough on the background of its scheme (WCAG

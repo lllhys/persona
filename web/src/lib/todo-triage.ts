@@ -2,22 +2,64 @@
 // agents' sessions (alive, running, asking), its PR / delivery state, the latest task_review verdict and when it last moved —
 // never from what an agent says about itself. The rules are the SOP's table, in its order; the first that holds wins.
 
-import { acceptanceStands, latestReview, reviewState } from "./supervision";
-import { openAsk, todoDueBy, todoStatus, type SessionLookup, type Todo, type TodoStatus } from "./todos";
-import { todoStageIndex } from "./todo-stage";
+import { acceptanceStands, decisionDismissed, latestReview, reviewState } from "./supervision";
+import { openAsk, todoDueBy, todoStatus, type PRFacts, type SessionLookup, type Todo, type TodoStatus } from "./todos";
 
-/** Where a to-do shows, in the page's order. The first four are open sections; the last three start folded. */
-export type TriageSection = "waiting" | "working" | "just_done" | "pr" | "other" | "shelved" | "done";
+/** Where a to-do shows. */
+export type TriageSection = "waiting" | "working" | "parked" | "just_done" | "other" | "shelved" | "done";
 
-export const TRIAGE_SECTIONS: readonly TriageSection[] = ["waiting", "working", "just_done", "pr", "other", "shelved", "done"];
+/** The page's order (#5707): what the owner has to act on, the unfinished work, what just finished, then the folded
+ *  ones, Done last. A merged row is led by its member in the first of these. */
+export const TRIAGE_SECTIONS: readonly TriageSection[] = ["waiting", "working", "parked", "other", "just_done", "shelved", "done"];
 
-/** Sections that start folded. */
-export const FOLDED_SECTIONS: ReadonlySet<TriageSection> = new Set(["other", "shelved", "done"]);
+/** Sections that start folded: the rest start open, unfinished to-dos included. */
+export const FOLDED_SECTIONS: ReadonlySet<TriageSection> = new Set(["shelved", "done"]);
 
 /** No activity for this long, nothing of it running: shelved (SOP rule 11). */
 export const SHELVE_AFTER_MS = 48 * 3600_000;
-/** Finished this recently: "Just finished"; earlier, "Done". */
+/** Finished this recently, and not seen since: "Just finished"; earlier, "Done". Seeing it (Got it, or opening it,
+ *  #5707) files it at once; the time is the fallback. */
 export const JUST_DONE_MS = 24 * 3600_000;
+export const PR_STATUS_FRESH_MS = 15 * 60_000;
+
+function normalizedPR(url: string | undefined): string {
+  return (url ?? "").trim().replace(/[#?].*$/, "").replace(/\/+$/, "").toLowerCase();
+}
+
+/** Its PRs with fresh facts saying open and non-draft: the current one first, then earlier ones newest first (#7935). */
+export function openMergePRs(todo: Todo, now: number): PRFacts[] {
+  const fresh = (f: PRFacts) => {
+    const checked = ms(f.checked_at);
+    return !!checked && now - checked >= 0 && now - checked <= PR_STATUS_FRESH_MS && f.state === "open" && !f.draft;
+  };
+  const out: PRFacts[] = [];
+  const current = todo.pr_status;
+  if (current && todo.pr_url && normalizedPR(todo.pr_url) === normalizedPR(current.url) && fresh(current)) out.push(current);
+  for (const f of todo.other_prs ?? []) if (normalizedPR(f.url) !== normalizedPR(todo.pr_url) && fresh(f)) out.push(f);
+  return out;
+}
+
+/** True only for a fresh open non-draft PR of the to-do with no active agent or owner decision. */
+export function waitingForMerge(todo: Todo, lookup: SessionLookup | undefined, now: number): boolean {
+  if (todo.done_at || !openMergePRs(todo, now).length) return false;
+  const status = todoStatus(todo, lookup);
+  if (status === "failed" || status === "needs_you" || status === "interrupted" || status === "working" || status === "waiting") return false;
+  if (!decisionDismissed(todo) && (reviewState(todo) === "needs_user" || openAsk(todo)?.outcome === "decide" || openAsk(todo)?.outcome === "cannot")) return false;
+  return true;
+}
+
+/** What holds one PR (its own facts), or the to-do's current PR when none is given. */
+export function prBlockers(todo: Todo, facts: PRFacts | undefined = todo.pr_status): string[] {
+  if (!facts) return [];
+  const blockers: string[] = [];
+  if (facts.review === "required") blockers.push("review_required");
+  if (facts.review === "changes_requested") blockers.push("changes_requested");
+  if (facts.checks === "failure") blockers.push("checks_failed");
+  if (facts.checks === "pending") blockers.push("checks_pending");
+  if (facts.conflicts) blockers.push("conflicts");
+  if (!blockers.length) blockers.push("waiting_maintainer");
+  return blockers;
+}
 
 /** Which SOP rule placed a to-do (for tests and the SOP's wording); the section follows from it. */
 export type TriageRule =
@@ -26,10 +68,12 @@ export type TriageRule =
   | "agent_asks"
   | "owner_decides"
   | "agent_running"
+  | "parked"
   | "closed"
   | "accepted"
   | "deployed"
   | "finished_unseen"
+  | "seen"
   | "pr_open"
   | "stale"
   | "rest";
@@ -71,17 +115,11 @@ export function lastActivity(todo: Todo, lookup?: SessionLookup, restoredAt = 0)
   return last;
 }
 
-/** The PR its work stopped at, still to merge: the hub says the delivery stopped at a PR, or it knows a PR and neither
- *  a delivery state nor the stage is past it (a stage at merge or later is a merged PR, #3205). */
-export function openPR(todo: Todo): boolean {
-  const d = todo.delivery?.state;
-  if (d === "pr") return true;
-  return Boolean(todo.pr_url) && (!d || d === "none") && todoStageIndex(todo.stage) < todoStageIndex("merge");
-}
-
 /** Whether a to-do may be shelved at all: it is a task (an agent was linked, or a conversation handed it out) with no
- *  due date ahead. The user's own to-dos without agents — reminders, errands — never shelve themselves. */
+ *  due date ahead. The user's own to-dos without agents — reminders, errands — never shelve themselves. An open concern
+ *  never shelves either: it waits for its report (docs/assistant/todos.md "Concerns", #3582). */
 function shelvable(todo: Todo, now: number): boolean {
+  if (todo.kind === "concern") return false;
   const due = todoDueBy(todo);
   if (due !== undefined && due >= now) return false;
   return (todo.agents ?? []).length > 0 || Boolean(todo.origin);
@@ -99,36 +137,61 @@ function shelvable(todo: Todo, now: number): boolean {
  *  6. accepted        the latest review accepted it (even reopened)     → Just finished (24 h), then Done
  *  7. deployed        its delivery is live                              → Just finished (24 h), then Done
  *  8. finished_unseen an agent finished unseen, awaits review, or a done ask → Just finished
- *  9. pr_open         its PR is open, nothing running                   → PR to merge (however old)
+ *  9. pr_open         fresh matching open non-draft PR facts, nothing active or awaiting owner → Parked (merge wait)
+ *  9a. seen           rule 8, seen since it last moved, no PR open      → Done
+ *
+ * Seen (#5707): the owner looked at it (`seen_at`: Got it, or opening it) at or after the moment that put it in Just
+ * finished — its close, its accepting review, its deploy, its last move for rule 8 — so it goes to Done at once.
  * 10. stale           a task with no activity for 48 h                  → Shelved
  * 11. rest            anything else                                     → Other open
  */
 export function triage(todo: Todo, lookup: SessionLookup | undefined, now: number, restoredAt = 0, superseded = false): Triage {
   const last = lastActivity(todo, lookup, restoredAt);
   const status: TodoStatus = todoStatus(todo, lookup);
-  const recent = (at: number) => now - at < JUST_DONE_MS;
+  // seen: the owner looked at it at or after `at`; fresh: it got to Just finished at `at`, under a day ago, unseen since
+  const seenAt = ms(todo.seen_at);
+  const seen = (at: number) => seenAt > 0 && seenAt >= at;
+  const fresh = (at: number) => now - at < JUST_DONE_MS && !seen(at);
   const ask = openAsk(todo);
   const at = (section: TriageSection, rule: TriageRule): Triage => ({ section, rule, last });
+  // An open concern closes only with its report: nothing else files it with the finished ones.
+  const concern = todo.kind === "concern" && !todo.done_at;
 
   if (status === "failed") {
     // the same piece of work finished in a related to-do (`supersededFailedStarts`): history, nothing left to retry
-    if (superseded) return at(recent(ms(todo.done_at) || last) ? "just_done" : "done", "superseded");
-    return at(now - last < SHELVE_AFTER_MS ? "waiting" : "done", "failed_start");
+    if (superseded) return at(fresh(ms(todo.done_at) || last) ? "just_done" : "done", "superseded");
+    if (now - last < SHELVE_AFTER_MS) return at("waiting", "failed_start");
+    if (concern) return at("other", "rest");
+    return at("done", "failed_start");
   }
   if (status === "needs_you" || status === "interrupted") return at("waiting", "agent_asks");
-  if (!todo.done_at && (reviewState(todo) === "needs_user" || ask?.outcome === "decide" || ask?.outcome === "cannot")) return at("waiting", "owner_decides");
+  // a decision the owner chose Don't handle on no longer waits on them (decisionDismissed)
+  if (!todo.done_at && !decisionDismissed(todo) && (reviewState(todo) === "needs_user" || ask?.outcome === "decide" || ask?.outcome === "cannot")) return at("waiting", "owner_decides");
+  // rule 8's signals, read here so rule 9 yields to them: a turn or review nobody has looked at stays Just finished
+  const finished = status === "unread" || reviewState(todo) === "pending_review" || (ask && !ask.outcome) || ask?.outcome === "done";
+  // a parked hold is its supervisor's reading of the latest turn: an agent session left unread does not hide its PR
+  // accepted or deployed work is finished whatever its PR facts say: rule 9 never outranks those rules (#7614 review)
+  const settled = !concern && (acceptanceStands(todo) || todo.delivery?.state === "live");
+  if (!settled && !(finished && !seen(last) && reviewState(todo) !== "parked") && waitingForMerge(todo, lookup, now)) {
+    // Seeing a supervisor's review does not finish its open PR or turn that internal review into an external wait.
+    return reviewState(todo) === "pending_review" ? at("other", "rest") : at("parked", "pr_open");
+  }
   if (status === "working" || status === "waiting") return at("working", "agent_running");
-  if (todo.done_at) return at(recent(ms(todo.done_at)) ? "just_done" : "done", "closed");
-  if (acceptanceStands(todo)) return at(recent(ms(latestReview(todo.supervision)?.at)) ? "just_done" : "done", "accepted");
-  if (todo.delivery?.state === "live") return at(recent(ms(todo.delivery.at) || last) ? "just_done" : "done", "deployed");
-  if (status === "unread" || reviewState(todo) === "pending_review" || (ask && !ask.outcome) || ask?.outcome === "done") return at("just_done", "finished_unseen");
-  if (openPR(todo)) return at("pr", "pr_open");
+  if (todo.done_at) return at(fresh(ms(todo.done_at)) ? "just_done" : "done", "closed");
+  // A fallback date is not a state transition: keep overdue waits visible until the hub actually wakes them.
+  if (reviewState(todo) === "parked") return at("parked", "parked");
+  if (!concern && acceptanceStands(todo)) return at(fresh(ms(latestReview(todo.supervision)?.at)) ? "just_done" : "done", "accepted");
+  if (!concern && todo.delivery?.state === "live") return at(fresh(ms(todo.delivery.at) || last) ? "just_done" : "done", "deployed");
+  if (finished && !seen(last)) return at("just_done", "finished_unseen");
+  // seen since it last moved, and no PR waits on the owner (an open concern is never Done open)
+  if (finished && !concern) return at("done", "seen");
   if (shelvable(todo, now) && now - last >= SHELVE_AFTER_MS) return at("shelved", "stale");
   return at("other", "rest");
 }
 
 /** Whether a to-do counts toward the header's open count: not closed, not accepted or deployed, not shelved. A finished
- *  turn nobody looked at yet (Just finished, still open) counts: only a review or the user closes a to-do. */
+ *  turn nobody looked at yet (Just finished, still open) counts: only a review or the user closes a to-do. One the owner
+ *  has seen since (rule 9a, in Done) does not. */
 export function countsAsOpen(todo: Todo, t: Triage): boolean {
   // a failed start has done_at too (the hub ends it), yet while it waits on the owner it is theirs to retry: open
   if (t.rule === "failed_start") return t.section === "waiting";
@@ -175,7 +238,8 @@ export function relatedKeys(todo: Todo): string[] {
 }
 
 /** The row each to-do is in: the root of its related to-dos (union of shared keys). Closed to-dos and open ones never
- *  share a row: a closed one is history, not part of the open work. */
+ *  share a row: a closed one is history, not part of the open work. An open concern always has a row of its own; a closed
+ *  concern groups like any closed to-do. */
 function relatedRoots(list: Todo[]): (id: string) => string {
   const parent = new Map(list.map((td) => [td.id, td.id]));
   const find = (id: string): string => {
@@ -186,6 +250,7 @@ function relatedRoots(list: Todo[]): (id: string) => string {
   };
   const owner = new Map<string, string>();
   for (const td of list) {
+    if (!td.done_at && td.kind === "concern") continue;
     const side = td.done_at ? "c" : "o";
     for (const k of relatedKeys(td)) {
       const key = side + "|" + k;
@@ -235,8 +300,9 @@ const ORDER = new Map(TRIAGE_SECTIONS.map((s, i) => [s, i]));
 
 /**
  * Every to-do placed in its section, related ones merged into one row (union of shared keys). Closed to-dos are not
- * merged into open ones' rows: a group is open members only, or closed members only. A group takes its most urgent
- * member's section (a superseded failed start never leads); rows in a section go most recently active first. `quiet: false` leaves quiet tasks (#1731) out,
+ * merged into open ones' rows: a group is open members only, or closed members only. An open concern always has a row of
+ * its own. A group takes its most urgent member's section (a superseded failed start never leads); rows in a section go
+ * most recently active first. `quiet: false` leaves quiet tasks (#1731) out,
  * as the sidebar's badge does; the page lists them.
  */
 export function triageTodos(

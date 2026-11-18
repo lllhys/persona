@@ -1,6 +1,7 @@
 import CoreLocation
 import EventKit
 import Foundation
+import PersonaWire
 
 /// Reminder tools: list, create, change, complete and delete; a reminder can go off on arriving at or leaving a place
 /// (iOS watches the place itself). Writes ask the user first.
@@ -126,7 +127,7 @@ enum RemindersTool {
     private static func fetch(_ store: EKEventStore, in lists: [EKCalendar]?) async -> [ReminderRow] {
         let predicate = store.predicateForReminders(in: lists)
         return await withCheckedContinuation { (continuation: CheckedContinuation<[ReminderRow], Never>) in
-            // EventKit calls back on its own queue: `@Sendable` keeps the block off the main actor (BackgroundCallbackTests).
+            // EventKit calls back on its own queue: `@Sendable` keeps the block off the main actor (test_apple_background_callbacks.py).
             store.fetchReminders(matching: predicate) { @Sendable reminders in
                 let rows = (reminders ?? []).compactMap { reminder -> ReminderRow? in
                     guard let calendar = reminder.calendar else { return nil }

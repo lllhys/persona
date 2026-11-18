@@ -3,7 +3,7 @@ package persona.core.contracts.api
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Read-only access to the machine hosting a session. */
+/** Access to the machine hosting a session: reads, and renaming or trashing files where the hub offers it. */
 interface SessionFiles {
     suspend fun directory(machineId: String, cwd: String, path: String): SessionDirectory
     suspend fun file(machineId: String, cwd: String, path: String): SessionFileContent
@@ -55,7 +55,33 @@ interface SessionFiles {
      * hub refuses a diverged branch, local changes, no upstream or a failed sign-in, with its reason.
      */
     suspend fun pull(machineId: String, cwd: String): SessionGitPull = throw UnsupportedOperationException("pull")
+    /**
+     * Whether [rename], [trash] and [restore] work for [machineId] (its hub's `file_edit` feature). An unknown feature list
+     * (an older hub's reply) offers them and lets the answer tell, as iOS `FolderEdits.available`.
+     */
+    fun editsFiles(machineId: String): Boolean = false
+    /**
+     * `POST …/files/rename` (docs/protocol/protocol.md "Changing files"): [path] (as in a listing) renamed to [name] in its
+     * folder; the new path, in the form [path] used. The machine refuses outside the home (409 `read_only`) and a name
+     * already taken (409 `exists`).
+     */
+    suspend fun rename(machineId: String, cwd: String, path: String, name: String): String = throw UnsupportedOperationException("rename")
+    /** `POST …/files/trash`: [paths] to the machine's trash, each with the id [restore] takes to put it back. */
+    suspend fun trash(machineId: String, cwd: String, paths: List<String>): List<SessionTrashedFile> =
+        throw UnsupportedOperationException("trash")
+    /** `POST …/files/restore` (Undo): what [trash] took put back where it was; the paths it is at again. */
+    suspend fun restore(machineId: String, trashIds: List<String>): List<String> = throw UnsupportedOperationException("restore")
 }
+
+/** `POST …/files/rename` and each of `…/files/restore`'s answers: where the file is now. */
+@Serializable data class SessionFilePath(val path: String)
+
+/** One path `POST …/files/trash` moved to the machine's trash, and the opaque id that puts it back. */
+@Serializable data class SessionTrashedFile(val path: String, @SerialName("trash_id") val trashId: String)
+
+@Serializable data class SessionTrashedFiles(val trashed: List<SessionTrashedFile> = emptyList())
+
+@Serializable data class SessionRestoredFiles(val restored: List<SessionFilePath> = emptyList())
 
 /** `GET /api/v1/machines/{id}/git/blob`: the version's copy in the node's cache, or `missing`. */
 @Serializable data class SessionGitBlob(val path: String? = null, val size: Long = 0, val missing: Boolean = false)

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-// #2602: background continuation stays in the ordinary summary, never a second tool drawer.
+// #2602: work a background task woke the agent for stays in an ordinary summary, never a tool drawer of its own kind.
+// #9140: that summary is the woken turn's own; the answer of the turn before the wake stays on screen.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,8 +23,10 @@ let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => { forgetExpanded(); host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
-const header = () => host.querySelector<HTMLButtonElement>("[data-work-group] > button")!;
-const slot = () => host.querySelector("[data-latest-text]");
+// each exchange's own summary line (the groups inside an opened one are not it)
+const headers = () => [...host.querySelectorAll<HTMLElement>("[data-work-group]")].filter((g) => !g.parentElement?.closest("[data-work-group]")).map((g) => g.querySelector<HTMLButtonElement>(":scope > button")!);
+const slots = () => [...host.querySelectorAll("[data-latest-text]")];
+const details = () => [...host.querySelectorAll("[data-work-detail]")].map((d) => d.textContent ?? "");
 
 describe.each(["assistant", "agents"] as const)("%s background continuation", (style) => {
   function render(items: Item[], live: boolean) {
@@ -32,39 +35,53 @@ describe.each(["assistant", "agents"] as const)("%s background continuation", (s
       {lines.map((line) => <ChatLineView key={line.id} line={line} mid="machine" sid="session" expandFold={async () => {}} />)}
     </ChatContext.Provider>));
   }
-  it("retains every wake tool in one manually inspectable summary during and after execution", () => {
+  it("keeps the answer before a wake and gives the woken work a collapsed summary of its own", () => {
     render(first, false);
-    const originalSlot = slot();
+    const answered = slots()[0];
+    expect(answered.textContent).toContain("Earlier progress.");
     const live = [...first, wake, tool(5), item(6, "text", "New progress."), tool(7)];
     render(live, true);
-    expect(slot()).toBe(originalSlot);
-    expect(slot()?.textContent).toContain("New progress.");
-    expect(host.querySelectorAll("[data-work-group]")).toHaveLength(1);
-    expect(host.textContent).not.toContain(wake.text);
+    // the turn before the wake was over: its last words stay where they were, its summary is untouched
+    expect(slots()[0]).toBe(answered);
+    expect(answered.textContent).toContain("Earlier progress.");
+    // the woken work opens with its notice and has one summary and one text slot of its own
+    expect(host.textContent).toContain(wake.text);
+    expect(host.querySelectorAll("[data-segment]")).toHaveLength(2);
+    expect(headers()).toHaveLength(2);
+    expect(slots()).toHaveLength(2);
+    const woken = slots()[1];
+    expect(woken.textContent).toContain("New progress.");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    act(() => header().click());
-    for (const seq of [2, 5, 7]) expect(host.querySelector("[data-work-detail]")?.textContent).toContain(`echo example-${seq}`);
-    expect(host.querySelector("[data-work-detail]")?.textContent).toContain("Earlier progress.");
+    // nothing opens by itself, during execution or after it (super rule 2)
+    expect(headers().map((h) => h.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
+    act(() => headers()[1].click());
+    for (const seq of [5, 7]) expect(details().join("\n")).toContain(`echo example-${seq}`);
+    expect(details().join("\n")).not.toContain("echo example-2");
     const done = [...live, item(9, "text", "Final result.")];
     render(done, false);
-    expect(slot()).toBe(originalSlot);
-    expect(slot()?.textContent).toContain("Final result.");
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    act(() => header().click());
-    expect(host.querySelector("[data-work-detail]")?.textContent).toContain("New progress.");
+    expect(slots()[0]).toBe(answered);
+    expect(answered.textContent).toContain("Earlier progress.");
+    expect(slots()[1]).toBe(woken);
+    expect(woken.textContent).toContain("Final result.");
+    expect(headers().map((h) => h.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
+    // every step stays inspectable in the summary of the turn it belongs to
+    act(() => headers()[1].click());
+    expect(details().join("\n")).toContain("New progress.");
+    act(() => headers()[0].click());
+    expect(details().join("\n")).toContain("echo example-2");
   });
-  it("reopens the real live exchange before its recap, without an empty live placeholder", () => {
+  it("draws work a wake started after a recap under the recap, without an empty live placeholder", () => {
     const recap = item(4, "recap", "Earlier context.");
     const resumed = [...first, recap, { ...wake, id: "wake5#0", seq: 5 }, tool(6), item(7, "text", "Resumed progress.")];
     render(resumed, true);
-    expect(host.querySelectorAll("[data-segment]")).toHaveLength(1);
-    expect(host.querySelectorAll("[data-work-group]")).toHaveLength(1);
-    expect(slot()?.textContent).toContain("Resumed progress.");
-    act(() => header().click());
-    expect(host.querySelector("[data-work-detail]")?.textContent).toContain("echo example-6");
+    expect(host.querySelectorAll("[data-segment]")).toHaveLength(2);
+    expect(headers()).toHaveLength(2);
+    expect(slots().map((s) => s.textContent)).toEqual([expect.stringContaining("Earlier progress."), expect.stringContaining("Resumed progress.")]);
+    act(() => headers()[1].click());
+    expect(details().join("\n")).toContain("echo example-6");
     render([...resumed, item(8, "text", "Resumed final result.")], false);
-    expect(header().getAttribute("aria-expanded")).toBe("false");
-    expect(slot()?.textContent).toContain("Resumed final result.");
+    expect(headers()[1].getAttribute("aria-expanded")).toBe("false");
+    expect(slots()[1].textContent).toContain("Resumed final result.");
+    expect(slots()[0].textContent).toContain("Earlier progress.");
   });
 });

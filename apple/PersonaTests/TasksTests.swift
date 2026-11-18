@@ -2,6 +2,7 @@ import Foundation
 import MapKit
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Tasks from the assistant's conversation (docs/assistant/unified-entry.md): the hub's shapes decode, a task's state follows
 /// its agents, the feed lands at the end of the exchange it happened in, and the @ of a mention is told from an address.
@@ -27,6 +28,35 @@ struct TasksTests {
         #expect(res.items[2].answer == "批准了")
         let plan = try #require(res.plans?["plan_1"])
         #expect(plan.state == .open && plan.tasks.first?.project == "app" && plan.tasks.first?.isReadOnly == false)
+    }
+
+    /// A to-do's completion check decodes (#3180), and says why a stopped task is still open only while it is current:
+    /// not done or unsure, the task open and not working, the check newer than the latest reopen (the web's `stoppedReason`).
+    @Test func theCompletionCheckSaysWhyAStoppedTaskIsOpen() throws {
+        func todo(_ extra: String) throws -> TodoItem {
+            try decode(#"{"id":"t","title":"x","agents":[],"reopened_at":"2026-11-13T09:00:00Z",\#(extra)}"#, as: TodoItem.self)
+        }
+        let waiting = try todo(#""check":{"verdict":"waiting","reason":" Waits for the deploy ","at":"2026-11-13T10:00:00Z","work_since":"2026-11-13T09:30:00Z"}"#)
+        #expect(waiting.check?.verdict == "waiting")
+        #expect(waiting.stoppedReason(working: false) == "Waits for the deploy")
+        #expect(waiting.stoppedReason(working: true) == nil)
+        #expect(try todo(#""check":{"verdict":"not_done","at":"2026-11-13T10:00:00Z"}"#).stoppedReason(working: false) == "")
+        for verdict in ["done", "unsure"] {
+            #expect(try todo(#""check":{"verdict":"\#(verdict)","reason":"r","at":"2026-11-13T10:00:00Z"}"#).stoppedReason(working: false) == nil)
+        }
+        // older than the reopen, the task closed, no check, or one that does not decode
+        #expect(try todo(#""check":{"verdict":"waiting","reason":"r","at":"2026-11-13T08:00:00Z"}"#).stoppedReason(working: false) == nil)
+        #expect(try todo(#""done_at":"2026-11-13T11:00:00Z","check":{"verdict":"waiting","reason":"r","at":"2026-11-13T10:00:00Z"}"#).stoppedReason(working: false) == nil)
+        #expect(try todo(#""notes":"n""#).check == nil)
+        #expect(try todo(#""check":"broken""#).check == nil)
+    }
+
+    /// The chat draws a task's card once, when it is handed out (#8237): its receipts, its Agent's reports and its reviews
+    /// stay in the feed for the trays and are not drawn; everything else is, in order.
+    @Test func theChatLeavesOutHowATaskGoesOn() throws {
+        let kinds: [FeedItem.Kind] = [.plan, .task, .receipt, .answered, .report, .routed, .review, .message, .today]
+        let feed = kinds.enumerated().map { FeedItem(id: "f\($0.offset)", conversation: "c", at: .distantPast, kind: $0.element) }
+        #expect(ChatLines.drawnFeed(feed).map(\.kind) == [.plan, .task, .answered, .routed, .message, .today])
     }
 
     /// An answered record has every question with its answer in full (#1231); one from before it shows its line.

@@ -39,6 +39,9 @@ class AssistantEntriesFixtureTest(private val name: String, private val fixture:
         assertEquals(name, expected.keys("needs_you"), got.needsYou.map { it.key })
         assertEquals(name, expected.keys("running"), got.running.map { it.key })
         assertEquals(name, expected.keys("shelved"), got.shelved.map { it.key })
+        // the In progress rows that say their supervisor is reviewing them
+        assertEquals(name, expected["supervisor_review"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty(),
+            got.running.filter { it is RunningEntry.Task && it.supervisorReview }.map { it.key })
         for ((key, value) in (expected["activity"] as? JsonObject).orEmpty()) {
             val row = got.running.first { it.key == key }
             val work = when (row) { is RunningEntry.Task -> row.activity; is RunningEntry.Agent -> row.activity }

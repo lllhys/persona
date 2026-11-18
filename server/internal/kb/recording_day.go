@@ -182,8 +182,9 @@ func validDay(s string) bool {
 	return err == nil && d.Format(time.DateOnly) == s
 }
 
-// dropRoom ignores a day upload's room and private mark, as attending is: a role asked for is off with
-// AttendanceNotMeeting (problem, normalizeAttendance's, wins when it has one).
+// dropRoom ignores a day upload's room, private mark and timeline, as attending is: a role asked for is off with
+// AttendanceNotMeeting (problem, normalizeAttendance's, wins when it has one). Its transcription mode is never stored
+// (putTranscriptionFields): hub asked for is answered device with TranscriptionNotMeeting.
 func (u *RecordingUpload) dropRoom(problem string) string {
 	if u.room != nil {
 		if _, p := u.roomRole(); problem == "" {
@@ -191,7 +192,7 @@ func (u *RecordingUpload) dropRoom(problem string) string {
 		}
 		u.room = nil
 	}
-	u.Private = nil
+	u.Private, u.timeline = nil, nil
 	return problem
 }
 
@@ -441,7 +442,8 @@ func (e *Engine) AppendRecording(rawID string, a RecordingAppend) (RecordingAppe
 	fresh := a.Segments[min(r.Next-*a.From, len(a.Segments)):]
 	add, size := make([]RecordingSegment, 0, len(fresh)), 0
 	for i, sg := range fresh {
-		sg.Text, sg.N = strings.TrimSpace(sg.Text), r.Next+i+1
+		sg.Text, sg.N, sg.Source = strings.TrimSpace(sg.Text), r.Next+i+1, "" // only the hub sets a source
+		sg.Echo = false                                                       // Persona never speaks in an all-day recording (as clean does for the PUT)
 		if sg.Text == "" {
 			continue // its position is taken, and it is left out of the transcript
 		}

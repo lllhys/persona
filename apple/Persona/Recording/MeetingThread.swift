@@ -26,8 +26,11 @@ nonisolated enum MeetingThread {
     }
 
     nonisolated enum Entry: Identifiable, Hashable, Sendable {
-        /// The room's first message (the meeting header): Persona joined.
+        /// Persona joined: the room's first message (the meeting header) when the meeting began with Persona in it (not as
+        /// the note-taker, #8851), or Persona invited later (`RecordingAttendance.presence`).
         case joined(id: String, at: Date?)
+        /// Persona taken out of the meeting while it recorded (`RecordingAttendance.presence`).
+        case left(id: String, at: Date?)
         /// A batch of live lines.
         case lines(id: String, at: Date?, lines: [Line])
         /// The end batch: the meeting ended (after the batch's last lines, when it had any).
@@ -51,6 +54,7 @@ nonisolated enum MeetingThread {
         var id: String {
             switch self {
             case .joined(let i, _): i
+            case .left(let i, _): i
             case .lines(let i, _, _): i
             case .ended(let i, _): i
             case .heard(let i, _, _, _, _): i
@@ -66,6 +70,7 @@ nonisolated enum MeetingThread {
         var at: Date? {
             switch self {
             case .joined(_, let t): t
+            case .left(_, let t): t
             case .lines(_, let t, _): t
             case .ended(_, let t): t
             case .heard(_, let t, _, _, _): t
@@ -91,8 +96,9 @@ nonisolated enum MeetingThread {
     /// question from a typed one and give a heard question's time when its block has none. `ended`: the meeting is over,
     /// so its last line from the meeting with words after its blocks (or none) is the end batch ("The meeting ended").
     /// Any other such line (a withdrawn photo's "Photo N was withdrawn…", phase 3) is the hub talking to the room and
-    /// shows nothing.
-    static func room(_ items: [Item], recordingID: UUID, asks: [AskInfo] = [], ended: Bool = true) -> [Entry] {
+    /// shows nothing. `presence`: Persona invited in or taken out while it recorded, each a row where it happened.
+    static func room(_ items: [Item], recordingID: UUID, asks: [AskInfo] = [], ended: Bool = true,
+                     presence: [RecordingPresence] = []) -> [Entry] {
         let header = "meeting-" + recordingID.uuidString.lowercased()
         let byID = Dictionary(asks.map { ($0.id.lowercased(), $0) }, uniquingKeysWith: { _, last in last })
         // Only the meeting's last line can say it ended: a photo's lines and a withdrawal never do.
@@ -122,7 +128,8 @@ nonisolated enum MeetingThread {
             let block = parsed.refs.first { $0.kind == "context" }
             let headerBlock = sourced && (block.map({ analyzed($0.text).header }) ?? false)
             if item.clientMsgID?.lowercased() == header || headerBlock {
-                out.append(.joined(id: item.id, at: item.ts))
+                // A meeting begun with Persona as the note-taker had nobody join (#8851): its header shows nothing.
+                if !(block.map({ analyzed($0.text).notes }) ?? false) { out.append(.joined(id: item.id, at: item.ts)) }
             } else if sourced && (ask != nil || matches(heardTitle, block?.title ?? "")) {
                 // The block's title carries the clock of the tap; a hub that leaves it out has the ask's `at`.
                 let tapped = firstGroup(titleClock, block?.title ?? "")
@@ -144,6 +151,26 @@ nonisolated enum MeetingThread {
                 out.append(.question(id: item.id, at: item.ts, text: words, via: via, ask: ask))
             }
         }
+        return presence.isEmpty ? out : placed(presence, in: out)
+    }
+
+    /// Persona's comings and goings (`presence`) among the room's entries, each before the first entry written after it
+    /// (none: at the end).
+    static func placed(_ presence: [RecordingPresence], in entries: [Entry]) -> [Entry] {
+        func row(_ index: Int, _ p: RecordingPresence) -> Entry {
+            p.answers ? .joined(id: "presence-\(index)", at: p.at) : .left(id: "presence-\(index)", at: p.at)
+        }
+        var rest = presence.enumerated().sorted { $0.element.at < $1.element.at }[...]
+        var out: [Entry] = []
+        out.reserveCapacity(entries.count + presence.count)
+        for entry in entries {
+            while let next = rest.first, let at = entry.at, next.element.at < at {
+                out.append(row(next.offset, next.element))
+                rest.removeFirst()
+            }
+            out.append(entry)
+        }
+        out.append(contentsOf: rest.map { row($0.offset, $0.element) })
         return out
     }
 
@@ -396,9 +423,11 @@ nonisolated enum MeetingThread {
         var endBatch: Bool
     }
 
-    /// What a context block's text says: the meeting header's (it says when it started and the role), and its live lines.
+    /// What a context block's text says: the meeting header's (it says when it started and the role; `notes`: the role is
+    /// the note-taker's), and its live lines.
     private nonisolated struct Block: Sendable {
         var header: Bool
+        var notes: Bool
         var lines: [Line]
     }
 
@@ -422,6 +451,7 @@ nonisolated enum MeetingThread {
     private static let titleClock = try! NSRegularExpression(pattern: #"\(([0-9:]+)\)\s*$"#)
     private static let startedLine = try! NSRegularExpression(pattern: "^Started: ", options: .anchorsMatchLines)
     private static let roleLine = try! NSRegularExpression(pattern: "^Role: ", options: .anchorsMatchLines)
+    private static let notesRoleLine = try! NSRegularExpression(pattern: "^Role: notes\\b", options: .anchorsMatchLines)
 
     private static func scanRaw(_ text: String) -> Raw {
         let ns = text as NSString
@@ -451,7 +481,8 @@ nonisolated enum MeetingThread {
             let words = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
             if !words.isEmpty { found.append(Line(clock: ns.substring(with: m.range(at: 1)), text: words)) }
         }
-        return Block(header: matches(startedLine, text) && matches(roleLine, text), lines: found)
+        let header = matches(startedLine, text) && matches(roleLine, text)
+        return Block(header: header, notes: header && matches(notesRoleLine, text), lines: found)
     }
 
     private static func matches(_ re: NSRegularExpression, _ text: String) -> Bool {
@@ -473,3 +504,4 @@ nonisolated extension MeetingThread.AskInfo {
     }
 }
 #endif
+import PersonaWire

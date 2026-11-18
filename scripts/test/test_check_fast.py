@@ -259,6 +259,32 @@ class CheckFastScriptsTests(unittest.TestCase):
                 self.assertIn("FAIL     scripts/test/test_doc_wire.py", out)
                 self.assertNotIn("test_doc_paths.py", out)
 
+    def test_wire_schema_inputs_run_the_wire_sample_suite(self):
+        # test_wire_schema.py holds the samples the shared fixtures keep for each wire schema to it, runs the generator's
+        # --check and imports the extension test's validator.
+        self.break_suite("test_wire_schema.py")
+        self.commit_on_top("scripts/test/test_sdk_bundle.py", PASSING, "base")  # a schema/ change runs it too
+        self.commit_on_top("scripts/gen/extension_schema.py", "", "base")
+        for path in ("schema/wire/x.schema.json", "spec/fixtures/todo-view/x.json", "scripts/gen/extension_schema.py",
+                     "scripts/test/test_extension_schema.py"):
+            with self.subTest(path=path):
+                self.write(path, "# changed\n")
+                code, out = self.check_fast(path=self.toolchain_without_node_and_go())
+                self.git("checkout", "-q", "base", "--", "scripts")
+                self.git("clean", "-fdq", "--", path.split("/", 1)[0])
+                self.assertEqual(1, code, out)
+                self.assertIn("FAIL     scripts/test/test_wire_schema.py", out)
+
+    def test_other_schema_and_spec_files_do_not_run_the_wire_sample_suite(self):
+        self.break_suite("test_wire_schema.py")
+        self.commit_on_top("scripts/test/test_sdk_bundle.py", PASSING, "base")
+        for path in ("schema/extension/x.schema.json", "spec/tokens/x.json"):
+            with self.subTest(path=path):
+                self.write(path, "{}\n")
+                code, out = self.check_fast(path=self.toolchain_without_node_and_go())
+                self.git("clean", "-fdq", "--", path.split("/", 1)[0])
+                self.assertNotIn("test_wire_schema.py", out)
+
     def test_a_change_where_the_section_check_reads_runs_it(self):
         # Most names test_doc_sections.py checks are in code comments, so a change under any of its SOURCE_DIRS runs it.
         self.break_suite("test_doc_sections.py")
@@ -274,12 +300,25 @@ class CheckFastScriptsTests(unittest.TestCase):
 
     def test_an_apple_change_runs_the_l10n_suite(self):
         self.break_suite("test_apple_l10n.py")
+        self.commit_on_top("scripts/test/test_apple_no_callkit.py", PASSING, "base")
         self.write("apple/Persona/Views/Settings/Options.swift", 'let s = "中文"\n')
         code, out = self.check_fast()
         self.assertEqual(1, code, out)
         self.assertIn("FAIL     scripts/test/test_apple_l10n.py", out)
+        self.assertIn("PASS     scripts/test/test_apple_no_callkit.py", out)
         self.assertIn("SKIP  apple/** builds and tests", out)  # the Mac-only checks are still reported
         self.assertNotIn("test_doc_paths.py", out)
+
+    def test_an_apple_or_xcconfig_change_runs_the_callkit_guard(self):
+        # It reads every Apple source and build file, and the xcconfig scripts/persona_config.py writes (#9290).
+        self.break_suite("test_apple_no_callkit.py")
+        for path in ("apple/Persona/Calls/Call.swift", "scripts/persona_config.py"):
+            with self.subTest(path=path):
+                self.write(path, "changed\n")
+                code, out = self.check_fast(path=self.toolchain_without_node_and_go())
+                self.git("clean", "-fdq", "--", path.split("/", 1)[0])
+                self.assertEqual(1, code, out)
+                self.assertIn("FAIL     scripts/test/test_apple_no_callkit.py", out)
 
     def test_token_inputs_run_the_token_suite(self):
         self.commit_on_top("scripts/assets/test_gen_tokens.py", FAILING, "base")
@@ -391,6 +430,17 @@ class CheckFastScriptsTests(unittest.TestCase):
         self.assertEqual(1, code, out)
         self.assertIn("FAIL     scripts/test/test_privacy_check.py", out)
 
+    def test_a_hook_or_adapter_generator_change_runs_the_adapter_hook_suite(self):
+        # test_check_deno_adapter_sh.py runs pre-push and scripts/gen/deno_adapter.sh in its temp repositories (#6001).
+        self.break_suite("test_check_deno_adapter_sh.py")
+        for changed in ("scripts/hooks/pre-push", "scripts/gen/deno_adapter.sh"):
+            with self.subTest(changed=changed):
+                self.git("checkout", "-q", "--", ".")
+                self.write(changed, "#!/bin/sh\n# changed\n")
+                code, out = self.check_fast()
+                self.assertEqual(1, code, out)
+                self.assertIn("FAIL     scripts/test/test_check_deno_adapter_sh.py", out)
+
     def test_a_privacy_check_change_also_runs_the_suites_that_load_it(self):
         # scripts/release/check_bundle_privacy.py imports privacy_check; test_merge_pr_sh.py copies it into its temp
         # repositories, where merge-pr.sh runs it.
@@ -403,6 +453,23 @@ class CheckFastScriptsTests(unittest.TestCase):
         self.assertIn("PASS     scripts/test/test_privacy_check.py", out)
         self.assertIn("FAIL     scripts/release/test_check_bundle_privacy.py", out)
         self.assertIn("FAIL     scripts/test/test_merge_pr_sh.py", out)
+
+    def test_a_ratchet_change_also_runs_the_suites_that_load_it(self):
+        # test_changed_ratchets.py imports the two ratchets; test_merge_pr_sh.py copies them and changed_ratchets.py
+        # into its temp repositories, where merge-pr.sh runs them (#7977).
+        scripts = ("changed_ratchets.py", "sleep_ratchet.py", "web_font_ratchet.py")
+        for name in scripts:
+            self.commit_on_top("scripts/ci/" + name, "print('clean')\n", "base")
+        self.commit_on_top("scripts/ci/test_changed_ratchets.py", FAILING, "base")
+        self.break_suite("test_merge_pr_sh.py")
+        for name in scripts:
+            with self.subTest(name):
+                self.git("checkout", "-q", "--", ".")
+                self.write("scripts/ci/" + name, "print('clean')\n# changed\n")
+                code, out = self.check_fast()
+                self.assertEqual(1, code, out)
+                self.assertIn("FAIL     scripts/ci/test_changed_ratchets.py", out)
+                self.assertIn("FAIL     scripts/test/test_merge_pr_sh.py", out)
 
     def test_a_migration_edit_runs_the_freeze_check(self):
         self.write("scripts/ci/migration_freeze.py", "print('freeze-ran')\n")
@@ -438,7 +505,7 @@ class CheckFastScriptsTests(unittest.TestCase):
         code, out = self.check_fast(path=self.toolchain_without_node_and_go())
         self.assertEqual(0, code, out)
         self.assertIn("PASS     frozen migrations", out)
-        self.assertNotIn("server go test", out)  # the destination is outside server/, and --name-only drops the old path
+        self.assertIn("SKIP  server go tests (internal/db): go not found", out)  # --no-renames retains the source path
 
     def test_all_runs_the_freeze_check_when_the_script_exists(self):
         self.write("scripts/ci/migration_freeze.py", "print('freeze-ran')\n")
@@ -589,6 +656,16 @@ class CheckFastServerInputsTests(unittest.TestCase):
         self.write("schema/extension/examples/Manifest.x.json", '{"changed": true}\n')
         out, packages = self.check_fast()
         self.assertEqual(["./internal/ext/..."], packages, out)
+
+    def test_a_wire_schema_runs_its_readers(self):
+        self.write("server/internal/wirereader/wire_test.go",
+                   'package wirereader\n\nvar s = filepath.Join("..", "..", "..", "schema", "wire", "x.schema.json")\n')
+        self.git("add", "-A")
+        self.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "reader")
+        self.git("tag", "-f", "base")
+        self.write("schema/wire/x.schema.json", '{"changed": true}\n')
+        out, packages = self.check_fast()
+        self.assertEqual(["./internal/wirereader/..."], packages, out)
 
     def test_the_server_test_launcher_runs_its_reader(self):
         self.write("scripts/test/server_test_env.py", "# changed\n")
@@ -866,6 +943,19 @@ class CheckFastWebInputsTests(unittest.TestCase):
         out, npm_calls = self.check_fast()
         self.assertNotIn("queued: web\n", out)
         self.assertEqual([], npm_calls, out)
+
+    def test_rename_out_of_web_still_queues_web(self):
+        self.write("web/src/old.ts", "export const old = 1;\n")
+        self.write("web/src/consumer.ts", "import { old } from './old';\nconsole.log(old);\n")
+        self.git("add", "web/src/old.ts", "web/src/consumer.ts")
+        self.git("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "web source base")
+        self.git("tag", "-f", "base")
+        self.git("config", "diff.renames", "true")
+        self.git("mv", "web/src/old.ts", "docs/old.ts")
+
+        out, npm_calls = self.check_fast()
+        self.assertIn("queued: web\n", out)
+        self.assertEqual(["web|run check:deps", "web|run typecheck", "web|test"], npm_calls, out)
 
     def test_a_doc_change_does_not_run_web(self):
         self.write("docs/guide.md", "guide changed\n")

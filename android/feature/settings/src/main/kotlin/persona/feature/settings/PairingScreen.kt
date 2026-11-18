@@ -18,9 +18,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -42,6 +44,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import persona.core.contracts.api.*
 import persona.core.domain.engines.Engines
+import persona.feature.chat.ChatLinkHost
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -76,8 +79,15 @@ fun PairingScreen(
     attempts: PairingAttempts? = null,
     /** The main conversation's steps on the checklist that follows a pairing (docs/assistant/onboarding.md 4.5). */
     mainReadiness: AssistantReadinessSource? = null,
+    /**
+     * The public getting-started page for people with no hub, from the build config ([GettingStarted]); null (or not an https
+     * address): the welcome page has no "No hub yet?" link and no link host. Opened through the host's link handler, which shows it inside the app.
+     */
+    gettingStartedUrl: String? = rememberGettingStartedUrl(),
 ) {
     val context = LocalContext.current
+    // Only a usable https address counts (whatever a caller passes in): without one the page has no link and no link host.
+    val guideUrl = remember(gettingStartedUrl) { GettingStarted.parse(gettingStartedUrl) }
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val paired by pairing.isPaired.collectAsState()
@@ -92,6 +102,8 @@ fun PairingScreen(
     var engineStep by rememberSaveable { mutableStateOf(if (paired && machines != null) records.enginePending() else null) }
     var welcome by rememberSaveable { mutableStateOf(initialLink == null && !skipWelcome) }
     var otherWays by rememberSaveable { mutableStateOf(false) }
+    // The scanner was started from the welcome page: Back from what it found returns there instead of to the connect choices.
+    var scanFromWelcome by remember { mutableStateOf(false) }
     var credentialsSaved by remember { mutableStateOf(false) }
     var lastRequest by remember { mutableStateOf<PairingRequest?>(null) }
     var awaitingSettings by remember { mutableStateOf(false) }
@@ -249,25 +261,28 @@ fun PairingScreen(
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let(::accept)
         if (result.originalIntent?.getBooleanExtra(PairingScanActivity.ManualInput, false) == true) {
-            credentialsSaved = false; lastRequest = null
+            credentialsSaved = false; lastRequest = null; welcome = false; scanFromWelcome = false
             confirm = null; failure = null; progress = emptyList(); manual = true
         }
     }
     fun scan() { scanner.launch(ScanOptions().setCaptureActivity(PairingScanActivity::class.java).setOrientationLocked(false).setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("").setBeepEnabled(false)) }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) scan() else { credentialsSaved = false; lastRequest = null; confirm = null; failure = null; progress = emptyList(); manual = true; notice = R.string.settings_pairing_notice_camera_denied }
+        if (granted) scan() else { welcome = false; scanFromWelcome = false; credentialsSaved = false; lastRequest = null; confirm = null; failure = null; progress = emptyList(); manual = true; notice = R.string.settings_pairing_notice_camera_denied }
     }
     fun requestScan() {
         if (context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) scan()
         else camera.launch(Manifest.permission.CAMERA)
     }
+    // The welcome page's main button goes straight to the scanner; a scan that finds nothing leaves the page as it was.
+    fun scanFromWelcomePage() { scanFromWelcome = true; requestScan() }
+    fun showOtherWays() { otherWays = true; passwordEntry = false; scanFromWelcome = false; welcome = false; notice = null }
     fun paste() {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val value = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
         if (value.isNullOrBlank()) notice = R.string.settings_pairing_notice_clipboard_empty else accept(value)
     }
     fun edit() {
-        passwordEntry = false
+        passwordEntry = false; scanFromWelcome = false
         credentialsSaved = false; lastRequest = null; confirm = null; failure = null; progress = emptyList(); manual = true; tries = 0; addressError = null
         // The address may change to another hub: its token starts empty.
         accessId = ""; accessSecret = ""; accessOpen = false
@@ -300,6 +315,9 @@ fun PairingScreen(
         progress = emptyList()
         notice = null
         manual = typed
+        // What a scan from the welcome page found: Back is the welcome page again, as before the scan.
+        if (scanFromWelcome && !typed && !credentialsSaved) { welcome = true; passwordEntry = true }
+        scanFromWelcome = false
     }
     val back: (() -> Unit)? = when {
         engineStep != null -> null
@@ -307,6 +325,7 @@ fun PairingScreen(
         page == PairingPage.Connecting -> null
         page == PairingPage.Confirm || page == PairingPage.Failed -> ::returnFromAttempt
         page == PairingPage.Manual -> ({ manual = false })
+        page == PairingPage.Password -> ({ passwordEntry = false })
         page == PairingPage.Welcome -> null
         onBack != null -> onBack
         !skipWelcome && initialLink == null -> ({ welcome = true; notice = null })
@@ -323,7 +342,7 @@ fun PairingScreen(
         ReadinessScreen(sessions, diagnostics, notificationsOnly = false,
             onDiagnostics = onDiagnostics, onDone = { records.pending(false); onReady() }, onLater = later, onBack = null,
             readiness = mainReadiness, footer = footer)
-    } else PairingListPage(page, onBack = back, state = key(page) { rememberLazyListState() }) {
+    } else PairingLinkHost(hosted = !skipWelcome && guideUrl != null) { PairingListPage(page, onBack = back, state = key(page) { rememberLazyListState() }) {
         when (page) {
             PairingPage.Welcome -> {
                 item {
@@ -337,7 +356,24 @@ fun PairingScreen(
                 item { JGroupItem(GroupPosition.of(1, 3)) { JRow(stringResource(R.string.settings_pairing_welcome_inbox_title), leadingIcon = PhIcons.Tray, subtitle = stringResource(R.string.settings_pairing_welcome_inbox), subtitleLines = 3) } }
                 item { JGroupItem(GroupPosition.of(2, 3)) { JRow(stringResource(R.string.settings_pairing_welcome_assistant_title), leadingIcon = PhIcons.Sparkle, subtitle = stringResource(R.string.settings_pairing_welcome_assistant), subtitleLines = 3) } }
                 item { SettingsCaption(stringResource(R.string.settings_pairing_welcome_push), Modifier.padding(vertical = Tokens.Space.m)) }
-                item { JButton(stringResource(R.string.settings_pairing_welcome_connect), { welcome = false }, Modifier.fillMaxWidth()) }
+                // A phone that already has a hub: scanning here still ends at the confirm page, which says it replaces that pairing.
+                if (paired) item {
+                    JNotice(stringResource(R.string.settings_pairing_replace_body), title = stringResource(R.string.settings_pairing_replace_title),
+                        status = Status.NeedsYou)
+                }
+                item { PairingActions { PairingScanButton(::scanFromWelcomePage) } }
+                item { SettingsCaption(stringResource(R.string.settings_pairing_connect_body), Modifier.padding(top = Tokens.Space.m)) }
+                // Without a hub there is nothing else to see: the guide (when this build has one), then the typed and command-line ways.
+                item {
+                    Column(Modifier.fillMaxWidth().padding(top = Tokens.Space.m), horizontalAlignment = Alignment.CenterHorizontally) {
+                        guideUrl?.let { url ->
+                            // Read here, inside the link host's content: outside it this is the activity's handler, which opens the system browser.
+                            val links = LocalUriHandler.current
+                            JTextButton(stringResource(R.string.settings_pairing_welcome_guide), { links.openUri(url) }, Modifier.fillMaxWidth())
+                        }
+                        JTextButton(stringResource(R.string.settings_pairing_other_ways), ::showOtherWays, Modifier.fillMaxWidth())
+                    }
+                }
             }
             PairingPage.Failed -> {
                 val reason = requireNotNull(attemptFailure)
@@ -451,7 +487,7 @@ fun PairingScreen(
                 item {
                     PairingActions {
                         JButton(stringResource(R.string.settings_password_login_title), { passwordEntry = true }, Modifier.fillMaxWidth(), kind = JButtonKind.Secondary)
-                        JButton(stringResource(R.string.settings_pairing_scan), ::requestScan, Modifier.fillMaxWidth(), icon = PhIcons.Scan)
+                        PairingScanButton { scanFromWelcome = false; requestScan() }
                         Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
                             JButton(stringResource(R.string.settings_pairing_paste), ::paste, Modifier.weight(1f), kind = JButtonKind.Secondary)
                             JButton(stringResource(R.string.settings_pairing_manual), { manual = true }, Modifier.weight(1f), kind = JButtonKind.Secondary)
@@ -475,10 +511,28 @@ fun PairingScreen(
         notice?.let { id -> item { JNotice(stringResource(id), Modifier.padding(top = Tokens.Space.m)) } }
         item { JTextButton(stringResource(R.string.settings_pairing_saved_title), { info = true }, Modifier.padding(top = Tokens.Space.m)) }
         item { footer() }
-    }
+    } }
     if (info) JDialog(onDismiss = { info = false }, title = stringResource(R.string.settings_pairing_saved_title),
         text = stringResource(R.string.settings_pairing_saved_body),
         confirm = stringResource(R.string.settings_pairing_got_it) to { info = false }, dismiss = null)
+}
+
+/**
+ * The root pairing page sits outside the shell, so no link host exists for the welcome page's guide link; this one gives it
+ * the app's usual link card (full screen, dragged to 0.6 it stops blocking, further down it closes). Pages inside the shell
+ * (Settings › Pairing, Add hub: [hosted] false) already have the shell's host and are not wrapped twice. A build with no guide
+ * address is not hosted either: the host starts the WebView renderer, and that page has no link to open. The link handler is
+ * the one read inside [content], never outside it.
+ */
+@Composable
+private fun PairingLinkHost(hosted: Boolean, content: @Composable () -> Unit) {
+    if (hosted) ChatLinkHost { content() } else content()
+}
+
+/** The main action of the welcome page and of the connect choices. */
+@Composable
+private fun PairingScanButton(onClick: () -> Unit) {
+    JButton(stringResource(R.string.settings_pairing_scan), onClick, Modifier.fillMaxWidth(), icon = PhIcons.Scan)
 }
 
 @Composable

@@ -1,0 +1,60 @@
+{
+  "id": "about-build-commit",
+  "description": "Open About and capture it; the build commit's value, Unknown state and copy behavior depend on how the APK was built and are checked per variant below.",
+  "requires": {
+    "fields": []
+  },
+  "automatedCoverage": "Only opening Settings > About and capturing it. The commit value, Unknown state and copy result are not asserted by this runner scene; they are read from the captured screen and the APK's resources.",
+  "steps": [
+    {
+      "step": "launch"
+    },
+    {
+      "step": "open",
+      "page": "about",
+      "probePage": "About and updates"
+    },
+    {
+      "step": "capture",
+      "name": "about-build-commit",
+      "state": "settings"
+    }
+  ],
+  "manualScenes": [
+    {
+      "id": "injected-debug-build",
+      "build": "scripts/ci/android.sh with a public test commit in PERSONA_BUILD_COMMIT, or ./gradlew -PpersonaBuildCommit=<commit> :app:assembleDebug",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "expect": "Version, Build and Commit rows in one group; Commit shows the first 12 characters in the code font on one line, with no chevron. Tapping the row puts the whole commit on the clipboard once, with the copied notice (and the system's own confirmation on Android 13+). The value equals the injected one."
+    },
+    {
+      "id": "uninjected-debug-build",
+      "build": "./gradlew :app:assembleDebug with no personaBuildCommit property and no PERSONA_BUILD_COMMIT",
+      "style": "glass",
+      "appearance": ["light", "dark"],
+      "expect": "Commit row says the localized Unknown, has no chevron and nothing happens on tap; Version and Build rows are unchanged."
+    },
+    {
+      "id": "release-worker-build",
+      "build": "scripts/release/android_release_worker.py release APK",
+      "style": "glass",
+      "appearance": ["light"],
+      "expect": "The APK's persona_build_commit resource equals the receipt's source_sha; signing, shrink check and install are unchanged."
+    },
+    {
+      "id": "long-commit-narrow-large-font",
+      "build": "a 64-digit PERSONA_BUILD_COMMIT",
+      "style": "all",
+      "appearance": ["light", "dark"],
+      "languages": ["en", "zh-Hans", "ja"],
+      "window": "medium tablet and a narrow phone, largest font size",
+      "expect": "The row and its two neighbours stay on one line and are not clipped; Copy still copies all 64 digits."
+    }
+  ],
+  "manualChecks": [
+    "Read the built APK's resource value (aapt2 dump resources, or the installed app's About) and compare with the injected commit; the value must be 7 to 64 hex digits or unknown, with no path or branch name.",
+    "TalkBack on the Commit row announces the title, the short commit and a Copy build commit action; the Unknown row announces no action.",
+    "With the open browser sign-in and Rust shadow changes merged, About still builds with both buildFeatures and the resource present and DevicesPage and the manifest are untouched."
+  ]
+}

@@ -3,23 +3,57 @@ import SwiftUI
 struct SettingsAssistantHeading: View {
     @Environment(AppModel.self) private var model
 
+    struct Content {
+        let manager: HubManager?
+        let title: String
+        let footnote: String?
+        let showsSwitch: Bool
+    }
+
+    /// The roster, not the number of assistants, decides whether Settings names an assistant and offers the switcher.
+    static func content(for model: AppModel) -> Content {
+        if model.managerRoster != nil, let manager = model.currentAssistant {
+            return Content(manager: manager,
+                           title: String(localized: "\(manager.name)'s Settings"),
+                           footnote: String(localized: "Only \(manager.name)'s own settings are shown. To change another assistant's, switch to it first."),
+                           showsSwitch: true)
+        }
+        return Content(manager: nil, title: String(localized: "Current Assistant's Settings"), footnote: nil, showsSwitch: false)
+    }
+
+    static var commonGroupsFooter: String {
+        String(localized: "These two groups are the same whichever assistant is current.")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            if model.managerRoster?.isMulti == true, let manager = model.currentAssistant {
-                AssistantSwitcherHeader(manager: manager, nameFont: Theme.Font.bodyStrong, showsSwitchLabel: true, openSettings: {})
-                Text(String(localized: "\(manager.name)'s settings")).font(Theme.Font.labelStrong)
+        let content = Self.content(for: model)
+        Group {
+            if let manager = content.manager {
+                AssistantSwitcherHeader(manager: manager, nameFont: Theme.Font.labelStrong, showsSwitchLabel: content.showsSwitch,
+                                        identityStyle: .settings(title: content.title, defaultID: model.managerRoster?.defaultID ?? manager.id),
+                                        openSettings: {})
             } else {
-                HStack(spacing: Theme.Space.m) {
-                    PersonaAvatar(size: Theme.Size.avatar)
-                    Text(model.persona.cardTitle).font(Theme.Font.bodyStrong).lineLimit(1)
+                VStack(alignment: .leading, spacing: Theme.Space.s) {
+                    HStack(spacing: Theme.Space.m) {
+                        PersonaAvatar(size: Theme.Size.avatar)
+                        Text(model.persona.cardTitle).font(Theme.Font.bodyStrong).lineLimit(1)
+                    }
+                    Text(content.title).font(Theme.Font.labelStrong)
                 }
-                Text("Current Assistant's Settings").font(Theme.Font.labelStrong)
             }
-            Text("Only the current assistant's settings are shown. Switch assistants to change another's settings.")
-                .font(Theme.Font.label).foregroundStyle(.secondary)
         }
         .textCase(nil)
-        .accessibilityIdentifier("settings-group-assistant")
+    }
+}
+
+/// Kept apart from the heading so the footer's roster read does not redraw the switcher.
+struct SettingsAssistantFooter: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let footnote = SettingsAssistantHeading.content(for: model).footnote {
+            Text(footnote)
+        }
     }
 }
 
@@ -84,7 +118,7 @@ struct SettingsPairingPage: View {
             return
         }
         await model.upgradeCredentials()
-        WatchSync.shared.push(summary: model.watchSummary())
+        model.summariesChanged()
         if model.watchConfigs().missing?.isEmpty == false {
             Haptics.error()
             model.toast = Toast(String(localized: "Couldn't get credentials for the watch. Check your network and try again; if the hub is too old, update it first."), style: .error)

@@ -7,7 +7,7 @@ import org.junit.Test
 import persona.core.contracts.*
 import persona.core.domain.lines.ChatLine
 
-/** #5084: a review the background supervisor wrote is one line in the conversation, not a record behind the trays. */
+/** #5084 marked a background supervisor's review; #8312 draws no review in the conversation or the background sheet. */
 class BackgroundReviewsTest {
     private fun review(id: String, by: String? = "background", verdict: String = "accepted") =
         FeedItem(id, "main", "2026-11-12T10:00:00Z", "review", "t", buildJsonObject {
@@ -29,18 +29,20 @@ class BackgroundReviewsTest {
         assertFalse(AssistantTaskCards.isBackgroundSupervisorReview(FeedItem("g", "main", "2026-11-12T10:00:00Z", "review", "t")))
     }
 
-    @Test fun itsReviewIsALineOfTheConversationAndLeavesTheRecord() {
+    @Test fun aReviewIsNotDrawnAndStaysInTheFeed() {
         val feed = listOf(review("own", by = null), review("background"))
-        assertEquals(listOf("background"), feedIds(AssistantTaskCards.lines(emptyList(), feed, emptyMap(), todos)))
-        assertEquals(listOf("own"), AssistantTaskCards.backgroundFeed(feed).map { it.id })
-        // the task being gone from the list changes nothing: the entry says which task it was
-        assertEquals(listOf("background"), feedIds(AssistantTaskCards.lines(emptyList(), feed, emptyMap(), emptyList())))
+        assertEquals(emptyList<String>(), feedIds(AssistantTaskCards.lines(emptyList(), feed, emptyMap(), todos, inline = true)))
+        assertEquals(emptyList<String>(), feedIds(AssistantTaskCards.lines(emptyList(), feed, emptyMap(), todos)))
+        assertEquals(emptyList<String>(), AssistantTaskCards.backgroundFeed(feed).map { it.id })
+        assertEquals(emptyList<String>(), AssistantTaskCards.backgroundFeed(feed, inline = true).map { it.id })
+        assertEquals(listOf("own", "background"), feed.map { it.id })
     }
 
-    @Test fun aHubWithoutTheMarkKeepsEveryReviewBehindTheTrays() {
+    @Test fun aHubWithoutTheMarkDrawsNoReviewEither() {
         val feed = listOf(review("one", by = null), review("two", by = null, verdict = "rework"))
         assertEquals(emptyList<String>(), feedIds(AssistantTaskCards.lines(emptyList(), feed, emptyMap(), todos)))
-        assertEquals(listOf("one", "two"), AssistantTaskCards.backgroundFeed(feed).map { it.id })
+        assertEquals(emptyList<String>(), AssistantTaskCards.backgroundFeed(feed).map { it.id })
+        assertEquals(listOf("one", "two"), feed.map { it.id })
     }
 
     @Test fun itsReviewAlreadyAmongTheLinesStaysInTheForeground() {

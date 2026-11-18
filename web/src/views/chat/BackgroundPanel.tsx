@@ -4,12 +4,14 @@
 // subagents) and Completed (the ended workflow runs the node still lists, newest end first). A row is a round kind mark,
 // a status mark and the title, with "status · progress · duration · tokens · tool uses" under it. A workflow row opens
 // its detail in the panel (Back, the run's head, progress and phases: WorkflowCard); a background task with an output
-// file opens that output in the side panel. The panel reads the session from the store, live; clocks tick only while
+// file opens its live output here, with Back to the list. The panel reads the session from the store, live; clocks tick only while
 // something runs.
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { t } from "../../i18n";
+import { credentialOwner, subscribeCredentialOwner } from "../../lib/api";
 import { useBackgroundChat, type BackgroundPanel as BackgroundPanelObject } from "../../lib/background-panel";
 import { openPanel } from "../../lib/panel";
+import { composing } from "../../lib/send-history";
 import { getSession, useStore } from "../../lib/store";
 import { backgroundTitle, loopCadence, loopNext, loopTask } from "../../lib/tasks";
 import { compactTokens } from "../../lib/tokens";
@@ -22,6 +24,7 @@ import { Icon, type IconName } from "../../ui/icons";
 import { PanelHeader } from "../../ui/PanelHeader";
 import { taskStatusWord } from "./TaskCard";
 import { WorkflowCard } from "./WorkflowCard";
+import { BackgroundCommandDetail } from "./BackgroundCommandDetail";
 
 /** When a run started, or 0 when the hub does not say. */
 const startOf = (w: Workflow) => Date.parse(w.started_at ?? "") || 0;
@@ -53,31 +56,65 @@ function taskIcon(task: BackgroundTask): IconName {
  *  is asked for again (a new object), as cindy consumes focusTaskId once. */
 export function BackgroundPanel({ mid, sid, opened, onClose }: { mid: string; sid: string; opened: BackgroundPanelObject; onClose: () => void }) {
   const session = useStore(() => getSession(mid, sid));
-  // the run whose detail shows, and whether its row opened it (the row is gone: Back takes the focus); Back gives the
-  // focus to the run's row
-  const asks = (p: BackgroundPanelObject) => (p.run ? { run: p.run, fromRow: false } : null);
+  const owner = useSyncExternalStore(subscribeCredentialOwner, credentialOwner, credentialOwner);
+  const firstOwner = useRef(owner);
+  const owned = firstOwner.current === owner;
+  type Selection = { kind: "run"; id: string; fromRow: boolean }
+    | { kind: "command"; task: BackgroundTask; cwd?: string; owner: string; manager?: string; fromRow: boolean };
+  const asks = (p: BackgroundPanelObject, previous?: Selection | null): Selection | null => {
+    if (p.run) return { kind: "run", id: p.run, fromRow: false };
+    if (!p.task) return null;
+    const task = otherBackground(session).find((entry) => entry.id === p.task);
+    const same = previous?.kind === "command" && previous.task.id === p.task && previous.owner === owner && previous.manager === session?.manager;
+    return task ? { kind: "command", task, cwd: same ? previous.cwd : session?.cwd, owner, manager: session?.manager, fromRow: Boolean(same && previous.fromRow) }
+      : same ? previous : null;
+  };
   const [asked, setAsked] = useState(opened);
-  const [shown, setShown] = useState<{ run: string; fromRow: boolean } | null>(() => asks(opened));
+  const [shown, setShown] = useState<Selection | null>(() => asks(opened));
   if (asked !== opened) {
     setAsked(opened);
-    setShown(asks(opened));
+    setShown(asks(opened, shown));
   }
-  const back = useRef<string | null>(null);
+  const back = useRef<{ kind: "run" | "command"; id: string; top: number } | null>(null);
+  const listTop = useRef(0);
   const list = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  const container = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
     if (shown || !back.current) return;
-    const row = [...(list.current?.querySelectorAll<HTMLElement>("[data-bg-run]") ?? [])].find((el) => el.dataset.bgRun === back.current);
-    row?.querySelector<HTMLElement>("[data-bg-row-button]")?.focus();
+    const scroller = list.current?.querySelector<HTMLElement>("[data-background-list]");
+    if (scroller) scroller.scrollTop = back.current.top;
+    const attr = back.current.kind === "run" ? "data-bg-run" : "data-bg-task";
+    const row = [...(list.current?.querySelectorAll<HTMLElement>(`[${attr}]`) ?? [])].find((el) => el.getAttribute(attr) === back.current!.id);
+    (row?.querySelector<HTMLElement>("[data-bg-row-button]") ?? container.current?.querySelector<HTMLElement>("header button"))?.focus({ preventScroll: true });
     back.current = null;
   }, [shown]);
   // a run gone from the session (the node no longer lists it), or not there when asked for: the list, and the ask is
   // dropped, so the panel never jumps to it later
-  const run = shown ? session?.workflows?.find((w) => w.task_id === shown.run) : undefined;
+  const run = shown?.kind === "run" ? session?.workflows?.find((w) => w.task_id === shown.id) : undefined;
+  const command = shown?.kind === "command" ? shown : undefined;
+  const commandCurrent = Boolean(command && owned && session && command.owner === owner && command.manager === session.manager);
+  const liveCommand = commandCurrent && command ? otherBackground(session).find((entry) => entry.id === command.task.id) : undefined;
+  // Keep the last task metadata when it leaves the running list; disappearance does not report its outcome.
+  if (command && liveCommand && command.task !== liveCommand) setShown({ ...command, task: liveCommand });
   useEffect(() => {
-    if (shown && !run) setShown(null);
-  }, [shown, run]);
+    if ((shown?.kind === "run" && !run) || (command && !commandCurrent)) setShown(null);
+  }, [shown, run, command, commandCurrent]);
+  useEffect(() => { if (!owned) onClose(); }, [owned, onClose]);
+  const rememberList = () => { listTop.current = list.current?.querySelector<HTMLElement>("[data-background-list]")?.scrollTop ?? 0; };
+  const goBack = () => {
+    if (!shown) return;
+    back.current = { kind: shown.kind, id: shown.kind === "run" ? shown.id : shown.task.id, top: listTop.current };
+    setShown(null);
+    openPanel({ kind: "background", mid, sid });
+  };
+  if (!owned) return null;
   return (
-    <div className="flex min-h-0 flex-1 flex-col" data-background-panel>
+    <div ref={container} className="flex min-h-0 flex-1 flex-col" data-background-panel onKeyDown={(event) => {
+      if (!commandCurrent || event.key !== "Escape" || event.defaultPrevented || document.querySelector("[role=menu],[role=dialog]")) return;
+      // Preserve IME cancellation, including Safari's 229 sentinel, without also closing the outer panel.
+      if (composing(event.nativeEvent)) { event.stopPropagation(); return; }
+      event.preventDefault(); event.stopPropagation(); goBack();
+    }}>
       <PanelHeader icon="list" title={t("sidepanel.background")} onClose={onClose} />
       {run ? (
         <WorkflowDetail
@@ -86,29 +123,57 @@ export function BackgroundPanel({ mid, sid, opened, onClose }: { mid: string; si
           mid={mid}
           sid={sid}
           focus={Boolean(shown?.fromRow)}
-          onBack={() => {
-            back.current = run.task_id;
-            setShown(null);
-          }}
+          onBack={goBack}
           onClose={onClose}
+        />
+      ) : command && commandCurrent ? (
+        <BackgroundCommandDetail
+          key={JSON.stringify([mid, sid, command.task.id, command.task.output_file])}
+          mid={mid} sid={sid} cwd={command.cwd} task={liveCommand ?? command.task}
+          running={Boolean(liveCommand)} focus={command.fromRow} owner={command.owner} manager={command.manager}
+          onBack={goBack}
+          onOpenFile={() => {
+            const current = getSession(mid, sid);
+            if (credentialOwner() !== command.owner || !current || current.manager !== command.manager) return;
+            openPanel({ kind: "file", mid, path: (liveCommand ?? command.task).output_file!, cwd: command.cwd });
+          }}
         />
       ) : (
         <div ref={list} className="flex min-h-0 flex-1 flex-col">
-          <BackgroundList session={session} mid={mid} sid={sid} onOpenRun={(task) => setShown({ run: task, fromRow: true })} />
+          <BackgroundList session={session} mid={mid} sid={sid} onOpenRun={(id) => {
+            rememberList(); setShown({ kind: "run", id, fromRow: true });
+          }} onOpenTask={(task) => {
+            const current = getSession(mid, sid);
+            if (owner !== credentialOwner() || !current || current.manager !== session?.manager) return;
+            rememberList();
+            setShown({ kind: "command", task, cwd: session?.cwd, owner, manager: session?.manager, fromRow: true });
+            openPanel({ kind: "background", mid, sid, task: task.id });
+          }} />
         </div>
       )}
     </div>
   );
 }
 
-function BackgroundList({ session, mid, sid, onOpenRun }: { session: Session | undefined; mid: string; sid: string; onOpenRun: (task: string) => void }) {
+export function BackgroundList({ session, mid, sid, onOpenRun, onOpenTask, inOverview }: {
+  session: Session | undefined;
+  mid: string;
+  sid: string;
+  onOpenRun: (task: string) => void;
+  onOpenTask: (task: BackgroundTask) => void;
+  inOverview?: boolean;
+}) {
+  const owner = credentialOwner();
   // an ended run leaves the list a day after it ended (recentWorkflows): the list's clock moves while something runs
   const busy = Boolean(session?.loop) || (session?.background?.length ?? 0) > 0 || (session?.workflows ?? []).some((w) => w.running);
   const now = useNow(60_000, busy);
-  const { loop, running, tasks, completed } = backgroundSections(session, now);
+  const { loop, running, tasks: allTasks, completed } = backgroundSections(session, now);
+  const subagentIds = inOverview ? new Set(session?.subagents?.map((agent) => agent.id)) : undefined;
+  const tasks = subagentIds ? allTasks.filter((task) => task.kind !== "agent" || !subagentIds.has(task.id)) : allTasks;
   const runningId = useId();
   const completedId = useId();
   if (!loop && !running.length && !tasks.length && !completed.length) {
+    if (inOverview) return null;
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-6 text-center" data-background-empty>
         <Icon name="list" size={20} className="text-ink-3" />
@@ -116,9 +181,9 @@ function BackgroundList({ session, mid, sid, onOpenRun }: { session: Session | u
       </div>
     );
   }
-  const openOutput = (task: BackgroundTask) => openPanel({ kind: "file", mid, path: task.output_file!, cwd: session?.cwd });
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2" data-background-list>
+    <div className={inOverview ? "pb-2" : "min-h-0 flex-1 overflow-y-auto px-1 pb-2"} data-background-list>
+      {inOverview && <h3 className="px-2 pt-3 text-xs font-semibold text-ink-2">{t("sidepanel.background")}</h3>}
       {(loop || running.length > 0 || tasks.length > 0) && (
         <section aria-labelledby={runningId} data-background-section="running">
           <SectionHeader id={runningId} label={t("chat-activity.section_running")} />
@@ -128,7 +193,6 @@ function BackgroundList({ session, mid, sid, onOpenRun }: { session: Session | u
           ))}
           {tasks.map((task) => {
             const title = backgroundTitle(task);
-            const command = task.command && task.command !== title ? task.command : "";
             const since = Date.parse(task.started_at ?? "");
             return (
               <TaskRow
@@ -137,8 +201,12 @@ function BackgroundList({ session, mid, sid, onOpenRun }: { session: Session | u
                 title={title}
                 status="running"
                 meta={[<span key="status">{taskStatusWord("running")}</span>, ...(Number.isFinite(since) ? [<LiveDuration key="time" since={since} />] : [])]}
-                command={command}
-                onClick={task.output_file ? () => openOutput(task) : undefined}
+                command={task.command}
+                onCopy={() => {
+                  const current = getSession(mid, sid);
+                  if (owner === credentialOwner() && current && current.manager === session?.manager && task.command) void copyText(task.command);
+                }}
+                onClick={task.output_file ? () => onOpenTask(task) : undefined}
                 data={{ "data-bg-task": task.id }}
               />
             );
@@ -199,9 +267,9 @@ function joined(parts: ReactNode[]): ReactNode[] {
   return parts.flatMap((p, i) => (i ? [<span key={`sep${i}`} aria-hidden>{" · "}</span>, p] : [p]));
 }
 
-/** cindy's TaskRow: a button when it opens something (a run's detail, a command's output), else a plain row. A
- *  background command keeps its command as a third line that copies it. */
-function TaskRow({ icon, title, status, meta, hint, command, onClick, trailing, data }: {
+/** A button when it opens a run or command detail, else a plain row. The command belongs to the main row;
+ *  copying is a separate action so it does not also open the output. */
+function TaskRow({ icon, title, status, meta, hint, command, onCopy, onClick, trailing, data }: {
   icon: IconName;
   title: string;
   status?: AgentStatus;
@@ -209,6 +277,7 @@ function TaskRow({ icon, title, status, meta, hint, command, onClick, trailing, 
   /** The title's hover text, when the row says less than there is. */
   hint?: string;
   command?: string;
+  onCopy?: () => void;
   onClick?: () => void;
   trailing?: ReactNode;
   data?: Record<string, string>;
@@ -228,34 +297,30 @@ function TaskRow({ icon, title, status, meta, hint, command, onClick, trailing, 
             {joined(meta)}
           </span>
         )}
+        {command && command !== title && (
+          <span className="mt-0.5 block truncate font-mono text-[11px] leading-4 text-ink-3" title={command} data-bg-command>{command}</span>
+        )}
       </span>
     </>
   );
   const row = "flex min-w-0 flex-1 items-start gap-2 rounded-[8px] px-2 py-1.5 text-left";
   return (
-    <div className="flex flex-col" {...data}>
+    <div className={cx("group flex flex-col rounded-lg transition-colors", (onClick || command) && "hover:bg-hover focus-within:bg-hover")} {...data}>
       <div className="flex items-start gap-1">
         {onClick ? (
-          <button type="button" onClick={onClick} className={cx(row, "transition-colors hover:bg-hover")} data-bg-row-button>
+          <button type="button" onClick={onClick} className={row} data-bg-row-button>
             {body}
           </button>
         ) : (
           <div className={row}>{body}</div>
         )}
+        {command && (
+          <span className="self-end pr-2 pb-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100">
+            <IconButton icon="copy" label={t("chat-activity.copy_command")} size={24} iconSize={12} onClick={onCopy} />
+          </span>
+        )}
         {trailing}
       </div>
-      {command && (
-        <button
-          type="button"
-          onClick={() => void copyText(command)}
-          aria-label={t("chat-activity.copy_command")}
-          title={command}
-          className="-mt-1 mr-2 mb-1 ml-9 truncate text-left font-mono text-[11px] leading-4 text-ink-3 hover:text-ink-2"
-          data-bg-command
-        >
-          {command}
-        </button>
-      )}
     </div>
   );
 }

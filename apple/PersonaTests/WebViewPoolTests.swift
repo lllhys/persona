@@ -81,4 +81,31 @@ struct WebViewPoolTests {
         #expect(pool.existing(for: dev) == nil)
         #expect(pool.view(for: dev) !== shown)
     }
+    /// A preloaded link (one nobody opened yet) is kept in memory, not in WebKit's disk cache; a link opened without a
+    /// preloaded view still loads in the default store (#8352).
+    @Test func aPreloadedPageIsKeptInMemoryNotOnDisk() async throws {
+        let pool = WebViewPool()
+        let url = URL(string: "https://example.invalid/preload/\(UUID().uuidString)")!
+        pool.preload([url])
+        for _ in 0..<200 where pool.existing(for: url) == nil { try await Task.sleep(for: .milliseconds(50)) }
+        let preloaded = try #require(pool.existing(for: url))
+        #expect(!preloaded.configuration.websiteDataStore.isPersistent)
+        #expect(pool.view(for: link).configuration.websiteDataStore.isPersistent)
+    }
+
+    /// Preloads carry the default store's cookies, so a signed-in site preloads signed in.
+    @Test func preloadsCarryTheDefaultStoresCookies() async throws {
+        let name = "persona-test-\(UUID().uuidString)"
+        let cookie = try #require(HTTPCookie(properties: [.name: name, .value: "1", .domain: "example.invalid", .path: "/"]))
+        let defaults = WKWebsiteDataStore.default().httpCookieStore
+        await defaults.setCookie(cookie)
+        defer { Task { await defaults.deleteCookie(cookie) } }
+        let pool = WebViewPool()
+        let url = URL(string: "https://example.invalid/preload/\(UUID().uuidString)")!
+        pool.preload([url])
+        for _ in 0..<200 where pool.existing(for: url) == nil { try await Task.sleep(for: .milliseconds(50)) }
+        let preloaded = try #require(pool.existing(for: url))
+        let cookies = await preloaded.configuration.websiteDataStore.httpCookieStore.allCookies()
+        #expect(cookies.contains { $0.name == name })
+    }
 }

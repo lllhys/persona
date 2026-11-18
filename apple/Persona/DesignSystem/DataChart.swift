@@ -2,12 +2,12 @@ import Charts
 import SwiftUI
 
 /// A chart of values over categories (a plugin's `chart` item, docs/extensions/extensions.md「UI slots」): bars (side by side or
-/// stacked) or lines, one to a few series, in the design system's colors. A series without a color of its own takes
+/// stacked), lines or areas (UI version 6: overlapping, each with its line, or stacked), one to a few series, in the design system's colors. A series without a color of its own takes
 /// the data hues in order (the first is the accent). Holding (iPhone) or hovering (Mac) a category shows its label and
 /// every series' value above the plot. Compact (a card): no axis text, only the marks and the first and last labels.
 /// Nothing here knows about plugins: the caller maps its data onto `DataChart.Series`.
 struct DataChart: View {
-    enum Kind: Sendable { case bar, line }
+    enum Kind: Sendable { case bar, line, area }
 
     struct Series: Identifiable, Sendable {
         var name: String
@@ -109,6 +109,23 @@ struct DataChart: View {
                     if picked == p.label {
                         PointMark(x: .value(String(localized: "Category"), p.label), y: .value(String(localized: "Value [Data Chart cda1d5]"), p.value))
                             .foregroundStyle(by: .value(String(localized: "Series"), p.series))
+                    }
+                case .area:
+                    // Stacked: each on the one under it; else overlapping, see-through, each with its line on top.
+                    AreaMark(x: .value(String(localized: "Category"), p.label), y: .value(String(localized: "Value [Data Chart cda1d5]"), p.value),
+                             stacking: stacked ? .standard : .unstacked)
+                        .foregroundStyle(by: .value(String(localized: "Series"), p.series))
+                        .opacity(stacked ? 0.85 : 0.25)
+                        .interpolationMethod(.monotone)
+                    if !stacked {
+                        LineMark(x: .value(String(localized: "Category"), p.label), y: .value(String(localized: "Value [Data Chart cda1d5]"), p.value), series: .value(String(localized: "Series"), p.series))
+                            .foregroundStyle(by: .value(String(localized: "Series"), p.series))
+                            .interpolationMethod(.monotone)
+                            .lineStyle(StrokeStyle(lineWidth: Theme.Size.rule))
+                        if picked == p.label {
+                            PointMark(x: .value(String(localized: "Category"), p.label), y: .value(String(localized: "Value [Data Chart cda1d5]"), p.value))
+                                .foregroundStyle(by: .value(String(localized: "Series"), p.series))
+                        }
                     }
                 }
             }

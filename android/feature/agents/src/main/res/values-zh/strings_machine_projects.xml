@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 一台电脑的项目页（iOS MachineSpacesView，#4338 A11），从空间页上的电脑打开 -->
+    <string name="agents_projects_details">机器详情</string>
+    <string name="agents_projects_working">工作中</string>
+    <string name="agents_projects_idle">空闲</string>
+    <plurals name="agents_projects_count">
+        <item quantity="other">%1$d 个项目</item>
+    </plurals>
+    <string name="agents_projects_summary">%1$s · %2$s</string>
+    <string name="agents_projects_empty_title">没有在跑的 Agent</string>
+    <string name="agents_projects_empty_offline">这台机器现在离线。</string>
+    <string name="agents_projects_empty_hint">在这台机器的 herdr 里启动 Claude、Codex 或 TRAEX，就会出现在这里。</string>
+</resources>

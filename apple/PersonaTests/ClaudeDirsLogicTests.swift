@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Settings › Claude Code › Blocked Config Folders (`ClaudeDirsLogic`): the same cases as web `agent-settings.test.ts`.
 struct ClaudeDirsLogicTests {
@@ -47,5 +48,13 @@ struct ClaudeDirsLogicTests {
         #expect(ClaudeDirsLogic.loadFailure(cancelled) == nil)
         let other = NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: "node 太旧"])
         #expect(ClaudeDirsLogic.loadFailure(other) == "读不到这台电脑的配置目录：node 太旧")
+    }
+
+    /// Block / Unblock / Add may only send a list to the computer those rows belong to (#9276).
+    @Test func canApplyOnlyToTheSameComputer() {
+        #expect(ClaudeDirsLogic.canApply(blockedFrom: "box", to: "box"))
+        #expect(!ClaudeDirsLogic.canApply(blockedFrom: "box", to: "studio"))
+        #expect(!ClaudeDirsLogic.canApply(blockedFrom: "", to: "box"))
+        #expect(!ClaudeDirsLogic.canApply(blockedFrom: "box", to: ""))
     }
 }

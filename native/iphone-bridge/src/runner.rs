@@ -122,6 +122,11 @@ impl Runner {
         Ok(())
     }
 
+    /// Whether xcodebuild exited before a runner connection was established.
+    pub fn exited_before_ready(&mut self) -> bool {
+        self.link.is_none() && matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
     /// One request; the runner's `result`, or its error.
     pub async fn call(&mut self, mut req: Value) -> Result<Value, BridgeError> {
         let (r, w) = self.link.as_mut().ok_or_else(|| not_ready("not connected"))?;

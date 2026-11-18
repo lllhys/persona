@@ -107,7 +107,7 @@ func compactJSON(raw json.RawMessage, max int) string {
 	v = prune(v)
 	b, _ := json.Marshal(v)
 	if len(b) > max {
-		return string(b[:max]) + "…(cut; narrow the query or page)"
+		return cutUTF8(string(b), max) + "…(cut; narrow the query or page)"
 	}
 	return string(b)
 }

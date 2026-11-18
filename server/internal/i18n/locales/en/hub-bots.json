@@ -10,5 +10,6 @@
   "topic_chat_home_many": "Only one group chat can be the home topic group",
   "topic_needs_owner": "Pair the bot first: the group chats are the owner's list",
   "topic_chats_new_app": "Send the group chats in a separate request: a new App ID unpairs the owner",
-  "nudge_after_range": "Nudge after must be between 0 (off) and {max} minutes"
+  "nudge_after_range": "Nudge after must be between 0 (off) and {max} minutes",
+  "source_report_delay_range": "Group reply delay must be a whole number from 0 to {max} minutes"
 }

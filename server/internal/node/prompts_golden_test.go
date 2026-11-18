@@ -5,6 +5,7 @@ package node
 
 import (
 	"encoding/json"
+	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 	"io"
 	"log"
@@ -96,4 +97,23 @@ func TestGoldenPeerMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	goldenNode(t, "peer_message", line.Message.Content)
+}
+
+// What the phone's Stop writes into the peer inbox of a Claude session outside Persona's terminals (claudebg.go
+// interruptOutside): agents/peer_stop as the user's words of a peer message.
+func TestGoldenPeerStop(t *testing.T) {
+	b, err := peerMessageAt("0d000000-0000-4000-8000-00000000000a", prompts.PeerStop(), peerNow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line struct {
+		Priority string `json:"priority"`
+		Message  struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(b, &line); err != nil || line.Priority != peerNow {
+		t.Fatalf("%s: %v", b, err)
+	}
+	goldenNode(t, "peer_stop", line.Message.Content)
 }

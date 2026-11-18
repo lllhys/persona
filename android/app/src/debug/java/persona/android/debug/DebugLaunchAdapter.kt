@@ -9,6 +9,7 @@ import persona.android.navigation.notificationRoute
 import persona.android.navigation.open
 import persona.android.navigation.terminalLink
 import persona.core.navigation.MachinesRoute
+import persona.core.navigation.TerminalPanesRoute
 import persona.core.navigation.RouteInput
 import persona.feature.knowledge.KnowledgeRoute
 import persona.core.contracts.api.PairingRequest
@@ -20,10 +21,12 @@ import java.net.URI
 /** Pages without a public deep link, for direct captures. */
 private val pages = mapOf(
     "machines" to ResolvedRoute(AppTab.Agents, MachinesRoute),
+    "terminals" to ResolvedRoute(AppTab.Agents, TerminalPanesRoute),
     "knowledge" to ResolvedRoute(AppTab.Persona, KnowledgeRoute),
     "inbox" to ResolvedRoute(AppTab.Persona, persona.core.navigation.InboxRoute),
     "settings" to ResolvedRoute(AppTab.Persona, persona.core.navigation.SettingsRoute),
     "phone" to ResolvedRoute(AppTab.Persona, persona.core.navigation.SettingsPageRoute(persona.core.navigation.SettingsPage.PhoneData)),
+    "about" to ResolvedRoute(AppTab.Persona, persona.core.navigation.SettingsPageRoute(persona.core.navigation.SettingsPage.About)),
     "mail" to ResolvedRoute(AppTab.Persona, persona.core.navigation.SettingsPageRoute(persona.core.navigation.SettingsPage.Mail)),
     "feishu" to ResolvedRoute(AppTab.Persona, persona.core.navigation.SettingsPageRoute(persona.core.navigation.SettingsPage.Feishu)),
     "catalog" to ResolvedRoute(AppTab.Persona, ComponentCatalogRoute),

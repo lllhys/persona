@@ -1,0 +1,194 @@
+{
+  "en": {
+    "checked_at": "",
+    "dismissed": false,
+    "launcher": "claude",
+    "machine": {
+      "id": "mbp",
+      "name": "小林的 MacBook"
+    },
+    "mode": "setup",
+    "next": "model",
+    "ready": false,
+    "steps": [
+      {
+        "id": "computer",
+        "machine": "mbp",
+        "state": "ok"
+      },
+      {
+        "id": "claude",
+        "state": "ok",
+        "version": "2.1.320"
+      },
+      {
+        "action": {
+          "id": "connect_model"
+        },
+        "alt_actions": [
+          {
+            "id": "login_claude"
+          }
+        ],
+        "code": "not_logged_in",
+        "detail": "The main chat runs the Claude Code CLI, and the Claude desktop app's sign-in doesn't count for it. Run claude auth login in a terminal on 小林的 MacBook, or use an API key instead. To use the desktop app's sign-in, start an agent with claude-desktop: it runs in the Claude desktop app.",
+        "id": "model",
+        "launcher": "claude",
+        "machine": "mbp",
+        "state": "problem",
+        "title": "Claude Code CLI isn't signed in"
+      },
+      {
+        "action": {
+          "id": "test_assistant"
+        },
+        "code": "not_logged_in",
+        "detail": "The main chat runs the Claude Code CLI, and the Claude desktop app's sign-in doesn't count for it. Run claude auth login in a terminal on 小林的 MacBook, or use an API key instead.",
+        "id": "first_message",
+        "state": "problem",
+        "title": "Claude Code CLI isn't signed in"
+      }
+    ],
+    "suggestions": [
+      {
+        "id": "what_can_you_do",
+        "local": true,
+        "title": "What can you do for me?"
+      },
+      {
+        "id": "how_to_connect_model",
+        "local": true,
+        "title": "How do I connect a model?"
+      }
+    ],
+    "version": 1
+  },
+  "ja": {
+    "checked_at": "",
+    "dismissed": false,
+    "launcher": "claude",
+    "machine": {
+      "id": "mbp",
+      "name": "小林的 MacBook"
+    },
+    "mode": "setup",
+    "next": "model",
+    "ready": false,
+    "steps": [
+      {
+        "id": "computer",
+        "machine": "mbp",
+        "state": "ok"
+      },
+      {
+        "id": "claude",
+        "state": "ok",
+        "version": "2.1.320"
+      },
+      {
+        "action": {
+          "id": "connect_model"
+        },
+        "alt_actions": [
+          {
+            "id": "login_claude"
+          }
+        ],
+        "code": "not_logged_in",
+        "detail": "メインチャットは Claude Code CLI で動き、Claude デスクトップアプリのログインはこれに含まれません。小林的 MacBook のターミナルで claude auth login を実行するか、API キーを使ってください。デスクトップアプリのログインを使うには、claude-desktop で Agent を開始してください。Claude デスクトップアプリで実行されます。",
+        "id": "model",
+        "launcher": "claude",
+        "machine": "mbp",
+        "state": "problem",
+        "title": "Claude Code CLI にログインしていません"
+      },
+      {
+        "action": {
+          "id": "test_assistant"
+        },
+        "code": "not_logged_in",
+        "detail": "メインチャットは Claude Code CLI で動き、Claude デスクトップアプリのログインはこれに含まれません。小林的 MacBook のターミナルで claude auth login を実行するか、API キーを使ってください。",
+        "id": "first_message",
+        "state": "problem",
+        "title": "Claude Code CLI にログインしていません"
+      }
+    ],
+    "suggestions": [
+      {
+        "id": "what_can_you_do",
+        "local": true,
+        "title": "何を手伝ってくれるの？"
+      },
+      {
+        "id": "how_to_connect_model",
+        "local": true,
+        "title": "モデルはどう接続するの？"
+      }
+    ],
+    "version": 1
+  },
+  "zh-Hans": {
+    "checked_at": "",
+    "dismissed": false,
+    "launcher": "claude",
+    "machine": {
+      "id": "mbp",
+      "name": "小林的 MacBook"
+    },
+    "mode": "setup",
+    "next": "model",
+    "ready": false,
+    "steps": [
+      {
+        "id": "computer",
+        "machine": "mbp",
+        "state": "ok"
+      },
+      {
+        "id": "claude",
+        "state": "ok",
+        "version": "2.1.320"
+      },
+      {
+        "action": {
+          "id": "connect_model"
+        },
+        "alt_actions": [
+          {
+            "id": "login_claude"
+          }
+        ],
+        "code": "not_logged_in",
+        "detail": "主对话用的是 Claude Code 命令行，Claude 桌面版登录了也不算。在 小林的 MacBook 的终端里运行 claude auth login，或者改用 API Key。想用桌面版的登录，新建 Agent 时选 claude-desktop，会话会在 Claude 桌面版里运行。",
+        "id": "model",
+        "launcher": "claude",
+        "machine": "mbp",
+        "state": "problem",
+        "title": "Claude Code 命令行还没登录"
+      },
+      {
+        "action": {
+          "id": "test_assistant"
+        },
+        "code": "not_logged_in",
+        "detail": "主对话用的是 Claude Code 命令行，Claude 桌面版登录了也不算。在 小林的 MacBook 的终端里运行 claude auth login，或者改用 API Key。",
+        "id": "first_message",
+        "state": "problem",
+        "title": "Claude Code 命令行还没登录"
+      }
+    ],
+    "suggestions": [
+      {
+        "id": "what_can_you_do",
+        "local": true,
+        "title": "你能帮我做什么？"
+      },
+      {
+        "id": "how_to_connect_model",
+        "local": true,
+        "title": "怎么接模型？"
+      }
+    ],
+    "version": 1
+  }
+}

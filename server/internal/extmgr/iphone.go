@@ -18,10 +18,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/devices"
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
+	"github.com/nwverse/persona/server/internal/update"
 )
 
 const iphoneExtensionID = "iphone"
@@ -257,14 +259,21 @@ func (h *Manager) putIPhone(w http.ResponseWriter, r *http.Request, m *Machine) 
 	writeJSON(w, i18n.IPhoneStatus(h.requestLang(r), h.refreshIPhone(r.Context(), m)))
 }
 
-// postIPhoneJob: POST /api/v1/machines/{mid}/iphone/{pair|forget|cancel} {"device"}: the machine page's Pair (an
-// iPhone plugged into this computer, trusted on the phone), Forget (its pairing record) and Cancel (no device). The node
-// runs a pairing in the background; its state comes back as IPhone.job (the page asks again while it runs). Pairing
-// needs the computer turned on; forgetting and cancelling only the extension on (a pairing started before the switch
-// went off can still be stopped, a paired iPhone still forgotten).
+// helperSource finds a release's build of a helper program for a computer (devices.Devices.HelperDownload).
+type helperSource interface {
+	HelperDownload(ctx context.Context, goos, arch, name string) ([]string, update.File, error)
+}
+
+// postIPhoneJob: POST /api/v1/machines/{mid}/iphone/{pair|forget|cancel|install|prepare} {"device"}: the machine page's
+// Pair (an iPhone plugged into this computer, trusted on the phone), Forget (its pairing record), Cancel (no device),
+// and the guided setup's Install (no device: the device bridge itself, the release's build for this computer) and
+// Prepare (an iPhone's developer disk image, which then also allows the computer to mount it again by itself, #8199).
+// The node runs them in the background; the state comes back as IPhone.job (the page asks again while it runs).
+// Pairing, installing and preparing need the computer turned on; forgetting and cancelling only the extension on (a
+// pairing started before the switch went off can still be stopped, a paired iPhone still forgotten).
 func (h *Manager) postIPhoneJob(w http.ResponseWriter, r *http.Request, m *Machine) {
 	action := r.PathValue("action")
-	if action != "pair" && action != "forget" && action != "cancel" {
+	if action != "pair" && action != "forget" && action != "cancel" && action != "install" && action != "prepare" {
 		writeErr(w, http.StatusNotFound, i18n.ErrEnglish("hub-computer.err_unknown_action"))
 		return
 	}
@@ -278,7 +287,7 @@ func (h *Manager) postIPhoneJob(w http.ResponseWriter, r *http.Request, m *Machi
 		}
 	}
 	in.Device = strings.TrimSpace(in.Device)
-	if action != "cancel" && in.Device == "" {
+	if action != "cancel" && action != "install" && in.Device == "" {
 		writeErr(w, http.StatusBadRequest, i18n.Err("hub-iphone.err_no_device"))
 		return
 	}
@@ -287,7 +296,7 @@ func (h *Manager) postIPhoneJob(w http.ResponseWriter, r *http.Request, m *Machi
 		writeErr(w, http.StatusNotFound, i18n.Err("hub-iphone.err_off"))
 		return
 	}
-	if action == "pair" && !p.Enabled {
+	if (action == "pair" || action == "install" || action == "prepare") && !p.Enabled {
 		writeErr(w, http.StatusNotFound, i18n.Err("hub-iphone.err_not_enabled"))
 		return
 	}
@@ -305,6 +314,27 @@ func (h *Manager) postIPhoneJob(w http.ResponseWriter, r *http.Request, m *Machi
 	params := map[string]any{}
 	if in.Device != "" {
 		params["device"] = in.Device
+	}
+	if action == "install" {
+		src, ok := h.opts.Devices.(helperSource)
+		if !ok {
+			writeErr(w, http.StatusNotFound, i18n.Err("hub-iphone.err_no_helper"))
+			return
+		}
+		m.mu.Lock()
+		goos, arch := m.info.OS, m.info.Arch
+		m.mu.Unlock()
+		urls, f, err := src.HelperDownload(ctx, goos, arch, "persona-iphone-bridge")
+		switch {
+		case errors.Is(err, devices.ErrNoHelper), errors.Is(err, devices.ErrNoHelperSource):
+			writeErr(w, http.StatusNotFound, i18n.Err("hub-iphone.err_no_helper"))
+			return
+		case err != nil:
+			h.logf("[%s] iphone bridge: %v", m.cfg.ID, err)
+			writeErr(w, http.StatusBadGateway, i18n.Err("hub-iphone.err_helper_unreachable"))
+			return
+		}
+		params = map[string]any{"urls": urls, "size": f.Size, "sha256": f.SHA256, "binary_sha256": f.BinarySHA256}
 	}
 	var got proto.IPhone
 	if err := m.callBuiltin(ctx, "iphone."+action, params, &got); err != nil {
@@ -372,7 +402,7 @@ func (h *Manager) iphoneDevices() []iphoneSeen {
 			if d.ID == "" {
 				continue
 			}
-			mac := iphoneSeenMac{ID: m.cfg.ID, Name: m.cfg.Name, Enabled: p.Enabled}
+			mac := iphoneSeenMac{ID: m.cfg.ID, Name: m.name(), Enabled: p.Enabled}
 			if i, ok := at[d.ID]; ok {
 				out[i].Machines = append(out[i].Machines, mac)
 				if better(d, out[i].IPhoneDevice) {
@@ -520,6 +550,9 @@ func (h *Manager) callIPhoneTool(ctx context.Context, sessionID, name string, ar
 	}
 	d, m, err := h.iphoneTarget(ctx, a.Phone)
 	if err != nil {
+		if !h.iphoneSomeAllowed() { // none allowed at all: the setup isn't done, not a wrong name
+			return proto.TextResult(err.Error()+" "+iphoneSetupHint, true)
+		}
 		return proto.TextResult(err.Error(), true)
 	}
 	in := map[string]any{}
@@ -646,8 +679,12 @@ func (h *Manager) iphoneStatus(ctx context.Context, session string) proto.ToolRe
 	out := struct {
 		Phones     []phone `json:"phones"`
 		NotAllowed int     `json:"not_allowed,omitempty"`
+		Setup      string  `json:"setup,omitempty"`
 	}{Phones: []phone{}}
 	for _, d := range h.iphoneDevices() {
+		if iphoneSetupUnfinished(d) {
+			out.Setup = iphoneSetupHint
+		}
 		if !d.Allowed {
 			out.NotAllowed++
 			continue
@@ -853,12 +890,42 @@ func iphoneSentOf(err error) string {
 	return proto.IPhoneMaybeSent
 }
 
-// iphoneFailure is a failed call for the model: what went wrong, and whether to try again or look first.
+// iphoneFailure is a failed call for the model: what went wrong, and whether to try again or look first; when the
+// reason is a setup the user hasn't finished, where to finish it (iphoneSetupHint).
 func iphoneFailure(err error) proto.ToolResult {
-	if iphoneSentOf(err) == proto.IPhoneNotSent {
-		return proto.TextResult(err.Error()+" (nothing was sent to the iPhone)", true)
+	hint := ""
+	if iphoneSetupCodes[iphoneCode(err)] {
+		hint = " " + iphoneSetupHint
 	}
-	return proto.TextResult(err.Error()+" (some of it may have happened on the iPhone: look at its screen with iphone_look before anything else, and do not repeat the steps blindly)", true)
+	if iphoneSentOf(err) == proto.IPhoneNotSent {
+		return proto.TextResult(err.Error()+" (nothing was sent to the iPhone)"+hint, true)
+	}
+	return proto.TextResult(err.Error()+" (some of it may have happened on the iPhone: look at its screen with iphone_look before anything else, and do not repeat the steps blindly)"+hint, true)
+}
+
+// iphoneSetupHint goes with an iPhone tool's result when the iPhone isn't set up yet (#8199): the user finishes that on
+// the iPhone, in the app's guided setup, which this link opens. Only in results, never in the tools' descriptions or the
+// assistant's prompt.
+const iphoneSetupHint = "iPhone control isn't fully set up: give the user the link [Set up iPhone control](persona://iphone/setup), its words in their language, to finish it on their iPhone (a few minutes)."
+
+// iphoneSetupCodes are the failures a finished setup ends: the extension or the computer off, the iPhone not allowed,
+// not paired (any more), Developer Mode off, not prepared, no bridge on the computer.
+var iphoneSetupCodes = map[string]bool{
+	"iphone_off": true, "not_enabled": true, "not_allowed": true, "not_paired": true, "pairing_missing": true,
+	"pairing_rejected": true, "developer_mode_off": true, "ddi_not_mounted": true, "bridge_missing": true,
+}
+
+// iphoneSetupUnfinished says whether a device's state is one the guided setup finishes (iphone_status).
+func iphoneSetupUnfinished(d iphoneSeen) bool { return !d.Allowed || iphoneSetupCodes[d.Code] }
+
+// iphoneSomeAllowed says whether some iPhone is allowed now: the assistant can operate it.
+func (h *Manager) iphoneSomeAllowed() bool {
+	for _, d := range h.iphoneDevices() {
+		if d.Allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // iphoneLogWhat is the log's account of a call: look, or the steps' actions, never what is typed or tapped.

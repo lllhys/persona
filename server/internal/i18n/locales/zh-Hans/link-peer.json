@@ -1,0 +1,11 @@
+{
+  "rate_limited": "认证失败太多次，稍后再试",
+  "wrong_credential": "凭据不对：这台电脑只认配对它的那台 hub",
+  "pair_json_required": "要一个 JSON：{code, token, machine, hub_id, hub_name}",
+  "code_required": "没有 code",
+  "token_invalid": "token 要 32 到 512 个可打印的 ASCII 字符，不含空白",
+  "machine_required": "没有 machine（hub 给这台电脑的机器 id）",
+  "bad_code": "配对码不对、过期了或者已经用过：在这台电脑上重新 persona-link pair --listen",
+  "pair_save_failed": "存不下配对结果",
+  "websocket_required": "要 WebSocket 升级"
+}

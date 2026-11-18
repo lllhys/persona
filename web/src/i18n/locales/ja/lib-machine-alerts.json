@@ -1,0 +1,21 @@
+{
+  "offline": "オフライン",
+  "deploy_failed": "更新に失敗",
+  "memory": "メモリ逼迫",
+  "disk": "ディスク残りわずか",
+  "cpu": "CPU 高負荷",
+  "load": "負荷が高い",
+  "launcher": "ランチャーの不具合",
+  "mismatch": "バージョン不一致",
+  "updating": "更新中",
+  "with_value": "{name} · {value}",
+  "per_core": "コアあたり {value}",
+  "severity_critical": "重大",
+  "severity_warning": "注意",
+  "severity_info": "お知らせ",
+  "spoken": "{severity}：{label}",
+  "gap_days_other": "{count} 日",
+  "gap_hours_other": "{count} 時間",
+  "gap_minutes_other": "{count} 分",
+  "offline_check": "オフライン · 確認手順"
+}

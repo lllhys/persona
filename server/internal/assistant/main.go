@@ -23,6 +23,8 @@ import (
 
 	"github.com/nwverse/persona/sdk/go/wire"
 
+	approvalops "github.com/nwverse/persona/server/internal/approval"
+	"github.com/nwverse/persona/server/internal/assistant/repositorystore"
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/db"
@@ -344,7 +346,7 @@ func run(ctx context.Context, build update.Build, o runOptions) error {
 	devs := devices.New(devices.Options{Store: database, ConfigFile: o.ConfigFile, TailcatKey: o.TailcatKey, ManagerID: o.ID,
 		Logf: log.New(stderr, "devices: ", log.LstdFlags).Printf,
 		Answer: func(ctx context.Context, machine, method string, params json.RawMessage) (any, bool, error) {
-			if !waitsOnPerson(method) { // a tool call, a write the gate forwarded: idle (idle.go) waits for it
+			if !waitsOnPerson(method) && method != "mcp.tools" { // discovery watches reconnect after restart; actual tool calls hold idle
 				svc.nodeAnswering.Add(1)
 				defer svc.nodeAnswering.Add(-1)
 			}
@@ -383,11 +385,21 @@ func run(ctx context.Context, build update.Build, o runOptions) error {
 			return bh.Answer(ctx, method, params)
 		},
 		AssistantEvent: func(event string, params json.RawMessage) { bh.TellLocal(event, params) },
+		// A meeting's audio socket (assistantwire.SocketRoutes): svc is made below, before the extensions run.
+		AssistantSocket: func(w http.ResponseWriter, r *http.Request) { svc.ServeSocket(w, r) },
+		TranscriptionChanged: func() {
+			if svc != nil {
+				svc.transcriptionReadinessChanged()
+			}
+		},
 		AssistantTools: func() []proto.Tool { return svc.toolsNow() },
 		// The model providers' keys that are references, for their provider extensions' details (launcher_secrets.go).
 		LauncherReferences: func(ctx context.Context) []extmgr.LauncherReference { return svc.launcherReferences(ctx) },
 		AssistantMachine:   func() string { return svc.mainMachine(context.Background()) },
 		Ask:                func(ctx context.Context, ix proto.Interaction) (proto.Resolution, error) { return svc.AskCard(ctx, ix) },
+		AskPrepared: func(ctx context.Context, ix proto.Interaction, op approvalops.Operation) (approvalops.Outcome, error) {
+			return svc.AskPreparedCard(ctx, ix, op)
+		},
 		DialRelay: func(ctx context.Context, query string) (*websocket.Conn, error) {
 			return bus.DialAt(ctx, hub, token, httpClient, devicewire.RelayPath, query)
 		},
@@ -406,9 +418,11 @@ func run(ctx context.Context, build update.Build, o runOptions) error {
 		Logf: logf, Devices: devs, Extensions: ext, StopWhenRevoked: o.StopWhenRevoked, StopWhenRejected: o.TokenFirst})
 	// The knowledge base in its directory, kept as its manager.json's kb section says (over the hub's hello). The model
 	// providers' keys are sealed with its own secret.key.
-	svc = New(Options{Hub: bh, Store: func() Store { return database }, Logf: logf, Devices: devs,
+	assistantStore := repositorystore.New(database)
+	svc = New(Options{Hub: bh, Store: func() Store { return assistantStore }, Logf: logf, Devices: devs,
 		KB: &KBOptions{Dir: o.KBDir, KeyDir: o.HandlesDir}, SecretKey: o.SecretKey,
-		Trust: devs, ID: o.ID, Build: version, RepositoryConfig: o.ConfigFile})
+		Trust: devs, ID: o.ID, Build: version, RepositoryConfig: o.ConfigFile,
+		RemoteImageCache: filepath.Join(home, "cache", "remote-images")})
 	svc.SetExtensions(ext) // the connectors', Cua's and ego's tools, in this process (fleet_tools.go)
 	// When the north star's recording began (north_star.go).
 	go svc.northStarStarted(ctx)

@@ -12,7 +12,7 @@ func TestCreateTerminal(t *testing.T) {
 	fake := orcarttest.New(t)
 	c := &orcart.Client{MetaPath: fake.MetaPath}
 
-	created, err := c.CreateTerminal(context.Background(), "id:wt-1", "my-tab", "mut-1")
+	created, err := c.CreateTerminal(context.Background(), "id:wt-1", "my-tab", "mut-1", "")
 	if err != nil {
 		t.Fatalf("CreateTerminal failed: %v", err)
 	}
@@ -28,13 +28,23 @@ func TestCreateTerminal(t *testing.T) {
 	if !created.IsLocal() {
 		t.Errorf("expected terminal to be local")
 	}
+	// The user's default shell: no shell in the request, which an Orca without shell selection would ignore anyway.
+	if _, ok := fake.Params("terminal.create")[0]["shell"]; ok {
+		t.Errorf("asked for a shell nobody chose: %v", fake.Params("terminal.create")[0])
+	}
+	if _, err := c.CreateTerminal(context.Background(), "id:wt-1", "bash-tab", "mut-2", orcart.GitBash); err != nil {
+		t.Fatalf("CreateTerminal with a shell failed: %v", err)
+	}
+	if got := fake.Params("terminal.create")[1]["shell"]; got != "git-bash" {
+		t.Errorf("shell = %v, want git-bash", got)
+	}
 }
 
 func TestRenameAndPaneTitle(t *testing.T) {
 	fake := orcarttest.New(t)
 	c := &orcart.Client{MetaPath: fake.MetaPath}
 
-	created, err := c.CreateTerminal(context.Background(), "id:wt-1", "old-name", "mut-1")
+	created, err := c.CreateTerminal(context.Background(), "id:wt-1", "old-name", "mut-1", "")
 	if err != nil {
 		t.Fatalf("CreateTerminal failed: %v", err)
 	}

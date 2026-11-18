@@ -198,10 +198,14 @@ type Store struct {
 	metaMu   sync.Mutex // acquire before mu when both are needed (projectInput reads Log under metaMu)
 	applyMu  sync.Mutex
 
-	recMu             sync.Mutex                 // a recording's read-compare-write (recordings.go)
-	recFilesMu        sync.RWMutex               // acquire before metaMu for recording snapshots and recovery
-	liveMu            sync.Mutex                 // a live log's read-modify-write (live.go); after recMu, before recFilesMu
-	meetMu            sync.Mutex                 // meeting.json's read-modify-write (meeting.go); after recMu, before liveMu
+	recMu      sync.Mutex   // a recording's read-compare-write (recordings.go)
+	recFilesMu sync.RWMutex // acquire before metaMu for recording snapshots and recovery
+	liveMu     sync.Mutex   // a live log's read-modify-write (live.go); after recMu, before recFilesMu
+	meetMu     sync.Mutex   // meeting.json's read-modify-write (meeting.go); after recMu, before liveMu
+	// audioMapMu guards audioRecs, hub-mode recordings' audio state (recording_audio.go); a leaf lock. Each one's own
+	// mutex comes after liveMu and before recFilesMu.
+	audioMapMu        sync.Mutex
+	audioRecs         map[string]*audioRec
 	recordingWrite    func(string, []byte) error // per-store candidate fault injection
 	recordingReadWait func()                     // per-store read-entry observation for concurrency tests
 	recordingRemove   func(string) error         // per-store commit fault injection
@@ -227,6 +231,8 @@ type Store struct {
 	settled string
 	// ingestWrite is a per-store failure-injection seam; nil uses fsync and atomic replacement.
 	ingestWrite func(string, []byte) error
+	// search is the search index over the files (search_index.go): its own locks, leaves.
+	search searchIndex
 }
 
 func NewStore(dir string) (*Store, error) {

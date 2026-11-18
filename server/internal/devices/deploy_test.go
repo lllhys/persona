@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/nodeproto"
 	"github.com/nwverse/persona/server/internal/proto"
+	"github.com/nwverse/persona/server/internal/update/updatetest"
 )
 
 // loginShells are the shells on this machine an ssh target's login shell could be: sshd hands the remote command to
@@ -133,6 +135,89 @@ func TestDeployScriptRejectsAnUnusableBinary(t *testing.T) {
 	}
 }
 
+// remote_bin may be a wrapper script that sets the node's environment (PERSONA_HOME, say) and execs the real personad:
+// replacing it with the binary moved the node to another data directory and machine uid, and nothing of the wrapper
+// was kept. The deploy refuses it and touches nothing; a binary it replaces is kept as .prev.
+func TestDeployScriptKeepsAWrapper(t *testing.T) {
+	for _, shell := range loginShells(t) {
+		t.Run(filepath.Base(shell), func(t *testing.T) {
+			for _, tc := range []struct {
+				name, old string
+				replaced  bool
+			}{
+				{"wrapper", "#!/bin/sh\nPERSONA_HOME=\"$HOME/.persona-other\" exec \"$HOME/tools/personad\" \"$@\"\n", false},
+				{"binary", "\x7fELF not really a binary\n", true},
+			} {
+				home := t.TempDir()
+				bin := filepath.Join(home, ".local", "bin", "personad-wrapped")
+				_ = os.MkdirAll(filepath.Dir(bin), 0o755)
+				if err := os.WriteFile(bin, []byte(tc.old), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				var gz bytes.Buffer
+				zw := gzip.NewWriter(&gz)
+				_, _ = zw.Write([]byte("#!/bin/sh\necho new\n"))
+				_ = zw.Close()
+				pkilled := fakePkill(t)
+				cmd := exec.Command(shell, "-c", deployScript("~/.local/bin/personad-wrapped", false))
+				cmd.Env = shellEnv(home, filepath.Dir(pkilled))
+				cmd.Stdin = &gz
+				out, err := cmd.CombinedOutput()
+				got, _ := os.ReadFile(bin)
+				prev, prevErr := os.ReadFile(bin + ".prev")
+				if tc.replaced {
+					if err != nil || string(got) != "#!/bin/sh\necho new\n" {
+						t.Errorf("%s: %v %s, file %q", tc.name, err, out, got)
+					}
+					if prevErr != nil || string(prev) != tc.old {
+						t.Errorf("%s: the replaced binary is not kept as .prev: %q %v", tc.name, prev, prevErr)
+					}
+					continue
+				}
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != deployExitWrapper || !strings.Contains(string(out), bin) {
+					t.Errorf("%s: %v %s", tc.name, err, out)
+				}
+				if string(got) != tc.old {
+					t.Errorf("%s: the wrapper was replaced: %q", tc.name, got)
+				}
+				if called, _ := os.ReadFile(pkilled); len(called) != 0 {
+					t.Errorf("%s: the node was restarted: %q", tc.name, called)
+				}
+				if _, err := os.Stat(bin + ".new"); err == nil {
+					t.Errorf("%s: .new left behind", tc.name)
+				}
+				if prevErr == nil {
+					t.Errorf("%s: .prev written for a file that was not replaced", tc.name)
+				}
+			}
+		})
+	}
+}
+
+// The hub says which file is a wrapper and what to update instead, not just the script's exit status.
+func TestDeployRefusingAWrapperSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	ssh := "#!/bin/sh\ncat >/dev/null\necho 'a script' >&2\nexit " + strconv.Itoa(deployExitWrapper) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "ssh"), []byte(ssh), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	bin := filepath.Join(dir, "personad")
+	if err := os.WriteFile(bin, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &Machine{cfg: MachineConfig{ID: "test-node", RemoteBin: "~/.local/bin/personad-wrapped"}}
+	err := m.deploy(context.Background(), bin, "test")
+	var msg *i18n.Message
+	if !errors.As(err, &msg) || msg.Key != "devices-deploy.wrapper" || msg.Args["path"] != "~/.local/bin/personad-wrapped" {
+		t.Fatalf("deploy: %#v", err)
+	}
+	if text := i18n.T(i18n.En, msg.Key, msg.Args); !strings.Contains(text, "~/.local/bin/personad-wrapped") {
+		t.Errorf("the message does not name the file: %q", text)
+	}
+}
+
 // No binary for the machine's platform on the hub: say what to do, don't start.
 func TestNodeBinaryMissing(t *testing.T) {
 	home := t.TempDir()
@@ -147,7 +232,7 @@ func TestNodeBinaryMissing(t *testing.T) {
 	}
 	dir := nodeBinaryDir()
 	_ = os.MkdirAll(dir, 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "personad-darwin-arm64"), []byte("x"), 0o755)
+	copyFile(t, updatetest.Program(t, nodeproto.ProgramPersonad, "darwin", "arm64"), filepath.Join(dir, "personad-darwin-arm64"))
 	if p, err := nodeBinary("darwin", "arm64", "", ""); err != nil || filepath.Base(p) != "personad-darwin-arm64" {
 		t.Fatalf("%s %v", p, err)
 	}
@@ -157,7 +242,7 @@ func TestNodeBinaryMissing(t *testing.T) {
 		t.Fatalf("persona-node without its build on the hub: %s", p)
 	}
 	node := filepath.Join(dir, "persona-node-darwin-arm64")
-	_ = os.WriteFile(node, []byte("x"), 0o755)
+	copyFile(t, updatetest.Program(t, nodeproto.ProgramPersonaNode, "darwin", "arm64"), node)
 	if p, _ := nodeBinary("darwin", "arm64", nodeproto.ProgramPersonaNode, "v2"); filepath.Base(p) != "personad-darwin-arm64" {
 		t.Fatalf("a persona-node that does not say its version: %s", p)
 	}
@@ -210,7 +295,7 @@ func TestDeployScriptKeepsPersonad(t *testing.T) {
 				bin := filepath.Join(home, ".persona", "bin", "persona-node")
 				old := ""
 				if tc.name != "none" {
-					old = "#!/bin/sh\n[ \"$1\" = node-update-check ] || exit 0\n"
+					old = "[ \"$1\" = node-update-check ] || exit 0\n" // no #! line: sh runs it all the same, and it is no wrapper
 					if tc.existing != "" {
 						old += "echo '" + tc.existing + "'\n"
 					} else {

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 struct DispatchedTasksTests {
     private func task(_ title: String, id: String? = nil, error: String? = nil) -> PlanTask {
@@ -37,7 +38,7 @@ struct DispatchedTasksTests {
     @Test func oneTaskKeepsItsExactTodoTarget() throws {
         let entries = try #require(DispatchedTasks.entries(for: feed(.task, ref: "new"), plans: [:],
                                                           titleOf: { $0 == "new" ? "Current title" : nil }, fallback: "Task"))
-        #expect(entries == [.init(id: "todo:new", todoID: "new", title: "Current title")])
+        #expect(entries == [.init(id: "todo:new", todoID: "new", title: "Current title", conversation: "main")])
     }
 
     @Test func severalTasksKeepPlanOrderAndLiveTitles() throws {
@@ -86,11 +87,120 @@ struct DispatchedTasksTests {
         #expect(DispatchedTasks.entries(for: routed, plans: [:], titleOf: { _ in nil }, fallback: "Task") == nil)
     }
 
+    private func agent(_ session: String, at: Date, error: String? = nil) -> TodoItem.Agent {
+        TodoItem.Agent(machineID: "computer", sessionID: session, title: "Layout \(session)", cwd: nil, agent: nil,
+                       startError: error, releasedAt: nil, linkedAt: at, source: nil, via: nil)
+    }
+
+    @Test func oneAgentIsOneCardThatOpensThatAgent() {
+        let at = Date(timeIntervalSince1970: 1_700_000_000)
+        let todo = TodoItem(id: "t", title: "Task", agents: [agent("agent", at: at)])
+        let cards = DispatchedTasks.cards(of: .init(id: "todo:t", todoID: "t", title: "Task", wake: "created", conversation: "main"), todo: todo)
+        #expect(cards.count == 1)
+        #expect(cards[0].id == "computer/agent")
+        #expect(cards[0].machineID == "computer")
+        #expect(cards[0].sessionID == "agent")
+        #expect(cards[0].agentTitle == "Layout agent")
+        #expect(cards[0].wake == "created")
+        #expect(cards[0].todoID == "t")
+    }
+
+    @Test func agentsLinkedTogetherAreEachACardAndALaterOneIsNot() {
+        let first = Date(timeIntervalSince1970: 1_700_000_000)
+        let todo = TodoItem(id: "t", title: "Task", agents: [
+            agent("a", at: first),
+            agent("b", at: first.addingTimeInterval(60)),
+            agent("later", at: first.addingTimeInterval(180)),
+        ])
+        let cards = DispatchedTasks.cards(of: .init(id: "todo:t", todoID: "t", title: "Task"), todo: todo)
+        #expect(cards.map(\.sessionID) == ["a", "b"])
+    }
+
+    @Test func anAgentThatDidNotStartLeavesTheTaskCard() {
+        let todo = TodoItem(id: "t", title: "Task", agents: [agent("a", at: .now, error: "offline")])
+        let entry = DispatchedTasks.Entry(id: "todo:t", todoID: "t", title: "Task", error: "offline")
+        #expect(DispatchedTasks.cards(of: entry, todo: todo) == [entry])
+        #expect(DispatchedTasks.cards(of: entry, todo: nil) == [entry])
+    }
+
+    @Test func theTitleIsTheSessionsThenTheAgentsThenTheTasks() {
+        #expect(DispatchedTasks.cardTitle(sessionTitle: "Claude Code", agentTitle: "Layout", taskTitle: "Task") == "Claude Code")
+        #expect(DispatchedTasks.cardTitle(sessionTitle: "  ", agentTitle: " Layout ", taskTitle: "Task") == "Layout")
+        #expect(DispatchedTasks.cardTitle(sessionTitle: nil, agentTitle: " ", taskTitle: "Task") == "Task")
+    }
+
+    @Test func aPlanTasksStayNewWhenTheirTaskItemSaysOtherwise() throws {
+        let p = plan([task("Planned", id: "one")])
+        let entries = try #require(DispatchedTasks.entries(for: feed(.plan), plans: [p.id: p],
+                                                          titleOf: { _ in "Planned" }, fallback: "Task"))
+        #expect(entries.allSatisfy { $0.wake == nil })
+        let active = feed(.task, ref: "one", body: .object(["wake": .string("active")]))
+        #expect(DispatchedTasks.entries(for: active, plans: [p.id: p], titleOf: { _ in nil }, fallback: "Task") == [])
+        let alone = try #require(DispatchedTasks.entries(for: feed(.task, ref: "other", body: .object(["wake": .string("resumed")])),
+                                                         plans: [:], titleOf: { _ in "Other" }, fallback: "Task"))
+        #expect(alone.first?.wake == "resumed")
+    }
+
     @Test func decisionsAndDismissedPlansKeepTheirNormalCards() {
         for state in [TaskPlan.State.open, .dismissed, .unknown] {
             let p = plan([task("Proposed")], state: state)
             #expect(DispatchedTasks.entries(for: feed(.plan), plans: [p.id: p], titleOf: { _ in nil }, fallback: "Task") == nil)
         }
         #expect(DispatchedTasks.entries(for: feed(.message), plans: [:], titleOf: { _ in nil }, fallback: "Task") == nil)
+    }
+}
+
+/// The hand-off card is the task's only card in the chat (#8237): a start that failed or a turn the model service cut off
+/// shows on it, in place, with why.
+@MainActor
+struct DispatchHandoffFailureTests {
+    private func session(_ fields: String) throws -> Session {
+        try JSON.decoder.decode(Session.self, from: Data(#"{"machine_id":"mac","session_id":"s","title":"s","cwd":"/p","updated_at":"2026-11-13T09:00:00Z",\#(fields)}"#.utf8))
+    }
+
+    @Test func aTurnCutOffShowsOnTheCardWithWhy() throws {
+        let cut = try session(#""state":"idle","status":"idle","turn_error":"The model service did not answer""#)
+        #expect(DispatchHandoffCard.interruption(cut, closed: false) == "The model service did not answer")
+        #expect(DispatchHandoffCard.interruption(cut, closed: true) == nil)
+        // a usage limit has its own words on the card; an Agent at work again, or with no error, was not cut off
+        #expect(DispatchHandoffCard.interruption(try session(#""state":"idle","status":"idle","turn_error":"limit","turn_error_kind":"usage_limit""#), closed: false) == nil)
+        #expect(DispatchHandoffCard.interruption(try session(#""state":"working","status":"working","turn_error":"boom""#), closed: false) == nil)
+        #expect(DispatchHandoffCard.interruption(try session(#""state":"idle","status":"idle""#), closed: false) == nil)
+    }
+
+    /// A failed start's reason in plain words on the card and the row; the raw error is the task's details' (#8237).
+    @Test func aFailedStartSaysWhyInPlainWords() {
+        typealias W = StartFailureWords
+        #expect(W.cause("rpc: connection closed") == .connectionLost)
+        #expect(W.cause("和「MacBook」的连接断了，等了一阵也没重连上：rpc: connection closed") == .connectionLost)
+        #expect(W.cause("unexpected EOF") == .connectionLost)
+        #expect(W.cause("context deadline exceeded") == .timedOut)
+        #expect(W.cause("dial tcp: connect: connection refused") == .offline)
+        #expect(W.cause("ssh: handshake failed: permission denied (publickey)") == .notAllowed)
+        #expect(W.cause("rpc: unknown method agent.start") == .needsUpdate)
+        #expect(W.cause("exit status 1") == nil)
+        // a sentence the hub wrote for people stays; a raw error nothing names says to open the task
+        #expect(W.plain("这台电脑上没装 Claude Code，装好后再试") == "这台电脑上没装 Claude Code，装好后再试")
+        let english = "Claude Code isn't installed on this computer. Install it, then retry."
+        #expect(W.plain(english) == english)
+        #expect(W.plain("exit status 1") == nil)
+        #expect(W.plain("  ") == nil)
+        #expect(W.rowLine("exit status 1") == W.details)
+        #expect(W.rowLine("rpc: connection closed") == W.words(.connectionLost))
+        #expect(W.cardLine("rpc: connection closed") == String(localized: "Didn't start: \(W.words(.connectionLost)) [Tasks Store 38bbb7]"))
+        #expect(W.cardLine("exit status 1") == W.details)
+    }
+
+    @Test func theInterruptedLineSaysWhyWhenItCan() {
+        let word = String(localized: "Interrupted [Chat Layout]")
+        #expect(DispatchHandoffCardBody.interruptedLine("") == word)
+        #expect(DispatchHandoffCardBody.interruptedLine("Overloaded") == word + " · Overloaded")
+    }
+
+    @Test func theUsageLimitBranchNeedsAStoppedAgentAndAnOpenTaskThatDoesNotNeedYou() throws {
+        let limited = try JSON.decoder.decode(Session.self, from: Data(#"{"machine_id":"mac","session_id":"s","title":"s","cwd":"/p","state":"idle","status":"idle","updated_at":"2026-11-13T09:00:00Z","turn_error":"You've hit your usage limit.","turn_error_kind":"usage_limit"}"#.utf8))
+        #expect(DispatchHandoffCard.limited(state: .working, closed: false, lead: limited))
+        #expect(!DispatchHandoffCard.limited(state: .needsYou, closed: false, lead: limited))
+        #expect(!DispatchHandoffCard.limited(state: .working, closed: true, lead: limited))
     }
 }

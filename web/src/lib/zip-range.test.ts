@@ -40,6 +40,39 @@ describe("readZipEntry", () => {
     expect(new TextDecoder().decode(got!.data)).toBe(new TextDecoder().decode(pdf));
   });
 
+  it("bounds actual inflated bytes even when the directory understates their size", async () => {
+    const bytes = await pages({ "preview.jpg": "x".repeat(1 << 20) }, "DEFLATE");
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const end = bytes.length - 22;
+    const central = view.getUint32(end + 16, true);
+    view.setUint32(central + 24, 1, true); // uncompressed size, forged in the directory
+    const limit = 16 << 10;
+    expect(bytes.length).toBeLessThan(limit);
+    expect(await readZipEntry(reader(bytes).read, bytes.length, IWORK_PREVIEWS, limit)).toBeNull();
+  });
+
+  it("accepts a deflated preview exactly at the limit", async () => {
+    const limit = 16 << 10;
+    const bytes = await pages({ "preview.jpg": "x".repeat(limit) }, "DEFLATE");
+    const result = await readZipEntry(reader(bytes).read, bytes.length, IWORK_PREVIEWS, limit);
+    expect(result?.data.length).toBe(limit);
+  });
+
+  it("rejects an oversized directory before requesting it", async () => {
+    const tail = new Uint8Array(22);
+    const view = new DataView(tail.buffer);
+    view.setUint32(0, 0x06054b50, true);
+    view.setUint32(12, (64 << 20) + 1, true);
+    view.setUint32(16, 1, true);
+    const calls: [number, number][] = [];
+    const read = async (start: number, end: number) => {
+      calls.push([start, end]);
+      return tail;
+    };
+    expect(await readZipEntry(read, 100 << 20, IWORK_PREVIEWS)).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
   it("says null for no preview or no zip", async () => {
     const bytes = await pages({ "Index/Document.iwa": "x" });
     expect(await readZipEntry(reader(bytes).read, bytes.length, IWORK_PREVIEWS)).toBeNull();

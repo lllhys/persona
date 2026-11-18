@@ -8,8 +8,6 @@ import { emptyTaskIndex } from "../../lib/tasks";
 import type { Item } from "../../lib/types";
 import { ChatContext } from "./chat-context";
 import { ChatLineView } from "./Lines";
-import { ReportLine } from "../assistant/Supervision";
-import { reportLine } from "../../lib/supervision";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -55,7 +53,7 @@ const toggle = () => host.querySelector<HTMLButtonElement>("[data-supervision] >
 describe("quiet supervision rendering", () => {
   it("defaults to one gray line, keeping a later queued user input in the open", () => {
     draw([...initial, next]);
-    expect(toggle().textContent).toBe("@督办巡检 · 督办已处理");
+    expect(toggle().textContent).toBe("@督办巡检 · 已在后台处理");
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
     expect(toggle().className).toContain("text-ink-3");
     expect(toggle().className).toContain("whitespace-nowrap");
@@ -91,12 +89,12 @@ describe("quiet supervision rendering", () => {
 
   it("keeps the running line quiet while live prose changes, and shows that prose when opened", () => {
     draw([u, thought], true, "Fictional streamed reply");
-    expect(toggle().textContent).toBe("@督办巡检 · 督办处理中…");
+    expect(toggle().textContent).toBe("@督办巡检 · 正在后台处理…");
     expect(host.textContent).not.toContain("Fictional streamed reply");
     act(() => toggle().click());
     expect(host.querySelector('[data-answer="streaming"]')?.textContent).toBe("Fictional streamed reply");
     draw(initial);
-    expect(toggle().textContent).toBe("@督办巡检 · 督办已处理");
+    expect(toggle().textContent).toBe("@督办巡检 · 已在后台处理");
     expect(toggle().getAttribute("aria-expanded")).toBe("true");
   });
 
@@ -130,9 +128,9 @@ describe("quiet supervision rendering", () => {
   });
 
   it.each([
-    ["en", "@Supervision · Supervision handled"],
-    ["zh-Hans", "@督办巡检 · 督办已处理"],
-    ["ja", "@進捗チェック · タスクの確認済み"],
+    ["en", "@Supervision · Handled in the background"],
+    ["zh-Hans", "@督办巡检 · 已在后台处理"],
+    ["ja", "@進捗チェック · バックグラウンドで処理済み"],
   ] as const)("localizes the %s compact line", async (lang, expected) => {
     await initI18n(lang);
     draw(initial);
@@ -149,48 +147,5 @@ describe("quiet supervision rendering", () => {
     act(() => toggle().click());
     expect(host.querySelectorAll("[data-supervision-input]")).toHaveLength(2);
     expect(host.querySelectorAll("[data-answer]")).toHaveLength(2);
-  });
-});
-
-describe("progress reports", () => {
-  it("defaults to a quiet line and preserves the full progress body without the separate evidence list on expansion", () => {
-    const item = { id: "fictional-report", conversation: "fictional-chat", at: "2026-11-01T10:00:00Z", kind: "report" as const, body: { kind: "progress", text: "Fictional progress details", step: 1, steps: 3, evidence: ["https://example.com/evidence"] } };
-    act(() => root.render(<ReportLine item={item} title="Example task" />));
-    expect(host.textContent).toBe("进度更新 · Example task");
-    expect(host.querySelector('[data-testid="report-line"]')).toBeNull();
-    act(() => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
-    expect(host.textContent).toContain("Fictional progress details");
-    expect(host.textContent).not.toContain("https://example.com/evidence");
-    expect(host.querySelector("ul")).toBeNull();
-  });
-});
-
-describe("report bodies", () => {
-  it.each(["done", "blocked", "question", "progress"])("keeps the %s body verbatim, including authored links, while hiding all evidence rows", (kind) => {
-    const text = "Checks passed.\nPR: https://example.com/body-pr\nKeep this final line.";
-    const evidence = [
-      "https://example.com/evidence-pr",
-      "https://example.com/evidence-commit",
-      "https://example.com/evidence-comment",
-      "https://example.com/evidence-run",
-      "/tmp/example-results.xcresult",
-    ];
-    const item = { id: "fictional-report-body", conversation: "fictional-chat", at: "2026-11-01T10:00:00Z", kind: "report" as const, body: { kind, text, evidence } };
-    act(() => root.render(<ReportLine item={item} title="Example task" />));
-    if (kind === "progress") act(() => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click());
-    expect(host.querySelector('[data-testid="report-line"] .whitespace-pre-wrap')?.textContent).toBe(reportLine(kind, text));
-    for (const entry of evidence) expect(host.textContent).not.toContain(entry);
-    expect(host.querySelector("ul")).toBeNull();
-    expect(item.body.evidence).toEqual(evidence);
-  });
-
-  it("retains can-wait status and the task link without showing evidence", () => {
-    const onOpenTask = vi.fn();
-    const item = { id: "fictional-later-report", conversation: "fictional-chat", at: "2026-11-01T10:00:00Z", kind: "report" as const, body: { kind: "question", text: "A question that can wait", later: true, evidence: ["https://example.com/evidence"] } };
-    act(() => root.render(<ReportLine item={item} title="Example task" onOpenTask={onOpenTask} />));
-    expect(host.querySelector('[data-testid="report-later"]')).not.toBeNull();
-    act(() => host.querySelector<HTMLButtonElement>("button")!.click());
-    expect(onOpenTask).toHaveBeenCalledOnce();
-    expect(host.textContent).not.toContain("https://example.com/evidence");
   });
 });

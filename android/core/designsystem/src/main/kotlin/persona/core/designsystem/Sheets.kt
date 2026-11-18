@@ -57,7 +57,7 @@ data class JAction(
     val onClick: () -> Unit,
 )
 
-/** A bottom sheet in the style's shape and surface. Sheets sit above a scrim, so they are always opaque. */
+/** A bottom sheet in the style's shape and surface. Ordinary sheets are opaque; adaptive Settings may clear the full-window container. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JSheet(
@@ -73,6 +73,12 @@ fun JSheet(
     scrollable: Boolean = false,
     contentPadding: androidx.compose.ui.unit.Dp? = null,
     bottomPadding: androidx.compose.ui.unit.Dp? = null,
+    /** Leave the window-sized container transparent so a page-sized Settings card can supply the only opaque surface. */
+    clearContainer: Boolean = false,
+    /** The page-sized Settings frame already draws the window scrim; do not blend a second one over it. */
+    clearScrim: Boolean = false,
+    /** Marks an intentional blank-tap focus clear, distinct from a presentation-driven focus transfer. */
+    onClearFocus: () -> Unit = {},
     showDragHandle: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -81,21 +87,33 @@ fun JSheet(
     val blocked by androidx.compose.runtime.rememberUpdatedState(onBlockedDismiss)
     // Brief's surface is its card grey, the fill of its text fields and chips: on a grey sheet they vanish (no border
     // either), so its sheets are paper like its pages.
-    val container = if (PersonaTheme.style == AppStyle.Brief) palette.background else palette.surfaceOpaque
+    val container = when {
+        clearContainer -> palette.surfaceOpaque.copy(alpha = 0f)
+        PersonaTheme.style == AppStyle.Brief -> palette.background
+        else -> palette.surfaceOpaque
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = skipPartiallyExpanded, confirmValueChange = {
         (it != SheetValue.Hidden || canDismiss).also { ok -> if (!ok) blocked?.invoke() }
     })
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val shortcutHelpOwner = androidx.compose.runtime.remember { Any() }
     ModalBottomSheet(
         onDismissRequest = { if (canDismiss) onDismiss() }, modifier = modifier,
         sheetState = sheetState,
         shape = PersonaTheme.shapes.sheetShape, containerColor = container, contentColor = palette.ink,
-        scrimColor = palette.scrim, tonalElevation = 0.dp,
+        scrimColor = if (clearScrim) palette.scrim.copy(alpha = 0f) else palette.scrim, tonalElevation = 0.dp,
         dragHandle = if (!showDragHandle) null else ({ Box(Modifier.padding(top = 10.dp.dense, bottom = 6.dp.dense).size(36.dp, 4.dp).clip(CircleShape).background(palette.ink3.copy(alpha = 0.5f))) }),
     ) {
         // Opaque over a scrim: glass inside the sheet must not sample (and show through) the page behind it.
-        androidx.compose.runtime.CompositionLocalProvider(LocalReadingInset provides 0.dp, LocalGlassSource provides null) {
-        Column(Modifier.fillMaxWidth().dismissKeyboardOnBlankTap()
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalReadingInset provides 0.dp,
+            LocalGlassSource provides null,
+            LocalSplitDetail provides null,
+            LocalHardwareShortcutHelpOwner provides shortcutHelpOwner,
+        ) {
+        Column(Modifier.fillMaxWidth().hardwareShortcutDismiss({
+            if (canDismiss) onDismiss() else blocked?.invoke()
+        }, shortcutHelpOwner).dismissKeyboardOnBlankTap(onClearFocus)
             // Content that grows once the sheet is open ("Session info" after it loads) would stay where the opening left the
             // sheet, its rest below the screen and out of reach: settle the sheet again at its new height.
             .onSizeChanged {
@@ -110,6 +128,7 @@ fun JSheet(
         }
         }
     }
+    HardwareShortcutHelp(shortcutHelpOwner)
 }
 
 /**
@@ -229,9 +248,14 @@ fun JDialog(
     content: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
     val palette = PersonaTheme.palette
-    androidx.compose.runtime.CompositionLocalProvider(LocalReadingInset provides 0.dp) {
+    val shortcutHelpOwner = androidx.compose.runtime.remember { Any() }
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalReadingInset provides 0.dp,
+        LocalHardwareShortcutHelpOwner provides shortcutHelpOwner,
+    ) {
     AlertDialog(
-        onDismissRequest = onDismiss, containerColor = palette.surfaceOpaque, shape = PersonaTheme.shapes.panelShape, tonalElevation = 0.dp,
+        onDismissRequest = onDismiss, modifier = Modifier.hardwareShortcutDismiss(onDismiss, shortcutHelpOwner),
+        containerColor = palette.surfaceOpaque, shape = PersonaTheme.shapes.panelShape, tonalElevation = 0.dp,
         title = { Text(title, style = PersonaTheme.type.title, color = palette.ink) },
         text = if (text == null && content == null) null else ({
             Column {
@@ -246,6 +270,7 @@ fun JDialog(
         },
         dismissButton = dismiss?.let { (label, action) -> { JButton(label, action, kind = JButtonKind.Quiet, size = JButtonSize.Medium) } },
     )
+    HardwareShortcutHelp(shortcutHelpOwner)
     }
 }
 

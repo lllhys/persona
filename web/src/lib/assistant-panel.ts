@@ -9,9 +9,9 @@
 // same way, from the next message, so "Recommended" is the provider the chat runs on now and the others keep their own
 // groups. Loaded with the panel, not with the composer.
 import { t } from "../i18n";
-import { agentId, agentName } from "./agent-kind";
+import { agentId, agentName, providerAgent } from "./agent-kind";
 import type { AssistantSetup } from "./assistant-models";
-import { ALL_EFFORTS, defaultModel, modelName, typedModelOffered, type AgentModel, type LauncherModels } from "./launcher-models";
+import { ALL_EFFORTS, defaultModel, modelName, modelSupportsFast, typedModelOffered, type AgentModel, type LauncherModels } from "./launcher-models";
 import { validModelId } from "./model-id";
 import { cleanSetup, type PanelConfig, type PanelModel, type PanelProvider, type PanelState } from "./model-panel";
 import { providerTitle } from "./provider-names";
@@ -20,11 +20,13 @@ import type { ModelPick } from "./types";
 
 /** A model of a launcher's list as the panel shows it: an ID typed before takes any of Claude Code's efforts (nobody
  *  knows which it has). */
-function panelModel(m: AgentModel, engine: string): PanelModel {
+function panelModel(m: AgentModel, engine: string, catalogFast: boolean): PanelModel {
   const out: PanelModel = { id: m.id, name: modelName(m), efforts: m.efforts ?? (m.custom && engine === "claude" ? ALL_EFFORTS : []) };
   if (m.description) out.description = m.description;
   if (m.resolved) out.resolved = m.resolved;
+  if (m.aliases?.length) out.aliases = m.aliases;
   if (m.default_effort) out.defaultEffort = m.default_effort;
+  if (catalogFast && modelSupportsFast(m)) out.fast = true;
   if (m.custom) out.custom = true;
   return out;
 }
@@ -42,6 +44,8 @@ export interface AssistantPanelOptions {
   /** The chat already runs on `engine`: a provider of another engine can't take it over (the hub refuses it, 409
    *  `launcher_other_kind`), so it is listed off with why. Not set on the new-conversation page. */
   running?: boolean;
+  /** A new conversation may choose an advertised native speed for its first turn. */
+  starting?: boolean;
   /** The chat has Codex's Fast speed: the model it runs offers it ("as it runs": on when `fastOn`). */
   fast?: boolean;
   fastOn?: boolean;
@@ -54,14 +58,14 @@ export function assistantPanel(setup: AssistantSetup, info: AssistantLaunchers |
   const runs = agentId(engine);
   const launchers = info?.launchers ?? [];
   const providers: PanelProvider[] = launchers.map((l) => {
-    const kind = agentId(l.agent_type || l.agent || "claude");
+    const kind = agentId(providerAgent(l.agent_type || l.agent || "claude", l.name));
     const e = listOf(l.name);
     const p: PanelProvider = { id: l.name, name: providerTitle(l), engine: kind, models: null };
     if (e.list === undefined) {
       if (e.error) p.error = e.error;
       else p.loading = true;
     } else {
-      let models = (e.list?.models ?? []).map((m) => panelModel(m, kind));
+      let models = (e.list?.models ?? []).map((m) => panelModel(m, kind, Boolean(o.starting)));
       // a launcher that fixes its own --model takes no model with a pick: what it runs by default, only
       if (e.list?.locked) models = models.filter((m) => m.id === defaultModel(e.list?.models ?? [])?.id);
       // no list to read (a direct API the computer can't ask, an older hub): the model it is configured with
@@ -77,20 +81,23 @@ export function assistantPanel(setup: AssistantSetup, info: AssistantLaunchers |
   if (info && !providers.some((p) => p.id === setup.provider)) {
     const claude = setup.provider === "claude";
     const e = listOf(setup.provider);
-    const models = e.list ? e.list.models.map((m) => panelModel(m, engine)) : setup.model ? [{ id: setup.model, name: modelLabel(setup.model), efforts: [] }] : [];
+    const models = e.list ? e.list.models.map((m) => panelModel(m, engine, Boolean(o.starting))) : setup.model ? [{ id: setup.model, name: modelLabel(setup.model), efforts: [] }] : [];
     providers.unshift({ id: setup.provider, name: setup.provider, engine, models: claude && !e.list ? null : models, ...(claude ? (e.list ? {} : { loading: true }) : { unavailable: t("chat-modelpill.provider_gone") }) });
   }
+  // what can't run it, a Paseo provider among them: that provider is its engine, never "paseo" (#8142)
   for (const u of info?.unavailable ?? []) {
     if (providers.some((p) => p.id === u.name)) continue;
-    providers.push({ id: u.name, name: providerTitle(u), engine: agentId(u.agent || "claude"), models: null, unavailable: u.reason });
+    providers.push({ id: u.name, name: providerTitle(u), engine: agentId(providerAgent(u.agent || "claude", u.name)), models: null, unavailable: u.reason });
   }
 
   const own = providers.find((p) => p.id === setup.provider);
   const row = own?.models ? currentModelRow(listOf(setup.provider).list?.models ?? [], setup.model) : undefined;
   const model = row?.id ?? setup.model ?? launchers.find((l) => l.name === setup.provider)?.model;
   if (o.fast && model && own?.models) own.models = own.models.map((m) => (m.id === model ? { ...m, fast: true } : m));
+  const currentRow = own?.models?.find((m) => m.id === model);
+  const canFast = Boolean(currentRow?.fast || o.fast);
   const state: PanelState = {
-    current: model ? cleanSetup({ provider: setup.provider, model, effort: setup.effort, fast: o.fast && o.fastOn }) : null,
+    current: model ? cleanSetup({ provider: setup.provider, model, effort: setup.effort, fast: canFast && Boolean(setup.fast || o.fastOn) }) : null,
     recommended: own && !own.unavailable ? [setup.provider] : [],
   };
   return { providers, state };

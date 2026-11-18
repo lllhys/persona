@@ -4,7 +4,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { credentialOwner, setToken } from "./api";
 import { getState } from "./store";
 import { setRosterDefault } from "./manager-choice";
-import { creationSession, creationBody, createdWorkspace, openChildWorktree, type CreationDraft } from "./worktree-creation";
+import { creationSession, creationBody, createdWorkspace, openChildWorktree, unsupportedWorktreeParent, type CreationDraft } from "./worktree-creation";
 import { onOpenNewWorktree, type WorktreePrepare, type WorktreeRequest } from "./worktree";
 
 vi.mock("./workspace-catalog", () => ({ refreshWorkspaceCatalog: vi.fn().mockResolvedValue(undefined) }));
@@ -142,6 +142,21 @@ describe("capability and placement safety", () => {
     const listen = vi.fn(); const stop = onOpenNewWorktree(listen); const onCreated = vi.fn();
     openChildWorktree({ machineId: "computer", host: "orca", workspaceId: "parent", cwd: "/collections" }, { source: { machineId: "computer", host: "orca", workspaceId: "source", cwd: "/projects/demo" }, onCreated });
     expect(listen).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ workspaceId: "source", owner: credentialOwner() }), parent: expect.objectContaining({ workspaceId: "parent", owner: credentialOwner() }), onCreated })); stop();
+  });
+  it("accepts a source-default parent with actual legacy herdr capabilities", async () => {
+    const source = { machineId: "computer", host: "herdr", workspaceId: "native-source", cwd: "/projects/demo", owner: credentialOwner(), manager: "assistant" };
+    const listen = vi.fn(); const stop = onOpenNewWorktree(listen);
+    openChildWorktree(source); stop();
+    const session = await creationSession(listen.mock.calls[0][0]);
+    session.update({ branch: "feature/child" });
+    const legacy = { root: "/projects/demo", repoName: "Demo", branch: "main", path: "/worktrees/demo", automatic_name: true };
+    const value = session.getSnapshot().draft;
+    expect(unsupportedWorktreeParent(value, legacy)).toBe(false);
+    expect(creationBody(value, legacy)).toEqual({ workspace_id: "native-source", kind: "herdr", branch: "feature/child", path: "/worktrees/demo/feature-child" });
+    expect(() => creationBody({ ...value, parent: null }, legacy)).toThrow();
+    expect(() => creationBody({ ...value, parent: { ...source, workspaceId: "other" } }, legacy)).toThrow();
+    await session.submit(legacy);
+    expect(JSON.parse(creates()[0][1].body)).not.toHaveProperty("parent_workspace_id");
   });
 });
 

@@ -64,6 +64,11 @@ type fakeHub struct {
 	// interrupted conversation is still listed as working (the hub answers once the agent got its Esc).
 	triage  *triageSwitches
 	stopLag time.Duration
+	// rooms are the recordings' rooms GET /api/v1/recordings/{id}/live tells (a recording not in it: 404; nil: a
+	// recording without one); liveStatus answers it instead when set; liveReads are the paths and queries it was asked.
+	rooms      map[string]*liveRoom
+	liveStatus int
+	liveReads  []string
 }
 
 type resolvedCard struct {
@@ -316,6 +321,26 @@ func (h *fakeHub) server(t *testing.T) *httptest.Server {
 			}
 		}
 		http.NotFound(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/recordings/{id}/live", func(w http.ResponseWriter, r *http.Request) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.liveReads = append(h.liveReads, r.URL.RequestURI())
+		if h.liveStatus != 0 {
+			w.WriteHeader(h.liveStatus)
+			_, _ = io.WriteString(w, `{"error":"not now"}`)
+			return
+		}
+		room, ok := h.rooms[r.PathValue("id")]
+		if !ok {
+			http.Error(w, `{"error":"no such recording"}`, http.StatusNotFound)
+			return
+		}
+		out := map[string]any{"revs": map[string]int{}}
+		if room != nil {
+			out["room"] = room
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	})
 	mux.HandleFunc("GET /api/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()

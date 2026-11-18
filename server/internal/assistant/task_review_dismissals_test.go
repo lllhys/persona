@@ -120,39 +120,52 @@ func TestTaskReviewDismissalReceiptAndRestart(t *testing.T) {
 	}
 }
 
-func TestTaskReviewDismissalSuppressesAcceptAndDeadline(t *testing.T) {
+// Don't handle hides a round, which is not an answer: the hub takes no default at its deadline and sends nothing.
+func TestTaskReviewDismissalSuppressesDeadline(t *testing.T) {
+	for _, reversible := range []bool{true, false} {
+		t.Run(map[bool]string{true: "default", false: "reminder"}[reversible], func(t *testing.T) {
+			at := time.Now().UTC().Add(-time.Hour)
+			e := dismissalEnv(t, &memStore{}, at, true)
+			e.s.accept.asks["task"].Reversible = reversible
+			before := todoNow(e.s, "task")
+			a, _ := e.s.askCopy("task")
+			callsBefore := e.f.callCount()
+			dismissReview(t, e, at)
+			e.s.sweepTaskDeadlines(time.Now())
+			if result, err := e.s.acceptTryAs(context.Background(), "task", "", true); result.taken || err != nil {
+				t.Fatalf("dismissed default: %v, %v", result, err)
+			}
+			if after, _ := e.s.askCopy("task"); !reflect.DeepEqual(a, after) {
+				t.Fatalf("dismiss changed acceptance/deadline: %+v", after)
+			}
+			if after := todoNow(e.s, "task"); !reflect.DeepEqual(before, after) {
+				t.Fatal("dismiss accepted or closed task")
+			}
+			if e.f.sends != nil || e.f.callCount() != callsBefore {
+				t.Fatal("dismiss or the suppressed default/reminder reached a device")
+			}
+		})
+	}
+}
+
+// An answer after Don't handle is the owner handling it after all: it goes through (here task_decided for an answer
+// already passed on) and undoes the dismissal, so the decision ends instead of refusing every later answer.
+func TestTaskReviewDismissalAnswerUndoesIt(t *testing.T) {
 	at := time.Now().UTC().Add(-time.Hour)
 	e := dismissalEnv(t, &memStore{}, at, true)
-	before := todoNow(e.s, "task")
-	a, _ := e.s.askCopy("task")
-	callsBefore := e.f.callCount()
 	dismissReview(t, e, at)
-	for _, extra := range []map[string]string{nil, {"option": "Option A"}, {"option": "Option B"}, {"response": respondExplainFirst}} {
-		in := map[string]string{"asked_at": a.AskedAt.Format(time.RFC3339Nano)}
-		for k, v := range extra {
-			in[k] = v
-		}
-		body, _ := json.Marshal(in)
-		w := e.do("POST", "/api/v1/todos/task/accept", string(body))
-		if w.Code != 409 {
-			t.Fatalf("dismissed accept: %d %s", w.Code, w.Body)
-		}
+	taken, err := e.s.decisionTold(context.Background(), "task", "Option B", "m", "conv", "Option B, please")
+	if err != nil || !taken {
+		t.Fatalf("answer after dismissal: %v %v", taken, err)
 	}
-	if ok, err := e.s.acceptTry(context.Background(), "task", ""); ok || err != nil {
-		t.Fatalf("card accept: %v %v", ok, err)
+	if v := todoNow(e.s, "task").Supervision; v.State == reviewNeedsUser {
+		t.Fatalf("still waiting on the owner: %+v", v)
 	}
-	e.s.sweepTaskDeadlines(time.Now())
-	if after, _ := e.s.askCopy("task"); !reflect.DeepEqual(a, after) {
-		t.Fatalf("dismiss changed acceptance/deadline: %+v", after)
-	}
-	if after := todoNow(e.s, "task"); !reflect.DeepEqual(before, after) {
-		t.Fatal("dismiss accepted or closed task")
-	}
-	if e.f.sends != nil {
-		t.Fatal("dismiss sent an agent message")
-	}
-	if e.f.callCount() != callsBefore {
-		t.Fatal("dismiss or suppressed acceptance called a device (including stop/close)")
+	e.s.reviewDismissals.mu.Lock()
+	d := e.s.reviewDismissals.byTodo["task"]
+	e.s.reviewDismissals.mu.Unlock()
+	if !d.Undone {
+		t.Fatalf("dismissal not undone: %+v", d)
 	}
 }
 
@@ -180,6 +193,7 @@ func TestTaskReviewDismissalSlowAcceptDoesNotBlockTodoList(t *testing.T) {
 		t.Run("option="+option, func(t *testing.T) {
 			at := time.Now().UTC().Add(-time.Hour)
 			e := dismissalEnv(t, &memStore{}, at, true)
+			dismissReview(t, e, at)
 			e.s.todos.todos["task"].Origin = "conversation"
 			e.s.todos.todos["task"].Agents = []TodoAgent{{MachineID: "server", SessionID: "worker"}}
 			e.s.todos.todos["independent"] = &Todo{ID: "independent", Title: "Independent task", Supervision: &Supervision{
@@ -334,5 +348,38 @@ func TestTaskReviewDismissalFailuresAndValidation(t *testing.T) {
 			t.Fatal("ended decision exposed")
 		}
 		e.s.todos.todos["task"].Supervision.State = reviewNeedsUser
+	}
+}
+
+// Don't handle reads the same wherever the decision shows: the To-dos page's triage no longer files it under Needs you
+// (as the main conversation's bar already did) and the assistant's snapshot no longer calls it waiting on the owner.
+func TestTaskReviewDismissalSameEverywhere(t *testing.T) {
+	at := time.Now().UTC().Add(-time.Hour)
+	e := dismissalEnv(t, &memStore{}, at, true)
+	e.s.todos.todos["task"].Origin = "conv"
+	e.s.todos.todos["task"].UpdatedAt = time.Now()
+	read := func() (todoTriage, string) {
+		t.Helper()
+		list := []listedTodo{{Todo: todoNow(e.s, "task")}}
+		if err := e.s.listDecisionReviews(context.Background(), list); err != nil {
+			t.Fatal(err)
+		}
+		if a, ok := e.s.todoAsks(context.Background())["task"]; ok {
+			list[0].Ask = &a
+		}
+		health := ""
+		for _, task := range e.s.snapshotTasks(context.Background(), "") {
+			if task.ID == "task" {
+				health = task.Health
+			}
+		}
+		return triageTodo(list[0], noSessions, time.Now(), time.Time{}, time.UTC, false), health
+	}
+	if tr, health := read(); tr.Rule != ruleOwnerDecides || health != "等你决定" {
+		t.Fatalf("before: %+v %q", tr, health)
+	}
+	dismissReview(t, e, at)
+	if tr, health := read(); tr.Rule == ruleOwnerDecides || tr.Section == triageWaiting || health != "你选了不处理这个决定" {
+		t.Fatalf("after Don't handle: %+v %q", tr, health)
 	}
 }

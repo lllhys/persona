@@ -1,0 +1,7 @@
+{
+  "picture": "Picture",
+  "retry": "Picture didn't load. Click to retry",
+  "more": "{n} more",
+  "load_image": "Load image",
+  "load_images": "Load {n} images"
+}

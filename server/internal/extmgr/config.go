@@ -38,6 +38,8 @@ type Config struct {
 	Extensions              []ExtensionConfig `json:"extensions,omitempty"`
 	LegacyExtensions        []ExtensionConfig `json:"plugins,omitempty"`
 	TrustedExtensionMarkets []string          `json:"trusted_extension_markets,omitempty"`
+	// ExtensionMarket configures outbound marketplace reads and package downloads.
+	ExtensionMarket ExtensionMarketConfig `json:"extension_market,omitempty"`
 	// ExtensionRuntime pins the shared engine; missing/unsupported enforcement blocks source activation.
 	ExtensionRuntime *denohost.Config  `json:"extension_runtime,omitempty"`
 	UIPageSessions   PageSessionLimits `json:"ui_page_sessions,omitempty"`
@@ -55,10 +57,16 @@ type Config struct {
 	fileErr error
 }
 
+// ExtensionMarketConfig is the extension marketplace's outbound network configuration.
+type ExtensionMarketConfig struct {
+	// Proxy is an http:// or socks5:// URL used for catalog reads, package downloads and HTTPS git clones.
+	Proxy string `json:"proxy,omitempty"`
+}
+
 // GoogleConfig is the iOS OAuth client behind Gmail's "Sign in with Google" (docs/extensions/mail.md).
 type GoogleConfig struct {
 	ClientID string `json:"client_id"`
-	// Proxy is an http:// proxy for Gmail IMAP / SMTP and Google's OAuth / Gmail API.
+	// Proxy is an http:// (CONNECT) or socks5:// proxy for Gmail IMAP / SMTP and Google's OAuth / Gmail API.
 	Proxy string `json:"proxy,omitempty"`
 }
 

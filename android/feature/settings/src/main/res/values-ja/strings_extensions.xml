@@ -11,14 +11,16 @@
     <string name="settings_ext_sandbox_off">サンドボックス未使用</string>
     <string name="settings_ext_sandbox_title">実行の分離</string>
     <string name="settings_ext_sandbox_note">サンドボックスが分離するのは、ハブが実行するインストール済みの拡張機能だけです。有効かどうかは上の実際の状態に従います。変更はハブのマシンか管理画面でのみ行えます。</string>
-    <string name="settings_ext_sandbox_egress">外部通信プロキシ経由：%1$s・%2$s</string>
+    <string name="settings_ext_sandbox_footer">アドレスの許可とサンドボックスの切り替えは管理画面で行います（管理者パスワードが必要です）。</string>
+    <string name="settings_ext_sandbox_network">ネットワーク</string>
     <plurals name="settings_ext_sandbox_allowed">
-        <item quantity="other">許可%d回</item>
+        <item quantity="other">許可 %d</item>
     </plurals>
-    <plurals name="settings_ext_sandbox_denied">
-        <item quantity="other">拒否%d回</item>
+    <plurals name="settings_ext_sandbox_blocked">
+        <item quantity="other">ブロック %d</item>
     </plurals>
-    <string name="settings_ext_sandbox_last_denied">最後の拒否：%1$s</string>
+    <string name="settings_ext_sandbox_blocked_sentence">%1$sが%2$sに接続しようとしましたが、申請したアドレスに含まれていないためブロックされました。</string>
+    <string name="settings_ext_sandbox_go_admin">管理画面で許可</string>
     <string name="settings_ext_depends">依存関係</string>
     <string name="settings_ext_pack_members">パックのメンバー</string>
     <string name="settings_ext_pack_note">インストール済みでバージョンが足りているメンバーは再インストールしません。以下は今回一緒にインストールまたはアップグレードする拡張機能です。</string>
@@ -66,6 +68,7 @@
     <string name="settings_ext_state_error">エラー</string>
     <string name="settings_ext_state_unknown">状態不明</string>
     <string name="settings_ext_run_pack">パック自体はプログラムを実行しません。メンバーはそれぞれ有効化、設定、アンインストールします。</string>
+    <string name="settings_ext_run_pack_members_follow">パック自体はプログラムを実行しません。メンバーはそれぞれ設定、アンインストールします。</string>
     <string name="settings_ext_run_running">実行中</string>
     <string name="settings_ext_run_idle">未実行。必要になると自動で起動します</string>
     <string name="settings_ext_source_builtin">組み込み</string>
@@ -159,6 +162,12 @@
     <string name="settings_ext_read_only">この拡張機能はアシスタントのmanager.jsonに書かれています。オン/オフと設定はそこで変更し、変更後にアシスタントを再起動してください。</string>
     <string name="settings_ext_enabled">有効</string>
     <string name="settings_ext_enabled_note">無効にすると実行が停止し、提供しているコネクタなども一緒にオフになります。設定とシークレットは保持されます。</string>
+    <string name="settings_ext_enable_footer_pack">パックをオフにすると、メンバーもオフになり、実行が止まります。パックをオンに戻すと、パックがオフにしたメンバーもオンに戻ります。自分で個別にオン・オフしたメンバーはそのままです。</string>
+    <string name="settings_ext_enable_footer_pack_off">パックをオンに戻すと、%1$s もオンに戻ります。自分で個別にオン・オフしたメンバーはそのままです。</string>
+    <string name="settings_ext_enable_footer_pack_alone">パックをオフにしても、オフになるのはパック自体だけです。メンバーはそれぞれのページでオン・オフしてください。</string>
+    <string name="settings_ext_disable_pack_title">「%1$s」とそのメンバーをオフにしますか？</string>
+    <string name="settings_ext_disable_pack_body">メンバーも一緒にオフになります：%1$s。オフにするだけで、アンインストールはしません。設定とデータは保持されます。パックをオンに戻すと、これらもオンに戻ります。</string>
+    <string name="settings_ext_disable_all">まとめて無効化</string>
     <string name="settings_ext_unavailable">読み込めません</string>
     <string name="settings_ext_still_needed">未設定：%1$s</string>
     <string name="settings_ext_channel_link">これはチャットチャネルです</string>
@@ -229,6 +238,12 @@
     <string name="settings_ext_preview_again">再プレビュー</string>
     <string name="settings_ext_uninstall_title">%1$sをアンインストールしますか？</string>
     <string name="settings_ext_uninstall_text">停止して設定とシークレットを削除します。提供しているコネクタも一緒に削除されます。</string>
+    <string name="settings_ext_uninstall_keep_result">パッケージも削除されますが、データフォルダはハブのマシンに残ります。手動でのクリーンアップが必要な項目は、アンインストール後に一覧表示されます。</string>
+    <string name="settings_ext_uninstall_delete_data_result">パッケージとデータフォルダも削除されます。手動でのクリーンアップが必要な項目は、アンインストール後に一覧表示されます。</string>
+    <string name="settings_ext_removal_warnings_text">アンインストールは完了しました。一部の項目は手動でクリーンアップする必要があります。</string>
+    <string name="settings_ext_removal_warnings_header">手動クリーンアップが必要な項目</string>
+    <string name="settings_ext_removal_copy">警告をすべてコピー</string>
+    <string name="settings_ext_removal_done">OK</string>
     <string name="settings_ext_dependents_title">依存する拡張機能も無効にしますか？</string>
     <string name="settings_ext_dependents_text">%1$sは%2$sに依存しているため、一緒に無効になります。</string>
     <string name="settings_ext_dependents_unnamed">他の拡張機能が%1$sに依存しているため、一緒に無効になります。</string>
@@ -371,4 +386,22 @@
     <string name="settings_subscriptions_counts_on">%1$d 件オン</string>
     <string name="settings_subscriptions_counts_failing">%1$d 件オン · %2$d 件エラー</string>
     <string name="settings_subscriptions_counts_none">購読できます</string>
+    <string name="settings_ext_notification_expired">この通知は有効期限切れです。拡張機能のページで再試行してください。</string>
+    <string name="settings_ext_notification_wrong_scope">元のハブまたはアシスタントが見つかりません。再接続して拡張機能のページで再試行してください。</string>
+    <string name="settings_ext_notification_unlock">この通知の操作を実行するには、スマートフォンのロックを解除してください。</string>
+    <plurals name="settings_ext_node_running">
+        <item quantity="other">%1$d台のマシンで実行中</item>
+    </plurals>
+    <plurals name="settings_ext_node_abnormal">
+        <item quantity="other">%1$d台のマシンに異常があります</item>
+    </plurals>
+    <plurals name="settings_ext_node_offline">
+        <item quantity="other">%1$d台がオフライン</item>
+    </plurals>
+    <plurals name="settings_ext_node_starting">
+        <item quantity="other">%1$d台のマシンで起動中</item>
+    </plurals>
+    <plurals name="settings_ext_node_stopped">
+        <item quantity="other">%1$d台のマシンで停止中</item>
+    </plurals>
 </resources>

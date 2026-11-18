@@ -50,6 +50,8 @@ type Mail interface {
 	ListAccounts() ([]mail.MailAccount, error)
 	ListMessages(ctx context.Context, opts mail.ListOptions) (*mail.ListResult, error)
 	GetMessage(ctx context.Context, accountID string, uid uint32, mailbox string) (*mail.MailMessage, error)
+	// SeenFlags is, for each of uids still in mailbox, whether it is seen; one it no longer has is not in the map.
+	SeenFlags(ctx context.Context, accountID, mailbox string, uids []uint32) (map[uint32]bool, error)
 	Send(ctx context.Context, req mail.SendRequest) error
 	// FetchAttachment is one attachment's bytes for mail_save_attachment (the node's mail.attachment), at most max.
 	FetchAttachment(ctx context.Context, accountID string, uid uint32, mailbox, id string, max int64) (mail.Attachment, []byte, error)

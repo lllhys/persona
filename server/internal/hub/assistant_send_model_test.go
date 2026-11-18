@@ -98,9 +98,11 @@ func TestAssistantModelIsWhatThePhonesMessageRunsOn(t *testing.T) {
 	if p["launcher"] != "conv" || p["model"] != nil || p["effort"] != "high" || p["model_fingerprint"] == nil || p["model_fingerprint"] != phone["model_fingerprint"] || p["is_main"] != true || phone["is_main"] != true {
 		t.Fatalf("assistant.model = %v, the phone's message runs on %v", p, phone)
 	}
-	// Another conversation the hub doesn't list yet (the node just started) keeps its own: nothing to say.
+	// Another conversation the hub doesn't list yet (the node just started) keeps its own: no model to say, and an
+	// explicitly empty supervision role, not an ordinary conversation's manual (#8251).
 	params, _ = json.Marshal(map[string]any{"session_id": "side"})
-	if got, err := nodeAsks(ctx, n.m, "assistant.model", params); err != nil || len(got.(map[string]any)) != 1 || got.(map[string]any)["is_main"] != false {
+	if got, err := nodeAsks(ctx, n.m, "assistant.model", params); err != nil || len(got.(map[string]any)) != 2 ||
+		got.(map[string]any)["is_main"] != false || got.(map[string]any)["supervision_instructions"] != "" {
 		t.Fatalf("an unlisted conversation: %v %v", got, err)
 	}
 }

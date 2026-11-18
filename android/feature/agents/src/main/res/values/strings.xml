@@ -19,6 +19,19 @@
         <item quantity="one">1 thing needs your decision</item>
         <item quantity="other">%1$d things need your decision</item>
     </plurals>
+    <!-- The note over the list while it is read further down: what came meanwhile; a tap goes back to the latest -->
+    <plurals name="agents_feed_needs_you">
+        <item quantity="one">%1$d needs you</item>
+        <item quantity="other">%1$d need you</item>
+    </plurals>
+    <plurals name="agents_feed_offline">
+        <item quantity="one">%1$d not running</item>
+        <item quantity="other">%1$d not running</item>
+    </plurals>
+    <plurals name="agents_feed_new">
+        <item quantity="one">%1$d new</item>
+        <item quantity="other">%1$d new</item>
+    </plurals>
     <plurals name="agents_summary_working">
         <item quantity="one">1 agent working</item>
         <item quantity="other">%1$d agents working</item>
@@ -66,6 +79,11 @@
     <string name="agents_count_pair">%1$s, %2$s</string>
     <string name="agents_flag_space_pinned">Space pinned</string>
     <string name="agents_flag_space_muted">Space muted</string>
+    <string name="agents_kind_todo">To-do</string>
+    <plurals name="agents_count_todos">
+        <item quantity="one">1 to-do</item>
+        <item quantity="other">%1$d to-dos</item>
+    </plurals>
     <string name="agents_kind_space">Space</string>
     <string name="agents_view_todo">View to-do</string>
     <string name="agents_history_unknown_folder">Unknown folder</string>
@@ -81,6 +99,10 @@
     <string name="agents_grouping_state">By status</string>
     <string name="agents_grouping_todo">By to-do</string>
     <string name="agents_grouping_project">By project</string>
+    <string name="agents_grouping_machine">By Machine</string>
+    <string name="agents_grouping_app">By App</string>
+    <string name="agents_grouping_recent">Recently Used</string>
+    <string name="agents_grouping_direction">By pinned</string>
     <string name="agents_menu_compact">Compact list</string>
     <string name="agents_menu_detailed">Detailed list</string>
     <string name="agents_menu_display">Display</string>
@@ -281,6 +303,12 @@
     <string name="agents_new_parent">Up one level</string>
     <string name="agents_new_no_subdirectories">No folders in this directory</string>
     <string name="agents_new_git_repo">Git repository</string>
+    <string name="agents_workspace_title">Workspace</string>
+    <string name="agents_workspace_main">Main checkout</string>
+    <string name="agents_workspace_folder">Folder</string>
+    <string name="agents_workspace_other">Other workspaces</string>
+    <string name="agents_workspace_choose_folder">Choose by folder</string>
+    <string name="agents_workspace_kind_branch">%1$s · %2$s</string>
     <string name="agents_new_retry_open">Try again</string>
     <string name="agents_new_tab_in">New tab in “%1$s”</string>
     <string name="agents_new_online">Online</string>
@@ -291,6 +319,8 @@
     <string name="agents_new_prefill_offline">“%1$s” is offline, so another one is picked; switch back once it connects</string>
     <string name="agents_new_reload">Reload options</string>
     <string name="agents_new_agent_type">Agent type</string>
+    <!-- The agent type of Paseo's providers other than Claude Code and Codex, each listed by its own name under it (#8143). -->
+    <string name="agents_new_type_other">Other agents</string>
     <string name="agents_new_launcher_this_time">Launcher (this time only)</string>
     <string name="agents_new_launcher">Launcher</string>
     <string name="agents_new_search_launcher">Search launchers or models</string>
@@ -298,6 +328,7 @@
     <string name="agents_new_follow_config">Follow model settings</string>
     <string name="agents_new_permission_mode">Permission mode</string>
     <string name="agents_new_bypass_warning">With everything allowed, editing files and running commands won\'t ask you again.</string>
+    <string name="agents_new_provider_mode_hint">This agent uses its own approval settings unless you pick Allow everything. You can switch in the chat later.</string>
     <string name="agents_new_effort">Thinking effort</string>
     <string name="agents_new_no_effort">This model has no thinking effort setting</string>
     <string name="agents_new_first_message_codex">First message (required for Codex)</string>
@@ -333,6 +364,8 @@
     <string name="agents_model_failed_detail">%1$s\nYou can still start; the default model is used</string>
     <string name="agents_model_retry">Retry</string>
     <string name="agents_model_sheet_note">%2$s models in “%1$s”, the same as typing /model in the terminal. Only for this start.</string>
+    <!-- The model list of a Paseo provider other than Claude Code and Codex, which has no terminal (#8143). -->
+    <string name="agents_model_sheet_note_provider">The models “%1$s” offers. Only for this start.</string>
     <string name="agents_model_configured">Model settings: %1$s</string>
     <string name="agents_new_error_pending">The last start isn\'t confirmed yet. Check the result.</string>
     <string name="agents_new_error_record">Couldn\'t read the start record. Close and try again.</string>
@@ -378,6 +411,7 @@
     <string name="agents_todos_done">Done</string>
     <string name="agents_todo_reopen_failed">Couldn\'t reopen the to-do: %1$s</string>
     <string name="agents_todo_auto_done">Auto-completed</string>
+    <string name="agents_todo_concern">Concern</string>
     <string name="agents_todo_state_needs_you">Needs you</string>
     <string name="agents_todo_state_unread">To review</string>
     <string name="agents_todo_state_working">In progress</string>
@@ -535,6 +569,9 @@
     <string name="agents_todos_filter_button">Filter and sort</string>
     <string name="agents_todos_filter_show">Show</string>
     <string name="agents_todos_sort_by">Sort by</string>
+    <string name="agents_todos_group_by">Group by</string>
+    <string name="agents_todos_group_status">Status</string>
+    <string name="agents_todos_group_direction">Pinned</string>
     <string name="agents_todos_filter_all">All</string>
     <string name="agents_todos_filter_no_due">No due date</string>
     <string name="agents_todos_filter_today">Today</string>
@@ -556,7 +593,12 @@
         <item quantity="other">%d to-dos</item>
     </plurals>
     <string name="agents_todo_restore">Restore</string>
+    <string name="agents_todo_seen">Got it</string>
+    <string name="agents_todo_seen_moved">Moved to Done</string>
+    <string name="agents_todo_seen_undo">Undo</string>
+    <string name="agents_todo_seen_failed">Something went wrong: %1$s</string>
     <string name="agents_todo_pr_moved">%1$s · moved %2$s</string>
+    <string name="agents_todo_for_briefing">Decision comes with the next briefing</string>
     <string name="agents_todo_pr">PR</string>
     <string name="agents_todo_state_accepted">Accepted</string>
     <plurals name="agents_todos_related">
@@ -584,6 +626,21 @@
     <string name="agents_todo_calendar_change_due_of">Change Due Date: %1$s…</string>
     <string name="agents_todo_calendar_date">Date</string>
     <string name="agents_todo_calendar_time">Time</string>
+    <string name="agents_todo_calendar_mode_day">Day</string>
+    <string name="agents_todo_calendar_mode_week">Week</string>
+    <string name="agents_todo_calendar_mode_month">Month</string>
+    <string name="agents_todo_calendar_previous_day">Previous day</string>
+    <string name="agents_todo_calendar_next_day">Next day</string>
+    <string name="agents_todo_calendar_previous_week">Previous week</string>
+    <string name="agents_todo_calendar_next_week">Next week</string>
+    <string name="agents_todo_calendar_show_day">Show Day</string>
+    <string name="agents_todo_calendar_due">Due</string>
+    <string name="agents_todo_calendar_add">Add</string>
+    <string name="agents_todo_calendar_add_hint">Set a reminder, the priority and notes on the to-do\'s page.</string>
+    <plurals name="agents_todo_calendar_open">
+        <item quantity="one">1 to-do</item>
+        <item quantity="other">%1$d to-dos</item>
+    </plurals>
     <plurals name="agents_todo_calendar_undated">
         <item quantity="one">1 without a due date</item>
         <item quantity="other">%1$d without a due date</item>

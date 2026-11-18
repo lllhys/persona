@@ -25,6 +25,9 @@ class MainConversationActionsTest {
         assertEquals(MainActions(compact = true, newMain = true), MainActions.of(setOf("client_ops", CompactFeature, NewMainFeature)))
         assertEquals(MainActions(compact = true, newMain = false), MainActions.of(setOf(CompactFeature)))
         assertEquals(MainActions(compact = false, newMain = false), MainActions.of(emptySet()))
+        // Clear context (#5100) only with the hub's assistant_main_clear, apart from the other two.
+        assertEquals(MainActions(compact = false, newMain = false, clear = true), MainActions.of(setOf("assistant_main_clear")))
+        assertEquals(MainActions(compact = true, newMain = true, clear = true), MainActions.of(setOf(CompactFeature, NewMainFeature, ClearMainFeature)))
     }
 
     /** Seen running here: "Compacting", then "Compacted" once, not again on the next update. */

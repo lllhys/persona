@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
@@ -189,27 +190,29 @@ func (m *Machine) performRPCDeployment(ctx context.Context, bin string, record *
 func (m *Machine) waitNodeIdle(ctx context.Context) error {
 	for {
 		var list struct {
-			Sessions []proto.Session `json:"sessions"`
+			Sessions   []proto.Session `json:"sessions"`
+			UpdateBusy *bool           `json:"update_busy"` // the node's own commit check (node_update_idle)
 		}
+		snapshot := new(sessionSnapshot)
 		check, cancel := context.WithTimeout(ctx, 15*time.Second)
-		err := m.call(check, "sessions.list", map[string]any{}, &list)
+		err := m.callWithSnapshot(check, "sessions.list", map[string]any{}, &list, snapshot)
 		cancel()
 		if err != nil {
 			return explain(i18n.Err("devices-deploy.idle_check_failed", i18n.Args{"err": err.Error()}), err)
 		}
-		m.setSessions(list.Sessions)
-		busy := m.machinePending() // a question of its agents waits on the phone
-		for _, s := range list.Sessions {
-			if s.State == proto.StateWorking || s.State == proto.StateNeedsYou || s.Status == proto.StatusWorking || s.PendingInteractions > 0 || s.Starting || len(s.Background) > 0 {
-				busy = true
-				break
-			}
-			for _, sub := range s.Subagents {
-				if sub.Running {
-					busy = true
-					break
-				}
-			}
+		sessions, accepted := m.acceptSessionsList(snapshot, list.Sessions, false)
+		m.mu.Lock()
+		ownCheck := nodeHas(m.info, nodeproto.NodeUpdateIdle) && list.UpdateBusy != nil
+		m.mu.Unlock()
+		var busy bool
+		if ownCheck {
+			// Only the node knows whether a conversation it runs headless is busy: its rows do not say so (#6364).
+			// A rejected response has no current update_busy to accept, so ask the node again rather than deploy on it.
+			busy = !accepted || *list.UpdateBusy
+		} else {
+			// A node that commits on the old rule refuses while anything works: wait for that here too, rather than
+			// transfer the whole build again on every refusal.
+			busy = m.machinePending() || slices.ContainsFunc(sessions, sessionAtWork) // a question of its agents waits on the phone
 		}
 		if !busy {
 			return nil
@@ -220,6 +223,14 @@ func (m *Machine) waitNodeIdle(ctx context.Context) error {
 		case <-time.After(m.deployRetry):
 		}
 	}
+}
+
+// sessionAtWork: the old commit check (nodes before node_update_idle) refuses while s is at work.
+func sessionAtWork(s proto.Session) bool {
+	if s.Starting || s.State == proto.StateWorking || s.State == proto.StateNeedsYou || s.Status == proto.StatusWorking || s.PendingInteractions > 0 || len(s.Background) > 0 {
+		return true
+	}
+	return slices.ContainsFunc(s.Subagents, func(sub proto.Subagent) bool { return sub.Running })
 }
 
 func (m *Machine) sendNodeUpdate(ctx context.Context, bin string, record *nodeDeployRecord) error {

@@ -1,0 +1,7 @@
+{
+  "type": "progress",
+  "key": "goal",
+  "label": "Goal",
+  "ratio": 0.625,
+  "style": "bar"
+}

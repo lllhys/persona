@@ -1,0 +1,520 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "stepped_submit_opens_review",
+      "description": "On a card of several questions, Submit on the last one opens the review and sends nothing yet.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/QuestionSteps.swift: QuestionSteps.enabled"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "submit",
+          "page": 1,
+          "picks": {
+            "Which layout?": [
+              "Full"
+            ],
+            "Where should it go?": [
+              "This folder"
+            ]
+          },
+          "other": {},
+          "sending": false
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": null,
+        "next_page": 1,
+        "reviewing": true
+      },
+      "derived": true
+    },
+    {
+      "name": "stepped_advance_from_earlier_page_opens_review",
+      "description": "With every question answered, the button on an earlier question also opens the review instead of sending.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/QuestionSteps.swift: QuestionSteps.enabled"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "advance",
+          "page": 0,
+          "picks": {
+            "Which layout?": [
+              "Full"
+            ],
+            "Where should it go?": [
+              "This folder"
+            ]
+          },
+          "other": {},
+          "sending": false
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": null,
+        "next_page": 0,
+        "reviewing": true
+      },
+      "derived": true
+    },
+    {
+      "name": "stepped_missing_answer_skips_review",
+      "description": "A question left unanswered goes back to it; the review does not open.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/QuestionSteps.swift: QuestionSteps.enabled"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "submit",
+          "page": 1,
+          "picks": {
+            "Where should it go?": [
+              "This folder"
+            ]
+          },
+          "other": {},
+          "sending": false
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": null,
+        "next_page": 0,
+        "reviewing": false
+      },
+      "derived": true
+    },
+    {
+      "name": "review_confirm_sends_all_answers",
+      "description": "Submit on the review sends every answer once, keyed by the original question, typed words trimmed.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/ScreenReview.swift: ScreenReviewFooter"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "confirm_review",
+          "page": 1,
+          "picks": {
+            "Which layout?": [
+              "Full"
+            ]
+          },
+          "other": {
+            "Where should it go?": "  ~/notes \n"
+          },
+          "sending": false,
+          "reviewing": true
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": {
+          "answers": {
+            "Which layout?": "Full",
+            "Where should it go?": "~/notes"
+          }
+        },
+        "reviewing": true
+      },
+      "derived": true
+    },
+    {
+      "name": "review_confirm_while_sending_sends_nothing",
+      "description": "While the answer is on its way the review's buttons are disabled and nothing is sent again.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/ScreenReview.swift: ScreenReviewFooter"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "confirm_review",
+          "page": 1,
+          "picks": {
+            "Which layout?": [
+              "Full"
+            ],
+            "Where should it go?": [
+              "This folder"
+            ]
+          },
+          "other": {},
+          "sending": true,
+          "reviewing": true
+        }
+      },
+      "expected": {
+        "allowed": false,
+        "resolution": null,
+        "reviewing": true
+      },
+      "derived": true
+    },
+    {
+      "name": "review_back_returns_to_questions",
+      "description": "Previous on the review closes it without sending, on the question the card was on.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/ScreenReview.swift: ScreenReviewFooter"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "review_back",
+          "page": 1,
+          "picks": {
+            "Which layout?": [
+              "Full"
+            ],
+            "Where should it go?": [
+              "This folder"
+            ]
+          },
+          "other": {},
+          "sending": false,
+          "reviewing": true
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": null,
+        "next_page": 1,
+        "reviewing": false
+      },
+      "derived": true
+    },
+    {
+      "name": "review_hides_options",
+      "description": "The review replaces the options, so no option can be picked while it shows.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.plain, showsFooter"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            },
+            {
+              "question": "Where should it go?",
+              "header": "Place",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "This folder"
+                },
+                {
+                  "label": "A temporary folder"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "pick_option",
+          "page": 1,
+          "picks": {
+            "Which layout?": [
+              "Full"
+            ],
+            "Where should it go?": [
+              "This folder"
+            ]
+          },
+          "other": {},
+          "sending": false,
+          "reviewing": true,
+          "option_index": 1
+        }
+      },
+      "expected": {
+        "allowed": false,
+        "resolution": null,
+        "reviewing": true
+      },
+      "derived": true
+    },
+    {
+      "name": "single_question_sends_without_review",
+      "description": "A card of one question has no review: its answer goes on the first click.",
+      "source": [
+        "apple/Persona/Views/Interactions/InteractionViews.swift: QuestionForm.submit, send",
+        "apple/Persona/Views/Interactions/QuestionSteps.swift: QuestionSteps.enabled"
+      ],
+      "input": {
+        "profile": "ios_current",
+        "interaction": {
+          "id": "example_request",
+          "machine_id": "example_machine",
+          "session_id": "example_session",
+          "kind": "question",
+          "questions": [
+            {
+              "question": "Which layout?",
+              "header": "Layout",
+              "multi_select": false,
+              "options": [
+                {
+                  "label": "Compact (Recommended)"
+                },
+                {
+                  "label": "Full"
+                }
+              ]
+            }
+          ]
+        },
+        "operation": {
+          "action": "submit",
+          "page": 0,
+          "picks": {},
+          "other": {
+            "Which layout?": "Something else"
+          },
+          "sending": false
+        }
+      },
+      "expected": {
+        "allowed": true,
+        "resolution": {
+          "answers": {
+            "Which layout?": "Something else"
+          }
+        },
+        "reviewing": false
+      },
+      "derived": true
+    }
+  ]
+}

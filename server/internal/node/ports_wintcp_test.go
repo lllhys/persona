@@ -109,3 +109,44 @@ func TestWinProcTable(t *testing.T) {
 		t.Fatalf("owned = %v", got)
 	}
 }
+
+// Git Bash breaks Windows' process tree (#9815): a dev server whose tree lost the agent is still the pane's when its
+// environment names the pane, and only then. The agent's own sockets stay out, a pane not scanned gets nothing, a
+// process with two sockets is read once, and without an environment reader only the tree counts.
+func TestPaneListenersFindWhatTheTreeLost(t *testing.T) {
+	roots := map[string][]int{"orca:t1:l1": {100, 101}, "w1:p1": {200}}
+	all := []listener{
+		{pid: 101, port: 3000, addr: "127.0.0.1"}, // under the agent: the tree has it
+		{pid: 300, port: 5173, addr: "127.0.0.1"}, // its parent chain broke; ORCA_PANE_KEY names t1:l1
+		{pid: 300, port: 5173, addr: "::1"},
+		{pid: 100, port: 41000, addr: "127.0.0.1"}, // the agent itself: its IDE bridge
+		{pid: 400, port: 8080, addr: "0.0.0.0"},    // another Orca pane, not an agent's here
+		{pid: 500, port: 9000, addr: "127.0.0.1"},  // no engine variables (a system service)
+		{pid: 600, port: 4000, addr: "127.0.0.1"},  // herdr inside an Orca terminal: the herdr pane, the first one scanned
+	}
+	env := map[int][]string{100: {"orca:t1:l1"}, 300: {"orca:t1:l1"}, 400: {"orca:t9:l9"}, 600: {"w1:p1", "orca:t1:l1"}}
+	asked := map[int]int{}
+	panesOf := func(pid int) []string { asked[pid]++; return env[pid] }
+
+	owners := map[int]string{101: "orca:t1:l1"}
+	got := paneListeners(all, owners, roots, panesOf)
+	want := []listener{all[0], all[1], all[2], all[6]}
+	if !slices.Equal(got, want) {
+		t.Errorf("listeners:\n got %+v\nwant %+v", got, want)
+	}
+	if owners[300] != "orca:t1:l1" || owners[600] != "w1:p1" {
+		t.Errorf("owners = %v", owners)
+	}
+	for _, pid := range []int{100, 400, 500} {
+		if _, ok := owners[pid]; ok {
+			t.Errorf("%d counted for %s", pid, owners[pid])
+		}
+	}
+	if asked[101] != 0 || asked[300] != 1 {
+		t.Errorf("environment read %v; want none for an owned process and one per process", asked)
+	}
+
+	if got := paneListeners(all, map[int]string{101: "orca:t1:l1"}, roots, nil); !slices.Equal(got, all[:1]) {
+		t.Errorf("without a reader: %+v", got)
+	}
+}

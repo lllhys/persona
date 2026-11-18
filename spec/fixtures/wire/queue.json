@@ -1,0 +1,62 @@
+[
+  {
+    "name": "queue_edit_images",
+    "description": "取回 Persona 对话的排队消息：应答带每条消息的照片，没有照片的那条为 null。",
+    "source": [
+      "server/internal/proto/session.go: QueueEdit",
+      "server/internal/node/assistant_queue.go: assistantEditQueue",
+      "docs/protocol/protocol.md: POST /api/v1/sessions/{mid}/{sid}/queue"
+    ],
+    "derived": true,
+    "decoder": "queue_edit",
+    "input": {
+      "queue": [
+        "请看这张图。",
+        "再检查一遍。"
+      ],
+      "images": [
+        [
+          {
+            "mime": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFklEQVR4nAAJAPb/AgAAAAAAAAAAAwAAGwADK+C1DwAAAABJRU5ErkJggg=="
+          }
+        ],
+        null
+      ]
+    },
+    "expected": {
+      "accepted": true,
+      "fields": {
+        "/images/0/0/data": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAFklEQVR4nAAJAPb/AgAAAAAAAAAAAwAAGwADK+C1DwAAAABJRU5ErkJggg==",
+        "/images/0/0/mime": "image/png",
+        "/images/1": null,
+        "/queue/0": "请看这张图。",
+        "/queue/1": "再检查一遍。"
+      }
+    }
+  },
+  {
+    "name": "queue_edit_words",
+    "description": "没有一条带照片时，应答省略 images。",
+    "source": [
+      "server/internal/proto/session.go: QueueEdit",
+      "server/internal/node/assistant_queue.go: assistantEditQueue",
+      "docs/protocol/protocol.md: POST /api/v1/sessions/{mid}/{sid}/queue"
+    ],
+    "derived": true,
+    "decoder": "queue_edit",
+    "input": {
+      "queue": [
+        "请补充示例。",
+        "再检查一遍。"
+      ]
+    },
+    "expected": {
+      "accepted": true,
+      "fields": {
+        "/queue/0": "请补充示例。",
+        "/queue/1": "再检查一遍。"
+      }
+    }
+  }
+]

@@ -3,7 +3,6 @@
   "conversation": "Conversation only",
   "code_and_conversation": "Code and conversation",
   "confirm_code": "Confirm code rewind",
-  "block_claude_only": "Claude only",
   "hub_unsupported": "This hub can't rewind yet. Update it first.",
   "needs_full_device": "Rewinding needs a device with full access.",
   "done_conversation": "Conversation rewound",
@@ -16,5 +15,6 @@
   "editing_hint": "Enter rewinds the chat to before it and sends this · Esc cancels",
   "cancel_editing": "Cancel editing",
   "edit_ended": "Your last message changed, so this is no longer an edit: it will go as a new message.",
-  "edit_wait": "Can't rewind the chat right now ({reason}). Your edit is still in the box."
+  "edit_wait": "Can't rewind the chat right now ({reason}). Your edit is still in the box.",
+  "unsupported": "Unavailable"
 }

@@ -6,15 +6,16 @@ import { ApiError, errorText } from "../../lib/api";
 import { ago } from "../../lib/format";
 import { t } from "../../i18n";
 import {
-  channelTitle, checkHubUpdate, dockerSteps, hubUpdate, hubUpdateHistory, latestWarning, recordTitle, recordTone, setHubUpdateSettings, startHubUpdate,
-  updateFinished, updateStateTitle, updateView, updateWorking, type HubUpdateRecord, type HubUpdateStatus,
+  applyHubUpdateBackup, checkHubUpdate, hubUpdate, hubUpdateBackups, hubUpdateHistory, setHubUpdateSettings, startHubUpdate,
+  updateFinished, updateStateTitle, updateWorking, type HubUpdateBackup, type HubUpdateRecord, type HubUpdateStatus,
 } from "../../lib/hub-update";
+import { channelTitle, dockerSteps, latestWarning, recordTitle, recordTone, sourceBehindWarning, updateView } from "../../lib/hub-update-settings";
 import { navigate } from "../../lib/router";
 import { isResumed } from "../../lib/reconnect";
 import { onHubEvent, useStore } from "../../lib/store";
 import { Button, copyText, cx, Dialog, IconButton, Loading, Spinner, toast } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
-import { Group, Pill, Row, Switch } from "./SettingsParts";
+import { Group, Pill, Row, Switch, SettingsHint, settingsInputClass } from "./SettingsParts";
 import { ExtensionDownloadMirrors } from "./ExtensionDownloadMirrors";
 
 export function HubSettings() {
@@ -28,7 +29,14 @@ function HubUpdates() {
   const [error, setError] = useState("");
   const [checking, setChecking] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [savingSource, setSavingSource] = useState(false);
+  const [savingAuto, setSavingAuto] = useState(false);
   const [confirmNow, setConfirmNow] = useState(false);
+  const [backups, setBackups] = useState<HubUpdateBackup[]>([]);
+  const [backupError, setBackupError] = useState("");
+  const [loadingBackups, setLoadingBackups] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState("");
+  const [confirmBackup, setConfirmBackup] = useState(false);
   const last = useRef<string | undefined>(undefined);
 
   const apply = useCallback((s: HubUpdateStatus) => {
@@ -48,6 +56,24 @@ function HubUpdates() {
       })
       .catch((e) => (e instanceof ApiError && e.status === 404 ? setUnsupported(true) : setError(errorText(e))));
   }, [apply]);
+
+  const loadBackups = useCallback(async () => {
+    setLoadingBackups(true);
+    try {
+      const versions = await hubUpdateBackups();
+      setBackups(versions);
+      setSelectedVersion(id => versions.some(v => v.id === id) ? id : "");
+      setBackupError("");
+    } catch (e) { setBackupError(errorText(e)); }
+    finally { setLoadingBackups(false); }
+  }, []);
+
+  useEffect(() => {
+    if (status?.source === "web-dev") {
+      if (!updateWorking(status)) void loadBackups();
+    }
+    else { setBackups([]); setSelectedVersion(""); setConfirmBackup(false); }
+  }, [status?.source, status?.state, status?.backup?.id, loadBackups]);
 
   useEffect(() => {
     void load();
@@ -84,12 +110,28 @@ function HubUpdates() {
     }
   };
 
-  const setAuto = async (on: boolean) => {
+  const restore = async () => {
+    setStarting(true);
     try {
-      apply(await setHubUpdateSettings({ auto: on }));
+      apply(await applyHubUpdateBackup(selectedVersion));
+      setConfirmBackup(false);
+    } catch (e) { toast(t("settings-hubsettings.start_failed", { error: errorText(e) }), "error"); }
+    finally { setStarting(false); }
+  };
+
+  const setAuto = async (on: boolean, computers = false) => {
+    setSavingAuto(true);
+    try {
+      apply(await setHubUpdateSettings(computers ? { auto_update_nodes: on } : { auto: on }));
     } catch (e) {
       toast(t("settings-hubsettings.save_failed", { error: errorText(e) }), "error");
-    }
+    } finally { setSavingAuto(false); }
+  };
+  const setSource = async (source: "release" | "beta" | "web-dev") => {
+    setSavingSource(true);
+    try { apply(await setHubUpdateSettings({ source })); }
+    catch (e) { toast(t("settings-hubsettings.save_failed", { error: errorText(e) }), "error"); }
+    finally { setSavingSource(false); }
   };
 
   if (unsupported) {
@@ -113,6 +155,16 @@ function HubUpdates() {
   const working = updateWorking(status);
   const view = updateView(status);
   const warning = latestWarning(status);
+  const activeBackup = working ? status.latest?.backup_id : undefined;
+  const selectedID = activeBackup || selectedVersion;
+  const selectedBackup = status.source === "web-dev" ? backups.find(v => v.id === selectedID) : undefined;
+  const updateDate = (value?: string) => {
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return t("settings-hubsettings.unknown");
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  };
+  const datedCommit = (commit?: string, date?: string) => commit ? `${updateDate(date)} · ${commit.slice(0, 12)}` : t("settings-hubsettings.unknown");
+  const behind = sourceBehindWarning(status);
 
   return (
     <>
@@ -128,22 +180,64 @@ function HubUpdates() {
       )}
 
       <Group title={t("settings-hubsettings.version")} anchor="hub-version">
-        <Row label={t("settings-hubsettings.version")} mono>
+        <Row label={t("settings-hubsettings.version")} mono stackOnNarrow>
           <span className="max-w-[320px] truncate" title={status.version}>{status.version}</span>
         </Row>
-        <Row label={t("settings-hubsettings.channel")}>{channelTitle(status.channel)}</Row>
+        <Row label={t("settings-hubsettings.channel")} anchor="hub-channel">{status.version.startsWith("web-dev-") ? t("settings-hubsettings.web_dev") : channelTitle(status.channel)}</Row>
+        {status.development && <>
+          <Row label={t("settings-hubsettings.source")} stackOnNarrow>
+            <select aria-label={t("settings-hubsettings.source")} className={settingsInputClass}
+              value={status.source ?? "release"} disabled={working || checking || starting || savingSource || savingAuto}
+              onChange={(e) => void setSource(e.target.value as "release" | "beta" | "web-dev")}>
+              <option value="release">{t("lib-hub-update.channel_release")}</option>
+              <option value="beta">{t("settings-hubsettings.beta_channel")}</option>
+              <option value="web-dev" disabled={!status.development.configured}>{t("settings-hubsettings.web_dev")}</option>
+            </select>
+          </Row>
+          {!status.development.configured && <SettingsHint>{t("settings-hubsettings.dev_setup")}</SettingsHint>}
+        </>}
+        {status.source === "beta" && <SettingsHint>{t("settings-hubsettings.beta_scope")}</SettingsHint>}
+        {status.source === "web-dev" && <>
+          <SettingsHint>{t("settings-hubsettings.dev_scope")}</SettingsHint>
+          <Row label={t("settings-hubsettings.branch")} wrapValue>{status.development?.branch}</Row>
+          <Row label={t("settings-hubsettings.current_commit")} mono wrapValue>{datedCommit(status.development?.current_commit, status.development?.current_updated_at)}</Row>
+          <Row label={t("settings-hubsettings.latest_commit")} mono wrapValue>{!status.latest?.backup_id ? datedCommit(status.latest?.commit, status.latest?.updated_at) : t("settings-hubsettings.unknown")}</Row>
+        </>}
         {status.last_check && <Row label={t("settings-hubsettings.last_check")}>{ago(status.last_check)}</Row>}
         <div className="flex justify-end px-4 py-2.5">
-          <Button icon="retry" busy={checking} disabled={checking || working} onClick={() => void check()}>
+          <Button icon="retry" busy={checking} disabled={checking || working || savingSource} onClick={() => void check()}>
             {checking ? t("settings-hubsettings.checking") : t("settings-hubsettings.check")}
           </Button>
         </div>
       </Group>
 
       <Group title={t("settings-hubsettings.update")} anchor="hub-update" footer={status.can_update ? t("settings-hubsettings.update_footer") : undefined}>
+        {status.source === "web-dev" && status.can_update && <>
+          <Row label={t("settings-hubsettings.update_version")} stackOnNarrow>
+            <select aria-label={t("settings-hubsettings.update_version")} className={cx(settingsInputClass, "min-w-0 max-w-full")}
+              value={selectedID} disabled={working || checking || starting || savingSource || loadingBackups}
+              onChange={e => setSelectedVersion(e.target.value)}>
+              <option value="">{t("settings-hubsettings.latest_main")}{status.latest?.commit && !status.latest.backup_id ? ` · ${datedCommit(status.latest.commit, status.latest.updated_at)}` : ""}</option>
+              {backups.map(v => <option key={v.id} value={v.id}>{t("settings-hubsettings.backup_version")} · {datedCommit(v.commit, v.updated_at)}</option>)}
+              {activeBackup && !backups.some(v => v.id === activeBackup) && <option value={activeBackup}>{t("settings-hubsettings.backup_version")} · {datedCommit(status.latest?.commit, status.latest?.updated_at)}</option>}
+            </select>
+          </Row>
+          {backupError && <div className="flex items-center gap-3 px-4 py-2.5">
+            <p role="alert" className="min-w-0 flex-1 text-label break-words text-red">{t("settings-hubsettings.backup_error", { error: backupError })}</p>
+            <Button disabled={loadingBackups} onClick={() => void loadBackups()}>{t("settings-hubsettings.retry")}</Button>
+          </div>}
+          {selectedBackup && <>
+            <Row label={t("settings-hubsettings.target_commit")} mono wrapValue>{datedCommit(selectedBackup.commit, selectedBackup.updated_at)}</Row>
+            <Row label={t("settings-hubsettings.backup_created_at")} wrapValue>{updateDate(selectedBackup.created_at)}</Row>
+            <SettingsHint>{t("settings-hubsettings.program_backup_hint")}</SettingsHint>
+            {!working && <div className="flex justify-end px-4 py-2.5">
+              <Button tone="accent" busy={starting} disabled={starting || checking || savingSource || loadingBackups} onClick={() => setConfirmBackup(true)}>{t("settings-hubsettings.apply_backup")}</Button>
+            </div>}
+          </>}
+        </>}
         {view.kind === "docker" && <DockerRows s={status} />}
         {view.kind === "cannot" && <p className="px-4 py-3 text-[12.5px] leading-relaxed text-ink-3">{view.why}</p>}
-        {view.kind === "newer" && status.latest && (
+        {!selectedBackup && view.kind === "newer" && status.latest && (
           <>
             <div className="px-4 py-3">
               <div className="flex items-center gap-2">
@@ -169,23 +263,34 @@ function HubUpdates() {
             )}
           </>
         )}
-        {view.kind === "working" && <Progress s={status} onNow={() => setConfirmNow(true)} />}
-        {view.kind === "current" && (
+        {(view.kind === "working" || (selectedBackup && working)) && <Progress s={status} onNow={() => setConfirmNow(true)} />}
+        {!selectedBackup && view.kind === "current" && (status.source !== "web-dev" || status.last_check) && (behind ? (
+          <p className="flex items-start gap-1.5 px-4 py-3 text-meta leading-snug break-words text-orange">
+            <Icon name="info" size={13} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">{behind}</span>
+          </p>
+        ) : !status.error && (
           <div className="flex items-center gap-2 px-4 py-3 text-[13px] text-green">
             <Icon name="check" size={14} stroke={2.4} />
             {t("settings-hubsettings.up_to_date")}
           </div>
-        )}
+        ))}
         {status.error && !working && <p className={cx("px-4 py-2.5 text-[12px] break-words", status.state === "rolled_back" ? "text-orange" : "text-red")}>{status.error}</p>}
       </Group>
 
       {status.can_update && (
-        <Group footer={t("settings-hubsettings.auto_footer")}>
+        <Group footer={t(status.source === "web-dev" ? "settings-hubsettings.dev_auto_footer" : "settings-hubsettings.auto_footer")} anchor="hub-auto-update">
           <Row label={t("settings-hubsettings.auto_update")}>
-            <Switch on={status.auto} onChange={(on) => void setAuto(on)} label={t("settings-hubsettings.auto_update")} />
+            <Switch on={status.auto} disabled={savingAuto || savingSource} onChange={(on) => void setAuto(on)} label={t("settings-hubsettings.auto_update")} />
           </Row>
         </Group>
       )}
+      {status.source === "web-dev" && status.auto_update_nodes !== undefined && <Group footer={t("settings-hubsettings.computer_auto_footer")}>
+        <Row label={t("settings-hubsettings.computer_auto")} wrapHint>
+          <Switch on={status.auto_update_nodes} disabled={working || savingSource || savingAuto} label={t("settings-hubsettings.computer_auto")}
+            onChange={(on) => void setAuto(on, true)} />
+        </Row>
+      </Group>}
 
       <Nodes />
 
@@ -193,18 +298,28 @@ function HubUpdates() {
         <Group title={t("settings-hubsettings.history")}>
           {history.slice(0, 10).map((r, i) => (
             <div key={`${r.to_build}/${r.started ?? i}`} className="px-4 py-2.5">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className={cx("text-[13px] font-medium", { green: "text-green", orange: "text-orange", red: "text-red" }[recordTone(r.result)])}>{recordTitle(r.result)}</span>
                 {r.auto && <Pill>{t("settings-hubsettings.auto")}</Pill>}
+                {r.source === "web-dev" && <Pill>{t("settings-hubsettings.web_dev")}</Pill>}
                 <span className="flex-1" />
-                {(r.ended || r.started) && <span className="shrink-0 text-[11.5px] text-ink-3">{ago(r.ended || r.started)}</span>}
+                {(r.ended || r.started) && <span className="shrink-0 text-[11.5px] text-ink-3">{updateDate(r.ended || r.started)}</span>}
               </div>
               <div className="mt-0.5 truncate font-mono text-[11.5px] text-ink-3">{`${r.from_version} → ${r.to_version}`}</div>
+              {r.commit && <div className="mt-0.5 font-mono text-submeta text-ink-3">{datedCommit(r.commit, r.ended || r.started)}</div>}
               {r.reason && <p className="mt-0.5 text-[11.5px] leading-snug text-ink-3">{r.reason}</p>}
             </div>
           ))}
         </Group>
       )}
+
+      <Dialog open={confirmBackup} onClose={() => setConfirmBackup(false)} title={t("settings-hubsettings.apply_backup")} width={400}
+        footer={<>
+          <Button tone="quiet" onClick={() => setConfirmBackup(false)}>{t("common.cancel")}</Button>
+          <Button tone="accent" busy={starting} disabled={starting || working || !selectedBackup} onClick={() => void restore()}>{t("settings-hubsettings.apply_backup")}</Button>
+        </>}>
+        <p className="text-meta leading-relaxed text-ink-2">{t("settings-hubsettings.apply_backup_confirm")}</p>
+      </Dialog>
 
       <Dialog
         open={confirmNow}

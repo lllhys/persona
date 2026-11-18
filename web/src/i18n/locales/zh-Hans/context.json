@@ -1,12 +1,8 @@
 {
-  "left": "还剩 {percent}% 上下文",
-  "used": "已用 {percent}%",
   "details": "Agent 行显示详情",
-  "details_hint": "Agent 行多一行：模型、上下文、多久没动、目录。会话顶栏始终显示模型和上下文条。默认关。",
-  "as_used": "上下文显示为已用",
-  "as_used_hint": "上下文写已用多少（已用 39%），不写还剩多少（还剩 61%）；用到 80% 起变警告色。默认关。",
-  "header_left": "上下文剩 {percent}%",
-  "header_used": "上下文已用 {percent}%",
+  "details_hint": "Agent 行多一行：模型、上下文、多久没动、目录。默认关。",
+  "label": "上下文 {percent}%",
+  "summary": "上下文 {used}%（已用），还剩 {left}%",
   "hint_ok": "上下文是 Agent 在这段对话里能记住的量，用完会自动压缩：较早的内容只留摘要。",
   "hint_warn": "快满了，满了会自动压缩，较早的内容只留摘要。想先收个尾，可以发 /compact 主动压缩，或者开一个新 Agent 接着做。",
   "tokens": "{used} / {window} token"

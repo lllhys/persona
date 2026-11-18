@@ -197,9 +197,12 @@ struct ProviderComputersPage: View {
         let typed = !(scope.keys[id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             Text(name(id)).font(Theme.Font.labelStrong).foregroundStyle(.secondary).lineLimit(1)
-            SecretField(has && !removed ? String(localized: "Type a key to replace it") : String(localized: "Uses the provider's key"),
-                        text: Binding(get: { scope.keys[id] ?? "" }, set: { scope.keys[id] = $0 }),
-                        identifier: "computers.key.\(id)")
+            ProviderKeyField(title: has && !removed ? String(localized: "Type a key to replace it") : String(localized: "Uses the provider's key"),
+                             filled: String(localized: "Filled in"),
+                             text: Binding(get: { scope.keys[id] ?? "" }, set: { scope.keys[id] = $0 }),
+                             byReference: Binding(get: { scope.keyRefs[id] ?? false }, set: { scope.keyRefs[id] = $0 }),
+                             references: model.hubFeatures.contains("launcher_secret_references"),
+                             stored: old?.machineKeyReferences?[id], identifier: "computers.key.\(id)")
             if has, !typed {
                 HStack(spacing: Theme.Space.s) {
                     if removed {

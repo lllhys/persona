@@ -3,6 +3,13 @@
     <string name="machines_title">マシン</string>
     <string name="machines_title_detail">マシンの詳細</string>
     <string name="machines_summary">%1$d/%2$d台がオンライン、%3$d台が要注意</string>
+    <string name="machines_summary_with_agents">%1$d/%2$d台がオンライン、%3$s、%4$s</string>
+    <plurals name="machines_attention">
+        <item quantity="other">%d台が要注意</item>
+    </plurals>
+    <plurals name="machines_agents_needs_you">
+        <item quantity="other">%d件のエージェントが要対応</item>
+    </plurals>
     <string name="machines_refresh">更新</string>
     <string name="machines_sessions_failure">マシンとセッションの一覧はまだ更新されていません。</string>
     <string name="machines_empty_title">まだパソコンがありません</string>
@@ -54,6 +61,8 @@
     <string name="machines_disk_total">ディスク（合計%1$s）</string>
     <string name="machines_sessions_title">実行中のセッション</string>
     <string name="machines_no_sessions">このマシンで実行中のセッションはありません</string>
+    <string name="machines_agents_show_all">すべて表示（%1$d件）</string>
+    <string name="machines_agents_show_less">折りたたむ</string>
     <string name="machines_system_title">システム情報</string>
     <string name="machines_system_os">システム</string>
     <string name="machines_system_version">バージョン</string>
@@ -89,6 +98,7 @@
     <string name="machines_reconnecting">再接続中…</string>
     <string name="machines_reconnect">再接続</string>
     <string name="machines_engine_note">選択したエンジンのセッションのみ表示します。</string>
+    <string name="machines_engine_note_none">デスクトップアプリのセッションを表示します。スマートフォンからのセッションの開始や再開はできません。</string>
     <string name="machines_botmux">botmux のセッションも表示</string>
     <string name="machines_botmux_note">このコンピューターに botmux がある場合、botmux のセッションを選択したエンジンのセッションと一緒に表示します。オフにすると表示せず、botmux も実行しません。</string>
     <string name="machines_notice_botmux_failed">botmux の設定を保存できませんでした：%1$s</string>

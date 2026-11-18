@@ -149,6 +149,75 @@ class ModelConfigurationScreenTest {
         advancedReads(false)
     }
 
+    /**
+     * #5086 and #5806: the hub's sentence for a purpose is under its name in the list and on its own page; the listed
+     * background supervisor is drawn once, after the last use of its group, and is not asked for by id.
+     */
+    @Test fun aPurposeSaysWhatItIsForInTheListAndOnItsPage() {
+        val about = "Follows up the tasks no leader supervises, so the main chat stays free for you."
+        val supervise = ModelPurpose(BackgroundSupervisor.PURPOSE, "Background supervisor", "Everyday uses", parent = "assistant",
+            description = about, effective = ModelBinding(model = "Example chat model"), inheritedFrom = "assistant",
+            fields = listOf("provider", "model", "effort"))
+        val described = purposes.map { if (it.id == "assistant") it.copy(description = "Answers you in the Persona conversation.") else it } + supervise
+        val asked = mutableListOf<String>()
+        // not delegated to `models`: its forManager would hand the page the catalog without the descriptions
+        val listing = object : ModelConfiguration {
+            override suspend fun catalog() = ModelCatalog(described)
+            override suspend fun purpose(id: String): ModelPurposeDetail {
+                asked += id
+                return described.firstOrNull { it.id == id }?.let { ModelPurposeDetail(it) } ?: throw ModelPurposeNotFound(id)
+            }
+            override suspend fun save(purpose: ModelPurpose, draft: ModelConfigurationDraft): ModelPurposeSave =
+                error("Reading a description must not save model configuration")
+            override suspend fun providerModels(provider: String, refresh: Boolean, machine: String?): ProviderModels? = null
+        }
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        var page by mutableStateOf<String?>(null)
+        rule.setContent {
+            CompositionLocalProvider(LocalManagerRoster provides roster) {
+                PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                    Box(Modifier.testTag("model-shot").width(400.dp).height(1200.dp).background(PersonaTheme.palette.background)) {
+                        val open = page
+                        if (open == null) ModelConfigurationPage(listing, onBack = {}, onPurpose = { _, _ -> })
+                        else ModelPurposePage(listing, open, onBack = {}, manager = "work")
+                    }
+                }
+            }
+        }
+        // under the reports folder, which CI uploads
+        val out = File(System.getProperty("persona.shots") ?: "build/reports/tests/model-described-shots").also { it.mkdirs() }
+        for (look in AppStyle.entries) for (night in listOf(false, true)) {
+            style = look; dark = night; page = null
+            Snapshot.sendApplyNotifications(); rule.waitForIdle()
+            rule.onNodeWithText("Answers you in the Persona conversation.", substring = true).assertIsDisplayed()
+            rule.onNodeWithText(about, substring = true).assertIsDisplayed()
+            // one row, last of its group; a purpose without the sentence reads as before
+            rule.onAllNodesWithText("Background supervisor").assertCountEquals(1)
+            val screening = rule.onNodeWithText("Information screening").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            val supervisor = rule.onNodeWithText("Background supervisor").fetchSemanticsNode().boundsInRoot
+            val agents = rule.onNodeWithText("Lark /agent").fetchSemanticsNode().boundsInRoot
+            assertTrue("the background supervisor is last of its group in $look", screening.bottom <= supervisor.top && supervisor.bottom <= agents.top)
+            val variant = "${look.name.lowercase()}-${if (night) "dark" else "light"}"
+            File(out, "models-described-$variant.png").outputStream().use {
+                assertTrue(rule.onNodeWithTag("model-shot").captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+            assertTrue("a listed background supervisor is not asked for by id", asked.isEmpty())
+            page = BackgroundSupervisor.PURPOSE
+            Snapshot.sendApplyNotifications(); rule.waitForIdle()
+            rule.onNodeWithTag("model-purpose-about").assertIsDisplayed().assertTextEquals(about)
+            File(out, "model-purpose-described-$variant.png").outputStream().use {
+                assertTrue(rule.onNodeWithTag("model-shot").captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+            assertEquals(listOf(BackgroundSupervisor.PURPOSE), asked.distinct())
+            asked.clear()
+        }
+        // a task's purpose, an extension's and an older hub's have no sentence: no line on the page
+        page = "inbox.triage"
+        Snapshot.sendApplyNotifications(); rule.waitForIdle()
+        rule.onAllNodesWithTag("model-purpose-about").assertCountEquals(0)
+    }
+
     /** Light/dark, default/200% text, closed/open; all captures use reduced motion. */
     @Test fun capturesEveryStyleAppearanceAndTextSize() {
         var style by mutableStateOf(AppStyle.Glass)

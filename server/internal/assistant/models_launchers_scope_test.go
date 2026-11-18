@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -273,11 +274,11 @@ func TestProviderSkipsComputersWithTheirOwnService(t *testing.T) {
 		"server/claude": {Agent: "claude", Known: true},
 	}
 	addProvider(t, s, `{"name":"fill","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-fill-00000"}`)
-	if r := request(s, "GET", "/api/v1/machines/mac/launchers", ""); strings.Contains(r.Body.String(), `"name":"fill"`) {
-		t.Fatalf("mac lists it: %s", r.Body)
+	if p := pickerOf(t, s, "mac", ""); slices.Contains(p.names(), "fill") {
+		t.Fatalf("mac lists it: %v", p.names())
 	}
-	if r := request(s, "GET", "/api/v1/machines/server/launchers", ""); !strings.Contains(r.Body.String(), `"name":"fill"`) {
-		t.Fatalf("server does not list it: %s", r.Body)
+	if p := pickerOf(t, s, "server", ""); !slices.Contains(p.names(), "fill") {
+		t.Fatalf("server does not list it: %v", p.names())
 	}
 	if err := s.call(context.Background(), "mac", DeviceAssistantSend, map[string]any{"launcher": "fill", "text": "hi"}, nil); codeOf(err) != proto.CodeLauncherOwnService {
 		t.Fatalf("a send on mac: %v", err)
@@ -287,6 +288,139 @@ func TestProviderSkipsComputersWithTheirOwnService(t *testing.T) {
 	defer f.mu.Unlock()
 	if !slices.Equal(names(f.catalog["mac"]), []string{"fill"}) {
 		t.Fatalf("mac's catalog: %v", names(f.catalog["mac"]))
+	}
+}
+
+// pickerOf is GET /api/v1/machines/{machine}/launchers?purpose=purpose: what New Agent's picker lists, and what it
+// shows off with why.
+func pickerOf(t *testing.T, s *Service, machine, purpose string) picker {
+	t.Helper()
+	path := "/api/v1/machines/" + machine + "/launchers"
+	if purpose != "" {
+		path += "?purpose=" + purpose
+	}
+	r := request(s, "GET", path, "")
+	if r.Code != http.StatusOK {
+		t.Fatalf("%s: %d %s", path, r.Code, r.Body)
+	}
+	var out picker
+	if err := json.Unmarshal(r.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+type picker struct {
+	Launchers   []proto.Launcher      `json:"launchers"`
+	Unavailable []unavailableLauncher `json:"unavailable"`
+}
+
+func (p picker) names() []string {
+	var out []string
+	for _, l := range p.Launchers {
+		out = append(out, l.Name)
+	}
+	return out
+}
+
+// New Agent's picker says why a provider is missing on a computer whose harness has a service of its own (#8109), as
+// the main chat's model panel does: listed off with its own-service reason there, not where it runs, and not for a
+// provider out of the computer's scope (its scope is the user's choice) or one that is used everywhere.
+func TestNewAgentPickerSaysWhyAProviderSkipsThisComputer(t *testing.T) {
+	s, f := scopeService(t)
+	f.launcherList = []proto.Launcher{{Name: "claude"}}
+	f.ownServices = map[string]proto.OwnServiceState{
+		"mac/claude":    {Agent: "claude", Known: true, Own: true, Via: "login"},
+		"server/claude": {Agent: "claude", Known: true},
+	}
+	addProvider(t, s, `{"name":"fill","display_name":"DeepSeek","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-fill-00000"}`)
+	addProvider(t, s, `{"name":"box","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-box-000000","share":"selected","scope_machines":["server"]}`)
+	addProvider(t, s, `{"name":"everywhere","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-use-000000","own_service":"use"}`)
+	addProvider(t, s, `{"kind":"api","api":"messages","name":"direct","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-api-000000","own_service":"skip"}`)
+	addProvider(t, s, `{"name":"dup","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-dup-000000"}`)
+	// an alias by the same name in the computers' rc files since: where the provider is left out, the alias is listed
+	f.launcherList = append(f.launcherList, proto.Launcher{Name: "dup"})
+	for _, purpose := range []string{"", "agent.new"} {
+		mac := pickerOf(t, s, "mac", purpose)
+		if slices.Contains(mac.names(), "fill") || !slices.Contains(mac.names(), "everywhere") || !slices.Contains(mac.names(), "dup") {
+			t.Fatalf("%q: mac lists %v", purpose, mac.names())
+		}
+		if len(mac.Unavailable) != 1 {
+			t.Fatalf("%q: mac's unavailable: %+v", purpose, mac.Unavailable)
+		}
+		u := mac.Unavailable[0]
+		if u.Name != "fill" || u.DisplayName != "DeepSeek" || u.Kind != "launcher" || u.Code != proto.CodeLauncherOwnService {
+			t.Fatalf("%q: mac's unavailable: %+v", purpose, u)
+		}
+		if !strings.Contains(u.Reason, "DeepSeek") || !strings.Contains(u.Reason, "Claude Code") {
+			t.Fatalf("%q: reason %q", purpose, u.Reason)
+		}
+		if server := pickerOf(t, s, "server", purpose); !slices.Contains(server.names(), "fill") || len(server.Unavailable) != 0 {
+			t.Fatalf("%q: server lists %v, unavailable %+v", purpose, server.names(), server.Unavailable)
+		}
+	}
+	// Turning the rule off for it, as docs/integrations/launchers.md has the PUT: the provider as read with that field
+	// changed. The field alone is not an edit (base_url and model are sent on every PUT, as on POST).
+	if r := request(s, "PUT", "/api/v1/launchers/fill", `{"own_service":"use"}`); r.Code != http.StatusBadRequest {
+		t.Fatalf("PUT with own_service alone: %d %s", r.Code, r.Body)
+	}
+	r := request(s, "GET", "/api/v1/launchers/fill", "")
+	var read struct {
+		Launcher map[string]any `json:"launcher"`
+	}
+	if err := json.Unmarshal(r.Body.Bytes(), &read); err != nil || read.Launcher == nil {
+		t.Fatalf("GET: %v %s", err, r.Body)
+	}
+	read.Launcher["own_service"] = "use"
+	body, _ := json.Marshal(read.Launcher)
+	if r := request(s, "PUT", "/api/v1/launchers/fill", string(body)); r.Code != http.StatusOK {
+		t.Fatalf("PUT as read with own_service use: %d %s", r.Code, r.Body)
+	}
+	if mac := pickerOf(t, s, "mac", ""); !slices.Contains(mac.names(), "fill") || len(mac.Unavailable) != 0 {
+		t.Fatalf("after turning the rule off, mac lists %v, unavailable %+v", mac.names(), mac.Unavailable)
+	}
+}
+
+// A provider whose latest check failed. Where its own-service rule leaves it out anyway, that rule is the reason the
+// pickers give, the main chat's as New Agent's: with the check passing it would still not be listed. Where it would
+// run, the check alone hides it and no picker calls it skipped.
+func TestAFailedCheckDoesNotChangeTheOwnServiceReason(t *testing.T) {
+	s, f := scopeService(t)
+	f.launcherList = []proto.Launcher{{Name: "claude"}}
+	f.ownServices = map[string]proto.OwnServiceState{
+		"mac/claude":    {Agent: "claude", Known: true, Own: true, Via: "login"},
+		"server/claude": {Agent: "claude", Known: true},
+	}
+	addProvider(t, s, `{"name":"fill","display_name":"DeepSeek","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-fill-00000"}`)
+	failed := func(machine string) *LauncherHealth {
+		return &LauncherHealth{Machine: machine, Launcher: "fill", State: healthFailing, Error: "exit status 1", CheckedAt: time.Now()}
+	}
+	s.health.loaded = true
+	s.health.recs = map[string]*LauncherHealth{healthKey("mac", "fill"): failed("mac"), healthKey("server", "fill"): failed("server")}
+	fill := func(p picker) (unavailableLauncher, bool) {
+		i := slices.IndexFunc(p.Unavailable, func(u unavailableLauncher) bool { return u.Name == "fill" })
+		if i < 0 {
+			return unavailableLauncher{}, false
+		}
+		return p.Unavailable[i], true
+	}
+	for _, purpose := range []string{"", "agent.new", "assistant"} {
+		mac := pickerOf(t, s, "mac", purpose)
+		if u, ok := fill(mac); slices.Contains(mac.names(), "fill") || !ok || u.Code != proto.CodeLauncherOwnService {
+			t.Fatalf("%q: mac lists %v, unavailable %+v", purpose, mac.names(), mac.Unavailable)
+		}
+		server := pickerOf(t, s, "server", purpose)
+		if _, ok := fill(server); slices.Contains(server.names(), "fill") || ok {
+			t.Fatalf("%q: server lists %v, unavailable %+v", purpose, server.names(), server.Unavailable)
+		}
+	}
+	// The check passing again: the server lists it, the mac still says why not.
+	s.health.recs = map[string]*LauncherHealth{}
+	if server := pickerOf(t, s, "server", ""); !slices.Contains(server.names(), "fill") {
+		t.Fatalf("server after the check passed: %v", server.names())
+	}
+	if _, ok := fill(pickerOf(t, s, "mac", "")); !ok {
+		t.Fatal("mac stopped saying why after the check passed")
 	}
 }
 
@@ -304,5 +438,47 @@ func TestModelConfigExplainsAnOutOfScopeProvider(t *testing.T) {
 	p := purposeOf(t, s, "assistant")
 	if p.MachineID != "server" || !strings.Contains(p.Status, "server") || slices.Contains(p.ProviderIDs, "launcher.box") {
 		t.Fatalf("assistant purpose: machine %q status %q providers %v", p.MachineID, p.Status, p.ProviderIDs)
+	}
+}
+
+// launchers.agents_default tells a node the provider and model Model Settings › Agents names, for pi (#8194): only a
+// provider pi can use and the computer is in scope for, names only, never the key.
+func TestAgentsDefaultForPi(t *testing.T) {
+	s, _ := scopeService(t)
+	addProvider(t, s, `{"name":"box","base_url":"https://gw.example.com","model":"m1","api_key":"sk-test-box-000000","share":"selected","scope_machines":["server"]}`)
+	addProvider(t, s, `{"name":"gem","agent":"agy","base_url":"https://gm.example.com","model":"g1","api_key":"sk-test-gem-000000"}`)
+	ask := func(machine string) map[string]any {
+		t.Helper()
+		out, handled, err := s.NodeAnswer(context.Background(), machine, NodeAgentsDefault, []byte(`{}`))
+		if !handled || err != nil {
+			t.Fatalf("not answered: %v %v", handled, err)
+		}
+		b, _ := json.Marshal(out)
+		if strings.Contains(string(b), "sk-test") {
+			t.Fatalf("a key in the answer: %s", b)
+		}
+		return out.(map[string]any)
+	}
+	setModel(t, s, "agent.new", ModelBinding{Provider: "launcher.box", Model: "m2", Effort: "high"})
+	if got := ask("server"); got["launcher"] != "box" || got["model"] != "m2" || got["effort"] != "high" {
+		t.Fatalf("in scope: %v", got)
+	}
+	if got := ask("mac"); len(got) != 0 {
+		t.Fatalf("out of scope: %v", got)
+	}
+	setModel(t, s, "agent.new", ModelBinding{Provider: "launcher.gem"})
+	if got := ask("server"); len(got) != 0 {
+		t.Fatalf("a provider pi cannot use: %v", got)
+	}
+	var list struct {
+		Launchers []LauncherView `json:"launchers"`
+	}
+	_ = json.Unmarshal(request(s, "GET", "/api/v1/launchers", "").Body.Bytes(), &list)
+	pi := map[string]bool{}
+	for _, l := range list.Launchers {
+		pi[l.Name] = l.Pi
+	}
+	if !pi["box"] || pi["gem"] {
+		t.Fatalf("pi in the list: %v", pi)
 	}
 }

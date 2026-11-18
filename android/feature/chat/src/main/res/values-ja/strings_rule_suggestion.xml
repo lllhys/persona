@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_rule_always">常に</string>
+    <string name="chat_rule_not_now">今はしない</string>
+    <string name="chat_rule_scope">対象：%1$s</string>
+    <string name="chat_rule_creates_trust">「常に」を選ぶとこの種類のタスクを記憶し、同じ種類のタスクは計画カードなしで Persona が直接開始します。</string>
+    <string name="chat_rule_creates_standing">「常に」を選ぶと継続的な承認を作成します：%1$s。</string>
+    <string name="chat_rule_action_merge">マージ</string>
+    <string name="chat_rule_action_push">プッシュ</string>
+    <string name="chat_rule_action_deploy_test">テスト環境へのデプロイ</string>
+    <string name="chat_rule_conditions">次の条件を満たす場合のみ：%1$s</string>
+    <string name="chat_rule_condition_ci_green">チェックが通っている</string>
+    <string name="chat_rule_condition_no_conflicts">競合がない</string>
+    <string name="chat_rule_quote">あなたの言葉として記録：「%1$s」</string>
+    <string name="chat_rule_creates_none">「常に」を選んでもルールは保存されず、この行を閉じるだけです。</string>
+    <string name="chat_rule_creates_none_setting">「常に」を選んでもルールは保存されず、この行を閉じるだけです。この種の質問に Persona が先に答えるには、hub のあるコンピュータ上のアシスタントの設定ファイルで %1$s をオンにする必要があります。</string>
+    <string name="chat_rule_made_trust">ルールを作成しました：この種類のタスクは今後直接開始されます。Web 版の Persona 設定の「記憶した自動開始ルール」に表示され、そこで削除できます。</string>
+    <string name="chat_rule_made_standing">継続的な承認を追加しました。アシスタントのプロフィールの「継続的な承認」で確認・取り消しできます。</string>
+    <string name="chat_rule_made_none">ルールは保存されていません。</string>
+    <string name="chat_rule_made_none_setting">ルールは保存されていません。この種の質問に Persona が先に答えるには、hub のあるコンピュータ上のアシスタントの設定ファイルで %1$s をオンにしてください。</string>
+    <string name="chat_rule_made_other">ルールを作成しました。</string>
+    <string name="chat_decision_for_briefing">次のブリーフィングと一緒に届きます</string>
+</resources>

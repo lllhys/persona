@@ -5,7 +5,7 @@ use the glasses' microphone as a recording input, and take a camera photo as cha
 
 ## In brief
 
-- **Glasses microphone**: phone recording under Knowledge › Recordings (`RecordingCaptureControls`, called "Recording context" before #3911) gains a "Microphone" option (phone microphone / glasses or Bluetooth headset). It uses standard Bluetooth HFP, requires no Meta SDK, and does not affect anything disabled by default.
+- **Glasses microphone**: phone recording on the Recordings page (`RecordingCaptureControls`, called "Recording context" before #3911) gains a "Microphone" option (phone microphone / glasses or Bluetooth headset). It uses standard Bluetooth HFP, requires no Meta SDK, and does not affect anything disabled by default.
 - **Glasses photo**: enable Meta's Wearables Device Access Toolkit (DAT) through configuration. "Glasses Photo" in the input bar's attachment menu lets you take a photo while viewing a live preview and attach it to a message. Not compiled into the App by default.
 
 ## Meta's third-party integration options (verified 2026-11)

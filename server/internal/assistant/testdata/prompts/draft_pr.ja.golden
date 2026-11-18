@@ -1,0 +1,7 @@
+📋 督办：你派出去的任务有 1 个要你处理
+（这是 Persona 的督办消息，不是用户发的。）
+<persona-supervision level="triage" />
+
+1. 任务「Example task」（todo_example，signal=draft_pr）：（関連する自分の PR https://github.com/example/app/pull/12（head head-a）はまだドラフトで、上流のレビューやマージ待ちではありません。
+）
+   验收标准：The task PR is merged.

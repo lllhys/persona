@@ -38,6 +38,22 @@ struct StoredValueTests {
         #expect(compact.wrappedValue == false)
     }
 
+    /// The value the key has already is not written again (#4206): every write wakes every `@AppStorage` view.
+    @Test func theSameValueIsNotWrittenAgain() async {
+        let compact = StoredValue(wrappedValue: false, "test.same", store: defaults)
+        compact.wrappedValue = true
+        nonisolated(unsafe) var writes = 0
+        let token = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: defaults, queue: nil) { _ in
+            writes += 1
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        compact.wrappedValue = true
+        #expect(writes == 0)
+        compact.wrappedValue = false
+        #expect(writes == 1)
+        #expect(defaults.bool(forKey: "test.same") == false)
+    }
+
     @Test func rawValuesAndSharing() {
         enum Mode: String { case a, b }
         let one = StoredValue(wrappedValue: Mode.a, "test.mode", store: defaults)

@@ -1,0 +1,1 @@
+{{if eq .Language "日本語"}}人身の危険や安全：煙・ガス・水漏れの警報、誰かが助けを求めている、転倒検知など。{{else if .Language}}Physical harm or safety: a smoke, gas or water-leak alarm, someone calling for help, a fall alert and the like.{{else}}人身伤害或安全：烟雾、燃气、漏水报警，有人求救，跌倒检测这类。{{end}}

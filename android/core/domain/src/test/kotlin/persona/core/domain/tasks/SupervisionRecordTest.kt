@@ -6,7 +6,7 @@ import persona.core.contracts.*
 import persona.core.domain.lines.*
 
 /**
- * #4339 C13: on Glass a quiet supervision round stays in Persona's conversation as one "Supervision record" line (iOS
+ * #4339 C13: on Glass a quiet supervision round stays in Persona's conversation as one "Handled in the background" line (iOS
  * `SupervisionRecordLine`), and scheduled and follow-up rounds read as they are unless the background rounds fold; Brief
  * and Board keep moving them to the background record.
  */

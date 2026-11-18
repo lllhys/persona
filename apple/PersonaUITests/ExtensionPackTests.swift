@@ -6,7 +6,8 @@ import XCTest
 /// why, and what wasn't tried, and a pack's install preview names its members. Each in light, dark and at the largest
 /// text size; `TEST_RUNNER_PERSONA_SHOTS=<dir>` keeps the screenshots (`pack-<step>-<look>.png`).
 /// `TEST_RUNNER_PERSONA_PHASE=before` takes the same steps on an older build (its xctestrun pointed at it), for before /
-/// after screenshots, and checks nothing that build doesn't do.
+/// after screenshots, and checks nothing that build doesn't do. The switch tests take a second hub with
+/// `MOCK_EXTENSION_PACK=legacy` in `TEST_RUNNER_PERSONA_EXTENSION_PACK_OLD_HUB` for the older-hub wording and no prompt.
 final class ExtensionPackTests: XCTestCase {
     private var env: [String: String] { ProcessInfo.processInfo.environment }
     private var before: Bool { env["PERSONA_PHASE"] == "before" }
@@ -22,8 +23,8 @@ final class ExtensionPackTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    @MainActor private func launch(_ args: [String]) throws -> XCUIApplication {
-        guard let hub = env["PERSONA_EXTENSION_PACK_HUB"] else {
+    @MainActor private func launch(_ args: [String], hub hubOverride: String? = nil) throws -> XCUIApplication {
+        guard let hub = hubOverride ?? env["PERSONA_EXTENSION_PACK_HUB"] else {
             throw XCTSkip("needs mock_hub.py with MOCK_EXTENSIONS=1 MOCK_EXTENSION_PACK=1 (PERSONA_EXTENSION_PACK_HUB)")
         }
         addUIInterruptionMonitor(withDescription: "notifications, the icon's note") { alert in
@@ -36,25 +37,20 @@ final class ExtensionPackTests: XCTestCase {
         app.launchPinned()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         for label in ["允许", "Allow"] where springboard.buttons[label].waitForExistence(timeout: 3) { springboard.buttons[label].tap() }
+        if springboard.alerts.firstMatch.waitForExistence(timeout: 2) {
+            HomeScreen.dismissIconNote()
+            app.terminate()
+            app.launchPinned()
+            XCTAssertFalse(springboard.alerts.firstMatch.waitForExistence(timeout: 1),
+                           "the same appearance must not ask about its icon again")
+        }
         return app
     }
 
     @MainActor private func shot(_ app: XCUIApplication, _ step: String, _ look: String) {
         guard let dir = env["PERSONA_SHOTS"] else { return }
-        dismissIconNote()
+        HomeScreen.dismissIconNote()
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appending(path: "pack-\(step)-\(look).png"))
-    }
-
-    /// The app icon follows the color scheme (`AppIconChoice`), and the system says so in an alert over the page when a
-    /// launch switches it: closed before a shot.
-    @MainActor private func dismissIconNote() {
-        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        guard board.alerts.firstMatch.waitForExistence(timeout: 2) else { return }
-        for label in ["OK", "好"] where board.alerts.buttons[label].exists { // i18n-ignore: the system's own button
-            board.alerts.buttons[label].tap()
-            sleep(1)
-            return
-        }
     }
 
     /// Any element whose label has `text` (a row's combined label has its name and its line).
@@ -134,5 +130,146 @@ final class ExtensionPackTests: XCTestCase {
             }
             shot(app, "preview", look.name)
         }
+    }
+
+    @MainActor private func setPackEnabled(_ enabled: Bool, hub: String) async throws {
+        var request = URLRequest(url: URL(string: hub + "/api/v1/extensions/example-pack/-/enabled")!)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
+    @MainActor private func toggle(_ element: XCUIElement, in app: XCUIApplication,
+                                   changingTo expected: String? = nil, presenting dialogID: String? = nil) {
+        // Retry only a synthesized tap with no observable outcome. The caller's state, wording and write assertions stay exact.
+        for _ in 0..<3 {
+            HomeScreen.dismissIconNote()
+            let control = element.switches.firstMatch
+            let target = control.exists ? control : element
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: target)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed,
+                           "the switch must finish loading before it is tapped")
+            target.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+            if let dialogID, app.buttons[dialogID].waitForExistence(timeout: 2) { return }
+            if let expected {
+                let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: element)
+                if XCTWaiter.wait(for: [changed], timeout: 2) == .completed { return }
+            }
+        }
+    }
+
+    @MainActor private func value(_ expected: String, of element: XCUIElement) {
+        let wait = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [wait], timeout: 5), .completed,
+                       "expected \(expected), got \(String(describing: element.value))")
+    }
+
+    @MainActor private func systemShot(_ step: String, _ look: String) {
+        guard let dir = env["PERSONA_SHOTS"] else { return }
+        HomeScreen.dismissIconNote()
+        try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir)
+            .appending(path: "pack-\(step)-\(look).png"))
+    }
+
+    @MainActor func testPackSwitchConfirmationAndFootnotes() async throws {
+        if before { throw XCTSkip("the before build has no pack-switch confirmation") }
+        guard let hub = env["PERSONA_EXTENSION_PACK_HUB"] else {
+            throw XCTSkip("needs the current pack mock")
+        }
+        let languages = [
+            ("en", "en_US", "Turning the pack off turns off its members too", "Turning the pack back on turns on"),
+            ("zh-Hans", "zh_CN", "停用合集会一起停用它的成员", "重新启用合集会重新启用"),
+        ]
+        for (language, locale, onText, offText) in languages {
+            for look in looks {
+                try await setPackEnabled(true, hub: hub)
+                let app = try launch(["-openExtension", "example-pack", "-AppleLanguages", "(\(language))",
+                                      "-AppleLocale", locale] + look.args)
+                let enabled = app.switches["plugin-enabled"]
+                XCTAssertTrue(enabled.waitForExistence(timeout: 15), app.debugDescription)
+                value("1", of: enabled)
+                let reason = app.descendants(matching: .any)["extension-enabled-reason"].firstMatch
+                XCTAssertTrue(reason.waitForExistence(timeout: 10) && reason.label.contains(onText), app.debugDescription)
+                shot(app, "switch-on-\(language)", look.name)
+
+                toggle(enabled, in: app, presenting: "extension-pack-disable-confirm")
+                let confirm = app.buttons["extension-pack-disable-confirm"].firstMatch
+                let cancel = app.buttons["extension-pack-disable-cancel"].firstMatch
+                XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
+                let confirmReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: confirm)
+                XCTAssertEqual(XCTWaiter.wait(for: [confirmReady], timeout: 5), .completed,
+                               "the destructive action must settle before it is measured")
+                value("1", of: enabled)
+                let confirmHeight = confirm.frame.height
+                XCTAssertGreaterThan(confirmHeight, 0)
+                systemShot("switch-confirm-\(language)", look.name)
+
+                // The compact iOS 27 dialog exposes cancellation by outside tap; older layouts also render a Cancel button.
+                if cancel.exists {
+                    let cancelReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: cancel)
+                    XCTAssertEqual(XCTWaiter.wait(for: [cancelReady], timeout: 5), .completed,
+                                   "Cancel must settle before it is measured")
+                    XCTAssertGreaterThan(cancel.frame.height, 0)
+                    XCTAssertEqual(confirmHeight, cancel.frame.height, accuracy: 2,
+                                   "the dialog buttons must stay on one line")
+                }
+
+                if language == "en" && look.name == "light" {
+                    if cancel.exists && cancel.isHittable { cancel.tap() }
+                    else { app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.25)).tap() }
+                    XCTAssertTrue(confirm.waitForNonExistence(timeout: 5))
+                    value("1", of: enabled)
+                    toggle(enabled, in: app, presenting: "extension-pack-disable-confirm")
+                    XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+                }
+                let confirmAgain = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: confirm)
+                XCTAssertEqual(XCTWaiter.wait(for: [confirmAgain], timeout: 5), .completed,
+                               "the destructive action must be visible before it is tapped")
+                confirm.tap()
+                value("0", of: enabled)
+                let restored = app.descendants(matching: .any)["extension-enabled-reason"].firstMatch
+                XCTAssertTrue(restored.waitForExistence(timeout: 10) && restored.label.contains(offText), app.debugDescription)
+                for name in ["Example Notes", "Example 助手", "Example 网关面板"] {
+                    XCTAssertTrue(restored.label.contains(name), "missing restored member \(name) in \(restored.label)")
+                }
+                shot(app, "switch-off-\(language)", look.name)
+
+                toggle(enabled, in: app, changingTo: "1")
+                value("1", of: enabled)
+                XCTAssertFalse(confirm.exists, "switching a pack on must not ask")
+            }
+        }
+    }
+
+    @MainActor func testPackSwitchOnLegacyHub() async throws {
+        if before { throw XCTSkip("the before build uses the old mock fields") }
+        guard let hub = env["PERSONA_EXTENSION_PACK_OLD_HUB"] else {
+            throw XCTSkip("needs MOCK_EXTENSION_PACK=legacy (PERSONA_EXTENSION_PACK_OLD_HUB)")
+        }
+        let languages = [
+            ("en", "en_US", "Turning the pack off turns off only the pack itself"),
+            ("zh-Hans", "zh_CN", "停用合集只会停用合集本身"),
+        ]
+        for (language, locale, footnote) in languages {
+            for look in looks.prefix(2) {
+                try await setPackEnabled(true, hub: hub)
+                let app = try launch(["-openExtension", "example-pack", "-AppleLanguages", "(\(language))",
+                                      "-AppleLocale", locale] + look.args, hub: hub)
+                let enabled = app.switches["plugin-enabled"]
+                XCTAssertTrue(enabled.waitForExistence(timeout: 15), app.debugDescription)
+                value("1", of: enabled)
+                let reason = app.descendants(matching: .any)["extension-enabled-reason"].firstMatch
+                XCTAssertTrue(reason.waitForExistence(timeout: 10) && reason.label.contains(footnote), app.debugDescription)
+                shot(app, "switch-legacy-\(language)", look.name)
+
+                toggle(enabled, in: app, changingTo: "0")
+                value("0", of: enabled)
+                XCTAssertFalse(app.buttons["extension-pack-disable-confirm"].exists,
+                               "an older hub must not show the pack-member confirmation")
+            }
+        }
+        try await setPackEnabled(true, hub: hub)
     }
 }

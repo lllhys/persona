@@ -77,32 +77,14 @@ const val LiveWorkId = "w-live"
 /**
  * The running turn. A frozen window and an explicit id keep the turn they name; otherwise, while the agent is at work,
  * the last block is the running turn if it is one (iOS `liveTurnID`, the web's `chatLines`). Guessing it from the last
- * user message misses a turn that took a queued message in (its id is its first message's), one a notice opened, and
- * a recap at the end.
+ * user message misses a turn that took a queued message in (its id is its first message's), one a notice or a wake
+ * opened, and a recap at the end.
  */
 internal fun liveTurnId(blocks: List<Block>, options: LineOptions): String? = when {
     options.frozen != null -> options.frozen.liveTurnId
     options.liveTurnId != null -> options.liveTurnId
-    options.live -> {
-        val last = blocks.lastOrNull()
-        val turn = (last as? Block.Turn)?.turn ?: blocks.filterIsInstance<Block.Turn>().lastOrNull()?.turn?.takeIf {
-            val resumed = it.ordered.lastOrNull()?.positionItem()
-            val boundary = (last as? Block.Row)?.row?.item
-            resumed != null && boundary != null &&
-                positionCompare(resumed.seq, resumed.part, boundary.seq, boundary.part) > 0
-        }
-        turn?.id
-    }
+    options.live -> (blocks.lastOrNull() as? Block.Turn)?.turn?.id
     else -> null
-}
-
-/** A turn reopened by a wake can have work after the recap that still follows its block in reading order. */
-private fun ChatRow.positionItem(): LineItem? = item ?: when (val step = steps.lastOrNull()) {
-    is WorkItem.Tool -> step.call.use
-    is WorkItem.Thought -> step.item
-    is WorkItem.Folded -> step.item
-    is WorkItem.Narration -> step.item
-    null -> null
 }
 
 internal fun buildLineRows(items: List<LineItem>): List<ChatRow> {
@@ -141,7 +123,12 @@ internal fun buildLineRows(items: List<LineItem>): List<ChatRow> {
                 flushThoughts(run.isEmpty())
                 run += WorkItem.Folded(it)
             }
-            "tool_result" -> Unit
+            "tool_result" -> if (it.task?.kind == "agent" && it.item.wake == true) {
+                // A subagent's report that woke the idle agent: drawn under its call, and where the next turn starts.
+                flushThoughts(run.isEmpty())
+                flushRun()
+                rows += ChatRow(WakeRow, it)
+            }
             else -> {
                 if (resultCall(it) != null || (it.kind == "image" && it.item.toolUseId != null)) continue
                 flushThoughts(run.isEmpty())
@@ -159,6 +146,12 @@ internal fun buildLineRows(items: List<LineItem>): List<ChatRow> {
     flushRun()
     return rows
 }
+
+/** A subagent's report that woke the idle agent (a `tool_result` with `wake`): it opens a turn and draws no line. */
+internal const val WakeRow = "wake"
+
+/** What woke the idle agent (docs/protocol/protocol.md `wake`): a background task's notice or a subagent's report. */
+private val ChatRow.isWake get() = (type == "notice" || type == WakeRow) && item?.item?.wake == true
 
 internal sealed interface Block {
     data class Row(val row: ChatRow) : Block
@@ -178,11 +171,11 @@ private class RawTurn(val id: String) {
         var afterWake = emptyList<ChatRow>()
         var tail = emptyList<ChatRow>()
         if (wakes.isNotEmpty()) {
-            val firstWake = order.indexOfFirst { it.type == "notice" && it.item?.item?.wake == true }
-            if (firstWake >= 0) afterWake = order.drop(firstWake).filterNot { it.isUserInput }
+            // A woken turn opens with its wake: what the wake led to, and what came after the turn's last words.
+            // Both stay in ordered/process, where the lines are drawn from.
+            afterWake = order.filterNot { it.isUserInput }
             val lastReply = order.indexOfLast { it.type == "reply" && !it.item?.text.isNullOrBlank() }
             if (lastReply >= 0) tail = order.drop(lastReply + 1).filterNot { it.isUserInput }
-            // A wake continues the same exchange. Keep its trailing calls in ordered/process, even before new text.
         }
         val steps = work
         val answerIndex = work.indexOfLast { it.type == "reply" && !it.item?.text.isNullOrBlank() }
@@ -197,18 +190,18 @@ private class RawTurn(val id: String) {
 internal fun buildBlocks(rows: List<ChatRow>): List<Block> {
     val blocks = mutableListOf<Block>()
     var current: RawTurn? = null
-    var lastRaw: RawTurn? = null
-    var lastIndex = 0
-    var reopenedAt: Int? = null
     fun close() {
         val raw = current ?: return
-        lastRaw = raw
-        val turn = Block.Turn(raw.finish())
-        val index = reopenedAt ?: blocks.size
-        blocks.add(index, turn)
-        lastIndex = index
-        reopenedAt = null
+        blocks += Block.Turn(raw.finish())
         current = null
+    }
+    // A background task woke the idle agent: the turn before it was over, and the last words of that turn stay its
+    // answer. The work it woke is a turn of its own that opens with the notice, where a message would be (#9140: kept
+    // in the turn before it, each woken turn's last words took the answer's place and the real answer folded into the
+    // work). After a recap it follows the recap.
+    fun wake(row: ChatRow) {
+        close()
+        current = RawTurn(row.id).also { it.wakes += row.item!!; it.process += row; it.ordered += row }
     }
     for (row in rows) {
         when (row.type) {
@@ -224,24 +217,16 @@ internal fun buildBlocks(rows: List<ChatRow>): List<Block> {
                 close()
                 blocks += Block.Row(row)
             }
+            WakeRow -> wake(row)
             "notice" -> {
                 val item = row.item!!
-                val wake = item.item.wake == true
-                if (wake && current == null && lastRaw != null &&
-                    (blocks.getOrNull(lastIndex) as? Block.Turn)?.turn?.id == lastRaw!!.id) {
-                    blocks.removeAt(lastIndex)
-                    reopenedAt = lastIndex
-                    current = lastRaw
-                }
                 if (item.item.modelRefusal != null) {
                     // #2528: an upstream refusal (and the model Claude Code moved to) is a line of its own after the
                     // exchange, never folded into the work row where it would go unseen (web buildBlocks)
                     if (current == null) current = RawTurn(row.id)
                     current!!.trailing += row
-                } else if (wake && current != null) {
-                    current!!.wakes += item
-                    current!!.process += row
-                    current!!.ordered += row
+                } else if (row.isWake) {
+                    wake(row)
                 } else if (current == null) {
                     current = RawTurn(row.id).also { it.process += row; it.ordered += row }
                 } else if (item.task == null && item.text.orEmpty().contains("中断")) { // i18n-ignore: the hub's interrupt notice
@@ -316,15 +301,21 @@ internal class LineBuilder(val liveId: String?, val options: LineOptions) {
 
     fun turnLines(turn: ChatTurn): List<ChatLine> = buildList {
         var ordered = turn.ordered
-        var wokeAt: Instant? = null
-        val first = ordered.firstOrNull()
-        if (first?.type == "notice" && first.item?.item?.wake == true) {
-            add(ChatLine.Row(first))
+        // Work a background task woke the agent for opens with that notice, where a message would be (a subagent's
+        // report that woke it is drawn under its call, so that one opens with the work).
+        val woke = ordered.firstOrNull()?.takeIf { it.isWake }
+        if (woke != null) {
+            if (woke.type == "notice") add(ChatLine.Row(woke))
             ordered = ordered.drop(1)
-            wokeAt = first.start
         }
-        val segments = segments(ordered)
+        val wokeAt = woke?.start
+        // Woken and at work with nothing of it here yet: its work line.
+        val segments = segments(ordered).ifEmpty {
+            if (woke != null && turn.id == liveId) listOf(Segment(null, emptyList())) else emptyList()
+        }
         for ((k, seg) in segments.withIndex()) {
+            // The work a wake opened is known by the wake: its line keeps its id from before its first step.
+            val opening = if (k == 0 && seg.user == null) woke?.id else null
             val live = turn.id == liveId && k == segments.lastIndex
             val photos = photos(seg.rows)
             if (photos.isNotEmpty()) add(ChatLine.UserImages(photos))
@@ -336,7 +327,7 @@ internal class LineBuilder(val liveId: String?, val options: LineOptions) {
                 seg.rows.indices.filter { it > last && seg.rows[it].isCompaction }.toSet()
             val rows = seg.rows.filterIndexed { i, _ -> i != last && i !in after }
             val steps = workItems(rows)
-            val id = "w-" + (seg.user?.id ?: seg.rows.firstOrNull()?.exchangeId ?: turn.id)
+            val id = "w-" + (seg.user?.id ?: opening ?: seg.rows.firstOrNull()?.exchangeId ?: turn.id)
             if (!live && steps.isNotEmpty() && steps.all { it is WorkItem.Thought && it.item.compaction != null }) {
                 // Only compactions: dividers across the chat, no work line to open.
                 addAll(rows.filter { it.isCompaction }.map { ChatLine.Row(it) })

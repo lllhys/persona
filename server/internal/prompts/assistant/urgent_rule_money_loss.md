@@ -1,0 +1,1 @@
+{{if eq .Language "日本語"}}資金やリソースが失われつつある：課金が制御できず増え続けている、クラウドリソースが削除された、アカウントが不正利用された、身に覚えのない請求がある。{{else if .Language}}Money or resources are being lost right now: charges running out of control and still growing, cloud resources deleted, an account used fraudulently or an unrecognized charge.{{else}}资金或资源正在损失：扣费失控还在涨、云资源被删、账号被盗刷或出现陌生扣款。{{end}}

@@ -58,9 +58,27 @@ describe("ChatSearch", () => {
     panel();
     const text = document.body.textContent ?? "";
     expect(text).toContain("输入关键词");
-    expect(text).toContain("可搜索正文、思考、工具名、工具输入和输出、系统事件。");
+    expect(text).toContain("可搜索正文、引用、思考、工具名、工具输入和输出、系统事件。");
     expect(text).toContain("0 条命中，已加载 1 轮");
     expect(text).toContain("已到最早的记录");
+  });
+
+  it("says while it searches the folded steps, and when some could not be searched (#6281)", () => {
+    panel({ foldsLoading: true });
+    expect(document.body.textContent).toContain("正在搜索收起的工作记录…");
+    panel({ foldsPartial: true });
+    expect(document.body.textContent).toContain("部分收起的工作记录没能搜索。");
+  });
+
+  it("lists a quoted context under its own heading, without the tag it travels in", () => {
+    vi.useFakeTimers();
+    const quoted: Item[] = [{ id: "q#0", seq: 1, role: "user", kind: "text", text: '帮我看看\n<persona-context kind="selection" title="摘录">隐藏摘录 HiddenCtx</persona-context>' }];
+    panel({ items: quoted, query: "hiddenctx" });
+    act(() => vi.advanceTimersByTime(250));
+    const rows = [...document.querySelectorAll("[data-search-result]")];
+    expect(rows.map((r) => r.getAttribute("data-search-result"))).toEqual(["quoted"]);
+    expect(document.body.textContent).toContain("引用");
+    expect(rows[0].textContent).not.toContain("persona-context");
   });
 
   it("lists the hits by category with the match marked, and picks one", () => {

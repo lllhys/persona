@@ -1,0 +1,7 @@
+{
+  "launcher": "{machine} 的 {engine} 里没有“{launcher}”，改用同一类 Agent 的“{to}”运行",
+  "model": "“{to}”没有模型 {model}，改用它自己的默认模型",
+  "effort": "“{to}”的模型没有思考档位 {effort}，按 {ran} 运行",
+  "effort_default": "“{to}”的模型没有思考档位 {effort}，按模型默认的档位运行",
+  "join": "；"
+}

@@ -52,6 +52,30 @@ class MockHub:
 
 
 class LarkChatListTests(unittest.TestCase):
+    def test_list_performance_fixture_has_real_pagination(self):
+        hub = MockHub(MOCK_LARK="1", MOCK_LARK_LIST="180")
+        self.addCleanup(hub.stop)
+        first = hub.get("/api/v1/lark/conversations?scope=chats&limit=60")
+        second = hub.get("/api/v1/lark/conversations?scope=chats&limit=60&cursor=" + first["next_cursor"])
+        self.assertEqual(len(first["conversations"]), 60)
+        self.assertEqual(len(second["conversations"]), 60)
+        self.assertTrue(second["next_cursor"])
+        self.assertFalse({c["id"] for c in first["conversations"]} & {c["id"] for c in second["conversations"]})
+
+    def test_unread_fixture_has_matches_beyond_a_read_only_page(self):
+        hub = MockHub(MOCK_LARK="1", MOCK_LARK_UNREAD="1")
+        self.addCleanup(hub.stop)
+        first = hub.get("/api/v1/lark/conversations?scope=chats&limit=60")
+        self.assertEqual(len(first["conversations"]), 60)
+        self.assertFalse(any(c["unread"] or c.get("marked_unread") for c in first["conversations"]))
+        second = hub.get("/api/v1/lark/conversations?scope=chats&limit=60&cursor=" + first["next_cursor"])
+        unread = hub.get("/api/v1/lark/conversations?scope=unread&limit=60")
+        self.assertEqual(unread["conversations"], second["conversations"])
+        self.assertTrue(any(c["unread"] == 0 and c.get("marked_unread") for c in unread["conversations"]))
+        self.assertTrue(any(c.get("pinned") for c in unread["conversations"]))
+        self.assertEqual(unread["next_cursor"], "")
+        self.assertEqual(unread["account_id"], first["account_id"])
+
     def check(self, **env):
         hub = MockHub(**env)
         self.addCleanup(hub.stop)
@@ -69,6 +93,10 @@ class LarkChatListTests(unittest.TestCase):
 
     def test_the_topic_group_chats_decode(self):
         self.check(MOCK_LARK_TOPIC="1")
+
+    def test_the_rich_page_and_the_topic_group_decode_together(self):
+        """PerfInbox's mock: MOCK_LARK answers /api/v1/lark/… first and must still serve f4 (#8561)."""
+        self.check(MOCK_LARK="1", MOCK_LARK_TOPIC="1", MOCK_LARK_RICH="1")
 
 
 class LarkTopicGroupTests(unittest.TestCase):
@@ -114,6 +142,37 @@ class LarkTopicGroupTests(unittest.TestCase):
         hub = MockHub()
         self.addCleanup(hub.stop)
         self.assertNotIn("f4", [c["id"] for c in hub.get("/api/v1/lark/conversations")["conversations"]])
+
+    def test_the_rich_feishu_page_still_serves_the_topic_group(self):
+        """MOCK_LARK=1 used to swallow /api/v1/lark/conversations and f4's topics (#8561)."""
+        hub = MockHub(MOCK_LARK="1", MOCK_LARK_TOPIC="1", MOCK_LARK_RICH="1")
+        self.addCleanup(hub.stop)
+        listed = hub.get("/api/v1/lark/conversations")
+        self.assertEqual(listed.get("account_id"), "mock-lark-account")
+        chats = listed["conversations"]
+        self.assertIn("f3", [c["id"] for c in chats])
+        chat = next(c for c in chats if c["id"] == "f4")
+        self.assertTrue(chat["is_topic"])
+        page = hub.get("/api/v1/lark/conversations/f4/messages?topic=1")
+        self.assertTrue(page["topic"])
+        self.assertEqual([m["position"] for m in page["messages"] if m.get("sender_type") == "bot"], ["401", "402", "403"])
+        hiking = hub.get("/api/v1/lark/conversations/f3/messages")
+        self.assertTrue(hiking["has_older"])
+        self.assertEqual(len(hiking["messages"]), 40)
+
+    def test_plain_mock_lark_keeps_the_rich_page_body(self):
+        """Without TOPIC/RICH, MOCK_LARK's conversations, f3 page and threads stay as they were on main."""
+        hub = MockHub(MOCK_LARK="1")
+        self.addCleanup(hub.stop)
+        listed = hub.get("/api/v1/lark/conversations")
+        self.assertEqual(set(listed), {"conversations", "next_cursor"})
+        self.assertEqual([c["id"] for c in listed["conversations"]], ["f1", "f2", "f3"])
+        hiking = hub.get("/api/v1/lark/conversations/f3/messages")
+        self.assertFalse(hiking["has_older"])
+        self.assertLessEqual(len(hiking["messages"]), 40)
+        thread = hub.get("/api/v1/lark/messages/lm_f2_187/thread")
+        self.assertEqual([m["id"] for m in thread["messages"] if m], ["lm_f2_187", "lm_f2_1871", "lm_f2_1872"])
+        self.assertFalse(thread["has_older"])
 
 
 class LarkDeliveryProofTests(unittest.TestCase):

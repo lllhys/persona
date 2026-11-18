@@ -5,13 +5,16 @@ import { attentionReason, interactionCanAnswer, sessionTitle, stateOf } from "./
 import { agentKey } from "./pins";
 import { homeKey } from "./folded-rows";
 import { useCounts, useAgentSessions } from "./sessions";
-import { getState, useStore } from "./store";
-import { answeredTags, attentionSoundEnabled, badgeText, batchDue, finishedBatch, detectNewCards, detectTransitions, pickEvent, rateLimiter, SETTLE_MS, settledTags, suppressed, tabTitle, trackTurns, type Turn } from "./attention";
-import { claimNotification, closeNotification, dismissNotification, releaseClaim, FRONT_BEAT_MS, inQuietHours, loadNotifyPrefs, markFront, notificationText, notifyPrefs, waitingCard, otherTabInFront, postNotification, systemNotifyAllowed, wants, managerMuted } from "./notify";
+import { getState, useStore, onHello, onHubEvent, send, sayHello, setHelloExtras, appSocketReady, connect, disconnect, DESKTOP_UNREGISTER_FEATURE } from "./store";
+import { answeredTags, attentionSoundEnabled, onAttentionSoundChange, badgeText, batchDue, finishedBatch, detectNewCards, detectTransitions, pickEvent, rateLimiter, SETTLE_MS, settledTags, suppressed, tabTitle, trackTurns, type Turn } from "./attention";
+import { claimNotification, closeNotification, dismissNotification, releaseClaim, FRONT_BEAT_MS, inQuietHours, loadNotifyPrefs, markFront, notificationText, notifyPrefs, waitingCard, otherTabInFront, postNotification, systemNotifyAllowed, systemNotifyActive, onSystemNotifyChange, wants, managerMuted } from "./notify";
+import { webPushFlag } from "./web-push-flag";
 import { defaultManager } from "./manager-choice";
 import { failedTagsOver, listenForNotificationClicks } from "./notification-answer";
 import { isMuted } from "./session-actions";
-import { href, navigate } from "./router";
+import { href, navigate, parse } from "./router";
+import { hubNotice } from "./hub-notify";
+import { stripBase } from "./base";
 import { needsFieldValues } from "./quick-answers";
 import { t } from "../i18n";
 import { requestRoute } from "./card-focus";
@@ -113,19 +116,43 @@ export function setFaviconBadge(needs: number): void {
 let ctx: AudioContext | undefined;
 let gestured = false;
 
-/** Browsers only start audio after a user gesture: until one has happened nothing plays (and nothing is queued). */
-export function armAudio(): void {
-  if (typeof window === "undefined") return;
-  const unlock = () => {
-    gestured = true;
-    try {
-      ctx ??= new AudioContext();
-      void ctx.resume();
-    } catch {
-      // no WebAudio here: silent
-    }
+const GESTURES = ["pointerdown", "keydown", "touchend"] as const;
+
+/** Listens for the gesture that starts audio, or stops listening (adding the same listener twice adds it once). */
+function listen(on: boolean) {
+  for (const ev of GESTURES) window[on ? "addEventListener" : "removeEventListener"](ev, unlock, { capture: true });
+}
+
+function unlock() {
+  gestured = true;
+  listen(false);
+  try {
+    ctx ??= new AudioContext();
+    void ctx.resume();
+  } catch {
+    // no WebAudio here: silent
+  }
+}
+
+/**
+ * Browsers only start audio after a user gesture: until one has happened nothing plays (and nothing is queued). Making
+ * the AudioContext takes 80–130 ms of the gesture it runs in, so it is made only for the alert sound, which is off by
+ * default: on the first gesture once it is on, or at once when it is switched on by a click or a key (Settings ›
+ * Notifications), which is a gesture itself. With it off, the page's first key or click pays nothing. Returns the cleanup.
+ */
+export function armAudio(): () => void {
+  if (typeof window === "undefined") return () => {};
+  const follow = () => {
+    const want = attentionSoundEnabled() && ctx?.state !== "running";
+    if (want && navigator.userActivation?.isActive) unlock();
+    else listen(want);
   };
-  for (const ev of ["pointerdown", "keydown", "touchend"]) window.addEventListener(ev, unlock, { once: true, capture: true });
+  follow();
+  const off = onAttentionSoundChange(follow);
+  return () => {
+    off();
+    listen(false);
+  };
 }
 
 // [frequency Hz, start s, length s, peak gain]
@@ -158,6 +185,10 @@ export function play(kind: "needs" | "finished"): void {
 function inFront(): boolean {
   return document.visibilityState === "visible" && document.hasFocus();
 }
+
+/** How long after the hello that starts asking for the hub's `notify` events they are taken as what the hub kept, not
+ *  news (it sends those right after that hello). */
+const HUB_REPLAY_MS = 3_000;
 
 const ASK_TITLE = {
   question: "notify.question_title",
@@ -235,7 +266,48 @@ export function useAttentionSignals(label: string, pane: { mid: string; sid: str
   useEffect(() => {
     document.title = tabTitle(label, needs);
   }, [label, needs]);
-  useEffect(() => setFaviconBadge(needs), [needs]);
+  useEffect(() => {
+    setFaviconBadge(needs);
+    window.personaDesktop?.setBadge(needs);
+  }, [needs]);
+
+  useEffect(() => {
+    const desktop = window.personaDesktop;
+    if (!desktop) return;
+    // What this socket was last told: the shell repeats its presence every 30 s whether it changed or not, and a
+    // repeat tells the hub nothing new. A hello is a new socket, told again.
+    let told: "on" | "off" | undefined;
+    const reconcile = () => {
+      if (!appSocketReady()) return;
+      // A newer web app can run in an older desktop: missing additive capabilities retain the browser behavior.
+      const active = desktop.desktopPresence?.().active ?? true;
+      const want = active && systemNotifyActive() ? "on" : "off";
+      if (want === told) return;
+      told = want;
+      if (want === "on") {
+        send({ type: "register_desktop", device_name: desktop.deviceName });
+        return;
+      }
+      if (getState().features.includes(DESKTOP_UNREGISTER_FEATURE)) send({ type: "unregister_desktop" });
+      else disconnect(); // Old hub: only closing this socket can withdraw its desktop registration.
+    };
+    const offHello = onHello(() => {
+      told = undefined;
+      reconcile();
+    });
+    // Recovery must also work after an old hub's socket-close withdrawal: there is no new hello without reconnecting.
+    // Only a socket that is gone is opened again: connect() replaces an open one, which every presence repeat did.
+    const restore = () => {
+      if (!appSocketReady() && (desktop.desktopPresence?.().active ?? true) && systemNotifyActive()) connect();
+      reconcile();
+    };
+    const offPresence = desktop.onPresenceChange?.(restore) ?? (() => {});
+    const offNotifications = onSystemNotifyChange(restore);
+    const offNotification = desktop.onOpenNotification?.((route: string) => {
+      if (route.startsWith("/") && !route.startsWith("//") && !route.includes("\\")) navigate(stripBase(route));
+    }) ?? (() => {});
+    return () => { offHello(); offPresence(); offNotifications(); offNotification(); };
+  }, []);
 
   useEffect(armAudio, []);
   // Allow / Deny clicked on a permission card's notification: the service worker hands it to this page (#4464)
@@ -266,6 +338,8 @@ export function useAttentionSignals(label: string, pane: { mid: string; sid: str
   const interactions = useStore((s) => s.interactions);
   useEffect(() => {
     if (loaded) loadNotifyPrefs().catch(() => {}); // the cached copy stays when the hub can't say
+    // Web Push on in this browser (#7459): its subscription is still the hub's, in this page's language
+    if (loaded && webPushFlag()) void import("./web-push").then((m) => m.syncWebPush());
   }, [loaded]);
   const key = pane ? agentKey({ machine_id: pane.mid, session_id: pane.sid }) : undefined;
   // read when an event fires, not when the effect ran
@@ -307,6 +381,11 @@ export function useAttentionSignals(label: string, pane: { mid: string; sid: str
       closeNotification(BATCH_TAG);
     }
     for (const tag of settled) if (tag.endsWith("#needs")) announced.current.delete(tag.slice(0, -"#needs".length));
+    // what was pushed while every page was closed (#7459) goes too once its event is over, as the page's own do
+    if (webPushFlag()) {
+      const pending = new Set(interactions.map((ix) => ix.id));
+      void import("./web-push").then((m) => m.settlePushed(next, pending));
+    }
     prev.current = next;
     turns.current = trackTurns(turns.current, sessions, now);
     const prefs = notifyPrefs();
@@ -384,6 +463,59 @@ export function useAttentionSignals(label: string, pane: { mid: string; sid: str
       timers.current.add(t);
     }
   }, [sessions, interactions, loaded]);
+
+  // The hub's `notify` events (#8145, lib/hub-notify.ts): what the hub tells a phone of the conversations this page does
+  // not follow itself (the assistant's), a notify_user, a decision, an alert. Asked for only while this page can alert
+  // (the alert sound or system notifications on), so the hub counts it as a device that hears them only then. The hello
+  // that starts asking has the hub send what it kept while this browser was not asking (hub/notifyring.go): opening the
+  // page announces none of that, as it announces no state it finds on loading.
+  const quietUntil = useRef(0);
+  useEffect(() => {
+    let asking: boolean | undefined;
+    const able = () => attentionSoundEnabled() || systemNotifyActive();
+    setHelloExtras(() => {
+      const on = able();
+      if (on && !asking) quietUntil.current = Date.now() + HUB_REPLAY_MS;
+      asking = on;
+      return on ? ["ws_notify"] : [];
+    });
+    const follow = () => {
+      if (able() !== Boolean(asking)) sayHello();
+    };
+    follow();
+    const offSound = onAttentionSoundChange(follow);
+    const offSystem = onSystemNotifyChange(follow);
+    const offNotify = onHubEvent("notify", (msg) => {
+      if (Date.now() < quietUntil.current) return;
+      const state = getState();
+      const n = hubNotice(msg, (k) => prev.current.has(k), state.interactions);
+      if (!n) return;
+      const mid = String(msg.machine_id ?? ""), sid = String(msg.session_id ?? "");
+      const row = (state.sessions[mid] ?? []).find((x) => x.session_id === sid);
+      const prefs = notifyPrefs();
+      if ((n.needs && !wants("needs", prefs)) || managerMuted(prefs, n.manager ?? row?.manager, defaultManager())) return;
+      const hushed = n.hush && inQuietHours(prefs);
+      // no sound for the conversation on screen while the window is in front, as for an Agent's (suppressed); the main
+      // chat's address names no conversation
+      const on = parse(stripBase(location.pathname), location.search);
+      const looking = inFront() && Boolean(n.key) && (n.key === viewing.current || (on.name === "persona" && (on.sid ?? state.assistant?.main) === sid));
+      if (attentionSoundEnabled() && !hushed && !looking && allow.current(Date.now())) play("needs");
+      if (unannounced() || !claimNotification(n.card ? `${n.tag}@${n.card}` : n.tag)) return;
+      const ix = n.card ? state.interactions.find((c) => c.id === n.card) : undefined;
+      const answer = ix?.kind === "permission" && !needsFieldValues(ix) && interactionCanAnswer(ix, row) ? ix.id : undefined;
+      const route = parse(n.path);
+      const icon = document.querySelector<HTMLLinkElement>(ICONS)?.dataset.original ?? document.querySelector<HTMLLinkElement>(ICONS)?.href;
+      postNotification({ title: n.title, body: n.body, tag: n.tag, url: href(route), icon, ix: answer, silent: hushed }, () => navigate(route));
+      // taken back once its card is answered or withdrawn (answeredTags), as a card the page announced itself
+      if (n.card && n.key) announced.current.set(n.key, n.card);
+    });
+    return () => {
+      offSound();
+      offSystem();
+      offNotify();
+      setHelloExtras(() => []);
+    };
+  }, []);
 
   useEffect(() => {
     const pending = timers.current;

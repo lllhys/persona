@@ -3,6 +3,7 @@ package extmgr
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/extension"
@@ -42,9 +43,13 @@ func (h *Manager) subscriptionUI(w http.ResponseWriter, r *http.Request) {
 		Name:      h.subscriptionConnectorName,
 		Native:    h.subscriptionNative,
 		Builtin:   builtinSources{h},
-		Assistant: in.Context.Assistant,
+		Ask:       in.Context.Assistant != nil,
+		Graph:     in.Context.Graph,
 		Triage:    h.triagePreview,
 		Platform:  in.Context.Platform,
+	}
+	if env.Ask {
+		env.Assistant = *in.Context.Assistant
 	}
 	res, err := subscriptionsui.Handle(ctx, h.subs, env, subscriptionsui.Request{State: in.State, Action: in.Action, Values: in.Values})
 	switch {
@@ -68,6 +73,46 @@ func (h *Manager) subscriptionUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+// subscriptionGraph answers GET /api/v1/subscriptions/-/graph (#5741): Inbox Sources as relations for the apps to
+// draw, in the words of the pages (?locale=, else the request's language) and the user's time zone (?tz= overrides).
+// Every device may read it, as every device may look at the pages.
+func (h *Manager) subscriptionGraph(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+	lang := h.uiFallbackLang(ctx, q.Get("locale"))
+	if l := i18n.FromRequest(r); q.Get("locale") == "" && l != "" {
+		lang = l
+	}
+	loc := h.userLocation()
+	if tz := q.Get("tz"); tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+	// The UI version the app draws, as a page request's context says it: its icons are the ones it knows. The web draws
+	// all of them and says nothing.
+	version := extension.UIVersion
+	if v, err := strconv.Atoi(q.Get("ui_version")); err == nil {
+		version = min(max(v, 1), extension.UIVersion)
+	}
+	p := principalOf(ctx)
+	g, err := subscriptionsui.DrawGraph(ctx, h.subs, subscriptionsui.Env{
+		UIVersion: version,
+		Lang:      lang,
+		Loc:       loc,
+		CanEdit:   p.Role == roleFull,
+		By:        subscriptions.Actor{ID: actorOf(ctx), Name: p.Name},
+		Name:      h.subscriptionConnectorName,
+		Native:    h.subscriptionNative,
+		Builtin:   builtinSources{h},
+	})
+	if err != nil {
+		writeSubscriptionErr(w, err)
+		return
+	}
+	writeJSON(w, g)
 }
 
 // subscriptionConnectorName is a connector as people know it on the pages: its own name, else its id.

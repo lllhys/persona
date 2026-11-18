@@ -4,6 +4,7 @@ import { t } from "../i18n";
 import { WORKFLOWS_COMMAND } from "./background-panel";
 import { LOOP_TEXT } from "./loop-command";
 import type { Session } from "./types";
+import { PERMISSIONS_COMMAND } from "./permissions-command";
 
 const session = (o: Partial<Session>): Session => ({ machine_id: "m", session_id: "s", cwd: "/x", status: "idle", state: "idle", pane_id: "p1", ...o }) as Session;
 const ALL = [{ text: "继续" }, { text: "/compact" }, { text: "/model " }, { text: LOOP_TEXT }, { text: "/clear" }];
@@ -109,5 +110,21 @@ describe("rankCommands", () => {
     expect(rankCommands(list, "")).toHaveLength(25);
     // the exact hit is first even when it sits past the limit in the list
     expect(rankCommands(list, "c39")[0].word).toBe("/c39");
+  });
+});
+
+// /permissions (#6476) goes wherever the chat shows the permission picker: an agent with modes while it runs.
+describe("agentCommands' /permissions", () => {
+  const LIST = [{ text: "/compact" }, { text: PERMISSIONS_COMMAND }];
+  const has = (s?: Session) => agentCommands(LIST, s).some((c) => c.text === PERMISSIONS_COMMAND);
+  it("is listed for a running Claude Code Agent, idle or working, and Antigravity", () => {
+    expect(has(session({}))).toBe(true);
+    expect(has(session({ state: "working", status: "working" }))).toBe(true);
+    expect(has(session({ agent: "agy" }))).toBe(true);
+  });
+  it("is not listed for Codex, a compatible CLI, a read-only source, an offline Agent or no session", () => {
+    for (const s of [session({ agent: "codex" }), session({ agent: "traex" }), session({ source_kind: "codex_app_server", capabilities: { send: true, terminal: true } }), session({ state: "offline", status: "offline" }), session({ capabilities: { modes: false } as Session["capabilities"] }), undefined]) {
+      expect(has(s)).toBe(false);
+    }
   });
 });

@@ -31,11 +31,12 @@ enum InboxAsk: CaseIterable {
 
 /// Hand to AI along the bottom of an opened item, iMessage's bar (docs/assistant/inbox.md "Item actions"): one row of
 /// one-tap asks, then [target ▾] [Hand to AI…] [↑]. A chip or a send goes to the target at once, behind a toast with Undo
-/// and View for `InboxHandOffModel.undoWindow`; the target is a menu (Main Chat, New Chat, the latest three Agents,
-/// More…) and the last one chosen is remembered. The page's content gets the bar's height as its bottom inset
+/// and View for `InboxHandOffModel.undoWindow`; the target is a menu (Main Chat, New Chat, then New Agent…, the latest
+/// three Agents and More…) and the last one chosen is remembered. New Agent… opens New Agent's page with the item instead. The page's content gets the bar's height as its bottom inset
 /// (`safeAreaInset`), and the bar rides up with the keyboard.
 struct InboxHandOffBar: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.pushInboxChat) private var pushChat
     let item: InboxItem
     /// The Draft Reply chip (AI Draft Reply's sheet); nil where the item can't be answered from here.
     var draft: (() -> Void)?
@@ -51,6 +52,8 @@ struct InboxHandOffBar: View {
     @State private var lastTime = false
     /// The Agent this source went to last time is gone: the main chat stands in, and the toast line says so once.
     @State private var lastGone = false
+    /// New Agent… (#5933): New Agent's page, prefilled with the item and the ask.
+    @State private var newAgent: InboxHandOffModel.NewAgentPrefill?
     @FocusState private var focused: Bool
 
     init(item: InboxItem, draft: (() -> Void)?, draftTitle: String? = nil) {
@@ -110,6 +113,17 @@ struct InboxHandOffBar: View {
             try? await Task.sleep(for: InboxHandOffModel.undoWindow)
             justSent = false
         }
+        #if os(iOS)
+        .sheet(item: $newAgent) { p in
+            NewChatView(initialPrompt: p.prompt, contextBlock: p.contextBlock, forwarded: [p.card], forwardedIcon: Theme.Icon.inbox,
+                        nameHint: p.nameHint, onlyGroup: p.group, onFirstMessage: { s, message in
+                handOff.newAgentFirstMessage(message, for: s.key)
+            }) { s in
+                newAgent = nil
+                started(s.key, prefill: p)
+            }
+        }
+        #endif
     }
 
     // MARK: Chips
@@ -157,16 +171,17 @@ struct InboxHandOffBar: View {
             Button { choose(.main) } label: { Label(String(localized: "Main Chat"), systemImage: Theme.Icon.persona) }
             Button { choose(.newChat) } label: { Label(String(localized: "New Chat [Inbox Hand-Off]"), systemImage: Theme.Icon.newConversation) }
             let all = agents
-            if !all.isEmpty {
-                Section(String(localized: "Agents")) {
-                    ForEach(all.prefix(Self.inMenu)) { agentButton($0) }
-                    if all.count > Self.inMenu {
-                        Menu {
-                            ForEach(all.dropFirst(Self.inMenu)) { agentButton($0) }
-                        } label: { Label(String(localized: "More…"), systemImage: Theme.Icon.more) }
-                    }
-                }
+            #if os(iOS)
+            // New Agent… (#5933) heads the section, so it is there even with no Agent running.
+            Section(String(localized: "Agents")) {
+                Button { openNewAgent() } label: { Label(String(localized: "New Agent…"), systemImage: Theme.Icon.add) }
+                agentButtons(all)
             }
+            #else
+            if !all.isEmpty {
+                Section(String(localized: "Agents")) { agentButtons(all) }
+            }
+            #endif
         } label: {
             HStack(spacing: Theme.Space.xs) {
                 ThemedIcon(symbol(handOff.target)).font(Theme.Font.label)
@@ -191,6 +206,15 @@ struct InboxHandOffBar: View {
         .accessibilityLabel(String(localized: "Hand To"))
         .accessibilityValue(lastTime ? String(localized: "\(name(handOff.target)), last time") : name(handOff.target))
         .accessibilityIdentifier("handoff-target")
+    }
+
+    @ViewBuilder private func agentButtons(_ all: [Session]) -> some View {
+        ForEach(all.prefix(Self.inMenu)) { agentButton($0) }
+        if all.count > Self.inMenu {
+            Menu {
+                ForEach(all.dropFirst(Self.inMenu)) { agentButton($0) }
+            } label: { Label(String(localized: "More…"), systemImage: Theme.Icon.more) }
+        }
     }
 
     private func agentButton(_ s: Session) -> some View {
@@ -283,7 +307,7 @@ struct InboxHandOffBar: View {
             let to = name(sent.target)
             let words = handOff.markDone ? String(localized: "Handed to \(to) · marked done") : String(localized: "Handed to \(to)")
             return Toast(words, style: .success,
-                         action: Toast.Action(title: String(localized: "View [Inbox Hand-Off]")) { handOff.open() })
+                         action: Toast.Action(title: String(localized: "View [Inbox Hand-Off]")) { openSent() })
         }
         return nil
     }
@@ -304,6 +328,46 @@ struct InboxHandOffBar: View {
 
     /// View while it waits: sends now and opens where it went.
     private func view() {
-        Task { if await handOff.sendQueued() { handOff.open() } }
+        Task { if await handOff.sendQueued() { openSent() } }
+    }
+
+    private func openSent() {
+        Self.open(sent: handOff.sent, item: item, model: model, push: pushChat, fallback: handOff.open)
+    }
+
+    /// View opens over the item wherever the Assistant stack offers its inbox route; other layouts keep the model's open.
+    @MainActor static func open(sent: (target: InboxHandOffModel.Target, key: SessionKey)?, item: InboxItem, model: AppModel,
+                                push: ((InboxChatRoute) -> Void)?, fallback: () -> Void) {
+        if let push, let sent {
+            push(InboxChatRoute(key: model.inHub(sent.key), manager: item.manager))
+        } else {
+            fallback()
+        }
+    }
+
+    // MARK: New Agent… (#5933)
+
+    /// New Agent's page with the item and what was typed (the first ask when nothing was): nothing is queued, so there is
+    /// no Undo; Start there is the confirmation, and Cancel comes back here with the words still in the field.
+    private func openNewAgent() {
+        guard !handOff.sending, handOff.queued == nil else { return }
+        focused = false
+        let ask = trimmed.isEmpty ? InboxAsk.summarize.ask : trimmed
+        Task { newAgent = await handOff.newAgent(ask: ask, group: model.hubGroup) }
+    }
+
+    /// The Agent New Agent's page started: the ask went with it, this source and the bar remember that Agent (not New
+    /// Agent…), the item is filed when asked, and the Agent opens.
+    private func started(_ key: SessionKey, prefill: InboxHandOffModel.NewAgentPrefill) {
+        text = ""
+        let target = InboxHandOffModel.Target.agent(key)
+        handOff.target = target
+        stored = target.stored
+        lastTime = false
+        lastGone = false
+        memory.rememberStarted(item, agent: key)
+        handOff.started(key, markDone: prefill.markDone)
+        Haptics.success()
+        openSent()
     }
 }

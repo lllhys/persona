@@ -9,6 +9,7 @@ vi.hoisted(() => {
 
 import type { Session } from "../lib/types";
 import type { ToastAction } from "../ui/atoms";
+import { activation, rowLabel } from "../ui/menu-model";
 import { conversationMenuItems, leaderItem, type ConversationMenuDeps } from "./ConversationMenu";
 
 const conv = (o: Partial<Session> = {}) => ({ machine_id: "hub", session_id: "c1", title: "周报", status: "idle", assistant: true, ...o }) as Session;
@@ -35,18 +36,35 @@ function deps(over: Partial<ConversationMenuDeps> = {}) {
 
 
 describe("a Persona conversation's sidebar menu (iOS AssistantSidebar)", () => {
-  it("offers 设为常驻, 重命名…, 归档, 拷贝会话 ID and 结束… for a running conversation, and never the word 置顶", () => {
+  it("offers 设为常驻, 重命名…, 归档, 复制会话 ID and 结束… for a running conversation, and never the word 置顶", () => {
     const items = conversationMenuItems(conv(), { main: false });
-    expect(items.map((i) => i.label)).toEqual(["设为常驻", "重命名…", "归档", "拷贝会话 ID", "结束…"]);
+    expect(items.map((i) => i.label)).toEqual(["设为常驻", "重命名…", "归档", "复制会话 ID", "结束…"]);
     expect(items.find((i) => i.key === "end")).toMatchObject({ danger: true, confirm: "确认结束", inline: true });
   });
 
-  it("gives the main conversation only 拷贝会话 ID and 结束…", () => {
+  it("gives the main conversation only 复制会话 ID and 结束…", () => {
     expect(conversationMenuItems(conv(), { main: true }).map((i) => i.key)).toEqual(["copy", "end"]);
   });
 
   it("has no 结束… once it has stopped", () => {
-    expect(conversationMenuItems(conv({ status: "offline" }), { main: false, leader: true }).map((i) => i.label)).toEqual(["取消常驻", "重命名…", "归档", "拷贝会话 ID"]);
+    expect(conversationMenuItems(conv({ status: "offline" }), { main: false, leader: true }).map((i) => i.label)).toEqual(["取消常驻", "重命名…", "归档", "复制会话 ID"]);
+  });
+
+  it("asks a second time before pinning or unpinning, and says what moves (#6214)", () => {
+    const make = leaderItem(conv(), false);
+    const end = leaderItem(conv(), true);
+    expect(make).toMatchObject({ confirm: "确认设为常驻", inline: true });
+    expect(end).toMatchObject({ confirm: "确认取消常驻", inline: true });
+    expect(make.confirmDetail).toContain("常驻");
+    expect(end.confirmDetail).toContain("最近");
+    expect(end.confirmDetail).toContain("主对话");
+    // the first choice only arms the row; the second runs it
+    expect(activation(make, null)).toBe("confirm");
+    expect(activation(make, "leader")).toBe("run");
+    expect(rowLabel(make, "leader")).toBe("确认设为常驻");
+    expect(activation(end, null)).toBe("confirm");
+    expect(activation(end, "leader")).toBe("run");
+    expect(rowLabel(end, "leader")).toBe("确认取消常驻");
   });
 
   it("makes a chat a lead (常驻) and ends one through the hub, says so, then reads the list again", async () => {
@@ -96,10 +114,10 @@ describe("a Persona conversation's sidebar menu (iOS AssistantSidebar)", () => {
     expect(failed.calls).toEqual(["error:offline", "refresh"]);
   });
 
-  it("gives the background supervisor only 拷贝会话 ID: it is built in, running or not (#5082)", async () => {
+  it("gives the background supervisor only 复制会话 ID: it is built in, running or not (#5082)", async () => {
     const { d, calls } = deps();
     const items = conversationMenuItems(conv(), { main: false, builtIn: true }, d);
-    expect(items.map((i) => i.label)).toEqual(["拷贝会话 ID"]);
+    expect(items.map((i) => i.label)).toEqual(["复制会话 ID"]);
     expect(conversationMenuItems(conv({ status: "offline" }), { main: false, leader: true, builtIn: true }).map((i) => i.key)).toEqual(["copy"]);
     await items[0].onSelect();
     expect(calls).toEqual(["copy:c1"]);

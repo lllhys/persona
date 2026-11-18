@@ -59,7 +59,7 @@ async function openLarge() {
 }
 
 describe("an image in the file panel opens the chat's viewer", () => {
-  it("with the file's name on top and 下载 / 拷贝, saving under the file's name", async () => {
+  it("with the file's name on top and 下载 / 复制, saving under the file's name", async () => {
     act(() => root.render(<ImageView file={file("shot.png", "image/png")} src="/orig/shot.png" />));
     const dialog = await openLarge();
     expect(dialog.getAttribute("aria-label")).toContain("shot.png");

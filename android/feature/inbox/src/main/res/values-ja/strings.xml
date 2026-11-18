@@ -3,7 +3,7 @@
     <string name="inbox_title">受信トレイ</string>
     <string name="inbox_retry">再試行</string>
     <string name="inbox_done">対応済み</string>
-    <string name="inbox_move_back">受信トレイに戻す</string>
+    <string name="inbox_move_back">戻す</string>
     <string name="inbox_hand_to_ai">AIに任せる</string>
     <string name="inbox_ai_draft">AI下書き</string>
     <string name="inbox_ai_summary">AI要約</string>
@@ -87,9 +87,18 @@
     <string name="inbox_empty_search_text">「%1$s」に一致するメッセージやメールはありません。</string>
     <string name="inbox_empty_title">受信トレイは空です</string>
     <string name="inbox_empty_text">ハブでLark（Lark ゲートウェイ）を設定するか、設定でメールアカウントを追加すると、対応が必要なメッセージやメールがここに表示されます。</string>
-    <string name="inbox_empty_filtered_title">すべて確認済み</string>
-    <string name="inbox_empty_filtered_text">この絞り込みには何もありません。</string>
-    <string name="inbox_group_fyi">参考まで</string>
+    <string name="inbox_empty_filtered_title">この絞り込みに一致する未対応の項目はありません</string>
+    <string name="inbox_empty_filtered_text">絞り込みを解除すると、受信トレイ全体が表示されます。</string>
+    <string name="inbox_empty_caught_up_title">すべて確認済み</string>
+    <string name="inbox_empty_caught_up_text">新しいメッセージやメールはここに表示されます。</string>
+    <string name="inbox_grouping_title">グループ</string>
+    <string name="inbox_empty_action_title">対応が必要なものはありません</string>
+    <string name="inbox_empty_working_title">進行中のものはありません</string>
+    <string name="inbox_empty_fyi_title">読むものはありません</string>
+    <string name="inbox_empty_done_title">完了したものはまだありません</string>
+    <string name="inbox_empty_section_text">残りは上のほかの区分にあります。</string>
+    <string name="inbox_empty_done_text">対応済みにしたものがここに表示されます。</string>
+    <string name="inbox_group_fyi">参考</string>
     <string name="inbox_mark_all_seen">すべて確認</string>
     <string name="inbox_clear_all">すべてクリア</string>
     <string name="inbox_translated">翻訳済み</string>
@@ -166,6 +175,19 @@
     <string name="inbox_handoff_last_gone">前回渡したエージェントは終了しているため、今回は Persona に渡します。</string>
     <string name="inbox_handoff_mark_done">同時に対応済みにする</string>
     <string name="inbox_handoff_sending">引き継ぎ中…</string>
+    <string name="inbox_handoff_chip_summary">要約して返信案</string>
+    <string name="inbox_handoff_chip_background">背景を調べる</string>
+    <string name="inbox_handoff_chip_handle">対応を依頼</string>
+    <string name="inbox_draft_reply">返信を下書き</string>
+    <string name="inbox_handoff_hint">AIに任せる…</string>
+    <string name="inbox_handoff_agents">エージェント</string>
+    <string name="inbox_handoff_more">その他…</string>
+    <string name="inbox_handoff_view">表示</string>
+    <string name="inbox_handoff_queued">%1$sへの引き継ぎ待ち（取り消しできます）</string>
+    <string name="inbox_handoff_queued_done">%1$sへの引き継ぎ待ち（対応済みにします）</string>
+    <string name="inbox_handoff_sending_to">%1$sに引き継ぎ中…</string>
+    <string name="inbox_handoff_sent_to">%1$sに引き継ぎました</string>
+    <string name="inbox_handoff_sent_done">%1$sに引き継ぎ、対応済みにしました</string>
     <string name="inbox_hand_to_persona">Personaに任せる</string>
     <plurals name="inbox_triage_waiting">
         <item quantity="other">%1$d件のメッセージが振り分け待ち</item>
@@ -269,6 +291,9 @@
     <string name="inbox_event_view_source">原文を見る</string>
     <string name="inbox_done_by_manager">アシスタントが処理済み</string>
     <string name="inbox_event_related">関連</string>
-    <!-- Source subscriptions (#2041): with the Inbox's other settings -->
+    <string name="inbox_open_chat">チャットを開く</string>
+    <string name="inbox_content">本文</string>
+    <!-- Source subscriptions (#2041): with the Inbox's other settings. Inbox Sources (#5308) once the hub says so. -->
     <string name="inbox_subscriptions">購読</string>
+    <string name="inbox_sources">受信箱のソース</string>
 </resources>

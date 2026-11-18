@@ -1,6 +1,7 @@
 import MarkdownUI
 import PersonaKit
 import SwiftUI
+import PersonaWire
 
 /// A long finished answer's parts (#4970, `AnswerParts`), worked out once per text: the chat's lines ask on every
 /// rebuild, and the rows' memos are prewarmed with them off the main thread (`RowMemo.prewarm`).
@@ -122,6 +123,7 @@ private struct AnswerPartWords: View {
     var body: some View {
         LinkedMarkdown(plain: text.markdown, paths: text.paths, key: key)
             .markdownTheme(.persona)
+            .readingContent()
             .environment(\.replyKey, message) // its quotes' folds, the lifted copy's too (as `AssistantText`)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -129,41 +131,70 @@ private struct AnswerPartWords: View {
 
 /// The lifted copy of a long answer drawn in parts (#5221): all of its parts again, each `Part.gap` under the one
 /// before, as the chat stacks them (so it looks as the answer did whole, `AnswerPartsLookTests`), the pressed part
-/// marked for the lift to put it where it was (`MessageLift.part`). Lifted, it is a lazy stack: only the parts near the
-/// screen are laid out, the others as the copy scrolls to them (laying out all of a long report at once is the cost
-/// #4970 took out of the chat). To select its words it lays out all of them
-/// (`MessageMenu.liftWhole`): the text view over them, laid out from the whole answer's text, follows every line.
+/// marked for the lift to put it where it was (`MessageLift.part`). It is a lazy stack: only the parts near the screen
+/// are laid out, the others as the copy scrolls to them (laying out all of a long report at once is the cost #4970 took
+/// out of the chat). Its first frame lays out the pressed part and what shows under it, as lifting one part did
+/// (#5291): the parts above it hold their place until the frame after, since a lazy stack opened at a part lays out its
+/// first parts and walks through those above it to reach it. Selected, it stays lazy: the text view over it holds all
+/// of the words, its lines on the chat's in each part laid out (`ShownWords.segments`).
 struct AnswerPartsLift: View {
     var item: Item
     /// The answer's row memo key (`RowMemo.key`).
     var message: String
     var pressed: Int
-    @Environment(\.liftWhole) private var whole
+    @Environment(\.liftPartRoom) private var room
+    /// The first frame is drawn: the parts above the pressed one are themselves.
+    @State private var grown = false
+    @State private var frames = LiftFrames()
 
     var body: some View {
         let parts = AnswerPartMemo.parts(item.text ?? "")
-        if whole || parts.isEmpty {
-            VStack(alignment: .leading, spacing: 0) { rows(parts, whole: true) }
+        if parts.isEmpty { // not in parts after all: the answer as one
+            AnswerPartWords(text: RowMemo.assistant(message) { _ in AssistantRowText(item.text ?? "") }, key: message, message: message)
+                .liftPressedPart(true)
                 .markdownSoftBreakMode(.lineBreak)
                 .selectableInLift(item.text ?? "", as: .reply(quiet: false))
         } else {
-            LazyVStack(alignment: .leading, spacing: 0) { rows(parts, whole: false) }
-                .scrollTargetLayout()
-                .markdownSoftBreakMode(.lineBreak)
+            let waits = !grown && pressed > 0 && tallerThanTheScreen(parts)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(parts.indices, id: \.self) { n in
+                    if waits && n < pressed { held(parts, n) } else { words(parts, n) }
+                }
+            }
+            .scrollTargetLayout()
+            .markdownSoftBreakMode(.lineBreak)
+            .selectableInLift(item.text ?? "", as: .reply(quiet: false), parts: parts.map(\.line))
+            .onAppear {
+                if waits { frames.run { grown = true; return false } }
+            }
         }
     }
 
-    @ViewBuilder private func rows(_ parts: [AnswerParts.Part], whole: Bool) -> some View {
-        if parts.isEmpty { // not in parts after all: the answer as one
-            AnswerPartWords(text: RowMemo.assistant(message) { _ in AssistantRowText(item.text ?? "") }, key: message, message: message)
-                .liftPressedPart(true, whole: true)
-        }
-        ForEach(parts.indices, id: \.self) { n in
-            let key = AnswerPartMemo.key(message, n)
-            let text = RowMemo.assistant(key) { _ in AssistantRowText(parts[n].text) }
-            AnswerPartWords(text: text, key: key, message: message)
-                .liftPressedPart(n == pressed, whole: whole)
-                .padding(.top, n == 0 ? 0 : parts[n].gap)
-        }
+    @ViewBuilder private func words(_ parts: [AnswerParts.Part], _ n: Int) -> some View {
+        let key = AnswerPartMemo.key(message, n)
+        let text = RowMemo.assistant(key) { _ in AssistantRowText(parts[n].text) }
+        AnswerPartWords(text: text, key: key, message: message)
+            .liftPressedPart(n == pressed)
+            .liftPartBox(n)
+            .padding(.top, n == 0 ? 0 : parts[n].gap)
+    }
+
+    /// A part not laid out yet, holding its place: as tall as the pressed part was in the chat for its length.
+    private func held(_ parts: [AnswerParts.Part], _ n: Int) -> some View {
+        Color.clear
+            .frame(height: CGFloat(parts[n].text.utf8.count) * height(perByteOf: parts))
+            .padding(.top, n == 0 ? 0 : parts[n].gap)
+    }
+
+    private func height(perByteOf parts: [AnswerParts.Part]) -> CGFloat {
+        guard let room, room.part > 0 else { return 0.7 } // about a line of the body's for each of its ~30 bytes
+        return room.part / CGFloat(max(parts[pressed].text.utf8.count, 1))
+    }
+
+    /// Surely taller than the screen: the card shows from the pressed part on, wherever the parts above it end. One that
+    /// may fit shows whole, as tall as it is, its parts all themselves from the first frame.
+    private func tallerThanTheScreen(_ parts: [AnswerParts.Part]) -> Bool {
+        guard let room else { return false }
+        return CGFloat(parts.reduce(0) { $0 + $1.text.utf8.count }) * height(perByteOf: parts) > room.screen * 2
     }
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/deeplink"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
 )
@@ -42,7 +43,7 @@ func (s *Service) minutesWritten(ctx context.Context, r kb.Recording, m kb.Minut
 	set := s.settings(ctx)
 	n := Notification{ID: "ntf_minutes_" + r.ID + "_" + strconv.Itoa(m.Version), Kind: NotifyPush, Title: title, Body: body,
 		DeviceID: set.MachineID, SessionID: set.Main, RecordingID: r.ID}
-	if err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: n}); err != nil {
+	if _, err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: n}); err != nil {
 		s.logf("assistant: minutes push: %v", err)
 	}
 	if link := recordingLink(s.webBase(ctx), r.ID); link != "" {
@@ -54,10 +55,7 @@ func (s *Service) minutesWritten(ctx context.Context, r kb.Recording, m kb.Minut
 
 // recordingLink is a recording's page in the web app at web (web/src/lib/router.ts), "" when web is.
 func recordingLink(web, id string) string {
-	if web == "" {
-		return ""
-	}
-	return web + "/kb/recordings/" + id
+	return deeplink.Web(web, deeplink.Recording(id))
 }
 
 func (s *Service) minutesRoutes(engine func(http.ResponseWriter, *http.Request) *kb.Engine) {

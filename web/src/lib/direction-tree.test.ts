@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Machine, Session } from "./types";
+import type { Session } from "./types";
 
-import { buildDirectionAgentTree } from "./direction-agent-tree";
+import { directionTaskNode } from "./direction-agent-tree";
 import {
+  DIRECTION_STATE_TONE,
   directionStateName,
   directionTitle,
-  directionTreeGroups,
   directionTreeNow,
   groupsByDirection,
   leaderDirections,
@@ -19,7 +19,7 @@ import {
   type DirectionTree,
 } from "./direction-tree";
 
-const counts = (working = 0, needs_you = 0, stuck = 0, review = 0) => ({ working, needs_you, stuck, review });
+const counts = (working = 0, needs_you = 0, stuck = 0, review = 0, planned = 0) => ({ working, needs_you, stuck, review, planned });
 
 const session = (mid: string, sid: string, state: Session["state"] = "working", extra: Partial<Session> = {}): Session => ({ machine_id: mid, session_id: sid, title: sid, cwd: "/code/app", status: "", state, ...extra });
 
@@ -29,13 +29,14 @@ const TREE: DirectionTree = {
       id: "lead-a",
       name: "Product",
       counts: counts(1, 1),
+      running: true,
       tasks: [
         { id: "t1", title: "Ask", state: "needs_you", agents: [{ machine_id: "m", session_id: "s1", title: "one", state: "needs_you", children: [{ machine_id: "m", session_id: "s2", title: "two", state: "working" }] }] },
         { id: "t2", title: "Build", state: "working", agents: [{ machine_id: "m", session_id: "gone", title: "gone", state: "", children: [{ machine_id: "m", session_id: "s3", title: "three", state: "working" }] }] },
       ],
     },
-    { id: "lead-b", name: "Infra", counts: counts(), tasks: [] },
-    { id: "main", name: "", secretary: true, counts: counts(1), tasks: [{ id: "t3", title: "Own", state: "working", agents: [] }] },
+    { id: "lead-b", name: "Infra", counts: counts(), running: false, tasks: [] },
+    { id: "main", name: "", secretary: true, counts: counts(1), running: false, tasks: [{ id: "t3", title: "Own", state: "working", agents: [] }] },
   ],
 };
 
@@ -53,6 +54,17 @@ describe("direction tree", () => {
     expect(normalizeTree(null)).toEqual({ directions: [] });
     // a count that is not a finite number is 0, never drawn as "null"
     expect(normalizeTree({ directions: [{ id: "b", counts: { working: null, needs_you: "3", stuck: Infinity, review: 1 } }] }).directions[0].counts).toEqual(counts(0, 0, 0, 1));
+    // running (#6626) as the hub sent it, whatever the counts; from a hub without it, whether it counts a working task
+    const running = (d: object) => normalizeTree({ directions: [{ id: "r", ...d }] }).directions[0].running;
+    expect(running({ counts: { working: 3 }, running: false })).toBe(false);
+    expect(running({ counts: { needs_you: 1 }, running: true })).toBe(true);
+    expect(running({ counts: { working: 1 } })).toBe(true);
+    expect(running({ counts: { needs_you: 1 } })).toBe(false);
+    expect(running({ counts: { working: 1 }, running: "yes" })).toBe(true);
+    // not started (#5846) is kept as the hub sent it, and counted
+    const planned = normalizeTree({ directions: [{ id: "c", counts: { planned: 2 }, tasks: [{ id: "p", title: "P", state: "planned" }] }] }).directions[0];
+    expect(planned.tasks?.[0].state).toBe("planned");
+    expect(planned.counts).toEqual(counts(0, 0, 0, 0, 2));
   });
 
   it("groups by direction only with a leader; the secretary's group shows only with a leader and a task", () => {
@@ -73,47 +85,20 @@ describe("direction tree", () => {
     expect(directionStateName("review")).toBe("待验收");
     expect(directionStateName("stuck")).toBe("卡住");
     expect(directionStateName("working")).toBe("在做");
+    expect(directionStateName("planned")).toBe("未开始");
+    expect(DIRECTION_STATE_TONE.planned).toBe("text-ink-3");
     expect(directionTitle(TREE.directions[2])).toBe("书记官");
-    expect(directionTitle({ id: "x", name: "", counts: counts() }, "Title")).toBe("Title");
+    expect(directionTitle({ id: "x", name: "", counts: counts(), running: false }, "Title")).toBe("Title");
   });
 
-  it("builds the Agents tree: direction › task › agent › child, agents it does not hold last, empty directions left out", () => {
-    const all = [session("m", "s1", "needs_you"), session("m", "s2"), session("m", "s3"), session("m", "loose", "idle")];
-    const tree = buildDirectionAgentTree(TREE, all, [{ id: "m", online: true } as Machine], undefined, Date.parse("2026-11-11T00:00:00Z"));
-    expect(tree.projects.map((p) => p.key)).toEqual(["direction-agents:lead-a"]);
-    const [a] = tree.projects;
-    expect(a.direction).toEqual({ counts: counts(1, 1), secretary: false });
-    expect(a.todos.map((td) => [td.todoId, td.taskState, td.state])).toEqual([["t1", "needs_you", "needs_you"], ["t2", "working", "working"]]);
-    // s2 nests under s1; the agent the list lacks gives its place to its child
-    expect(a.todos[0].agents.map((n) => [n.session.session_id, n.children.map((c) => c.session.session_id)])).toEqual([["s1", ["s2"]]]);
-    expect(a.todos[1].agents.map((n) => n.session.session_id)).toEqual(["s3"]);
-    expect(a.state).toBe("needs_you");
-    expect(tree.loose.flatMap((g) => g.sessions.map((s) => s.session_id))).toEqual(["loose"]);
-  });
-
-  it("puts the secretary's agents in a last 书记官 group, and drops a task none of whose agents the list holds", () => {
-    const withSecretary: DirectionTree = {
-      directions: [
-        TREE.directions[0],
-        {
-          ...TREE.directions[2],
-          tasks: [
-            { id: "t3", title: "Own", state: "working", agents: [{ machine_id: "m", session_id: "s4", title: "four", state: "working" }] },
-            { id: "t4", title: "Filtered", state: "stuck", agents: [{ machine_id: "m", session_id: "hidden", title: "hidden", state: "working" }] },
-          ],
-        },
-      ],
-    };
-    const all = [session("m", "s1", "needs_you"), session("m", "s2"), session("m", "s3"), session("m", "s4"), session("m", "loose", "idle")];
-    const tree = buildDirectionAgentTree(withSecretary, all, [{ id: "m", online: true } as Machine], undefined, Date.parse("2026-11-11T00:00:00Z"));
-    expect(tree.projects.map((p) => p.key)).toEqual(["direction-agents:lead-a", "direction-agents:main"]);
-    const secretary = tree.projects.at(-1)!;
-    expect(secretary.name).toBe("书记官");
-    expect(secretary.direction).toEqual({ counts: counts(1), secretary: true });
-    expect(secretary.todos.map((td) => td.todoId)).toEqual(["t3"]);
-    expect(secretary.todos[0].agents.map((n) => n.session.session_id)).toEqual(["s4"]);
-    // a listed agent the tree does not hold stays in the loose groups
-    expect(tree.loose.flatMap((g) => g.sessions.map((s) => s.session_id))).toEqual(["loose"]);
+  it("draws a task's agents as the 常驻 rows do: a child under its parent, an agent the list lacks giving its place to its child", () => {
+    const all = [session("m", "s1", "needs_you"), session("m", "s2"), session("m", "s3")];
+    const sessions = new Map(all.map((s) => [`${s.machine_id}/${s.session_id}`, s]));
+    const placed = new Set<string>();
+    const [t1, t2] = (TREE.directions[0].tasks ?? []).map((td) => directionTaskNode(td, sessions, placed, { keyPrefix: "k:", folded: false, standIns: false }));
+    expect([[t1.todoId, t1.taskState, t1.state], [t2.todoId, t2.taskState, t2.state]]).toEqual([["t1", "needs_you", "needs_you"], ["t2", "working", "working"]]);
+    expect(t1.agents.map((n) => [n.session.session_id, n.children.map((c) => c.session.session_id)])).toEqual([["s1", ["s2"]]]);
+    expect(t2.agents.map((n) => n.session.session_id)).toEqual(["s3"]);
   });
 
   it("is read once for everyone asking while a read is out, again after it for a change; a 404 is no tree", async () => {
@@ -126,13 +111,13 @@ describe("direction tree", () => {
     expect(String((fetch.mock.calls[0] as unknown[])[0])).toContain("/api/v1/assistant/directions/tree");
     expect(a).toBe(b);
     expect(b).toBe(c);
-    expect(directionTreeGroups()).toBe(true);
+    expect(groupsByDirection(directionTreeNow())).toBe(true);
     // a directions push reads it again
     await refreshDirectionTree();
     expect(fetch).toHaveBeenCalledTimes(2);
     status = 404;
     expect(await refreshDirectionTree()).toBeNull();
-    expect(directionTreeGroups()).toBe(false);
+    expect(groupsByDirection(directionTreeNow())).toBe(false);
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 
@@ -181,11 +166,11 @@ describe("direction tree", () => {
     expect(directionTreeNow()).toBeNull();
     status = 200;
     await refreshDirectionTree();
-    expect(directionTreeGroups()).toBe(true);
+    expect(groupsByDirection(directionTreeNow())).toBe(true);
     // a later failure keeps the tree it had
     status = 500;
     await refreshDirectionTree();
-    expect(directionTreeGroups()).toBe(true);
+    expect(groupsByDirection(directionTreeNow())).toBe(true);
   });
 
   it("asks once more after a read when a push comes while it is out", async () => {
@@ -231,6 +216,6 @@ describe("direction tree", () => {
     await newer;
     answers[0](new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: { "Content-Type": "application/json" } }));
     await older;
-    expect(directionTreeGroups()).toBe(true);
+    expect(groupsByDirection(directionTreeNow())).toBe(true);
   });
 });

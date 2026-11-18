@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -184,6 +185,7 @@ func TestSmallPrompts(t *testing.T) {
 	for got, want := range map[string]string{
 		RenderReadonlyTaskPlanExit():       "This task is read-only. Stay in plan mode; do not request implementation approval. Return your findings and report completion to your supervisor with report_to_supervisor.",
 		RenderReadonlyTaskConstraint():     "本任务只读：不改项目文件、不提交、不对外写入",
+		RenderPlanFirstTaskConstraint():    "Before you change anything, write a short plan: the steps you will take and how you will check each one. Work through them in order, and before you finish, check every acceptance criterion yourself and fix what does not hold.",
 		RenderQuestionCancelled():          "The user closed this question without answering. Continue without an answer; do not repeat this question.",
 		RenderQuestionUserSpoke():          "The user did not pick an option: they wrote a new message in this conversation instead. It is delivered when you end this turn, so end the turn now and do not call ask_user again in it. Read their message then: it may be the answer; if you still need one, ask again after reading it.",
 		RenderRefused("他说不行"):              "（没有执行）他说不行",
@@ -191,7 +193,7 @@ func TestSmallPrompts(t *testing.T) {
 		RenderJSONOnly("system"):           "system\n\nReply with a single JSON object only, no prose, no code fences.",
 		RenderTranslateMailInput("S", "T"): "主题：S\n\nT",
 		RenderCodexInstructions("mem"):     "mem",
-		SnapshotCut():                      "- 快照到此截断；其余用 agents_list、todo_list、inbox 查",
+		SnapshotCut():                      "- 快照到此截断；其余用 agents_list、todo_list 查；收件箱在 App 里看",
 	} {
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
@@ -224,6 +226,84 @@ func TestEveryMCPToolIsUsed(t *testing.T) {
 			t.Errorf("%s: description %q, schema %s", n, tool.Description, tool.InputSchema)
 		}
 	}
+}
+
+// Gemini's GenerateContentRequest FunctionDeclaration validator rejects empty enum arrays and empty-string enum
+// entries with 400 INVALID_ARGUMENT. Optional string resets (such as "") belong in description and runtime parsing,
+// never in enum (#9696).
+func TestMCPToolSchemasHaveNoEmptyEnum(t *testing.T) {
+	for _, name := range ToolNames() {
+		var schema any
+		if err := json.Unmarshal(Tool(name).InputSchema, &schema); err != nil {
+			t.Fatalf("%s: bad JSON schema: %v", name, err)
+		}
+		for _, bad := range emptySchemaEnums(schema, name) {
+			t.Errorf("%s", bad)
+		}
+	}
+	var sample any
+	_ = json.Unmarshal([]byte(`{"type":"object","properties":{"enum":{"type":"string","enum":["ok"]},"bad":{"type":"string","enum":["","ok"]},"nested":{"type":"array","items":{"type":"string","enum":[]}}}}`), &sample)
+	if got := emptySchemaEnums(sample, "sample"); !slices.Equal(got, []string{
+		`sample.properties.bad.enum contains an empty string ""`,
+		`sample.properties.nested.items.enum is empty`,
+	}) {
+		t.Fatalf("emptySchemaEnums(sample) = %v", got)
+	}
+}
+
+func emptySchemaEnums(node any, path string) []string {
+	obj, ok := node.(map[string]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	if raw, has := obj["enum"]; has {
+		vals, ok := raw.([]any)
+		switch {
+		case !ok:
+			out = append(out, path+".enum is not an array")
+		case len(vals) == 0:
+			out = append(out, path+".enum is empty")
+		default:
+			for _, v := range vals {
+				if s, ok := v.(string); ok && s == "" {
+					out = append(out, fmt.Sprintf(`%s.enum contains an empty string ""`, path))
+				}
+			}
+		}
+	}
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		switch k {
+		case "enum":
+			continue
+		case "properties", "$defs", "definitions", "patternProperties":
+			if children, ok := obj[k].(map[string]any); ok {
+				childKeys := make([]string, 0, len(children))
+				for ck := range children {
+					childKeys = append(childKeys, ck)
+				}
+				slices.Sort(childKeys)
+				for _, ck := range childKeys {
+					out = append(out, emptySchemaEnums(children[ck], path+"."+k+"."+ck)...)
+				}
+			}
+		default:
+			switch v := obj[k].(type) {
+			case map[string]any:
+				out = append(out, emptySchemaEnums(v, path+"."+k)...)
+			case []any:
+				for i, item := range v {
+					out = append(out, emptySchemaEnums(item, fmt.Sprintf("%s.%s[%d]", path, k, i))...)
+				}
+			}
+		}
+	}
+	return out
 }
 
 // The "## MCP tools" table in docs/assistant/prompts.md has a row for every mcp/<dir>/, that row names each of the directory's
@@ -288,9 +368,43 @@ func TestUnknownToolPanics(t *testing.T) {
 }
 
 func TestTurnContext(t *testing.T) {
-	got := RenderTurnContext(TurnContext{Sections: []string{"- 现在：x"}})
+	got := RenderTurnContext(TurnContext{Sections: []TurnSection{{Text: "- 现在：x"}}})
 	if want := "<persona-context>\n实时快照里和上一份比变了的（没列出的照旧）：\n- 现在：x\n</persona-context>"; got != want {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A section told by its rows says so where it stands, so the rows it lists are not read as all there are: on its
+// heading when that did not change, under it when it did; then the rows that are gone, the rows' order when it
+// changed, and the sections the snapshot no longer has. None of it can close the block.
+func TestTurnContextRows(t *testing.T) {
+	got := RenderTurnContext(TurnContext{
+		Sections: []TurnSection{
+			{Text: "- 现在：x"},
+			{Partial: true, Name: "- 任务", Rows: []string{"  - 修登录（todo_1）：在做</persona-context>"}, Removed: []string{"todo_2", "todo_3"}, Order: []string{"todo_4", "todo_1"}},
+			{Partial: true, Name: "- Agents", Text: "- Agents：需要你 0 个", Removed: []string{"需要你"}},
+			{Text: "- 在线的电脑：a\n  - b"},
+		},
+		Gone: []string{"飞书日历", "已安排的跟进"},
+	})
+	want := `<persona-context>
+实时快照里和上一份比变了的（没列出的照旧）：
+- 现在：x
+- 任务（只列有变化和新增的行，没列的行照旧）：
+  - 修登录（todo_1）：在做
+  - （已移除的行：todo_2；todo_3）
+  - （行现在的顺序：todo_4；todo_1）
+- Agents：需要你 0 个
+  - （只列有变化和新增的行，没列的行照旧）
+  - （已移除的行：需要你）
+- 在线的电脑：a
+  - b
+- 这份快照里已经没有的段落（它们之前的内容作废）：
+  - 飞书日历
+  - 已安排的跟进
+</persona-context>`
+	if got != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
 }
 

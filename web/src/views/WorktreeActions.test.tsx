@@ -29,6 +29,7 @@ let requests: { url: string; init: RequestInit; resolve: (value: Response) => vo
 let deny = false;
 let folder = false;
 let dirty = 0;
+let linked = true;
 let ordered: Session[] | undefined;
 const body = () => document.body.textContent || "";
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((el) => el.textContent === label)!;
@@ -46,7 +47,7 @@ const render = async (readOnly = false) => act(async () => root.render(<StrictMo
 
 beforeEach(async () => {
   await initI18n("en"); resetManagerChoice(); setRosterDefault("manager"); setToken("synthetic-component");
-  requests = []; deny = false; folder = false; dirty = 0; ordered = undefined;
+  requests = []; deny = false; folder = false; dirty = 0; linked = true; ordered = undefined;
   Object.values(mock).forEach((value) => { if (typeof value === "function") value.mockClear(); });
   mock.catalog = { owner: credentialOwner(), manager: "manager", workspaces: [{ id: "discovery", machine_id: "computer", source: "orca", source_id: "work", title: "Readable worktree", cwd: "/repo/work", parent_source_id: "parent", available: true, online: true }, { id: "parent-row", machine_id: "computer", source: "orca", source_id: "parent", title: "Parent", cwd: "/repo", project_id: "other-project" }] };
   target = { owner: mock.catalog.owner, manager: "manager", machineId: "computer", host: "orca", workspaceId: "work", cwd: "/repo/work", label: "Readable worktree" };
@@ -56,7 +57,8 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", vi.fn((url: string, init: RequestInit) => {
     if (url.endsWith("/auth/tokens")) return Promise.resolve(new Response(JSON.stringify(deny ? { error: "read only" } : { current: "device", tokens: [{ id: "device", role: "full" }] }), { status: deny ? 403 : 200 }));
     const json = init.body ? JSON.parse(String(init.body)) : {};
-    if (json.preview) return Promise.resolve(new Response(JSON.stringify({ workspace_id: "work", kind: "orca", host_id: "local", instance_id: "private-instance", preview_token: "private-token", path: "/repo/work", branch: "topic", folder, dirty }), { status: 200 }));
+    if (url.endsWith("/worktree/status")) return Promise.resolve(new Response(JSON.stringify({ worktree: linked, path: target.cwd }), { status: 200 }));
+    if (json.preview) return Promise.resolve(new Response(JSON.stringify({ workspace_id: "work", kind: json.kind, host_id: "local", instance_id: json.kind === "orca" ? "private-instance" : "", preview_token: "private-token", path: "/repo/work", branch: json.close_only ? "" : "topic", folder: json.close_only || folder, dirty: json.close_only ? 0 : dirty, ...(json.close_only ? { close_only: true } : {}) }), { status: 200 }));
     return new Promise<Response>((resolve) => requests.push({ url, init, resolve }));
   }));
   host = document.createElement("div"); document.body.append(host); root = createRoot(host); await render();
@@ -118,11 +120,34 @@ it("passes a real same-host cross-project parent to the leader callback and call
 });
 it("fails closed on restricted device roles and preserves copy navigation", async () => {
   deny = true; await open(); expect((item("New agent") as HTMLButtonElement).disabled).toBe(true);
-  expect(body()).toContain("Full device access"); expect((item("Copy path") as HTMLButtonElement).disabled).toBe(false); expect(requests).toHaveLength(0);
+  expect(body()).toContain("Full device access"); expect((item("Copy folder path") as HTMLButtonElement).disabled).toBe(false); expect(requests).toHaveLength(0);
 });
-it("does not show Orca removal for a generic runtime", async () => {
-  target = { ...target, host: "herdr" }; mock.catalog.workspaces[0].source = "herdr"; await render(); await open();
-  expect(item("Rename worktree")).toBeTruthy(); expect(item("Delete worktree")).toBeUndefined();
+it("does not show workspace removal for a generic runtime", async () => {
+  target = { ...target, host: "future" }; mock.catalog.workspaces[0].source = "future"; await render(); await open();
+  expect(item("Close workspace")).toBeUndefined(); expect(item("Delete worktree")).toBeUndefined();
+});
+
+it("closes a herdr main workspace through a file-preserving confirmation", async () => {
+  target = { ...target, host: "herdr" }; mock.catalog.workspaces[0].source = "herdr"; linked = false;
+  await render(); await open();
+  expect(item("Close workspace")).toBeTruthy();
+  expect((item("Delete worktree") as HTMLButtonElement).disabled).toBe(true);
+  await click(item("Close workspace"));
+  expect(body()).toContain("The directory, files and Git branches are kept");
+  expect(document.querySelector("input[type=checkbox]")).toBeNull();
+  await click(button("Close workspace"));
+  expect(JSON.parse(String(requests[0].init.body))).toEqual({ workspace_id: "work", kind: "herdr", preview_token: "private-token", close_only: true });
+  await reply(0, { workspace_id: "work", removed: true, state: "removed" });
+  expect(mock.refresh).toHaveBeenCalledTimes(1);
+  expect(document.querySelector("[role=dialog]")).toBeNull();
+});
+
+it("allows linked herdr checkout deletion and retains the branch by default", async () => {
+  target = { ...target, host: "herdr" }; mock.catalog.workspaces[0].source = "herdr";
+  await render(); await open(); await click(item("Delete worktree"));
+  expect(body()).toContain("The checkout directory and its files will be deleted");
+  await click(button("Delete worktree"));
+  expect(JSON.parse(String(requests[0].init.body))).toEqual({ workspace_id: "work", kind: "herdr", preview_token: "private-token" });
 });
 it("invalidates a ready preview on machine availability or catalog target replacement", async () => {
   await open(); await click(item("Delete worktree")); mock.state.machines[0].online = false; await render();

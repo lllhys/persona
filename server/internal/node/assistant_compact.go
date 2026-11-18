@@ -22,13 +22,20 @@ import (
 
 const assistantCompactTimeout = 10 * time.Minute
 
-// assistantCompact starts compacting conversation id, resuming its process when it is not running.
-func (n *Node) assistantCompact(ctx context.Context, id string) error {
+// assistantCompact starts compacting conversation id, resuming its process when it is not running; with onlyRunning
+// (the hub compacting a meeting's room, #8253) it refuses not_running instead: a process that exited since the hub saw it
+// running is never started only to be compacted.
+func (n *Node) assistantCompact(ctx context.Context, id string, onlyRunning bool) error {
 	if id == "" || !validID(id) {
 		return errors.New("invalid session id")
 	}
 	if n.runtimeAssistant(id) {
 		return refusal("unsupported", "这个对话由 runtime 运行，不能在这里压缩", nil)
+	}
+	if saved, ok := n.state.get(id); ok && proto.IsExternalLauncher(saved.Launcher) {
+		var finish func()
+		ctx, finish = n.beginExternalStartup(ctx, id)
+		defer finish()
 	}
 	defer n.assistantLife.lock(id)() // not while a send or a restore has this conversation's process (model_restore.go)
 	n.mu.Lock()
@@ -45,6 +52,9 @@ func (n *Node) assistantCompact(ctx context.Context, id string) error {
 			return refusal("busy", "正在回答，等这一轮结束再压缩", nil)
 		}
 	} else {
+		if onlyRunning {
+			return refusal("not_running", "这个对话的进程没有在运行，不为压缩启动它", nil)
+		}
 		if n.transcriptPath(id) == "" {
 			return refusal("gone", "这个对话的记录已经不在了", nil)
 		}
@@ -56,15 +66,51 @@ func (n *Node) assistantCompact(ctx context.Context, id string) error {
 		if cwd == "" {
 			cwd = identity.AssistantDir(n.home)
 		}
-		if _, err := n.assistantAgent(ctx, launcher); err != nil {
-			return err
+		if !proto.IsExternalLauncher(launcher) {
+			if _, err := n.assistantAgent(ctx, launcher); err != nil {
+				return err
+			}
+			n.stopAssistant(id)
 		}
-		n.stopAssistant(id)
 		var err error
-		execution := modelExecution{Model: st.Model, Effort: st.ModelEffort, UseEffort: st.ModelFingerprint != "", Fingerprint: st.ModelFingerprint, Runtime: st.Runtime, IsMain: st.IsMain}
+		// A guest (a meeting's room too) starts as on any resume: spawnClaude reads its tools and kind from its record
+		// (no built-in tools, strict MCP config, project setting sources, its own settings and profile), and
+		// spawnAssistant refuses one whose launcher runs another agent by now.
+		execution := modelExecution{Model: st.Model, Effort: st.ModelEffort, UseEffort: st.ModelFingerprint != "", Fingerprint: st.ModelFingerprint, IsMain: st.IsMain, MainCompactWindow: st.MainCompactWindow, ConfigDir: st.ConfigDir, SupervisionInstructions: st.SupervisionInstructions, Origin: st.Origin}
+		resolved, current := n.assistantModel(ctx, id)
+		if proto.IsExternalLauncher(launcher) {
+			if resolved != launcher || current.External == nil {
+				return externalRefusal(ctx, "adapter_scope_required")
+			}
+			// Refresh execution authority, not the conversation's saved profile or unresolved policy.
+			execution.Model, execution.Effort = current.Model, current.Effort
+			execution.UseEffort, execution.Fingerprint = current.UseEffort, current.Fingerprint
+			execution.Runtime, execution.IsMain, execution.External = current.Runtime, current.IsMain, current.External
+			execution.MainCompactWindow = n.mainWindowOn(launcher, current.IsMain, current.MainCompactWindow)
+			if err := n.checkExternalAssistant(ctx, id, launcher, execution, false); err != nil {
+				return err
+			}
+			if _, err := n.assistantAgent(ctx, launcher); err != nil {
+				return err
+			}
+			n.stopAssistant(id)
+		}
+		if current.SupervisionResolved {
+			execution.SupervisionInstructions = current.SupervisionInstructions
+		}
+		if proto.IsExternalLauncher(launcher) {
+			execution.StartupContext = ctx
+		}
 		if p, err = n.spawnAssistant(id, cwd, launcher, true, false, execution); err != nil {
 			return err
 		}
+		if st.SupervisionInstructions != execution.SupervisionInstructions {
+			st.SupervisionInstructions = execution.SupervisionInstructions
+			n.state.put(id, st)
+		}
+	}
+	if proto.IsExternalLauncher(p.launcher) && ctx.Err() != nil {
+		return externalAdapterError(ctx, ctx.Err())
 	}
 	p.mu.Lock()
 	p.compacting, p.compacted, p.manual = true, true, true
@@ -83,6 +129,9 @@ func (n *Node) assistantCompact(ctx context.Context, id string) error {
 		p.compacting, p.manual = false, false
 		p.mu.Unlock()
 		n.compactionEnded(id, "没能开始压缩："+err.Error())
+		return err
+	}
+	if err := finishExternalStartup(ctx); err != nil {
 		return err
 	}
 	n.logger.Printf("assistant %s: compacting, as the user asked", short(id))

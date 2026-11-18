@@ -1,5 +1,6 @@
 package persona.core.data
 
+import persona.core.contracts.GroupKeys
 import persona.core.contracts.HubScope
 import persona.core.contracts.Item
 import persona.core.contracts.MessageEcho
@@ -28,8 +29,11 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
@@ -41,6 +45,60 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Hub-authoritative delivery of one durable outbox message. Unlike [DeliveryState], this is never inferred from manual
+ * confirmation, an HTTP error's delivered hint, or the grace that turns a sent bubble into a shown one.
+ *
+ * The app routes Agent sends through its grouped MessageSender facade. A process-local core/data stream lets the real
+ * outbox reach the repository through that unchanged facade; the pairing scope prevents cross-hub delivery.
+ */
+internal data class AuthoritativeMessageDelivery(
+    val scope: String,
+    val clientMessageId: String,
+    val session: SessionKey,
+    val text: String,
+    val agentHandOff: InboxAgentHandOff? = null,
+    /** False when the target outbox committed evidence but the originating inbox still must commit it before recording. */
+    val originCommitted: Boolean = true,
+)
+
+internal object AuthoritativeMessageDeliveries {
+    private val mutable = MutableSharedFlow<AuthoritativeMessageDelivery>(extraBufferCapacity = Int.MAX_VALUE)
+    val events: SharedFlow<AuthoritativeMessageDelivery> = mutable
+    /** Unacknowledged hand-offs only: a same-process origin reopen need not wait for its disk replay. */
+    private val awaitingOrigin = LinkedHashMap<Pair<String, String>, AuthoritativeMessageDelivery>()
+
+    /** Buffered so recording a hand-off can never hold up or change message delivery. */
+    suspend fun publish(delivery: AuthoritativeMessageDelivery) {
+        val handOff = delivery.agentHandOff
+        val originCommitted = when {
+            handOff == null -> delivery.originCommitted
+            delivery.originCommitted -> true
+            else -> InboxReplyJournal.commitAgentHandOffDelivery(handOff, delivery.scope)
+        }
+        val committed = delivery.copy(originCommitted = originCommitted)
+        if (handOff != null) synchronized(awaitingOrigin) {
+            val key = handOff.scope to handOff.request.operationId
+            awaitingOrigin.remove(key)
+            awaitingOrigin[key] = committed
+            while (awaitingOrigin.size > 256) awaitingOrigin.remove(awaitingOrigin.keys.first())
+        }
+        mutable.emit(committed)
+    }
+
+    internal fun replay(scope: String): List<AuthoritativeMessageDelivery> = synchronized(awaitingOrigin) {
+        awaitingOrigin.filterKeys { it.first == scope }.values.toList()
+    }
+
+    internal fun acknowledge(delivery: AuthoritativeMessageDelivery) {
+        val handOff = delivery.agentHandOff ?: return
+        synchronized(awaitingOrigin) {
+            val key = handOff.scope to handOff.request.operationId
+            if (awaitingOrigin[key] === delivery) awaitingOrigin.remove(key)
+        }
+    }
+}
 
 class OutboxMessageSender(
     private val hubScope: HubScope,
@@ -76,6 +134,10 @@ class OutboxMessageSender(
     @Volatile private var mainResolver: MainConversationResolver? = null
     /** Transcript items that already showed a message (observeTranscript): the same item never shows a second. */
     private val claimed = mutableSetOf<Pair<SessionKey, String>>()
+    /** One process-local publication per client id; the repository's durable tombstone covers process recreation. */
+    private val publishedDeliveries = mutableSetOf<String>()
+    /** A publication interrupted at an unknown store point is recovered by the origin, not blocked on that store again. */
+    private val interruptedDeliveries = mutableSetOf<String>()
     /** Whether a session is at work (connectActivity): its turn may write a delivered message only when it ends. */
     @Volatile private var busy: (SessionKey) -> Boolean = { false }
 
@@ -158,8 +220,16 @@ class OutboxMessageSender(
         check(job.isActive) { "Pairing scope is closed" }
         require(entry.text.isNotBlank() && entry.clientMessageId.isNotBlank())
         require(entry.session.machineId.isNotBlank() && entry.session.sessionId.isNotBlank())
-        store.enqueue(entry)
-        if (transport.readyToSend.value) receiptState.preparing(entry.session, entry.clientMessageId, false)
+        val handOff = currentCoroutineContext()[InboxAgentHandOffContext]?.handOff
+        val stored = if (handOff == null) entry else {
+            require(handOff.request.operationId == entry.clientMessageId && handOff.request.text == entry.text &&
+                GroupKeys.rawKey(handOff.session) == GroupKeys.rawKey(entry.session)) {
+                "Hand-off does not match its outbox message"
+            }
+            entry.copyForDelivery(agentHandOff = handOff)
+        }
+        store.enqueue(stored)
+        if (transport.readyToSend.value) receiptState.preparing(stored.session, stored.clientMessageId, false)
         wake.trySend(Unit)
         Unit
     }
@@ -288,9 +358,16 @@ class OutboxMessageSender(
 
     /**
      * Manual refusal retries must update the durable outbox as well as the composer overlay. [opId] is the operation
-     * id the retry goes under (a new one: the refused one would be answered from its first try).
+     * id the retry goes under (a new one: the refused one would be answered from its first try). [result] is the actual
+     * transport outcome, or null while sending or when cancellation leaves it unknown; only explicit acceptance is
+     * authoritative hand-off delivery. In particular, a Sent overlay can instead carry an HTTP delivered=yes hint.
      */
-    suspend fun recordComposerDelivery(id: String, delivery: ComposerDelivery, opId: String? = null) = lifecycle.withLock {
+    suspend fun recordComposerDelivery(
+        id: String,
+        delivery: ComposerDelivery,
+        opId: String? = null,
+        result: MessageTransportResult? = null,
+    ) = lifecycle.withLock {
         check(job.isActive) { "Pairing scope is closed" }
         val entry = store.entries.first().firstOrNull { it.clientMessageId == id } ?: error("Message state changed")
         val attempt = request(entry).copy(opId = opId ?: entry.operationId)
@@ -308,6 +385,7 @@ class OutboxMessageSender(
         if (state == OutboxState.Sending) receiptState.begin(attempt, entry.mainTarget)
         else receiptState.result(attempt, if (state in setOf(OutboxState.Sent, OutboxState.Shown))
             MessageTransportResult.Accepted else MessageTransportResult.NoReceipt)
+        if (result == MessageTransportResult.Accepted) publishAuthoritative(entry)
     }
 
     /** Attachments need the same durably bound target before uploading machine-local files. */
@@ -386,8 +464,10 @@ class OutboxMessageSender(
         if (items.none(MessageEcho::candidate)) return
         lifecycle.withLock {
             check(job.isActive) { "Pairing scope is closed" }
-            val pending = store.entries.first().filter { it.session == session && it.state in reconcilable }
-                .sortedBy { it.createdAt }.toMutableList()
+            val pending = store.entries.first().filter { it.session == session && it.state in catchUpStates }
+                // An untagged copy still belongs to the oldest unsettled message; Shown is only the fallback.
+                .sortedWith(compareBy<OutboxEntry> { it.state == OutboxState.Shown }.thenBy { it.createdAt })
+                .toMutableList()
             for (item in items) {
                 if (pending.isEmpty()) break
                 if (!MessageEcho.candidate(item) || (session to item.id) in claimed) continue
@@ -395,8 +475,11 @@ class OutboxMessageSender(
                     it.opId?.let { op -> MessageEcho.carries(item, op) } == true }
                     ?: pending.firstOrNull { MessageEcho.arrived(it.text, it.createdAt, item) } ?: continue
                 pending.remove(entry)
-                if (store.transition(entry.clientMessageId, reconcilable, OutboxState.Shown)) {
+                val moved = store.transition(entry.clientMessageId, reconcilable, OutboxState.Shown)
+                // A restored Shown row is only display state; this newly observed transcript item is fresh evidence.
+                if (moved || entry.state == OutboxState.Shown) {
                     claimed += session to item.id
+                    publishAuthoritative(entry)
                     wake.trySend(Unit)
                 }
             }
@@ -409,7 +492,7 @@ class OutboxMessageSender(
         // Bound the whole catch-up so unresolved entries cannot hold the sending gate forever.
         withTimeoutOrNull(reconciliationTimeoutMillis) {
             val entries = store.entries.first()
-            for (entry in entries.filter { it.state in reconcilable }) {
+            for (entry in entries.filter { it.state in catchUpStates }) {
                 if (entry.state in uncertain) store.transition(entry.clientMessageId, uncertain, OutboxState.Verifying)
                 val evidence = try {
                     transport.reconcile(request(entry), entry.createdAt,
@@ -417,12 +500,16 @@ class OutboxMessageSender(
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { null }
                 when (evidence) {
-                    MessageEvidence.Shown -> store.transition(entry.clientMessageId, reconcilable, OutboxState.Shown)
+                    MessageEvidence.Shown -> {
+                        val moved = store.transition(entry.clientMessageId, reconcilable, OutboxState.Shown)
+                        // Fresh validated evidence still counts when a restored row was already Shown.
+                        if (moved || entry.state == OutboxState.Shown) publishAuthoritative(entry)
+                    }
                     is MessageEvidence.Receipt -> {
                         // A late success can settle manual review; an unknown receipt must keep that choice visible.
                         val from = if (evidence.result == MessageTransportResult.Accepted)
                             uncertain + OutboxState.NeedsConfirmation else uncertain
-                        settle(entry.clientMessageId, from, evidence.result)
+                        settle(entry, from, evidence.result)
                     }
                     null -> store.transition(entry.clientMessageId, setOf(OutboxState.Verifying), OutboxState.Unknown)
                 }
@@ -469,7 +556,7 @@ class OutboxMessageSender(
                         return
                     }
                 }
-                entry = entry.copy(session = target)
+                entry = entry.copyForDelivery(session = target)
             }
             if (entry.state !in allowed) continue
             if (!store.transition(entry.clientMessageId, allowed, OutboxState.Sending)) continue
@@ -480,7 +567,7 @@ class OutboxMessageSender(
                 if (!store.transition(entry.clientMessageId, setOf(OutboxState.Unknown), OutboxState.Sending)) continue
                 result = attempt(entry)
             }
-            if (settle(entry.clientMessageId, setOf(OutboxState.Sending), result) == OutboxState.WaitingForNetwork) return
+            if (settle(entry, setOf(OutboxState.Sending), result) == OutboxState.WaitingForNetwork) return
         }
     }
 
@@ -489,15 +576,71 @@ class OutboxMessageSender(
      * spent (the hub answers it again from this try: 202 unknown, the stored 409), so the next attempt takes a new one,
      * as on iOS. Without an answer the id stays: the hub sends a repeated id once.
      */
-    private suspend fun settle(id: String, from: Set<OutboxState>, result: MessageTransportResult): OutboxState {
+    private suspend fun settle(entry: OutboxEntry, from: Set<OutboxState>, result: MessageTransportResult): OutboxState {
+        val id = entry.clientMessageId
+        // A late Accepted receipt is new evidence even after manual confirmation or an earlier settlement. Do not move
+        // Shown back to Sent (or manufacture a same-state transition): publish that evidence once for this sender.
+        if (result == MessageTransportResult.Accepted && entry.state in settled) {
+            publishAuthoritative(entry)
+            unstall(id)
+            return entry.state
+        }
         val state = classify(result)
         val error = (result as? MessageTransportResult.HubError)?.let { it.code ?: it.error }
         val moved = if ((result as? MessageTransportResult.HubError)?.delivered == "none") {
             store.transition(id, from, state, error, newOperationId())
         } else store.transition(id, from, state, error)
+        if (result == MessageTransportResult.Accepted) {
+            val settledNow = moved || store.entries.first().any {
+                it.clientMessageId == id && it.state in settled
+            }
+            if (settledNow) publishAuthoritative(entry)
+        }
         if (moved && state == OutboxState.WaitingForNetwork) stall(id, error) else unstall(id)
         return state
     }
+
+    private suspend fun publishAuthoritative(entry: OutboxEntry) {
+        val first = synchronized(publishedDeliveries) { publishedDeliveries.add(entry.clientMessageId) }
+        if (!first) return
+        val recovering = synchronized(interruptedDeliveries) { interruptedDeliveries.remove(entry.clientMessageId) }
+        var published = false
+        try {
+            var storeCommitted = false
+            val persisted = if (recovering) {
+                entry.copyForDelivery(agentHandOff = entry.agentHandOff?.copy(delivered = true))
+            } else try {
+                store.persistAgentHandOffDelivery(entry).also { storeCommitted = true }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Recording metadata must never change an already authoritative message result.
+                entry.copyForDelivery(agentHandOff = entry.agentHandOff?.copy(delivered = true))
+            }
+            // Recovery means the store outcome is unknown, not that its origin committed. Publish repairs it idempotently.
+            val originCommitted = storeCommitted && store.agentHandOffOriginCommitted(persisted)
+            // Reconciliation has a short timeout. Once fresh evidence retries an interrupted commit, finish that small
+            // durable repair and its publication rather than cancelling between the journal write and the event.
+            if (recovering) withContext(NonCancellable) {
+                AuthoritativeMessageDeliveries.publish(persisted.delivery(originCommitted))
+            } else {
+                AuthoritativeMessageDeliveries.publish(persisted.delivery(originCommitted))
+            }
+            published = true
+        } finally {
+            // Cancellation or another publication failure must not consume the only later chance to recover.
+            if (!published) {
+                synchronized(publishedDeliveries) { publishedDeliveries.remove(entry.clientMessageId) }
+                if (entry.agentHandOff != null) synchronized(interruptedDeliveries) {
+                    interruptedDeliveries += entry.clientMessageId
+                }
+            }
+        }
+    }
+
+    private fun OutboxEntry.delivery(originCommitted: Boolean = true) = AuthoritativeMessageDelivery(
+        hubScope.path, clientMessageId, session, text, agentHandOff, originCommitted,
+    )
 
     /**
      * [id] came back waiting. Waiting for the link is what the outbox is for; while the link is up it means the hub
@@ -604,10 +747,13 @@ class OutboxMessageSender(
         private val reviewable = setOf(OutboxState.Unknown, OutboxState.Verifying)
         /** Delivery unknown, with or without the review deadline passed: the user decides (confirm or discard). */
         private val undecided = reviewable + OutboxState.NeedsConfirmation
-        private val reconcilable = uncertain + setOf(OutboxState.Sent, OutboxState.NeedsConfirmation)
+        private val settled = setOf(OutboxState.Sent, OutboxState.Shown)
+        private val reconcilable = uncertain + OutboxState.Sent + OutboxState.NeedsConfirmation
+        /** Read-only catch-up may also find late evidence for an already shown message; transcript matching may not. */
+        private val catchUpStates = reconcilable + OutboxState.Shown
         private val dispatchable = setOf(OutboxState.Queued, OutboxState.WaitingForNetwork)
         private val hidden = setOf(OutboxState.Cancelled, OutboxState.Shown)
-        private val refusals = setOf("input_draft", "dialog_open", "op_id_reused", "invalid", "stale_session")
+        private val refusals = setOf("agent_stopped", "input_draft", "dialog_open", "codex_not_ready", "codex_first_text", "codex_waiting", "op_id_reused", "invalid", "stale_session")
         /** A message that keeps coming back waiting while the link is up goes again this often (iOS retryOutboxSoon). */
         private const val StallRetryMillis = 10_000L
         /** …and is refused after this long, about six tries (iOS OutboxWait.connectedLimit). */
@@ -621,6 +767,8 @@ class OutboxMessageSender(
             MessageTransportResult.NotSent -> OutboxState.WaitingForNetwork
             MessageTransportResult.NoReceipt -> OutboxState.Unknown
             is MessageTransportResult.HubError -> when {
+                // Its first paste may already be in Codex. Only the user can decide whether to send it again.
+                result.code == "codex_first_unconfirmed" && result.delivered == "unknown" -> OutboxState.NeedsConfirmation
                 result.delivered == "unknown" -> OutboxState.Verifying
                 result.delivered == "yes" -> OutboxState.Sent
                 result.code in refusals || result.code in SetupFailureCodes -> OutboxState.Refused

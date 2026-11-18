@@ -5,6 +5,14 @@ import org.junit.Test
 import persona.core.contracts.*
 
 class SessionDetailTest {
+    @Test fun aCompleteCodexRowHydratesTheWaitingFlagOmittedByASummary() {
+        val summary = Session("computer", "waiting", agent = "codex", waiting = false)
+        val complete = summary.copy(waiting = null, awaitingFirstMessage = true)
+        val merged = sessionWithDetail(summary, null, null, complete)
+        assertTrue(merged.awaitingFirstMessage)
+        assertTrue(sessionWithDetail(summary, merged, null).awaitingFirstMessage)
+        assertFalse(sessionWithDetail(summary.copy(sessionId = "other"), merged, null, complete).awaitingFirstMessage)
+    }
     @Test fun archivedMetadataIsAvailableOnlyForItsReadOnlyConversation() {
         for (agent in listOf("claude", "codex")) {
             val archived = Session("computer", "history", agent = agent, title = "Archived $agent",

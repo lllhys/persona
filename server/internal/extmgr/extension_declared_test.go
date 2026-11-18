@@ -1,6 +1,7 @@
 package extmgr
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +44,7 @@ func TestDeclarativeKit(t *testing.T) {
 	if len(skills) != 1 || skills[0].Name != "review" || string(skills[0].Files["SKILL.md"]) != "# review\n" {
 		t.Fatalf("%+v", skills)
 	}
-	if got := h.extensions.extensionInstructions(); !strings.Contains(got, "Answer in short sentences.") {
+	if got := h.extensions.extensionInstructions(context.Background(), ""); !strings.Contains(got, "Answer in short sentences.") {
 		t.Fatal(got)
 	}
 
@@ -52,7 +53,7 @@ func TestDeclarativeKit(t *testing.T) {
 			t.Fatalf("%s: %d %v", c, code, out)
 		}
 	}
-	if len(h.extensions.extensionSkills()) != 0 || strings.Contains(h.extensions.extensionInstructions(), "short sentences") {
+	if len(h.extensions.extensionSkills()) != 0 || strings.Contains(h.extensions.extensionInstructions(context.Background(), ""), "short sentences") {
 		t.Fatal("switched off: not the assistant's any more")
 	}
 	if _, out := call(t, mux, "GET", "/api/v1/extensions/-/prompts", master, ""); len(out["prompts"].([]any)) != 0 {

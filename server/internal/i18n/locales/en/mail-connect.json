@@ -1,0 +1,8 @@
+{
+  "proxy": "The machine running the Persona hub cannot reach the mail server {target} through the proxy ({proxy}): the proxy refused it ({reason}). This is not a password problem. Ask the admin to check the hub's proxy setting (google.proxy in manager.json), or try a network that can reach this mailbox",
+  "dns": "The machine running the Persona hub cannot resolve the mail server address {host}. This is not a password problem. Check that machine's network and DNS, and that the server address is spelled right",
+  "tls": "The machine running the Persona hub cannot set up a secure connection (TLS handshake failed) with the mail server {target}. This is not a password problem. The port or encryption setting is probably wrong, or something on the network is intercepting the connection; check the server and port settings and try again",
+  "refused": "The mail server {target} refused the connection from the machine running the Persona hub. This is not a password problem. Check the server address and port, and that IMAP / SMTP is turned on for the mailbox",
+  "timeout": "The machine running the Persona hub cannot reach the mail server {target} (the connection timed out or was cut). This is not a password problem: that machine's network cannot get to this server (a firewall is common, especially for Gmail). Try a network that can reach it, or ask the admin to set a proxy for the hub (google.proxy in manager.json, used for Gmail only for now)",
+  "timeout_proxy": "The machine running the Persona hub cannot reach the mail server {target} (the connection timed out or was cut), even through the proxy. This is not a password problem. Ask the admin to check the hub's proxy setting and try again"
+}

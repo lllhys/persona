@@ -8,6 +8,7 @@ import { ApiError } from "../lib/api";
 import { getState } from "../lib/store";
 import { boardSectionOf } from "../lib/task-board";
 import { askTake, askTone, awaitsReview, openAsk, sortTodos, type Todo, type TodoAsk } from "../lib/todos";
+import { getFeedState, setRoute } from "../lib/feed";
 
 vi.hoisted(() => {
   const g = globalThis as Record<string, unknown>;
@@ -24,7 +25,6 @@ const toast = vi.hoisted(() => vi.fn());
 vi.mock("../ui/atoms", async (orig) => ({ ...(await orig<typeof import("../ui/atoms")>()), toast }));
 
 const { TodosView } = await import("./Todos");
-const { FeedLineView } = await import("./assistant/Tasks");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -120,6 +120,16 @@ describe("a to-do's row", () => {
     expect(toast).toHaveBeenCalledWith("已按推荐来", "ok");
   });
 
+  it("settles a recorded decision whose Agent is unavailable", async () => {
+    listed = [todo()]; // keep the settled row visible after refresh
+    api.mockImplementation(async (path: string) => path.endsWith("/accept") ? { ok: true, delivered: "none" } : path === "/todos" ? { todos: listed } : {});
+    await drawList([todo()]);
+    act(() => askButton()!.click());
+    await flush();
+    expect(host.querySelector("[data-ask-done=recorded]")?.textContent).toBe("已记下，Agent 已停，督办会接手");
+    expect(toast).toHaveBeenCalledWith("已记下，Agent 已停，督办会接手", "ok");
+  });
+
   it("an earlier round already answered says so and reads the to-dos again", async () => {
     listed = [todo()]; // the hub still lists it until the read comes back
     api.mockImplementation(async (path: string) => {
@@ -176,6 +186,21 @@ describe("a to-do's row", () => {
 });
 
 describe("a to-do's page", () => {
+  it("lists parked work outside Done and counts it under the badge's name", async () => {
+    await drawList([todo({
+      seen_at: new Date(Date.now() + 1000).toISOString(),
+      ask: { outcome: "done", verdict: "The previous turn ended.", asked_at: now },
+      supervision: {
+        supervisor: "conv1", state: "parked",
+        parked: { reason: "Waiting on another team", waiting_on: "someone_else", until: new Date(Date.now() + 86400_000).toISOString(), count: 1 },
+      },
+    })]);
+    expect(host.querySelector('[data-section="parked"]')?.textContent).toContain("上线新登录页");
+    expect(host.querySelector('[data-section="done"]')?.textContent ?? "").not.toContain("上线新登录页");
+    expect(host.querySelector("header")?.textContent).toContain("已搁置 1");
+    expect(host.querySelector("header")?.textContent).toContain("暂无进展 0");
+  });
+
   it("shows the ask in full with its button and the conversation to answer it in", async () => {
     await drawList([todo()], "t1");
     const panel = host.querySelector<HTMLElement>("[data-testid=todo-ask-panel]")!;
@@ -185,6 +210,8 @@ describe("a to-do's page", () => {
     expect(buttons).toEqual(["按推荐来", "去对话里回答"]);
     act(() => [...panel.querySelectorAll("button")][1].click());
     expect(navigate).toHaveBeenCalledWith({ name: "persona", sid: "conv1" });
+    expect(getFeedState().routes.conv1).toEqual({ todoId: "t1", askedAt: ASKED });
+    setRoute("conv1", null);
   });
 
   it("a decision with nothing recommended says where to answer it", async () => {
@@ -197,17 +224,5 @@ describe("a to-do's page", () => {
   it("shows nothing while the to-do waits on nothing", async () => {
     await drawList([todo({ ask: undefined })], "t1");
     expect(host.querySelector("[data-testid=todo-ask-panel]")).toBeNull();
-  });
-});
-
-describe("the main chat's task card", () => {
-  it("carries the ask and takes it in place", async () => {
-    seed({ todos: [todo({ agents: [{ machine_id: "m1", session_id: "s1", linked_at: now }] })], sessions: {}, interactions: [] });
-    act(() => root.render(<FeedLineView item={{ id: "f1", conversation: "conv1", at: now, kind: "task", ref: "t1" }} />));
-    await flush();
-    expect(askRow()!.textContent).toContain("推荐：先发预发环境");
-    act(() => askButton()!.click());
-    await flush();
-    expect(accepts()).toHaveLength(1);
   });
 });

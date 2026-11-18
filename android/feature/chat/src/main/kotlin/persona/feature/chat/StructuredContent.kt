@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,7 +23,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
+import persona.core.domain.diff.LineDiff
 import androidx.compose.ui.unit.dp
 import persona.core.contracts.Item
 import persona.core.contracts.api.ChannelSources
@@ -45,12 +57,18 @@ internal fun MessageContent(item: Item, user: Boolean, update: ChatTextUpdate? =
         .let { if (hideCloseout) persona.core.domain.sort.stripCloseout(it) else it }
     val model = remember(text, item.from, user) { messageModel(text, item.from, user) }
     val uri = LocalUriHandler.current
-    Column(Modifier.fillMaxWidth().messageMenu(MessageTarget(item.id, model.plain, user, model.editText(), time = item.ts))) {
+    val target = MessageTarget(item.id, model.plain, user, model.editText(), time = item.ts)
+    Column(Modifier.fillMaxWidth().messageMenu(target)) {
         MessageContextGroup(model.contexts, "${item.id}/contexts", uri::openUri, alignEnd = user)
         AttachedFileCards(model.attached, alignEnd = user)
         // a reply still being written: its quotes do not fold yet (#2984)
         CompositionLocalProvider(LocalReplyStreaming provides (update?.streaming == true)) {
-            MessageParts(model.parts, user, item.id, boxed = boxed, streaming = update?.streaming == true)
+            // "Select" selects these words where they are
+            SelectableWords(target) {
+                Column(Modifier.fillMaxWidth()) {
+                    MessageParts(model.parts, user, item.id, boxed = boxed, streaming = update?.streaming == true)
+                }
+            }
         }
         if (cut) FullTextButton(item) { whole = it } else ReaderEntry(text)
         if (update?.streaming == true) StreamingCursor()
@@ -69,7 +87,7 @@ private fun StreamingCursor() {
     val transition = rememberInfiniteTransition(label = "streaming-cursor")
     val alpha by transition.animateFloat(1f, 0f,
         infiniteRepeatable(tween(500), RepeatMode.Reverse), label = "cursor-alpha")
-    Text("▍", Modifier.alpha(alpha), color = PersonaTheme.palette.accent, style = PersonaTheme.type.body)
+    DisableSelection { Text("▍", Modifier.alpha(alpha), color = PersonaTheme.palette.accent, style = PersonaTheme.type.body) }
 }
 
 @Composable
@@ -175,9 +193,11 @@ internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUp
                 AttachedPhotoRow(photos)
                 if (parts.isNotEmpty()) Spacer(Modifier.height(Tokens.Space.s))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
-                MessageParts(parts, true, items.firstOrNull()?.id.orEmpty(), onLastLine)
-                if (streaming) StreamingCursor()
+            SelectableWords(target.takeIf { menu }) {
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                    MessageParts(parts, true, items.firstOrNull()?.id.orEmpty(), onLastLine)
+                    if (streaming) StreamingCursor()
+                }
             }
         }
     }
@@ -186,10 +206,14 @@ internal fun MergedUserBubble(items: List<Item>, updates: Map<String, ChatTextUp
 @Composable
 internal fun ThoughtContent(text: String, id: String, collapsed: Boolean, last: Boolean = true) {
     var open by rememberSaveable(id) { mutableStateOf(!collapsed) }
+    // A thought in a work step fades its text (ThinkingRow chip, MessageViews.swift:778, ChatView.swift:7388).
+    // The BeautifulUI trace (MessageViews.swift:791) does not pass unfold, and this row is not that trace.
+    val edge = rememberOpenEdge(id)
+    val revealing = edge.revealing(open)
     Column {
         val thought = stringResource(R.string.chat_work_thought)
         TimelineStep(PhIcons.Lightbulb, thought, verb = thought, last = last, onClick = { open = !open })
-        if (open) {
+        if (open) Column(Modifier.unfolding(revealing)) {
             Column(Modifier.workDetail(Tokens.Space.m)) {
                 ChatMarkdown(text, id, PersonaTheme.type.callout, PersonaTheme.palette.ink2)
             }
@@ -199,14 +223,14 @@ internal fun ThoughtContent(text: String, id: String, collapsed: Boolean, last: 
 }
 
 internal fun toolCategory(name: String) = when (val base = persona.core.domain.toolBaseName(name)) {
-    "Read", "LS" -> PhIcons.Eye
+    "Read", "LS", "NotebookRead" -> PhIcons.Eye
     "Edit", "MultiEdit", "NotebookEdit" -> PhIcons.PencilSimple
     "Write" -> PhIcons.File
-    "Bash" -> PhIcons.TerminalWindow
+    "Bash", "PowerShell" -> PhIcons.TerminalWindow
     "Grep", "Glob", "ToolSearch" -> PhIcons.MagnifyingGlass
     "WebFetch", "WebSearch" -> PhIcons.GlobeSimple
     "Task", "Agent" -> PhIcons.Robot
-    "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList" -> PhIcons.ListChecks
+    "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet" -> PhIcons.ListChecks
     "EnterPlanMode", "ExitPlanMode" -> PhIcons.Lightbulb
     // Persona's own tools (iOS ToolPresentation.symbol); PersonaTools knows the rest of the mcp__ ones.
     "conversation_rename" -> PhIcons.PencilSimple
@@ -235,43 +259,93 @@ internal fun DiffStats(diff: ToolDiff) {
     }
 }
 
+/** A line's code with the words that changed on [word] (tabs widened per piece, so the ranges still fit). */
+internal fun diffText(line: DiffLine, word: Color): AnnotatedString = buildAnnotatedString {
+    for (piece in LineDiff.pieces(line.text, line.changed)) {
+        val text = piece.text.replace("\t", "    ")
+        if (piece.changed) withStyle(SpanStyle(background = word)) { append(text) } else append(text)
+    }
+}
+
+/** How many rows a long diff shows until Show All; unchanged runs fold into one row each before the cap. */
+private const val DiffPreviewRows = 40
+
+/** The old and new line numbers' column. */
+private val DiffNumberColumn = 64.dp
+
 @Composable
 internal fun DiffView(diff: ToolDiff, id: String) {
     var expanded by rememberSaveable(id) { mutableStateOf(false) }
     val list = rememberLazyListState()
-    val lines = remember(diff, expanded) { if (expanded) diff.lines else diff.lines.take(40) }
+    val preview = remember(diff) { diff.folded().take(DiffPreviewRows) }
+    // Something is left out: rows past the cap, or a folded run (a fold always takes away a row).
+    val clipped = preview.size < diff.lines.size
+    val rows = remember(diff, expanded, preview) {
+        if (expanded) diff.lines.mapIndexed { index, line -> DiffRow.Line(index, line) } else preview
+    }
     val palette = PersonaTheme.palette
     val horizontal = rememberScrollState()
     val measurer = rememberTextMeasurer()
     val style = PersonaTheme.type.code
     val density = LocalDensity.current
-    val longest = remember(lines) { lines.maxByOrNull { it.text.length }?.text.orEmpty().replace("\t", "    ") }
+    val longest = remember(rows) {
+        rows.filterIsInstance<DiffRow.Line>().maxByOrNull { it.line.text.length }?.line?.text.orEmpty().replace("\t", "    ")
+    }
     val measured = remember(longest, style, density) { measurer.measure(longest, style, softWrap = false).size.width }
     Column(Modifier.clip(PersonaTheme.shapes.controlShape).background(palette.sunken)) {
         Column {
-            DiffNavigation(diff, list) { expanded = true }
+            DiffNavigation(diff, list, expanded) { expanded = true }
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 // The sign column as on iOS: dotXL wide, growing with the font, then sm before the code.
                 val signColumn = Tokens.Size.dotXL * density.fontScale + Tokens.Space.sm
-                val codeWidth = maxOf(maxWidth - 64.dp - signColumn, with(density) { measured.toDp() } + Tokens.Space.s)
+                val codeWidth = maxOf(maxWidth - DiffNumberColumn - signColumn, with(density) { measured.toDp() } + Tokens.Space.s)
+                // Keyed by the line's place in the whole diff, so rows stay put when the diff grows or Show All opens.
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp), state = list) {
-                    items(lines) { line ->
-                        Row(Modifier.fillMaxWidth().background(palette.sunken), verticalAlignment = Alignment.CenterVertically) {
-                            Text("${line.old ?: ""}  ${line.new ?: ""}", Modifier.width(64.dp),
-                                style = style, color = PersonaTheme.palette.ink2, maxLines = 1)
-                            // A hunk header or a note of a unified diff ('@') reads quietly, with no sign.
-                            Text(if (line.sign == '@') " " else line.sign.toString(), Modifier.padding(end = Tokens.Space.sm).width(Tokens.Size.dotXL * density.fontScale), style = style,
-                                color = when (line.sign) { '+' -> palette.diffAdd; '-' -> palette.diffDel; else -> PersonaTheme.palette.ink2 })
-                            Box(Modifier.weight(1f).horizontalScroll(horizontal)) {
-                                Text(line.text.replace("\t", "    "), Modifier.width(codeWidth), style = style, softWrap = false,
-                                    color = if (line.sign == '@') palette.ink3 else palette.ink)
-                            }
+                    items(rows, key = { row -> when (row) { is DiffRow.Line -> "l${row.index}"; is DiffRow.Fold -> "f${row.from}" } }) { row ->
+                        when (row) {
+                            is DiffRow.Fold -> Text(pluralStringResource(R.plurals.chat_diff_unchanged_lines, row.count, row.count),
+                                Modifier.fillMaxWidth().background(palette.sunken).padding(start = DiffNumberColumn + signColumn),
+                                style = style, color = palette.ink3, maxLines = 1)
+                            is DiffRow.Line -> DiffCodeLine(row.line, style, codeWidth, signColumn, horizontal, tinted = diff.foldsContext)
                         }
                     }
                 }
             }
-            if (diff.lines.size > 40) JTextButton(if (expanded) stringResource(R.string.chat_content_collapse)
+            if (clipped) JTextButton(if (expanded) stringResource(R.string.chat_content_collapse)
                 else pluralStringResource(R.plurals.chat_content_show_all_lines, diff.lines.size, diff.lines.size), { expanded = !expanded })
+        }
+    }
+}
+
+/**
+ * One line of a diff on iOS's line model: its numbers and sign, then the code; with [tinted] (an edit's own comparison, not a
+ * Codex patch) an added or removed line on its own tint, the words that changed deeper still. Only the code is selectable, and a screen reader hears "added" or "removed" for the sign.
+ */
+@Composable
+private fun DiffCodeLine(line: DiffLine, style: TextStyle, codeWidth: Dp, signColumn: Dp, horizontal: ScrollState, tinted: Boolean) {
+    val palette = PersonaTheme.palette
+    val density = LocalDensity.current
+    // The palette's diff tints (iOS Theme.Diff); a Codex patch keeps its plain rows, as before.
+    val fill = if (!tinted) null else when (line.sign) { '+' -> palette.diffAddFill; '-' -> palette.diffDelFill; else -> null }
+    val word = if (!tinted) Color.Unspecified else when (line.sign) { '+' -> palette.diffAddEmphasis; '-' -> palette.diffDelEmphasis; else -> Color.Unspecified }
+    val text = remember(line, word) { diffText(line, word) }
+    val state = when (line.sign) {
+        '+' -> stringResource(R.string.chat_diff_line_added)
+        '-' -> stringResource(R.string.chat_diff_line_removed)
+        else -> null
+    }
+    Row(Modifier.fillMaxWidth().background(palette.sunken).let { if (fill != null) it.background(fill) else it }, verticalAlignment = Alignment.CenterVertically) {
+        DisableSelection {
+            Text("${line.old ?: ""}  ${line.new ?: ""}", Modifier.width(DiffNumberColumn), style = style, color = palette.ink2, maxLines = 1)
+            // A hunk header or a note of a unified diff ('@') reads quietly, with no sign.
+            Text(if (line.sign == '@') " " else line.sign.toString(),
+                Modifier.padding(end = Tokens.Space.sm).width(Tokens.Size.dotXL * density.fontScale)
+                    .semantics { state?.let { contentDescription = it } }, style = style,
+                color = when (line.sign) { '+' -> palette.diffAdd; '-' -> palette.diffDel; else -> palette.ink2 })
+        }
+        Box(Modifier.weight(1f).horizontalScroll(horizontal)) {
+            Text(text, Modifier.width(codeWidth), style = style, softWrap = false,
+                color = if (line.sign == '@') palette.ink3 else palette.ink)
         }
     }
 }

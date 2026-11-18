@@ -51,6 +51,7 @@ func TestClientHelloLocale(t *testing.T) {
 func helloFrom(h *Hub, device, hello string) *client {
 	c := &client{out: make(chan []byte, 16), role: roleFull, hub: h, device: device}
 	h.onClientHello(c, []byte(hello))
+	h.waitHelloWrites() // these helpers assert the saved/global language, not the connection's immediate c.lang
 	return c
 }
 

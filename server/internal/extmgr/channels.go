@@ -239,17 +239,38 @@ func (h *Manager) marketChannels(have []channel.View) []channel.View {
 	for _, v := range have {
 		seen[v.ID] = true
 	}
-	for _, it := range h.catalog("", "") {
-		if it.Installed != "" || len(it.Contributes["channel"]) == 0 || it.Problem != "" {
+	l := h.userLang()
+	for _, s := range h.marketStates() {
+		if s.index == nil {
 			continue
 		}
-		for _, id := range it.Contributes["channel"] {
-			if seen[id] {
+		// Few entries contribute a channel, and the catalog's item is costly (translations, permission lines, every
+		// contribution, whether this hub can install it): only the entries that do are built. The channel list is
+		// asked for every few seconds while agents work, and building the whole catalog for it was 4.4 ms and
+		// 1.1 MB a time with the official market's entries (#3197).
+		var items []CatalogItem
+		for i := range s.index.Extensions {
+			e := &s.index.Extensions[i]
+			if len(e.Parsed.Contributes["channel"]) == 0 || len(e.Parsed.Items("channel")) == 0 {
 				continue
 			}
-			seen[id] = true
-			out = append(out, channel.View{ID: id, Name: it.Name, Kind: channel.KindIM, Source: channel.SourceMarket, Plugin: it.ID, Market: it.Market,
-				State: channel.StateNotInstalled, Bind: channel.BindNone, Description: it.Description})
+			items = append(items, h.catalogItem(l, s, e, e.Translations()))
+		}
+		if extension.IsOfficialMarket(s.rec.Spec) {
+			slices.SortFunc(items, officialCatalogOrder) // the catalog's order for that market
+		}
+		for _, it := range items {
+			if it.Installed != "" || len(it.Contributes["channel"]) == 0 || it.Problem != "" {
+				continue
+			}
+			for _, id := range it.Contributes["channel"] {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				out = append(out, channel.View{ID: id, Name: it.Name, Kind: channel.KindIM, Source: channel.SourceMarket, Plugin: it.ID, Market: it.Market,
+					State: channel.StateNotInstalled, Bind: channel.BindNone, Description: it.Description})
+			}
 		}
 	}
 	return out

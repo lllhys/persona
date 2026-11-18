@@ -1,0 +1,15 @@
+{
+  "busy_waiting": "あなたの回答を待っています。今閉じると中断されます。",
+  "busy_working": "まだ作業中です。今閉じると中断されます。",
+  "busy_loop": "ループを実行中です。今閉じるとループが止まります。",
+  "busy_server": "サーバーを実行中です。今閉じるとサーバーが止まります。",
+  "close_anyway": "それでも閉じる",
+  "closed": "閉じました",
+  "close_failed": "閉じられませんでした：{error}",
+  "close_agent_title": "このエージェントを閉じますか？",
+  "close_agent": "エージェントを閉じる",
+  "close_agent_detail": "{machine}の「{where}」で動いているClaudeを終了し、このタブを閉じます。会話はここに残り、あとでターミナルページから再開できます。",
+  "close_runtime_detail": "{machine}の「{title}」を終了します。会話履歴は引き続き参照できます。",
+  "archive_close_detail": "Persona は「{title}」をアーカイブし、{machine} 上のタブとプロセスを閉じます。会話は残ります。「アーカイブしたエージェント」から復元し、ターミナルページから再開できます。",
+  "archive_close": "アーカイブして閉じる"
+}

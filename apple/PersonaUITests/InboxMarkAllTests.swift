@@ -24,7 +24,8 @@ final class InboxMarkAllTests: XCTestCase {
         }
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
-        launch(app, pair: pair, args: ["-tab", "mail", "-inbox.kind", "", "-inbox.source", "feishu"])
+        // the Lark filter's first row is FYI: every section stacked (the section bar's All, #9053)
+        launch(app, pair: pair, args: ["-tab", "mail", "-inbox.kind", "", "-inbox.source", "feishu", "-showInboxSection", "all"])
         func shot(_ name: String) {
             let image = app.screenshot()
             let a = XCTAttachment(screenshot: image)

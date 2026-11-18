@@ -2,19 +2,25 @@ package persona.feature.chat
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import persona.core.contracts.Todo
+import persona.core.contracts.TodoAsk
 import persona.core.designsystem.*
+import persona.core.designsystem.icons.PersonaIcons
 import persona.core.domain.tasks.AssistantExtra
 import persona.core.domain.tasks.AssistantTaskCards
 import persona.core.domain.tasks.decisionOptions
+import persona.core.domain.tasks.todoRuleCard
 
 /** Acceptance carries the exact round the user read, independently of any later task refresh. */
 @Composable
@@ -41,16 +47,38 @@ internal fun TaskOwnerDecision(todo: Todo, host: AssistantTaskHost) {
     }
 }
 
-/** The owner's decision keeps direct completion separate from following Persona's recommendation. */
+/**
+ * The owner's decision, with the rule it suggests under it once the owner gave the same go-ahead three times (#4929).
+ * A decision with options is answered on the row (#3804); one from an older hub keeps the recommendation's button.
+ */
 @Composable
 internal fun TaskDecisionCard(todo: Todo, host: AssistantTaskHost, enabled: Boolean = true, onOpen: (() -> Unit)? = null) {
     val ask = todo.ask?.takeIf { it.outcome == "decide" } ?: return
     if (todo.isDone || todo.cancelledAt != null) return
-    // A decision with options is answered on the row (#3804); one from an older hub keeps the recommendation's button.
-    if (ask.decisionOptions.isNotEmpty()) {
-        TaskDecisionAnswers(todo, ask, host, enabled, onOpen)
-        return
+    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+        if (ask.decisionOptions.isNotEmpty()) TaskDecisionAnswers(todo, ask, host, enabled, onOpen)
+        else TaskDecisionRecommendation(todo, ask, host, enabled, onOpen)
+        RuleSuggestionLine(todoRuleCard(todo.id, ask.askedAt), ask.suggestion, host.tasks, host.onError, todo.manager, enabled)
     }
+}
+
+/**
+ * A decision held for the next briefing (#4930, docs/assistant/todos.md "Decisions that can wait"): nothing was pushed for
+ * it, and it is answered here all the same.
+ */
+@Composable
+internal fun ForBriefingMark(modifier: Modifier = Modifier) {
+    Row(modifier.testTag("decision-for-briefing"), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+        JIcon(PersonaIcons.schedule, decorative = true, size = Tokens.Space.m, tint = PersonaTheme.palette.ink3)
+        Text(stringResource(R.string.chat_decision_for_briefing), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** The owner's decision keeps direct completion separate from following Persona's recommendation. */
+@Composable
+private fun TaskDecisionRecommendation(todo: Todo, ask: TodoAsk, host: AssistantTaskHost, enabled: Boolean, onOpen: (() -> Unit)?) {
     val busy by host.tasks.busy.collectAsStateWithLifecycle()
     val sending = "accept:${todo.id}" in busy
     var failed by remember(todo.id, ask) { mutableStateOf(false) }
@@ -63,6 +91,7 @@ internal fun TaskDecisionCard(todo: Todo, host: AssistantTaskHost, enabled: Bool
             ask.recommend?.takeIf(String::isNotBlank)?.let {
                 Text(stringResource(R.string.chat_tray_recommended, it), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
             }
+            if (ask.forBriefing) ForBriefingMark()
             if (failed) Text(stringResource(R.string.chat_tray_finish_failed), style = PersonaTheme.type.caption, color = PersonaTheme.palette.danger.text)
             if (changed) Text(stringResource(R.string.chat_tray_accept_changed), style = PersonaTheme.type.caption, color = PersonaTheme.palette.cautionText)
             val finish = JAction(stringResource(R.string.chat_tray_finish_now), enabled = enabled) {

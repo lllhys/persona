@@ -31,10 +31,12 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 const zoomButton = () => host.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui-mermaid.zoom")}"]`)!;
-const dialog = () => host.querySelector<HTMLElement>('[role="dialog"]');
+const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
 
 function open() {
   zoomButton().focus();
@@ -43,6 +45,71 @@ function open() {
 }
 
 describe("Mermaid zoom", () => {
+  function openStage() {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(800);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+    vi.spyOn(SVGElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 400, 100));
+    open();
+    const stage = dialog()!.querySelector<HTMLElement>("[data-mermaid-stage]")!;
+    vi.spyOn(stage, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 800, 600));
+    return { stage, drawing: stage.firstElementChild as HTMLElement };
+  }
+
+  it.each(["ctrlKey", "metaKey"] as const)("leaves %s wheel events to the browser", (modifier) => {
+    const { stage, drawing } = openStage();
+    const before = drawing.style.transform;
+    const event = new WheelEvent("wheel", { [modifier]: true, deltaY: -100, bubbles: true, cancelable: true });
+    stage.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(drawing.style.transform).toBe(before);
+  });
+
+  it("keeps an off-center drawing point under the pointer while zooming", () => {
+    const { stage, drawing } = openStage();
+    const event = new WheelEvent("wheel", {
+      clientX: 700, clientY: 350, deltaY: -100, bubbles: true, cancelable: true,
+    });
+    const view = () => drawing.style.transform
+      .match(/translate\(([^,]+)px, ([^)]+)px\) scale\(([^)]+)\)$/)!
+      .slice(1)
+      .map(Number);
+    const [beforeX, beforeY, beforeZoom] = view();
+    stage.dispatchEvent(event);
+    const [x, y, zoom] = view();
+    expect(event.defaultPrevented).toBe(true);
+    expect(zoom).toBeGreaterThan(beforeZoom);
+    expect((300 - x) / zoom).toBeCloseTo((300 - beforeX) / beforeZoom);
+    expect((50 - y) / zoom).toBeCloseTo((50 - beforeY) / beforeZoom);
+  });
+
+  it("preserves pan and zoom through observer notifications and fits on request", () => {
+    let callback: ResizeObserverCallback | undefined;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(cb: ResizeObserverCallback) { callback = cb; }
+      observe() {}
+      disconnect() {}
+    });
+    const { stage, drawing } = openStage();
+    const notify = () => callback?.([], {} as ResizeObserver);
+    const initial = drawing.style.transform;
+    stage.dispatchEvent(new WheelEvent("wheel", {
+      clientX: 700, clientY: 350, deltaY: -100, bubbles: true, cancelable: true,
+    }));
+    dialog()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft" }));
+    const adjusted = drawing.style.transform;
+    expect(adjusted).not.toBe(initial);
+    notify();
+    expect(drawing.style.transform).toBe(adjusted);
+    Object.defineProperties(stage, {
+      clientWidth: { value: 580 },
+      clientHeight: { value: 800 },
+    });
+    notify();
+    expect(drawing.style.transform).toBe(adjusted);
+    dialog()!.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui-mermaid.fit")}"]`)!.click();
+    expect(drawing.style.transform).toBe("translate(-50%, -50%) translate(0px, 0px) scale(1.37)");
+  });
+
   it("opens as a modal dialog that has the focus", () => {
     open();
     const d = dialog()!;
@@ -65,11 +132,24 @@ describe("Mermaid zoom", () => {
     expect(document.activeElement).toBe(zoomButton());
   });
 
-  it("keeps Tab on the dialog when the diagram has nothing to focus", () => {
+  it("wraps Tab around the viewer controls and returns focus after Close", () => {
     open();
-    const e = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
-    act(() => void dialog()!.dispatchEvent(e));
-    expect(e.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(dialog());
+    const buttons = [...dialog()!.querySelectorAll("button")];
+    for (const button of buttons) vi.spyOn(button, "getClientRects").mockReturnValue({ length: 1 } as DOMRectList);
+    const close = buttons.at(-1)!;
+    const first = buttons[0];
+    const tab = (target: HTMLElement, shiftKey: boolean) => {
+      const event = new KeyboardEvent("keydown", { key: "Tab", shiftKey, bubbles: true, cancelable: true });
+      act(() => target.dispatchEvent(event));
+      expect(event.defaultPrevented).toBe(true);
+    };
+    close.focus();
+    tab(close, false);
+    expect(document.activeElement).toBe(first);
+    tab(first, true);
+    expect(document.activeElement).toBe(close);
+    act(() => close.click());
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(zoomButton());
   });
 });

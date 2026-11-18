@@ -32,6 +32,13 @@ interface HubManagers {
     /** `PATCH /api/v1/managers/{id} {default: true}`. */
     suspend fun makeDefault(id: String): HubManager
 
+    /**
+     * `PATCH /api/v1/managers/{id} {hide}`: keep the hub's own assistant out of the switcher while it is not used, or
+     * show it there again. Only the built-in manager takes it; hiding is refused (409 `builtin_in_use`) while it is the
+     * default or owns a computer.
+     */
+    suspend fun setHide(id: String, hide: Boolean)
+
     /** `DELETE /api/v1/managers/{id}`: its token stops working at once (an installing one's code is void). */
     suspend fun delete(id: String)
 }
@@ -51,6 +58,13 @@ data class ManagerRoster(
 
     /** More than one installed manager: another one's computers, conversations and offline state are told apart. */
     val isMulti: Boolean get() = installed.size > 1
+
+    /**
+     * The switcher's rows: the installed managers (the default first), then the ones still installing, leaving out a
+     * [HubManager.hidden] one (the hub's own assistant, kept out while it is not used). [installed] and [isMulti] still
+     * count it: what is its keeps its place, and the badges and the Default tag read as before.
+     */
+    val switcherRows: List<HubManager> get() = (installed + managers.filter { it.isInstalling }).filterNot { it.hidden }
 
     /** The default manager's id: the roster's `default`, else the one marked default, else the hub's own assistant. */
     val defaultManagerId: String get() = defaultId.ifBlank { managers.firstOrNull { it.isDefault }?.id ?: ASSISTANT_MANAGER }
@@ -207,6 +221,13 @@ data class HubManager(
      * installing, an older hub), which counts as none.
      */
     @SerialName("inbox_needs_you") val inboxNeedsYou: Int? = null,
+    /**
+     * The user's choice to keep it out of the switcher while it is not used (the hub's own assistant only): what
+     * Settings' Show in the switcher shows, turned around. Absent (false) from an older hub.
+     */
+    val hide: Boolean = false,
+    /** That choice in effect now (the hub's word: [hide], not the default, owns no computer): the switcher leaves it out. */
+    val hidden: Boolean = false,
 ) {
     val isInstalling: Boolean get() = !installing.isNullOrBlank()
 }

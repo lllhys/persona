@@ -2,6 +2,13 @@
 <!-- Share as a picture, videos and pasted pictures in the composer (iOS MessageShareSheet, VideoAttachments, PasteImageChip). -->
 <resources>
     <string name="chat_composer_videos_only">请看视频</string>
+    <string name="chat_composer_files_only">请看附件</string>
+    <string name="chat_composer_file_limit">一条消息最多 10 个文件</string>
+    <string name="chat_attach_waiting">等待中</string>
+    <plurals name="chat_files_more">
+        <item quantity="other">还有 %1$d 个文件</item>
+    </plurals>
+    <string name="chat_files_show_less">收起</string>
     <string name="chat_composer_video_placeholder">[视频]</string>
     <string name="chat_paste_image">粘贴</string>
     <string name="chat_paste_dont">不粘贴</string>

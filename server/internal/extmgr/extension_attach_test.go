@@ -437,7 +437,10 @@ func TestOnlyAnAttachedPackageGetsATokenOfEveryScope(t *testing.T) {
 		t.Fatalf("installed from remote: with hub_api: %q %v", ip.Hub.Token, ip.Hub.Scopes)
 	}
 	ip := initOf("example-attached", true)
-	want := slices.DeleteFunc(extension.EveryScope(), func(s string) bool { return s == extension.ScopeModels })
+	// Model calls and transcription are granted by name only (extension_model_calls.go, extension_transcription.go).
+	want := slices.DeleteFunc(extension.EveryScope(), func(s string) bool {
+		return s == extension.ScopeModels || s == extension.ScopeTranscription
+	})
 	if !strings.HasPrefix(ip.Hub.Token, extTokenPrefix) || !slices.Equal(ip.Hub.Scopes, want) {
 		t.Fatalf("an attached package with hub_api: %q %v", ip.Hub.Token, ip.Hub.Scopes)
 	}

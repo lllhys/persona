@@ -17,6 +17,7 @@ import (
 	"github.com/nwverse/persona/server/internal/db"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/managerconf"
+	"github.com/nwverse/persona/server/internal/procs"
 )
 
 // The assistant runs as its own process, `personad assistant` (internal/assistant), on the hub's bus. Unless hub.json
@@ -144,8 +145,8 @@ func (h *Hub) runAssistant(ctx context.Context, token string) error {
 		return err
 	}
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
-	cmd.Env = identity.Environment(os.Environ(), "PERSONA_ASSISTANT_HUB="+managerconf.LocalHubURL(h.cfg.Listen),
-		"PERSONA_ASSISTANT_DEPLOY=child")
+	cmd.Env = procs.ChildEnv(identity.Environment(os.Environ(),
+		"PERSONA_ASSISTANT_HUB="+managerconf.LocalHubURL(h.cfg.Listen), "PERSONA_ASSISTANT_DEPLOY=child"))
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 10 * time.Second
 	if err := cmd.Start(); err != nil {

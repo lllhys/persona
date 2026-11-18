@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/identity"
@@ -1183,7 +1184,11 @@ func (p *Proc) logLine(raw []byte, dropped bool) {
 		return
 	}
 	if dropped || len(line) > LogLineMost {
-		line = line[:min(len(line), LogLineMost)] + "…"
+		cut := min(len(line), LogLineMost)
+		for cut > 0 && cut < len(line) && !utf8.RuneStart(line[cut]) { // not inside a character
+			cut--
+		}
+		line = line[:cut] + "…"
 	}
 	p.spec.Logf("plugin %s: %s", p.spec.ID, line)
 	if p.spec.Observe != nil {

@@ -6,7 +6,7 @@ import { mergeCaption, historyOf, type VoiceCaption } from "./captions";
 import { Uplink } from "./uplink";
 import { INTERRUPT_FRAME, parseFrame, resendFrame, startFrame, textFrame } from "./frames";
 import {
-  DEFAULT_INPUT_RATE, DEFAULT_OUTPUT_RATE, runOpen,
+  DEFAULT_INPUT_RATE, DEFAULT_OUTPUT_RATE, runOpen, SPEECH_GATE_FEATURE,
   type VoiceFailure, type VoiceFrame, type VoiceLine, type VoiceLink, type VoiceReady, type VoiceRun, type VoiceStart, type VoiceTargetInfo,
 } from "./wire";
 import type { Session } from "../types";
@@ -324,15 +324,22 @@ export class VoiceConversation {
     this.set({ muted: on });
   }
 
-  /** Whether Resend / Clear and Send can go for a run: refused, and reported by the connection that is up now. A
-   *  reconnect rebuilds only the open runs, so after one the extension no longer knows a refused run. */
+  /** Whether Resend / Clear and Send / Send Anyway can go for a run: refused, and reported by the connection that is up
+   *  now. A reconnect rebuilds only the open runs, so after one the extension no longer knows a refused run. */
   canResend(runID: string): boolean {
-    if (!this.ready || !this.socket) return false;
     const run = this.snap.runs.find((r) => r.id === runID);
-    return run?.state === "refused" && this.runSeen.get(runID) === this.generation;
+    return run !== undefined && this.knows(run, this.snap.features);
   }
 
-  /** Resend / Clear and Send a run a 409 refused, under its id; `clearingDraft` hands the hub's `clearable` back. */
+  /** `run` can go again on this connection. One the user-speech gate held back (`unprompted`) only with an extension
+   *  that keeps it (`speech_gate`, #5904), and only with a task: the extension keeps none without one, and an older
+   *  extension none at all, so a resend would do nothing. */
+  private knows(run: VoiceRun, features: readonly string[]): boolean {
+    if (!this.ready || !this.socket || run.state !== "refused" || this.runSeen.get(run.id) !== this.generation) return false;
+    return run.code !== "unprompted" || (run.resendable === true && run.task.trim() !== "" && features.includes(SPEECH_GATE_FEATURE));
+  }
+
+  /** Resend / Clear and Send / Send Anyway a refused run, under its id; `clearingDraft` hands the hub's `clearable` back. */
   resend(runID: string, clearingDraft = false): boolean {
     const run = this.snap.runs.find((r) => r.id === runID);
     if (!run || !this.canResend(runID) || !this.socket) return false;
@@ -358,12 +365,14 @@ export class VoiceConversation {
     this.audio?.cue(cue);
   }
 
-  /** What `start` says now: the target, the conversation's last turns, whether the microphone cancels echo, and when it
-   *  picks up again the captions so far and the runs not over yet, each as last reported. */
+  /** What `start` says now: the target, the conversation's last turns, whether the microphone cancels echo, the
+   *  user-speech gate (always on: the web has no switch; said, it tells the extension this page has Send anyway, #5904),
+   *  and when it picks up again the captions so far and the runs not over yet, each as last reported. */
   startFrame(): VoiceStart {
     return {
       model: this.snap.model, voice: this.snap.voice, target: { machine_id: this.mid, session_id: this.sid }, recent: this.recent,
       history: historyOf(this.snap.captions), resume: this.snap.runs.filter((r) => runOpen(r.state)), echoCancellation: this.audio?.cancelsEcho,
+      speechGate: true,
     };
   }
 
@@ -629,7 +638,7 @@ export class VoiceConversation {
 
   private set(patch: Partial<VoiceSnapshot>): void {
     const next = { ...this.snap, ...patch };
-    const resendable = next.runs.filter((r) => r.state === "refused" && this.ready && this.socket !== null && this.runSeen.get(r.id) === this.generation).map((r) => r.id);
+    const resendable = next.runs.filter((r) => this.knows(r, next.features)).map((r) => r.id);
     next.resendable = sameList(resendable, this.snap.resendable) ? this.snap.resendable : resendable;
     if (shallowSame(next, this.snap)) return;
     this.snap = next;

@@ -308,7 +308,7 @@
         "network": {"type": "array", "items": {"$ref": "#/$defs/NetworkEntry"}},
         "hub_api": {"type": "boolean", "description": "The old way: the hub's full token. With hub scopes, the scopes win."},
         "hub": {"type": "array", "description": "The scopes of the hub's API it calls: its token opens their routes only.",
-          "items": {"type": "string", "pattern": "^(kb\\.read|kb\\.write|sent\\.read|inbox\\.read|inbox\\.write|agents\\.read|agents\\.control|agents\\.permission_mode|machines\\.read|notify|assistant\\.ask|assistant\\.read|todos\\.read|todos\\.write|leaders\\.read|models|extensions\\.call:[a-z0-9][a-z0-9_-]{0,31})$"}},
+          "items": {"type": "string", "pattern": "^(kb\\.read|kb\\.write|sent\\.read|inbox\\.read|inbox\\.write|agents\\.read|agents\\.control|agents\\.permission_mode|machines\\.read|notify|assistant\\.ask|assistant\\.read|assistant\\.memory\\.read|todos\\.read|todos\\.write|leaders\\.read|assistant\\.dispatch_policy|assistant\\.start_defaults|models|transcription|extensions\\.call:[a-z0-9][a-z0-9_-]{0,31})$"}},
         "launcher_keys": {"type": "boolean"},
         "gh_login": {"type": "boolean", "description": "It asks the hub for the GitHub token of a computer's gh login (the one the user picks for the GitHub connector), held in its memory only."},
         "usage_gateways": {"type": "boolean", "description": "It reads the account list of the account-pool gateways in the hub's usage sources (usage.gateway_accounts): accounts, status and quota windows, never a key."},
@@ -337,6 +337,8 @@
       "properties": {
         "connectors": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/ConnectorItem"}},
         "voice": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/NamedItem"}},
+        "transcription": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/NamedItem"}},
+        "speech": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/NamedItem"}},
         "computer": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/NamedItem"}},
         "browser": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/NamedItem"}},
         "iphone": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/NamedItem"}},
@@ -360,28 +362,38 @@
         "error_reports": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/ErrorReportsItem"}},
         "auth_relay": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/AuthRelayItem"}},
         "secret_providers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/SecretProviderItem"}},
+        "repository_providers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/RepositoryProviderItem"}},
         "messaging": {"type": "array", "minItems": 1, "items": {"$ref": "messaging.schema.json#/$defs/MessagingItem"}}
       }
     },
     "SkillItem": {
-      "description": "A skill (docs \"Declarative contributions\"): a directory of the package with SKILL.md, put in with the assistant's skills.",
+      "description": "A skill (docs \"Declarative contributions\"): a directory of the package with SKILL.md, put in with the assistant's skills. With source data (docs \"Assistant content from the data directory\"): a directory of the extension's data directory whose subdirectories with a SKILL.md are skills its program writes (Markdown files only, 256 KB and 32 skills per extension).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "id": {"$ref": "#/$defs/ID"},
-        "dir": {"type": "string", "description": "The directory, relative to the package."}
+        "dir": {"type": "string", "description": "The directory, relative to the package (or to the data directory with source data)."},
+        "source": {"$ref": "#/$defs/ContentSource"}
       },
       "required": ["id", "dir"]
     },
-    "PromptKind": {"type": "string", "enum": ["instructions", "quick"]},
+    "ContentSource": {
+      "description": "Where a skill's or a prompt's files are: package (the default) or data, the extension's data directory, which its program writes and upgrades keep.",
+      "type": "string",
+      "enum": ["package", "data"]
+    },
+    "PromptKind": {"type": "string", "enum": ["instructions", "quick", "project_context", "inbox_context"]},
     "PromptItem": {
-      "description": "A prompt: instructions (a .md of the package added to the assistant's CLAUDE.md) or quick (a template the apps offer in the message box).",
+      "description": "A prompt: instructions (a .md of the package, or with source data of the data directory, added to the assistant's CLAUDE.md), quick (a template the apps offer in the message box), project_context (a directory of the data directory whose <project slug>.md files go into a new Agent's project background) or inbox_context (a .md of the data directory added to the Inbox's triage and draft prompts).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "id": {"$ref": "#/$defs/ID"},
         "kind": {"$ref": "#/$defs/PromptKind"},
-        "file": {"type": "string", "description": "instructions: the .md file."},
+        "source": {"$ref": "#/$defs/ContentSource"},
+        "file": {"type": "string", "description": "instructions: the .md file (with source data: at most 6 KB, adopted at most once a day); inbox_context: the .md file (1 KB used)."},
+        "dir": {"type": "string", "description": "project_context: the directory of <project slug>.md files (1.5 KB of each used)."},
+        "never_quote": {"type": "string", "description": "inbox_context: a text file of sentences, one a line, a draft must not repeat word for word (64 KB used); only checked, never in a prompt."},
         "title": {"type": "string", "maxLength": 40, "description": "quick: what the apps show."},
         "text": {"type": "string", "maxLength": 4000, "description": "quick: what goes into the message box."}
       },
@@ -547,6 +559,39 @@
       },
       "required": ["id", "name", "schemes"]
     },
+    "RepositoryProviderItem": {
+      "description": "A code-hosting source on the exact hosts it names, for the repository catalog and a to-do's repositories and links there: the manager asks the program (repo.parse, repo.check, repo.link, repo.describe; repository.schema.json) and re-checks every answer. Needs the program to speak the protocol. A host another installed extension claims, on or off, fails the install, and so does one host in two items.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/ID"},
+        "name": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*[^\\x00-\\x20\\x7f-\\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][^\\x00-\\x1f\\x7f-\\x9f]*$",
+          "description": "What the source is called (Acme Code): the catalog and a to-do's repositories show it. Not only spaces, no control characters."},
+        "hosts": {"type": "array", "description": "The exact host names whose addresses it reads (code.example.com): lowercase, no scheme, port, path or wildcard, not an IP address, and not a host the built-in GitHub and GitLab read.", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+          "items": {"type": "string", "maxLength": 253, "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+            "not": {"anyOf": [{"enum": ["github.com", "www.github.com", "api.github.com", "ssh.github.com", "gitlab.com", "altssh.gitlab.com"]}, {"pattern": "(^|\\.)([0-9]+|0x[0-9a-f]*)$"}]}}},
+        "link_kinds": {"type": "array", "description": "What it calls the link kinds it names (each at most once; the others keep their usual words). Only relabels: the kinds stay issue and pull_request.", "maxItems": 2, "uniqueItems": true,
+          "items": {"$ref": "#/$defs/RepositoryLinkLabel"},
+          "not": {"minItems": 2, "anyOf": [{"items": {"properties": {"kind": {"const": "issue"}}}}, {"items": {"properties": {"kind": {"const": "pull_request"}}}}]}}
+      },
+      "required": ["id", "name", "hosts"]
+    },
+    "RepositoryLinkLabel": {
+      "description": "The word a repository provider shows for one kind of its links (MR for a pull_request).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"$ref": "#/$defs/RepositoryLinkKind"},
+        "label": {"type": "string", "minLength": 1, "maxLength": 24, "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*[^\\x00-\\x20\\x7f-\\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][^\\x00-\\x1f\\x7f-\\x9f]*$",
+          "description": "Not only spaces, no control characters."}
+      },
+      "required": ["kind", "label"]
+    },
+    "RepositoryLinkKind": {
+      "description": "The kinds of a to-do's links to a repository: an issue, or a pull request (a merge request).",
+      "type": "string",
+      "enum": ["issue", "pull_request"]
+    },
     "ErrorReportsItem": {
       "description": "It is given the error and crash reports of the hub and the user's devices (error_reports.deliver): needs the program to speak the protocol, on_startup and permissions.error_reports.",
       "type": "object",
@@ -606,7 +651,7 @@
       "required": ["id", "name", "capabilities"]
     },
     "NamedItem": {
-      "description": "A contribution with only an id and a name: voice, computer, browser.",
+      "description": "A contribution with only an id and a name: voice, transcription, speech, computer, browser.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -710,13 +755,24 @@
         "opens": {"type": "string", "description": "overview_card, capsule_card and widget only: a nav_page or extension_page of the same extension."},
         "connector": {"type": "string", "description": "inbox_item only: one of the extension's own connectors."},
         "families": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "view.schema.json#/$defs/WidgetFamily"}, "description": "widget only (and needed there): the sizes it can be drawn at."},
-        "refresh_minutes": {"type": "integer", "minimum": 15, "maximum": 1440, "description": "widget only: how often the widget is drawn again on its own (30 when not said)."}
+        "refresh_minutes": {"type": "integer", "minimum": 15, "maximum": 1440, "description": "widget only: how often the widget is drawn again on its own (30 when not said)."},
+        "group": {"$ref": "#/$defs/UIGroup", "description": "nav_page only: the sidebar group the page goes in unless the user put it elsewhere (#9071). Title translated in l10n's groups."}
       },
       "required": ["id", "title", "placement"],
       "anyOf": [
         {"properties": {"placement": {"const": "widget"}}, "required": ["families"]},
         {"properties": {"placement": {"not": {"const": "widget"}}}, "not": {"anyOf": [{"required": ["families"]}, {"required": ["refresh_minutes"]}]}}
       ]
+    },
+    "UIGroup": {
+      "description": "A sidebar group a nav_page names (docs \"UI slots\"): pages of any extension naming the same id share it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 40}
+      },
+      "required": ["id", "title"]
     },
     "AgentSourceItem": {
       "type": "object",

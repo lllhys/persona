@@ -47,6 +47,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -90,6 +91,13 @@ class HttpExtensionManagement internal constructor(
     }
 
     override suspend fun extension(id: String) = detail(call(path(id, "-", ""), "GET"))
+
+    override fun adminNetworkUrl(id: String): String? = iconBase()?.toHttpUrlOrNull()?.newBuilder()
+        ?.addPathSegments("admin/extensions")
+        ?.query(null)
+        ?.addEncodedQueryParameter("extension", java.net.URLEncoder.encode(id, "UTF-8").replace("+", "%20"))
+        ?.fragment("network")
+        ?.build()?.toString()
 
     override suspend fun setEnabled(id: String, enabled: Boolean, cascade: Boolean) =
         detail(call(path(id, "-", "enabled"), "PUT", buildJsonObject { put("enabled", enabled); if (cascade) put("cascade", true) }))
@@ -222,6 +230,9 @@ class HttpExtensionManagement internal constructor(
             (context?.locale ?: app.locale)?.takeIf { it.isNotEmpty() }?.let { put("locale", it) }
             (context?.platform ?: app.platform)?.takeIf { it.isNotEmpty() }?.let { put("platform", it) }
             (context?.uiVersion ?: app.uiVersion)?.let { put("ui_version", it) }
+            // Inbox Sources (#5278, #5661): the key itself, even "", says this app opens Set Up with ….
+            // Only those pages set it. Empty is not dropped: without the key the pages leave the row out.
+            context?.assistant?.let { put("assistant", it) }
         }
         state?.takeIf { it.isNotEmpty() }?.let { put("state", it) }
         action?.let { put("action", it) }
@@ -452,9 +463,11 @@ class HttpExtensionManagement internal constructor(
          * code hosting components (header, breadcrumb, file tree, code, diff, comments, composer), tabs, split views and
          * an action's values; 5 code review (a diff's hidden lines, viewed marks, drafts and the review's bar, #3136); 6
          * pictures, controls in rows, candlesticks / areas / donuts / pies and sparks, a row's actions, grids and carousels,
-         * date / time / multichoice / multiline fields, title styles, named colours and more icons (#5464).
+         * date / time / multichoice / multiline fields, title styles, named colours and more icons (#5464); 7 a section's
+         * key, which only the native stream reads; 8 the columns layout of a dashboard page and a section's span, icon,
+         * link and rows side by side (#9158). The native stream sends the same version.
          */
-        const val UI_VERSION = 6
+        const val UI_VERSION = 8
 
         /** The hub's own picture route (UI version 6), the one path a view's picture is fetched from with credentials. */
         private val ImagePath = Regex("/api/v1/extensions/[A-Za-z0-9_-]{1,64}/-/image/[A-Za-z0-9_.-]{1,1900}")

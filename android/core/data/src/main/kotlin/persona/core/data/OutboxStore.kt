@@ -35,7 +35,24 @@ data class OutboxEntry(
     /** It carries out the session's waiting launcher switch ([persona.core.contracts.api.MessageSender.sendApplyingSwitch]). */
     val applySwitch: Boolean = false,
 ) {
+    /** Journal-owned delivery evidence stays out of the public data-class and generated copy signatures. */
+    internal var agentHandOff: InboxAgentHandOff? = null
+        private set
+
     val operationId: String get() = opId ?: clientMessageId
+
+    /** Attaches evidence to a new entry or a fresh public copy. */
+    internal fun withAgentHandOff(handOff: InboxAgentHandOff?): OutboxEntry = apply { agentHandOff = handOff }
+
+    /** The internal counterpart of the public generated copy, including journal-owned delivery evidence. */
+    internal fun copyForDelivery(
+        session: SessionKey = this.session,
+        state: OutboxState = this.state,
+        error: String? = this.error,
+        opId: String? = this.opId,
+        agentHandOff: InboxAgentHandOff? = this.agentHandOff,
+    ): OutboxEntry = copy(session = session, state = state, error = error, opId = opId)
+        .withAgentHandOff(agentHandOff)
 }
 
 /** All methods operate on exactly one pairing scope. */
@@ -43,6 +60,15 @@ interface OutboxStore {
     val entries: Flow<List<OutboxEntry>>
     /** Persist without clearing an editor whose revision is unknown. */
     suspend fun enqueue(entry: OutboxEntry)
+    /**
+     * Commit authoritative hand-off evidence before it is published. The Room store overrides this to commit the
+     * pairing's reply journal; the returned entry always carries the evidence. Ordinary messages are unchanged.
+     */
+    suspend fun persistAgentHandOffDelivery(entry: OutboxEntry): OutboxEntry = entry.copyForDelivery(
+        agentHandOff = entry.agentHandOff?.copy(delivered = true),
+    )
+    /** Whether [persistAgentHandOffDelivery] also committed the originating inbox's replay journal. */
+    fun agentHandOffOriginCommitted(entry: OutboxEntry): Boolean = true
     /** Compare the draft revision, persist the message and clear that draft in one transaction. */
     suspend fun enqueueDraft(entry: OutboxEntry, draft: DraftSnapshot?) {
         check(draft == null) { "Versioned drafts are not supported by this store" }

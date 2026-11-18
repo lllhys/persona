@@ -31,6 +31,8 @@ const (
 	guideNone codeGuide = iota
 	guideQQ
 	guideNetEase
+	guideGmail
+	guideICloud
 )
 
 func qqPreset() *preset {
@@ -45,24 +47,33 @@ func neteasePreset(host, site string) *preset {
 		SMTPHost: "smtp." + host, SMTPPort: 465, SMTPSecurity: "tls", Guide: guideNetEase, Site: site}
 }
 
+// gmailPreset is Google's servers; the app password is made at Site (2-Step Verification must be on).
+func gmailPreset() *preset {
+	return &preset{Provider: ProviderGmail, IMAPHost: "imap.gmail.com", IMAPPort: 993,
+		SMTPHost: "smtp.gmail.com", SMTPPort: 465, SMTPSecurity: "tls", Guide: guideGmail, Site: gmailAppPasswordSite}
+}
+
+// iCloudPreset is Apple's servers; the app-specific password is made at Site.
+func iCloudPreset() *preset {
+	return &preset{Provider: ProviderIMAP, IMAPHost: "imap.mail.me.com", IMAPPort: 993,
+		SMTPHost: "smtp.mail.me.com", SMTPPort: 587, SMTPSecurity: "starttls", Guide: guideICloud, Site: "account.apple.com"}
+}
+
+// gmailAppPasswordSite is where a Google account makes an app password (also the Gmail guide's link on the clients).
+const gmailAppPasswordSite = "myaccount.google.com/apppasswords"
+
 var presets = map[string]*preset{
-	"gmail.com": {
-		Provider: ProviderGmail, IMAPHost: "imap.gmail.com", IMAPPort: 993,
-		SMTPHost: "smtp.gmail.com", SMTPPort: 465, SMTPSecurity: "tls",
-	},
-	"googlemail.com": {
-		Provider: ProviderGmail, IMAPHost: "imap.gmail.com", IMAPPort: 993,
-		SMTPHost: "smtp.gmail.com", SMTPPort: 465, SMTPSecurity: "tls",
-	},
-	"qq.com":      qqPreset(),
-	"foxmail.com": qqPreset(),
-	"vip.qq.com":  qqPreset(),
-	"163.com":     neteasePreset("163.com", "mail.163.com"),
-	"126.com":     neteasePreset("126.com", "mail.126.com"),
-	"yeah.net":    neteasePreset("yeah.net", "mail.yeah.net"),
-	"vip.163.com": neteasePreset("vip.163.com", "vip.163.com"),
-	"vip.126.com": neteasePreset("vip.126.com", "vip.126.com"),
-	"188.com":     neteasePreset("188.com", "www.188.com"),
+	"gmail.com":      gmailPreset(),
+	"googlemail.com": gmailPreset(),
+	"qq.com":         qqPreset(),
+	"foxmail.com":    qqPreset(),
+	"vip.qq.com":     qqPreset(),
+	"163.com":        neteasePreset("163.com", "mail.163.com"),
+	"126.com":        neteasePreset("126.com", "mail.126.com"),
+	"yeah.net":       neteasePreset("yeah.net", "mail.yeah.net"),
+	"vip.163.com":    neteasePreset("vip.163.com", "vip.163.com"),
+	"vip.126.com":    neteasePreset("vip.126.com", "vip.126.com"),
+	"188.com":        neteasePreset("188.com", "www.188.com"),
 	"outlook.com": {
 		Provider: ProviderIMAP, IMAPHost: "outlook.office365.com", IMAPPort: 993,
 		SMTPHost: "smtp-mail.outlook.com", SMTPPort: 587, SMTPSecurity: "starttls",
@@ -75,14 +86,8 @@ var presets = map[string]*preset{
 		Provider: ProviderIMAP, IMAPHost: "outlook.office365.com", IMAPPort: 993,
 		SMTPHost: "smtp-mail.outlook.com", SMTPPort: 587, SMTPSecurity: "starttls",
 	},
-	"icloud.com": {
-		Provider: ProviderIMAP, IMAPHost: "imap.mail.me.com", IMAPPort: 993,
-		SMTPHost: "smtp.mail.me.com", SMTPPort: 587, SMTPSecurity: "starttls",
-	},
-	"me.com": {
-		Provider: ProviderIMAP, IMAPHost: "imap.mail.me.com", IMAPPort: 993,
-		SMTPHost: "smtp.mail.me.com", SMTPPort: 587, SMTPSecurity: "starttls",
-	},
+	"icloud.com": iCloudPreset(),
+	"me.com":     iCloudPreset(),
 	"yahoo.com": {
 		Provider: ProviderIMAP, IMAPHost: "imap.mail.yahoo.com", IMAPPort: 993,
 		SMTPHost: "smtp.mail.yahoo.com", SMTPPort: 465, SMTPSecurity: "tls",
@@ -136,6 +141,10 @@ func PasswordGuide(l i18n.Lang, email string) string {
 		return i18n.T(l, "mail-preset.guide_qq", i18n.Args{"site": p.Site})
 	case guideNetEase:
 		return i18n.T(l, "mail-preset.guide_netease", i18n.Args{"site": p.Site})
+	case guideGmail:
+		return i18n.T(l, "mail-preset.guide_gmail", i18n.Args{"site": p.Site})
+	case guideICloud:
+		return i18n.T(l, "mail-preset.guide_icloud", i18n.Args{"site": p.Site})
 	}
 	return ""
 }

@@ -2,10 +2,25 @@ package persona.core.contracts
 
 import org.junit.Assert.*
 import org.junit.Test
+import persona.core.contracts.api.ExtensionDependent
 import persona.core.contracts.api.ExtensionDetail
 import persona.core.contracts.api.ExtensionPackMember
 
 class ExtensionDetailTest {
+    @Test fun integerStepDecodesFromTheFormAndIsOptional() {
+        val detail = ExtensionDetail.decode(JsonCodec.parseToJsonElement("""{
+            "id":"example",
+            "form":{"fields":[
+                {"name":"goal","type":"integer","step":250},
+                {"name":"count","type":"integer"},
+                {"name":"large","type":"integer","step":9007199254740991}
+            ]}
+        }"""))
+        assertEquals(250L, detail.form[0].step)
+        assertNull(detail.form[1].step)
+        assertEquals(9007199254740991L, detail.form[2].step)
+    }
+
     @Test fun installedDetailsRetainDependencyStatesAndPackConstraints() {
         val detail = ExtensionDetail.decode(JsonCodec.parseToJsonElement("""{
             "id":"example-pack",
@@ -26,9 +41,25 @@ class ExtensionDetailTest {
         assertEquals(listOf(ExtensionPackMember("member", "example", "^1.0.0"), ExtensionPackMember("other")), detail.extensionPack)
     }
 
+    @Test fun packSwitchFieldsDecodeFromANewHub() {
+        val detail = ExtensionDetail.decode(JsonCodec.parseToJsonElement("""{
+            "id":"example-pack",
+            "pack_members_follow":true,
+            "pack_on":[{"id":"base","name":"Base"},{"id":"addon"}],
+            "pack_off":["base","addon"]
+        }"""))
+        assertTrue(detail.packMembersFollow)
+        assertEquals(listOf(ExtensionDependent("base", "Base"), ExtensionDependent("addon")), detail.packOn)
+        assertEquals("addon", detail.packOn.last().label)
+        assertEquals(listOf("base", "addon"), detail.packOff)
+    }
+
     @Test fun olderHubsHaveNoDependencyOrMemberSections() {
         val detail = ExtensionDetail.decode(JsonCodec.parseToJsonElement("""{"id":"example"}"""))
         assertTrue(detail.depends.isEmpty())
         assertTrue(detail.extensionPack.isEmpty())
+        assertFalse(detail.packMembersFollow)
+        assertTrue(detail.packOn.isEmpty())
+        assertTrue(detail.packOff.isEmpty())
     }
 }

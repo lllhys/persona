@@ -12,16 +12,17 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/extension/sandbox"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/lazyre"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// The agent sandbox at Persona's own agent starts (docs/server/agent-sandbox.md, #5357): the assistant's Claude on the CLI and
-// on the Agent SDK (started by the node), a managed launcher (`personad launch`, run by a pane's shell) and a Codex
-// started from the phone (`personad codex-start`, the same). Off unless turned on; on, a start whose agent has a
-// sandbox of its own that would clash, or whose sandbox cannot be told, is not wrapped and says why. A start that
-// cannot be wrapped runs as before.
+// The agent sandbox at Persona's own agent starts (docs/server/agent-sandbox.md, #5357): the assistant's Claude on the CLI
+// (started by the node), a managed launcher (`personad launch`, run by a pane's shell) and a Codex started from the
+// phone (`personad codex-start`, the same). Off unless turned on; on, a start whose agent has a sandbox of its own that
+// would clash, or whose sandbox cannot be told, is not wrapped and says why. A start that cannot be wrapped runs as
+// before.
 
 // agentSandboxEnv turns the agent sandbox on or off for the process that reads it, over the switch file.
 const agentSandboxEnv = "PERSONA_AGENT_SANDBOX"
@@ -67,9 +68,9 @@ func agentDataDirs(home, dir string) []string {
 }
 
 // wrapAgent is sandbox.WrapAgent for one start (where: what started it, for the log and the doctor) when the switch is
-// on; inner says why the agent's own sandbox would clash ("" none), asked only then. A start that is not wrapped
-// is logged with why.
-func wrapAgent(where, home, dir, cwd string, settings []string, inner func() string, argv, env []string, logf func(string, ...any)) ([]string, []string, sandbox.AgentStatus) {
+// on; inner returns the structured reason the agent's own sandbox would clash (nil when none), asked only then. A
+// start that is not wrapped is logged with its canonical default-language why.
+func wrapAgent(where, home, dir, cwd string, settings []string, inner func() *sandbox.StatusReason, argv, env []string, logf func(string, ...any)) ([]string, []string, sandbox.AgentStatus) {
 	on, _ := agentSandboxOn(dir)
 	if !on {
 		return argv, env, sandbox.AgentStatus{State: sandbox.AgentOff}
@@ -77,7 +78,7 @@ func wrapAgent(where, home, dir, cwd string, settings []string, inner func() str
 	plan := sandbox.AgentPlan{DataDirs: agentDataDirs(home, dir), Home: home, Cwd: cwd, LauncherSettings: settings,
 		Probe: agentSandboxProbe, Check: agentSandboxCheck}
 	if envValue(env, sandbox.AgentEnv) != "1" && inner != nil {
-		plan.Inner = inner()
+		plan.InnerReason = inner()
 	}
 	argv, env, st := sandbox.WrapAgent(plan, argv, env)
 	if st.State != sandbox.AgentActive && logf != nil {
@@ -104,8 +105,8 @@ func (n *Node) notePaneStart(launcher string) {
 	if on, _ := agentSandboxOn(n.dir); !on {
 		return
 	}
-	st := sandbox.AgentStatus{State: sandbox.AgentSkipped,
-		Why: "在 herdr 或 Orca 里用「" + launcher + "」启动（不是托管启动器 personad launch），这一版不包，herdr 重启后接着跑的也一样"}
+	reason := sandbox.NewStatusReason("node-doctor.sandbox_pane_start", i18n.Args{"launcher": launcher})
+	st := sandbox.AgentStatus{State: sandbox.AgentSkipped, Why: reason.Error(), Reason: reason}
 	log.Printf("agent sandbox: %s not wrapped (%s): %s", paneStartWhere, st.State, st.Why)
 	recordAgentSandbox(n.dir, paneStartWhere, st)
 }
@@ -193,7 +194,12 @@ var claudeManagedSettingsDirs = []string{"/Library/Application Support/ClaudeCod
 // CLAUDE_CONFIG_DIR, so the node passes every config directory it knows), the project's (.claude/settings.json and
 // settings.local.json in cwd and the folders above it), the administrator's (managed settings) and what argv passes
 // with --settings. A file that is there but cannot be read counts as on: not knowing is not wrapping.
+// It remains the default-text compatibility wrapper; agent starts persist claudeInnerReason's structured form.
 func claudeInner(argv, env []string, cwd, home string, dirs []string) string {
+	return claudeInnerReason(argv, env, cwd, home, dirs).Error()
+}
+
+func claudeInnerReason(argv, env []string, cwd, home string, dirs []string) *sandbox.StatusReason {
 	cfg := envValue(env, "CLAUDE_CONFIG_DIR")
 	if cfg == "" {
 		cfg = filepath.Join(home, ".claude")
@@ -228,10 +234,10 @@ func claudeInner(argv, env []string, cwd, home string, dirs []string) string {
 			continue
 		}
 		if err != nil {
-			return "读不了 Claude 的设置 " + f + "，判断不出它有没有开自带 sandbox"
+			return sandbox.NewStatusReason("node-doctor.sandbox_claude_settings_unreadable", i18n.Args{"path": f})
 		}
-		if why := claudeSandboxIn(b, f); why != "" {
-			return why
+		if reason := claudeSandboxInReason(b, f); reason != nil {
+			return reason
 		}
 	}
 	for i, a := range argv {
@@ -244,45 +250,50 @@ func claudeInner(argv, env []string, cwd, home string, dirs []string) string {
 			continue
 		}
 		if t := strings.TrimSpace(v); strings.HasPrefix(t, "{") {
-			if why := claudeSandboxIn([]byte(t), "--settings"); why != "" {
-				return why
+			if reason := claudeSandboxInReason([]byte(t), "--settings"); reason != nil {
+				return reason
 			}
 			continue
 		}
 		b, err := os.ReadFile(proto.ExpandHome(v, home))
 		if err != nil {
-			return "读不了 --settings 的 " + v + "，判断不出 Claude 有没有开自带 sandbox"
+			return sandbox.NewStatusReason("node-doctor.sandbox_claude_inline_settings_unreadable", i18n.Args{"path": v})
 		}
-		if why := claudeSandboxIn(b, v); why != "" {
-			return why
+		if reason := claudeSandboxInReason(b, v); reason != nil {
+			return reason
 		}
 	}
-	return ""
+	return nil
 }
 
 // claudeSandboxIn says why settings (named where) may turn Claude's own sandbox on, "" when they do not.
+// Its default text is unchanged; claudeSandboxInReason carries the same fact for localized persistence.
 func claudeSandboxIn(b []byte, where string) string {
+	return claudeSandboxInReason(b, where).Error()
+}
+
+func claudeSandboxInReason(b []byte, where string) *sandbox.StatusReason {
 	var s map[string]json.RawMessage
 	if err := json.Unmarshal(b, &s); err != nil {
-		return "Claude 的设置 " + where + " 不是合法的 JSON，判断不出它有没有开自带 sandbox"
+		return sandbox.NewStatusReason("node-doctor.sandbox_claude_settings_invalid_json", i18n.Args{"where": where})
 	}
 	raw, ok := s["sandbox"]
 	if !ok || string(raw) == "null" || string(raw) == "false" {
-		return ""
+		return nil
 	}
 	var sb struct {
 		Enabled *bool `json:"enabled"`
 	}
 	if json.Unmarshal(raw, &sb) != nil {
-		return "Claude 的设置 " + where + " 里的 sandbox 看不懂，判断不出它有没有开自带 sandbox"
+		return sandbox.NewStatusReason("node-doctor.sandbox_claude_settings_invalid_sandbox", i18n.Args{"where": where})
 	}
 	if sb.Enabled != nil && !*sb.Enabled {
-		return ""
+		return nil
 	}
 	if sb.Enabled == nil {
-		return "" // a sandbox block that does not turn it on (only its options)
+		return nil // a sandbox block that does not turn it on (only its options)
 	}
-	return "Claude 在 " + where + " 里开了自带 sandbox（sandbox.enabled），和外层沙箱不能同时用"
+	return sandbox.NewStatusReason("node-doctor.sandbox_claude_own", i18n.Args{"where": where})
 }
 
 // codexManagedConfig are an administrator's Codex settings: they can force a sandbox mode over the user's.
@@ -296,16 +307,22 @@ var codexManagedConfig = []string{"/etc/codex/managed_config.toml", "/etc/codex/
 //   - otherwise its mode is, first to last: --dangerously-bypass-approvals-and-sandbox / --yolo, -s / --sandbox /
 //     --full-auto, the profile's sandbox_mode (-p, else config's profile), -c sandbox_mode, config's sandbox_mode,
 //     read-only.
+//
+// It remains the default-text compatibility wrapper; agent starts persist codexInnerReason's structured form.
 func codexInner(argv, env []string, cwd, home string) string {
+	return codexInnerReason(argv, env, cwd, home).Error()
+}
+
+func codexInnerReason(argv, env []string, cwd, home string) *sandbox.StatusReason {
 	if codexOnRemote(argv) {
-		return "Codex 接的是另外的 app-server（--remote）：它的工具不在这个进程里跑"
+		return sandbox.NewStatusReason("node-doctor.sandbox_codex_remote", nil)
 	}
 	if codexOwnProcess(argv) == "" {
-		return "plain Codex 可能跑在共享的 app-server 守护进程上，包住 TUI 挡不住它的工具；要包的话启动器里加 -c sandbox_mode=\"danger-full-access\""
+		return sandbox.NewStatusReason("node-doctor.sandbox_codex_shared", nil)
 	}
 	for _, f := range codexManagedConfig {
 		if _, err := os.Stat(f); err == nil {
-			return "有 Codex 的托管配置 " + f + "，判断不出它的沙箱模式"
+			return sandbox.NewStatusReason("node-doctor.sandbox_codex_managed_config", i18n.Args{"path": f})
 		}
 	}
 	codexHome := envValue(env, "CODEX_HOME")
@@ -317,7 +334,7 @@ func codexInner(argv, env []string, cwd, home string) string {
 		for d := filepath.Clean(cwd); ; d = filepath.Dir(d) {
 			if p := filepath.Join(d, ".codex"); p != filepath.Clean(codexHome) {
 				if _, err := os.Stat(filepath.Join(p, "config.toml")); err == nil {
-					return "项目里有 " + filepath.Join(p, "config.toml") + "，判断不出 Codex 的沙箱模式"
+					return sandbox.NewStatusReason("node-doctor.sandbox_codex_project_config", i18n.Args{"path": filepath.Join(p, "config.toml")})
 				}
 			}
 			if d == "/" || d == filepath.Dir(d) {
@@ -340,7 +357,7 @@ func codexInner(argv, env []string, cwd, home string) string {
 		case a == "--":
 			i = len(argv)
 		case a == "--dangerously-bypass-approvals-and-sandbox" || a == "--yolo":
-			return ""
+			return nil
 		case flag == "-s" || flag == "--sandbox":
 			if !hasVal {
 				val = next()
@@ -372,18 +389,18 @@ func codexInner(argv, env []string, cwd, home string) string {
 					profile = tomlWord(v)
 				}
 			case strings.HasPrefix(k, "profiles."):
-				return "启动参数里用 -c 改了 profile（" + k + "），判断不出 Codex 的沙箱模式"
+				return sandbox.NewStatusReason("node-doctor.sandbox_codex_profile_override", i18n.Args{"key": k})
 			}
 		}
 	}
 	if mode == "" {
 		b, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "读不了 Codex 的 config.toml，判断不出它的沙箱模式"
+			return sandbox.NewStatusReason("node-doctor.sandbox_codex_config_unreadable", nil)
 		}
 		cfg, ok := codexSandboxConfig(string(b))
 		if !ok {
-			return "Codex 的 config.toml 里有看不懂的 profile 写法，判断不出它的沙箱模式"
+			return sandbox.NewStatusReason("node-doctor.sandbox_codex_config_invalid_profile", nil)
 		}
 		if profile == "" {
 			profile = cfg.profile
@@ -398,12 +415,12 @@ func codexInner(argv, env []string, cwd, home string) string {
 		}
 	}
 	if mode == "danger-full-access" {
-		return ""
+		return nil
 	}
 	if mode == "" {
-		mode = "默认模式"
+		return sandbox.NewStatusReason("node-doctor.sandbox_codex_own_default", nil)
 	}
-	return "Codex 自带沙箱（" + mode + "）和外层沙箱冲突，只有 danger-full-access 才包"
+	return sandbox.NewStatusReason("node-doctor.sandbox_codex_own", i18n.Args{"mode": mode})
 }
 
 // codexConfig is what a config.toml says about the sandbox.

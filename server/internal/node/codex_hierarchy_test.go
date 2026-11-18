@@ -398,7 +398,7 @@ func TestCodexAppProjectsAreNumberedInTheAppsOrder(t *testing.T) {
 	}
 	for _, c := range []struct {
 		thread, cwd string
-		want        int
+		want        int32
 	}{
 		{"tools", tools, 1},
 		{"site", site, 2},

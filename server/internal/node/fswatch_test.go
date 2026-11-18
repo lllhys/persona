@@ -326,17 +326,16 @@ func TestFsWatchGitStatusChanges(t *testing.T) {
 	n.fsw.set(n, fsWatchParams{Git: []string{dir}})
 	ev.none(t, 300*time.Millisecond)
 
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Each edit is written whole (writeWhole): a look between os.WriteFile's truncate and its write sees an empty
+	// file, a real change of its own (#2174). Staged outside the repository, or the staged file is an untracked change.
+	staging := t.TempDir()
+	writeWhole(t, staging, filepath.Join(dir, "a.txt"), []byte("two\n"))
 	if c := ev.next(t); len(c.Git) != 1 || c.Git[0] != dir || len(c.Dirs) != 0 {
 		t.Fatalf("modified: %+v", c)
 	}
 	// Editing a file that is already modified leaves the status text alone; its time and size still move.
 	time.Sleep(20 * time.Millisecond)
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("three lines\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeWhole(t, staging, filepath.Join(dir, "a.txt"), []byte("three lines\n"))
 	if c := ev.next(t); len(c.Git) != 1 {
 		t.Fatalf("modified again: %+v", c)
 	}
@@ -438,6 +437,53 @@ func TestListDirMarksIgnoredBesideMagicNames(t *testing.T) {
 	}
 	odd := []string{":!odd.txt", ":(glob)y", ":^x"}
 	check(list(odd), odd)
+}
+
+func TestFsWatchGenerationRejectsLateOlderSet(t *testing.T) {
+	n, dir := testNode(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	n.fsw.start(ctx, func(fsChanged) {})
+	defer n.fsw.close()
+	old, fresh := filepath.Join(dir, "old"), filepath.Join(dir, "new")
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	n.fsw.beforeSet = func() {
+		select {
+		case <-entered:
+			// The newer set has no reason to wait for the older one.
+		default:
+			close(entered)
+			<-release
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		n.fsw.set(n, fsWatchParams{Dirs: []fsWatchDir{{Path: old, Cwd: dir}}, Generation: 1})
+	}()
+	<-entered
+	n.fsw.set(n, fsWatchParams{Dirs: []fsWatchDir{{Path: fresh, Cwd: dir}}, Generation: 2})
+	close(release)
+	<-done
+	current := func() string {
+		n.fsw.mu.Lock()
+		defer n.fsw.mu.Unlock()
+		if len(n.fsw.dirs) != 1 {
+			return fmt.Sprintf("%v", n.fsw.dirs)
+		}
+		for d := range n.fsw.dirs {
+			return d.Path
+		}
+		return ""
+	}
+	if got := current(); got != fresh {
+		t.Fatalf("a late generation-1 set replaced generation 2: %q", got)
+	}
+	n.fsw.set(n, fsWatchParams{Dirs: []fsWatchDir{{Path: old, Cwd: dir}}, Generation: 1})
+	if got := current(); got != fresh {
+		t.Fatalf("an older generation accepted later: %q", got)
+	}
 }
 
 // The RPC the hub calls: the JSON of fs.watch becomes the watched set, and an empty one releases it.

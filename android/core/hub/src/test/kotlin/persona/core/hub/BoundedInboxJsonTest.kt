@@ -5,7 +5,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
@@ -30,6 +30,27 @@ class BoundedInboxJsonTest {
         val actual = wire.toResponseBody().use { BoundedInboxJson.read(it) {} }
         assertEquals(text, actual["text"]!!.jsonPrimitive.content)
         assertTrue(BoundedInboxJson.read(" \n\t".toResponseBody()) {}.isEmpty())
+    }
+
+    @Test fun validLargeInboxListStaysWithinEntryBudget() {
+        val wire = buildJsonObject {
+            put("items", buildJsonArray {
+                repeat(677) { index ->
+                    add(buildJsonObject {
+                        put("id", JsonPrimitive("item-$index"))
+                        put("done", JsonPrimitive(index % 3 == 0))
+                        put("kind", JsonPrimitive(if (index % 3 == 0) "fyi" else "actionable"))
+                        repeat(90) { field -> put("field_$field", JsonPrimitive(field)) }
+                    })
+                }
+            })
+        }.toString()
+
+        val items = BoundedInboxJson.read(wire.toResponseBody()) {}["items"]!!.jsonArray
+
+        assertEquals(677, items.size)
+        assertEquals("item-0", items.first().jsonObject["id"]!!.jsonPrimitive.content)
+        assertEquals("item-676", items.last().jsonObject["id"]!!.jsonPrimitive.content)
     }
 
     @Test fun declaredOversizeIsRejectedBeforeReading() {

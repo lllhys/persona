@@ -180,7 +180,7 @@ final class SentAsYouTests: XCTestCase {
         let row = app.buttons["sent.row.70"]
         XCTAssertTrue(row.waitForExistence(timeout: 15), "no rows:\n\(app.debugDescription)")
         row.tap()
-        let done = app.buttons["sent.detail.done"]
+        let done = app.buttons["sent.detail.close"]
         XCTAssertTrue(done.waitForExistence(timeout: 10), "the details did not open:\n\(app.debugDescription)")
         XCTAssertTrue(text(app, containing: "mail_send").exists, "the action")
         XCTAssertTrue(text(app, containing: "ann@example.com").exists, "where it went")
@@ -213,7 +213,7 @@ final class SentAsYouTests: XCTestCase {
         for _ in 0..<4 where !(chat.exists && chat.isHittable) { app.swipeUp() }
         XCTAssertTrue(chat.exists, "no 打开对话 in the details:\n\(app.debugDescription)")
         chat.tap()
-        XCTAssertTrue(app.buttons["sent.detail.done"].waitForNonExistence(timeout: 10), "the details stayed over the chat")
+        XCTAssertTrue(app.buttons["sent.detail.close"].waitForNonExistence(timeout: 10), "the details stayed over the chat")
         XCTAssertTrue(any(app, "assistant-sidebar-button").waitForExistence(timeout: 20), "Persona's chat did not open:\n\(app.debugDescription)")
         XCTAssertFalse(app.buttons["sent.row.70"].exists, "still on the list")
     }
@@ -225,7 +225,7 @@ final class SentAsYouTests: XCTestCase {
         reveal(app, row, swipes: 4)
         XCTAssertTrue(row.exists, "no long row:\n\(app.debugDescription)")
         row.tap()
-        XCTAssertTrue(app.buttons["sent.detail.done"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["sent.detail.close"].waitForExistence(timeout: 10))
         let cut = text(app, containing: "个字处被截断")
         for _ in 0..<10 where !cut.exists { app.swipeUp() }
         XCTAssertTrue(cut.exists, "no note that the text was cut:\n\(app.debugDescription)")
@@ -265,7 +265,7 @@ final class SentAsYouTests: XCTestCase {
         alert.buttons["撤回"].tap()
         XCTAssertTrue(any(app, "sent.detail.recalledAt").waitForExistence(timeout: 15), "the sheet does not say when it was recalled")
         XCTAssertFalse(recall.exists, "撤回… stays after the recall")
-        app.buttons["sent.detail.done"].tap()
+        app.buttons["sent.detail.close"].tap()
 
         let refused = app.buttons["sent.row.60"]
         reveal(app, refused, swipes: 6)

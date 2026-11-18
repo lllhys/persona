@@ -4,6 +4,7 @@
   "unknown": "北极星指标：今天的数读取失败，数值未知。",
   "not_recorded": "未知（还没开始记录）",
   "count": "{n} 次（提问 {ask} · 待处理卡片 {cards} · 通知 {notify} · 授权卡 {auth}）",
+  "count_calls": "{n} 次（提问 {ask} · 待处理卡片 {cards} · 通知 {notify} · 授权卡 {auth} · 加急来电 {calls}）",
   "partial": "，部分未知：当天开始后才开始记录",
   "no_attempts": "还没有发起或恢复",
   "rate": "{rate}（发起和恢复 {n} 次，成功 {ok} 次）",

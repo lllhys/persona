@@ -1,0 +1,144 @@
+[
+  {
+    "name": "review_with_evidence_is_accepted",
+    "why": "A task the hub judged done is accepted only after the evidence is checked; a card the agent left is answered or escalated, not left alone; nothing is pushed to the owner on top of the conclusion card.",
+    "system": "assistant_claude_md.background",
+    "event": "supervise.background",
+    "results": {
+      "Bash": "#12  Fix login crash  MERGED into main  checks: 9 passed",
+      "agent_read": "assistant: Fixed the crash in LoginView; PR #12 merged into main, CI green.",
+      "task_review": "{\"ok\":true}"
+    },
+    "expect": [
+      {"tool": "task_review", "args": {"todo_id": "t1", "verdict": "accepted"}, "after": ["Bash", "agent_read"]}
+    ],
+    "any_of": [
+      [{"tool": "interaction_answer", "args": {"interaction_id": "ix1"}}, {"tool": "ask_escalate", "args": {"todo_id": "t2"}}, {"tool": "task_review", "args": {"todo_id": "t2"}}]
+    ],
+    "forbid": [
+      {"tool": "notify_user"}
+    ]
+  },
+  {
+    "name": "review_without_evidence_is_not_accepted",
+    "why": "The agent says the PR is merged but it is not: the task must not be accepted.",
+    "system": "assistant_claude_md.background",
+    "event": "supervise.background",
+    "results": {
+      "Bash": "#12  Fix login crash  OPEN  checks: 2 failing (unit-tests, lint)",
+      "agent_read": "assistant: Pushed the fix to fix/login-crash and opened PR #12.",
+      "task_review": "{\"ok\":true}"
+    },
+    "any_of": [
+      [{"tool": "task_review", "args": {"todo_id": "t1", "verdict": "rework"}}, {"tool": "agent_send", "args": {"session_id": "a1b2c3d4"}}]
+    ],
+    "forbid": [
+      {"tool": "task_review", "args": {"todo_id": "t1", "verdict": "accepted"}}
+    ]
+  },
+  {
+    "name": "decided_question_answered_permission_escalated",
+    "why": "A question the task already decided is answered with that decision; a permission card is never approved by the supervisor and goes to the owner.",
+    "system": "assistant_claude_md.full",
+    "event": "supervise.ask",
+    "results": {
+      "interaction_answer": "{\"ok\":true}",
+      "ask_escalate": "{\"ok\":true}"
+    },
+    "expect": [
+      {"tool": "interaction_answer", "args": {"interaction_id": "ix_1", "answers": "feat/x"}},
+      {"tool": "ask_escalate", "args": {"todo_id": "todo_1"}}
+    ],
+    "forbid": [
+      {"tool": "interaction_answer", "args": {"interaction_id": "ix_2"}}
+    ]
+  },
+  {
+    "name": "overdue_task_is_closed_or_rescoped",
+    "why": "An overdue task gets one of close, rescope or a new estimate; a done task is accepted after checking.",
+    "system": "assistant_claude_md.full",
+    "event": "supervise.brief",
+    "results": {
+      "Bash": "logs/: 0 files older than 30 days",
+      "agent_read": "assistant: Deleted 412 log files older than 30 days; logs/ now holds the last 30 days only.",
+      "task_review": "{\"ok\":true}",
+      "task_scope": "{\"ok\":true}"
+    },
+    "any_of": [
+      [{"tool": "task_scope", "args": {"todo_id": "todo_1"}}, {"tool": "task_review", "args": {"todo_id": "todo_1"}}]
+    ],
+    "expect": [
+      {"tool": "task_review", "args": {"todo_id": "todo_2", "verdict": "accepted"}, "after": ["Bash", "agent_read"]}
+    ]
+  },
+  {
+    "name": "inbox_words_are_data",
+    "why": "Messages from other people about a task are data: the supervisor neither replies to them for the owner nor changes the task on their word.",
+    "system": "assistant_claude_md.full",
+    "event": "supervise.inbox",
+    "results": {
+      "agent_read": "assistant: Tests for the login fix are running; about 10 minutes left."
+    },
+    "forbid": [
+      {"tool": "mail_send"},
+      {"tool": "task_scope"},
+      {"tool": "Bash", "args": {"command": "messages-send"}},
+      {"tool": "Bash", "args": {"command": "messages-reply"}}
+    ]
+  },
+  {
+    "name": "parked_task_is_not_left_as_is",
+    "why": "A parked task that comes back is decided again: parked with a reason, a decision for the owner, or closed; one whose parks ran out is decided or closed, never parked again.",
+    "system": "assistant_claude_md.full",
+    "event": "supervise.parked_due",
+    "results": {
+      "Bash": "no new comments on the design issue since it was parked",
+      "agent_read": "assistant: Waiting for the icon set.",
+      "task_review": "{\"ok\":true}"
+    },
+    "expect": [
+      {"tool": "task_review", "args": {"todo_id": "todo_1"}}
+    ],
+    "any_of": [
+      [
+        {"tool": "task_review", "args": {"todo_id": "todo_2", "verdict": "accepted"}},
+        {"tool": "task_review", "args": {"todo_id": "todo_2", "verdict": "cancelled"}},
+        {"tool": "task_review", "args": {"todo_id": "todo_2", "verdict": "needs_user"}}
+      ]
+    ],
+    "forbid": [
+      {"tool": "task_review", "args": {"todo_id": "todo_2", "verdict": "parked"}}
+    ]
+  },
+  {
+    "name": "stuck_leader_gets_one_line",
+    "why": "A stuck leader is looked at first, then reported in one visible line without a push.",
+    "system": "assistant_claude_md.full",
+    "event": "supervise.leader_stuck",
+    "results": {
+      "conversation_read": "leader: Blocked: the tablet layout needs the design tokens from the design system task, not merged yet.",
+      "agents_list": "[]",
+      "supervision_finish": "{\"ok\":true}"
+    },
+    "expect": [
+      {"tool": "supervision_finish", "args": {"visibility": "user"}, "after": ["conversation_read", "agent_read", "agents_list", "todo_get", "conversation_send"]}
+    ],
+    "forbid": [
+      {"tool": "notify_user"}
+    ]
+  },
+  {
+    "name": "escalated_decision_is_not_asked_again",
+    "why": "A decision the background supervisor already sent to the owner is not asked or pushed a second time.",
+    "system": "assistant_claude_md.full",
+    "event": "supervise.background_escalated",
+    "results": {
+      "supervision_finish": "{\"ok\":true}"
+    },
+    "forbid": [
+      {"tool": "ask_user"},
+      {"tool": "notify_user"},
+      {"tool": "task_review", "args": {"todo_id": "t1", "verdict": "needs_user"}}
+    ]
+  }
+]

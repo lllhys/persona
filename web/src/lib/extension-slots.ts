@@ -4,7 +4,10 @@
 // (GET /api/v1/extensions/-/ui without a placement) and again on reconnect, when an extension changes here, and when the tab
 // comes back after a while; a nav_page's badge changes in place on the extension_ui event (plugin_ui from an older
 // hub). Only on a hub with UI slots (extension_ui_slots, or plugin_ui_slots): an older one is never asked (it would answer an empty list anyway).
-import { defaultKnown, fromDefaultManager, messageManager, onDefaultManager, otherManager } from "./manager-choice";
+// The list this browser was last given is kept (docs/web/web.md "Extension pages on reload"): drawn from the first paint,
+// before the hello, and replaced by the hub's answer.
+import { defaultKnown, defaultManager, fromDefaultManager, messageManager, onDefaultManager, otherManager } from "./manager-choice";
+import { feedCacheScope, scopedKey } from "./feed-cache";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { applyBadge, inboxItemPlace, placesOf, uiPlaces, type BadgeEvent, type SlotName, type UIPlace } from "./extension-ui";
 import { isResumed } from "./reconnect";
@@ -14,7 +17,12 @@ import { extIdOf, hubHasExt, newRoutes } from "./extension-api";
 /** Whether the hub has UI slots: extension_ui_slots (#1844), or plugin_ui_slots before it. */
 export const hasSlots = (features: string[]) => hubHasExt(features, "ui_slots");
 
-let places: UIPlace[] = [];
+// Kept under the feed cache's hub and sign-in scope with the default manager it was read under. `kept`: that manager
+// while the list shown is the kept one (null once the hub answered); `placesScope`: whose the list shown is.
+const KEPT = "ext-places";
+let kept: string | null = null;
+let placesScope = feedCacheScope();
+let places: UIPlace[] = keptPlaces();
 let asked = 0; // when the list was last asked for
 let generation = 0;
 let started = false;
@@ -26,9 +34,29 @@ const others = new Map<string, UIPlace[]>();
 const othersAsked = new Map<string, number>(); // the generation each was last asked in
 const NONE: UIPlace[] = [];
 
-function set(next: UIPlace[]) {
+function keptPlaces(): UIPlace[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(scopedKey(placesScope, KEPT) ?? "") ?? "null");
+    const list = v.places.filter((u: UIPlace) => [u.extension, u.id, u.title, u.placement].every((x) => typeof x === "string"));
+    kept = String(v.manager);
+    return list;
+  } catch {
+    return []; // nothing (readable) kept, signed out, or no storage: the hub's answer, as before
+  }
+}
+
+/** The list shown, kept for the next load unless `scope` (whose it is) has signed out or changed since. */
+function set(next: UIPlace[], scope = placesScope) {
   if (next === places) return;
   places = next;
+  placesScope = scope;
+  kept = null;
+  try {
+    const key = scopedKey(scope, KEPT);
+    if (key) localStorage.setItem(key, JSON.stringify({ manager: defaultKnown() ? defaultManager() : "", places: next }));
+  } catch {
+    // storage full or off: the next load waits for the hub, as before
+  }
   listeners.forEach((l) => l());
 }
 
@@ -52,13 +80,16 @@ function askOther(manager: string) {
 /** Asks the hub again (an extension turned on or off, installed, upgraded…), the other managers' asked for too. */
 export function refreshExtensionPlaces() {
   const g = ++generation;
-  if (!hasSlots(getState().features)) {
-    set(places.length ? [] : places);
+  const { features } = getState();
+  if (!hasSlots(features)) {
+    // before the hello what is kept stays; a hub without slots has none
+    if (features.length) set(places.length ? [] : places, feedCacheScope());
     return;
   }
   asked = Date.now();
+  const scope = feedCacheScope();
   uiPlaces("").then(
-    (list) => g === generation && set(list),
+    (list) => g === generation && set(list, scope),
     () => {}, // keep what is shown; the next reconnect asks again
   );
   for (const m of others.keys()) askOther(m);
@@ -93,8 +124,12 @@ function start() {
   };
   onHubEvent("extension_ui", badge(false));
   onHubEvent("plugin_ui", badge(true));
-  // the default became known or moved: its places and badges are read again (those left out before), and the others'
-  onDefaultManager(() => refreshExtensionPlaces());
+  // the default became known or moved: its places and badges are read again (those left out before), and the others';
+  // a list kept under another default is not its
+  onDefaultManager(() => {
+    if (kept && kept !== defaultManager()) set([]);
+    refreshExtensionPlaces();
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && Date.now() - asked > 60_000) refreshExtensionPlaces();
   });
@@ -113,14 +148,15 @@ const subscribe = (l: () => void) => {
 /** The places of one slot, in the hub's order; none on a hub without plugin_ui_slots. `manager`: whose extensions (an
  *  inbox item's, a computer's); none, or the default: the default's. */
 export function useExtensionSlot(placement: SlotName, manager?: string): UIPlace[] {
-  const on = useStore((s) => hasSlots(s.features));
+  // null before the hello: the kept list, if any
+  const on = useStore((s) => (s.features.length ? hasSlots(s.features) : null));
   const other = otherManager(manager);
   const snapshot = () => (other ? (others.get(other) ?? NONE) : places);
   const all = useSyncExternalStore(subscribe, snapshot, snapshot);
   useEffect(() => {
     if (on && other) askOther(other);
   }, [on, other]);
-  return useMemo(() => (on ? placesOf(all, placement) : []), [on, all, placement]);
+  return useMemo(() => (on !== false ? placesOf(all, placement) : []), [on, all, placement]);
 }
 
 /** One place by extension and id (a page opened from the sidebar or a card), if the hub listed it. */

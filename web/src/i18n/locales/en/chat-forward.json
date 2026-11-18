@@ -8,5 +8,7 @@
   "remove": "Remove forward",
   "open_original": "Open the original message",
   "show_all": "Show all",
-  "collapse": "Collapse"
+  "collapse": "Collapse",
+  "group_heading_one": "{count} forwarded message",
+  "group_heading_other": "{count} forwarded messages"
 }

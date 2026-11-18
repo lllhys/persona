@@ -40,13 +40,13 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Persona sets alarms and timers only when you ask and approve it on your iPhone, for example to wake you at 6:40 or to start a 25-minute focus timer.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<key>NSAlarmKitUsageDescription</key>
-	<string>Persona sets alarms and timers only when you ask and approve it on your iPhone, for example to wake you at 6:40 or to start a 25-minute focus timer.</string>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Persona plays Apple Music when you ask, for example a playlist for focused work, and can pause or skip what the Music app is playing.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
@@ -65,10 +65,12 @@
 	<string>Persona saves health data only after you approve it on your iPhone, one entry at a time, for example a weight or last night's sleep you told Claude about.</string>
 	<key>NSHomeKitUsageDescription</key>
 	<string>Persona controls your Home accessories and scenes only when you ask and approve each change on your iPhone, for example to turn off the living room light.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Persona connects straight to your computer when it's on the same Wi-Fi, to show its screen faster.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Persona shares your current location with Claude only when you ask, for example to find what time it is where you are or which office you are in.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Persona records audio when you start a recording or dictate a message, for example a meeting or a spoken note. Recordings are transcribed on your iPhone and only the text is saved to the knowledge base on your hub; the audio stays on your iPhone. In a voice conversation you start — on the phone or in CarPlay — your voice is streamed through your hub to the realtime speech service it is set up with, only while the conversation is open.</string>
+	<string>Persona records audio when you start a recording or dictate a message, for example a meeting or a spoken note. Recordings are transcribed on your iPhone and only the text is saved to the knowledge base on your hub; the audio stays on your iPhone, except while Talk is on in a meeting: what is said then goes to the voice service. A meeting you choose to transcribe on the hub sends its audio, Talk included, through your hub to the speech service it is set up with, and the hub deletes it once the meeting's minutes are written. In a voice conversation or a call to Persona you start — on the phone, in CarPlay or with Siri — your voice is streamed through your hub to the realtime speech service it is set up with, only while it lasts. On an urgent call you answer, Persona listens on your iPhone and only the text of what you say goes to your hub.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Persona saves images Claude produces to your library when you ask, for example a chart it generated.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -76,13 +78,20 @@
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Persona lets Claude read and create reminders when you ask, for example to add “review the PR” to your Today list.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Persona turns your voice into text when you hold the mic button, for example to dictate a reply to Claude.</string>
+	<string>Persona turns your voice into text when you use the mic button, for example to dictate a reply to Claude, and on an urgent call you answer, to hear what you decide. It does this on your iPhone when it can.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INStartCallIntent</string>
+		<string>INStartAudioCallIntent</string>
+	</array>
 	<key>PersonaAppGroup</key>
 	<string>$(PERSONA_APP_GROUP)</string>
 	<key>PersonaGettingStartedURL</key>
 	<string>$(PERSONA_GETTING_STARTED_URL)</string>
+	<key>PersonaHealthBackgroundDelivery</key>
+	<string>$(PERSONA_HEALTH_BACKGROUND_DELIVERY)</string>
 	<key>PersonaHomeKit</key>
 	<string>$(PERSONA_HOMEKIT)</string>
 	<key>PersonaPushKeychainGroup</key>
@@ -115,6 +124,7 @@
 		<string>remote-notification</string>
 		<string>audio</string>
 		<string>processing</string>
+		<string>voip</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict>

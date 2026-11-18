@@ -1,6 +1,7 @@
 import Observation
 import PersonaKit
 import SwiftUI
+import PersonaWire
 
 // Settings › Channels (docs/extensions/channels.md): every way of talking to Persona — the apps, the Feishu bot, WeChat, /agent in
 // Feishu, voice, the chat app bots plugins contribute — as GET /api/v1/channels lists them; one channel's page (its
@@ -132,7 +133,7 @@ enum ChannelText {
         case "sent", "connectors/-sent": return .sent
         case "connectors": return .connectors
         case "connectors/feishu-bot": return .feishuBot
-        case "connectors/feishu": return .feishu
+        case "connectors/feishu": return .feishu()
         case "model-config": return .modelConfiguration
         default:
             // settings/extensions/<id>, or settings/plugins/<id> as hubs from before the rename write it (#1844).

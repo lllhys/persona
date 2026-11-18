@@ -4,6 +4,7 @@
 #   ./scripts/app/android.sh test       # unit tests only
 #   ./scripts/app/android.sh lint       # Android lint
 #   ./scripts/app/android.sh shots -s <emulator> --out <directory>
+#   ./scripts/app/android.sh shots-live -s <emulator> --scenario <scene.json> --theme light|dark|both --out <directory>
 #   ./scripts/app/android.sh apk        # debug APK only (android/app/build/outputs/apk/debug/app-debug.apk)
 #   ./scripts/app/android.sh release    # R8 release APK, checked, aligned and signed for your own phone
 #                                       # (android/app/build/outputs/apk/release/app-release.apk); add -s <phone> to install it
@@ -16,9 +17,12 @@
 #   SHOTS_FROZEN=<ISO time>        e.g. 2026-11-02T04:00:00+00:00: freeze the mock hub's and the emulator's clock,
 #                                  turn animations off, put the status bar in demo mode (needs adb root) and
 #                                  capture each page only once it has held still
+#   SHOTS_GETTING_STARTED_URL=<https URL>  show the welcome page's "No hub yet?" link in the capture (default: none, so captures
+#                                  do not depend on the local config)
 #   SHOTS_SETTLE=<seconds>         wait after each launch before the capture (default 2)
 # Compare two capture directories with scripts/app/android_shots_diff.py.
 # The application id comes from ~/.config/persona/config.json: android.application_id, else app.bundle_id.
+# The welcome page's "No hub yet?" link comes from the same file: publish.getting_started_url (https only; none: no link).
 # release signs with android.release_keystore (and android.release_key_alias, android.release_keystore_password_command,
 # android.release_key_password_command) from the same file; with none configured it uses the SDK's local debug keystore
 # (~/.android/debug.keystore), the key debug builds on this computer are signed with, so it updates one in place.
@@ -29,15 +33,27 @@ cd "$(dirname "$0")/../.."
 COMMAND=install
 SERIAL=""
 OUTPUT=""
+SCENARIO=""
+THEME=both
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -s|--serial) SERIAL="${2:?需要模拟器序列号}"; shift 2 ;;
     --out) OUTPUT="${2:?需要输出目录}"; shift 2 ;;
-    install|apk|release|test|lint|shots) COMMAND="$1"; shift ;;
-    *) echo "用法：$0 [install|apk|release|test|lint|shots] [-s 模拟器] [--out 目录]" >&2; exit 2 ;;
+    --scenario) SCENARIO="${2:?需要场景文件}"; shift 2 ;;
+    --theme) THEME="${2:?需要 light、dark 或 both}"; shift 2 ;;
+    install|apk|release|test|lint|shots|shots-live) COMMAND="$1"; shift ;;
+    *) echo "用法：$0 [install|apk|release|test|lint|shots|shots-live] [-s 模拟器] [--out 目录]" >&2; exit 2 ;;
   esac
 done
-if [ "$COMMAND" = shots ]; then
+if [ "$COMMAND" = shots-live ]; then
+  SCENARIO=${SCENARIO:-scripts/app/android_adaptive_scenes/window-selftest.json}
+  [ -f "$SCENARIO" ] || { echo "场景文件不存在：$SCENARIO" >&2; exit 2; }
+  SCENARIO="$(cd "$(dirname "$SCENARIO")" && pwd)/$(basename "$SCENARIO")"
+  case "$THEME" in light|dark|both) ;; *) echo "--theme 只能是 light、dark 或 both。" >&2; exit 2 ;; esac
+elif [ -n "$SCENARIO" ] || [ "$THEME" != both ]; then
+  echo "--scenario 和 --theme 只用于 shots-live。" >&2; exit 2
+fi
+if [ "$COMMAND" = shots ] || [ "$COMMAND" = shots-live ]; then
   APP_ID=com.example.persona.shots
 else
 APP_ID=$(python3 scripts/persona_config.py get android.application_id 2>/dev/null || true)
@@ -61,8 +77,8 @@ if ! [[ "$JAVA_MAJOR" =~ ^[0-9]+$ ]] || [ "$JAVA_MAJOR" -lt 21 ]; then
     exit 1
   fi
 fi
-if [ "$COMMAND" = shots ]; then
-  case "$SERIAL" in emulator-*) ;; *) echo "shots 必须用 -s 指定专用模拟器。" >&2; exit 2 ;; esac
+if [ "$COMMAND" = shots ] || [ "$COMMAND" = shots-live ]; then
+  case "$SERIAL" in emulator-*) ;; *) echo "shots / shots-live 必须用 -s 指定专用模拟器。" >&2; exit 2 ;; esac
   [ "$("$ADB" -s "$SERIAL" shell getprop ro.kernel.qemu | tr -d '\r')" = 1 ] || { echo "指定设备不是已启动的模拟器。" >&2; exit 2; }
   case "${SHOTS_STYLE:-}" in ""|glass|brief|board) ;; *) echo "SHOTS_STYLE 只能是 glass、brief 或 board。" >&2; exit 2 ;; esac
   case "${SHOTS_PLUGINS:-}" in ""|0|1) ;; *) echo "SHOTS_PLUGINS 只能是 1 或 0。" >&2; exit 2 ;; esac
@@ -90,11 +106,16 @@ print(moment.astimezone(timezone.utc).strftime("%m%d%H%M%Y.%S"))' "$SHOTS_FROZEN
   OUTPUT=$(cd "$OUTPUT" && pwd)
 fi
 cd android
+if [ "$COMMAND" = shots ] || [ "$COMMAND" = shots-live ]; then
+  GETTING_STARTED=${SHOTS_GETTING_STARTED_URL:-}
+else
+  GETTING_STARTED=$(python3 ../scripts/persona_config.py get publish.getting_started_url 2>/dev/null || true)
+fi
 [ -f local.properties ] || echo "sdk.dir=$SDK" > local.properties
 case "$COMMAND" in
-  test) ./gradlew -q -PpersonaApplicationId="$APP_ID" test ;;
-  lint) ./gradlew -q -PpersonaApplicationId="$APP_ID" lint ;;
-  apk) ./gradlew -q -PpersonaApplicationId="$APP_ID" :app:assembleDebug && ls -la app/build/outputs/apk/debug/app-debug.apk ;;
+  test) ./gradlew -q -PpersonaApplicationId="$APP_ID" -PpersonaGettingStartedUrl="$GETTING_STARTED" test ;;
+  lint) ./gradlew -q -PpersonaApplicationId="$APP_ID" -PpersonaGettingStartedUrl="$GETTING_STARTED" lint ;;
+  apk) ./gradlew -q -PpersonaApplicationId="$APP_ID" -PpersonaGettingStartedUrl="$GETTING_STARTED" :app:assembleDebug && ls -la app/build/outputs/apk/debug/app-debug.apk ;;
   release)
     config() { python3 ../scripts/persona_config.py get "$1" 2>/dev/null || true; }
     # || true: with no build-tools ls fails, and under pipefail the script would stop here without the message below
@@ -122,7 +143,10 @@ case "$COMMAND" in
     fi
     [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ] || { echo "密钥库口令命令没有输出。" >&2; exit 1; }
     case "$STORE_PASSWORD$KEY_PASSWORD" in *$'\n'*) echo "密钥库口令命令输出了多行。" >&2; exit 1 ;; esac
-    ./gradlew -q -PpersonaApplicationId="$APP_ID" :app:assembleRelease
+    # About shows the commit this APK is built from: this repository's HEAD, passed explicitly (unknown when it cannot be read).
+    BUILD_COMMIT=$(git -C .. rev-parse HEAD 2>/dev/null || true)
+    [[ $BUILD_COMMIT =~ ^[0-9a-f]{40}$ ]] || BUILD_COMMIT=unknown
+    ./gradlew -q -PpersonaApplicationId="$APP_ID" -PpersonaGettingStartedUrl="$GETTING_STARTED" -PpersonaBuildCommit="$BUILD_COMMIT" :app:assembleRelease
     UNSIGNED=app/build/outputs/apk/release/app-release-unsigned.apk
     SIGNED=app/build/outputs/apk/release/app-release.apk
     python3 ../scripts/release/check_android_shrink.py "$UNSIGNED" app/build/outputs/mapping/release --build-tools "$TOOLS"
@@ -140,11 +164,11 @@ case "$COMMAND" in
       "$ADB" -s "$SERIAL" shell am start -n "$APP_ID/persona.android.MainActivity" >/dev/null
     fi ;;
   install)
-    ./gradlew -q -PpersonaApplicationId="$APP_ID" :app:assembleDebug
+    ./gradlew -q -PpersonaApplicationId="$APP_ID" -PpersonaGettingStartedUrl="$GETTING_STARTED" :app:assembleDebug
     "$ADB" ${ADB_ARGS[@]+"${ADB_ARGS[@]}"} install -r app/build/outputs/apk/debug/app-debug.apk
     "$ADB" ${ADB_ARGS[@]+"${ADB_ARGS[@]}"} shell am start -n "$APP_ID/persona.android.MainActivity" >/dev/null ;;
-  shots)
-    ./gradlew -q -PpersonaApplicationId="$APP_ID" -Pkotlin.compiler.execution.strategy=in-process :app:assembleDebug
+  shots|shots-live)
+    ./gradlew -q -PpersonaApplicationId="$APP_ID" -PpersonaGettingStartedUrl="$GETTING_STARTED" -Pkotlin.compiler.execution.strategy=in-process :app:assembleDebug
     "$ADB" -s "$SERIAL" install -r app/build/outputs/apk/debug/app-debug.apk >/dev/null
     "$ADB" -s "$SERIAL" shell pm clear "$APP_ID" >/dev/null
     MOCK_PID=""
@@ -154,6 +178,8 @@ case "$COMMAND" in
     CLOCK_PID=""
     CLOCK_STOP=/data/local/tmp/persona-shots-clock.stop
     STYLE_ARGS=()
+    AUTOMATION_ARGS=(--es debug.automation true)
+    [ "$COMMAND" != shots-live ] || AUTOMATION_ARGS=(--ez debug.automation true)
     [ -z "${SHOTS_STYLE:-}" ] || STYLE_ARGS=(--es debug.style "$SHOTS_STYLE")
     demo() { "$ADB" -s "$SERIAL" shell am broadcast -a com.android.systemui.demo -e command "$@" >/dev/null; }
     # Set the emulator's clock back to the frozen instant (before each cold start and each capture).
@@ -161,24 +187,44 @@ case "$COMMAND" in
       [ -z "$FROZEN_SET" ] || "$ADB" -s "$SERIAL" shell date -u "$FROZEN_SET" >/dev/null
     }
     cleanup_shots() {
-      "$ADB" -s "$SERIAL" shell am force-stop "$APP_ID" >/dev/null 2>&1 || true
-      if [ -n "$MOCK_PORT" ]; then "$ADB" -s "$SERIAL" reverse --remove "tcp:$MOCK_PORT" >/dev/null 2>&1 || true; fi
-      if [ -n "$MOCK_PID" ]; then kill "$MOCK_PID" 2>/dev/null || true; wait "$MOCK_PID" 2>/dev/null || true; fi
+      local original_status=$?
+      local cleanup_failed=0
+      cleanup_step() {
+        if "$@" >/dev/null 2>&1; then return 0; fi
+        if [ "$COMMAND" = shots-live ]; then
+          echo "FAIL shots-live cleanup: $*" >&2
+          cleanup_failed=1
+        fi
+        return 0
+      }
+      cleanup_step "$ADB" -s "$SERIAL" shell am force-stop "$APP_ID"
+      if [ "$COMMAND" = shots-live ]; then
+        cleanup_step "$ADB" -s "$SERIAL" shell run-as "$APP_ID" rm -f no_backup/hub-data/adaptive-probe.json
+        cleanup_step "$ADB" -s "$SERIAL" shell rm -f /data/local/tmp/persona-adaptive-ui.xml
+      fi
+      if [ -n "$MOCK_PORT" ]; then cleanup_step "$ADB" -s "$SERIAL" reverse --remove "tcp:$MOCK_PORT"; fi
+      if [ -n "$MOCK_PID" ]; then
+        if kill -0 "$MOCK_PID" 2>/dev/null; then cleanup_step kill "$MOCK_PID"; fi
+        wait "$MOCK_PID" 2>/dev/null || true
+      fi
       if [ -n "$CLOCK_PID" ]; then
-        "$ADB" -s "$SERIAL" shell touch "$CLOCK_STOP" >/dev/null 2>&1 || true
-        kill "$CLOCK_PID" 2>/dev/null || true; wait "$CLOCK_PID" 2>/dev/null || true
+        cleanup_step "$ADB" -s "$SERIAL" shell touch "$CLOCK_STOP"
+        if kill -0 "$CLOCK_PID" 2>/dev/null; then cleanup_step kill "$CLOCK_PID"; fi
+        wait "$CLOCK_PID" 2>/dev/null || true
       fi
       if [ -n "$SAVED_SETTINGS" ]; then
         # Give the emulator back its clock, animations and status bar.
-        demo exit 2>/dev/null || true
+        cleanup_step demo exit
         for pair in $SAVED_SETTINGS; do
           key=${pair%%=*} value=${pair#*=}
-          if [ "$value" = null ]; then "$ADB" -s "$SERIAL" shell settings delete global "$key" >/dev/null 2>&1 || true
-          else "$ADB" -s "$SERIAL" shell settings put global "$key" "$value" >/dev/null 2>&1 || true; fi
+          if [ "$value" = null ]; then cleanup_step "$ADB" -s "$SERIAL" shell settings delete global "$key"
+          else cleanup_step "$ADB" -s "$SERIAL" shell settings put global "$key" "$value"; fi
         done
       fi
+      if [ "$cleanup_failed" -ne 0 ] && [ "$original_status" -eq 0 ]; then original_status=1; fi
+      return "$original_status"
     }
-    trap cleanup_shots EXIT
+    trap 'cleanup_shots; exit $?' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
     if [ -n "$FROZEN_SET" ]; then
@@ -223,6 +269,23 @@ case "$COMMAND" in
     cd ..
     PLUGINS_MODE=""
     [ "${SHOTS_PLUGINS:-}" != 1 ] || PLUGINS_MODE=1
+    if [ "$COMMAND" = shots-live ]; then
+      SCENE_MOCK_ENV=$(python3 - "$SCENARIO" <<'SCENE_ENV_PY'
+import json, re, sys
+with open(sys.argv[1], encoding='utf-8') as source:
+    values = json.load(source).get('requires', {}).get('mockEnv', {})
+if not isinstance(values, dict): sys.exit('requires.mockEnv must be an object')
+for key, value in values.items():
+    if not re.fullmatch(r'MOCK_[A-Z0-9_]+', key) or not isinstance(value, str) or any(c in value for c in '\r\n\t'):
+        sys.exit('mockEnv keys must be MOCK_* and values must be single-line strings')
+    print(key + '\t' + value)
+SCENE_ENV_PY
+) || { echo "场景 mockEnv 无效。" >&2; exit 2; }
+      while IFS=$'\t' read -r key value; do
+        [ -n "$key" ] || continue
+        export "$key=$value"
+      done <<< "$SCENE_MOCK_ENV"
+    fi
     PORT=${SHOTS_MOCK_PORT:-0} MOCK_FROZEN=${SHOTS_FROZEN:-} MOCK_EXTENSIONS=$PLUGINS_MODE python3 -u - >"$OUTPUT/mock-hub.log" 2>&1 <<'MOCK_PY' &
 import ast, os, re, sys, types
 from pathlib import Path
@@ -314,7 +377,7 @@ SHOTS_PY
     freeze_clock
     # debug.style is saved, but pm clear above wiped it, so every launch passes it again.
     "$ADB" -s "$SERIAL" shell am start -W -n "$APP_ID/persona.android.debug.DebugEntryActivity" \
-      --es debug.mockAddress "$MOCK_ADDRESS" --es debug.openTab Agents --es debug.automation true \
+      --es debug.mockAddress "$MOCK_ADDRESS" --es debug.openTab Agents ${AUTOMATION_ARGS[@]+"${AUTOMATION_ARGS[@]}"} \
       ${STYLE_ARGS[@]+"${STYLE_ARGS[@]}"} >/dev/null
     # Poll the private navigation checkpoint (the pairing-scoped shell position) to wait for pairing and shell creation.
     shell_ready() { "$ADB" -s "$SERIAL" shell run-as "$APP_ID" find no_backup/hub-data -name shell-position.json 2>/dev/null | tr -d '\r' | grep -q 'shell-position.json'; }
@@ -327,6 +390,23 @@ SHOTS_PY
       # With the mobile network hidden no connection is in service, so Android 15 shows a satellite icon about 5 s
       # later (no demo command or icon_blacklist removes it). Wait it out so every capture has the same status bar.
       while [ $((SECONDS - DEMO_SINCE)) -lt 8 ]; do sleep 0.5; done
+    fi
+    if [ "$COMMAND" = shots-live ]; then
+      THEMES=("$THEME")
+      [ "$THEME" != both ] || THEMES=(light dark)
+      RESET_ARGS=()
+      for theme in ${THEMES[@]+"${THEMES[@]}"}; do
+        # Each theme gets one fresh initial task so its first debug route is applied by initialLaunch.
+        # The Python runner never force-stops between the steps of that theme.
+        "$ADB" -s "$SERIAL" shell am force-stop "$APP_ID" >/dev/null
+        ADB="$ADB" APP_ID="$APP_ID" SERIAL="$SERIAL" MOCK_ADDRESS="$MOCK_ADDRESS" OUTPUT="$OUTPUT" \
+          SHOTS_STYLE="${SHOTS_STYLE:-}" SHOTS_SETTLE="$SETTLE" SHOTS_FROZEN="${SHOTS_FROZEN:-}" \
+          python3 scripts/app/android_adaptive_shots.py --scenario "$SCENARIO" --theme "$theme" --out "$OUTPUT" \
+            ${RESET_ARGS[@]+"${RESET_ARGS[@]}"}
+        RESET_ARGS=(--reset)
+      done
+      echo "同进程截图已输出到：$OUTPUT"
+      exit 0
     fi
     capture() {
       local theme="$1" name="$2"
@@ -367,7 +447,7 @@ SHOTS_PY
       capture "$theme" pairing --es debug.openPairing true
       capture "$theme" diagnostics --es debug.openDiagnostics true
       for page in notifications readiness; do capture "$theme" "settings-$page" --es debug.openLink "'persona://open?target=settings&page=$page'"; done
-      for page in machines knowledge phone catalog; do capture "$theme" "$page" --es debug.openPage "$page"; done
+      for page in machines terminals knowledge phone catalog; do capture "$theme" "$page" --es debug.openPage "$page"; done
       # Settings › Managers (docs/assistant/managers.md): the mock's roster, a manager on another computer and the hub's own (Delete off).
       # The install code sheet is drawn by ManagersShotsTest (feature/settings, build/managers-shots/).
       capture "$theme" settings-managers --es debug.openPage managers

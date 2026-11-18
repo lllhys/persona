@@ -19,11 +19,9 @@ describe("contextUsage", () => {
 
 describe("labels", () => {
   const u = contextUsage({ context_tokens: 78000, context_window: 200000 })!;
-  it("says what is left by default and what is used on request", () => {
-    expect(contextLabel(u, false)).toBe("61%");
-    expect(contextTooltip(u, false)).toBe("还剩 61% 上下文");
-    expect(contextLabel(u, true)).toBe("39%");
-    expect(contextTooltip(u, true)).toBe("已用 39%");
+  it("labels the used share and explains both used and remaining shares", () => {
+    expect(contextLabel(u)).toBe("上下文 39%");
+    expect(contextTooltip(u)).toBe("上下文 39%（已用），还剩 61%");
   });
   it("warns from 80% used", () => {
     expect(contextWarn(contextUsage({ context_tokens: 158000, context_window: 200000 })!)).toBe(false);
@@ -54,31 +52,31 @@ describe("rowDetail", () => {
   const now = Date.parse("2026-11-05T12:00:00Z");
   it("lists folder, model, context and age, leaving out what is unknown", () => {
     const s = { ...base, model: "claude-opus-5-5", context_tokens: 78000, context_window: 200000, updated_at: "2026-11-05T11:55:00Z" };
-    expect(rowDetail(s, false, now).map((p) => p.text)).toEqual(["opus 5.5", "61%", "5分钟前", "weather"]);
-    expect(rowDetail(s, true, now)[1]).toMatchObject({ text: "39%", warn: false, title: "已用 39%" });
-    expect(rowDetail(base, false, now).map((p) => p.text)).toEqual(["weather"]);
+    expect(rowDetail(s, now).map((p) => p.text)).toEqual(["opus 5.5", "上下文 39%", "5分钟前", "weather"]);
+    expect(rowDetail(s, now)[1]).toMatchObject({ text: "上下文 39%", warn: false, title: "上下文 39%（已用），还剩 61%" });
+    expect(rowDetail(base, now).map((p) => p.text)).toEqual(["weather"]);
   });
   it("marks a nearly full window", () => {
     const s = { ...base, context_tokens: 190000, context_window: 200000 };
-    expect(rowDetail(s, false, now).find((p) => p.warn)?.text).toBe("5%");
-    expect(rowDetail(s, false, now).find((p) => p.warn)?.danger).toBe(true);
+    expect(rowDetail(s, now).find((p) => p.warn)?.text).toBe("上下文 95%");
+    expect(rowDetail(s, now).find((p) => p.warn)?.danger).toBe(true);
   });
   it("marks 80–89% used as a warning but not a danger", () => {
     const s = { ...base, context_tokens: 170000, context_window: 200000 };
-    expect(rowDetail(s, false, now).find((p) => p.warn)).toMatchObject({ text: "15%", warn: true, danger: false });
+    expect(rowDetail(s, now).find((p) => p.warn)).toMatchObject({ text: "上下文 85%", warn: true, danger: false });
   });
 });
 
 describe("the header's popover (#4054)", () => {
   it("says the share with the tokens, then what happens when it fills; only notes, nothing to choose", () => {
-    const notes = contextNotes(contextUsage({ context_tokens: 78000, context_window: 200000 })!, false);
+    const notes = contextNotes(contextUsage({ context_tokens: 78000, context_window: 200000 })!);
     expect(notes.map((n) => [n.label, n.hint])).toEqual([
-      ["还剩 61% 上下文", "7.8 万 / 20 万 token"], // the token count as the compaction divider writes it
+      ["上下文 39%（已用），还剩 61%", "7.8 万 / 20 万 token"], // the token count as the compaction divider writes it
       ["上下文是 Agent 在这段对话里能记住的量，用完会自动压缩：较早的内容只留摘要。", undefined],
     ]);
     expect(notes.every((n) => n.note)).toBe(true);
-    const near = contextNotes(contextUsage({ context_tokens: 170000, context_window: 200000 })!, true);
-    expect(near[0].label).toBe("已用 85%");
+    const near = contextNotes(contextUsage({ context_tokens: 170000, context_window: 200000 })!);
+    expect(near[0].label).toBe("上下文 85%（已用），还剩 15%");
     expect(near[1].label).toContain("/compact");
   });
 });

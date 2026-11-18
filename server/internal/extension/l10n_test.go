@@ -223,3 +223,24 @@ func TestPackageTranslationsPreviewAndInstalled(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// A sidebar group's title (#9071) is translated by its id under groups, like a page's under ui; a title too long leaves
+// the file out with a warning, as any other.
+func TestTranslationsGroupTitle(t *testing.T) {
+	dir := t.TempDir()
+	writeL10n(t, dir, "en.json", `{"groups": {"workbench": "Workbench"}}`)
+	writeL10n(t, dir, "ja.json", `{"groups": {"workbench": "`+strings.Repeat("長", 41)+`"}}`)
+	ts, warnings := ReadTranslations(dir)
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "groups.workbench: at most 40 characters") {
+		t.Fatal(warnings)
+	}
+	if got := ts.GroupTitle(i18n.En, "workbench", "工作台"); got != "Workbench" {
+		t.Fatalf("en: %q", got)
+	}
+	if got := ts.GroupTitle(i18n.ZhHans, "workbench", "工作台"); got != "工作台" {
+		t.Fatalf("zh-Hans keeps the manifest's own: %q", got)
+	}
+	if got := ts.GroupTitle(i18n.En, "assets", "资产"); got != "资产" {
+		t.Fatalf("a group no translation names keeps its title: %q", got)
+	}
+}

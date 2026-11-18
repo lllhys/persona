@@ -6,7 +6,7 @@ import { useState } from "react";
 import { fileDownloadURL, fileThumbURL } from "../../lib/api";
 import { getSession } from "../../lib/store";
 import { Icon } from "../../ui/icons";
-import { ImageViewer } from "./ImageViewer";
+import { ImageViewer } from "./LazyImageViewer";
 import { t } from "../../i18n";
 
 /** The side of a thumbnail: the same as an image item's in the bubble (Thumb size 96). */

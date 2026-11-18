@@ -29,6 +29,8 @@ data class ExtensionUiRoute(
     val extensionId: String, val uiId: String, val title: String, val state: String? = null, val depth: Int = 0,
     /** Whose extension it is, as on [ExtensionRoute]. */
     val manager: String? = null,
+    /** Process-local notification capability; no action id, input or hub credential is serialized here. */
+    val notificationActionToken: String? = null,
 ) : NavKey
 
 /** Settings › Extensions › Extension market: what the hub's extension markets offer (docs/extensions/extensions.md "Extension market"). */

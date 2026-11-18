@@ -5,9 +5,10 @@
   "truncated": "Showing the first 100 matches. Narrow your search.",
   "enter_keyword": "Type something to search",
   "no_hits": "No matches",
-  "scope": "Searches messages, thinking, tool names, tool input and output, and system events.",
-  "footnote": "Only what's loaded is searched. Steps that haven't been fetched and truncated full text aren't included.",
+  "scope": "Searches messages, quoted context, thinking, tool names, tool input and output, and system events.",
+  "footnote": "Only what's loaded is searched, folded steps included. Truncated full text isn't included.",
   "category_text": "Messages",
+  "category_quoted": "Quoted",
   "category_thinking": "Thinking",
   "category_tool_name": "Tool names",
   "category_tool_input": "Tool input",
@@ -17,5 +18,7 @@
   "loading_pages_one": "Loading earlier messages, {count} page in",
   "loading_pages_other": "Loading earlier messages, {count} pages in",
   "stop_loading": "Stop",
+  "searching_folds": "Searching folded steps…",
+  "folds_partial": "Some folded steps couldn't be searched.",
   "at_start": "This is the start of the chat"
 }

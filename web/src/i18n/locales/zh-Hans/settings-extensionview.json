@@ -10,5 +10,6 @@
   "draw_failed": "扩展没画出来",
   "retry": "重试",
   "confirm_title": "确认",
-  "ok": "确定"
+  "ok": "确定",
+  "updating": "正在更新…"
 }

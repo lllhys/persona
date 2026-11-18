@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "description": "Forwarding several messages at once (#3838): one forward block per message, in the chat's order, then the note; next to each other and from the same chat they read as one card. See docs/protocol/protocol.md \"Forwarded messages\".",
+  "budget": {
+    "description": "Each message is cut at the smaller of `each` and `total` / the number forwarded (whole characters, rounded down); at most `most` messages go at once.",
+    "each": 20000,
+    "total": 60000,
+    "most": 30,
+    "cases": [
+      {
+        "count": 1,
+        "limit": 20000
+      },
+      {
+        "count": 3,
+        "limit": 20000
+      },
+      {
+        "count": 4,
+        "limit": 15000
+      },
+      {
+        "count": 7,
+        "limit": 8571
+      },
+      {
+        "count": 30,
+        "limit": 2000
+      }
+    ]
+  },
+  "write": [
+    {
+      "name": "three_then_a_note",
+      "description": "Three messages of one chat and the note typed under them: the blocks one per line, a blank line, the note.",
+      "blocks": [
+        {
+          "title": "Forwarded from Me · Network tests",
+          "url": "persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2311",
+          "msg": "e5f0c3a1-0000-4000-8000-00000000000a#11",
+          "attributes": {
+            "role": "user",
+            "author": "Me",
+            "chat": "Network tests",
+            "project": "weather › tests",
+            "machine": "MacBook Pro",
+            "time": "2026-11-11T10:20:00+08:00"
+          },
+          "text": "How many times does it retry?"
+        },
+        {
+          "title": "Forwarded from Claude · Network tests",
+          "url": "persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2312",
+          "msg": "e5f0c3a1-0000-4000-8000-00000000000a#12",
+          "attributes": {
+            "role": "agent",
+            "author": "Claude",
+            "chat": "Network tests",
+            "project": "weather › tests",
+            "machine": "MacBook Pro",
+            "time": "2026-11-11T10:24:00+08:00"
+          },
+          "text": "Three times, from `RetryPolicy.swift`."
+        },
+        {
+          "title": "Forwarded from Claude · Network tests",
+          "url": "persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2314",
+          "msg": "e5f0c3a1-0000-4000-8000-00000000000a#14",
+          "attributes": {
+            "role": "agent",
+            "author": "Claude",
+            "chat": "Network tests",
+            "project": "weather › tests",
+            "machine": "MacBook Pro",
+            "time": "2026-11-11T10:25:00+08:00"
+          },
+          "text": "Timeouts are 15 s each.\n- The last one is not retried"
+        }
+      ],
+      "note": "Same for the photo sync",
+      "message": "<persona-context kind=\"forward\" title=\"Forwarded from Me · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2311\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#11\" role=\"user\" author=\"Me\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:20:00+08:00\">\nHow many times does it retry?\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Claude · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2312\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#12\" role=\"agent\" author=\"Claude\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:24:00+08:00\">\nThree times, from `RetryPolicy.swift`.\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Claude · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2314\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#14\" role=\"agent\" author=\"Claude\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:25:00+08:00\">\nTimeouts are 15 s each.\n- The last one is not retried\n</persona-context>\n\nSame for the photo sync"
+    }
+  ],
+  "read": [
+    {
+      "name": "three_then_a_note",
+      "description": "Reads back as its three blocks, in order, and the note; one card.",
+      "message": "<persona-context kind=\"forward\" title=\"Forwarded from Me · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2311\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#11\" role=\"user\" author=\"Me\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:20:00+08:00\">\nHow many times does it retry?\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Claude · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2312\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#12\" role=\"agent\" author=\"Claude\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:24:00+08:00\">\nThree times, from `RetryPolicy.swift`.\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Claude · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2314\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#14\" role=\"agent\" author=\"Claude\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:25:00+08:00\">\nTimeouts are 15 s each.\n- The last one is not retried\n</persona-context>\n\nSame for the photo sync",
+      "msgs": [
+        "e5f0c3a1-0000-4000-8000-00000000000a#11",
+        "e5f0c3a1-0000-4000-8000-00000000000a#12",
+        "e5f0c3a1-0000-4000-8000-00000000000a#14"
+      ],
+      "rest": "Same for the photo sync",
+      "groups": [
+        [
+          0,
+          1,
+          2
+        ]
+      ]
+    },
+    {
+      "name": "groups",
+      "description": "Forwards group while they are next to each other and from the same session; another chat's forward or a quote ends a group.",
+      "message": "<persona-context kind=\"forward\" title=\"Forwarded from Me · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2311\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#11\" role=\"user\" author=\"Me\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:20:00+08:00\">\nHow many times does it retry?\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Claude · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2312\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#12\" role=\"agent\" author=\"Claude\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:24:00+08:00\">\nThree times, from `RetryPolicy.swift`.\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Codex · Photo sync\" url=\"persona://session/studio/b2e4d6f8-0000-4000-8000-000000000003?at=c9d1%233\" msg=\"c9d1#3\" role=\"agent\" author=\"Codex\" chat=\"Photo sync\" machine=\"Mac Studio\" time=\"2026-11-11T09:00:00+08:00\">\nThe plan is ready.\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Claude · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2314\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#14\" role=\"agent\" author=\"Claude\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:25:00+08:00\">\nTimeouts are 15 s each.\n- The last one is not retried\n</persona-context>\n<persona-context kind=\"quote\" title=\"Claude\" url=\"\" msg=\"q-1\">\nEarlier words\n</persona-context>\n<persona-context kind=\"forward\" title=\"Forwarded from Me · Network tests\" url=\"persona://session/macbook/a1f3c2d4-0000-4000-8000-000000000006?at=e5f0c3a1-0000-4000-8000-00000000000a%2311\" msg=\"e5f0c3a1-0000-4000-8000-00000000000a#11\" role=\"user\" author=\"Me\" chat=\"Network tests\" project=\"weather › tests\" machine=\"MacBook Pro\" time=\"2026-11-11T10:20:00+08:00\">\nHow many times does it retry?\n</persona-context>\n\nnote",
+      "msgs": [
+        "e5f0c3a1-0000-4000-8000-00000000000a#11",
+        "e5f0c3a1-0000-4000-8000-00000000000a#12",
+        "c9d1#3",
+        "e5f0c3a1-0000-4000-8000-00000000000a#14",
+        "q-1",
+        "e5f0c3a1-0000-4000-8000-00000000000a#11"
+      ],
+      "rest": "note",
+      "groups": [
+        [
+          0,
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ],
+        [
+          5
+        ]
+      ]
+    }
+  ]
+}

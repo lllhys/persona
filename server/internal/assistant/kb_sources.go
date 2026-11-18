@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nwverse/persona/server/internal/assistant/archiverecovery"
 	"os"
 	"path/filepath"
 	"slices"
@@ -174,7 +175,7 @@ func (b busArchive) page(ctx context.Context, cursor string, limit int) (assista
 // cursor publication. Ending a reservation uses a separate deadline even when
 // the archive round was cancelled. A failed end remains reserved there, so
 // disable cannot falsely report success.
-func (b busArchive) commit(ctx context.Context, generation string, work archiveRecoveryWork, write, settle func() error) (retErr error) {
+func (b busArchive) commit(ctx context.Context, generation string, work archiverecovery.Work, write, settle func() error) (retErr error) {
 	if b.fenceVersion == 0 {
 		return write()
 	}
@@ -182,8 +183,8 @@ func (b busArchive) commit(ctx context.Context, generation string, work archiveR
 		return err
 	}
 	req := assistantwire.ArchiveFence{ID: b.id, Generation: generation, Token: randomHex(16)}
-	journal := newArchiveRecoveryRecord(req, archiveRecoveryBegin, work)
-	if err := writeArchiveRecovery(b.dir, journal); err != nil {
+	journal := archiverecovery.NewRecord(req, archiverecovery.Begin, work)
+	if err := archiverecovery.Write(b.dir, journal); err != nil {
 		return err
 	}
 	var answer assistantwire.ArchiveFenceResult
@@ -202,15 +203,15 @@ func (b busArchive) commit(ctx context.Context, generation string, work archiveR
 		}
 		retErr = errors.Join(retErr, b.finishReservation(assistantwire.ConnectorsArchiveEnd, req, recovery))
 	}()
-	journal.Stage = archiveRecoverySettle
-	if err := writeArchiveRecovery(b.dir, journal); err != nil {
+	journal.Stage = archiverecovery.Settle
+	if err := archiverecovery.Write(b.dir, journal); err != nil {
 		return err
 	}
 	retErr = write()
 	finished = true
 	if retErr == nil {
-		journal.Stage = archiveRecoveryEnd
-		retErr = writeArchiveRecovery(b.dir, journal)
+		journal.Stage = archiverecovery.End
+		retErr = archiverecovery.Write(b.dir, journal)
 	}
 	return retErr
 }
@@ -254,7 +255,7 @@ func (s *Service) sendArchiveReservation(parent context.Context, pending archive
 	if !answer.Acquired {
 		return errors.New("archive source did not acknowledge the reservation")
 	}
-	if err := removeArchiveRecovery(pending.dir, pending.req.Token); err != nil {
+	if err := archiverecovery.Remove(pending.dir, pending.req.Token); err != nil {
 		return err
 	}
 	s.kb.archiveCleanupMu.Lock()
@@ -396,7 +397,7 @@ func archiveConnector(ctx context.Context, e *kb.Engine, id string, a connector.
 	var generation string
 	guard, guarded := a.(interface {
 		page(context.Context, string, int) (assistantwire.ChangesResult, error)
-		commit(context.Context, string, archiveRecoveryWork, func() error, func() error) error
+		commit(context.Context, string, archiverecovery.Work, func() error, func() error) error
 	})
 	for page := 0; page < kbConnectorPages; page++ {
 		var result assistantwire.ChangesResult
@@ -445,7 +446,7 @@ func archiveConnector(ctx context.Context, e *kb.Engine, id string, a connector.
 			}
 			return nil
 		}
-		work := archiveRecoveryWork{}
+		work := archiverecovery.Work{}
 		for _, batch := range result.Batches {
 			source := id
 			if batch.Source != "" && batch.Source != id {
@@ -454,12 +455,12 @@ func archiveConnector(ctx context.Context, e *kb.Engine, id string, a connector.
 				}
 				source = batch.Source
 			}
-			work.add(source, batch.Chat.ID)
+			work.Add(source, batch.Chat.ID)
 		}
 		// A failed ingest may have installed a journal that a later store open
 		// completes. Keep the reservation until every recorded chat is settled.
 		settle := func() error {
-			for _, pair := range work.chats {
+			for _, pair := range work.Chats {
 				if err := e.Store.SettleIngest(pair.Source, pair.Chat); err != nil {
 					return err
 				}

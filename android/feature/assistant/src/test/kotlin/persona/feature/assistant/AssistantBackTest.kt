@@ -110,7 +110,8 @@ class AssistantBackTest {
         mount()
         back()
         rule.onNodeWithText("chat:main").assertExists()
-        rule.onAllNodesWithText("What you send goes to the main chat", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("Start a new side chat", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("This is your main chat", substring = true).assertCountEquals(0)
         backIsTheShells()
     }
 
@@ -121,7 +122,8 @@ class AssistantBackTest {
         rule.onAllNodesWithText("chat:", substring = true).assertCountEquals(0)
         // On the blank page itself New chat is off (iOS), and its first message goes nowhere near the main conversation.
         newChat().assertIsNotEnabled()
-        rule.onAllNodesWithText("What you send goes to the main chat", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("Start a new side chat", substring = true).assertCountEquals(1)
+        rule.onAllNodesWithText("This is your main chat", substring = true).assertCountEquals(0)
         // Back undoes it: the conversation it was opened on, then the main one.
         back()
         rule.onNodeWithText("chat:side").assertExists()

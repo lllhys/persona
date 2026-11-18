@@ -271,6 +271,42 @@ func TestGateProxyHoldsRequestsToTheRules(t *testing.T) {
 	}
 }
 
+// A confirmed body of exactly JSON null binds the grant to null, not to any body: another JSON body or one that is not
+// JSON is refused and leaves the grant, which the confirmed null then uses once (#8973).
+func TestGateGrantOfAJSONNullBodyTakesOnlyNull(t *testing.T) {
+	api := newFakeAPI(t)
+	n, _ := gateNode(t, api.URL)
+	p := n.gates()
+	base, release, err := p.open("ex", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	note := base + "/api/v1/notes/N1"
+	p.grant("ex", "", larkCall{Method: "POST", Path: "/notes/N1", Body: "null"}, proto.LarkLetThrough{Kind: proto.LarkThroughCard})
+	if code, _ := send(t, "POST", note, `{"text":"changed"}`); code != http.StatusForbidden {
+		t.Fatalf("another JSON body than the null confirmed: %d", code)
+	}
+	if code, _ := send(t, "POST", note, "changed", "Content-Type", "text/plain"); code != http.StatusForbidden {
+		t.Fatalf("a body that is not JSON for the null confirmed: %d", code)
+	}
+	if code, _ := send(t, "POST", note, " null "); code != http.StatusOK {
+		t.Fatalf("the confirmed null: %d", code)
+	}
+	if code, _ := send(t, "POST", note, "null"); code != http.StatusForbidden {
+		t.Fatalf("the confirmed null, sent again: %d", code)
+	}
+	var writes []apiSeen
+	for _, r := range api.requests() {
+		if r.Method != "GET" {
+			writes = append(writes, r)
+		}
+	}
+	if len(writes) != 1 || writes[0].Path != "/api/v1/notes/N1" || writes[0].Body != " null " {
+		t.Fatalf("the writes the API got: %+v", writes)
+	}
+}
+
 // What the phone confirms is what the proxy lets through, once; a refusal lets nothing through; "Always allow for this session" lets
 // the same route through again without asking.
 func TestGateLetsThroughWhatThePhoneConfirmed(t *testing.T) {

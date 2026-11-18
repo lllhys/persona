@@ -59,6 +59,16 @@ type DB struct {
 	pids *pidSet
 }
 
+// QueryRow runs one ordinary read on the existing pool. It carries no manager-owned types.
+func (d *DB) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	return d.pool.QueryRow(ctx, query, args...)
+}
+
+// Transaction runs fn in one transaction on the existing pool.
+func (d *DB) Transaction(ctx context.Context, fn func(pgx.Tx) error) error {
+	return pgx.BeginFunc(ctx, d.pool, fn)
+}
+
 // pidSet is the backend process ids of a pool's open connections.
 type pidSet struct {
 	mu sync.Mutex
@@ -456,7 +466,7 @@ func (d *DB) TruncateForTest(ctx context.Context) error {
 		"device_tokens", "live_activities", "phone_tools", "phone_write_queue", "node_sessions", "mail_accounts", "interactions",
 		"settings", "inbox_items", "kb_entities", "connector_secrets", "machine_systems", "machine_metrics", "sent_messages",
 		"todos", "todo_agents", "assistant_always", "machine_trust", "hub_settings", "manager_outbox", "handed_over",
-		"machine_audit", "sent_as_user"})
+		"machine_audit", "sent_as_user", "session_work_events", "hub_push_sent", "urgent_calls", "model_usage"})
 	if err != nil {
 		return err
 	}

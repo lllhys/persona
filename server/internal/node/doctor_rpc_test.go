@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // callDoctor runs node.doctor / node.doctor.fix through handle, as the hub's call would, and decodes the report.
@@ -150,7 +152,7 @@ func TestDoctorRPCCheckNamesAreWhatTheWebGroups(t *testing.T) {
 	// On a Mac, and wherever the preflight runs, two more (#5944): the web shows them under "Other checks" when they
 	// are not fine, and offers no Fix for them (their state is "").
 	e.opts.LaunchAgent, e.opts.LaunchdTarget = filepath.Join(e.n.home, "none.plist"), "gui/501/"+NodeLaunchdLabel
-	e.opts.Preflight = func(context.Context) DoctorCheck {
+	e.opts.Preflight = func(context.Context, i18n.Lang) DoctorCheck {
 		return DoctorCheck{Name: pathAccessCheck, Status: DoctorWarn, Detail: "x"}
 	}
 	rep = callDoctor(t, e, "node.doctor", `{}`)
@@ -172,7 +174,7 @@ func TestDoctorRPCWithoutThePreflight(t *testing.T) {
 	e := newDoctorEnv(t)
 	e.healthy(t)
 	runs := 0
-	e.opts.Preflight = func(context.Context) DoctorCheck {
+	e.opts.Preflight = func(context.Context, i18n.Lang) DoctorCheck {
 		runs++
 		return DoctorCheck{Name: pathAccessCheck, Status: DoctorOK, Detail: "x"}
 	}

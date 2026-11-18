@@ -1,0 +1,4 @@
+# Retained third-party notices keep their exact upstream bytes and checksums.
+harmony/native/ssh/licenses/** -text -whitespace
+harmony/entry/src/main/resources/rawfile/native-ssh-licenses.html -text -whitespace
+native/app-core/licenses/** -text -whitespace

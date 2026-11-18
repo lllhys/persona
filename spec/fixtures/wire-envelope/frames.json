@@ -1,0 +1,671 @@
+{
+  "schema_version": 1,
+  "operation": "server_event_envelope",
+  "profile": "ios_current",
+  "cases": [
+    {
+      "name": "hello_defaults_to_empty_features",
+      "description": "hello 缺少可选字段时仍接受事件，能力列表默认为空。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope features and ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello" },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [] }
+    },
+    {
+      "name": "hello_features_null_defaults_to_empty",
+      "description": "hello 的 features 为 null 时与缺失相同，使用空数组。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope features and ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "features": null },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [] }
+    },
+    {
+      "name": "hello_wrong_features_type_drops_event",
+      "description": "hello 的 features 不是字符串数组时整个事件被丢弃。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope features"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "features": ["items", 7] },
+      "expected": { "outcome": "dropped", "key": "features" }
+    },
+    {
+      "name": "hello_features_keep_first_duplicate",
+      "description": "重复 features 键按 Foundation 的规则保留第一个数组。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope features and ServerEvent.decode case hello",
+        "swift-foundation JSONDecoder.swift: JSONDecoderImpl.KeyedContainer.stringify first-value duplicate-key rule"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "features": ["first"], "features": ["second"] },
+      "expected": { "outcome": "accepted", "event": "hello", "features": ["first"] }
+    },
+    {
+      "name": "hello_unknown_field_is_ignored",
+      "description": "未知键中的任意合法 JSON 不影响 hello 的已知字段。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope and ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "features": ["future"], "future_field": { "enabled": true, "rows": "any" } },
+      "expected": { "outcome": "accepted", "event": "hello", "features": ["future"] }
+    },
+    {
+      "name": "inbox_shared_scalars_check_even_when_unused",
+      "description": "inbox 不使用这些键也会拒绝错误类型的共享标量，完整覆盖 12 个易漏字段。",
+      "source": ["apple/Shared/LiveConnection.swift: ServerEvent.Envelope scalar CodingKeys and decode guard"],
+      "derived": true,
+      "input": { "type": "inbox", "machine_id": 1, "session_id": 2, "revision": 3, "text": 4, "status": 5, "backlog": 6, "has_more": 7, "more_after": 8, "history": 9, "from_seq": "10", "to_seq": "11", "id": 12 },
+      "expected": { "outcome": "dropped", "key": "machine_id" }
+    },
+    {
+      "name": "hello_wrong_from_seq_drops_event",
+      "description": "hello 不使用 from_seq 也会因它不是整数而丢弃整个 Envelope。",
+      "source": ["apple/Shared/LiveConnection.swift: ServerEvent.Envelope fromSeq and case hello"],
+      "derived": true,
+      "input": { "type": "hello", "from_seq": "8" },
+      "expected": { "outcome": "dropped", "key": "from_seq" }
+    },
+    {
+      "name": "hello_rows_must_be_integer",
+      "description": "终端共用的 rows 在 hello 上也会参与 Envelope 解码，错误类型丢弃事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope rows, ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "rows": "24" },
+      "expected": { "outcome": "dropped", "key": "rows" }
+    },
+    {
+      "name": "hello_wrong_build_type_drops_event",
+      "description": "hello 的 build 必须是有符号 64 位整数。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope build"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "build": "42" },
+      "expected": { "outcome": "dropped", "key": "build" }
+    },
+    {
+      "name": "hello_raw_manager_accepts_mixed_json",
+      "description": "原始 JSONValue 的 manager 可以使用嵌套对象、字符串和布尔值，不参与 hello 构造。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope manager, ServerEvent.decode case hello",
+        "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: JSONValue.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "manager": { "nested": ["text", true, null, 2] } },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [] }
+    },
+    {
+      "name": "hello_raw_account_boolean_is_not_string",
+      "description": "共用 account 接受原始 JSON 布尔值，不因为不是字符串而丢弃 hello。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope account comment and declaration, ServerEvent.decode case hello",
+        "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: JSONValue.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "account": true },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [] }
+    },
+    {
+      "name": "inbox_raw_json_fractional_number_is_accepted",
+      "description": "原始 JSONValue 的普通小数按 Double 解码，不误判为错误类型。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope manager and case inbox",
+        "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: JSONValue.init(from:) Double decoding"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "manager": 1.5, "args": [2.25, { "value": 3.5 }] },
+      "expected": { "outcome": "accepted", "event": "inbox" }
+    },
+    {
+      "name": "inbox_raw_json_finite_large_integer_is_accepted",
+      "description": "原始 JSONValue 的有限大整数可作为 Double，不要求落在 Int64 内。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope account and case inbox",
+        "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: JSONValue.init(from:) Double decoding"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "account": 100000000000000000000 },
+      "expected": { "outcome": "accepted", "event": "inbox" }
+    },
+    {
+      "name": "hello_null_optional_scalars_are_absent",
+      "description": "hello 的字符串、整数与布尔可选键接受 null，并按缺省值构造。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope and ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "features": ["items"], "channel": null, "build": null, "protocol": null, "min_app_build": null, "public_url": null, "rows": null, "full": null },
+      "expected": { "outcome": "accepted", "event": "hello", "features": ["items"], "channel": null, "build": null, "protocol_version": null, "min_app_build": null, "public_url": null }
+    },
+    {
+      "name": "hello_public_url_is_not_rewritten",
+      "description": "public_url 在 Envelope 中按原始字符串投影，URL(string:) 的 Foundation 转换不在本切片内。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope publicURL and ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "public_url": "https://example.com/base" },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [], "public_url": "https://example.com/base" }
+    },
+    {
+      "name": "hello_non_object_is_not_an_event",
+      "description": "非对象 JSON 无法提供 keyed Envelope，事件被丢弃。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope, ServerEvent.decode guard"
+      ],
+      "derived": true,
+      "input": ["hello"],
+      "expected": { "outcome": "dropped", "key": null }
+    },
+    {
+      "name": "inbox_requires_only_type",
+      "description": "inbox 不需要载荷，未知额外键被忽略。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case inbox"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "future": { "rows": "not an envelope key" } },
+      "expected": { "outcome": "accepted", "event": "inbox" }
+    },
+    {
+      "name": "inbox_null_known_fields_are_ignored",
+      "description": "inbox 的已知可选键为 null 时不影响事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope optional fields, ServerEvent.decode case inbox"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "items": null, "features": null, "fleet": null, "mesh": null, "rows": null, "manager": null },
+      "expected": { "outcome": "accepted", "event": "inbox" }
+    },
+    {
+      "name": "inbox_wrong_items_type_drops_event",
+      "description": "即使 inbox 不使用 items，Envelope 中错误的 items 类型也会丢弃事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope items, ServerEvent.decode case inbox"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "items": {} },
+      "expected": { "outcome": "dropped", "key": "items" }
+    },
+    {
+      "name": "unknown_type_is_ignored_after_valid_envelope",
+      "description": "未知事件类型在合法 Envelope 解码后走 default，被忽略。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode default",
+        "docs/archive/redesign/README.md: D5 tolerant decoding"
+      ],
+      "derived": true,
+      "input": { "type": "future_event", "extra": true },
+      "expected": { "outcome": "ignored", "type": "future_event" }
+    },
+    {
+      "name": "unknown_type_wrong_backlog_drops_event",
+      "description": "未知事件也先检查共享 backlog 的布尔类型，不因事件未知而忽略错误。",
+      "source": ["apple/Shared/LiveConnection.swift: ServerEvent.Envelope backlog, decode guard before switch"],
+      "derived": true,
+      "input": { "type": "future_event", "backlog": "yes" },
+      "expected": { "outcome": "dropped", "key": "backlog" }
+    },
+    {
+      "name": "unknown_type_still_checks_known_keys",
+      "description": "未知事件类型不能绕过共享 Envelope 中已知键的类型检查。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode guard before switch and default"
+      ],
+      "derived": true,
+      "input": { "type": "future_event", "features": {} },
+      "expected": { "outcome": "dropped", "key": "features" }
+    },
+    {
+      "name": "missing_type_is_dropped",
+      "description": "缺少必需 type 时整个事件被丢弃。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope type"
+      ],
+      "derived": true,
+      "input": { "features": [] },
+      "expected": { "outcome": "dropped", "key": "type" }
+    },
+    {
+      "name": "null_type_is_dropped",
+      "description": "type 为 null 与缺失相同，不能满足必需字符串。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope type"
+      ],
+      "derived": true,
+      "input": { "type": null },
+      "expected": { "outcome": "dropped", "key": "type" }
+    },
+    {
+      "name": "numeric_type_is_dropped",
+      "description": "数字 type 不满足必需字符串，不转成事件名。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope type"
+      ],
+      "derived": true,
+      "input": { "type": 7 },
+      "expected": { "outcome": "dropped", "key": "type" }
+    },
+    {
+      "name": "items_defaults_optional_fields",
+      "description": "items 缺少数组与连续性字段时使用 iOS 的默认值。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example" },
+      "expected": { "outcome": "accepted", "event": "items", "machine_id": "machine-example", "session_id": "session-example", "items": [], "backlog": false, "has_more": null, "history": null, "from_seq": null, "to_seq": null, "more_after": false }
+    },
+    {
+      "name": "items_null_array_and_flags_default",
+      "description": "items 的可选数组和布尔字段为 null 时按缺失处理。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "items": null, "backlog": null, "more_after": null, "has_more": null },
+      "expected": { "outcome": "accepted", "event": "items", "machine_id": "machine-example", "session_id": "session-example", "items": [], "backlog": false, "has_more": null, "history": null, "from_seq": null, "to_seq": null, "more_after": false }
+    },
+    {
+      "name": "items_missing_machine_id_drops_event",
+      "description": "items 事件需要完整 SessionKey，缺 machine_id 时不产生事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode SessionKey and case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "session_id": "session-example" },
+      "expected": { "outcome": "dropped", "key": "machine_id" }
+    },
+    {
+      "name": "items_missing_session_id_drops_event",
+      "description": "items 事件需要完整 SessionKey，缺 session_id 时不产生事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode SessionKey and case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example" },
+      "expected": { "outcome": "dropped", "key": "session_id" }
+    },
+    {
+      "name": "items_empty_session_ids_are_kept",
+      "description": "SessionKey 只要求两个字符串存在，空字符串不会被判为缺失。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode SessionKey and case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "", "session_id": "", "items": [] },
+      "expected": { "outcome": "accepted", "event": "items", "machine_id": "", "session_id": "", "items": [], "backlog": false, "has_more": null, "history": null, "from_seq": null, "to_seq": null, "more_after": false }
+    },
+    {
+      "name": "items_from_seq_must_be_integer",
+      "description": "items 的 from_seq 不接受数字字符串。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fromSeq"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "from_seq": "8" },
+      "expected": { "outcome": "dropped", "key": "from_seq" }
+    },
+    {
+      "name": "items_backlog_must_be_boolean",
+      "description": "items 的 backlog 不使用字符串转布尔值的规则。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope backlog"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "backlog": "true" },
+      "expected": { "outcome": "dropped", "key": "backlog" }
+    },
+    {
+      "name": "items_wrong_other_event_key_drops_event",
+      "description": "items 不使用 rows 也不能绕过共享 Envelope 对它的类型检查。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope rows and ServerEvent.decode case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "rows": "24" },
+      "expected": { "outcome": "dropped", "key": "rows" }
+    },
+    {
+      "name": "items_data_must_be_string_or_null",
+      "description": "终端共用的 data 必须是字符串或 null，即使出现在 items 事件上。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope data and ServerEvent.decode case items"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "data": ["bytes"] },
+      "expected": { "outcome": "dropped", "key": "data" }
+    },
+    {
+      "name": "items_duplicate_type_keeps_first",
+      "description": "type 重复时保留第一个值，不把后一个值用于路由。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope type and ServerEvent.decode",
+        "swift-foundation JSONDecoder.swift: JSONDecoderImpl.KeyedContainer.stringify first-value duplicate-key rule"
+      ],
+      "derived": true,
+      "input": { "type": "items", "type": "inbox", "machine_id": "machine-example", "session_id": "session-example" },
+      "expected": { "outcome": "accepted", "event": "items", "machine_id": "machine-example", "session_id": "session-example", "items": [], "backlog": false, "has_more": null, "history": null, "from_seq": null, "to_seq": null, "more_after": false }
+    },
+    {
+      "name": "items_raw_args_accepts_object",
+      "description": "items 事件上的 args 是原始 JSONValue，不因对象形状被拒绝。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope args and case items",
+        "apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift: JSONValue.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "args": { "command": "example", "count": 2 } },
+      "expected": { "outcome": "accepted", "event": "items", "machine_id": "machine-example", "session_id": "session-example", "items": [], "backlog": false, "has_more": null, "history": null, "from_seq": null, "to_seq": null, "more_after": false }
+    },
+    {
+      "name": "items_invalid_item_scalar_drops_event",
+      "description": "items 中必需 item 标量键的错误类型拒绝整个事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope items and case items",
+        "apple/Shared/Models.swift: Item id and synthesized Decodable"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "items": [{ "id": 7, "seq": 1, "role": "assistant", "kind": "text", "text": "Example" }] },
+      "expected": { "outcome": "dropped", "key": "items" }
+    },
+    {
+      "name": "items_unprojected_number_never_panics",
+      "description": "Item 未读字段的超范围数字只得到诊断拒绝，不触发 panic，也不推断完整 iOS Item 是否接受。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope items",
+        "apple/Shared/Models.swift: Item required scalar fields; unprojected nested fields are outside this slice"
+      ],
+      "derived": true,
+      "input": { "type": "items", "machine_id": "machine-example", "session_id": "session-example", "items": [{ "id": "item-example", "seq": 1, "role": "assistant", "kind": "text", "future": 1e400 }] },
+      "expected": { "outcome": "dropped", "key": "items" }
+    },
+    {
+      "name": "mesh_non_object_is_lenient",
+      "description": "mesh 不是对象时只丢弃 mesh，不丢弃 hello。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.LenientAuth sibling MeshField.init(from:), ServerEvent.decode case hello"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "mesh": 7 },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [], "mesh": null }
+    },
+    {
+      "name": "mesh_bad_hubs_element_drops_only_hubs",
+      "description": "mesh.hubs 中坏元素导致 hubs 字段被丢弃，hello 仍接受。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.MeshField.init(from:)",
+        "apple/Shared/Hubs.swift: MeshHub.init(from:) required hub_id"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "mesh": { "hubs": [{ "name": "missing-id" }] } },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [], "mesh": null }
+    },
+    {
+      "name": "mesh_valid_hubs_keep_identity",
+      "description": "mesh.hubs 的合法条目按原顺序保留，hello 的可选字段继续解码。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.MeshField.init(from:) and case hello",
+        "apple/Shared/Hubs.swift: MeshHub.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "features": ["mesh"], "mesh": { "hubs": [{ "hub_id": "hub-a", "name": "Hub A" }, { "hub_id": "hub-b", "online": true }] } },
+      "expected": { "outcome": "accepted", "event": "hello", "features": ["mesh"], "mesh": [{ "hub_id": "hub-a", "name": "Hub A", "online": null, "self": null }, { "hub_id": "hub-b", "name": null, "online": true, "self": null }] }
+    },
+    {
+      "name": "mesh_lenient_hub_field_keeps_identity",
+      "description": "mesh hub 的宽容 tls_port 失败只丢该字段，不丢 hub_id 与 name。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.MeshField.init(from:)",
+        "apple/Shared/Hubs.swift: MeshHub.init(from:) tlsPort try?"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "mesh": { "hubs": [{ "hub_id": "hub-a", "name": "Hub A", "tls_port": 1e400 }] } },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [], "mesh": [{ "hub_id": "hub-a", "name": "Hub A", "online": null, "self": null }] }
+    },
+    {
+      "name": "mesh_lenient_scalar_fields_keep_identity",
+      "description": "mesh hub 的 name/online/self 解码失败只丢各自字段，hub_id 仍保留。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.MeshField.init(from:)",
+        "apple/Shared/Hubs.swift: MeshHub.init(from:) name, online and self try?"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "mesh": { "hubs": [{ "hub_id": "hub-a", "name": 1e400, "online": 1e400, "self": 1e400 }] } },
+      "expected": { "outcome": "accepted", "event": "hello", "features": [], "mesh": [{ "hub_id": "hub-a", "name": null, "online": null, "self": null }] }
+    },
+    {
+      "name": "mesh_wrong_outer_key_type_drops_event",
+      "description": "Envelope 的已知标量类型错误不会因为 mesh 本身宽容而被吞掉。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope build and MeshField"
+      ],
+      "derived": true,
+      "input": { "type": "hello", "mesh": 7, "build": "42" },
+      "expected": { "outcome": "dropped", "key": "build" }
+    },
+    {
+      "name": "inbox_fleet_tolerates_bad_stats",
+      "description": "inbox 上 fleet.stats 解码失败只丢 stats，不丢整个 Envelope。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.init(from:) stats try?"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "stats": { "tpm": "bad" } } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null } }
+    },
+    {
+      "name": "inbox_fleet_bad_required_scalar_drops_event",
+      "description": "inbox 上 fleet.needsYou 的错误类型仍会丢弃整个事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.init(from:) needsYou decodeIfPresent"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "needsYou": "one" } },
+      "expected": { "outcome": "dropped", "key": "fleet" }
+    },
+    {
+      "name": "inbox_fleet_missing_item_id_drops_event",
+      "description": "fleet.items 条目的必需 id 缺失会使 Envelope 解码失败。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Item.init(from:) required id"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "items": [{ "title": "Example task" }] } },
+      "expected": { "outcome": "dropped", "key": "fleet" }
+    },
+    {
+      "name": "inbox_fleet_bad_look_drops_only_look",
+      "description": "fleet.look 的失败单独丢弃，不影响 inbox 事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.init(from:) look try?, FleetLook required fields"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "needsYou": 2, "look": { "design": "missing-colors" } } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 2, "working": 0, "unread": 0, "stats": null, "look": null } }
+    },
+    {
+      "name": "inbox_fleet_bad_package_drops_whole_look",
+      "description": "FleetLook.package 使用普通 decodeIfPresent，非字符串会使整个 look 被外层 try? 丢弃。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.init(from:) look try?, synthesized FleetLook Decodable"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "look": { "design": "example", "light": 1, "dark": 2, "package": 7 } } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null } }
+    },
+    {
+      "name": "inbox_fleet_phase_and_kind_are_lenient",
+      "description": "fleet 未知 phase 和 item kind 分别按空阶段和 screen 处理，而非丢弃事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Phase.init(from:) and Item.Kind.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "phase": "future", "items": [{ "id": "machine/session", "kind": "future" }] } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null, "items": [{ "id": "machine/session", "kind": "screen" }] } }
+    },
+    {
+      "name": "inbox_fleet_non_string_kind_large_integer_defaults_to_screen",
+      "description": "fleet item kind 即使是超出整型范围的字面量，也因非字符串而宽容回退为 screen。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Item.Kind.init(from:) try? String fallback"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "items": [{ "id": "machine/session", "kind": 18446744073709551616 }] } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null, "items": [{ "id": "machine/session", "kind": "screen" }] } }
+    },
+    {
+      "name": "inbox_fleet_lenient_item_fields_keep_event",
+      "description": "fleet item 的 background 与 progress 解码失败只丢各自字段，不丢整个事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Item.init(from:) background and progress try?"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "items": [{ "id": "machine/session", "background": 1e400, "progress": 1e400 }] } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null, "items": [{ "id": "machine/session", "kind": "screen" }] } }
+    },
+    {
+      "name": "inbox_fleet_lenient_slots_keep_event",
+      "description": "fleet 的 left/right 宽容 slot 失败回退为 status，不影响事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.init(from:) left and right try?"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "left": 1e400, "right": 1e400 } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null } }
+    },
+    {
+      "name": "inbox_fleet_bad_loads_drops_only_loads",
+      "description": "fleet stats 的 loads 解码失败只丢 loads，tpm 等严格计数继续保留。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Stats.init(from:) loads try?"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "stats": { "tpm": 4, "tokens": 5, "requests": 6, "loads": 1e400 } } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": { "tpm": 4, "tokens": 5, "requests": 6 }, "look": null } }
+    },
+    {
+      "name": "inbox_fleet_fractional_since_is_a_double",
+      "description": "fleet item 的 since 是 Double，接受有限小数而非只接受整数。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Item.init(from:) since Double?"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "items": [{ "id": "machine/session", "since": 1.5 }] } },
+      "expected": { "outcome": "accepted", "event": "inbox", "fleet": { "phase": "", "needs_you": 0, "working": 0, "unread": 0, "stats": null, "look": null, "items": [{ "id": "machine/session", "kind": "screen" }] } }
+    },
+    {
+      "name": "inbox_fleet_string_since_drops_event",
+      "description": "fleet item 的 since 不接受数字字符串，错误类型丢弃 Envelope。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope fleet and case inbox",
+        "apple/Shared/FleetState.swift: FleetState.Item.init(from:) since Double?"
+      ],
+      "derived": true,
+      "input": { "type": "inbox", "fleet": { "items": [{ "id": "machine/session", "since": "1.5" }] } },
+      "expected": { "outcome": "dropped", "key": "fleet" }
+    },
+    {
+      "name": "fleet_requires_fleet_payload",
+      "description": "fleet 事件本身需要 fleet 对象，缺失时不产生事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case fleet"
+      ],
+      "derived": true,
+      "input": { "type": "fleet" },
+      "expected": { "outcome": "dropped", "key": "fleet" }
+    },
+    {
+      "name": "fleet_valid_payload_projects_counts",
+      "description": "fleet 事件保留合法计数，宽容字段继续采用默认值。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case fleet",
+        "apple/Shared/FleetState.swift: FleetState.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "fleet", "fleet": { "phase": "working", "needsYou": 1, "working": 2, "unread": 3, "stats": { "tpm": 4, "tokens": 5, "requests": 6 }, "look": { "design": "example", "light": 16777215, "dark": 0 } } },
+      "expected": { "outcome": "accepted", "event": "fleet", "fleet": { "phase": "working", "needs_you": 1, "working": 2, "unread": 3, "stats": { "tpm": 4, "tokens": 5, "requests": 6 }, "look": { "design": "example", "light": 16777215, "dark": 0 } } }
+    },
+    {
+      "name": "screen_missing_session_id_drops_event",
+      "description": "screen 事件与 items 一样需要完整 SessionKey。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case screen"
+      ],
+      "derived": true,
+      "input": { "type": "screen", "machine_id": "machine-example", "text": "Example" },
+      "expected": { "outcome": "dropped", "key": "session_id" }
+    },
+    {
+      "name": "screen_unknown_status_falls_back_to_unknown",
+      "description": "screen 的未知状态降级为 unknown，缺省文本为空字符串。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case screen",
+        "apple/Shared/Models.swift: SessionStatus.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "screen", "machine_id": "machine-example", "session_id": "session-example", "status": "future_state" },
+      "expected": { "outcome": "accepted", "event": "screen", "machine_id": "machine-example", "session_id": "session-example", "text": "", "status": "unknown" }
+    },
+    {
+      "name": "screen_null_status_falls_back_to_unknown",
+      "description": "screen 的 null 状态与缺失相同，使用 unknown。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case screen",
+        "apple/Shared/Models.swift: SessionStatus.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "screen", "machine_id": "machine-example", "session_id": "session-example", "text": "Example", "status": null },
+      "expected": { "outcome": "accepted", "event": "screen", "machine_id": "machine-example", "session_id": "session-example", "text": "Example", "status": "unknown" }
+    },
+    {
+      "name": "screen_numeric_status_drops_event",
+      "description": "screen 的 status 不是字符串时不转成 unknown，而是拒绝 Envelope。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.Envelope status and case screen",
+        "apple/Shared/Models.swift: SessionStatus.init(from:)"
+      ],
+      "derived": true,
+      "input": { "type": "screen", "machine_id": "machine-example", "session_id": "session-example", "status": 7 },
+      "expected": { "outcome": "dropped", "key": "status" }
+    },
+    {
+      "name": "sessions_list_requires_revision",
+      "description": "sessions_list 缺少 revision 时不产生事件。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case sessions_list"
+      ],
+      "derived": true,
+      "input": { "type": "sessions_list" },
+      "expected": { "outcome": "dropped", "key": "revision" }
+    },
+    {
+      "name": "sessions_list_keeps_revision",
+      "description": "sessions_list 的字符串 revision 原样保留。",
+      "source": [
+        "apple/Shared/LiveConnection.swift: ServerEvent.decode case sessions_list"
+      ],
+      "derived": true,
+      "input": { "type": "sessions_list", "revision": "rev-example" },
+      "expected": { "outcome": "accepted", "event": "sessions_list", "revision": "rev-example" }
+    }
+  ]
+}

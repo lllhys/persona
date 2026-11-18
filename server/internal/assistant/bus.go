@@ -131,9 +131,12 @@ func NewBusHub(o BusOptions) *BusHub {
 		HelloParams: func() any {
 			return map[string]any{"id": id, "host": host, "os": runtime.GOOS, "arch": runtime.GOARCH,
 				"deploy": o.Deploy, "version": o.Version, "capabilities": []string{assistantwire.CapabilityConfigOwn, assistantwire.CapabilityAgentSessionArchives,
-					assistantwire.CapabilityAgentSessionArchiveClose, assistantwire.CapabilityAgentNaming, assistantwire.CapabilityMachinesOwn,
-					assistantwire.CapabilityMeetingAttendance, assistantwire.CapabilityMeetingConversation, assistantwire.CapabilityMeetingPhotos, assistantwire.CapabilityRecordingDay,
-					devicewire.SharingCapability}}
+					assistantwire.CapabilityAgentSessionArchiveClose, assistantwire.CapabilityAgentNaming, assistantwire.CapabilityAgentAutoname, assistantwire.CapabilityMachinesOwn,
+					assistantwire.CapabilityMeetingAttendance, assistantwire.CapabilityMeetingConversation, assistantwire.CapabilityMeetingPhotos, assistantwire.CapabilityMeetingLiveView,
+					assistantwire.CapabilityMeetingHighlights, assistantwire.CapabilityMeetingNotes, assistantwire.CapabilityMeetingEcho, assistantwire.CapabilityMeetingTranscription,
+					assistantwire.CapabilityRecordingDay, assistantwire.CapabilityAssistantSearch, assistantwire.CapabilityHTTPBodyStream, assistantwire.CapabilityAssistantStartServiceTier,
+					assistantwire.CapabilityMCPWait, assistantwire.CapabilitySessionsSideFold, assistantwire.CapabilityRemoteImages, assistantwire.CapabilityTodoView,
+					assistantwire.CapabilityTodoPlaces, devicewire.SharingCapability}}
 		},
 		OnHello: b.onHello,
 		// A node's tool call that its caller stopped waiting for ends at the hub too (fleet_tools.go).
@@ -393,7 +396,9 @@ func (b *BusHub) AppCall(ctx context.Context, p AppCall) (json.RawMessage, error
 	return out, busError(err)
 }
 
-func (b *BusHub) NotifyRequest(ctx context.Context, p NotifyRequest) error { return b.sendPush(ctx, p) }
+func (b *BusHub) NotifyRequest(ctx context.Context, p NotifyRequest) (NotifyResult, error) {
+	return b.sendPush(ctx, p)
+}
 
 func (b *BusHub) Tell(event string, params any) error { return b.client.Notify(event, params) }
 
@@ -499,6 +504,18 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 		}
 		defer memtrim.AfterLarge(len(p.Body)) // a large upload's buffers go back to the system after it
 		return serveHTTP(ctx, b.httpHandler(s), p, s.lang)
+	case assistantwire.MethodHTTPStreamed: // http.request with its body on a relay of its own (bus_body.go)
+		var p assistantwire.HTTPRequest
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		body, err := b.streamedBody(ctx, p.BodyStream)
+		if err != nil {
+			return nil, &rpc.Error{Code: assistantwire.CodeBodyIncomplete, Message: method + ": " + err.Error()}
+		}
+		p.Body, p.BodyStream = body, nil
+		defer memtrim.AfterLarge(len(p.Body))
+		return serveHTTP(ctx, b.httpHandler(s), p, s.lang)
 	case assistantwire.MethodTools:
 		return map[string]any{"tools": s.Tools(ctx)}, nil
 	case assistantwire.MethodTool:
@@ -546,6 +563,9 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 		if err := decode(&p); err != nil {
 			return nil, err
 		}
+		if s.keepsBehind(ctx, p) { // older owner messages to it are kept: this one goes after them (undelivered.go)
+			return nil, &rpc.Error{Code: assistantwire.CodeUndeliveredAhead, Message: "older messages to this conversation wait to go in"}
+		}
 		ctx, note := withLauncherNote(ctx)
 		params, err := s.SendParams(ctx, p)
 		if err != nil {
@@ -556,6 +576,16 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 			return map[string]any{"params": params, "launcher_note": *note}, nil
 		}
 		return map[string]any{"params": params}, nil
+	case assistantwire.MethodKeepUndelivered:
+		var p assistantwire.KeepUndeliveredParams
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		kept, err := s.KeepUndelivered(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"undelivered": kept}, nil
 	case assistantwire.MethodRename:
 		var p RenameParams
 		if err := decode(&p); err != nil {
@@ -599,6 +629,15 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 			return nil, err
 		}
 		return s.askHub(ctx, p.Interaction)
+	case assistantwire.MethodFleetAskPrepared:
+		var p struct {
+			Interaction proto.Interaction `json:"interaction"`
+			Replacement string            `json:"replacement"`
+		}
+		if err := decode(&p); err != nil {
+			return nil, err
+		}
+		return b.askPreparedHub(ctx, p.Interaction, p.Replacement)
 	}
 	if out, ok, err := s.kbRequest(ctx, method, params); ok { // the knowledge base's (kb_bus.go)
 		return out, err
@@ -617,8 +656,38 @@ func (b *BusHub) request(ctx context.Context, method string, params json.RawMess
 	if out, ok, err := s.modelsRequest(ctx, method, params); ok { // the hub's plugins' (models_hub.go)
 		return out, err
 	}
+	if out, ok, err := s.transcriptionRequest(ctx, method, params); ok { // extensions' transcription (extension_transcribe.go)
+		return out, err
+	}
+	if out, ok, err := s.meetingChoiceRequest(ctx, method, params); ok { // the Volcengine extension's switch (meeting_transcription_choice.go)
+		return out, err
+	}
 	if d := b.opts.Devices; d != nil {
+		if method == devicewire.MethodCall {
+			var p devicewire.NodeCall
+			if err := json.Unmarshal(params, &p); err != nil {
+				return nil, err
+			}
+			if conversationWrite(p.Method) {
+				s.conversationWrites.RLock()
+				defer s.conversationWrites.RUnlock()
+			}
+			if p.Method != "session.unwatch" {
+				if err := s.conversationParamsAvailable(ctx, d.Canonical(p.MachineID), p.Params); err != nil {
+					return nil, err
+				}
+			}
+		}
 		if out, ok, err := d.Request(ctx, method, params); ok { // devices.* (devices.go)
+			if err == nil && method == devicewire.MethodCall {
+				var p devicewire.NodeCall
+				_ = json.Unmarshal(params, &p)
+				if p.Method != "session.unwatch" {
+					if err := s.conversationParamsAvailable(ctx, d.Canonical(p.MachineID), p.Params); err != nil {
+						return nil, err
+					}
+				}
+			}
 			if err == nil && method == devicewire.MethodCall {
 				s.nodeCallDone(ctx, params) // an effort set on a conversation with a model pick (model_pick.go)
 			}
@@ -640,6 +709,9 @@ func serveHTTP(ctx context.Context, s http.Handler, p assistantwire.HTTPRequest,
 	}
 	if p.ShareAuthority != nil {
 		ctx = devicewire.WithShareAuthority(ctx, *p.ShareAuthority)
+	}
+	if p.OwnerAnswer {
+		ctx = devicewire.WithOwnerAnswer(ctx)
 	}
 	if p.HandoffApprover != nil { // set by the hub only, never from a header (secret_handoff.go there)
 		ctx = assistantwire.WithHandoffApprover(ctx, *p.HandoffApprover)
@@ -745,11 +817,11 @@ func (b *BusHub) event(ctx context.Context, ev busEvent) error {
 	decode := func(v any) error { return json.Unmarshal(ev.params, v) }
 	switch ev.name {
 	case assistantwire.EventUserSpoke:
-		var p SessionRef
+		var p assistantwire.UserSpokeParams
 		if err := decode(&p); err != nil {
 			return err
 		}
-		s.UserSpoke(ctx, p)
+		s.userSpokeText(ctx, p.SessionRef, p.Text)
 	case assistantwire.EventUserStopped:
 		var p SessionRef
 		if err := decode(&p); err != nil {

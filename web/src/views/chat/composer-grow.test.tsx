@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 // The composer grows to six lines; native scrolling and the existing phone-only expanded editor stay intact.
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadPages } from "../../lib/lazy-page";
 import { Composer } from "./Composer";
 import { COMPOSER_LINES, lineCount, offersExpand } from "./composer-grow";
 
@@ -25,6 +26,10 @@ const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHei
 let phone = true;
 let host: HTMLDivElement;
 let root: Root;
+
+beforeAll(async () => {
+  await loadPages();
+});
 
 beforeEach(() => {
   phone = true;
@@ -118,4 +123,130 @@ describe("the phone composer", () => {
     expect(expandButton()).toBeNull();
     expect(box().style.maxHeight).toBe(`min(${6 * 24}px, min(240px, calc(var(--kb-h) * 0.35)))`);
   });
+});
+
+describe("the expanded composer keyboard", () => {
+  const open = (onSend: (m: { text: string; images: { mime: string; data: string }[] }) => Promise<boolean>, blocked?: ComponentProps<typeof Composer>["blocked"]) => {
+    act(() => root.render(<Composer draftKey="expanded-keyboard" placeholder="" onSend={onSend} blocked={blocked} />));
+    type(lines(9));
+    act(() => expandButton()!.click());
+    const field = editor()!.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.setSelectionRange(field.value.length, field.value.length);
+    return field;
+  };
+  const press = async (field: HTMLTextAreaElement, extra: KeyboardEventInit = {}, nativeNewline = false) => {
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...extra });
+    await act(async () => {
+      field.dispatchEvent(event);
+      await Promise.resolve();
+    });
+    if (!event.defaultPrevented && nativeNewline) {
+      // jsdom has no native textarea default action; carry out the newline the browser would insert.
+      const start = field.selectionStart, end = field.selectionEnd;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, `${field.value.slice(0, start)}\n${field.value.slice(end)}`);
+        field.setSelectionRange(start + 1, start + 1);
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    return event;
+  };
+
+  it.each([
+    { name: "Ctrl", mods: { ctrlKey: true } },
+    { name: "Cmd", mods: { metaKey: true } },
+  ])("sends on $name+Enter, keeps plain Enter as a newline, and leaves Mod+Alt/Shift+Enter alone", async ({ mods }) => {
+    const sent: string[] = [];
+    const field = open(async (m) => (sent.push(m.text), true));
+    const at = field.value.indexOf("step 5");
+    field.setSelectionRange(at, at);
+    const withNewline = lines(9).replace("\nstep 5", "\n\nstep 5");
+    expect((await press(field, {}, true)).defaultPrevented).toBe(false);
+    expect(field.value).toBe(withNewline);
+    expect(sent).toEqual([]);
+    for (const extra of [{ altKey: true }, { shiftKey: true }]) {
+      expect((await press(field, { ...mods, ...extra })).defaultPrevented).toBe(false);
+      expect(sent).toEqual([]);
+      expect(editor()).not.toBeNull();
+    }
+    expect((await press(field, mods)).defaultPrevented).toBe(true);
+    expect(sent).toEqual([withNewline]);
+    expect(editor()).toBeNull();
+  });
+
+  it("sends nothing during IME composition, including keyCode 229", async () => {
+    const onSend = vi.fn(async () => true);
+    const field = open(onSend);
+    for (const extra of [{ ctrlKey: true, isComposing: true }, { metaKey: true, keyCode: 229 }, { isComposing: true }, { keyCode: 229 }]) {
+      expect((await press(field, extra)).defaultPrevented).toBe(false);
+    }
+    expect(field.value).toBe(lines(9));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(editor()).not.toBeNull();
+  });
+
+  it("returns a blocked Mod+Enter to the existing nudge without losing the draft", async () => {
+    const onNudge = vi.fn(), onSend = vi.fn(async () => true);
+    const field = open(onSend, { label: "Finish setup", onNudge });
+    expect((await press(field, { ctrlKey: true })).defaultPrevented).toBe(true);
+    expect(editor()).toBeNull();
+    expect(box().value).toBe(lines(9));
+    expect(host.querySelector('[data-testid="composer-nudge"]')).not.toBeNull();
+    expect(onNudge).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps an empty, unblocked draft open with its caret on Mod+Enter", async () => {
+    const onSend = vi.fn(async () => true);
+    const field = open(onSend);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, "");
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    field.setSelectionRange(0, 0);
+    expect((await press(field, { ctrlKey: true })).defaultPrevented).toBe(true);
+    expect(editor()).not.toBeNull();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(field.value).toBe("");
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, 0]);
+  });
+});
+
+describe("the expanded composer chunk", () => {
+  it("opens on the first tap after a late chunk, keeping the draft and caret", async () => {
+    const chunk = { calls: 0, open: () => {} };
+    vi.resetModules();
+    vi.doMock("./ComposerOverlays", async () => {
+      chunk.calls++;
+      await new Promise<void>((resolve) => { chunk.open = resolve; });
+      return vi.importActual<typeof import("./ComposerOverlays")>("./ComposerOverlays");
+    });
+    try {
+      const { initI18n } = await import("../../i18n");
+      await initI18n("zh-Hans");
+      const { Composer: DeferredComposer } = await import("./Composer");
+      await act(async () => {
+        root.render(<DeferredComposer draftKey="deferred-expand" placeholder="" onSend={async () => true} />);
+      });
+      type(lines(9));
+      box().setSelectionRange(5, 9);
+      const control = expandButton()!;
+      act(() => control.dispatchEvent(new PointerEvent("pointerdown", { pointerType: "mouse", bubbles: true })));
+      await vi.waitFor(() => expect(chunk.calls).toBe(1));
+      expect(editor()).toBeNull();
+
+      await act(async () => { control.click(); });
+      expect(editor()).toBeNull();
+      await act(async () => { chunk.open(); });
+      await vi.waitFor(async () => {
+        await act(async () => { await Promise.resolve(); });
+        expect(editor()).not.toBeNull();
+      }, { timeout: 10_000 });
+      const field = editor()!.querySelector<HTMLTextAreaElement>("textarea")!;
+      expect(field.value).toBe(lines(9));
+      expect([field.selectionStart, field.selectionEnd]).toEqual([5, 9]);
+    } finally {
+      vi.doUnmock("./ComposerOverlays");
+    }
+  }, 20_000);
 });

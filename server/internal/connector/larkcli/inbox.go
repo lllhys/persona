@@ -31,9 +31,10 @@ const (
 	// what was already collected.
 	inboxCursorOverlap = 10 * time.Minute
 	// Direct chats are also read from their own history (sweepDirectChats), which has no indexing delay:
-	// the most recently active inboxDirectChats of them, each back to inboxDirectLookback.
-	inboxDirectChats    = 10
-	inboxDirectLookback = time.Hour
+	// up to inboxDirectChats per round, rotating through the most recent candidates.
+	inboxDirectChats      = 10
+	inboxDirectCandidates = 50
+	inboxDirectLookback   = 2 * time.Hour
 )
 
 // StateStore is the small part of the manager's Postgres-backed settings store
@@ -47,11 +48,12 @@ type StateStore interface {
 const inboxStateKey = "connector.larkcli.inbox"
 
 type persistedInboxState struct {
-	Cursor       string   `json:"cursor,omitempty"`
-	PageToken    string   `json:"page_token,omitempty"`
-	Topics       []string `json:"topics,omitempty"`
-	Seen         []string `json:"seen,omitempty"`
-	TopicsSeeded bool     `json:"topics_seeded,omitempty"`
+	Cursor       string                          `json:"cursor,omitempty"`
+	PageToken    string                          `json:"page_token,omitempty"`
+	Topics       []string                        `json:"topics,omitempty"`
+	Seen         []string                        `json:"seen,omitempty"`
+	TopicsSeeded bool                            `json:"topics_seeded,omitempty"`
+	Things       map[string]connector.InboxThing `json:"things,omitempty"`
 }
 
 type inboxGroup struct {
@@ -228,11 +230,7 @@ func (c *Connector) pollChat(ctx context.Context) (bool, error) {
 	}
 
 	sort.SliceStable(found, func(i, j int) bool {
-		ti, tj := messageTime(found[i]), messageTime(found[j])
-		if ti.Equal(tj) {
-			return found[i].MessageID < found[j].MessageID
-		}
-		return ti.Before(tj)
+		return messageLess(found[i], found[j])
 	})
 
 	newMessages := c.dedupMessages(found)
@@ -273,28 +271,37 @@ func (c *Connector) pollChat(ctx context.Context) (bool, error) {
 	return changed, directErr
 }
 
-// sweepDirectChats reads the most recently active direct chats from their own history, back to inboxDirectLookback.
+// sweepDirectChats rotates through recent direct chats' history, back to inboxDirectLookback.
 // Message search is the round's main source, but it indexes some messages minutes late: one indexed after the cursor
 // had passed its time was never collected. Every direct message belongs in the Inbox, and chat history has no
 // indexing delay, so these chats are read here as well; the seen ledger drops what search already delivered. Search
 // results carry the chat's type and partner; history does not, so they are filled in from the chat list.
 func (c *Connector) sweepDirectChats(ctx context.Context) ([]adapter.Message, error) {
-	list, err := c.runner.ListDirectChats(ctx, inboxDirectChats)
+	list, err := c.runner.ListDirectChats(ctx, inboxDirectCandidates)
 	if err != nil {
 		return nil, err
 	}
 	floor := c.currentTime().Add(-inboxDirectLookback).UTC()
 	start := floor.Format(time.RFC3339)
 	var out []adapter.Message
-	read := 0
+	var chats []adapter.Chat
 	for _, chat := range list.Chats {
 		if chat.ChatID == "" || (chat.ChatMode != "p2p" && chat.ChatType != "p2p") {
 			continue
 		}
-		if read == inboxDirectChats {
-			break
-		}
-		read++
+		chats = append(chats, chat)
+	}
+	if len(chats) == 0 {
+		return nil, nil
+	}
+	// Keep ten reads per round without permanently skipping the eleventh active chat.
+	c.inboxMu.Lock()
+	offset := c.inboxDirectOffset % len(chats)
+	read := minInt(inboxDirectChats, len(chats))
+	c.inboxDirectOffset = (offset + read) % len(chats)
+	c.inboxMu.Unlock()
+	for i := 0; i < read; i++ {
+		chat := chats[(offset+i)%len(chats)]
 		page, err := c.runner.ListMessagesSince(ctx, chat.ChatID, start, 50)
 		if err != nil {
 			return out, err
@@ -402,14 +409,14 @@ func (c *Connector) Collect(context.Context) ([]connector.InboxThing, error) {
 // falls back to messages-send.
 func (c *Connector) Reply(ctx context.Context, r connector.InboxReply) error {
 	if strings.HasPrefix(r.Thread, "doc:") {
-		return fmt.Errorf("lark-cli document comments are read-only")
+		return fmt.Errorf("%w: lark-cli document comments are read-only", connector.ErrCannotReply)
 	}
 	if c == nil || c.runner == nil {
 		return &adapter.Error{Kind: adapter.KindNotInstalled}
 	}
 	chatID, ok := chatIDFromThread(r.Thread)
 	if !ok {
-		return fmt.Errorf("%s cannot be replied to", r.Thread)
+		return fmt.Errorf("%w: the thread names no chat", connector.ErrCannotReply) // never the thread: it is a private id
 	}
 	var err error
 	if strings.TrimSpace(r.Last) != "" && strings.Contains(r.Thread, ":thread:") {
@@ -481,6 +488,11 @@ func (c *Connector) loadInboxStateLocked(ctx context.Context) error {
 		return nil
 	}
 	c.inboxState = saved
+	for thread, thing := range saved.Things {
+		if thread != "" {
+			c.inboxThings[thread] = thing
+		}
+	}
 	for _, id := range saved.Seen {
 		if id != "" {
 			c.inboxSeen[id] = struct{}{}
@@ -498,7 +510,11 @@ func (c *Connector) saveInboxStateLocked(ctx context.Context) error {
 	if c.inboxStore == nil {
 		return nil
 	}
-	state := persistedInboxState{Cursor: c.inboxState.Cursor, PageToken: c.inboxState.PageToken, TopicsSeeded: c.inboxState.TopicsSeeded}
+	state := persistedInboxState{Cursor: c.inboxState.Cursor, PageToken: c.inboxState.PageToken, TopicsSeeded: c.inboxState.TopicsSeeded,
+		Things: make(map[string]connector.InboxThing, len(c.inboxThings))}
+	for thread, thing := range c.inboxThings {
+		state.Things[thread] = thing
+	}
 	for topic := range c.inboxTopics {
 		state.Topics = append(state.Topics, topic)
 	}
@@ -627,7 +643,7 @@ func (c *Connector) groupMessages(messages []adapter.Message, me string, knownTo
 		}
 		if message.Sender.ID == me {
 			if prior := byKey[key]; prior != nil {
-				prior.replied = true
+				prior.replied = after(message, prior.latest)
 			}
 			if topic := topicID(message); topic != "" {
 				topics[topic] = struct{}{}
@@ -664,6 +680,7 @@ func (c *Connector) groupMessages(messages []adapter.Message, me string, knownTo
 		}
 		current.messages = append(current.messages, message)
 		current.latest = message
+		current.replied = false
 		current.mentioned = current.mentioned || mentioned
 	}
 	return out
@@ -677,10 +694,30 @@ func (c *Connector) thingForGroup(ctx context.Context, group *inboxGroup, me str
 	contextMessages := append([]adapter.Message(nil), group.messages...)
 	if page, err := c.runner.ListMessages(ctx, group.chatID, group.threadID, "", 40); err == nil && len(page.Messages) > 0 {
 		contextMessages = mergeMessages(page.Messages, group.messages)
-		for _, message := range page.Messages {
-			if messageKey(message) == group.key && message.Sender.ID == me && after(message, latest) {
-				group.replied = true
-			}
+	}
+	// History can already contain a follow-up which search has not indexed. Only
+	// eligible incoming activity in this chat/topic can supersede the search hit.
+	c.inboxMu.Lock()
+	_, allChat := c.inboxAllChats[group.chatID]
+	c.inboxMu.Unlock()
+	for _, message := range contextMessages {
+		if message.Deleted || messageKey(message) != group.key || message.Sender.ID == me || !after(message, latest) {
+			continue
+		}
+		if latest.ChatType != "p2p" && group.threadID == "" && !allChat && !messageMentions(message, me) {
+			continue
+		}
+		message.ChatType = firstNonEmpty(message.ChatType, latest.ChatType)
+		if len(message.ChatPartner) == 0 {
+			message.ChatPartner = latest.ChatPartner
+		}
+		latest = message
+		group.replied = false
+		group.mentioned = group.mentioned || messageMentions(message, me)
+	}
+	for _, message := range contextMessages {
+		if !message.Deleted && messageKey(message) == group.key && message.Sender.ID == me && after(message, latest) {
+			group.replied = true
 		}
 	}
 	text := messageText(latest)
@@ -706,11 +743,13 @@ func (c *Connector) thingForGroup(ctx context.Context, group *inboxGroup, me str
 		label = i18n.T(lang, "hub-connectors.larkcli_mention")
 	}
 	title := firstNonEmpty(group.chatName, group.chatID)
+	name := group.chatName // the chat's name, never an opaque id: what ReplyTo may show
 	if latest.ChatType == "p2p" {
 		// Direct chats have no stable display name in some search results. The
 		// other sender is the conversation's name; use any sender name only as
 		// a fallback, and keep the opaque chat id as the final fallback.
 		title = p2pTitle(group, contextMessages, me)
+		name = p2pName(group, contextMessages, me)
 	}
 	tags := []connector.Tag{{Key: connector.TagChat, Value: latest.ChatID, Name: title}}
 	if senderTag, ok := latestSenderTag(contextMessages, me); ok {
@@ -723,10 +762,10 @@ func (c *Connector) thingForGroup(ctx context.Context, group *inboxGroup, me str
 		Title:    title,
 		Sender:   latest.Sender.Name,
 		Preview:  firstLine(text),
-		Context:  contextText(contextMessages),
+		Context:  contextText(contextMessages, me),
 		At:       messageTime(latest),
 		Last:     latest.MessageID,
-		ReplyTo:  latest.MessageID,
+		ReplyTo:  replyTo(lang, name, group.threadID != ""),
 		CanReply: latest.MessageID != "",
 		Rules:    c.rules(),
 		Tags:     tags,
@@ -754,7 +793,24 @@ func (c *Connector) thingForGroup(ctx context.Context, group *inboxGroup, me str
 	return thing
 }
 
-func p2pTitle(group *inboxGroup, contextMessages []adapter.Message, me string) string {
+// replyTo says where a reply to the item goes and who sees it (connectorwire.InboxThing.ReplyTo): Reply sends as the
+// user to the chat, or into the topic the message is in. name is the chat's name; without one (only an opaque id is
+// known), the sentence names no chat.
+func replyTo(lang i18n.Lang, name string, topic bool) string {
+	switch {
+	case topic && name != "":
+		return i18n.T(lang, "hub-connectors.larkcli_reply_to_topic", i18n.Args{"chat": name})
+	case topic:
+		return i18n.T(lang, "hub-connectors.larkcli_reply_to_topic_unnamed")
+	case name != "":
+		return i18n.T(lang, "hub-connectors.larkcli_reply_to", i18n.Args{"chat": name})
+	}
+	return i18n.T(lang, "hub-connectors.larkcli_reply_to_unnamed")
+}
+
+// p2pName is a direct chat's name: the other sender, else the chat partner, else the chat's own name; "" when only
+// opaque ids are known.
+func p2pName(group *inboxGroup, contextMessages []adapter.Message, me string) string {
 	if group == nil {
 		return ""
 	}
@@ -773,9 +829,17 @@ func p2pTitle(group *inboxGroup, contextMessages []adapter.Message, me string) s
 			return partner.Name
 		}
 	}
-	if group.chatName != "" {
-		return group.chatName
+	return group.chatName
+}
+
+func p2pTitle(group *inboxGroup, contextMessages []adapter.Message, me string) string {
+	if group == nil {
+		return ""
 	}
+	if name := p2pName(group, contextMessages, me); name != "" {
+		return name
+	}
+	messages := append(append([]adapter.Message(nil), group.messages...), contextMessages...)
 	for i := len(messages) - 1; i >= 0; i-- {
 		partner := chatPartner(messages[i].ChatPartner)
 		if value := firstNonEmpty(partner.OpenID, partner.AppID, partner.ID); value != "" {
@@ -923,10 +987,35 @@ func messageKey(message adapter.Message) string {
 	return message.ChatID
 }
 
+// atAll is an @all written in the content: lark-cli lists only people in mentions, so an @all reaches the Inbox as
+// "@_all" in a text message and as <at user_id="all"> in a post.
+var atAll = lazyre.New(`(?:^|\s)@_all(?:\s|$)|<at\s+user_id="all"`)
+
 func messageMentions(message adapter.Message, me string) bool {
+	return mentionsOwner(message, me) || mentionsAll(message)
+}
+
+// mentionsOwner: the message @'s the owner, by the mention's id only: another person can have the owner's display name.
+func mentionsOwner(message adapter.Message, me string) bool {
+	if me == "" {
+		return false
+	}
+	for _, mention := range message.Mentions {
+		if mention.ID == me {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsAll: the message @'s everyone.
+func mentionsAll(message adapter.Message) bool {
+	if atAll.MatchString(rawText(message.Content)) {
+		return true
+	}
 	for _, mention := range message.Mentions {
 		id, key, name := strings.ToLower(strings.TrimSpace(mention.ID)), strings.ToLower(strings.TrimSpace(mention.Key)), strings.ToLower(strings.TrimSpace(mention.Name))
-		if me != "" && mention.ID == me || id == "all" || id == "@all" || strings.Contains(id, "@_all") || strings.Contains(key, "@all") || strings.Contains(name, "@all") || strings.Contains(name, "everyone") || strings.Contains(name, "所有人") { // i18n-ignore: match Feishu's localized @all mention name
+		if id == "all" || id == "@all" || strings.Contains(id, "@_all") || strings.Contains(key, "@all") || strings.Contains(name, "@all") || strings.Contains(name, "everyone") || strings.Contains(name, "所有人") { // i18n-ignore: match Feishu's localized @all mention name
 			return true
 		}
 	}
@@ -958,11 +1047,39 @@ func messageTime(message adapter.Message) time.Time {
 }
 
 func after(message, previous adapter.Message) bool {
+	if message.ChatID != "" && message.ChatID == previous.ChatID {
+		position, err := strconv.ParseUint(message.MessagePosition, 10, 64)
+		prior, priorErr := strconv.ParseUint(previous.MessagePosition, 10, 64)
+		if err == nil && priorErr == nil && position > 0 && prior > 0 {
+			return position > prior
+		}
+	}
 	tm, tp := messageTime(message), messageTime(previous)
 	if tm.IsZero() || tp.IsZero() {
-		return message.MessageID > previous.MessageID
+		return false // An opaque ID cannot establish whether the owner replied later.
 	}
 	return tm.After(tp)
+}
+
+// messageLess keeps messages with the same wall-clock minute in source order.
+// Position is scoped to a chat; group chats first so the comparator remains transitive.
+func messageLess(a, b adapter.Message) bool {
+	ta, tb := messageTime(a), messageTime(b)
+	if !ta.Equal(tb) {
+		return ta.Before(tb)
+	}
+	if a.ChatID != b.ChatID {
+		return a.ChatID < b.ChatID
+	}
+	pa, _ := strconv.ParseUint(a.MessagePosition, 10, 64)
+	pb, _ := strconv.ParseUint(b.MessagePosition, 10, 64)
+	if (pa > 0) != (pb > 0) {
+		return pa > 0
+	}
+	if pa != pb {
+		return pa < pb
+	}
+	return a.MessageID < b.MessageID
 }
 
 func messageText(message adapter.Message) string {
@@ -1029,7 +1146,16 @@ func rawText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-func contextText(messages []adapter.Message) string {
+// The marks after a sender that say whom a message @'s, as the tier criteria read them (prompts/inbox/tiers.md): there a
+// Lark group message without them did not @ the owner.
+const (
+	markOwner = "（@了我）"  // i18n-ignore: the tier criteria's mark, read by the model
+	markAll   = "（@所有人）" // i18n-ignore: the tier criteria's mark, read by the model
+)
+
+// contextText is the conversation as the models read it, a line a message: "<sender><marks>: <text>", the marks from
+// the message's structured mentions (both when it @'s the owner and everyone). me is the owner's id.
+func contextText(messages []adapter.Message, me string) string {
 	var b strings.Builder
 	for _, message := range messages {
 		text := strings.TrimSpace(messageText(message))
@@ -1039,12 +1165,19 @@ func contextText(messages []adapter.Message) string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
+		start := b.Len()
 		name := message.Sender.Name
 		if name == "" {
 			name = message.Sender.ID
 		}
-		if name != "" {
-			b.WriteString(name)
+		b.WriteString(name)
+		if mentionsOwner(message, me) {
+			b.WriteString(markOwner)
+		}
+		if mentionsAll(message) {
+			b.WriteString(markAll)
+		}
+		if b.Len() > start {
 			b.WriteString(": ")
 		}
 		b.WriteString(text)
@@ -1067,11 +1200,7 @@ func mergeMessages(primary, extra []adapter.Message) []adapter.Message {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		ti, tj := messageTime(out[i]), messageTime(out[j])
-		if ti.Equal(tj) {
-			return out[i].MessageID < out[j].MessageID
-		}
-		return ti.Before(tj)
+		return messageLess(out[i], out[j])
 	})
 	return out
 }

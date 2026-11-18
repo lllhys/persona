@@ -233,6 +233,15 @@ func (m *inboxMail) GetMessage(_ context.Context, _ string, uid uint32, _ string
 	}
 	return nil, fmt.Errorf("no mail %d", uid)
 }
+func (m *inboxMail) SeenFlags(_ context.Context, _, _ string, uids []uint32) (map[uint32]bool, error) {
+	out := map[uint32]bool{}
+	for _, uid := range uids {
+		if f := m.full[uid]; f != nil {
+			out[uid] = f.Seen
+		}
+	}
+	return out, nil
+}
 func (m *inboxMail) Send(_ context.Context, r mail.SendRequest) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -498,7 +507,8 @@ func TestInboxSourcesAnswerTheManager(t *testing.T) {
 		len(g.replies) != 1 || g.replies[0].Text != "好的" {
 		t.Fatalf("reply: %v %+v", err, g.replies)
 	}
-	if _, err := inbox(assistantwire.InboxReply, map[string]any{"source": "lark", "reply": connector.InboxReply{Thread: "chat:1"}}); !errors.Is(err, errCannotReply) {
+	if _, err := inbox(assistantwire.InboxReply, map[string]any{"source": "lark", "reply": connector.InboxReply{Thread: "chat:1"}}); !errors.As(err, new(*rpc.Error)) ||
+		err.(*rpc.Error).Code != assistantwire.CodeInboxSourceUnavailable {
 		t.Fatalf("a reply through a connector the hub has not: %v", err)
 	}
 	if out, err := inbox(assistantwire.InboxSettle, map[string]any{"source": "examplechat", "threads": []string{"old:1", "new:2"}}); err != nil ||
@@ -525,6 +535,17 @@ func TestInboxSourcesAnswerTheManager(t *testing.T) {
 		!strings.Contains(string(out), `"text":"请周五前提交"`) || !strings.Contains(string(out), `"name":"HR"`) {
 		t.Fatalf("a mail's text: %s %v", out, err)
 	}
+	// Which mails of an item off the page are still there, read or not (#5993): 9 unread, 10 read, 11 gone; more than
+	// one lookup may ask about is refused rather than read in part (that would look like mail gone).
+	m.full[10] = &mail.MailMessage{MailSummary: mail.MailSummary{Seen: true}}
+	if out, err := inbox(assistantwire.InboxMailFlagsMethod, assistantwire.InboxMailFlagsAsk{AccountID: "acc1", Mailbox: "INBOX", UIDs: []uint32{9, 10, 11}}); err != nil ||
+		string(out) != `{"seen":[10],"unseen":[9]}` {
+		t.Fatalf("mail flags: %s %v", out, err)
+	}
+	if _, err := inbox(assistantwire.InboxMailFlagsMethod, assistantwire.InboxMailFlagsAsk{AccountID: "acc1", UIDs: make([]uint32, assistantwire.InboxMailFlagsMost+1)}); err == nil {
+		t.Fatal("a lookup past InboxMailFlagsMost must be refused")
+	}
+	delete(m.full, 10)
 	if _, err := inbox(assistantwire.InboxReplyMail, map[string]any{"account_id": "acc1", "uid": 9, "mailbox": "INBOX", "text": "收到"}); err != nil ||
 		len(m.sent) != 1 || m.sent[0].Subject != "Re: 季度汇报" || m.sent[0].InReplyTo != "<m9@example.com>" || !strings.HasPrefix(m.sent[0].Text, "收到") {
 		t.Fatalf("a mail reply: %v %+v", err, m.sent)

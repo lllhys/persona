@@ -143,7 +143,7 @@ func scanBackground(f *os.File, off *int64, m *transcript.Meta, size int64) {
 	r := bgReaders.Get().(*bufio.Reader)
 	r.Reset(io.NewSectionReader(f, *off, size-*off))
 	defer func() {
-		r.Reset(nil) // drop the file; the lines read are only used before this returns
+		r.Reset(nil) // drop the file; what m keeps of a line is a copy (below)
 		bgReaders.Put(r)
 	}()
 	at, long := *off, false
@@ -172,7 +172,9 @@ func scanBackground(f *os.File, off *int64, m *transcript.Meta, size int64) {
 		// The static markers (bgMarkers and transcript's goal, ultracode and plan ones) in one pass over the line (bgmatch.go).
 		// A plan tool's result line does not name the tool: it is the line with the call's id.
 		if !long && len(line) <= 64<<10 && (match.match(line) || containsAny(line, m.PlanPending())) {
-			transcript.ParseLine(0, bytes.TrimSuffix(line, []byte("\n")), m)
+			// A copy: m outlives this scan, and the parser keeps the line it was given (the tree's raw record, #8407),
+			// which here would be the pooled buffer, holding another transcript's lines by the next look (#8440).
+			transcript.ParseLine(0, bytes.Clone(bytes.TrimSuffix(line, []byte("\n"))), m)
 		} else if !long {
 			m.ObserveModelFallback(bytes.TrimSuffix(line, []byte("\n")))
 		} else if refusalLine != nil {

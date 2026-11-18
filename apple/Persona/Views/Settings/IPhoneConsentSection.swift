@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Settings › Connectors › This iPhone › Control of This iPhone: this iPhone's own consent to be operated by the
-/// assistant through a computer it is paired with (the hub's extension iphone, docs/extensions/iphone.md). Shown only while
-/// the extension is on. The app finds itself among the iPhones the computers list by its model and iOS version; several
-/// alike, the user picks; none, there is no switch (fail-closed).
+/// This iPhone's own consent to be operated by the assistant through a computer it is paired with (the hub's extension
+/// iphone, docs/extensions/iphone.md), asked in the guided setup's last step (IPhoneSetupView, #8199). The app finds
+/// itself among the iPhones the computers list by its model and iOS version; several alike, the user picks; none, there
+/// is no switch (fail-closed).
 @Observable final class IPhoneConsentModel {
     struct Deps {
         /// The iPhones the computers reach; nil from a hub without the extension (the section stays hidden).
@@ -80,83 +80,6 @@ import SwiftUI
         } catch {
             self.error = error.localizedDescription
         }
-    }
-}
-
-/// The page it sits on loads `consent` (`.task(id: model.config)`): this view draws nothing until the hub says the
-/// extension is on, and a task on nothing never runs.
-struct IPhoneConsentSection: View {
-    @Environment(AppModel.self) private var model
-    var consent: IPhoneConsentModel
-    @State private var confirming = false
-
-    var body: some View {
-        Group {
-            if consent.shown {
-                Section {
-                    rows
-                } header: {
-                    Text("Control of This iPhone")
-                } footer: {
-                    Text("Through a computer it's paired with, the assistant can see this iPhone's screen, tap and type. Paying, sending, deleting and other sensitive steps ask you first. That computer must also be turned on, on its page.")
-                }
-            }
-        }
-        .alert(IPhoneConsentText.confirmTitle(consent.match), isPresented: $confirming) {
-            Button(String(localized: "Cancel"), role: .cancel) {}
-            Button(String(localized: "Allow [iPhone Consent]")) { Task { await consent.setAllowed(true); report() } }
-        } message: {
-            Text("It can see the screen, tap and type through a computer it's paired with. Sensitive steps still ask you first. You can turn this off here at any time.")
-        }
-    }
-
-    @ViewBuilder private var rows: some View {
-        switch consent.match {
-        case .this(let me, let alike):
-            Toggle(isOn: Binding(get: { me.consented }, set: { on in
-                if on { confirming = true } else { Task { await consent.setAllowed(false); report() } }
-            })) {
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text("Allow the Assistant to Operate This iPhone")
-                    Text(IPhoneConsentText.detail(me)).font(Theme.Font.label).foregroundStyle(.secondary)
-                }
-            }
-            .disabled(consent.saving)
-            .accessibilityIdentifier("iphone-consent")
-            if alike > 1 {
-                Button { consent.pick(nil) } label: {
-                    Text("Not This iPhone").lineLimit(1)
-                }
-                .accessibilityIdentifier("iphone-not-this")
-            }
-        case .choose(let alike):
-            Text("Several paired iPhones look like this one. Pick this iPhone.")
-                .font(Theme.Font.secondary).foregroundStyle(.secondary)
-            ForEach(alike) { d in
-                HStack(spacing: Theme.Space.m) {
-                    VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                        Text(d.device.name).lineLimit(1)
-                        Text(IPhoneConsentText.macs(d)).font(Theme.Font.label).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: Theme.Space.s)
-                    Button { consent.pick(d.id) } label: { Text("This One").lineLimit(1) }
-                        .themedButton()
-                        .accessibilityIdentifier("iphone-pick-\(d.id)")
-                }
-            }
-        case .none:
-            Label {
-                Text("This iPhone isn't paired with a computer that's online, so it can't be operated. Pair it on your computer's page, then come back.")
-                    .font(Theme.Font.secondary).foregroundStyle(.secondary)
-            } icon: {
-                ThemedIcon(Theme.Icon.phoneControl).foregroundStyle(.secondary)
-            }
-            .accessibilityIdentifier("iphone-consent-none")
-        }
-    }
-
-    private func report() {
-        if let e = consent.error { model.toast = Toast(String(localized: "Couldn't change it: \(e)"), style: .error) } else { Haptics.tap() }
     }
 }
 

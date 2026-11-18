@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Installs, upgrades and removals in steps (docs/protocol/protocol.md「Extension install, upgrade and uninstall progress」, #3307): what the hub
 /// pushes decodes (unknown states and steps kept), a hub with `extension_operations` previews in the background, waits
@@ -35,9 +36,10 @@ struct ExtensionOperationsTests {
      "permissions_digest":"d1","expires_at":"2099-01-01T00:00:00Z","market":"m1"}
     """#
 
-    private func store(_ hub: FakeHub, stepped: Bool) -> ExtensionOperations {
+    private func store(_ hub: FakeHub, stepped: Bool, defaultID: @escaping () -> String? = { nil },
+                       patience: TimeInterval = 15 * 60) -> ExtensionOperations {
         ExtensionOperations(deps: .init(api: { hub.client }, features: { stepped ? ["extension_operations"] : [] }, hub: { "fake" },
-                                        poll: .milliseconds(10)))
+                                        defaultID: defaultID, poll: .milliseconds(10), patience: patience))
     }
 
     private func decode(_ json: String) throws -> ExtensionOperation { try JSON.decoder.decode(ExtensionOperation.self, from: Data(json.utf8)) }
@@ -83,6 +85,87 @@ struct ExtensionOperationsTests {
         #expect(ops.operations.count == 2, "the same id from the default manager is another operation")
         #expect(ops.operation(for: "example-calendar")?.state == .succeeded)
         #expect(ops.operation(for: "example-calendar", manager: "m2")?.state == .running)
+    }
+
+    @Test func anExplicitDefaultPageFollowsAnUnscopedOperationPush() async throws {
+        let hub = FakeHub()
+        hub.on("GET", "/api/v1/plugins/-/operations", json: #"{"operations":["# + Self.op("running") + "]}")
+        hub.on("POST", "/api/v1/plugins/-/operations/op1/retry",
+               json: #"{"operation":"# + Self.op("running", id: "op2", updated: "2026-11-06T08:00:07Z") + "}")
+        hub.on("GET", "/api/v1/plugins/-/operations/op2", json: Self.op("succeeded", id: "op2", updated: "2026-11-06T08:00:08Z"))
+        let ops = store(hub, stepped: true)
+
+        await ops.reload(manager: "assistant")
+        #expect(hub.requests.last?.headers[APIClient.managerHeader] == "assistant", "the page keeps its intentional route")
+        #expect(ops.operation(for: "example-calendar", manager: "assistant")?.state == .running)
+        #expect(ops.operation(for: "example-calendar")?.state == .running)
+        #expect(ops.operations.count == 1, "the explicit default id is stored under the default key")
+
+        ops.received(try decode(Self.op("failed", updated: "2026-11-06T08:00:06Z", retryable: true)))
+        #expect(ops.operation(for: "example-calendar", manager: "assistant")?.state == .failed,
+                "a nil-tagged push updates the explicitly routed default page")
+        #expect(ops.operation(for: "example-calendar")?.state == .failed)
+        #expect(ops.operations.count == 1)
+
+        var other = try decode(Self.op("running", updated: "2026-11-06T08:00:07Z"))
+        other.manager = "work"
+        ops.received(other)
+        #expect(ops.operation(for: "example-calendar", manager: "work")?.state == .running)
+        #expect(ops.operation(for: "example-calendar", manager: "assistant")?.state == .failed,
+                "a non-default assistant stays separate")
+        #expect(ops.operations.count == 2)
+
+        let failed = try #require(ops.operation(for: "example-calendar", manager: "assistant"))
+        let end = try await ops.retry(failed)
+        #expect(end.state == .succeeded)
+        #expect(hub.sent("POST", "/api/v1/plugins/-/operations/op1/retry").first?.headers[APIClient.managerHeader] == "assistant",
+                "canonical storage does not remove Retry's request header")
+        #expect(hub.sent("GET", "/api/v1/plugins/-/operations/op2").first?.headers[APIClient.managerHeader] == "assistant",
+                "Follow keeps the explicitly routed default assistant too")
+        #expect(ops.operation(for: "example-calendar")?.id == "op2")
+        #expect(ops.operation(for: "example-calendar", manager: "work")?.state == .running)
+    }
+
+    @Test func aMovedDefaultPageFollowsItsCanonicalNilPush() async throws {
+        let hub = FakeHub()
+        hub.on("GET", "/api/v1/plugins/-/operations", json: #"{"operations":["# + Self.op("running") + "]}")
+        let ops = store(hub, stepped: true, defaultID: { "m-2" })
+
+        await ops.reload(manager: "m-2")
+        #expect(hub.requests.last?.headers[APIClient.managerHeader] == "m-2", "the page keeps its explicit route")
+        #expect(ops.operation(for: "example-calendar", manager: "m-2")?.state == .running)
+        #expect(ops.operation(for: "example-calendar")?.state == .running)
+        #expect(ops.operations.count == 1)
+
+        // AppModel has already canonicalized this m-2 push to nil before the store receives it.
+        var push = try decode(Self.op("succeeded", updated: "2026-11-06T08:00:06Z"))
+        push.manager = ManagerRoster.pushed(by: "m-2", defaultID: "m-2")
+        #expect(push.manager == nil)
+        ops.received(push)
+        #expect(ops.operation(for: "example-calendar", manager: "m-2")?.state == .succeeded)
+        #expect(ops.operation(for: "example-calendar")?.state == .succeeded)
+        #expect(ops.operations.count == 1, "the canonical nil push updates the explicitly reloaded default")
+    }
+
+    @Test func aDefaultChangeDuringFollowStillObservesTheTerminalState() async throws {
+        let hub = FakeHub()
+        var defaultID: String? = "assistant"
+        hub.on("POST", "/api/v1/plugins/-/catalog/preview", json: #"{"operation":"# + Self.op("running") + "}")
+        hub.on("GET", "/api/v1/plugins/-/operations/op1") { _ in
+            defaultID = "work"
+            return Data(Self.op("succeeded", updated: "2026-11-06T08:00:06Z").utf8)
+        }
+        let ops = store(hub, stepped: true, defaultID: { defaultID }, patience: 1)
+
+        let started = try await ops.startPreview(market: "m1", extension: "example-calendar", manager: "assistant")
+        let end = await ops.settled(started)
+
+        #expect(end.state == .succeeded)
+        #expect(end.manager == "assistant", "completion keeps the request's original manager")
+        #expect(ops.operation(for: "example-calendar", manager: "assistant")?.state == .succeeded)
+        let reads = hub.sent("GET", "/api/v1/plugins/-/operations/op1")
+        #expect(reads.count == 1, "the terminal reread completes without another polling burst")
+        #expect(reads.first?.headers[APIClient.managerHeader] == "assistant")
     }
 
     @Test func aSteppedInstallPreviewsWaitsForConsentAndGoesOn() async throws {
@@ -173,6 +256,52 @@ struct ExtensionOperationsTests {
         let old = FakeHub()
         await store(old, stepped: false).reload()
         #expect(old.requests.isEmpty)
+    }
+
+    /// A page of another assistant's extension reads that assistant's operations, asking it by name, and they replace
+    /// its own alone: its install waiting for consent is still there when the page opens again (no push comes for it),
+    /// and other assistants' operations (a failed removal's, the default's) are left as they were.
+    @Test func aPageReadsItsOwnAssistantsOperations() async throws {
+        let hub = FakeHub()
+        hub.on("GET", "/api/v1/plugins/-/operations", json: #"{"operations":["# + Self.op("needs_consent", step: "consent") + "]}")
+        let ops = store(hub, stepped: true)
+        // "work"'s install waiting for consent, as starting it from that assistant's market leaves it; "home"'s failed
+        // removal; the default's download.
+        var waiting = try decode(Self.op("needs_consent", step: "consent"))
+        waiting.manager = "work"
+        ops.received(waiting)
+        var failed = try decode(Self.op("failed", id: "op5"))
+        failed.manager = "home"
+        ops.received(failed)
+        ops.received(try decode(Self.op("running", step: "download", id: "op9")))
+
+        await ops.reload(manager: "work")
+        #expect(hub.requests.map { $0.headers[APIClient.managerHeader] } == ["work"])
+        #expect(ops.operation(for: "example-calendar", manager: "work")?.state == .needsConsent, "its install waiting for consent stays")
+        #expect(ops.operation(for: "example-calendar", manager: "home")?.id == "op5", "another assistant's stays")
+        #expect(ops.operation(for: "example-calendar")?.id == "op9", "the default's stays")
+        await ops.reload(manager: "work")
+        #expect(ops.operation(for: "example-calendar", manager: "work")?.state == .needsConsent, "read again, still there")
+        #expect(ops.operation(for: "example-calendar", manager: "home")?.state == .failed)
+
+        // The default's list (the connection back) replaces the default's alone.
+        await ops.reload()
+        #expect(hub.requests.last?.headers[APIClient.managerHeader] == nil)
+        #expect(ops.operation(for: "example-calendar")?.id == "op1")
+        #expect(ops.operation(for: "example-calendar", manager: "work") != nil && ops.operation(for: "example-calendar", manager: "home") != nil)
+    }
+
+    /// The market's page reads its assistant's operations the same way.
+    @Test func theMarketPageReadsItsAssistantsOperations() async throws {
+        let hub = FakeHub()
+        hub.on("GET", "/api/v1/plugins/-/operations", json: #"{"operations":["# + Self.op("needs_consent", step: "consent") + "]}")
+        let ops = store(hub, stepped: true)
+        ops.received(try decode(Self.op("running", step: "download", id: "op9")))
+        let page = MarketExtensionModel(market: "m1", id: "example-calendar", deps: .init(api: { hub.client.showing("work") }), operations: ops)
+        await page.loadOperations()
+        #expect(hub.requests.map { $0.headers[APIClient.managerHeader] } == ["work"])
+        #expect(page.operation?.state == .needsConsent && page.operation?.manager == "work")
+        #expect(ops.operation(for: "example-calendar")?.id == "op9", "the default's stays")
     }
 
     @Test func retryGoesBackToTheHubWhenItCan() async throws {

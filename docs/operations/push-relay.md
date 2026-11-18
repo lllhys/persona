@@ -3,7 +3,7 @@
 A self-hosted hub doesn't have the APNs key of the Apple Team that owns the App, so it can't send pushes. The push relay is a `personad relay` run by the App's publisher:
 it holds the APNs key and hands pushes to APNs on behalf of every hub. The hub encrypts the notification content with the phone's public key, the relay only forwards ciphertext,
 and the phone decrypts it in the Notification Service Extension before showing it. A hub that has its own APNs key (`~/.persona/apns.json`) keeps talking to APNs directly and never goes through the relay.
-The Mac version works the same way: its Notification Service Extension target is `PersonaMacNotify` (product `PersonaNotify.appex`; the module and principal notification class still use `PersonaNotify`, `docs/apple/mac.md` ("Remote push (Mac)"), #432), and the private key lives in the data protection keychain, shared with the extension. Apple Vision Pro builds the same extension as `PersonaVisionNotify` (#1981, `docs/apple/vision.md`).
+The retired native Mac version worked the same way: its Notification Service Extension target was `PersonaMacNotify` (product `PersonaNotify.appex`; the module and principal notification class still use `PersonaNotify`, #432), and the private key lived in the data protection keychain, shared with the extension. The Electron desktop posts local notifications through its web bridge rather than that retired target. Apple Vision Pro builds the same extension as `PersonaVisionNotify` (#1981, `docs/apple/vision.md`).
 
 ```
 hub ──(HPKE ciphertext + grant)──▶ relay ──(APNs key)──▶ APNs ──▶ phone: Notification Service Extension decrypts → shows
@@ -44,10 +44,23 @@ The relay builds the APNs `aps` itself. The hub can only provide ciphertext and 
 | `alert` | `{"aps":{"alert":{"title":"Persona","body":"有新消息"},"mutable-content":1,"sound":"default"},"e":"<ciphertext>"}` (`有新消息` = "New message"), push type `alert` |
 | `background` | `{"aps":{"content-available":1},"e":"<ciphertext>"}`, push type `background`, priority 5 |
 | `liveactivity` | The `aps` given by the hub (only keys used by Live Activities are allowed), push type `liveactivity`, topic with `.push-type.liveactivity` appended |
+| `voip` | `{"e":"<ciphertext>"}` with no `aps`, push type `voip`, priority 10, topic `<bundle id>.voip`, `apns-expiration` now + `ttl` (default 30 s, at most 60 s). Only with a VoIP grant ("VoIP pushes" below) |
 
 - "New message" is the fallback: it's shown when the extension fails to decrypt, times out, the device hasn't been unlocked since boot (private key unreadable), or the ciphertext has expired. **It never falls back to plaintext.**
 - The fallback always rings. Once the extension opens the push, the sealed `aps` decides the sound as well: one without `sound` (`personad notify --silent`, `"silent": true`, a push hushed by quiet hours) arrives quiet, the same as with direct APNs (`PushCrypto.apply`).
 - The hub SHA-256 hashes `collapse_id` before giving it to the relay (for a card the original value is `card:` and a hash of the manager and the id, or the interaction id for a built-in assistant's card whose id fits APNs' 64 bytes).
+
+### VoIP pushes (urgent calls)
+
+An urgent call rings the phone through PushKit. PushKit hands the payload straight to the App, with no Notification Service Extension, and iOS ends an App that does not report a call for it at once.
+So a `voip` push carries only the ciphertext; the App opens it with the same key and names the call from it. One it cannot open (no key yet, garbage, an `iat` past the push's lifetime) is still reported, as "Persona", and ended at once, so a relay that replays an old call cannot ring the phone for long. The relay never writes a call's text.
+
+- **A separate token and grant**: PushKit gives the App its own device token. The App registers it with topic `<bundle id>.voip` and gets a VoIP grant. The relay serves that topic when the bundle id is in `topics`, so `relay.json` needs no change.
+  A VoIP grant carries only `voip` pushes, and `voip` needs a VoIP grant (400 otherwise): APNs would refuse the mix anyway.
+- **Short life**: `apns-expiration` is at most a minute away, so a phone that was offline does not ring later for a call that is over.
+- **Few**: 6 calls per VoIP token at once, then one every 5 minutes (429 "too many calls"), apart from the notification budget. The hub's own limit is a few calls a day.
+- **An older relay** answers 403 to the VoIP registration and 400 to a `voip` push; `GET /relay/v1/health` lists `push_types` on a relay that knows `voip`. The App then reports that this phone cannot take calls, and the hub falls back to a time-sensitive notification.
+- The same `.p8` token key sends VoIP pushes; no new key or certificate. The App needs the `voip` background mode.
 
 ### Live Activities are plaintext
 
@@ -62,7 +75,7 @@ Ordinary notifications, ask_user, Agent completion, and silent wakes are all cip
   under the relay's own key (`secret_path`). The relay keeps no state; it learns the recipient by opening the grant. The phone hands the grant to its own hub,
   and the hub sends `Authorization: Bearer <grant>` with each push. A missing grant, a tampered grant, or a topic not on the relay's allowed list all get 401 / 403.
 - **Only its own App**: the topic in the grant must be in `topics` in `relay.json` (the App's bundle id); the relay doesn't push for other Apps.
-- **Rate limits**: 120 per device per minute (burst 30); registration 20 per source IP per minute. Request body at most 8 KB, ciphertext at most 3800 base64 characters
+- **Rate limits**: 120 per device per minute (burst 30), plus the VoIP budget above for `voip`; registration 20 per source IP per minute. Request body at most 8 KB, ciphertext at most 3800 base64 characters
   (with the outer layer, within APNs's 4 KB). Before encrypting, the hub truncates titles / bodies that don't fit (the full content is in the App). A question's structured `ask` is dropped whole if it still cannot fit; its question and option labels are never clipped ([protocol](../protocol/protocol.md#answering-a-question-from-its-notification)).
 - **Revocation**: when APNs reports 410 / `BadDeviceToken` / `Unregistered`, the relay returns 410 and the hub deletes the device (same as direct). It only deletes if the device's current registration still has this token; if the App registered a new token before the answer came back (relay retries and grant renewal take several seconds), the new registration and its notification settings are kept.
   To invalidate all grants, replace the relay's `secret_path`: when the hub gets a 401 on push, it re-registers once with the device token it remembers, gets a new grant, and pushes again, without waiting for the phone.
@@ -77,22 +90,23 @@ Ordinary notifications, ask_user, Agent completion, and silent wakes are all cip
 Relay (`personad relay`, config `~/.persona/relay.json`):
 
 ```
-POST /relay/v1/register   {"apns_token":"<hex>","env":"production|sandbox","topic":"<bundle id>"}
+POST /relay/v1/register   {"apns_token":"<hex>","env":"production|sandbox","topic":"<bundle id>|<bundle id>.voip"}
                           → {"grant":"<base64url>"}
 POST /relay/v1/push       Authorization: Bearer <grant>
-                          {"type":"alert|background|liveactivity","priority":"10|5","collapse_id":"<hex>",
-                           "sealed":"<base64>",                      // alert / background
+                          {"type":"alert|background|liveactivity|voip","priority":"10|5","collapse_id":"<hex>",
+                           "sealed":"<base64>",                      // alert / background / voip
+                           "ttl":30,                                 // voip: seconds APNs keeps trying (1-60)
                            "token":"<hex>","aps":{…}}                // liveactivity: the activity's or push-to-start token
                           → 200 {"ok":true} | 410 {"reason":"Unregistered"}
                             | 422 {"error":"apns <status>","reason":"…"}  // APNs rejected it for good: not retried
                             | 502 {"error":"…"}                          // APNs 429/5xx or unreachable: retried
                             | other 4xx {"error":"…"}                    // the relay's own refusal
-GET  /relay/v1/health     → {"ok":true,"apns":true}
+GET  /relay/v1/health     → {"ok":true,"apns":true,"push_types":["alert","background","liveactivity","voip"]}
 ```
 
 The relay address must be `https` (the hub also only accepts `https`, or `http` to a local loopback address for end-to-end scripts): grants and Live Activity content must not cross the network in plaintext.
 
-hub: `POST /api/v1/devices` gains three fields: `push_key` (the phone's public key, base64 of the X9.63 uncompressed point), `relay_url`, `relay_grant`.
+hub: `POST /api/v1/devices` gains three fields: `push_key` (the phone's public key, base64 of the X9.63 uncompressed point), `relay_url`, `relay_grant`. For urgent calls three more: `voip_token` (the PushKit token), `voip_grant` (the relay's grant for it, topic `<bundle id>.voip`) and `voip_error` (why the phone got none, in its words); the answer's `call` says whether a ring can reach the phone. A ring (`call.ring`, `../protocol/protocol.md` "Bus") goes through the relay with `voip_grant`, renewed once with the PushKit token on a 401; when APNs calls the PushKit token dead, the hub forgets only that token and the phone keeps its other pushes.
 
 hub routing (`push.go`): with `apns.json` → direct (exactly as before); without → via the relay if the device sent `relay_url` + `relay_grant` + `push_key`; otherwise no push.
 
@@ -107,6 +121,7 @@ lost alerts and Live Activity updates. Live Activity pushes carry `aps.timestamp
   report `apns_token`, `push_key`, `relay_url`, `relay_grant` together to the hub.
 - Notification Service Extension `PersonaNotify`: if `e` is present, decrypt it and swap in the title / subtitle / body / category (the notification's buttons) / thread / interruption level / userInfo;
   without `e` (direct pushes never carry `mutable-content`, so the extension isn't invoked) the notification is shown as-is.
+- Urgent calls (`../assistant/urgent-call.md`): only while the owner has them on, the App registers with PushKit, gets a grant for that token with topic `<bundle id>.voip` (cached apart from the notifications' grant) and reports `voip_token` / `voip_grant` / `voip_error` with its other fields; turning calls off unregisters and reports none. A VoIP push is opened in the App process with the same key and reported as a LiveCommunicationKit call at once.
 - Silent pushes (`background`) are decrypted in the App process; `persona_wake` wakes the connection as before, and `resolved_interaction_ids` removes the notifications of cards that are over (#4349, only to apps that registered with `features: ["withdraw"]`).
 - MCP forms and links (`INTERACTION_ELICITATION`, no buttons) are pushed only to apps that registered with `features: ["elicitation"]`, sealed like any other alert. Their alert carries neither the link to open nor a form's values ([protocol.md](../protocol/protocol.md) "MCP elicitation", #2433).
 
@@ -130,6 +145,7 @@ Now every side says which way pushes take and, when none, why:
   | `direct` / `relay` | `push_failed` | The way is there, but the last push to the device's token did not go (`detail`: APNs' or the relay's answer, or the hub's own reason when it did not send the push: `seal: …` for a relay push it could not seal, `push of N bytes is over APNs' 4096-byte limit` for a direct push too long even shortened). In memory, until a push goes or the device registers a new token / relay. A Live Activity push goes to the activity's own token: its answer neither sets nor clears this |
 
   `GET /api/v1/auth/tokens` adds `push` (credential id → the way of the device it registered last) for **Settings › Devices**; `GET /api/v1/devices/push` lists every device (`personad hub doctor` prints it under "推送").
+- **App, later** (#1859): the way the registration answered is kept from launch or pairing, so a `push_failed` that came later (or went away) showed in Settings › Devices but not in Settings › Notifications. Settings › Notifications now reads `push[current]` from `GET /api/v1/auth/tokens` each time it opens and when the App comes back while it is open (`PushRegistrar.refreshRoute`): no entry for this credential means no push registration from it at that hub; a hub that sends no `push` leaves what is known. When that read or the registration's `POST /api/v1/devices` fails, the page says "Unknown · Couldn't check with the hub (…)" until the next read, instead of an older way as if current.
 
 ## Connections
 

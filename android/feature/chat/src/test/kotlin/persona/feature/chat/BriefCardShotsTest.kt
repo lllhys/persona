@@ -46,6 +46,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import persona.core.contracts.BriefSetupPage
 import persona.core.contracts.FeedItem
 import persona.core.contracts.FeedResponse
 import persona.core.contracts.JsonCodec
@@ -185,10 +186,112 @@ class BriefCardShotsTest {
             rule.onNodeWithText("Run the future stage").assertIsDisplayed()
             rule.onNodeWithText("future-stage").assertIsDisplayed()
             rule.onAllNodes(isHeading()).assertCountEquals(5)
+            // every other briefing, and an older hub: no recommended setup
+            rule.onAllNodesWithTag("brief-setup").assertCountEquals(0)
             val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
             if (!d) light[s] = bitmap.copy(Bitmap.Config.ARGB_8888, false)
             else assertFalse("Light and dark must differ for $s", light.getValue(s).sameAs(bitmap))
             File(output, "brief-${s.name.lowercase()}-${if (d) "dark" else "light"}.png").outputStream()
+                .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+    }
+
+    /** A week's first briefing: three mechanisms this app has a page for, one a newer hub names. */
+    private fun setupBrief(): FeedItem {
+        val body = (brief().body as JsonObject) + ("setup" to JsonCodec.parseToJsonElement("""[
+            {"id":"triage_decide","setting":"agents.triage.decide","count":4,"text":"Card for decisions would have asked you about 4 stops instead of leaving them idle. It costs one triage call per stop. Turn it on in Session triage."},
+            {"id":"standing_authorizations","count":3,"text":"A standing authorization would have answered 3 merge approvals. Add one in Persona's settings in the web app."},
+            {"id":"supervisor_tier","setting":"assistant.supervise","count":12,"text":"The background supervisor's 12 reviews of the last 30 days held on its model; its provider has a lower tier."},
+            {"id":"future_mechanism","count":1,"text":"Something a newer hub recommends."}]"""))
+        return brief().copy(body = JsonObject(body))
+    }
+
+    /**
+     * The first briefing of a week (#5085): the hub's recommended-setup lines as they came, each with Open settings only
+     * when its mechanism has a page in this app (session triage, standing authorizations, the supervisor's model);
+     * opening one calls nothing on the hub.
+     */
+    @Test fun theWeeksRecommendedSetupOpensOnlyThePagesThisAppHas() {
+        val api = Api(setupBrief())
+        val opened = mutableListOf<BriefSetupPage>()
+        val store = TasksStore(api, Connection(), scope)
+        store.reloadTodos()
+        store.load("main")
+        val host = AssistantTaskHost(store, "main", emptyList(), { it }, {}, { throw it }, {}, manager = "brief-owner", onOpenSetup = opened::add)
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(style = style, darkTheme = dark, reduceMotion = true) {
+                val feeds by host.tasks.feeds.collectAsStateWithLifecycle()
+                Column(Modifier.testTag("shot").width(400.dp).background(PersonaTheme.palette.background).padding(Tokens.Space.l)) {
+                    feeds["main"].orEmpty().forEach { AssistantExtraLine(AssistantExtra.Feed(it), host) }
+                }
+            }
+        }
+        // under the reports folder, which CI uploads: the only pictures of this section from a machine without an emulator
+        val output = File("build/reports/tests/brief-setup-shots").also { it.mkdirs() }
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            Snapshot.sendApplyNotifications()
+            rule.waitForIdle()
+            rule.onNodeWithText("Recommended setup").assertIsDisplayed()
+            rule.onNodeWithText("Nothing was changed", substring = true).assertIsDisplayed()
+            rule.onAllNodes(isHeading()).assertCountEquals(6)
+            for (id in listOf("triage_decide", "standing_authorizations", "supervisor_tier", "future_mechanism")) {
+                rule.onNodeWithTag("brief-setup-$id").assertIsDisplayed()
+            }
+            rule.onNodeWithText("Something a newer hub recommends.").assertIsDisplayed()
+            rule.onAllNodesWithText("Open settings").assertCountEquals(3)
+            setupButtonsSitUnderTheirLines()
+            rule.onAllNodesWithTag("brief-setup-open-future_mechanism").assertCountEquals(0)
+            val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+            File(output, "brief-setup-${s.name.lowercase()}-${if (d) "dark" else "light"}.png").outputStream()
+                .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        rule.onNodeWithTag("brief-setup-open-triage_decide").performClick()
+        rule.onNodeWithTag("brief-setup-open-standing_authorizations").performClick()
+        rule.onNodeWithTag("brief-setup-open-supervisor_tier").performClick()
+        assertEquals(listOf(BriefSetupPage.SessionTriage, BriefSetupPage.StandingAuthorizations, BriefSetupPage.SupervisorModel), opened)
+        // read-only: nothing was accepted, completed, handled or otherwise sent
+        assertTrue(api.accepted.isEmpty() && api.completed.isEmpty() && api.handled.isEmpty() && api.managers.isEmpty())
+    }
+
+    /** A setup line keeps the card's width with its button under it, as the card's other rows: never a narrow column beside it. */
+    private fun setupButtonsSitUnderTheirLines() {
+        for (id in listOf("triage_decide", "standing_authorizations", "supervisor_tier")) {
+            val text = rule.onNodeWithTag("brief-setup-$id").getUnclippedBoundsInRoot()
+            val button = rule.onNodeWithTag("brief-setup-open-$id").assertIsDisplayed().getUnclippedBoundsInRoot()
+            assertTrue("Open settings must sit under the line of $id", button.top >= text.bottom)
+            assertTrue("Open settings must not take width from the line of $id", button.left < text.right)
+        }
+    }
+
+    @Test
+    @Config(sdk = [35], qualifiers = "en-w400dp-h4800dp-xhdpi", fontScale = 2f)
+    fun largestTextKeepsASetupLineAtTheCardsWidthInEveryStyle() {
+        val store = TasksStore(Api(setupBrief()), Connection(), scope)
+        store.reloadTodos()
+        store.load("main")
+        val host = AssistantTaskHost(store, "main", emptyList(), { it }, {}, { throw it }, {}, manager = "brief-owner", onOpenSetup = {})
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(style = style, darkTheme = dark, reduceMotion = true) {
+                val feeds by host.tasks.feeds.collectAsStateWithLifecycle()
+                Column(Modifier.testTag("shot").width(400.dp).background(PersonaTheme.palette.background).padding(Tokens.Space.l)) {
+                    feeds["main"].orEmpty().forEach { AssistantExtraLine(AssistantExtra.Feed(it), host) }
+                }
+            }
+        }
+        // under the reports folder, which CI uploads: the only pictures of this section from a machine without an emulator
+        val output = File("build/reports/tests/brief-setup-shots").also { it.mkdirs() }
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d
+            Snapshot.sendApplyNotifications()
+            rule.waitForIdle()
+            setupButtonsSitUnderTheirLines()
+            val bitmap = rule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+            File(output, "brief-setup-large-${s.name.lowercase()}-${if (d) "dark" else "light"}.png").outputStream()
                 .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         }
     }

@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/nwverse/persona/server/internal/nodeproto"
 )
 
 func termClient(h *Hub, role string) *client {
@@ -97,6 +99,8 @@ func TestPaneScreenReadsNeedAFullDevice(t *testing.T) {
 	}
 }
 
+// A full device's; cwd (#5832) only to a node with pane_cwd and new_space (#6362) only to one with pane_new_space,
+// else node_outdated before the node is asked.
 func TestNewShellIsAFullDevicesAndNamesNoDirectory(t *testing.T) {
 	tn := newTermNode(t)
 	h := tn.hub
@@ -119,6 +123,18 @@ func TestNewShellIsAFullDevicesAndNamesNoDirectory(t *testing.T) {
 	}
 	if got := tn.await(t, 1); len(got) != 1 || got[0] != "panes.new" {
 		t.Errorf("node log = %q", got)
+	}
+	m.mu.Lock()
+	m.info.Protocol, m.info.Capabilities = 1, nil // a node from before pane_cwd
+	m.mu.Unlock()
+	if code := post(roleFull, `{"workspace_id":"w1","cwd":"~/proj"}`); code != http.StatusConflict {
+		t.Errorf("cwd to an old node: %d, want 409", code)
+	}
+	m.mu.Lock()
+	m.info.Protocol, m.info.Capabilities = 1, []string{nodeproto.PaneCwd} // has pane_cwd, not pane_new_space (#6362)
+	m.mu.Unlock()
+	if code := post(roleFull, `{"kind":"herdr","cwd":"~","new_space":true}`); code != http.StatusConflict {
+		t.Errorf("new_space to a node without pane_new_space: %d, want 409", code)
 	}
 }
 
@@ -177,6 +193,24 @@ func TestNodeActionsAreMountedOnTheHTTPRouter(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Errorf("mounted route %s: HTTP %d", path, w.Code)
 		}
+	}
+}
+
+func TestHerdrWorkspaceCloseModeIsForwardedAsAStrictBoolean(t *testing.T) {
+	tn := newTermNode(t)
+	if code := postAction(tn.hub, roleFull, "worktree/delete", `{"workspace_id":"w1","kind":"herdr","preview":true,"close_only":true}`); code != http.StatusOK {
+		t.Fatal(code)
+	}
+	tn.await(t, 1)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(tn.args["worktree.delete"]), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["close_only"] != true || got["kind"] != "herdr" {
+		t.Fatal(got)
+	}
+	if code := postAction(tn.hub, roleFull, "worktree/delete", `{"workspace_id":"w1","kind":"herdr","preview":true,"close_only":"true"}`); code != http.StatusBadRequest {
+		t.Fatal(code)
 	}
 }
 
@@ -255,6 +289,14 @@ func TestNodeActionsPassOnlyTheirFields(t *testing.T) {
 	}
 }
 
+// Removing a closed Agent's worktree on a runtime engine waits for the runtime's archive as deleting one does (the
+// node gives both 145 s): the hub gives the user's request as long, not an answer of its own first (#8135).
+func TestWorktreeRemoveWaitsAsLongAsDelete(t *testing.T) {
+	if remove, del := nodeActions["worktree/remove"].timeout, nodeActions["worktree/delete"].timeout; remove < del {
+		t.Fatalf("worktree/remove %s, worktree/delete %s", remove, del)
+	}
+}
+
 // Not on the lists of what an answer-only device may call, and credentials-only in the extension scopes.
 func TestNodeActionRoutesAreFullCredentialsOnly(t *testing.T) {
 	data, err := os.ReadFile("testdata/route_scopes.txt")
@@ -288,7 +330,8 @@ func TestWorktreeCreatePassesOnlyItsFields(t *testing.T) {
 	tn.mu.Lock()
 	got := tn.args["worktree.create"]
 	tn.mu.Unlock()
-	if got != `{"branch":"feat/x","kind":"herdr","path":"/tmp/wt/feat-x","workspace_id":"w1"}` {
+	// and the language its refusals are written in: the user's, the request naming none (nodeAction)
+	if got != `{"branch":"feat/x","kind":"herdr","locale":"zh-Hans","path":"/tmp/wt/feat-x","workspace_id":"w1"}` {
 		t.Errorf("the node was sent %s", got)
 	}
 	for _, role := range []string{roleAnswer, roleLink, roleExtension} {
@@ -301,6 +344,44 @@ func TestWorktreeCreatePassesOnlyItsFields(t *testing.T) {
 	}
 	if got := tn.await(t, 1); len(got) != 1 {
 		t.Errorf("a refused request reached the node: %q", got)
+	}
+}
+
+// The node writes its worktree refusals in the request's language: the locale the client sent, else its
+// Accept-Language; only to the actions that take one (a new agent's worktree among them).
+func TestNodeActionsSendTheRequestsLanguage(t *testing.T) {
+	tn := newTermNode(t)
+	post := func(path, body, accept string) map[string]any {
+		t.Helper()
+		r := httptest.NewRequest("POST", "/api/v1/machines/m1/"+path, strings.NewReader(body))
+		r.SetPathValue("mid", "m1")
+		if accept != "" {
+			r.Header.Set("Accept-Language", accept)
+		}
+		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, principal{Role: roleFull, ID: "dev"}))
+		w := httptest.NewRecorder()
+		tn.hub.nodeAction(nodeActions[path])(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s = %d", path, w.Code)
+		}
+		tn.await(t, 1)
+		tn.mu.Lock()
+		raw := tn.args[nodeActions[path].method]
+		tn.mu.Unlock()
+		got := map[string]any{}
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := post("worktree/add", `{"cwd":"/tmp/proj","kind":"paseo"}`, "ja-JP,ja;q=0.9"); got["locale"] != "ja" || got["kind"] != "paseo" {
+		t.Errorf("add: %v", got)
+	}
+	if got := post("worktree/create", `{"workspace_id":"w1","branch":"x","path":"/tmp/wt/x","locale":"en"}`, "ja"); got["locale"] != "en" {
+		t.Errorf("the client's own locale: %v", got)
+	}
+	if got := post("worktree/status", `{"cwd":"/tmp/proj"}`, "ja"); got["locale"] != nil {
+		t.Errorf("an action that takes no language was sent one: %v", got)
 	}
 }
 
@@ -329,7 +410,7 @@ func TestAutomaticWorktreeCreateRequiresABooleanFlagAndFullCredentials(t *testin
 	tn.mu.Lock()
 	got := tn.args["worktree.create"]
 	tn.mu.Unlock()
-	if got != `{"auto_name":true,"kind":"orca","parent_workspace_id":"folder","workspace_id":"w1"}` {
+	if got != `{"auto_name":true,"kind":"orca","locale":"zh-Hans","parent_workspace_id":"folder","workspace_id":"w1"}` {
 		t.Fatalf("automatic create fields: %s", got)
 	}
 }

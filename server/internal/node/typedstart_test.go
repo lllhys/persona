@@ -158,8 +158,9 @@ func TestStartFileInRealShells(t *testing.T) {
 					t.Errorf("%s (%s): start file left behind", sh.name, l)
 				}
 			}
-			// A launcher the shell does not have: its not-found line, prefixed with the file's path, is still read as one
-			// (startProbe, shellmiss.go), with the pane's shell left to the probe.
+			// A launcher the shell does not have: its not-found line, prefixed with the file's path or the shell's name and
+			// worded in the language the shell picks (bash follows the system language on a Mac without LANG), ends the
+			// start (startProbe, shellmiss.go).
 			cmd := n.agentCommand(n.claudeCommandLine(claudeLaunch{Launcher: "nosuch"}, "--session-id "+startID, shellQuote), shellQuote, bin)
 			file, err := writeStartScript(dir, cmd)
 			if err != nil {
@@ -168,14 +169,11 @@ func TestStartFileInRealShells(t *testing.T) {
 			c := exec.Command(bin, "-ic", startLine(file, startID, bin))
 			c.Env = []string{"HOME=" + home, "ZDOTDIR=" + home, "PATH=" + path + ":/usr/bin:/bin"}
 			out, _ := c.CombinedOutput()
-			var miss shellMiss
-			for _, l := range strings.Split(string(out), "\n") {
-				if m, ok := parseShellMiss(l); ok {
-					miss = m
-				}
-			}
-			if miss.Word != "nosuch" || miss.Kind != missNotFound || miss.Shell != "" && miss.Shell != sh.name {
-				t.Errorf("%s: not-found line %+v in %q", sh.name, miss, out)
+			probe := &startProbe{anchor: startID, program: "nosuch", launcher: "nosuch", startFile: file, firstWord: "."}
+			refused, _ := probe.verdict(startLine(file, startID, bin)+"\n"+string(out), func() bool { return true })
+			var re *rpc.Error
+			if !errors.As(refused, &re) || re.Code != proto.CodeLauncherMissing || !strings.Contains(string(re.Data), `"missing":"nosuch"`) {
+				t.Errorf("%s: start refused %v for %q", sh.name, refused, out)
 			}
 		})
 	}

@@ -34,6 +34,7 @@
   "waiting_auth": "Waiting for you to authorize on {name}…",
   "open_to_enter_code": "Open {name} to enter code",
   "qr_label": "Sign-in QR code",
+  "scan_to_authorize": "Scan with your phone and confirm; this continues by itself. Or open the link on this computer.",
   "bind_in_channels": "You can also link it in Settings › Channels › {name}.",
   "verifying": "Verifying…",
   "next": "Next",

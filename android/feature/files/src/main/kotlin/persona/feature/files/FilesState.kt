@@ -4,6 +4,7 @@ import persona.core.contracts.api.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -355,6 +356,48 @@ class FilesController(
             catch (error: Exception) {
                 if (generation == previewGeneration) mutable.update { it.copy(previewError = describe(error)) }
             }
+        }
+    }
+
+    /** Whether this machine's hub renames and trashes (`file_edit`): a row's menu offers Rename and Move to Trash then. */
+    val editsFiles: Boolean get() = api.editsFiles(machineId)
+
+    /**
+     * Renames [path] to [name] in its folder (`files/rename`), then reads the folder shown again (iOS `FolderEdits.rename`).
+     * A name the machine can't take is said without asking it; the same name sends nothing.
+     */
+    internal fun rename(path: String, name: String, report: (FileEdit) -> Unit) {
+        val wanted = name.trim()
+        nameProblem(wanted)?.let { report(FileEdit.Invalid(it)); return }
+        if (wanted == FilesPaths.name(path)) return
+        edit(wanted, restoring = false, report) { api.rename(machineId, cwd, path, wanted); FileEdit.Renamed }
+    }
+
+    /** Moves [paths] to the machine's trash (`files/trash`), then reads the folder again; the report carries Undo's ids. */
+    internal fun trash(paths: List<String>, report: (FileEdit) -> Unit) {
+        if (paths.isEmpty()) return
+        edit(null, restoring = false, report) { FileEdit.Trashed(paths, api.trash(machineId, cwd, paths).map { it.trashId }) }
+    }
+
+    /** Undo: puts back what [trash] took (`files/restore`), then reads the folder again. [name] is what a 409 `exists` names. */
+    internal fun restore(trashIds: List<String>, name: String, report: (FileEdit) -> Unit) {
+        if (trashIds.isEmpty()) return
+        edit(name, restoring = true, report) { api.restore(machineId, trashIds); FileEdit.Restored }
+    }
+
+    /**
+     * Where changes run: on the page's dispatcher but not in its job, so one runs to its end when the page closes
+     * meanwhile. The machine may already have done it, and the window's toast still says so, with Undo, as iOS's task does.
+     */
+    private val edits = CoroutineScope(scope.coroutineContext.minusKey(Job) + SupervisorJob())
+
+    /** Runs a change in [edits], reads the folder again when it happened, and reports it. */
+    private fun edit(name: String?, restoring: Boolean, report: (FileEdit) -> Unit, work: suspend () -> FileEdit) {
+        edits.launch {
+            val result = try { work() } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { FileEdit.Failed(editRefusal(error, name), restoring) }
+            if (result !is FileEdit.Failed) directory()
+            report(result)
         }
     }
 

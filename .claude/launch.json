@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "editable-mock-hub",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": ["PORT=18760", "MOCK_EDITABLE=1", "python3", "-I", "scripts/mock/mock_hub.py"],
+      "port": 18760
+    },
+    {
+      "name": "editable-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "web", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}

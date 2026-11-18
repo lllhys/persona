@@ -14,6 +14,7 @@ settleRosterDefault();
 const place: UIPlace = { extension: "example-chat", extension_name: "Example Chat", id: "event", title: "事件", placement: "inbox_item", size: "full", connector: "examplechat" };
 vi.mock("../../lib/extension-slots", () => ({ useInboxItemPlace: (source?: string) => (source === "examplechat" ? place : undefined) }));
 vi.mock("../../lib/translate", () => ({ useTranslatePrefs: () => ({ enabled: false }), hubTranslation: () => undefined }));
+vi.mock("./LarkThread", () => ({ LarkThread: () => <div data-chat-body>chat body</div>, chatOfItem: () => ({}) }));
 
 const item = (over: Partial<InboxItem>): InboxItem => ({
   id: "examplechat:1", source: "examplechat", kind: "dm", account: "examplechat", account_name: "Example Chat", title: "周会", preview: "周四下午可以吗",
@@ -31,10 +32,26 @@ describe("收件箱：扩展画的详情（inbox_item）", () => {
     // a chat's Pin works on the chat the own body draws: not there under the extension's page
     expect(renderToStaticMarkup(<InboxDetail item={item({ lark: { feed_id: "f1", is_group: false } })} loaded />)).not.toContain("Pin 消息");
   });
+  it("keeps a chat original collapsed and unmounted even when the extension offers a page", () => {
+    const html = renderToStaticMarkup(<InboxDetail item={item({ lark: { feed_id: "f1", is_group: false }, chain: [{ id: "c1", kind: "received", text: "New message" }] })} loaded />);
+    expect(html).not.toContain('data-event-body="embedded"');
+    expect(html).not.toContain("data-chat-body");
+    expect(html).not.toContain("Pin 消息");
+    expect(html).toContain('data-testid="inbox-original-toggle"');
+    expect(html).toContain('data-testid="inbox-original-row-toggle"');
+    expect(html).not.toContain("data-extension-inbox");
+  });
   it("keeps the own detail for a source without one", () => {
     const html = renderToStaticMarkup(<InboxDetail item={item({ id: "x:1", source: "telegramx" })} loaded />);
     expect(html).not.toContain("data-extension-inbox");
     expect(html).toContain("周四下午可以吗");
+  });
+  it("offers Same matter as on open and done items without eagerly loading the picker", () => {
+    for (const current of [item({}), item({ done_at: "2026-01-01T00:00:00Z", done_by: "user" })]) {
+      const html = renderToStaticMarkup(<InboxDetail item={current} loaded />);
+      expect(html).toContain('aria-label="是同一件事…"');
+      expect(html).not.toContain("搜索标题和位置");
+    }
   });
   it("falls back quietly when refused or there is nothing to draw, with why when the extension fails", () => {
     expect(fallbackOf(new ApiError(403, "这一条不是这个扩展的连接器收进来的", { code: "forbidden" }))).toEqual({ quiet: true });

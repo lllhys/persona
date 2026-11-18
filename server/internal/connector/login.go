@@ -38,7 +38,8 @@ type Prompt struct {
 	URL      string `json:"url,omitempty"`
 	UserCode string `json:"user_code,omitempty"`
 	Interval int    `json:"interval,omitempty"`
-	// QR is URL's QR code for PromptQRCode: the hub fills it in on the way to the app (a connector leaves it out).
+	// QR is URL's QR code for PromptQRCode, and for a PromptDeviceCode whose URL carries UserCode as its user_code
+	// (scanning it needs nothing typed): the hub fills it in on the way to the app (a connector leaves it out).
 	QR *QRCode `json:"qr,omitempty"`
 	// Hint is for people: where the code went ("The code was sent to your other Telegram device"), the password's hint.
 	Hint string `json:"hint,omitempty"`

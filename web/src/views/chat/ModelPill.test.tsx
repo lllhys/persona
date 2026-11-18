@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { t } from "../../i18n";
 import type { PanelProvider } from "../../lib/model-panel";
 import { requestModelPicker } from "../../lib/model-switch";
+import { setToken } from "../../lib/api";
+import { resetManagerChoice, setRosterDefault } from "../../lib/manager-choice";
 import { getSession, getState, upsertSession } from "../../lib/store";
 import type { Session } from "../../lib/types";
 import type { ModelPanelProps } from "../../ui/model-panel/ModelPanel";
@@ -29,7 +31,7 @@ vi.mock("../../ui/model-panel/ModelPanel", () => ({
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("../../ui/atoms", async (orig) => ({ ...(await orig<typeof import("../../ui/atoms")>()), toast }));
 
-const { AgentModelPill, ModelPill, pillEffort } = await import("./ModelPill");
+const { AgentModelPill, ModelPill, pillEffort, pillShortName } = await import("./ModelPill");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -55,12 +57,14 @@ describe("the pill's states", () => {
     expect(html).toContain("aria-expanded:bg-hover");
   });
 
-  it("takes the composer card's widths: 148 px under 600, a step smaller under 520, the tile and chevron alone under 420", () => {
+  it("takes the composer card's widths: its words' width under 600, a step smaller under 520, the tile and chevron alone under 420", () => {
     const html = markup(<ModelPill current={opus} onOpen={() => {}} />);
     const root = /^<button[^>]*class="([^"]*)"/.exec(html)![1];
     expect(root).toContain("max-w-[min(320px,100%)]");
     expect(root).toContain("min-w-[72px]");
-    expect(root).toContain("@max-[600px]/composer:w-[148px]");
+    // no fixed width while narrow: a fixed 148 px cut "Opus 5.5" to "Opus …" beside free room (audit item 50)
+    expect(root).not.toMatch(/@max-\[600px\]\/composer:w-\[/);
+    expect(root).toContain("shrink");
     expect(root).toContain("@max-[520px]/composer:text-[12px]");
     expect(root).toContain("@max-[420px]/composer:w-[64px]");
     const name = /<span title="Opus 5.5" class="([^"]*)"/.exec(html)![1];
@@ -70,6 +74,37 @@ describe("the pill's states", () => {
     expect(classOf(html, 'data-pill-engine="claude"')).toContain("@max-[420px]/composer:hidden");
     // narrow, the effort may truncate (the engine and effort stay; the name gives way first)
     expect(classOf(html, "data-pill-effort")).toContain("@max-[600px]/composer:truncate");
+  });
+
+  it("narrow, a name drops its bracketed qualifier instead of being cut; the tooltip keeps it all (audit item 50)", () => {
+    expect(pillShortName("Default (recommended)")).toBe("Default");
+    expect(pillShortName("GPT-5 (beta)")).toBe("GPT-5");
+    expect(pillShortName("Opus 5.5")).toBe("Opus 5.5");
+    expect(pillShortName("(beta)")).toBe("(beta)");
+    // a context size names another model: it stays, short, so the 1M model never reads as the standard one
+    expect(pillShortName("Opus 5.5 (1M context)")).toBe("Opus 5.5 1M");
+    expect(pillShortName("Sonnet 4.5 [1m]")).toBe("Sonnet 4.5 1M");
+    expect(pillShortName("Sonnet 4.5（200k 上下文）")).toBe("Sonnet 4.5 200K");
+    expect(pillShortName("Sonnet 4.5 [1m]")).not.toBe(pillShortName("Sonnet 4.5"));
+    const html = markup(<ModelPill current={{ ...opus, model: "Opus 5.5 (1M context)" }} onOpen={() => {}} />);
+    const full = /<span title="Opus 5.5 \(1M context\)" class="([^"]*)">Opus 5.5 \(1M context\)<\/span>/.exec(html)![1];
+    expect(full).toContain("@max-[600px]/composer:hidden");
+    const short = /<span title="Opus 5.5 \(1M context\)" data-pill-short="true" class="([^"]*)">Opus 5.5 1M<\/span>/.exec(html)![1];
+    expect(short).toMatch(/(^| )hidden( |$)/);
+    expect(short).toContain("@max-[600px]/composer:block");
+    expect(short).toContain("@max-[420px]/composer:hidden");
+    // a name with nothing to drop is drawn once
+    expect(markup(<ModelPill current={opus} onOpen={() => {}} />)).not.toContain("data-pill-short");
+  });
+
+  it("one of Paseo's providers: its mark and its label, never the engine's id (#8142)", () => {
+    const grok = markup(<ModelPill current={{ engine: "grok", engineLabel: "Grok", provider: "grok", model: "Grok 4" }} onOpen={() => {}} />);
+    expect(grok).toContain('title="Grok · Grok 4 · grok"');
+    expect(grok).toMatch(/data-pill-engine="grok"[^>]*>.*data-agent-mark="letter"/);
+    expect(grok).not.toMatch(/paseo/i);
+    const cursor = markup(<ModelPill current={{ engine: "cursor", engineLabel: "Cursor", provider: "cursor", model: "Auto" }} onOpen={() => {}} />);
+    expect(cursor).toContain('data-agent-mark="cursor"');
+    expect(cursor).toContain('title="Cursor · Auto · cursor"');
   });
 
   it("Fast: a filled bolt in the neutral colour, and Fast in the tooltip", () => {
@@ -178,6 +213,7 @@ const agent = (x: Partial<Session> = {}): Session =>
   ({ machine_id: `mac-${machine}`, session_id: "s1", title: "整理发布说明", cwd: "/code", status: "idle", state: "idle", agent: "claude", launcher: "gateway", model: "claude-opus-5-5", effort: "high", pane_id: "p1", ...x }) as Session;
 
 beforeEach(() => {
+  resetManagerChoice();
   machine++;
   panel.props = null;
   toast.mockClear();
@@ -208,6 +244,8 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  resetManagerChoice();
+  setToken("");
 });
 
 async function show(s: Session) {
@@ -225,6 +263,21 @@ const modes = () => calls.filter((c) => c.url.endsWith("/modes")).map((c) => c.b
 const provider = (id: string) => panel.props!.providers.find((p: PanelProvider) => p.id === id)!;
 
 describe("an Agent's pill", () => {
+  it("reloads when the default manager becomes known or the credential owner changes", async () => {
+    await show(agent());
+    expect(calls.filter((c) => c.url.includes("/models"))).toHaveLength(1);
+    listAnswer = () => json({ agent: "claude", models: [{ id: "opus", resolved: "claude-opus-5-5", name: "Default manager model" }] });
+    await act(async () => setRosterDefault("known-default"));
+    await flush();
+    expect(calls.filter((c) => c.url.includes("/models"))).toHaveLength(2);
+    expect(pill()!.textContent).toContain("Default manager model");
+    listAnswer = () => json({ agent: "claude", models: [{ id: "opus", resolved: "claude-opus-5-5", name: "Replacement owner model" }] });
+    await act(async () => setToken("replacement-review-owner"));
+    await flush();
+    expect(calls.filter((c) => c.url.includes("/models"))).toHaveLength(3);
+    expect(pill()!.textContent).toContain("Replacement owner model");
+  });
+
   it("reads its own list once for the model's name, and opens the panel with the computer's launchers", async () => {
     await show(agent());
     expect(pill()!.textContent).toContain("Opus 5.5");

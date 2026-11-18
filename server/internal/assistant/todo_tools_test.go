@@ -137,6 +137,37 @@ func TestTodoTools(t *testing.T) {
 	})
 }
 
+// A task whose agent never started stays visible to the assistant, with why, instead of reading as finished work (#6014).
+func TestTodoToolsFailedStart(t *testing.T) {
+	todoStores(t, func(t *testing.T, e *todoEnv, _ *db.DB) {
+		ctx := context.Background()
+		task, err := e.s.createTodo(ctx, "Fix the build", "", "conv1", "plan_failed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reason := "claude did not start within 3m0s: the tab's shell had not run it yet"
+		if err := e.s.failTodo(ctx, task.ID, reason); err != nil {
+			t.Fatal(err)
+		}
+		line := task.ID + ` "Fix the build" [failed to start, task]`
+		for _, args := range []map[string]any{nil, {"status": "done"}} {
+			list, err := e.tool("todo_list", args)
+			if err != nil || !strings.Contains(list, line) {
+				t.Fatalf("list %v: %s %v", args, list, err)
+			}
+		}
+		got, err := e.tool("todo_get", map[string]any{"id": task.ID})
+		if err != nil || !strings.Contains(got, line) || !strings.Contains(got, "failed to start: "+reason) {
+			t.Fatalf("get: %s %v", got, err)
+		}
+		// Stored done, but not done: it says it still waits on the owner and how it starts again (#10365).
+		if !strings.Contains(got, "did not start ") || !strings.Contains(got, "not done, it still waits on the owner") ||
+			!strings.Contains(got, "task_retry") || strings.Contains(got, "\ndone ") {
+			t.Fatalf("get reads as done: %s", got)
+		}
+	})
+}
+
 // Deleting is confirmed on the phone every time: declined, the to-do stays; allowed, it is gone. Completing a task
 // (agents work on it) is confirmed too; the user's own to-do is not.
 func TestTodoToolsConfirm(t *testing.T) {
@@ -241,6 +272,10 @@ func TestTodoReminders(t *testing.T) {
 		pushes := e.f.pushed()
 		if len(pushes) != 1 || pushes[0].Title != "Call the bank" || !strings.Contains(pushes[0].Body, "12-01") {
 			t.Fatalf("pushes: %+v", pushes)
+		}
+		// The owner's own reminder is theirs to act on: P0 even with push tiering on, keyed by to-do and due time.
+		if pushes[0].Level != "P0" || !strings.HasPrefix(pushes[0].RelatedKey, "todo-remind:"+id+"@") {
+			t.Fatalf("reminder level %q key %q", pushes[0].Level, pushes[0].RelatedKey)
 		}
 		if got, _ := e.todo(id); got.RemindedAt == nil {
 			t.Fatal("not marked pushed")

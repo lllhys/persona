@@ -20,7 +20,6 @@
   "pinned": "Pinned",
   "remove": "Remove from list",
   "removed_toast": "Removed “{title}”. It comes back when it gets a new message.",
-  "restore": "Restore",
   "restored_toast": "Restored “{title}”",
   "undo": "Undo",
   "hide_failed": "Couldn't remove: {error}",

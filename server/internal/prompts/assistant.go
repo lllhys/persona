@@ -6,6 +6,14 @@ import (
 	"unicode/utf8"
 )
 
+type AssistantSelectedSkill struct {
+	Name, Path, Ref string
+}
+
+func RenderAssistantSelectedSkills(skills []AssistantSelectedSkill) string {
+	return render("assistant/selected_skills", skills)
+}
+
 // AssistantMachine is one computer in the assistant's CLAUDE.md, as seen from where the assistant runs.
 type AssistantMachine struct {
 	Name, ID string
@@ -32,9 +40,46 @@ type AssistantClaudeMD struct {
 	// BackgroundSupervisor: the background supervisor follows up the tasks no leader supervises (#4927), so the main
 	// conversation is told it no longer reviews them itself. False keeps the text as it was.
 	BackgroundSupervisor bool
+	// UrgentCall: the owner turned urgent calls on (docs/assistant/urgent-call.md): when to call and the "what counts
+	// as urgent" rules. nil adds nothing.
+	UrgentCall *UrgentCall
+}
+
+// UrgentCall is the urgent-call section of the assistant's instructions.
+type UrgentCall struct {
+	Rules []UrgentCallRule
+}
+
+// UrgentCallRule is one "what counts as urgent" rule: its id (urgent_call's rule) and its words.
+type UrgentCallRule struct {
+	ID   string
+	Text string
+}
+
+// urgentRuleTemplates are the built-in rules' definitions, used while the owner has not reworded them.
+var urgentRuleTemplates = map[string]string{
+	"money_loss":     "assistant/urgent_rule_money_loss",
+	"harm":           "assistant/urgent_rule_harm",
+	"agent_disaster": "assistant/urgent_rule_agent_disaster",
+}
+
+// UrgentRuleBuiltin is built-in rule id's definition in Chinese ("" for an id that is not one).
+func UrgentRuleBuiltin(id string) string { return UrgentRuleBuiltinIn(id, "") }
+
+// UrgentRuleBuiltinIn is built-in rule id's definition in language, the owner's by its own name ("English", or
+// Japanese written in Japanese); "" is Chinese.
+func UrgentRuleBuiltinIn(id, language string) string {
+	name, ok := urgentRuleTemplates[id]
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(render(name, struct{ Language string }{language}))
 }
 
 func RenderAssistantClaudeMD(d AssistantClaudeMD) string { return render("assistant/claude_md", d) }
+
+// RenderSupervisionInstructions is identical for every authorized supervisor and event.
+func RenderSupervisionInstructions() string { return render("assistant/supervision_instructions", nil) }
 
 // AssistantHealthClaudeMD is the health space's CLAUDE.md (docs/assistant/health.md).
 type AssistantHealthClaudeMD struct {
@@ -77,7 +122,7 @@ type SnapshotMachine struct {
 
 // SnapshotApp is the Persona app on one kind of device as it last said its version (assistant/snapshot_app). No
 // time: the node sends only the snapshot's changed lines, and a reconnect must not make this one change.
-// Platform: ios | ipados | watchos | macos | visionos | android.
+// Platform: ios | ipados | watchos | macos | visionos | android | harmony.
 type SnapshotApp struct {
 	Platform, Version, Build, OS string // Build, OS: "" when not said
 	Simulator                    bool
@@ -135,9 +180,19 @@ type SnapshotFollowup struct {
 	Every string // "30 minutes" for a repeating one
 }
 
+// SnapshotFollowing is one open inbox matter being followed: where it happens, who or what it waits on, the next step
+// and when to look again (CheckAt in the user's zone, zero when none). The two flags select the state note in the
+// template, so no prompt wording is assembled in Go.
+type SnapshotFollowing struct {
+	Title, Where, Who, Next string
+	CheckAt                 time.Time
+	FollowUpAsk, CheckDue   bool
+}
+
 // SnapshotPlan is a plan card in the main conversation still waiting for the user's "Start" (#4453): nothing of it has
 // started, and it shows nowhere else.
 type SnapshotPlan struct {
+	ID     string    // the plan's id, for task_plan_withdraw (#6739)
 	At     time.Time // when it was put up, in the user's zone
 	Titles []string  // its tasks' titles (at most three)
 	Tasks  int       // how many tasks it has
@@ -193,7 +248,25 @@ type SnapshotTask struct {
 	// Reported: what its agent last reported to the supervisor (report_to_supervisor), nil when it has not.
 	Reported *SnapshotReport
 	// Plan: its agent's own task list, nil when it keeps none or Reported is newer (a report says more).
-	Plan *SnapshotAgentPlan
+	Plan  *SnapshotAgentPlan
+	Owner SnapshotOwner
+}
+
+// SnapshotOwner is whose a task in the snapshot is, never rendered: the conversation that handed it out (its todo's
+// origin, "" for the user's own to-do) and the one that supervises it, so a conversation other than the main one gets
+// only its own tasks (assistant/context.go scopeSnapshot).
+type SnapshotOwner struct {
+	Origin, Supervisor string
+}
+
+// SnapshotOpenTodo is the compact index of one open todo. Full task details are
+// limited separately so every open todo remains discoverable in the context.
+type SnapshotOpenTodo struct {
+	ID, Title, Link string
+	Owner           SnapshotOwner
+	// Failed: its agent did not start, and it still waits on the owner (stored done with its start error, counted open
+	// as the app's To-dos count it).
+	Failed bool
 }
 
 // SnapshotReport is a supervised task's agent's latest report: its kind (progress, question, blocked, done), the step
@@ -245,23 +318,31 @@ type Snapshot struct {
 	Awaiting []SnapshotAgent
 	// Muted: agents (or their spaces) the user turned notifications off for that would be in one of the above; in
 	// none of them, as the Live Activity and the Agents badge count none of them (#4562).
-	Muted          []SnapshotAgent
-	Working        []SnapshotAgent
-	Workflows      []SnapshotWorkflow // background workflow runs still running, newest first
-	PhoneOnline    bool
-	Apps           []SnapshotApp      // one per kind of device, the user's own before a simulator
-	KB             string             // RenderKBDigest, "" leaves it out
-	Chats          *SnapshotChats     // nil: Feishu did not answer in time
-	Calendar       *SnapshotCalendar  // nil: the calendar did not answer in time
-	Followups      []SnapshotFollowup // the next eight
-	FollowupsTotal int                // all of them
-	Routines       []SnapshotRoutine  // the daily tasks that are on (at most eight)
-	RoutinesTotal  int                // all of them
-	Missed         []SnapshotMiss     // scheduled runs that failed or were skipped since yesterday 18:00, newest first
-	MissedTotal    int                // all of them (Missed is the newest six)
-	Tasks          []SnapshotTask     // tasks opened from assistant conversations (task_plan), newest first
-	Plans          []SnapshotPlan     // plan cards in the main conversation waiting for "Start", newest first (at most five)
-	PlansTotal     int
+	Muted           []SnapshotAgent
+	Working         []SnapshotAgent
+	Workflows       []SnapshotWorkflow // background workflow runs still running, newest first
+	PhoneOnline     bool
+	NoPhone         bool               // leaves the iPhone line out: the background supervisor's (assistant/context.go backgroundSnapshot)
+	Apps            []SnapshotApp      // one per kind of device, the user's own before a simulator
+	KB              string             // RenderKBDigest, "" leaves it out
+	Chats           *SnapshotChats     // nil: Feishu did not answer in time
+	Calendar        *SnapshotCalendar  // nil: the calendar did not answer in time
+	Followups       []SnapshotFollowup // the next eight
+	FollowupsTotal  int                // all of them
+	Routines        []SnapshotRoutine  // the daily tasks that are on (at most eight)
+	RoutinesTotal   int                // all of them
+	Missed          []SnapshotMiss     // scheduled runs that failed or were skipped since yesterday 18:00, newest first
+	MissedTotal     int                // all of them (Missed is the newest six)
+	Tasks           []SnapshotTask     // tasks opened from assistant conversations (task_plan), newest first
+	OpenTodos       []SnapshotOpenTodo // compact index of open todos, including personal todos
+	OpenTodosTotal  int                // all open todos; OpenTodos is bounded for very large lists
+	OpenTodosLoaded bool               // false when the store could not be read; do not report that as zero
+	Plans           []SnapshotPlan     // plan cards in the main conversation waiting for "Start", newest first (at most five)
+	PlansTotal      int
+
+	FollowingEnabled bool                // Inbox is enabled and available; false leaves the whole section out
+	Following        []SnapshotFollowing // open inbox matters being followed, earliest check first (at most five)
+	FollowingTotal   int                 // all of them
 	// Asked: the assistant's ask_user questions nobody answered in time, now to-dos waiting for the user's call (#1617),
 	// oldest first.
 	Asked []SnapshotAsked
@@ -272,15 +353,20 @@ type Snapshot struct {
 	// Approvals: open tasks whose finished work waits for the user's nod to go live (merge, deploy, turn on, send),
 	// oldest first: told to the user as one list to approve at once (docs/assistant/todos.md "Delivery").
 	Approvals []SnapshotApproval
+	// Scoped: the snapshot of a conversation other than the main one and its stand-ins: Tasks, Unaccepted and Approvals
+	// hold only the tasks it handed out or supervises, and OpenTodos only its open ones Tasks does not show; other
+	// conversations' tasks and the user's own to-dos are left to todo_list (OpenTodosTotal still counts every open
+	// to-do; assistant/context.go scopeSnapshot).
+	Scoped bool
 	// Omit: the sections left out to keep the block within its budget (assistant/context.go fitSnapshot).
 	Omit SnapshotOmit
 }
 
 // SnapshotOmit marks the sections a snapshot leaves out for size (#3203). An omitted section still renders its heading
-// and its count, with the tool that lists it, never as empty: the node sends only the sections that changed, so a
-// section that went missing would read as unchanged, and one rendered without its items as "none".
+// and count with where to see the rows (a tool, or the App for Inbox follow-ups), never as empty: the node sends only
+// what changed, so a section that went missing would read as gone, and one rendered without its items as "none".
 type SnapshotOmit struct {
-	Waiting, Working, Unread, Routines, Followups, Asked, KB, OtherChats, Unaccepted, Tasks, Approvals bool
+	Waiting, Working, Unread, Routines, Following, Followups, Asked, KB, OtherChats, Unaccepted, OpenTodos, Tasks, Approvals bool
 }
 
 // SnapshotCut is the line a snapshot cut short ends with (assistant/snapshot_cut).
@@ -289,6 +375,7 @@ func SnapshotCut() string { return render("assistant/snapshot_cut", nil) }
 // SnapshotApproval is a task held short of live until the user approves: what it is, how far it got, where it is held.
 type SnapshotApproval struct {
 	ID, Title, Stage, Gate, Link string
+	Owner                        SnapshotOwner
 }
 
 // SnapshotAccept is a deployed task waiting for the user to check it, or a conclusion waiting for the user: its verdict
@@ -296,6 +383,7 @@ type SnapshotApproval struct {
 type SnapshotAccept struct {
 	Title, Verdict, Changed, Link string
 	Since                         time.Time // in the user's zone
+	Owner                         SnapshotOwner
 }
 
 func (s Snapshot) Up() []SnapshotMachine   { return s.machines(true) }
@@ -326,6 +414,15 @@ func (s Snapshot) Upcoming() *SnapshotCalendar {
 	return &out
 }
 
+// FollowingLeft is how many followed matters are not in the snapshot's bounded list.
+func (s Snapshot) FollowingLeft() int {
+	left := s.FollowingTotal - len(s.Following)
+	if left < 0 {
+		return 0
+	}
+	return left
+}
+
 func RenderSnapshot(s Snapshot) string { return render("assistant/snapshot", s) }
 
 // RenderSnapshotWorkflow is one running workflow, in a line ("'parity-audit' stage Verify (2/2), 169/185 agents done, running 14 minutes").
@@ -344,6 +441,10 @@ type AssistantContext struct {
 	// LeaderName: for a leader, its direction's name.
 	Directions []ContextDirection
 	LeaderName string
+	// LeaderStatus: for a leader whose direction has notes, the one-line status of the knowledge-base project it is
+	// filed under (#10086). Here rather than in its system prompt: a summary rewrite changes it, and a changed system
+	// prompt would restart the leader.
+	LeaderStatus string
 	// Background: this is the background supervisor (#4927), which follows up the tasks no leader supervises.
 	// BackgroundStarted: for the main conversation, once: the background supervisor's id, the first message after it
 	// began to follow up the main conversation's tasks.
@@ -367,20 +468,22 @@ type TaskRun struct {
 	Label          string
 	Once, Interval bool   // neither: daily
 	Every          string // interval: "30 minutes"
-	// Accelerated: a leader's open supervised todos shortened this run's interval.
-	Accelerated bool
-	Late        string // "" when on time; else how late ("25 minutes")
-	Due         time.Time
-	Prompt      string
-	KBHint      bool // daily runs with the knowledge base on
+	Late           string // "" when on time; else how late ("25 minutes")
+	Due            time.Time
+	Prompt         string
+	KBHint         bool // daily runs with the knowledge base on
 	// KnowledgeDir: the knowledge base directory the hint names; "" is the default ~/.persona/data.
 	KnowledgeDir string
 	// Continued: it goes into the task's own conversation, which got the background on the first run.
 	Continued bool
 	// PushAsked: the task pushes only what the run sends with notify_user (its push "asked", #2396).
 	PushAsked bool
+	// InboxWorthy, InboxEvery: the task's inbox setting (#6430): a run puts a row in the Inbox only when it finds something
+	// worth a look (inbox_post), or the manager puts one after every run.
+	InboxWorthy, InboxEvery bool
 	// Facts: the run's facts Persona worked out (RenderBriefFacts), above the task's prompt; "" for a task without them.
 	Facts string
+	State string // formatted scheduled-task state and update instructions
 }
 
 func RenderTaskRun(t TaskRun) string { return render("assistant/task_run", t) }
@@ -403,7 +506,13 @@ type BriefFacts struct {
 	Failed                                                           []BriefFailed
 	Accept                                                           []BriefAccept
 	Progress                                                         []BriefProgress
-	Leaders                                                          []BriefLeader // one per direction (#3609)
+	// InboxWaiting and InboxDue are read-only follow-up facts for the model only; neither is on the card or in the push.
+	InboxWaiting, InboxDue []BriefFollow
+	Leaders                []BriefLeader // one per direction (#3609)
+	// Directions are the deterministic per-direction wait lists, main included. Every direction keeps all owner-wait
+	// rows and folds only its non-owner tail; More says how many rows the direction link holds beyond it.
+	Directions       []BriefDirection
+	DisabledRoutines []BriefDisabledRoutine
 	// Briefs: the open pieces of work that need the owner or changed since the last briefing, in their own words;
 	// BriefsDone: those that ended since, once, with each criterion's result (#3822).
 	Briefs, BriefsDone []BriefTask
@@ -503,6 +612,35 @@ type BriefLeader struct {
 	Reached, Doing, NeedsYou string
 }
 
+// BriefDirection is one direction's open-work count and deterministic wait rows. Main and leader directions alike keep
+// every owner-wait row; only the non-owner tail is folded into More. Line is ready to read in the owner's language.
+type BriefDirection struct {
+	ID, Name, Link             string
+	Owner                      bool
+	Open, Active, Undispatched int
+	Waits                      []BriefWait
+	More                       int
+}
+
+// BriefWait is one stopped task or unanswered card. Kind is needs_user, review, question, permission, private,
+// parked, capacity, orphaned, overdue or stalled. Since/Until are zero when the ledger did not record them.
+type BriefWait struct {
+	TodoID, InteractionID string
+	Title, Kind           string
+	Since                 time.Time
+	Until                 time.Time
+	WaitingOn, Reason     string
+	Link, Line            string
+}
+
+// BriefDisabledRoutine is a disabled daily report or patrol. DisabledAt is nil for routines saved before the hub
+// recorded the transition; Line says "disable time not recorded" rather than substituting LastRun.
+type BriefDisabledRoutine struct {
+	ID, Title, Direction, Kind string
+	DisabledAt                 *time.Time
+	Link, Line                 string
+}
+
 // BriefFailed is one thing that did not go through: a task whose agent did not start, a scheduled run that failed
 // (Run) or was skipped (Skipped).
 type BriefFailed struct {
@@ -512,6 +650,9 @@ type BriefFailed struct {
 
 // BriefAccept is a task waiting to be verified, with what it changed in the words of its "Please verify" card.
 type BriefAccept struct{ Line, Changed string }
+
+// BriefFollow is one Inbox matter in the briefing's model-only facts: its title, who or what it waits on and next step.
+type BriefFollow struct{ Title, Who, Next string }
 
 // BriefProgress is a task being worked on and its stage ("plan", "develop", "review", "merge", "deploy", "verify"; "" not known).
 type BriefProgress struct{ Title, Stage string }
@@ -571,6 +712,9 @@ type TaskNotice struct {
 	// Files: the files it handed over, as name and path on the conversation's computer (task_files.go, #10511); the
 	// agent named them in its reply, and the manager copied them here. They are kept out of Text's clip.
 	Files []string
+	// RetryWith: failed because of its launcher there, the launcher the assistant may start it with instead when the
+	// user asks (task_retry's launcher; only the web's card has a button for it, #10365).
+	RetryWith string
 	// Reporting: the notice goes into the conversation that opened the task (one started with report_tasks, such as
 	// a Feishu /agent's, #3192), not the main conversation.
 	Reporting bool
@@ -663,38 +807,50 @@ type Supervise struct {
 	Overdue bool
 	// ParkedDue: an entry is a parked task whose time came (#3804).
 	ParkedDue bool
+	// ParkDecided: an entry is a task whose parking a decision of the owner's ended (#8044).
+	ParkDecided bool
 	// Asked: an entry is an agent's cards that came to this conversation before the user (ask); AskMinutes how long
 	// they wait here before going up a rung.
 	Asked      bool
 	AskMinutes int
+	// LowDistraction: the owner's low-distraction mode is on: a card is never handed to the user on a timeout, and ask_escalate
+	// pushes only what is the owner's alone (why_owner).
+	LowDistraction bool
 	// Decisions: an entry is about a decision the owner cannot answer as it is (recheck, undecidable,
 	// owner_cannot_answer; #3804).
 	Decisions bool
 	// Inbox: an entry is new Inbox messages from other people about the task (#4293).
 	Inbox bool
+	// Fresh: it goes to the background supervisor as a round that starts from a clean context (#7315): a line on where
+	// what earlier rounds settled is kept, the round marker (SuperviseRoundMarker) and each entry's last review. The
+	// handling rules are in no supervision message (they are the static supervision instructions), so a round carries
+	// only its entries' facts. Not Fresh renders as before, byte for byte.
+	Fresh bool
 }
 
 // SuperviseEntry is one task in it, with what happened (Kind: review, idle, needs_you, stalled, interrupted, failed,
 // started, escalated, ask, inbox…).
 type SuperviseEntry struct {
 	ID, Title, Kind string
-	Detail          string             // why: the judge's reason, the step it is stuck on, the model service's error, why it did not start
-	Minutes         int                // how long it has waited (needs_you) or not moved (stalled)
-	Ask             string             // needs_you: what it asks
-	Recommend       string             // escalated: the option the leader recommends
-	LeaderGone      bool               // decide: its task leader agent cannot be reached, so the supervisor takes the task over
-	Background      bool               // escalated: by the background supervisor, not a leader conversation (#4927)
-	DoneWhen        []string           // what done means
-	Round           int                // reworks so far
-	Machine         string             // where its agent runs (a name)
-	Session         string             // its agent's session id (short)
-	AgentID         string             // full id for durable deduplication; not rendered
-	Last            string             // what its agent said last
-	Closeout        *SuperviseCloseout // the closeout its agent ended the turn with (#3612), nil when it wrote none
-	Link            string             // the task's page ("" when the hub has no public_url)
-	Quiet           bool               // the user was not pushed about it
-	Orphan          string             // orphaned: why nobody works on it (error, closed, offline)
-	Review          *SuperviseReviewed // review: what the independent reviewer found (#2173), nil when none ran
+	AgentReply      *DecisionAgentReply // decision_reply: a pending decision's owner message, not an inferred choice
+	Detail          string              // why: the judge's reason, the step it is stuck on, the model service's error, why it did not start
+	Minutes         int                 // how long it has waited (needs_you), not moved (stalled) or not progressed (no_progress)
+	Calls, Waits    int                 // no_progress: the tool calls the hub saw since the last progress, and how many were waits or repeats
+	Ask             string              // needs_you: what it asks
+	Recommend       string              // escalated: the option the leader recommends
+	LeaderGone      bool                // decide: its task leader agent cannot be reached, so the supervisor takes the task over
+	Background      bool                // escalated: by the background supervisor, not a leader conversation (#4927)
+	DoneWhen        []string            // what done means
+	Round           int                 // reworks so far
+	Machine         string              // where its agent runs (a name)
+	Session         string              // its agent's session id (short)
+	AgentID         string              // full id for durable deduplication; not rendered
+	Last            string              // what its agent said last
+	Closeout        *SuperviseCloseout  // the closeout its agent ended the turn with (#3612), nil when it wrote none
+	Link            string              // the task's page ("" when the hub has no public_url)
+	Quiet           bool                // the user was not pushed about it
+	Orphan          string              // orphaned: why nobody works on it (error, closed, offline)
+	Review          *SuperviseReviewed  // review: what the independent reviewer found (#2173), nil when none ran
 	// report: what its agent reported (progress, question, blocked, done), its words, evidence and step.
 	Report      string
 	Said        string
@@ -707,15 +863,18 @@ type SuperviseEntry struct {
 	// lines, and how many retries are left; KeptUntil "" when the start failed for good.
 	KeptUntil, Question, Screen string
 	RetriesLeft                 int
-	// ask: the cards waiting, and the task's decisions in effect (prompts/todo/decisions.md, rendered); escalated: the
-	// cards a leader gave the user.
+	// RetryWith: failed because of its launcher on that computer, the other launchers there task_retry may start it
+	// with (PlanTask.RetryWith, #10365), the first suggested.
+	RetryWith []string
+	// ask: the cards waiting, and the task's decisions in effect (prompts/todo/decisions.md, rendered), which
+	// parked_due and park_decided carry too; escalated: the cards a leader gave the user.
 	Asks      []SuperviseAsk
 	Decisions string
 	// recheck and owner_cannot_answer: the decision as it was asked; owner_cannot_answer: the owner's answer
 	// (decide_yourself, not_what_i_asked, explain_first).
 	Decision *SuperviseDecision
 	Response string
-	// parked_due: what the task was parked for.
+	// parked_due: what the task was parked for; park_decided: what it was parked for again before the message went.
 	Parked *SuperviseParked
 	// From the task's brief (#3822): Asked is the owner's message that led to the work (clipped) and AskedAt its day;
 	// Started says who started it when it was not the owner; Dropped are the criteria scope changes took out.
@@ -724,6 +883,20 @@ type SuperviseEntry struct {
 	Dropped                             []string
 	// inbox: the Inbox item the new messages came in, the newest when several did.
 	Inbox *SuperviseInbox
+	// LastReview: the task's last review, shown only in a Fresh message (#7315): a round that does not see the earlier
+	// ones does not ask or send back the same thing again. nil when it was never reviewed.
+	LastReview *SuperviseLastReview
+}
+
+// SuperviseLastReview is a task's last task_review as a Fresh supervision message repeats it: the verdict, when (local
+// "01-02 15:04") and its reason or note, clipped.
+type SuperviseLastReview struct {
+	Verdict, At, Note string
+}
+
+// DecisionAgentReply asks a supervisor to confirm a pending decision after its owner writes in the task's Agent chat.
+type DecisionAgentReply struct {
+	Language, Machine, Session string
 }
 
 // SuperviseInbox is the Inbox item an inbox entry names (#4293): its id, title (the chat's name or the mail's subject),
@@ -732,7 +905,20 @@ type SuperviseEntry struct {
 type SuperviseInbox struct {
 	Item, Title, Sender, Preview string
 	Count                        int
+	// URL is a GitHub PR's or issue's address; ToAgent is "sent" once the note reached the task's agent (InboxToAgent,
+	// #7346), "" when the supervisor is the only one told.
+	URL, ToAgent string
 }
+
+// InboxToAgent is the note a task's agent gets when someone else writes on the task's GitHub thread (#7346): who,
+// how many new messages, a line of the newest, and the thread to read.
+type InboxToAgent struct {
+	Sender, Preview, URL string
+	Count                int
+}
+
+// RenderInboxToAgent is that note.
+func RenderInboxToAgent(d InboxToAgent) string { return render("assistant/inbox_to_agent", d) }
 
 // SuperviseParked is what a task was parked for (task_review parked), as its parked_due entry repeats it: the reason,
 // what kind of thing it waits on, until when (local), how many times in a row it was parked with no agent turn in
@@ -761,9 +947,17 @@ type SuperviseOption struct{ Label, LeadsTo string }
 type SuperviseAsk struct {
 	ID, Kind, Machine, Session, Text string
 	Raised                           bool
+	// Reminded: low-distraction mode kept the card from the user when its time ran out, and gives it to its supervisor once more.
+	Reminded bool
 }
 
 func RenderSupervise(s Supervise) string { return render("assistant/supervise", s) }
+
+type DraftPR struct {
+	Language, URL, Head string
+}
+
+func RenderDraftPR(p DraftPR) string { return render("assistant/draft_pr", p) }
 
 // SuperviseReviewed is the independent review of a task waiting for review: State clean (nothing blocking), blocking
 // (blocking findings left once the rework rounds ran out) or failed (Error says why), its counts and report.
@@ -804,6 +998,12 @@ func RenderTaskDoneWhen(criteria []string) string {
 	return render("assistant/task_done_when", struct{ Criteria []string }{criteria})
 }
 
+// RenderTaskGoal is a task's done_when as one checkable condition, for a Claude Code /goal typed before the task's
+// first message (docs/integrations/agent-goal.md "A goal set at the start"): one line, trimmed.
+func RenderTaskGoal(criteria []string) string {
+	return strings.TrimSpace(render("assistant/task_goal", struct{ Criteria []string }{criteria}))
+}
+
 // Relay is a message one assistant conversation sends another (conversation_send / conversation_new): what was
 // written, behind a note saying where it comes from and how many hops it is from the user's own message.
 type Relay struct {
@@ -811,6 +1011,16 @@ type Relay struct {
 	Tool              string // conversation_send | conversation_new
 	Hop, MaxHops      int
 	Text              string
+	// Quote: the owner's own message the sender carried, as the hub verified it (#3822); nil sends none.
+	Quote *RelayQuote
+}
+
+// RelayQuote is the owner's message a relay carries: its id, when and in which conversation they wrote it, the
+// conversations that passed it on after that one (oldest first), and the text verbatim. ParseRelayQuoteID reads the id back.
+type RelayQuote struct {
+	ID, At, Conversation string
+	Via                  []string
+	Text                 string
 }
 
 // RenderRelay is the message the other conversation gets (assistant/relay).
@@ -827,6 +1037,9 @@ type CodexMemory struct {
 }
 
 func RenderCodexMemory(m CodexMemory) string { return render("assistant/codex_memory", m) }
+
+// RenderMemoryDream asks the background pass to consolidate durable preferences.
+func RenderMemoryDream() string { return render("assistant/memory_dream", nil) }
 
 // RuntimeInstructions is what the assistant on an agent runtime (DSH…) gets with a new conversation's first message
 // (assistant/runtime_instructions): the shared memory, and the skills' gated commands it runs as tools.
@@ -847,18 +1060,39 @@ func RenderRuntimeInstructions(r RuntimeInstructions) string {
 	return render("assistant/runtime_instructions", r)
 }
 
-// RenderCodexInstructions is the Codex assistant's developer instructions (assistant/codex_instructions): the memory.
-// The live snapshot is not in them but in each message (TurnContext), like Claude's.
-func RenderCodexInstructions(memory string) string {
-	return render("assistant/codex_instructions", struct{ Memory string }{memory})
+// RenderCodexInstructions composes memory and optional supervisor policy as developer instructions.
+// The live snapshot stays in each message (TurnContext), like Claude's.
+func RenderCodexInstructions(memory string, supervision ...string) string {
+	policy := ""
+	if len(supervision) > 0 {
+		policy = supervision[0]
+	}
+	return render("assistant/codex_instructions", struct{ Memory, Supervision string }{memory, policy})
 }
 
 // TurnContext is the <persona-context> block a message to the assistant starts with (assistant/turn_context): the
 // sections of the live snapshot (AssistantContext) the conversation hasn't seen yet. Full: all of them (the
-// conversation is new, was compacted, or node lost track); otherwise only those that changed, the time always.
+// conversation is new, was compacted, or node lost track); otherwise only those that changed, the time always, and
+// in Gone the names of the sections the snapshot no longer has.
 type TurnContext struct {
 	Full     bool
-	Sections []string
+	Sections []TurnSection
+	Gone     []string
+}
+
+// TurnSection is one section of a TurnContext: all of it in Text, or with Partial only what changed in it (#9078).
+// A partial section says so on its heading, so the rows it lists are never read as all the rows there are: Text is
+// then the heading line when that changed ("" when it did not: Name, the section's name, stands in for it), Rows the
+// rows that are new or changed, Removed the ids of the rows that are gone, and Order the ids of all its rows in
+// their order now, given only when the reader could not tell it (the rows it knew in the order it knew them, the
+// new ones after them).
+type TurnSection struct {
+	Text    string
+	Partial bool
+	Name    string
+	Rows    []string
+	Removed []string
+	Order   []string
 }
 
 func RenderTurnContext(c TurnContext) string { return render("assistant/turn_context", c) }
@@ -1028,3 +1262,31 @@ func RenderRouteInput(in RouteInput) string { return render("assistant/route_inp
 // RenderRouteAgent is the system prompt of assistant.route for a new agent (assistant/route_agent): which leader's
 // direction its work belongs to; it reads RouteInput (the agent's first message as the sentence, no projects).
 func RenderRouteAgent() string { return render("assistant/route_agent", nil) }
+
+// DirectionNotes is what a leader conversation is told of its own direction (#10086): the notes the owner wrote for it
+// and the goal of the knowledge-base project it is filed under. Lang is the owner's language (i18n code; "" or
+// zh-Hans: Chinese).
+type DirectionNotes struct {
+	Lang, Name, Notes, ProjectName, ProjectGoal string
+}
+
+// Empty: nothing the owner wrote and no project goal, so nothing is added to the leader's policy.
+func (d DirectionNotes) Empty() bool { return d.Notes == "" && d.ProjectGoal == "" }
+
+// RenderDirectionNotes is the block appended to a leader's role policy (supervision_instructions); empty when there
+// is nothing to say, so a direction without notes keeps its policy byte for byte.
+func RenderDirectionNotes(d DirectionNotes) string {
+	if d.Empty() {
+		return ""
+	}
+	return render("assistant/direction_notes", d)
+}
+
+// RenderTodoDirection is the block a new Agent working for a direction gets before its first prompt (todo/direction);
+// empty without notes.
+func RenderTodoDirection(d DirectionNotes) string {
+	if d.Notes == "" {
+		return ""
+	}
+	return render("todo/direction", d)
+}

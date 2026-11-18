@@ -39,6 +39,7 @@ class ComposerMediaTest {
     private fun state(text: String, vararg attachments: ComposerAttachment) = ChatComposerState(ChatComposerDraft(text, attachments.toList())).apply {
         photosOnlyText = "Please look at the photos"
         videosOnlyText = "Please look at the video"
+        filesOnlyText = "Please look at the attached files"
     }
 
     @Test fun aVideoGoesAsATagAfterTheWordsNotAsAPath() {
@@ -89,6 +90,35 @@ class ComposerMediaTest {
         // Another kind of file keeps its tag in the words.
         val audio = "Listen\n\n<persona-file kind=\"audio\" path=\"/tmp/a.m4a\" name=\"a.m4a\" size=\"9\"/>"
         assertEquals(audio, ChatComposerState().apply { editMessage(audio) }.value.text)
+    }
+
+    @Test fun ordinaryFilesComeAfterVideosAndReturnAsFileAttachmentsOnEdit() {
+        val document = ComposerAttachment("f", "notes.txt", "content://docs/notes", false, "/tmp/notes.txt", size = 86,
+            uploadState = DraftUploadState.Uploaded)
+        val sent = state("", video(), document, photo()).message()
+        assertEquals("Please look at the photos\n\n${video().attachedFile()!!.toXml()}\n${document.attachedFile()!!.toXml()}\n\n" +
+            "<attached_images>\n/tmp/photo.jpg\n</attached_images>", sent)
+        val edited = ChatComposerState().apply {
+            photosOnlyText = "Please look at the photos"; videosOnlyText = "Please look at the video"
+            filesOnlyText = "Please look at the attached files"; editMessage(sent)
+        }
+        assertEquals("Please look at the photos", edited.value.text)
+        assertEquals(listOf("video", "file"), edited.attachments.filterNot { it.image }.map { it.attachedFile()!!.kind })
+        assertEquals(sent, edited.message())
+
+        val filesOnly = state("", document).message()
+        assertEquals("Please look at the attached files\n\n${document.attachedFile()!!.toXml()}", filesOnly)
+        assertEquals("notes.txt", composerMessagePreview(filesOnly, "[Photo]", "[Video]"))
+    }
+
+    @Test fun editKeepsEveryVideoFromAnOlderOrHandWrittenMessage() {
+        val videos = List(5) { index -> video("v$index", "/tmp/clip-$index.mov") }
+        val sent = state("Keep every video", *videos.toTypedArray()).message()
+        val edited = ChatComposerState().apply {
+            videosOnlyText = "Please look at the video"; editMessage(sent)
+        }
+        assertEquals(5, edited.attachments.count { it.video })
+        assertEquals(sent, edited.message())
     }
 
     @Test fun aQueuedVideoReadsAsItsMark() {

@@ -16,8 +16,7 @@
 //   trae      SI `trae.svg`; source trae.ai (TRAE, ByteDance's coding agent; not TRAEX, which keeps its letter)
 // viewBoxes of opencode, cursor and trae are cropped to the glyph (CLAUDE.md: assets carry no padding); nothing else is changed.
 import { t } from "../i18n";
-import { agentId, agentLetter, agentName, isMarked, sessionAgent, type AgentSurface, type MarkedAgent } from "../lib/agent-kind";
-import type { Session } from "../lib/types";
+import { agentLetter, agentName, isMarked, markId, sessionAgent, type AgentSurface, type MarkedAgent } from "../lib/agent-kind";
 import { cx } from "./atoms";
 import claudeMark from "./brands/claude.svg";
 import codexMark from "./brands/codex.svg";
@@ -41,12 +40,13 @@ const MARKS: Record<MarkedAgent, { src: string; template?: boolean; fit: number 
 
 /**
  * `agent` is what the node reports ("" is Claude Code); `label` the runtime's own name for an agent the app does not
- * know; `surface` the client it runs in (#6390): the command line's mark carries a </> badge on its lower right, the
- * desktop app's none. `size` is the box. The mark says what it is (role=img, "Claude Code, command line");
- * `decorative` for a place that names the agent in text right beside it.
+ * know, whose mark is drawn when it names an agent that has one (a Paseo provider named "Cursor", markId); `surface`
+ * the client it runs in (#6390): the command line's mark carries a </> badge on its lower right, the desktop app's
+ * none. `size` is the box. The mark says what it is (role=img, "Claude Code, command line"); `decorative` for a place
+ * that names the agent in text right beside it.
  */
 export function AgentMark({ agent, label, surface, size = 14, decorative, className, remote }: { agent?: string; label?: string; surface?: AgentSurface; size?: number; decorative?: boolean; className?: string; /** It runs on another computer: a signal arc at the mark's upper right (RemoteSignal). */ remote?: boolean }) {
-  const id = agentId(agent);
+  const id = markId(agent, label);
   const agentNamed = agentName(agent, label);
   const name = markName(agent, label, surface);
   const a11y = decorative ? { "aria-hidden": true as const } : { role: "img" as const, "aria-label": name };
@@ -143,12 +143,12 @@ function markName(agent?: string, label?: string, surface?: AgentSurface): strin
 }
 
 /** What a session's mark says it is (SessionMark's accessible name), for a place that names it along with more. */
-export function sessionMarkName(s: Pick<Session, "agent" | "agent_label" | "source_kind" | "agent_surface">): string {
+export function sessionMarkName(s: Parameters<typeof sessionAgent>[0]): string {
   const { agent, label, surface } = sessionAgent(s);
   return markName(agent, label, surface);
 }
 
 /** The mark of a session's agent. */
-export function SessionMark({ s, ...rest }: { s: Pick<Session, "agent" | "agent_label" | "source_kind" | "agent_surface"> } & Omit<Parameters<typeof AgentMark>[0], "agent" | "label" | "surface">) {
+export function SessionMark({ s, ...rest }: { s: Parameters<typeof sessionAgent>[0] } & Omit<Parameters<typeof AgentMark>[0], "agent" | "label" | "surface">) {
   return <AgentMark {...sessionAgent(s)} {...rest} />;
 }

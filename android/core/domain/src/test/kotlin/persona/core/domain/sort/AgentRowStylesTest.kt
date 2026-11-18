@@ -3,6 +3,8 @@ package persona.core.domain.sort
 import org.junit.Assert.*
 import org.junit.Test
 import persona.core.contracts.Session
+import persona.core.contracts.Workflow
+import persona.core.domain.zh
 
 /**
  * The Agents list's row styles (#4338 A9): one display made of the two stored values, with iOS's cases
@@ -42,8 +44,8 @@ class AgentRowStylesTest {
             assertFalse(sourceAfterWords)
             assertFalse(stateAtFoot)
             assertFalse(card)
-            // iOS gives the words two lines; Android's Avatar row keeps the one it had.
-            assertEquals(1, wordLines)
+            // iOS gives the words two lines (`lineLimit(2)`).
+            assertEquals(2, wordLines)
         }
         // B: the dot alone, the mark beside the title; one line of words with the source at its end; no model or to-do.
         with(AgentListDisplay.TwoLines.rowParts) {
@@ -75,6 +77,8 @@ class AgentRowStylesTest {
         }
     }
 
+    private val workflow = Workflow(taskId = "t1", runId = "wf_1", name = "parity-audit", status = "running", running = true)
+
     @Test fun stateCardsSpellEveryStateButSeen() {
         fun card(r: AgentSession, muted: Boolean = false) = r.cardStateWord(muted)?.english()
         assertEquals("Needs you", card(row("needs_you")))
@@ -82,10 +86,51 @@ class AgentRowStylesTest {
         assertEquals("Unread", card(row("unread")))
         assertEquals("Awaiting reply", card(row("idle") { copy(awaitsReply = true) }))
         assertEquals("Waiting in the background", card(row { copy(backgroundWaiting = true) }))
+        // A computer that is out of reach and a state the app doesn't know have their words too (iOS `stateLabel`).
+        assertEquals("Not running", card(row("offline")))
+        assertEquals("Unknown", card(row("unknown")))
         // Seen says nothing (iOS: a quiet one's word is left out), nor a muted one.
         assertNull(card(row("idle")))
         assertNull(card(row("needs_you"), muted = true))
         assertNull(card(row("idle") { copy(awaitsReply = true) }, muted = true))
+        assertNull(card(row("offline"), muted = true))
+    }
+
+    @Test fun aWorkflowKeepsAWorkingAgentWorkingInTheBackground() {
+        fun word(r: AgentSession, muted: Boolean = false) = r.stateWord(muted).english()
+        // iOS `Session.isBackgroundWorking`: working with a workflow running, whatever else it says; not an ended run.
+        assertEquals("Working (Background)", word(row { copy(workflows = listOf(workflow)) }))
+        assertEquals("Working", word(row { copy(workflows = listOf(workflow.copy(status = "completed", running = false))) }))
+        assertEquals("Working", word(row()))
+        // Only a working one: the same run on an agent that has stopped or needs you does not change its state.
+        assertEquals("Unread", word(row("unread") { copy(workflows = listOf(workflow)) }))
+        assertEquals("Needs you", word(row("needs_you") { copy(workflows = listOf(workflow)) }))
+        // Waiting in the background wins, as in `stateLabel`; the assistant's own conversation is never background work.
+        assertEquals("Waiting in the background", word(row { copy(backgroundWaiting = true, workflows = listOf(workflow)) }))
+        assertEquals("Working", word(row { copy(assistant = true, workflows = listOf(workflow)) }))
+        // A card spells it out; so does every other place that writes a state (the space page's cards).
+        assertEquals("Working (Background)", row { copy(workflows = listOf(workflow)) }.cardStateWord(false)?.english())
+        assertEquals("Seen", word(row("idle")))
+        assertEquals("Awaiting reply", word(row("idle") { copy(awaitsReply = true) }))
+        // Muted, plain Seen: a muted one is never Awaiting reply.
+        assertEquals("Seen", word(row("idle") { copy(awaitsReply = true) }, muted = true))
+    }
+
+    @Test fun theStateLabelIsThePlainWordAChatHeaderSays() {
+        // iOS `Session.stateLabel`: the same words as `stateWord`, except Awaiting reply, which needs to know about the mute.
+        assertEquals("Seen", row("idle") { copy(awaitsReply = true) }.stateLabel.english())
+        assertEquals("Awaiting reply", row("idle") { copy(awaitsReply = true) }.stateWord(false).english())
+        assertEquals("Working (Background)", row { copy(workflows = listOf(workflow)) }.stateLabel.english())
+        assertEquals("Waiting in the background", row { copy(backgroundWaiting = true) }.stateLabel.english())
+        assertEquals("Waiting in the background", row { copy(backgroundWaiting = true, workflows = listOf(workflow)) }.stateLabel.english())
+        // Only a working one waits in the background; the assistant's own conversation never runs background work.
+        assertEquals("Seen", row("idle") { copy(backgroundWaiting = true) }.stateLabel.english())
+        assertEquals("Working", row { copy(assistant = true, workflows = listOf(workflow)) }.stateLabel.english())
+        for ((state, word) in listOf("needs_you" to "Needs you", "working" to "Working", "unread" to "Unread", "idle" to "Seen",
+            "offline" to "Not running", "unknown" to "Unknown")) assertEquals(word, row(state).stateLabel.english())
+        // The words in the app's other languages, from iOS's catalog.
+        assertEquals("工作中（后台）", row { copy(workflows = listOf(workflow)) }.stateLabel.zh())
+        assertEquals("后台等待中", row { copy(backgroundWaiting = true) }.stateLabel.zh())
     }
 
     @Test fun rowContentTakesTheDisplaysStateWord() {

@@ -133,57 +133,108 @@ final class FolderEdits {
     }
 }
 
-/// Where Move puts things: the browser's folders from its top (`cwd`), opened on the one shown; Move Here takes the
-/// folder open. The folders being moved can't be opened (nothing goes into itself).
+/// Where Move puts things: folders from `root` (the session's folder, the home or `/`, whichever the folder shown is
+/// in), opened on the one shown (`at`); Move Here takes the folder open. The folders being moved can't be opened
+/// (nothing goes into itself).
 struct FolderPicker: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
     let machineID: String
     var group: String
     let cwd: String
-    /// The full paths being moved.
+    let root: String
+    /// The full paths being moved (or copied).
     let moving: [String]
+    /// Copy to… (#5830): Copy Here, and the folder they are in may be picked (a duplicate).
+    var copying = false
     let pick: (String) -> Void
-    /// The folders opened below cwd, each as its full path.
+    @State private var naming: String?
+    @State private var newName = ""
+    @State private var made = 0
+    /// The folders opened below root, each as its full path.
     @State private var opened: [String]
 
-    init(machineID: String, group: String, cwd: String, start: [String], moving: [String], pick: @escaping (String) -> Void) {
+    init(machineID: String, group: String, cwd: String, root: String, at: String, moving: [String], copying: Bool = false,
+         pick: @escaping (String) -> Void) {
         self.machineID = machineID
         self.group = group
         self.cwd = cwd
+        self.root = root
         self.moving = moving
+        self.copying = copying
         self.pick = pick
-        var paths: [String] = [], at = cwd
-        for name in start {
-            at = (at as NSString).appendingPathComponent(name)
-            paths.append(at)
+        _opened = State(initialValue: Self.opened(from: root, to: at))
+    }
+
+    /// The folders from root down to at (root itself not among them); none when at is not under root.
+    nonisolated static func opened(from root: String, to at: String) -> [String] {
+        let base = root == "/" ? "" : root
+        guard at != root, at.hasPrefix(base + "/") else { return [] }
+        var paths: [String] = [], cur = base
+        for name in at.dropFirst(base.count + 1).split(separator: "/") {
+            cur += "/" + name
+            paths.append(cur)
         }
-        _opened = State(initialValue: paths)
+        return paths
     }
 
     var body: some View {
         NavigationStack(path: $opened) {
-            level(cwd)
+            level(root)
                 .navigationDestination(for: String.self) { level($0) }
         }
     }
 
     private func level(_ path: String) -> some View {
-        FolderPickerList(machineID: machineID, group: group, cwd: cwd, path: path, moving: Set(moving)) { opened.append($0) }
+        FolderPickerList(machineID: machineID, group: group, cwd: cwd, path: path, moving: Set(moving), reload: made) { opened.append($0) }
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
+                SheetClose { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Move Here") {
+                    Button(copying ? String(localized: "Copy Here") : String(localized: "Move Here")) {
                         pick(path)
                         dismiss()
                     }
                     .lineLimit(1)
-                    // Moving to where they all are changes nothing.
-                    .disabled(Set(moving.map { ($0 as NSString).deletingLastPathComponent }) == [path])
+                    // Moving to where they all are changes nothing (a copy there is a duplicate).
+                    .disabled(!copying && Set(moving.map { ($0 as NSString).deletingLastPathComponent }) == [path])
                     .accessibilityIdentifier("files.move.here")
                 }
+                #if os(iOS)
+                ToolbarItem(placement: .bottomBar) {
+                    Button { newName = String(localized: "untitled folder"); naming = path } label: {
+                        Label("New Folder", systemImage: Theme.Icon.newFolder).labelStyle(.titleAndIcon).lineLimit(1)
+                    }
+                    .accessibilityIdentifier("files.move.newfolder")
+                }
+                #endif
             }
+            .alert("New Folder", isPresented: Binding(get: { naming == path }, set: { if !$0 { naming = nil } })) {
+                TextField("Name [Personal Agent Prefs d44e9b]", text: $newName)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Create") { makeFolder(in: path) }
+                Button("Cancel", role: .cancel) { naming = nil }
+            }
+    }
+
+    /// Makes a folder where the picker is and opens it (#5830).
+    private func makeFolder(in path: String) {
+        let name = newName.trimmingCharacters(in: .whitespaces)
+        naming = nil
+        if let problem = FolderEdits.nameProblem(name) {
+            model.toast = Toast(problem, style: .error)
+            return
+        }
+        guard let api = model.api(group) else { return }
+        Task {
+            do {
+                _ = try await api.makeDir(machine: machineID, dir: path, cwd: cwd, name: name)
+                made += 1
+                opened.append((path as NSString).appendingPathComponent(name))
+            } catch {
+                model.toast = Toast(FolderEdits.message(error), style: .error)
+            }
+        }
     }
 }
 
@@ -195,6 +246,8 @@ private struct FolderPickerList: View {
     let cwd: String
     let path: String
     let moving: Set<String>
+    /// Bumped when a folder was made here: read the folder again.
+    var reload = 0
     let open: (String) -> Void
     @State private var folders: [FileEntry]?
     @State private var error: String?
@@ -244,7 +297,7 @@ private struct FolderPickerList: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .accessibilityIdentifier("files.move.list")
-        .task(id: path) {
+        .task(id: "\(path)\u{0}\(reload)") {
             guard let api = model.api(group) else { return }
             do {
                 let l = try await api.listDir(machine: machineID, path: path, cwd: cwd)

@@ -30,7 +30,7 @@ nonisolated enum MeetingTalk {
         let spoken = entry.attendance.flatMap { $0.spoken.isEmpty ? nil : $0 }
         for segment in entry.segments {
             for line in segment.sentences ?? [] where !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if spoken?.spokenBy(line) != true { return true }
+                if spoken?.echo(line) != true { return true }
             }
         }
         return false

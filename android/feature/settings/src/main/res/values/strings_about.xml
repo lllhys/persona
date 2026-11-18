@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_about_commit">Commit</string>
+    <string name="settings_about_commit_unknown">Unknown</string>
+    <string name="settings_about_commit_copy">Copy build commit</string>
+    <string name="settings_about_commit_copied">Build commit copied</string>
+</resources>

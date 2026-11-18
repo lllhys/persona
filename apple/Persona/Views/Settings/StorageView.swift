@@ -26,10 +26,24 @@ nonisolated enum StorageKind: String, CaseIterable, Identifiable, Sendable {
         case .chatImages: String(localized: "Screenshots and other images, downloaded only once")
         case .feishuMedia: String(localized: "Images, videos, and files from Lark messages")
         case .pageState: String(localized: "Agents and Inbox lists, and recent messages in Lark chats")
-        case .web: String(localized: "Web pages opened in the app (sign-ins not included)")
+        case .web: String(localized: "Pages from links in chats, opened or loaded ahead")
         case .network: String(localized: "Copies the system keeps for network requests")
         case .other: String(localized: "Temporary files and other caches")
         case .appData: String(localized: "Settings and pairing info, kept when you clear caches")
+        }
+    }
+
+    /// What clearing this kind means, in its confirmation.
+    var clearEffect: String {
+        switch self {
+        case .agentChats: String(localized: "Chats download again from the hub when you open them.")
+        case .chatImages: String(localized: "Images download again from the hub when you see them.")
+        case .feishuMedia: String(localized: "Lark images and files download again when you open them.")
+        case .pageState: String(localized: "Lists and Lark chats load again from the hub.")
+        case .web: String(localized: "Pages load again from the web when you open them. Sign-ins are kept.")
+        case .network: String(localized: "Requests go to the network again.")
+        case .other: String(localized: "Temporary files are removed.")
+        case .appData: ""
         }
     }
 
@@ -211,8 +225,23 @@ struct StorageView: View {
                 #endif
             }
 
+            // Above the rows, on the first screen: a hint below them was never seen (#8355).
             Section {
-                ForEach(StorageKind.allCases) { kind in row(kind) }
+                ForEach(StorageKind.allCases) { kind in
+                    row(kind)
+                        .swipeActions {
+                            if kind.clearable, (usage?[kind] ?? 0) > 0 {
+                                Button("Clear [Image Editor bce237]", role: .destructive) { confirmOne = kind }
+                            }
+                        }
+                        .contextMenu {
+                            if kind.clearable, (usage?[kind] ?? 0) > 0 {
+                                Button(role: .destructive) { confirmOne = kind } label: { Label("Clear [Image Editor bce237]", systemImage: Theme.Icon.delete) }
+                            }
+                        }
+                }
+            } header: {
+                Text("Tap an item to clear it.").textCase(nil)
             }
 
             Section {
@@ -241,14 +270,23 @@ struct StorageView: View {
         .themedPage()
         .detailTitle(String(localized: "Storage"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await measure() }
+        .task {
+            await measure()
+            #if DEBUG
+            // `-openStorageClear <kind>` (screenshots): that row's confirmation, as a tap on it opens it.
+            if let k = UserDefaults.standard.string(forKey: "openStorageClear").flatMap(StorageKind.init(rawValue:)) { confirmOne = k }
+            #endif
+        }
         .refreshable { await measure() }
         .confirmationDialog("Clear all \(clearableTotal.storageText) of caches? Settings and pairing info are kept.", isPresented: $confirmAll, titleVisibility: .visible) {
             Button("Clear [Image Editor bce237]", role: .destructive) { Task { await clear(StorageKind.allCases.filter(\.clearable)) } }
         }
         .confirmationDialog(confirmOne.map { String(localized: "Clear “\($0.title)” (\((usage?[$0] ?? 0).storageText))?") } ?? "",
-                            isPresented: Binding(get: { confirmOne != nil }, set: { if !$0 { confirmOne = nil } }), titleVisibility: .visible) {
-            Button("Clear [Image Editor bce237]", role: .destructive) { if let k = confirmOne { Task { await clear([k]) } } }
+                            isPresented: Binding(get: { confirmOne != nil }, set: { if !$0 { confirmOne = nil } }), titleVisibility: .visible,
+                            presenting: confirmOne) { k in
+            Button("Clear [Image Editor bce237]", role: .destructive) { Task { await clear([k]) } }
+        } message: { k in
+            Text(k.clearEffect)
         }
     }
 
@@ -273,7 +311,19 @@ struct StorageView: View {
         .accessibilityHidden(true)
     }
 
-    private func row(_ kind: StorageKind) -> some View {
+    /// A kind with something to clear is a button that asks to clear it (#8355): a swipe alone was never found. The swipe
+    /// and the long press stay as shortcuts; App Data and an empty kind have no action.
+    @ViewBuilder private func row(_ kind: StorageKind) -> some View {
+        if kind.clearable, (usage?[kind] ?? 0) > 0, clearing == nil {
+            Button { confirmOne = kind } label: { rowContent(kind) }
+                .tint(.primary) // the row reads as before; the footer says a tap clears it
+                .accessibilityHint(Text("Clears it after you confirm"))
+        } else {
+            rowContent(kind)
+        }
+    }
+
+    private func rowContent(_ kind: StorageKind) -> some View {
         HStack(spacing: Theme.Space.m) {
             ThemedIcon(kind.icon)
                 .font(Theme.Font.bodyStrong)
@@ -296,16 +346,6 @@ struct StorageView: View {
             }
         }
         .contentShape(.rect)
-        .swipeActions {
-            if kind.clearable, (usage?[kind] ?? 0) > 0 {
-                Button("Clear [Image Editor bce237]", role: .destructive) { confirmOne = kind }
-            }
-        }
-        .contextMenu {
-            if kind.clearable, (usage?[kind] ?? 0) > 0 {
-                Button(role: .destructive) { confirmOne = kind } label: { Label("Clear [Image Editor bce237]", systemImage: Theme.Icon.delete) }
-            }
-        }
         .accessibilityElement(children: .combine)
     }
 

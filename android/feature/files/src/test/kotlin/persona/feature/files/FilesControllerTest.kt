@@ -2,6 +2,8 @@ package persona.feature.files
 
 import persona.core.contracts.api.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import persona.core.hub.HubError
+import persona.core.hub.HubFailure
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
@@ -68,6 +70,29 @@ private class FakeMachine : SessionFiles {
         asked += "show $hash"
         return SessionGitShow(SessionGitCommit(hash, subject = "Add README"), files = listOf(SessionGitFile("README.md", index = "M")),
             diff = "diff --git a/README.md b/README.md\n@@ -1 +1 @@\n-a\n+b")
+    }
+    var edits = true
+    var editFailing: Exception? = null
+    var restoreFailing: Exception? = null
+    /** Holds a change until completed: the page may close while it is on its way. */
+    var editGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    override fun editsFiles(machineId: String) = edits
+    override suspend fun rename(machineId: String, cwd: String, path: String, name: String): String {
+        asked += "rename $path $name"
+        editGate?.await()
+        editFailing?.let { throw it }
+        return joinRemotePath(FilesPaths.parent(path) ?: "/", name)
+    }
+    override suspend fun trash(machineId: String, cwd: String, paths: List<String>): List<SessionTrashedFile> {
+        asked += "trash ${paths.joinToString()}"
+        editGate?.await()
+        editFailing?.let { throw it }
+        return paths.mapIndexed { i, path -> SessionTrashedFile(path, "t$i") }
+    }
+    override suspend fun restore(machineId: String, trashIds: List<String>): List<String> {
+        asked += "restore ${trashIds.joinToString()}"
+        restoreFailing?.let { throw it }
+        return trashIds
     }
 }
 
@@ -479,5 +504,122 @@ class FilesControllerTest {
         assertTrue("log 30" in machine.asked)
         assertTrue(machine.asked.none { it.startsWith("pull") })
         coroutineContext.cancelChildren()
+    }
+
+    private fun TestScope.editing(machine: FakeMachine): Pair<FilesController, MutableList<FileEdit>> {
+        val files = controller(machine)
+        files.start()
+        runCurrent()
+        machine.asked.clear()
+        return files to mutableListOf()
+    }
+
+    @Test fun aRenameSendsThePathAndTheNewNameThenReadsTheFolderAgain() = runTest {
+        val machine = FakeMachine()
+        val (files, reports) = editing(machine)
+        assertTrue(files.editsFiles)
+        files.rename("$cwd/Sources", "  Lib  ", reports::add)
+        runCurrent()
+        assertEquals(listOf("rename $cwd/Sources Lib", "fs $cwd"), machine.asked)
+        assertEquals(listOf<FileEdit>(FileEdit.Renamed), reports)
+        coroutineContext.cancelChildren()
+    }
+
+    @Test fun aNameTheMachineCantTakeIsSaidWithoutAsking() = runTest {
+        val machine = FakeMachine()
+        val (files, reports) = editing(machine)
+        for (bad in listOf("", "  ", ".", "..", "a/b")) files.rename("$cwd/Sources", bad, reports::add)
+        // The same name changes nothing, so nothing is sent and nothing is said.
+        files.rename("$cwd/Sources", "Sources", reports::add)
+        runCurrent()
+        assertTrue(machine.asked.isEmpty())
+        assertEquals(listOf(NameProblem.Empty, NameProblem.Empty, NameProblem.Dots, NameProblem.Dots, NameProblem.Slash),
+            reports.map { (it as FileEdit.Invalid).problem })
+        assertNull(nameProblem(".env"))
+        coroutineContext.cancelChildren()
+    }
+
+    @Test fun aTrashCarriesUndoWhichPutsItBack() = runTest {
+        val machine = FakeMachine()
+        val (files, reports) = editing(machine)
+        files.trash(listOf("$cwd/Sources"), reports::add)
+        runCurrent()
+        assertEquals(listOf("trash $cwd/Sources", "fs $cwd"), machine.asked)
+        val trashed = reports.single() as FileEdit.Trashed
+        assertEquals(listOf("t0"), trashed.trashIds)
+        machine.asked.clear()
+        files.restore(trashed.trashIds, "Sources", reports::add)
+        runCurrent()
+        assertEquals(listOf("restore t0", "fs $cwd"), machine.asked)
+        assertEquals(FileEdit.Restored, reports.last())
+        // An Undo that fails says so, as Undo's failure, and leaves the folder as it is.
+        machine.asked.clear()
+        machine.restoreFailing = HubFailure(HubError.Server, "taken", 409, "exists")
+        files.restore(listOf("t0"), "Sources", reports::add)
+        runCurrent()
+        assertEquals(listOf("restore t0"), machine.asked)
+        assertEquals(FileEdit.Failed(EditRefusal.Exists("Sources"), restoring = true), reports.last())
+        coroutineContext.cancelChildren()
+    }
+
+    @Test fun refusalsAreSaidInTheUsersWordsAndTheFolderStays() = runTest {
+        val machine = FakeMachine()
+        val (files, reports) = editing(machine)
+        val cases = listOf(
+            HubFailure(HubError.Server, "only the home", 409, "read_only") to EditRefusal.ReadOnly,
+            HubFailure(HubError.Server, "taken", 409, "exists") to EditRefusal.Exists("Lib"),
+            HubFailure(HubError.Server, "not there", 404, "not_found") to EditRefusal.Gone,
+            HubFailure(HubError.Server, "personad on box is too old", 409, "node_outdated") to EditRefusal.NodeOutdated("personad on box is too old"),
+            HubFailure(HubError.Server, "HTTP 404", 404) to EditRefusal.HubTooOld,
+            HubFailure(HubError.Server, "~/a is on another disk", 502, "internal") to EditRefusal.Unavailable(502),
+        )
+        for ((failure, refusal) in cases) {
+            machine.editFailing = failure
+            files.rename("$cwd/Sources", "Lib", reports::add)
+            runCurrent()
+            assertEquals(FileEdit.Failed(refusal), reports.last())
+        }
+        // A dropped connection is the connection's failure, said as a folder that can't be read says it.
+        val offline = HubFailure(HubError.Timeout)
+        machine.editFailing = offline
+        files.trash(listOf("$cwd/Sources"), reports::add)
+        runCurrent()
+        assertEquals(FileEdit.Failed(EditRefusal.Other(offline)), reports.last())
+        assertTrue(machine.asked.none { it.startsWith("fs ") })
+        coroutineContext.cancelChildren()
+    }
+
+    @Test fun aChangeRunsToItsEndWhenThePageCloses() = runTest {
+        val machine = FakeMachine()
+        val (files, reports) = editing(machine)
+        machine.editGate = kotlinx.coroutines.CompletableDeferred()
+        files.trash(listOf("$cwd/Sources"), reports::add)
+        runCurrent()
+        // Leaving the page cancels its scope; the trash on its way still ends, and its Undo is still reported.
+        coroutineContext.cancelChildren()
+        machine.editGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("t0"), (reports.single() as FileEdit.Trashed).trashIds)
+    }
+
+    @Test fun refusalsKeepTheHubsNameAndRequestId() = runTest {
+        val machine = FakeMachine()
+        val (files, reports) = editing(machine)
+        // Undo into a folder where the name is taken meanwhile: the hub names the one there, not the name the phone asked about.
+        machine.restoreFailing = HubFailure(HubError.Server, "taken", 409, "exists", body = """{"error":"taken","code":"exists","name":"Sources 2"}""")
+        files.restore(listOf("t0"), "Sources", reports::add)
+        runCurrent()
+        assertEquals(FileEdit.Failed(EditRefusal.Exists("Sources 2"), restoring = true), reports.last())
+        // A server error keeps the hub's request id, to find its log line.
+        machine.editFailing = HubFailure(HubError.Server, "~/a is on another disk", 502, "internal", requestId = "r-1")
+        files.rename("$cwd/Sources", "Lib", reports::add)
+        runCurrent()
+        assertEquals(FileEdit.Failed(EditRefusal.Unavailable(502, "r-1")), reports.last())
+        coroutineContext.cancelChildren()
+    }
+
+    @Test fun editsAreOfferedOnlyWhereTheHubHasThem() = runTest {
+        val machine = FakeMachine().apply { edits = false }
+        assertFalse(controller(machine).editsFiles)
     }
 }

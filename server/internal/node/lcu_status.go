@@ -131,6 +131,9 @@ func lcuStatus(ctx context.Context) proto.Computer {
 		}
 		c.ScreenSharing = screenSharing(ctx)
 		c.Displays = screenDisplays(ctx, c.ScreenSharing)
+		c.ScreenVideo = screenVideoStatus(ctx) // #3954: nil until advertiseScreenVideo
+		c.ScreenInput = screenInputStatus(ctx) // #7775: nil without Persona Input
+		c.PhoneScreen = phoneScreenStatus(ctx) // #9314: nil without a Persona Input that has it
 	}
 	c.Ready, c.Note = lcuReady(c)
 	c.Job = currentJob()

@@ -7,17 +7,30 @@
 import { openTask } from "../../lib/handoff";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { t } from "../../i18n";
-import { errorText } from "../../lib/api";
+import { ApiError, errorText } from "../../lib/api";
 import { acceptBrief, type AskAnswer } from "../../lib/feed";
 import { clock } from "../../lib/format";
+import { navigate } from "../../lib/router";
 import { refreshTodos } from "../../lib/store";
 import { askOptions, type AskOption, type AskResponse, type Todo, type TodoAsk } from "../../lib/todos";
 import { Button, IconButton, Menu, toast, useMenu } from "../../ui/atoms";
 import type { MenuItem } from "../../ui/menu-model";
 import { RecommendedTag } from "../../ui/RecommendedTag";
+import { BriefingMark } from "./BriefingMark";
 
 /** Where answering the round stands: not yet, being sent, or answered (with what the row then says). */
 type Answering = { state: "idle" } | { state: "busy"; key: string } | { state: "done"; text: string };
+
+/** A dialog that has the Agent's terminal and kept the answer from it (423 dialog_open, #7343): its first line ("" when the
+ *  hub could not read it) and the Agent whose terminal it is, when the hub said. */
+type Blocker = { dialog: string; mid?: string; sid?: string };
+
+/** The blocker a failed answer is, or undefined for any other failure. */
+export function dialogBlocker(e: unknown): Blocker | undefined {
+  if (!(e instanceof ApiError) || e.code !== "dialog_open") return undefined;
+  const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return { dialog: str(e.body.dialog) ?? "", mid: str(e.body.machine_id), sid: str(e.body.session_id) };
+}
 
 /** The fixed answers in the menu's order. */
 const RESPONSES: AskResponse[] = ["decide_yourself", "not_what_i_asked", "explain_first"];
@@ -86,10 +99,11 @@ function useFitting(count: number, round: string) {
   return { row, fit: Math.min(fit, count) };
 }
 
-export function DecisionRow({ todo, ask, rowKey, admission, onBusyChange, blocked = false, footer }: { todo: Pick<Todo, "id" | "title">; ask: TodoAsk; rowKey: string; admission?: { current: boolean }; onBusyChange?: (busy: boolean) => void; blocked?: boolean; footer?: ReactNode }) {
+export function DecisionRow({ todo, ask, rowKey, admission, onBusyChange, blocked = false, footer, hideTitle = false }: { todo: Pick<Todo, "id" | "title">; ask: TodoAsk; rowKey?: string; admission?: { current: boolean }; onBusyChange?: (busy: boolean) => void; blocked?: boolean; footer?: ReactNode; hideTitle?: boolean }) {
   const options = askOptions(ask);
   const responses = askResponses(ask);
   const [answering, setAnswering] = useState<Answering>({ state: "idle" });
+  const [blocker, setBlocker] = useState<Blocker>();
   // Admit one answer synchronously, before React disables the other buttons.
   const ownAdmission = useRef(false);
   const admitted = admission ?? ownAdmission;
@@ -104,16 +118,20 @@ export function DecisionRow({ todo, ask, rowKey, admission, onBusyChange, blocke
     admitted.current = true;
     onBusyChange?.(true);
     setAnswering({ state: "busy", key });
+    setBlocker(undefined);
     acceptBrief(todo.id, ask.asked_at, body).then(
       (res) => {
-        setAnswering({ state: "done", text: res === "handled" ? t("assistant-brief.handled") : done });
+        setAnswering({ state: "done", text: res === "handled" ? t("assistant-brief.handled") : res === "recorded" ? t("assistant-brief.recorded_not_delivered") : done });
         if (res === "handled") void refreshTodos(); // acceptBrief reads them again only when the hub took it
       },
       (e) => {
         admitted.current = false;
         onBusyChange?.(false);
         setAnswering({ state: "idle" });
-        toast(t("assistant-decisionrow.failed", { error: errorText(e) }), "error");
+        // a dialog in the Agent's terminal: said on the card, where the button was pressed, with the way to it
+        const b = dialogBlocker(e);
+        if (b) setBlocker(b);
+        else toast(t("assistant-decisionrow.failed", { error: errorText(e) }), "error");
       },
     );
   };
@@ -138,12 +156,14 @@ export function DecisionRow({ todo, ask, rowKey, admission, onBusyChange, blocke
 
   return (
     <div data-needs-row={rowKey} data-decision-row={ask.why_owner || ""} className="flex min-w-0 flex-col gap-1.5 rounded-control bg-field px-3 py-2.5">
-      <div className="flex min-w-0 items-center gap-2">
-        <button type="button" onClick={open} className="block min-w-0 flex-1 truncate text-left text-[12px] text-ink-2 hover:underline" title={t("assistant-brief.open_row", { title: todo.title })}>
-          {todo.title}
-        </button>
-        <span className="shrink-0 text-xs text-ink-2">{t("assistant-tasks.review_needs_user")}</span>
-      </div>
+      {!hideTitle && (
+        <div className="flex min-w-0 items-center gap-2">
+          <button type="button" onClick={open} className="block min-w-0 flex-1 truncate text-left text-[12px] text-ink-2 hover:underline" title={t("assistant-brief.open_row", { title: todo.title })}>
+            {todo.title}
+          </button>
+          <span className="shrink-0 text-xs text-ink-2">{t("assistant-tasks.review_needs_user")}</span>
+        </div>
+      )}
       <p data-decision-question className="text-[13.5px] font-medium select-text [overflow-wrap:anywhere]">
         {question}
       </p>
@@ -168,10 +188,24 @@ export function DecisionRow({ todo, ask, rowKey, admission, onBusyChange, blocke
           {ask.cost_of_waiting && <span data-decision-cost>{t("assistant-decisionrow.cost", { cost: ask.cost_of_waiting })}</span>}
         </p>
       )}
+      {/* held for the briefing (#5803): nothing was pushed for it, which is why it did not ring */}
+      {ask.for_briefing && answering.state !== "done" && <BriefingMark />}
       {ask.response && answering.state !== "done" && (
         <p data-decision-response={ask.response} className="truncate text-[12px] text-ink-2">
           {t("assistant-decisionrow.responded")}
         </p>
+      )}
+      {blocker && answering.state === "idle" && (
+        <div data-decision-blocked role="alert" className="flex min-w-0 items-center gap-2 rounded-control bg-orange-tint px-2.5 py-1.5 text-label text-orange">
+          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+            {blocker.dialog ? t("assistant-decisionrow.dialog_open", { dialog: blocker.dialog }) : t("assistant-decisionrow.dialog_open_unnamed")}
+          </span>
+          {blocker.mid && blocker.sid && (
+            <Button tone="secondary" onClick={() => navigate({ name: "session", mid: blocker.mid!, sid: blocker.sid!, view: "term" })} className="shrink-0">
+              {t("assistant-decisionrow.open_terminal")}
+            </Button>
+          )}
+        </div>
       )}
       <div className={footer ? "sticky -bottom-2.5 bg-field" : undefined}>
       {answering.state === "done" ? (

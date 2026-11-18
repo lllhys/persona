@@ -107,7 +107,7 @@ func ParseIndex(data []byte) (*MarketIndex, []string, error) {
 		}
 	}
 	if len(ix.Extensions) > IndexExtensionsMost {
-		return nil, nil, i18n.Err("extension-market_read.too_many", i18n.Args{"most": IndexExtensionsMost})
+		return nil, nil, i18n.Err("extension-market_read.catalog_over_limit", i18n.Args{"most": IndexExtensionsMost})
 	}
 	// Identity declarations are never silently dropped or resolved first-entry-wins.
 	declaredTargets := map[string]bool{}

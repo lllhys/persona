@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  customModel, defaultDetail, defaultLabel, effortChoices, fitEffort, followedBinding, forgetCustomModel, launcherAgent, launcherModels, modelDetail, modelName, modelRows,
-  pickerLauncher, machineLaunchers, oneOff, providerModels, startPicks, takesTypedModel, tierLeftOut, typedModelOffered, withoutCustom, type AgentModel, type LauncherModels,
+  customModel, defaultDetail, defaultLabel, effortChoices, effortRule, fitEffort, followedBinding, forgetCustomModel, launcherAgent, launcherModels, listedModel, listedModes, modelDetail,
+  modelName, modelRows, pickerLauncher, machineLaunchers, providerModels, startPicks, takesEffort, takesTypedModel, tierLeftOut, typedModelOffered, withoutCustom,
+  type AgentModel, type LauncherModels,
 } from "./launcher-models";
 
 const all = ["low", "medium", "high", "xhigh", "max"];
@@ -115,11 +116,11 @@ describe("列表", () => {
       .mockResolvedValueOnce({ ok: false, status: 502, text: async () => JSON.stringify({ error: "claude: command not found" }) });
     vi.stubGlobal("fetch", fetcher);
     expect(await launcherModels("desk top", "traex")).toEqual({ agent: "traex", models: [] });
-    expect(await launcherModels("desktop", "gateway/x", { refresh: true })).toEqual(claude);
+    expect(await launcherModels("desktop", "gateway/x", { refresh: true, purpose: "assistant" })).toEqual(claude);
     expect(await launcherModels("desktop", "claude")).toBeNull();
     await expect(launcherModels("desktop", "claude")).rejects.toMatchObject({ status: 502, message: "claude: command not found" });
     expect(fetcher.mock.calls.map((c) => c[0]).slice(0, 2)).toEqual([
-      "/api/v1/machines/desk%20top/launchers/traex/models", "/api/v1/machines/desktop/launchers/gateway%2Fx/models?refresh=1",
+      "/api/v1/machines/desk%20top/launchers/traex/models", "/api/v1/machines/desktop/launchers/gateway%2Fx/models?refresh=1&purpose=assistant",
     ]);
   });
 });
@@ -175,6 +176,25 @@ describe("思考强度", () => {
     expect(fitEffort("high", effortChoices(claude, "gateway/glm-5.3"))).toBe("high");
     expect(fitEffort("", all)).toBe("");
   });
+
+  // A launcher that lists its own permission modes (#8261, Paseo's other providers) takes the efforts its model lists and
+  // nothing else: no list, or a model it doesn't list, offers none rather than Claude Code's five.
+  it("a launcher that lists its permission modes takes only the efforts its model lists", () => {
+    const grok = { name: "grok", agent: "paseo", source: "paseo", permission_modes: ["default", "bypassPermissions"] };
+    const list: LauncherModels = { agent: "paseo", models: [{ id: "grok-4", name: "Grok 4", default: true, efforts: ["low", "high"] }, { id: "grok-mini", name: "Grok mini" }] };
+    expect([effortRule("claude"), effortRule("agy"), effortRule("paseo", grok), effortRule("codex", grok), effortRule("paseo"), effortRule("codex")])
+      .toEqual(["any", "any", "listed", "listed", "none", "none"]);
+    expect([listedModes(grok), listedModes({ permission_modes: [] }), listedModes(undefined)]).toEqual([["default", "bypassPermissions"], undefined, undefined]);
+    expect([takesEffort("paseo", grok), takesEffort("paseo"), takesEffort("claude")]).toEqual([true, false, true]);
+    expect(effortChoices(list, "", {}, "listed")).toEqual(["low", "high"]);
+    expect(effortChoices(list, "grok-mini", {}, "listed")).toEqual([]);
+    expect(effortChoices(list, "typed-id", {}, "listed")).toEqual([]);
+    expect(effortChoices(null, "", {}, "listed")).toEqual([]);
+    expect(effortChoices(list, "", {}, "none")).toEqual([]);
+    expect(startPicks({ agent: "paseo", list, model: "", effort: "high", launcher: grok })).toEqual({ effort: "high" });
+    expect(startPicks({ agent: "paseo", list, model: "", effort: "max", launcher: grok })).toEqual({});
+    expect(startPicks({ agent: "paseo", list, model: "", effort: "high" }), "an older computer's launcher: no effort, as before").toEqual({});
+  });
 });
 
 describe("启动时发什么", () => {
@@ -201,7 +221,6 @@ describe("启动器的默认值 (#2455)", () => {
     expect(defaultLabel({ provider: "kcc", model: "" })).toBe("默认：kcc");
     expect(defaultLabel(null, "claude")).toBe("默认：claude");
     expect(defaultLabel(undefined)).toBe("默认");
-    expect(oneOff()).toBe("仅这一次");
   });
   it("titles the default's provider by its display name (#5029)", () => {
     const names = [{ name: "relay-example-com", display_name: "我的中转 站" }, { name: "kcc" }];
@@ -239,7 +258,8 @@ describe("手动输入的模型 ID（#1644）", () => {
 
   it("Claude Code and Codex take one, unless the launcher fixes its own --model", () => {
     expect(takesTypedModel("claude") && takesTypedModel("codex")).toBe(true);
-    expect(takesTypedModel("traex") || takesTypedModel("agy")).toBe(false);
+    expect(takesTypedModel("pi") && takesTypedModel("cursor") && takesTypedModel("agy")).toBe(true);
+    expect(takesTypedModel("traex") || takesTypedModel("dsh")).toBe(false);
     expect(typedModelOffered("claude", claude)).toBe(true);
     expect(typedModelOffered("claude", undefined)).toBe(true); // the list couldn't be read
     expect(typedModelOffered("claude", { ...claude, locked: "固定了模型" })).toBe(false);
@@ -279,6 +299,24 @@ describe("手动输入的模型 ID（#1644）", () => {
     const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.method).toBe("DELETE");
     expect(url).toContain("/api/v1/machines/mac/launchers/cc%20gw/models/custom?model=~vendor%2Fmodel-latest%5B1m%5D");
+  });
+});
+
+describe("spellings the hub folded into one row (#10365)", () => {
+  const gateway: LauncherModels = { agent: "claude", models: [
+    { id: "default", name: "Default (recommended)", resolved: "claude-opus-5-5", default: true, efforts: all },
+    { id: "claude-opus-5-5", name: "Opus 5.5", aliases: ["opus", "fable", "sonnet", "haiku"], efforts: ["low", "high"] },
+    { id: "kiro/claude-opus-5-5", name: "Opus 5.5 (kiro)" },
+  ] };
+
+  it("a model saved as an alias finds its row: its efforts, no typed row for it, a search by it", () => {
+    expect(listedModel(gateway.models, "sonnet")?.id).toBe("claude-opus-5-5");
+    expect(listedModel(gateway.models, "kiro/claude-opus-5-5")?.id).toBe("kiro/claude-opus-5-5");
+    expect(listedModel(gateway.models, "claude-opus-4-8")).toBeUndefined();
+    expect(effortChoices(gateway, "haiku")).toEqual(["low", "high"]);
+    expect(effortChoices(gateway, "", { provider: "launcher.gateway-api", model: "opus" })).toEqual(["low", "high"]);
+    expect(customModel(gateway.models, "fable")).toBe("");
+    expect(ids(modelRows(gateway.models, "fable").rows)).toEqual(["claude-opus-5-5"]);
   });
 });
 

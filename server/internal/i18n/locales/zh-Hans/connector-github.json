@@ -1,0 +1,3 @@
+{
+  "device_unreachable": "hub 连不上 github.com，未能登录 GitHub。请检查 hub 的网络；如果需要代理，可在 manager.json 配置 github.proxy 后重试。"
+}

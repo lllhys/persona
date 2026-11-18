@@ -1,0 +1,9 @@
+{
+  "no_node": "没有在运行的 Persona node（hub 没连上这台电脑）",
+  "too_old": "这台电脑上的 personad 太旧，不认识 ask",
+  "timeout": "超时，手机上没人回答",
+  "dismissed": "手机上选了「交回电脑」",
+  "dismissed_terminal": "手机上选了「交回电脑」，在终端里问",
+  "unreachable": "联系不上手机：{reason}",
+  "unreachable_terminal": "联系不上手机（{reason}），在终端里问"
+}

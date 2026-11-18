@@ -22,7 +22,7 @@ vi.mock("./reports", async (orig) => ({
   startHealthConversation: () => (hub.started++, new Promise(() => {})),
 }));
 vi.mock("../chat/ChatView", () => ({
-  ChatView: ({ mid, sid, headerActions }: { mid: string; sid: string; headerActions?: React.ReactNode }) => <div><p data-chat>{`${mid}/${sid}`}</p>{headerActions}</div>,
+  ChatView: ({ mid, sid, headerActions, placeholder }: { mid: string; sid: string; headerActions?: React.ReactNode; placeholder?: string }) => <div><p data-chat data-placeholder={placeholder}>{`${mid}/${sid}`}</p>{headerActions}</div>,
 }));
 
 import { Health } from "./Health";
@@ -63,6 +63,41 @@ describe("the health page's box", () => {
     expect(hub.started).toBe(1);
     expect(host.querySelector("textarea")!.disabled).toBe(true);
   });
+
+  it("keeps the home page alive when a suggestion's draft write hits a full localStorage", async () => {
+    hub.answers.push(listed);
+    localStorage.clear();
+    const quotaError = () => {
+      const err = new Error("QuotaExceededError");
+      err.name = "QuotaExceededError";
+      throw err;
+    };
+    const original = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === "draft:health-new") quotaError();
+      return original.call(this, key, value);
+    });
+    const errors: string[] = [];
+    const onError = (e: ErrorEvent) => {
+      errors.push(e.message);
+      e.preventDefault(); // keep the jsdom console clean; the failure is asserted below
+    };
+    window.addEventListener("error", onError);
+    try {
+      act(() => root.render(<Health fresh onToggleSidebar={() => {}} />));
+      await flush();
+      const suggestion = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(t("health.suggestion_sleep")))!;
+      expect(suggestion).toBeTruthy();
+      expect(() => act(() => suggestion.click())).not.toThrow();
+      await flush();
+      expect(errors).toEqual([]); // a raw localStorage throw escapes React as a window error; the helper swallows it
+      expect(localStorage.getItem("draft:health-new")).toBeNull(); // the quota failure was swallowed, not surfaced
+      expect(host.querySelector("textarea")).not.toBeNull(); // the page and its composer stay mounted
+    } finally {
+      window.removeEventListener("error", onError);
+      spy.mockRestore();
+    }
+  });
 });
 
 describe("a health conversation", () => {
@@ -75,6 +110,13 @@ describe("a health conversation", () => {
     await act(async () => retry.click());
     await flush();
     expect(host.querySelector("[data-chat]")?.textContent).toBe("mac/h1");
+  });
+
+  it("asks health questions in its box, as the space's home does, not the main chat's words", async () => {
+    hub.answers.push(listed);
+    act(() => root.render(<Health sid="h1" onToggleSidebar={() => {}} />));
+    await flush();
+    expect(host.querySelector("[data-chat]")?.getAttribute("data-placeholder")).toBe(t("health.ask_placeholder"));
   });
 
   it("reads the list again on the next hello", async () => {

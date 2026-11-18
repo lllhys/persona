@@ -167,6 +167,7 @@
     <string name="chat_screen_added_context">コンテキストとして追加しました。次のメッセージと一緒に送信されます</string>
     <string name="chat_search_category_event">システムイベント</string>
     <string name="chat_search_category_text">本文</string>
+    <string name="chat_search_category_quoted">引用</string>
     <string name="chat_search_category_thinking">思考</string>
     <string name="chat_search_category_tool_input">ツールの入力</string>
     <string name="chat_search_category_tool_output">ツールの出力</string>
@@ -242,6 +243,11 @@
     <plurals name="chat_content_show_all_lines">
         <item quantity="other">すべて表示（%1$d行）</item>
     </plurals>
+    <plurals name="chat_diff_unchanged_lines">
+        <item quantity="other">… %1$d行は変更なし</item>
+    </plurals>
+    <string name="chat_diff_line_added">追加</string>
+    <string name="chat_diff_line_removed">削除</string>
     <plurals name="chat_todos_progress">
         <item quantity="other">ToDo %1$d/%2$d件完了</item>
     </plurals>
@@ -276,19 +282,19 @@
         <item quantity="other">✓ %1$d件のタスクを開始</item>
     </plurals>
     <plurals name="chat_tasks_plan_dismissed">
-        <item quantity="other">未開始・%1$d件のタスク</item>
+        <item quantity="other">未開始 · %1$d件のタスク</item>
     </plurals>
     <string name="chat_tasks_plan_task_failed">「%1$s」を開始できませんでした：%2$s</string>
     <string name="chat_tasks_plan_reason_unknown">原因不明</string>
     <plurals name="chat_tasks_plan_split">
-        <item quantity="other">%1$d件に分けて、こう始めます</item>
+        <item quantity="other">%1$d件に分けて、この内容で開始</item>
     </plurals>
-    <string name="chat_tasks_plan_single">こう始めます</string>
+    <string name="chat_tasks_plan_single">この内容で開始</string>
     <string name="chat_tasks_default_model">デフォルトモデル</string>
     <string name="chat_tasks_read_only">読み取り専用を要求</string>
-    <string name="chat_tasks_plan_remember">次回からこの種類は直接開始</string>
+    <string name="chat_tasks_plan_remember">今後このフォルダ以下はすぐに開始</string>
     <plurals name="chat_tasks_plan_start_count">
-        <item quantity="other">%1$d件を開始</item>
+        <item quantity="other">%1$d件のタスクを開始</item>
     </plurals>
     <string name="chat_tasks_plan_start">開始</string>
     <string name="chat_tasks_plan_dismiss">開始しない</string>
@@ -334,7 +340,9 @@
     <string name="chat_tasks_interrupt_all_handled">→ すべて対応済み</string>
     <string name="chat_tasks_quick_reminder">リマインダーを追加しました</string>
     <string name="chat_tasks_quick_calendar">カレンダーに追加しました</string>
-    <string name="chat_tasks_quick_on_iphone">iPhone上</string>
+    <string name="chat_tasks_quick_undo">取り消す</string>
+    <string name="chat_tasks_quick_undone">取り消しました</string>
+    <string name="chat_tasks_quick_undo_failed">取り消せませんでした</string>
     <string name="chat_today_done_one">完了：%1$s</string>
     <plurals name="chat_today_done_many">
         <item quantity="other">%1$d件のタスクが完了</item>
@@ -420,15 +428,11 @@
     <string name="chat_work_thinking">思考中</string>
     <string name="chat_work_step">%1$s、ステップ%2$d</string>
     <string name="chat_work_elapsed">%1$s、%2$s</string>
-    <string name="chat_work_seconds">%1$d秒</string>
-    <string name="chat_work_minutes">%1$d分</string>
-    <string name="chat_work_hours_minutes">%1$d時間%2$d分</string>
     <string name="chat_work_working_for">作業中%1$s</string>
     <string name="chat_work_done">完了</string>
     <string name="chat_work_tools">ツール%1$d</string>
     <string name="chat_work_thoughts">思考%1$d</string>
     <string name="chat_work_replies">返信%1$d</string>
-    <string name="chat_work_minutes_seconds">%1$d分%2$d秒</string>
     <string name="chat_work_reading_files">%1$d件のファイルを読み込み中</string>
     <plurals name="chat_work_done_steps">
         <item quantity="other">%1$dステップ</item>

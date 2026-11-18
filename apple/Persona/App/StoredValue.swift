@@ -83,6 +83,7 @@ extension StoredValue where Value: RawRepresentable, Value.RawValue == Int {
 @MainActor @Observable
 final class StoredValueBox<Value: Equatable> {
     private(set) var value: Value
+    @ObservationIgnored private let key: String
     @ObservationIgnored private let store: UserDefaults
     @ObservationIgnored private let read: (UserDefaults) -> Value
     @ObservationIgnored private let write: (UserDefaults, Value) -> Void
@@ -94,12 +95,14 @@ final class StoredValueBox<Value: Equatable> {
                        write: @escaping (UserDefaults, Value) -> Void) -> StoredValueBox {
         let id = "\(ObjectIdentifier(store).hashValue)|\(key)|\(Value.self)"
         if let box = boxes[id] as? StoredValueBox { return box }
-        let box = StoredValueBox(store: store, read: read, write: write)
+        let box = StoredValueBox(key: key, store: store, read: read, write: write)
         boxes[id] = box
         return box
     }
 
-    private init(store: UserDefaults, read: @escaping (UserDefaults) -> Value, write: @escaping (UserDefaults, Value) -> Void) {
+    private init(key: String, store: UserDefaults, read: @escaping (UserDefaults) -> Value,
+                 write: @escaping (UserDefaults, Value) -> Void) {
+        self.key = key
         self.store = store
         self.read = read
         self.write = write
@@ -111,7 +114,12 @@ final class StoredValueBox<Value: Equatable> {
     }
 
     func set(_ new: Value) {
-        write(store, new)
+        // The value the key has already is not written again: every write wakes every `@AppStorage` view, whatever its
+        // key, and waits on the preferences daemon; a phone laid out again for the app switcher's snapshots ran out of the
+        // scene's 10 seconds in such a write (0x8BADF00D, #4206). A key a launch argument sets (the UI tests) is written
+        // still: the value read is the argument's, and the one stored under it may differ (a stale "closed" left by an
+        // earlier test, read by the next launch without the argument).
+        if read(store) != new || store.volatileDomain(forName: UserDefaults.argumentDomain)[key] != nil { write(store, new) }
         if new != value { value = new }
     }
 

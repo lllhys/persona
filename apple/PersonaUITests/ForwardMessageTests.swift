@@ -23,9 +23,10 @@ final class ForwardMessageTests: XCTestCase {
     @MainActor private func launch(_ scheme: String) -> XCUIApplication {
         let url = hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? hub
         let app = XCUIApplication()
-        // Fresh chats: a forward cached by an earlier run would sit where the steps tap.
+        // Fresh chats and boxes: a forward cached by an earlier run would sit where the steps tap, and one a failed run
+        // left over a box would stand in for the same message forwarded again.
         app.launchArguments = ["-pairURL", "persona://pair?url=\(url)&token=mock", "-tab", "dev", "-openSession", review,
-                               "-ui.scheme", scheme, "-openChatsFresh", "YES"]
+                               "-ui.scheme", scheme, "-openChatsFresh", "YES", "-openDraftsFresh", "YES"]
         app.launchPinned()
         return app
     }

@@ -53,9 +53,12 @@ func timedOut(ctx context.Context, err error) bool {
 }
 
 // minutesTimedOut counts a try of revision rev of recording id that ran out of time, and puts the next one off.
+// Minutes that end failed so from a final transcript take the hub's audio with them.
 func (e *Engine) minutesTimedOut(id string, rev int64, now time.Time) {
 	st := e.Store
 	st.recMu.Lock()
+	drop := false
+	defer func() { e.dropAudioAfterMinutes(id, drop) }() // deferred calls run last first: after recMu is let go
 	defer st.recMu.Unlock()
 	r, ok := st.Recording(id)
 	if !ok || r.Revision != rev {
@@ -66,6 +69,7 @@ func (e *Engine) minutesTimedOut(id string, rev int64, now time.Time) {
 	wait := minutesRetry << min(r.MinutesTimeouts-1, 8)
 	r.MinutesRetryAt = now.Add(wait)
 	r.planMinutes()
+	drop = r.MinutesState == MinutesFailed && r.transcriptionDone()
 	if st.putEntity(KindRecording, r.ID, r, &r.Tagging, false) == nil && r.MinutesState == MinutesPending {
 		e.logf("recording %s: minutes: try %d of %d ran out of time; the next, with %s per call, in %s", id,
 			r.MinutesTimeouts, minutesTimeoutTries, minutesCallTime(r.MinutesTimeouts), wait)

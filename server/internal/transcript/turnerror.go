@@ -24,19 +24,23 @@ func (m *Meta) ClaudeTurnStarted(wake bool) {
 	}
 	resumes := m.TurnErrorResumes && wake
 	m.clearTurnError()
-	m.TurnErrorResumes, m.turnWorked = resumes, false
+	m.TurnErrorResumes, m.turnWorked, m.turnSucceeded = resumes, false, false
 	m.turnParts = nil
 	m.resumesSaid = m.resumesSaid || !wake
 }
 
 // TurnErrorResumesSaid: a line read said whether Claude Code goes on by itself after its limit (its notices, a
 // message typed, a reply, another error). False when none did: the lines read start after its notice (a tail of the
-// transcript), and what an earlier read found stands.
+// transcript, read into a Meta of its own: the first prompt in its head says nothing of a wait at the end), and what
+// an earlier read found stands.
 func (m *Meta) TurnErrorResumesSaid() bool { return m.resumesSaid }
 
-// ReadingTail: the lines parsed from here on are the transcript's tail, after its head was read for the title (a
-// prompt there says nothing of a wait at the end): TurnErrorResumesSaid counts the tail's lines only.
-func (m *Meta) ReadingTail() { m.resumesSaid = false }
+// TurnSucceeded reports that the latest Claude turn closed after at least one visible reply from the model, not a
+// synthetic runtime notice, and that no model error followed it. A prompt, an unclosed reply, or a process exit is not
+// evidence of success. The reply itself stays in the transcript; this is only the latest turn's outcome.
+func (m *Meta) TurnSucceeded() bool {
+	return !m.Codex && m.TurnClosed && m.turnSucceeded && m.TurnError == ""
+}
 
 func (m *Meta) clearTurnError() {
 	m.TurnError, m.TurnErrorKind, m.TurnErrorResetsAt = "", "", time.Time{}

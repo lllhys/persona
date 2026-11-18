@@ -167,6 +167,10 @@ func TestProviderDiscoveryPaginationAndWindows(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			calls := 0
 			gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/prefix/v1/model-capabilities" { // asked once the list is read; none here
+					http.NotFound(w, r)
+					return
+				}
 				calls++
 				if r.URL.Path != "/prefix/v1/models" {
 					t.Errorf("path: %s", r.URL.Path)
@@ -341,7 +345,13 @@ func TestChatLauncherValidation(t *testing.T) {
 }
 
 func TestChatProviderDiscovery(t *testing.T) {
+	var report string
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/prefix/v1/model-capabilities" { // the report about the protocol the provider speaks
+			report = r.URL.RawQuery + "|" + r.Header.Get("Authorization")
+			http.NotFound(w, r)
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/prefix/v1/models" || r.Header.Get("Authorization") != "Bearer "+fakeKey {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -353,5 +363,8 @@ func TestChatProviderDiscovery(t *testing.T) {
 	models, ok := out["models"].([]proto.ProviderModel)
 	if !ok || out["error"] != nil || len(models) != 1 || models[0].ID != "local-model" || models[0].ContextWindow != 32000 {
 		t.Fatalf("%v", out)
+	}
+	if report != "protocol=chat_completions|Bearer "+fakeKey {
+		t.Fatalf("capability report asked as %q", report)
 	}
 }

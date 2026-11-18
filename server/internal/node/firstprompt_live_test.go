@@ -92,7 +92,7 @@ func TestLiveFirstPrompt(t *testing.T) {
 			prompt := "This is a disposable first-prompt delivery test. Do not run tools or change files.\n" +
 				strings.Repeat("Synthetic multiline context for image paste verification.\n", 26) +
 				"Reply with FIRST_PROMPT_IMAGE_OK and say whether an image is attached.\n\n<attached_images>\n" + img + "\n</attached_images>"
-			if err := n.firstPrompt(ctx, pane, id, prompt, a); err != nil {
+			if err := n.firstPrompt(ctx, pane, id, prompt, a, ""); err != nil {
 				t.Fatal(err)
 			}
 			n.firstWait.Wait()

@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,13 +26,17 @@ const (
 )
 
 // clientAppPlatforms are the apps whose version is their own; the web is left out (the hub serves it).
-var clientAppPlatforms = map[string]bool{"ios": true, "macos": true, "watchos": true, "visionos": true, "android": true}
+var clientAppPlatforms = map[string]bool{"ios": true, "macos": true, "watchos": true, "visionos": true, "android": true, "harmony": true}
 
 type clientApps struct {
-	mu     sync.Mutex
-	loaded bool
-	byCred map[string]assistantwire.ClientApp
-	saved  map[string]time.Time // seen_at as last written
+	mu        sync.Mutex
+	loaded    bool
+	byCred    map[string]assistantwire.ClientApp
+	saved     map[string]time.Time // seen_at as last written
+	pendingMu sync.Mutex
+	pending   []clientAppUpdate
+	flushing  bool
+	changed   chan struct{}
 }
 
 // noteClientApp records what c said in client_hello (its meta is already set).
@@ -63,65 +68,129 @@ func (h *Hub) noteClientAppSimulator(c *client, simulator bool) {
 	})
 }
 
-// updateClientApp changes the entry of credential cred, saving it when it changed or its last save is old.
+// updateClientApp records a change to the entry of credential cred. A persistent hub's consumer applies every queued
+// change in message order and saves one snapshot for the whole batch; connection handlers never wait for the store.
 func (h *Hub) updateClientApp(cred string, change func(assistantwire.ClientApp, bool) assistantwire.ClientApp) {
 	// A pairing token is traded for a device credential within seconds: nothing is kept under it. Nor under the
 	// hub's main token (no credential): a simulator on it is never marked, so it would pass for the phone.
 	if cred == "" || strings.HasPrefix(cred, "pair_") {
 		return
 	}
+	update := clientAppUpdate{cred: cred, change: change}
+	if h.store == nil {
+		h.writeClientApps([]clientAppUpdate{update})
+		return
+	}
+	a := &h.apps
+	h.startHelloWriters()
+	if !h.admitHelloReport(h.helloWrites.appsSlot, helloStoreTimeout, &h.helloWrites.appsDrop, clientAppsSetting) {
+		return
+	}
+	a.pendingMu.Lock()
+	a.pending = append(a.pending, update)
+	a.pendingMu.Unlock()
+	wakeHelloWriter(h.helloWrites.appsWake)
+}
+
+// writeClientApps loads once, applies batch in order, then writes one snapshot. A failed load skips the whole batch:
+// an unread setting is not an empty map, and saving it would drop every other device (#5827, #6889).
+func (h *Hub) writeClientApps(batch []clientAppUpdate) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	if !h.prepareClientApps(ctx) {
+		return
+	}
+	h.writeClientAppsLoaded(ctx, batch)
+}
+
+func (h *Hub) prepareClientApps(ctx context.Context) bool {
 	a := &h.apps
 	a.mu.Lock()
-	defer a.mu.Unlock() // one write at a time, so the setting holds the latest
-	h.loadClientAppsLocked(ctx)
-	prev, had := a.byCred[cred]
-	next := change(prev, had)
-	if next.Platform == "" {
+	defer a.mu.Unlock()
+	return h.loadClientAppsLocked(ctx)
+}
+
+func (h *Hub) writeClientAppsLoaded(ctx context.Context, batch []clientAppUpdate) {
+	a := &h.apps
+	a.mu.Lock()
+	save := false
+	for _, update := range batch {
+		if h.changeClientAppLocked(update) {
+			save = true
+		}
+	}
+	store := h.store
+	if !save || store == nil {
+		a.mu.Unlock()
 		return
+	}
+	snapshot := maps.Clone(a.byCred)
+	saved := make(map[string]time.Time, len(snapshot))
+	for k, v := range snapshot {
+		saved[k] = v.SeenAt
+	}
+	a.mu.Unlock()
+
+	if err := store.PutSetting(ctx, clientAppsSetting, snapshot); err != nil {
+		h.logf("save %s: %v", clientAppsSetting, err)
+		return
+	}
+	a.mu.Lock()
+	a.saved = saved
+	a.mu.Unlock()
+}
+
+// changeClientAppLocked applies one report and reports whether the resulting snapshot needs a save.
+func (h *Hub) changeClientAppLocked(update clientAppUpdate) bool {
+	a := &h.apps
+	prev, had := a.byCred[update.cred]
+	next := update.change(prev, had)
+	if next.Platform == "" {
+		return false
 	}
 	if next.SeenAt.IsZero() {
 		next.SeenAt = prev.SeenAt
 	}
-	a.byCred[cred] = next
-	stale := next.SeenAt.Sub(a.saved[cred]) >= clientAppsResave
+	a.byCred[update.cred] = next
+	stale := next.SeenAt.Sub(a.saved[update.cred]) >= clientAppsResave
 	same := had && prev.Platform == next.Platform && prev.Version == next.Version && prev.Build == next.Build &&
 		prev.OS == next.OS && prev.Simulator == next.Simulator
 	if same && !stale {
-		return
+		return false
 	}
 	pruneClientApps(a.byCred, time.Now())
-	if h.store == nil {
-		return
-	}
-	if err := h.store.PutSetting(ctx, clientAppsSetting, a.byCred); err != nil {
-		h.logf("save %s: %v", clientAppsSetting, err)
-		return
-	}
-	a.saved = make(map[string]time.Time, len(a.byCred))
-	for k, v := range a.byCred {
-		a.saved[k] = v.SeenAt
-	}
+	return true
 }
 
-func (h *Hub) loadClientAppsLocked(ctx context.Context) {
+// loadClientAppsLocked publishes loaded state only after a complete successful read. The caller holds a.mu.
+func (h *Hub) loadClientAppsLocked(ctx context.Context) bool {
 	a := &h.apps
 	if a.loaded {
-		return
+		return true
 	}
-	a.byCred, a.saved = map[string]assistantwire.ClientApp{}, map[string]time.Time{}
-	if h.store != nil {
-		var stored map[string]assistantwire.ClientApp
-		if _, err := h.store.Setting(ctx, clientAppsSetting, &stored); err != nil {
-			h.logf("load %s: %v", clientAppsSetting, err)
-			return // tried again on the next report, so a slow start does not wipe what was kept
+	if h.store == nil {
+		if a.byCred == nil {
+			a.byCred = map[string]assistantwire.ClientApp{}
 		}
-		for k, v := range stored {
-			a.byCred[k], a.saved[k] = v, v.SeenAt
+		if a.saved == nil {
+			a.saved = map[string]time.Time{}
 		}
+		a.loaded = true
+		return true
 	}
+	var stored map[string]assistantwire.ClientApp
+	if _, err := h.store.Setting(ctx, clientAppsSetting, &stored); err != nil {
+		h.logf("load %s: %v", clientAppsSetting, err)
+		return false // tried again on the next report, without changing or saving partial state
+	}
+	byCred := make(map[string]assistantwire.ClientApp, len(stored))
+	saved := make(map[string]time.Time, len(stored))
+	for k, v := range stored {
+		byCred[k], saved[k] = v, v.SeenAt
+	}
+	a.byCred, a.saved = byCred, saved
 	a.loaded = true
+	return true
 }
 
 // clientAppList is every kept app, newest first (devices.list "apps").

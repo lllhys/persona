@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import persona.core.contracts.Machine
 import persona.core.contracts.api.DoctorCheck
 import persona.core.contracts.api.DoctorReport
+import persona.core.domain.engines.Engines
 
 /*
  * "What this computer can do" (docs/server/machines.md "Doctor: what this computer can do", the web's lib/node-health.ts): what `personad node doctor` finds on a computer,
@@ -80,7 +81,8 @@ internal fun deriveFeatures(report: DoctorReport, engine: String = "herdr"): Lis
         if (checks.isEmpty()) return@mapNotNull null
         val w = worst(checks)
         val state = when (w?.status) {
-            "fail" -> FeatureState.Broken
+            // No terminal engine chosen: the terminal's own check is not needed, whatever it found.
+            "fail" -> if (spec.optional && spec.needed != null && engine == Engines.NONE) FeatureState.Off else FeatureState.Broken
             "warn" -> if (spec.optional) (if (spec.needed?.invoke(engine) == true) FeatureState.Broken else FeatureState.Off) else FeatureState.Partial
             else -> FeatureState.Ready
         }

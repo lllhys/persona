@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func TestInboxRowsCarryTheItemsAFallbackTierAndTheRules(t *testing.T) {
 	r := rowOf(t, rows, "sub:"+sub.ID+":t1")
 	want := connector.InboxThing{Thread: "sub:" + sub.ID + ":t1", Kind: "sub_notice", Label: "Notices", Title: "Office hours moved again",
 		Sender: "Office", Preview: "Made-up notice text", At: time.Date(2026, 11, 10, 8, 30, 0, 0, time.UTC), Last: "n2",
-		Extra: &connector.ThingExtra{RuleTier: "fyi"}, Tags: []connector.Tag{{Key: "source", Value: sub.ID, Name: "Notices"},
+		Extra: &connector.ThingExtra{RuleTier: "fyi", Count: 2}, Tags: []connector.Tag{{Key: "source", Value: sub.ID, Name: "Notices"},
 			{Key: connector.TagSender, Value: "office", Name: "Office"}}}
 	ctx := r.Context
 	r.Context = ""
@@ -517,15 +518,67 @@ func TestTheDestinationsMarksAreKept(t *testing.T) {
 // have no one sender.
 func TestDeliveredSenderIsAMuteTarget(t *testing.T) {
 	d := deliverer{sub: Subscription{ID: "sub_x", Label: "Notices"}, loc: time.UTC, lang: i18n.En}
-	tags := d.tags(" Office ")
+	tags := d.tags(&Item{Sender: " Office "})
 	if len(tags) != 2 || tags[1] != (connector.Tag{Key: connector.TagSender, Value: "office", Name: "Office"}) || tags[0].Key != "source" {
 		t.Fatalf("tags: %+v", tags)
 	}
-	if tags := d.tags(""); len(tags) != 1 || tags[0].Value != "sub_x" {
+	if tags := d.tags(&Item{}); len(tags) != 1 || tags[0].Value != "sub_x" {
 		t.Fatalf("without a sender: %+v", tags)
+	}
+	if tags := d.tags(nil); len(tags) != 1 || tags[0].Value != "sub_x" {
+		t.Fatalf("without an item: %+v", tags)
 	}
 	digest := d.digestThing([]Held{{Seq: 1, Item: Item{UID: "a", Title: "A", Sender: "Office"}}, {Seq: 2, Item: Item{UID: "b", Title: "B", Sender: "Shop"}}})
 	if len(digest.Tags) != 1 {
 		t.Errorf("a digest of several senders mutes none: %+v", digest.Tags)
+	}
+}
+
+// A recipe's sender_id and chat make the row's mute targets match by id, as a built-in's do (#6165): the sender's id as
+// the source writes it (not lowercased), with the display name to read; the chat's id with its name, or the id alone.
+func TestDeliveredSenderAndChatByID(t *testing.T) {
+	d := deliverer{sub: Subscription{ID: "sub_x", Label: "Team chat", Recipe: Recipe{GroupBy: "thread"}}, loc: time.UTC, lang: i18n.En}
+	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	th := d.threadThing("c1", []Held{
+		{Seq: 1, Stored: at, Item: Item{UID: "m1", Title: "Earlier", Sender: "Ann", SenderID: "ou_Ann1", Chat: "oc_Team", ChatName: "Team"}},
+		{Seq: 2, Stored: at.Add(time.Minute), Item: Item{UID: "m2", Title: "Newest", Sender: "Bo", SenderID: "ou_Bo2", Chat: "oc_Team", ChatName: "Team"}},
+	})
+	want := []connector.Tag{{Key: "source", Value: "sub_x", Name: "Team chat"},
+		{Key: connector.TagSender, Value: "ou_Bo2", Name: "Bo"}, {Key: connector.TagChat, Value: "oc_Team", Name: "Team"}}
+	if !slices.Equal(th.Tags, want) {
+		t.Fatalf("tags of the newest item:\n got %+v\nwant %+v", th.Tags, want)
+	}
+	tags := d.tags(&Item{SenderID: "u1", Chat: "c9"})
+	if tags[1] != (connector.Tag{Key: connector.TagSender, Value: "u1", Name: "u1"}) || tags[2] != (connector.Tag{Key: connector.TagChat, Value: "c9", Name: "c9"}) {
+		t.Fatalf("ids without names: %+v", tags)
+	}
+}
+
+// A recipe maps who and where (#6165) without making them content: adding sender_id, chat and chat_name to a recipe
+// keeps every item's uid and content hash, so no item reads as changed; a path that finds nothing is warned about as
+// for any field.
+func TestRecipeMapsSenderAndChatIDsOutsideTheContent(t *testing.T) {
+	var v any
+	if err := json.Unmarshal([]byte(`{"id":"m1","text":"Hi","from":{"name":" Bo ","id":" ou_Bo2 "},"chat":{"id":"oc_Team","name":"Team  room"}}`), &v); err != nil {
+		t.Fatal(err)
+	}
+	plain := connector.SubscriptionFields{ID: "$.id", Title: "$.text", Sender: "$.from.name"}
+	full := plain
+	full.SenderID, full.Chat, full.ChatName = "$.from.id", "$.chat.id", "$.chat.name"
+	a, b := mapItem(v, &plain, "sub_message", time.UTC), mapItem(v, &full, "sub_message", time.UTC)
+	if b.item.SenderID != "ou_Bo2" || b.item.Chat != "oc_Team" || b.item.ChatName != "Team room" || b.item.Sender != "Bo" {
+		t.Fatalf("mapped: %+v", b.item)
+	}
+	if a.hash != b.hash || a.item.UID != b.item.UID {
+		t.Fatalf("who and where changed the content: %s %s / %s %s", a.hash, a.item.UID, b.hash, b.item.UID)
+	}
+	missing := full
+	missing.Chat = "$.room"
+	ws := emptyFieldWarnings(&missing, []mapped{mapItem(v, &missing, "sub_message", time.UTC)})
+	if len(ws) != 1 || ws[0].Key != "fields.chat" {
+		t.Fatalf("warnings: %+v", ws)
+	}
+	if ps := itemProblems(mapItem(v, &missing, "sub_message", time.UTC), &missing); len(ps) != 1 || ps[0].Key != "fields.chat" {
+		t.Fatalf("problems: %+v", ps)
 	}
 }

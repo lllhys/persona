@@ -18,6 +18,9 @@
   "cannot_update": "This hub doesn't update itself.",
   "warning_bad": "This version failed to start last time and was rolled back. Auto-update won't install it again.",
   "warning_held": "Auto-update won't install this version: {why}. If it looks fine, update manually.",
+  "warning_source_behind": "The update source {url} ({from}) has nothing newer than {version}, which is older than this hub, so it looks stopped. Set update.url in hub.json to another source.",
+  "source_from_build": "built in",
+  "source_from_config": "hub.json update.url",
   "new_image": "New image {version}",
   "docker_set_image": "On the hub machine, set PERSONA_IMAGE in the .env next to the compose file to:",
   "docker_then_run": "Then run in that folder:",
@@ -31,5 +34,8 @@
   "notice_turn_off": "Turn off",
   "notice_got_it": "Got it",
   "notice_dismiss": "Don't show again",
-  "notice_open": "Open Settings › Hub"
+  "notice_open": "Open Settings › Hub",
+  "state_building": "Building…",
+  "state_backing_up": "Backing up…",
+  "state_applying_backup": "Preparing backup programs…"
 }

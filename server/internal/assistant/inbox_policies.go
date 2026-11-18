@@ -374,7 +374,7 @@ func (s *Service) inboxPolicyRoutes() {
 // policy's tier; the ones the model sorts get it when it answers. Under b.mu.
 func (b *inboxBook) applyRuledPolicies(items []*InboxItem) {
 	for _, it := range items {
-		if it.open() && it.Tier != "" && it.TriagedAt == it.Last && !it.handled() {
+		if it.open() && it.Tier != "" && it.tiered() && !it.handled() {
 			b.roundWrite(it)
 			b.applyPolicyTier(it)
 		}

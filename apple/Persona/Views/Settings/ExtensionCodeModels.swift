@@ -22,6 +22,9 @@ nonisolated struct CodeDiffLine: Hashable, Sendable {
     var text: String
     var old: Int?
     var new: Int?
+    /// The words that changed (UTF-16 offsets into `text`), when paired with the line it was changed from or to
+    /// (UI version 5's code review, `CodeReview.markWords`); empty otherwise.
+    var changed: [Range<Int>] = []
 
     /// The side a comment on this line is anchored to, and its line there: a removed line on the old side, any
     /// other on the new one (as GitHub and Codebase anchor them).
@@ -111,10 +114,13 @@ nonisolated struct CodeTreeEntry: Hashable, Sendable {
     var deletions: Int?
     var comments: Int?
     var badge: String?
+    /// Marked viewed by the extension (UI version 5).
+    var viewed: Bool?
 
     init(path: String, kind: String? = nil, status: String? = nil, additions: Int? = nil, deletions: Int? = nil,
-         comments: Int? = nil, badge: String? = nil) {
+         comments: Int? = nil, badge: String? = nil, viewed: Bool? = nil) {
         self.path = path
+        self.viewed = viewed
         self.kind = kind
         self.status = status
         self.additions = additions

@@ -501,10 +501,20 @@ private struct FittedDiagram: View {
 }
 
 /// Inline formulas (`persona-math:` images, `MathMarkdown`): drawn at the body's size as template images, so they take
-/// the text's color; TeX that KaTeX cannot read shows as its source in monospace. Other inline images load as before.
+/// the text's color; TeX that KaTeX cannot read shows as its source in monospace. A web picture inside a line of text
+/// is as tall as the line (#9474), loaded through the hub when it can (`ReplyPictureSource`); other inline images load
+/// as before.
 struct MathInlineImages: InlineImageProvider {
+    /// Whether web pictures load: not in what other people wrote (`AskedMarkdownImages`), where one may be a tracking
+    /// pixel and an inline picture has no tap to ask.
+    var web = true
+
     func image(with url: URL, label: String) async throws -> Image {
-        guard let tex = MathMarkdown.tex(url) else { return try await DefaultInlineImageProvider.default.image(with: url, label: label) }
+        guard let tex = MathMarkdown.tex(url) else {
+            guard ReplyImages.isWeb(url.absoluteString) else { return try await DefaultInlineImageProvider.default.image(with: url, label: label) }
+            guard web else { throw URLError(.cancelled) }
+            return try await Self.linePicture(url.absoluteString)
+        }
         let points = await RenderedText.points
         if let image = try? await MarkdownRenderer.shared.image(.inlineMath, tex, dark: false, points: points) {
             return Image(uiImage: image).renderingMode(.template)
@@ -518,6 +528,17 @@ struct MathInlineImages: InlineImageProvider {
             return renderer.nsImage.map { i in i.isTemplate = true; return Image(nsImage: i) } ?? Image(systemName: Theme.Icon.code)
             #endif
         }
+    }
+
+    /// A web picture inside a line of text: the hub's smallest size, drawn as tall as the line (never enlarged).
+    private static func linePicture(_ url: String) async throws -> Image {
+        let line = await RenderedText.points * Theme.ReplyPicture.inlineHeight
+        let size = ReplyImageLayout.sizes[0]
+        let path = await ReplyPictureSource.path(url, size: size)
+        guard let picture = await LarkMedia.shared.image(path, maxPixel: CGFloat(size)), let cg = picture.cgImage else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        return Image(uiImage: UIImage(cgImage: cg, scale: max(1, CGFloat(cg.height) / line), orientation: .up))
     }
 }
 

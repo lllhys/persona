@@ -400,9 +400,10 @@ func TestDayRecapAskTodosAndPush(t *testing.T) {
 	d.do("POST", todos, "", map[string]any{"version": 1, "actions": []string{"a9"}}, http.StatusNotFound)
 	d.do("POST", todos, "answer", map[string]any{"version": 1, "actions": []string{"a1"}}, http.StatusForbidden)
 
-	// kb_get: the recap before the transcript, with where its suggested to-dos stand; kb_list marks it.
+	// kb_get: the recap before the transcript, with where its suggested to-dos stand; kb_list marks it. The day was
+	// recorded in English: so is its recap's Markdown.
 	got, err := d.s.toolKB(context.Background(), "kb_get", json.RawMessage(`{"kind":"recordings","id":"`+dayRec+`"}`))
-	if err != nil || !strings.Contains(got, "recap.md:\n# "+day) || !strings.Contains(got, "Suggested to-dos as they stand") ||
+	if err != nil || !strings.Contains(got, "recap.md:\n# Day recap · "+day) || !strings.Contains(got, "## Suggested to-dos") || !strings.Contains(got, "Suggested to-dos as they stand") ||
 		!strings.Contains(got, "a1 Bo: Fix the flaky upload test (by tomorrow) → to-do "+first+" open") ||
 		strings.Index(got, "recap.md:") > strings.Index(got, "transcript.md:") {
 		t.Fatalf("kb_get: %v\n%s", err, got)

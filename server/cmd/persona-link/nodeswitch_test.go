@@ -611,7 +611,15 @@ func TestNodeInstallRefusesPersonaNodeForAManager(t *testing.T) {
 func TestMain(m *testing.M) {
 	realWatchSwitch = watchSwitch
 	watchSwitch = func(context.Context) {}
-	os.Exit(m.Run())
+	previous, hadLanguage := os.LookupEnv("PERSONA_LANG")
+	_ = os.Setenv("PERSONA_LANG", "zh-Hans") // Legacy assertions are Chinese; language tests set their own locale.
+	code := m.Run()
+	if hadLanguage {
+		_ = os.Setenv("PERSONA_LANG", previous)
+	} else {
+		_ = os.Unsetenv("PERSONA_LANG")
+	}
+	os.Exit(code)
 }
 
 var realWatchSwitch func(context.Context)

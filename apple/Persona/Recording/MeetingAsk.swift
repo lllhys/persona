@@ -23,6 +23,8 @@ final class MeetingAsk {
         var text: String?
         /// The live log's length once the lines up to the tap went (a question about what was just said).
         var liveNext: Int?
+        /// The words were said while Talk was held, and transcribed on this phone (#3862 phase 4: Talk without a call).
+        var spoken = false
     }
 
     /// The hub's answer (`Ask`).
@@ -63,6 +65,8 @@ final class MeetingAsk {
         var via: String? = nil
         /// The hub's error code of a failed one (`room_unavailable` sends it again as a new question).
         var failure: String? = nil
+        /// Said while Talk was held and transcribed on this phone (#3862 phase 4), not typed.
+        var spoken = false
 
         var answer: String? { if case .answered(let text) = state { text } else { nil } }
     }
@@ -94,7 +98,7 @@ final class MeetingAsk {
     }
 
     /// Longest typed question (the contract's limit, in characters).
-    static let maxQuestion = 1000
+    nonisolated static let maxQuestion = 1000
 
     /// A typed question can go: it has something besides spaces and new lines (what `ask` trims away). The live bar's
     /// send button waits for this.
@@ -115,17 +119,17 @@ final class MeetingAsk {
     /// `roomMissing`: an older manager took the room meeting with Persona off (`RecordingSync.roomMissing`), so an ask
     /// would only force a whole upload and fail; it can be asked again once a `200` carries `room`. The one rule for the
     /// meeting page, its bar, the Live Activity and `ask` / `retry` (#3862).
-    nonisolated static func canAsk(_ entry: RecordingEntry, roomMissing: Bool) -> Bool { entry.attended && !roomMissing }
+    nonisolated static func canAsk(_ entry: RecordingEntry, roomMissing: Bool) -> Bool { entry.answered && !roomMissing }
 
-    /// Asks about `entry`'s meeting: `text` typed, or nil to ask about what was just said. Nothing when Persona can't be
-    /// asked about it (`canAsk`).
+    /// Asks about `entry`'s meeting: `text` typed (or, `spoken`, said while Talk was held and transcribed on this phone,
+    /// #3862 phase 4), or nil to ask about what was just said. Nothing when Persona can't be asked about it (`canAsk`).
     @discardableResult
-    func ask(_ entry: RecordingEntry, text: String? = nil) -> UUID? {
+    func ask(_ entry: RecordingEntry, text: String? = nil, spoken: Bool = false) -> UUID? {
         guard Self.canAsk(entry, roomMissing: deps.roomMissing(entry.id)) else { return nil }
         let typed = text.map { String(String.UnicodeScalarView($0.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.prefix(Self.maxQuestion))) }
         if let typed, !Self.hasWords(typed) { return nil }
         let exchange = Exchange(recordingID: entry.id, at: max(0, deps.now()), question: typed, typed: typed != nil, state: .asking,
-                                asked: deps.clock())
+                                asked: deps.clock(), spoken: spoken && typed != nil)
         exchanges.append(exchange)
         run(exchange.id, locale: entry.locale, prepare: typed == nil)
         return exchange.id
@@ -183,7 +187,8 @@ final class MeetingAsk {
             if settled {
                 do {
                     let got = try await deps.ask(Question(id: id, recordingID: start.recordingID, at: start.at,
-                                                          text: start.typed ? start.question : nil, liveNext: liveNext))
+                                                          text: start.typed ? start.question : nil, liveNext: liveNext,
+                                                          spoken: start.spoken))
                     answer = got
                     state = got.text.isEmpty ? .failed(Self.message(nil)) : .answered(got.text)
                 } catch {
@@ -272,6 +277,9 @@ extension MeetingAsk.Deps {
              now: { RecordingCapture.shared.timeline },
              heard: { id in
                  RecordingCapture.shared.flushSegment()
+                 // Hub mode (#3862 phase 5): the hub finishes its own sentences up to `at` and ignores `live_next`; the
+                 // segment cut here still reaches it with the next upload, for when it has no sentences of its own.
+                 if MeetingTranscription.shared.hubTranscribes(id) { return nil }
                  await MeetingAskWire.transcribed(id)
                  MeetingLive.shared.append(id)
                  return await MeetingLive.shared.sent(id)
@@ -297,7 +305,9 @@ extension MeetingAsk.Deps {
         var question: String?
         var at: Double
         var liveNext: Int?
-        enum CodingKeys: String, CodingKey { case id, question, at, liveNext = "live_next" }
+        /// A question said while Talk was held (#3862 phase 4); left out (not `false`) for every other.
+        var spoken: Bool?
+        enum CodingKeys: String, CodingKey { case id, question, at, spoken, liveNext = "live_next" }
     }
 
     nonisolated struct Ask: Decodable, Equatable, Sendable {
@@ -348,7 +358,8 @@ extension MeetingAsk.Deps {
     static let deadline: TimeInterval = 4 * 60
 
     static func body(_ q: MeetingAsk.Question) -> Body {
-        Body(id: q.id.uuidString.lowercased(), question: q.text, at: q.at, liveNext: q.liveNext)
+        Body(id: q.id.uuidString.lowercased(), question: q.text, at: q.at, liveNext: q.liveNext,
+             spoken: q.spoken && q.text != nil ? true : nil)
     }
 
     static func ask(_ q: MeetingAsk.Question) async throws -> MeetingAsk.Answer {
@@ -433,3 +444,4 @@ nonisolated extension MeetingAskWire.Heard {
     }
 }
 #endif
+import PersonaWire

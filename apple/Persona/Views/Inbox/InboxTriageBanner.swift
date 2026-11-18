@@ -69,7 +69,8 @@ struct InboxTriageBanner: View {
             }
         }
         .accessibilityIdentifier("inbox.triage")
-        .modelConfigurationSheet(isPresented: $configuring, purposeID: InboxTriageText.purpose)
+        // The default assistant's: the inbox's list (read naming none) says how its triage stands.
+        .modelConfigurationSheet(isPresented: $configuring, purposeID: InboxTriageText.purpose, owner: .defaultAssistant)
     }
 }
 

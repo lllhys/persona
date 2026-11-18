@@ -3,7 +3,7 @@ import Foundation
 import Observation
 
 /// The live sentences of a meeting Persona attends (#2981, docs/assistant/meeting-minutes.md「Live sentences」): every
-/// finished sentence that ended while Persona attended, and isn't Persona's own voice, goes into the recording's
+/// finished sentence that ended while Persona attended, and isn't Persona's echo (#5905), goes into the recording's
 /// append-only live log (`RecordingAttendance.live`), and from there to `POST /api/v1/recordings/{id}/live`, from the
 /// position the hub holds (`next`). Nothing goes before the hub has stored an upload with the meeting's current
 /// attendance (`RecordingSync.attendanceSettled`). The live log only feeds the attending session and the answers; the
@@ -41,11 +41,16 @@ final class MeetingLive {
         var settled: (RecordingEntry) -> Bool
         /// The hub needs the upload first, even if this phone thinks it was stored (`RecordingSync.reupload`).
         var upload: (UUID) -> Void
-        /// The stretch Persona is saying now (`MeetingSpeaker.openSpan`).
-        var openSpan: (UUID) -> RecordingSpan?
+        /// The stretches Persona is saying now, each with what it is saying (`MeetingSpeaker.openSpan`, and the meeting
+        /// call's voice: `MeetingCall.openSpan`).
+        var openSpans: (UUID) -> [RecordingSpan]
         var wait: (Duration) async -> Void
-        /// Every `200` of `…/live`: the meeting conversation keeps what it says of the room (`MeetingConversation.applyLive`).
+        /// Every `200` of `…/live`: the meeting conversation keeps what it says of the room (`MeetingConversation.applyLive`)
+        /// and, without the socket, reads the room's topics (`MeetingConversation.liveAccepted`).
         var report: (UUID, Answer) -> Void = { _, _ in }
+        /// The hub transcribes the meeting (#3862 phase 5, `MeetingTranscription.hubTranscribes`): the live log is its own,
+        /// and `POST …/live` would be `409 hub_transcribes`.
+        var hubTranscribes: (UUID) -> Bool = { _ in false }
     }
 
     /// Lines in one request at most (the contract's limit).
@@ -57,6 +62,8 @@ final class MeetingLive {
     @ObservationIgnored private var sending: Set<UUID> = []
     @ObservationIgnored private var again: Set<UUID> = []
     @ObservationIgnored private var failures: [UUID: Int] = [:]
+    /// Meetings the hub answered `409 hub_transcribes` for: their lines don't go, whatever the phone thought the mode was.
+    @ObservationIgnored private var hubTranscribing: Set<UUID> = []
     @ObservationIgnored private var started = false
 
     init(deps: Deps, library: RecordingLibrary = .shared) {
@@ -82,18 +89,19 @@ final class MeetingLive {
     }
 
     /// Adds the sentences of segments transcribed since last time: those that ended while Persona attended and are not
-    /// its own voice. Positions already given never move. Returns whether any were added.
+    /// its echo (`RecordingAttendance.echo`, the answer being said too). Positions already given never move. Returns
+    /// whether any were added.
     @discardableResult
     func append(_ id: UUID) -> Bool {
         guard let entry = library.entry(id), entry.isMeeting, entry.source == .phone, let attendance = entry.attendance else { return false }
         let fresh = entry.segments.sorted { $0.index < $1.index }
             .filter { $0.sentences != nil && !attendance.liveSegments.contains($0.index) }
         guard !fresh.isEmpty else { return false }
-        let open = deps.openSpan(id)
+        let open = deps.openSpans(id)
         var lines: [RecordingSentence] = []
         for segment in fresh {
             for line in segment.sentences ?? [] where !line.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if attendance.attended(line), !attendance.spokenBy(line, open: open) { lines.append(line) }
+                if attendance.attended(line), !attendance.echo(line), !open.contains(where: { $0.echoes(line) }) { lines.append(line) }
             }
         }
         library.change(id) { e in
@@ -129,6 +137,9 @@ final class MeetingLive {
             // wait in the log until it is on again.
             guard attendance.sentRole.attends else { return }
             guard deps.settled(entry) else { return } // the upload that names the attendance goes first; it calls back
+            // In hub mode the hub writes the live log from the meeting's audio (and from the uploads' segments while it
+            // has no sentences): the phone's lines stay its own.
+            guard !deps.hubTranscribes(id), !hubTranscribing.contains(id) else { return }
             let log = attendance.live
             let from = min(states[id]?.next ?? 0, log.count)
             // The hub said all the log is in: nothing to send (an empty request only asks where it is, once).
@@ -161,6 +172,10 @@ final class MeetingLive {
             // The hub holds fewer than the phone thought: ask where it is, then go on from there.
             states[id]?.next = nil
             return true
+        case (409, "hub_transcribes"):
+            // The hub transcribes this meeting (#3862 phase 5): the live log is its.
+            hubTranscribing.insert(id)
+            return false
         case (404, "recording_not_found"), (409, "not_attending"):
             // No upload with this attendance yet: it goes first, and calls back once stored.
             deps.upload(id)
@@ -208,11 +223,15 @@ extension MeetingLive.Deps {
              },
              settled: { RecordingSync.shared.attendanceSettled($0) },
              upload: { RecordingSync.shared.reupload($0) },
-             openSpan: { MeetingSpeaker.shared.openSpan(for: $0) },
+             openSpans: { [MeetingSpeaker.shared.openSpan(for: $0), MeetingCall.shared.openSpan(for: $0)].compactMap { $0 } },
              wait: { try? await Task.sleep(for: $0) },
              report: { id, answer in
                  MeetingConversation.shared.applyLive(id, room: answer.room, privateMark: answer.privateMark, followup: answer.followup)
-             })
+                 // The app behind has no `meeting_live`: the room's topics are read after the lines went (#3862 phase 2).
+                 MeetingConversation.shared.liveAccepted(id)
+             },
+             hubTranscribes: { MeetingTranscription.shared.hubTranscribes($0) })
     }
 }
 #endif
+import PersonaWire

@@ -9,8 +9,8 @@ import (
 )
 
 // A stopped agent is read-only (node stopped.go, #4754): agent_send and agent_interrupt refuse it before anything is
-// asked or sent, and point the model at agent_start; /exit to it is a no-op. An offline row a node before #4754 lists
-// (no capabilities) is still sent to, as that node resumes it.
+// asked or sent, and point the model at agent_start (or an eligible explicit resume, agent_resume.go); /exit to it is
+// a no-op. An older node's offline row without provenance is not authorization to resume.
 func TestStoppedAgentIsReadOnlyForTheAssistant(t *testing.T) {
 	s, f := newQuietService(t)
 	ctx := t.Context()
@@ -20,7 +20,7 @@ func TestStoppedAgentIsReadOnlyForTheAssistant(t *testing.T) {
 	f.setSessions("box", stopped)
 
 	_, err := s.runTool(ctx, "server", "conv1", "agent_send", sendArgs("stop0001", "go on", ""))
-	if err == nil || !strings.Contains(err.Error(), "has stopped and is read-only") || !strings.Contains(err.Error(), "agent_start") {
+	if err == nil || !strings.Contains(err.Error(), "has stopped") || !strings.Contains(err.Error(), "agent_start") {
 		t.Fatalf("agent_send to a stopped agent: %v", err)
 	}
 	if res, err := s.runTool(ctx, "server", "conv1", "agent_send", sendArgs("stop0001", "/exit", "")); err != nil ||

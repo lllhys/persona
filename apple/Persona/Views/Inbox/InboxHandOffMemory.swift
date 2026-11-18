@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// Where Hand to AI last sent an item from each source (#2121; docs/assistant/inbox.md "Item actions";
 /// spec/fixtures/inbox/handoff_memory.json): the repository, else the chat, else the sender (the item's `mutes`), in the
@@ -70,6 +71,12 @@ struct InboxHandOffMemory {
     func resolved(for item: InboxItem, isListed: (SessionKey) -> Bool) -> Resolved? {
         guard let key = Self.key(item) else { return nil }
         return Self.resolve(recall(key), isListed: isListed)
+    }
+
+    /// New Agent… started an Agent with the item (#5933): its source remembers that Agent, never New Agent…, so the next
+    /// item from it starts on that Agent while it can take messages.
+    func rememberStarted(_ item: InboxItem, agent key: SessionKey) {
+        if let source = Self.key(item) { remember(source, target: .agent(key)) }
     }
 
     /// A group that is gone forgets where its items went.

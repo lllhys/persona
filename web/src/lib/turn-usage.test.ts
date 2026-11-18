@@ -150,6 +150,14 @@ describe("an exchange's usage", () => {
     expect(segs.map((s) => s.usage?.first)).toEqual([true, undefined, undefined]);
   });
 
+  it("counts a wake after an answer, and the work it woke, in an exchange of its own (#9140)", () => {
+    const wake: Item = { id: "w5#0", seq: 5, role: "system", kind: "notice", wake: true, text: "Background command finished", task: { kind: "shell", status: "completed", task_id: "b1" }, usage: [opus({ in: 5 })] };
+    const items = [u(1, "check the trains"), a(2, "running", [opus({ out: 3 })]), u(3, "what to pack?"), a(4, "a rain jacket", [opus({ out: 4 })]), wake, a(6, "three trains run", [opus({ out: 6 })])];
+    const segs = segOf(chatLines(items));
+    expect(segs.map((s) => models(s)?.[0])).toEqual([tokens({ out: 3 }), tokens({ out: 4 }), tokens({ in: 5, out: 6 })]);
+    expect(segs.map((s) => s.answer?.id)).toEqual(["a2#0", "a4#0", "a6#0"]);
+  });
+
   it("is one string for the reply's props, the same for the same usage", () => {
     const one = segments([u(1, "a"), a(2, "b", [opus({ in: 1 })])])[0].usage;
     const two = segments([u(1, "a"), a(2, "b", [opus({ in: 1 })])])[0].usage;

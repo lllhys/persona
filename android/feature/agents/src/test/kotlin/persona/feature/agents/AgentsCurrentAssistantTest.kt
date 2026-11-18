@@ -254,7 +254,7 @@ class AgentsCurrentAssistantTest {
         val made = mutableListOf<String?>()
         val linked = mutableListOf<String>()
         override suspend fun todos() = emptyList<Todo>()
-        override suspend fun createTodo(title: String, notes: String): Todo {
+        override suspend fun createTodo(title: String, notes: String, due: persona.core.contracts.TodoDue?): Todo {
             made += kotlinx.coroutines.currentCoroutineContext()[RequestManager]?.id
             return Todo("t-${made.size}", title)
         }

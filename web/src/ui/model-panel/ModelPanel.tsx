@@ -110,12 +110,20 @@ export function ModelPanel({ anchor, onClose, providers, state, scope, onPick, o
   const listId = useId();
   const [view, setView] = useState<PanelView>({ kind: "all" });
   const [query, setQuery] = useState("");
+  // families unfolded during this opening ("Earlier versions"); a new opening starts folded again
+  const [openFamilies, setOpenFamilies] = useState<ReadonlySet<string>>(() => new Set());
   const searching = query.trim() !== "";
   const shown: PanelView = searching ? { kind: "all" } : view;
   const sections = useMemo(
-    () => panelSections({ providers, state, view, query, favorites: store.favorites, recent: store.recent, overrides: store.overrides, presets }),
-    [providers, state, view, query, store.favorites, store.recent, store.overrides, presets],
+    () => panelSections({ providers, state, view, query, favorites: store.favorites, recent: store.recent, overrides: store.overrides, presets, openFamilies }),
+    [providers, state, view, query, store.favorites, store.recent, store.overrides, presets, openFamilies],
   );
+  const toggleFamily = (key: string) =>
+    setOpenFamilies((now) => {
+      const next = new Set(now);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
   const rows = useMemo(() => sections.flatMap((s) => s.rows), [sections]);
 
   const panel = useRef<HTMLDivElement>(null);
@@ -435,6 +443,30 @@ export function ModelPanel({ anchor, onClose, providers, state, scope, onPick, o
     return { text: row.provider.name };
   };
 
+  const renderRow = (row: PanelRow) => {
+    const customizable = rowCustomizable(row, state, live);
+    const removes = row.kind === "favorite" || (row.kind === "recent" && Boolean(row.starredUid));
+    const two = second(row);
+    return (
+      <Row
+        key={row.key}
+        row={row}
+        second={two.text}
+        describes={two.describes || row.kind === "preset"}
+        blocked={rowBlock(row.provider, state, row.current)}
+        customizable={customizable}
+        flyoutOpen={fly?.key === row.key}
+        starred={removes || flash === row.key}
+        starRemoves={removes}
+        frozen={picking}
+        onPick={() => void pick(row)}
+        onStar={() => star(row)}
+        onCustomize={(el, toggle) => openFlyout(row, el, toggle, false)}
+        onCustomizeKey={(el) => openFlyout(row, el, false, true)}
+        onForget={onForget && (() => onForget(row.provider.id, row.model.id))}
+      />
+    );
+  };
   const flyMode = (row: PanelRow): FlyoutMode => (row.kind === "favorite" ? "favorite" : row.customized ? "customized" : "recommended");
   const empty = !sections.length;
   const notes = [state.busy && { icon: "info" as const, text: state.busy, tone: "text-ink-3" }, state.note && { icon: "warning" as const, text: state.note, tone: "text-orange" }].filter(Boolean) as { icon: "info" | "warning"; text: string; tone: string }[];
@@ -522,6 +554,7 @@ export function ModelPanel({ anchor, onClose, providers, state, scope, onPick, o
                       <div aria-hidden className="truncate px-2.5 pt-2 pb-1 text-[12px] leading-[1.33] font-medium text-ink-2">
                         {label(s)}
                         {s.kind === "provider" && s.provider?.idNote && <span className="ml-1.5 font-mono text-[11px] font-normal text-ink-3">{s.provider.idNote}</span>}
+                        {s.kind === "provider" && s.provider?.alsoNote && <span className="ml-1.5 text-submeta font-normal text-ink-3">{s.provider.alsoNote}</span>}
                       </div>
                       {s.kind === "provider" && s.provider && <GroupNotes provider={s.provider} onReload={onReload} onHelp={onHelp} />}
                       {s.loading && (
@@ -530,30 +563,46 @@ export function ModelPanel({ anchor, onClose, providers, state, scope, onPick, o
                           {t("ui-modelpanel.loading")}
                         </div>
                       )}
-                      {s.rows.map((row) => {
-                        const customizable = rowCustomizable(row, state, live);
-                        const removes = row.kind === "favorite" || (row.kind === "recent" && Boolean(row.starredUid));
-                        const two = second(row);
-                        return (
-                          <Row
-                            key={row.key}
-                            row={row}
-                            second={two.text}
-                            describes={two.describes || row.kind === "preset"}
-                            blocked={rowBlock(row.provider, state, row.current)}
-                            customizable={customizable}
-                            flyoutOpen={fly?.key === row.key}
-                            starred={removes || flash === row.key}
-                            starRemoves={removes}
-                            frozen={picking}
-                            onPick={() => void pick(row)}
-                            onStar={() => star(row)}
-                            onCustomize={(el, toggle) => openFlyout(row, el, toggle, false)}
-                            onCustomizeKey={(el) => openFlyout(row, el, false, true)}
-                            onForget={onForget && (() => onForget(row.provider.id, row.model.id))}
-                          />
-                        );
-                      })}
+                      {s.blocks
+                        ? s.blocks.map((b) =>
+                            b.family ? (
+                              <div key={b.key} role="group" aria-label={b.family.label} data-panel-family={b.family.key}>
+                                <div className="flex min-w-0 items-center gap-2 px-3 pt-1.5 pb-0.5">
+                                  <span aria-hidden className="min-w-0 truncate text-submeta leading-[1.4] text-ink-3">{b.family.label}</span>
+                                  {b.older > 0 && (
+                                    <button
+                                      type="button"
+                                      aria-expanded={Boolean(b.open)}
+                                      aria-label={b.open ? t("ui-modelpanel.hide_older_of", { family: b.family.label }) : t("ui-modelpanel.older_of", { family: b.family.label, count: b.older })}
+                                      data-panel-fold={b.key}
+                                      disabled={picking}
+                                      onClick={() => toggleFamily(b.key)}
+                                      className="ml-auto flex shrink-0 items-center gap-0.5 rounded-control px-1.5 py-0.5 text-submeta leading-[1.4] whitespace-nowrap text-ink-3 transition-colors duration-150 outline-none enabled:hover:bg-hover-2 enabled:hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed"
+                                    >
+                                      {b.open ? t("ui-modelpanel.hide_older") : t("ui-modelpanel.older", { count: b.older })}
+                                      <Icon name="chevron" size={11} className={cx("shrink-0 transition-transform duration-150", b.open && "rotate-180")} />
+                                    </button>
+                                  )}
+                                </div>
+                                {b.rows.map(renderRow)}
+                              </div>
+                            ) : (
+                              <div key={b.key}>{b.rows.map(renderRow)}</div>
+                            ),
+                          )
+                        : s.rows.map(renderRow)}
+                      {s.total && s.provider && (
+                        <button
+                          type="button"
+                          disabled={picking}
+                          data-panel-more={s.provider.id}
+                          onClick={() => s.provider && chooseView({ kind: "provider", provider: s.provider.id })}
+                          className="mt-1 flex w-full items-center gap-1.5 rounded-control px-3 py-1.5 text-left text-label text-ink-2 transition-colors duration-150 outline-none enabled:hover:bg-hover-2 enabled:hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed"
+                        >
+                          <span className="min-w-0 truncate">{t("ui-modelpanel.show_all", { count: s.total })}</span>
+                          <Icon name="chevronRight" size={12} className="shrink-0" />
+                        </button>
+                      )}
                     </div>
                   ))
                 )}

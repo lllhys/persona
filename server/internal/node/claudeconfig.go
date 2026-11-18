@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -163,7 +164,44 @@ func settingValue(raw map[string]any, key string) any {
 	return raw[key]
 }
 
+// agentConfigMu serializes every read-edit-write of an agent's own settings file: RPCs are handled concurrently and the
+// app lets several saves be in flight, so two unserialized edits of one file would each drop the other's change.
+var agentConfigMu sync.Mutex
+
+// writeConfigFile replaces path with data through a temp file of its own (so two writers never share one), keeping the
+// file's mode, or defMode for a new file.
+func writeConfigFile(path string, data []byte, defMode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	mode := defMode
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm()
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.persona.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	err = f.Chmod(mode)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
+}
+
 func writeSetting(path, key string, value any) error {
+	agentConfigMu.Lock()
+	defer agentConfigMu.Unlock()
 	raw, err := readSettingsFile(path)
 	if err != nil {
 		return err
@@ -191,16 +229,5 @@ func writeSetting(path, key string, value any) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp := path + ".persona.tmp"
-	mode := os.FileMode(0o644)
-	if st, err := os.Stat(path); err == nil {
-		mode = st.Mode().Perm()
-	}
-	if err := os.WriteFile(tmp, append(b, '\n'), mode); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writeConfigFile(path, append(b, '\n'), 0o644)
 }

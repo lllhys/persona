@@ -14,6 +14,10 @@ const (
 	codeTargetReadOnly      = "target_read_only"     // fatal: it can only be read
 	codeTargetForbidden     = "target_forbidden"     // fatal: this caller may not bind one (another extension)
 	codeMachineOffline      = "machine_offline"      // not fatal: its computer is offline, what is said waits for it
+	// A meeting call's (meeting.go): fatal, its target is not its recording's room, or that room is not ready.
+	codeNotMeetingRoom = "not_meeting_room"
+	// fatal: an ordinary call bound to a meeting's room, which takes only meeting calls.
+	codeMeetingRoom = "meeting_room"
 )
 
 // infoProtocol is the voice wire this plugin speaks (docs/assistant/voice.md "Version negotiation"): 1 is the frames of

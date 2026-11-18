@@ -32,6 +32,24 @@ class SummaryRowsTest {
         assertEquals(ModelPick("claude", "opus"), merged.modelPick)
     }
 
+    @Test fun suggestionTextAndRiskAlwaysComeFromTheSameRow() {
+        for (oldRisk in listOf(false, true)) {
+            val old = full.copy(suggestion = "Review the old plan", suggestionRisky = oldRisk)
+            val summary = Session(machineId = "mac", sessionId = "c1", assistant = true, waiting = false)
+            val inherited = summary.keepingDetails(old)
+            assertEquals("Review the old plan", inherited.suggestion)
+            assertEquals("inherited text keeps inherited risk", oldRisk, inherited.suggestionRisky)
+        }
+        val old = full.copy(suggestion = "Review the old plan", suggestionRisky = true)
+        for (newRisk in listOf(false, true)) {
+            val summary = Session(machineId = "mac", sessionId = "c1", assistant = true, waiting = false,
+                suggestion = "Review the new plan", suggestionRisky = newRisk)
+            val merged = summary.keepingDetails(old)
+            assertEquals("Review the new plan", merged.suggestion)
+            assertEquals("new text brings its own risk", newRisk, merged.suggestionRisky)
+        }
+    }
+
     @Test fun aSummaryWithoutAPickMeansItFollowsTheDefault() {
         val summary = Session(machineId = "mac", sessionId = "c1", assistant = true, waiting = false)
         assertNull(summary.keepingDetails(full).modelPick)

@@ -1,0 +1,4 @@
+{
+  "image_load": "从 {host} 加载图片",
+  "image_retry": "重试加载 {host} 的图片"
+}

@@ -13,6 +13,7 @@ import { refreshWorkspaceCatalog, useWorkspaceCatalog } from "../lib/workspace-c
 import { closeWorktreeActions, worktreeActionsCurrent, type WorktreeActionsRequest } from "../lib/worktree-actions";
 import { firstDirectWorktreeAgent, resolveWorktreeAction, worktreeActionKey, worktreeSafetyStamp } from "../lib/worktree-actions-context";
 import { WorktreeMutation } from "../lib/worktree-actions-state";
+import type { WorktreeStatus } from "../lib/worktree";
 import { copyText, Menu, toast } from "../ui/atoms";
 import type { MenuItem } from "../ui/menu-model";
 import type { WorktreeActionsHostProps, WorktreeMutationRegistry } from "./WorktreeActions";
@@ -24,16 +25,17 @@ export function ActiveWorktreeActions({ request, registry, onOpenWorkspace, sess
   const machines = useStore((state) => state.machines);
   const pins = useStore((state) => state.pins || NO_PINS);
   const storeSessions = useStore((state) => [state.sessions, state.sessionSummaries] as const);
-  const [view, setView] = useState<"menu" | "rename" | "delete">("menu");
+  const [view, setView] = useState<"menu" | "rename" | "delete" | "close">("menu");
+  const [linkedWorktree, setLinkedWorktree] = useState<boolean | null>();
   const [access, setAccess] = useState<"loading" | "full" | "readOnly">("loading");
   const key = worktreeActionKey(target);
   const permission = useRef(false);
   permission.current = access === "full" && !readOnly;
-  const live = useRef({ catalog, readOnly, view });
-  live.current = { catalog, readOnly, view };
+  const live = useRef({ catalog, readOnly, view, linkedWorktree });
+  live.current = { catalog, readOnly, view, linkedWorktree };
   const current = () => worktreeActionsCurrent(id) && target.owner === credentialOwner();
-  const resolve = () => resolveWorktreeAction(target, { catalog: live.current.catalog, machines: getState().machines, writable: permission.current });
-  const context = resolveWorktreeAction(target, { catalog, machines, writable: permission.current });
+  const resolve = () => resolveWorktreeAction(target, { catalog: live.current.catalog, machines: getState().machines, writable: permission.current, linkedWorktree: live.current.linkedWorktree === true });
+  const context = resolveWorktreeAction(target, { catalog, machines, writable: permission.current, linkedWorktree: linkedWorktree === true });
   const close = () => {
     if (!current()) return;
     closeWorktreeActions(id);
@@ -42,7 +44,7 @@ export function ActiveWorktreeActions({ request, registry, onOpenWorkspace, sess
   };
   const [model] = useState(() => {
     const prior = registry.get(key);
-    if (prior && prior.snapshot().phase !== "invalid") return prior;
+    if (prior && !["invalid", "removed"].includes(prior.snapshot().phase)) return prior;
     prior?.dispose();
     const created = new WorktreeMutation(target, { resolve, current, acknowledged: () => {} });
     registry.set(key, created);
@@ -52,7 +54,7 @@ export function ActiveWorktreeActions({ request, registry, onOpenWorkspace, sess
   model.updateDependencies({ resolve, current, acknowledged: (action) => {
     if (!current()) return;
     void refreshWorkspaceCatalog();
-    toast(t(action === "rename" ? "worktree-actions.renamed" : "worktree-actions.removed"), "ok");
+    toast(t(action === "rename" ? "worktree-actions.renamed" : action === "close" ? "worktree-actions.closed" : "worktree-actions.removed"), "ok");
     close();
   } });
   const state = useSyncExternalStore(model.subscribe, model.snapshot, model.snapshot);
@@ -70,6 +72,18 @@ export function ActiveWorktreeActions({ request, registry, onOpenWorkspace, sess
     }).catch(() => { if (current() && !controller.signal.aborted) setAccess("readOnly"); });
     return () => controller.abort();
   }, [id, target.manager]); // request identity is immutable
+
+  useEffect(() => {
+    if (target.host !== "herdr" || access !== "full") return;
+    const controller = new AbortController();
+    void api<WorktreeStatus>(`/machines/${encodeURIComponent(target.machineId)}/worktree/status`, {
+      method: "POST", json: { kind: target.host, cwd: target.cwd }, signal: controller.signal,
+      headers: { [MANAGER_HEADER]: target.manager },
+    }).then((status) => {
+      if (current() && !controller.signal.aborted) setLinkedWorktree(status.worktree && status.path === target.cwd);
+    }).catch(() => { if (current() && !controller.signal.aborted) setLinkedWorktree(null); });
+    return () => controller.abort();
+  }, [id, target.host, access]);
 
   useLayoutEffect(() => {
     if (access === "loading") return;
@@ -100,7 +114,7 @@ export function ActiveWorktreeActions({ request, registry, onOpenWorkspace, sess
     return [...pinnedSessions(unique, pins), ...unique.filter((session) => !isPinned(session, pins)).sort(compare)];
   }, [sessions, storeSessions, pins]);
   const agent = firstDirectWorktreeAgent(target, catalog, ordered);
-  const changeView = (next: "rename" | "delete") => {
+  const changeView = (next: "rename" | "delete" | "close") => {
     if (!current()) return;
     anchor.focus({ preventScroll: true });
     setView(next);
@@ -135,15 +149,19 @@ export function ActiveWorktreeActions({ request, registry, onOpenWorkspace, sess
       const parent = resolve().parent;
       if (current() && parent) { close(); onOpenWorkspace(parent); }
     } }] : []),
-    ...(target.host === "orca" ? [{ key: "delete", label: t(state.dispatched ? "worktree-actions.check_status" : "worktree-actions.delete"), icon: "trash" as const,
+    ...(target.host === "herdr" && (!state.dispatched || state.preview?.close_only) ? [{ key: "close", label: t(state.dispatched ? "worktree-actions.check_status" : "worktree-actions.close_workspace"), icon: "x" as const,
+      divider: true, danger: true, keepOpen: true, disabled: state.dispatched ? !context.canReconcile : !context.canClose, onSelect: () => changeView("close") }] : []),
+    ...(["orca", "herdr", "paseo"].includes(target.host) && !(state.dispatched && state.preview?.close_only) ? [{ key: "delete", label: t(state.dispatched ? "worktree-actions.check_status" : "worktree-actions.delete"), icon: "trash" as const,
       divider: true, danger: true, keepOpen: true, disabled: state.dispatched ? !context.canReconcile : !context.canDelete, onSelect: () => changeView("delete") }] : []),
+    ...(target.host === "herdr" && linkedWorktree === false ? [{ key: "linked-only", label: t("worktree-actions.linked_only"), note: true, onSelect: () => {} }] : []),
+    ...(target.host === "herdr" && linkedWorktree === null ? [{ key: "git-unavailable", label: t("worktree-actions.unavailable"), note: true, onSelect: () => {} }] : []),
     ...(!context.writable ? [{ key: "availability", label: access === "loading" ? t("worktree-actions.checking_access") : context.reason, note: true, onSelect: () => {} }] : []),
     ...(context.workspace?.is_main || context.hasChildren ? [{ key: "protected", label: t(context.hasChildren ? "worktree-actions.has_children" : "worktree-actions.protected"), note: true, onSelect: () => {} }] : []),
   ];
   return <>
     {view === "menu" && <Menu anchor={request.at?.anchor || anchor} point={request.at?.point} onClose={close} align="right"
-      header={context.workspace?.title || target.label || t("worktree-actions.worktree")} items={items} />}
+      header={context.workspace?.title || target.label || t("worktree-actions.worktree")} headerAsWritten={Boolean(context.workspace?.title || target.label)} items={items} />}
     {view === "rename" && <RenameWorktreeDialog target={target} name={context.workspace?.title || target.label || ""} model={model} onClose={close} />}
-    {view === "delete" && <DeleteWorktreeDialog target={target} machineName={context.machine?.name} model={model} onClose={close} />}
+    {(view === "delete" || view === "close") && <DeleteWorktreeDialog target={target} machineName={context.machine?.name} closeOnly={view === "close"} model={model} onClose={close} />}
   </>;
 }

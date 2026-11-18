@@ -108,7 +108,6 @@ func TestLarkAgentModelValidationAndProviderUse(t *testing.T) {
 	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "lark-custom"}})
 	for _, body := range []string{
 		`{"provider":"launcher.lark-custom"}`,
-		`{"revision":0,"runtime":"agentsdk"}`,
 		`{"revision":0,"provider":"launcher.missing"}`,
 		`{"revision":0,"effort":"unsupported"}`,
 		`{"revision":0,"effort":"off"}`,

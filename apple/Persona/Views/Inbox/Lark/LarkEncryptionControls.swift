@@ -86,7 +86,7 @@ struct LarkEncryptionCoverPicker: View {
             .themedGroupedPage()
             .navigationTitle("Public Text")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.lineLimit(1) } }
+            .toolbar { SheetClose { dismiss() } }
             .task { await load() }
         }
     }
@@ -143,7 +143,7 @@ struct LarkEncryptionUnlockSheet: View {
             .themedGroupedPage()
             .navigationTitle("Unlock Encrypted Messages")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { password = ""; dismiss() }.lineLimit(1).disabled(busy) } }
+            .toolbar { SheetClose(disabled: busy) { password = ""; dismiss() } }
             .interactiveDismissDisabled(busy)
             .onDisappear { password = "" }
         }

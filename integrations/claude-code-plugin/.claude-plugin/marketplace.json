@@ -1,0 +1,12 @@
+{
+  "name": "persona",
+  "description": "Persona's plugin for Claude Code, kept beside Persona Link.",
+  "owner": { "name": "Persona", "url": "https://github.com/nwverse/persona" },
+  "plugins": [
+    {
+      "name": "persona",
+      "source": "./",
+      "description": "Delivers your own messages from the Persona apps into this session as your input, while it waits for you."
+    }
+  ]
+}

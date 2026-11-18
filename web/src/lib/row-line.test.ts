@@ -27,6 +27,13 @@ describe("rowLine", () => {
     expect(rowLine(s({ state: "unread", last_text: "旧的话", work: { phase: "done", line: "三段都写好了" } as Session["work"] }))).toEqual({ text: "✓ 三段都写好了" });
   });
 
+  it("says what a Just finished agent did (#9751)", () => {
+    const finished = s({ state: "idle", last_text: "旧的话", work: { phase: "done", line: "三段都写好了", just_finished: true } as Session["work"] });
+    expect(rowLine(finished, undefined, false, true)).toEqual({ text: "✓ 三段都写好了" });
+    // muted, or the caller says no: a seen row has no second line
+    expect(rowLine(finished)).toBeUndefined();
+  });
+
   it("says nothing for the other states", () => {
     for (const state of ["working", "idle", "offline", "unknown"] as const) expect(rowLine(s({ state, last_text: "在跑测试" }))).toBeUndefined();
   });

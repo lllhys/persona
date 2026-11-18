@@ -15,7 +15,7 @@ The code is `server/internal/assistant/north_star.go` (readout, recording, route
 A day is the owner's calendar day in the assistant's time zone (`timezone` in the assistant's settings, else the
 machine's), from midnight to the end of the day, or to now for today.
 
-Four categories count, each only at the moment it was **first dispatched to the owner** (`tellUser`, the
+Five categories count, each only at the moment it was **first dispatched to the owner** (`tellUser`, the
 `interactions.user_notified_at` marker added in #4443), not when it was raised or shown in an app:
 
 | Category | What it is |
@@ -23,7 +23,8 @@ Four categories count, each only at the moment it was **first dispatched to the 
 | `ask_user` | A conversation's own `ask_user` question card (`kind` `question`, `tool_name` `ask_user`). |
 | `action_card` | Any other card the owner has to act on: an Agent's question, a terminal dialog (`screen`), a form (`elicitation`). |
 | `authorization` | A tool permission card (`permission`) or a plan approval (`plan`). |
-| `notify_user` | A `notify_user` call, when it is sent (work event `notify_user`). |
+| `notify_user` | A `notify_user` call that a device took (work event `notify_user`): the hub handed it to a phone, computer or browser (`notify.request`'s `devices`, `docs/protocol/protocol.md` "Bus"). One a hub that does not report devices took counts too, as before. |
+| `urgent_call` | A matter that rang the owner's phone (work event `urgent_call`, `urgent-call.md`), once however often it rang; `by_kind` says why it rang (`owner_asked`, `rule`). The pushes after a missed or declined call are not counted again. |
 
 Each counted item has a source:
 
@@ -42,6 +43,8 @@ These are listed apart and never count as interruptions:
 | `supervisor_escalated` | Cards a supervisor passed up (`ask_escalated`). If one then reached the owner, it counts in its category. |
 | `auto_authorized` | Cards answered by a standing authorization (`interactions.auto_authorized_at`). |
 | `probe` | Cards and notifications from a session whose working directory is under a temporary directory (`/tmp`, `/private/tmp`, `/var/folders`, the manager's `os.TempDir()`), where local tests and live probes run. |
+| `notify_missed` | `notify_user` calls no device took when they were made, by why (the work event's `missed`, #8138): `no_device` (nothing could take it), `filtered` (every device that could turned it off), `kept` (only offline devices keep it for their next connection), `held` (low-distraction mode held it for the briefing and no connected device took it), `hub_away` (the hub was away; the manager's outbox sends it when it is back). Copies to chat channels with pushes on are not known when the call returns and do not change this. |
+| `call_skipped` | Urgent calls that did not ring, by why (work event `urgent_call_skipped`): a gate stopped them (`off`, `no_quote`, `no_rule`, `no_happening`, `no_action`, `already_called`, `quiet`, `cap`, `spacing`) or no phone took the ring (`no_phone`). Each went out as a P0 notification instead, counted under `notify_user` when a device took it. A test call from Settings counts under `probe`. |
 
 ### Unknown, never zero
 
@@ -132,9 +135,10 @@ answers 503. The answer (abridged):
       "ask_user": {"count": 1, "by_source": {"dot": 1}, "by_kind": {"ask_user": 1}, "unknown": 3},
       "action_card": {"count": 2, "by_source": {"task": 2}, "by_kind": {"question": 2}, "unknown": 0},
       "authorization": {"count": 1, "by_source": {"session": 1}, "by_kind": {"permission": 1}, "unknown": 0},
-      "notify_user": {"count": 1, "by_source": {"dot": 1}, "by_kind": {"notify_user": 1}, "unknown": 0}
+      "notify_user": {"count": 1, "by_source": {"dot": 1}, "by_kind": {"notify_user": 1}, "unknown": 0},
+      "urgent_call": {"count": 0, "by_source": {}, "by_kind": {}, "unknown": 0}
     },
-    "excluded": {"supervisor_routed": 2, "supervisor_held": 1, "supervisor_escalated": 1, "auto_authorized": 1, "probe": 2},
+    "excluded": {"supervisor_routed": 2, "supervisor_held": 1, "supervisor_escalated": 1, "auto_authorized": 1, "probe": 2, "notify_missed": {"no_device": 1}, "call_skipped": {"cap": 1}},
     "sources": [{"category": "action_card", "source": "task", "kind": "question", "machine_id": "<machine>",
                  "session_id": "<session>", "todo_id": "<task>", "title": "Fix the build", "count": 2}]
   },

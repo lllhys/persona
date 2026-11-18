@@ -21,7 +21,7 @@ import (
 // fields differ from them (a field added, renamed, retyped or retagged by a change that did not update this file),
 // appendSession leaves every session to the reflect encoder: the session is sent whole, only slower, until its line
 // here and this hash are brought up to date. TestSessionWireMatchesReflect fails meanwhile and prints the new hash.
-const sessionWireLayout = 0xe40c472e69558a21
+const sessionWireLayout = 0x3b11d3e1bfabc8cc
 
 var sessionWireCurrent = sessionLayout() == sessionWireLayout && hierarchyLayout() == hierarchyWireLayout
 
@@ -41,7 +41,7 @@ const (
 
 // hierarchyWireLayout is the layout hash of SessionHierarchy and SessionChildren, whose members appendSession writes
 // on the row: while either differs, appendSession leaves every session to the reflect encoder, as for sessionWireLayout.
-const hierarchyWireLayout = 0x963e02625bba54a9
+const hierarchyWireLayout = 0x4902aefc2aad6f7d
 
 // hierarchyLayout hashes SessionHierarchy's fields, then SessionChildren's.
 func hierarchyLayout() uint64 {
@@ -97,6 +97,18 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 	w.boolean(`"archived":`, s.Archived, true)
 	w.boolean(`"title_manual":`, s.TitleManual, true)
 	w.boolean(`"bypass_available":`, s.BypassAvailable, true)
+	if s.Tags != nil { // omitempty on *[]string drops only a nil pointer; a non-nil one is written, even when its slice is nil or empty (as the reflect encoder does)
+		if len(*s.Tags) == 0 {
+			w.key(`"tags":`)
+			if *s.Tags == nil {
+				w.b = append(w.b, "null"...)
+			} else {
+				w.b = append(w.b, '[', ']')
+			}
+		} else {
+			w.strs(`"tags":`, *s.Tags)
+		}
+	}
 	w.str(`"title":`, s.Title, false)
 	w.str(`"cwd":`, s.Cwd, false)
 	w.str(`"workspace_cwd":`, s.WorkspaceCwd, true)
@@ -156,10 +168,10 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 	w.str(`"space_id":`, s.SpaceID, true)
 	w.str(`"space_name":`, s.SpaceName, true)
 	w.integer(`"space_index":`, int64(s.SpaceIndex), true)
+	w.integer(`"slot_index":`, int64(s.SlotIndex), true)
 	w.str(`"parent_space_id":`, s.ParentSpaceID, true)
 	w.str(`"slot_id":`, s.SlotID, true)
 	w.str(`"slot_name":`, s.SlotName, true)
-	w.integer(`"slot_index":`, int64(s.SlotIndex), true)
 	if s.PaneIndex != nil {
 		w.integer(`"pane_index":`, int64(*s.PaneIndex), false)
 	}
@@ -174,6 +186,9 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 	w.time(`"seen_at":`, s.SeenAt) // time.Time is a struct, never empty, so omitempty keeps it
 	w.time(`"state_since":`, s.StateSince)
 	w.strs(`"queued":`, s.Queued)
+	if s.Undelivered != nil {
+		w.value(`"undelivered":`, s.Undelivered)
+	}
 	if len(s.Background) > 0 {
 		if backgroundWireCurrent {
 			w.key(`"background":`)
@@ -217,6 +232,7 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 		w.str(`"title_source":`, s.TitleSource.String(), false)
 	}
 	w.boolean(`"suggestion_risky":`, s.SuggestionRisky, true)
+	w.boolean(`"bypass_pending":`, s.BypassPending, true)
 	w.str(`"turn_error":`, s.TurnError, true)
 	w.str(`"turn_error_kind":`, s.TurnErrorKind, true)
 	if s.TurnErrorResetsAt != nil {
@@ -251,20 +267,23 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 	w.str(`"attention_reason":`, s.AttentionReason, true)
 	w.str(`"failure_reason":`, s.FailureReason, true)
 	w.str(`"external_url":`, s.ExternalURL, true)
-	w.str(`"runtime":`, s.Runtime, true)
-	w.str(`"runtime_fallback":`, s.RuntimeFallback, true)
 	w.str(`"chat":`, s.Chat, true)
 	w.str(`"topic":`, s.Topic, true)
 	w.strs(`"dispatched":`, s.Dispatched)
 	w.strs(`"also_open_in":`, s.AlsoOpenIn)
 	w.str(`"host":`, s.Host, true)
 	if h := s.Hierarchy; h != nil { // sessionWire's hierarchy members, keys of the row itself (compatibility.go)
+		if h.CompletedTodo != nil {
+			w.value(`"completed_todo":`, h.CompletedTodo)
+		}
+		w.str(`"parent_agent_id":`, h.ParentAgentID, true)
 		if !h.StartedAt.IsZero() {
 			w.time(`"started_at":`, h.StartedAt)
 		}
 		w.str(`"asking_parent_session_id":`, h.AskingParentSessionID, true)
 		w.str(`"folded_under":`, h.FoldedUnder, true)
 		w.str(`"folded_as":`, h.FoldedAs, true)
+		w.str(`"folded_side":`, h.FoldedSide, true)
 		if c := h.Children; c != nil {
 			w.key(`"children":`)
 			w.open()
@@ -272,11 +291,17 @@ func appendSession(b []byte, s *Session) ([]byte, bool) {
 			w.integer(`"working":`, int64(c.Working), true)
 			w.integer(`"needs_you":`, int64(c.NeedsYou), true)
 			w.integer(`"workers":`, int64(c.Workers), true)
+			w.integer(`"sides":`, int64(c.Sides), true)
+			w.integer(`"sides_working":`, int64(c.SidesWorking), true)
+			w.integer(`"sides_needs_you":`, int64(c.SidesNeedsYou), true)
+			w.integer(`"sides_unread":`, int64(c.SidesUnread), true)
 			w.close()
 		}
 		if len(h.EngineHistory) > 0 {
 			w.value(`"engine_history":`, &h.EngineHistory)
 		}
+		w.strs(`"aliases":`, h.Aliases)
+		w.boolean(`"deleted":`, h.Deleted, true)
 	}
 	w.boolean(legacyStartedMember, s.StartedByPersona, false) // sessionWire's legacy key (compatibility.go)
 	return append(w.b, '}'), w.ok

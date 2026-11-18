@@ -10,6 +10,8 @@ struct ModelConfigurationView: View {
     var inSheet = false
     /// Sheets opened from other pages keep their existing Model Settings title and navigation.
     var showsAdvancedProviders = true
+    /// Whose model settings (`ModelSettingsOwner`): the current assistant's, or the default's for what runs on it.
+    var owner: ModelSettingsOwner = .current
     @State private var page = ModelConfigurationModel()
     @State private var scopeExpanded = false
     @State private var editing: ModelPurposeRoute?
@@ -75,11 +77,14 @@ struct ModelConfigurationView: View {
         .themedPage()
         .detailTitle(showsAdvancedProviders ? String(localized: "Models") : String(localized: "Model Settings [Launcher Model Picker 8cbcf7]"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await page.load() }
+        .task {
+            page.owner = owner
+            await page.load()
+        }
         .refreshable { await page.load() }
         #if os(macOS)
         .sheet(item: $editing, onDismiss: { Task { await page.load() } }) { route in
-            NavigationStack { ModelPurposeEditorView(purposeID: route.id, inSheet: true) }
+            NavigationStack { ModelPurposeEditorView(purposeID: route.id, inSheet: true, owner: owner) }
                 .macSheet()
         }
         #endif
@@ -108,6 +113,12 @@ struct ModelConfigurationView: View {
     private func categoryLabel(_ category: ModelPurpose) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
             Text(category.id == "lark.agent" ? String(localized: "Lark /agent") : category.name).font(Theme.Font.body).lineLimit(1)
+            // What the use is for, in the hub's sentence (#5806); a hub from before sends none, and the row is as it was.
+            if let note = category.purposeNote {
+                Text(note).font(Theme.Font.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("model-purpose-note-\(category.id)")
+            }
             Text(page.modelSummary(category))
                 .font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
             if ModelConfigurationModel.followsCategory(category) {
@@ -146,7 +157,10 @@ struct ModelPurposeEditorView: View {
     /// In a sheet of its own. On a Mac that sheet's bottom row is the way out: Cancel (asking first when there are edits)
     /// and Save, which closes it once saved (#1248).
     var inSheet = false
+    /// Whose model settings (`ModelSettingsOwner`): the current assistant's, or the default's for what runs on it.
+    var owner: ModelSettingsOwner = .current
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppModel.self) private var model
     @State private var page = ModelConfigurationModel()
     @State private var confirmReload = false
     @State private var advancedExpanded = false
@@ -218,7 +232,12 @@ struct ModelPurposeEditorView: View {
                 } header: {
                     Text("Model Settings [Model Configuration View 082a73]")
                 } footer: {
-                    Text("Changes take effect from the next run. Current tasks aren't interrupted and past data isn't reprocessed. Permission settings don't change with the model.")
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        Text("Changes take effect from the next run. Current tasks aren't interrupted and past data isn't reprocessed. Permission settings don't change with the model.")
+                        if let note = Self.defaultAssistantNote(owner: owner, model: model) {
+                            Text(note)
+                        }
+                    }
                 }
                 .disabled(page.saving || page.loading)
                 Section {
@@ -274,11 +293,23 @@ struct ModelPurposeEditorView: View {
         #if os(macOS)
         .sheetCancel(unsaved: page.dirty, when: inSheet) { dismiss() }
         #endif
-        .task(id: purposeID) { await page.loadIfNeeded(purposeID: purposeID) }
+        .task(id: purposeID) {
+            // Before its first request, which keeps the client.
+            page.owner = owner
+            await page.loadIfNeeded(purposeID: purposeID)
+        }
         .task(id: listProvider) { await loadList() }
         .confirmationDialog("Reloading discards your unsaved edits.", isPresented: $confirmReload, titleVisibility: .visible) {
             Button("Reload [Lark Chat Pins View 7bdd5c]", role: .destructive) { Task { await page.load(purposeID: purposeID) } }
         }
+    }
+
+    /// Whose settings a default-owned editor changes while another assistant is current; nil for the current assistant's
+    /// editor or when no other assistant needs telling apart.
+    static func defaultAssistantNote(owner: ModelSettingsOwner, model: AppModel) -> String? {
+        guard owner == .defaultAssistant, model.assistantManagerID != nil,
+              let name = TranslationModelNote.defaultName(model) else { return nil }
+        return String(localized: "These settings belong to the default assistant “\(name)”.")
     }
 
     private var advancedExplanation: String {
@@ -434,15 +465,17 @@ struct ModelPurposeEditorView: View {
 
 extension View {
     /// Model Settings over this page as a sheet: one purpose's editor (`purposeID`), or the categories (nil). A sheet avoids
-    /// mixing value and view navigation in the stack below (the assistant's and tasks' details, the inbox).
-    func modelConfigurationSheet(isPresented: Binding<Bool>, purposeID: String?) -> some View {
-        modifier(ModelConfigurationSheet(showing: isPresented, purposeID: purposeID))
+    /// mixing value and view navigation in the stack below (the assistant's and tasks' details, the inbox). `owner`: whose
+    /// (`ModelSettingsOwner`; the default's for what runs on it whichever assistant is current).
+    func modelConfigurationSheet(isPresented: Binding<Bool>, purposeID: String?, owner: ModelSettingsOwner = .current) -> some View {
+        modifier(ModelConfigurationSheet(showing: isPresented, purposeID: purposeID, owner: owner))
     }
 }
 
 private struct ModelConfigurationSheet: ViewModifier {
     @Binding var showing: Bool
     var purposeID: String?
+    var owner: ModelSettingsOwner
 
     func body(content: Content) -> some View {
         content.sheet(isPresented: $showing) {
@@ -451,22 +484,24 @@ private struct ModelConfigurationSheet: ViewModifier {
             // sheet's bottom row, and the categories open each one over this sheet.
             NavigationStack {
                 if let purposeID {
-                    ModelPurposeEditorView(purposeID: purposeID, inSheet: true)
+                    ModelPurposeEditorView(purposeID: purposeID, inSheet: true, owner: owner)
                 } else {
-                    ModelConfigurationView(inSheet: true, showsAdvancedProviders: false).macSheetDone { showing = false }
+                    ModelConfigurationView(inSheet: true, showsAdvancedProviders: false, owner: owner).macSheetDone { showing = false }
                 }
             }
             .macSheet()
             #else
             NavigationStack {
                 Group {
-                    if let purposeID { ModelPurposeEditorView(purposeID: purposeID) } else { ModelConfigurationView(showsAdvancedProviders: false) }
-                }
-                .navigationDestination(for: ModelPurposeRoute.self) { ModelPurposeEditorView(purposeID: $0.id) }
-                .pageToolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button("Close") { showing = false }.lineLimit(1)
+                    if let purposeID {
+                        ModelPurposeEditorView(purposeID: purposeID, owner: owner)
+                    } else {
+                        ModelConfigurationView(showsAdvancedProviders: false, owner: owner)
                     }
+                }
+                .navigationDestination(for: ModelPurposeRoute.self) { ModelPurposeEditorView(purposeID: $0.id, owner: owner) }
+                .pageToolbar {
+                    SheetClose { showing = false }
                 }
             }
             #endif
@@ -479,6 +514,8 @@ struct ModelConfigurationLink: View {
     var title = String(localized: "Model Settings [Launcher Model Picker 8cbcf7]")
     var purposeID: String?
     var summary: String?
+    /// Whose model settings the sheet edits (`ModelSettingsOwner`).
+    var owner: ModelSettingsOwner = .current
     @State private var showing = false
 
     var body: some View {
@@ -499,7 +536,7 @@ struct ModelConfigurationLink: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("model-config-link")
-        .modelConfigurationSheet(isPresented: $showing, purposeID: purposeID)
+        .modelConfigurationSheet(isPresented: $showing, purposeID: purposeID, owner: owner)
         #if DEBUG
         // `-showModelConfigSheet <purpose id>|all`: this sheet open, for screenshots.
         .task {

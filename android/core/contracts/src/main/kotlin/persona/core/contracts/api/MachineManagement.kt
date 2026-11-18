@@ -16,6 +16,12 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 
 /**
+ * [MachineManagement.setEngine]'s choice for a computer with no terminal engine, as iOS `MachineEngine.noEngine`. Not a hub engine
+ * id: the hub is sent the empty host set instead (docs/integrations/engines.md "Host sets").
+ */
+const val NO_TERMINAL_ENGINE = "none"
+
+/**
  * What the app changes on a machine (docs/protocol/protocol.md "REST"): its launchers, reconnecting and redeploying its node,
  * its terminal engine, whether botmux's sessions are listed, and its whitelisted Claude Code and Codex settings. Bound to the active pairing; every call goes to the
  * hub that is paired when it is made.
@@ -48,7 +54,10 @@ interface MachineManagement {
     /** `POST /api/v1/machines/{id}/herdr/start`: an explicit start, independent of the autostart setting. */
     suspend fun startHerdr(machineId: String): HerdrState
 
-    /** `PUT /api/v1/machines/{id}/engine`: allowed offline (applied when it connects); returns the updated machine. */
+    /**
+     * `PUT /api/v1/machines/{id}/engine`: allowed offline (applied when it connects); returns the updated machine.
+     * [NO_TERMINAL_ENGINE] is saved as the empty host set, only for a hub that reports `engine_hosts`.
+     */
     suspend fun setEngine(machineId: String, engine: String): Machine
 
     /**
@@ -77,6 +86,20 @@ interface MachineManagement {
 
     /** `PUT /api/v1/machines/{id}/claude-dirs/blocked`: the whole list of patterns; the hub answers the new state. */
     suspend fun setBlockedClaudeDirs(machineId: String, blocked: List<String>): ClaudeDirsState = throw UnsupportedOperationException()
+
+    /**
+     * `GET /api/v1/machines/{id}/claude-live-replies`: whether the Claude Code sessions Persona starts on this
+     * computer send their replies while Claude writes them (#1309, #9178). Null when the hub has no such route
+     * (404, an older hub): the switch is hidden.
+     */
+    suspend fun claudeLiveReplies(machineId: String): Boolean? = null
+
+    /**
+     * `PUT /api/v1/machines/{id}/claude-live-replies {"on"}`: saved at once, and the hub tells the node; returns the
+     * setting in force.
+     */
+    suspend fun setClaudeLiveReplies(machineId: String, on: Boolean): Boolean =
+        throw UnsupportedOperationException("claude live replies")
 
     /** `GET /api/v1/machines/{id}/doctor`: what `personad node doctor` finds there (full devices only). */
     suspend fun doctor(machineId: String): DoctorReport = throw UnsupportedOperationException("doctor")

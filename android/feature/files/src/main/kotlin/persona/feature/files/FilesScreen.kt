@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
 import persona.core.contracts.api.*
 import persona.core.designsystem.*
+import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcon
 import persona.core.designsystem.icons.PhIcons
 import persona.core.navigation.ChatRoute
@@ -94,6 +95,11 @@ private fun FilesBrowser(
     val pathCopied = stringResource(R.string.files_path_copied)
     var hidden by rememberShowHidden()
     var menu by remember { mutableStateOf(false) }
+    // The entry a dialog is open for (its full path): Rename's name, or Move to Trash's confirmation.
+    var renaming by rememberSaveable { mutableStateOf<String?>(null) }
+    var trashing by rememberSaveable { mutableStateOf<String?>(null) }
+    val report = rememberFileEditReport(controller)
+    val edits = controller.editsFiles
     val here = state.here
     JListPage(
         title = FilesPaths.name(here), subtitle = here, onBack = onBackToChat, largeTitle = true,
@@ -119,7 +125,8 @@ private fun FilesBrowser(
                     JIconButton(PhIcons.DotsThree, stringResource(R.string.files_options), { menu = true })
                 }
             }
-            filesBrowser(state, controller, hidden, onInsertPath)
+            filesBrowser(state, controller, hidden, onInsertPath, rename = if (edits) ({ renaming = it }) else null,
+                trash = if (edits) ({ trashing = it }) else null)
         } else gitBrowser(state, controller)
     }
     if (menu) JActionSheet(buildList {
@@ -128,6 +135,8 @@ private fun FilesBrowser(
         add(JAction(stringResource(R.string.files_copy_folder), PhIcons.Copy) { copy(here, pathCopied) })
         add(JAction(stringResource(R.string.files_insert_folder), PhIcons.CursorText) { onInsertPath(here) })
     }, { menu = false }, title = stringResource(R.string.files_folder_actions))
+    renaming?.let { path -> RenameFileDialog(FilesPaths.name(path), { controller.rename(path, it, report) }, { renaming = null }) }
+    trashing?.let { path -> TrashFileDialog(FilesPaths.name(path), { controller.trash(listOf(path), report) }, { trashing = null }) }
 }
 
 /** The folders from the breadcrumb's top down to the one shown, as chips; it follows you to the end as you go in. */
@@ -146,7 +155,9 @@ private fun Crumbs(levels: List<Pair<String, String>>, onPick: (String) -> Unit,
     }
 }
 
-private fun LazyListScope.filesBrowser(state: FilesState, controller: FilesController, hidden: Boolean, insert: (String) -> Unit) {
+/** [rename] and [trash] (of an entry's full path): offered in each row's menu when the hub can (`file_edit`). */
+private fun LazyListScope.filesBrowser(state: FilesState, controller: FilesController, hidden: Boolean, insert: (String) -> Unit,
+    rename: ((String) -> Unit)? = null, trash: ((String) -> Unit)? = null) {
     val listing = state.directory
     when {
         listing == null && state.directoryError != null -> item { RetryState(stringResource(R.string.files_folder_failed), state.directoryError) { controller.directory() } }
@@ -169,7 +180,8 @@ private fun LazyListScope.filesBrowser(state: FilesState, controller: FilesContr
                     val thumbnail = if (!entry.dir && FileThumbnails.wanted(entry.name, entry.size)) controller.thumbnail(path, entry.size, entry.mtime) else null
                     FileRow(entry, gitChange(state.git, path, entry.dir), now, thumbnail = thumbnail,
                         open = { if (entry.dir) controller.directory(path) else controller.push(FileSelection.File(path)) },
-                        copy = { copyText(path, pathCopied) }, insert = { insert(path) })
+                        copy = { copyText(path, pathCopied) }, insert = { insert(path) },
+                        rename = rename?.let { { it(path) } }, trash = trash?.let { { it(path) } })
                 }
             }
             if (listing.truncated) item { Notice(stringResource(R.string.files_too_many, LocalizedFormats.number(MAX_LISTED, currentLocale)), padded = false) }
@@ -177,10 +189,13 @@ private fun LazyListScope.filesBrowser(state: FilesState, controller: FilesContr
     }
 }
 
-/** One entry: its kind, the name (a hidden one quieter), size and when it changed, the Git change, ⋯. */
+/**
+ * One entry: its kind, the name (a hidden one quieter), size and when it changed, the Git change, ⋯. Its menu (⋯ or a long
+ * press) inserts or copies the path, and with [rename] and [trash] renames it or moves it to the trash (iOS `FilesPane.entryRow`).
+ */
 @Composable
 private fun FileRow(entry: SessionFileEntry, change: SessionGitFile?, now: Instant, open: () -> Unit, copy: () -> Unit, insert: () -> Unit,
-    thumbnail: Pair<String, suspend (Int) -> ByteArray?>? = null) {
+    thumbnail: Pair<String, suspend (Int) -> ByteArray?>? = null, rename: (() -> Unit)? = null, trash: (() -> Unit)? = null) {
     var menu by remember { mutableStateOf(false) }
     val palette = PersonaTheme.palette
     val resources = LocalResources.current
@@ -204,9 +219,12 @@ private fun FileRow(entry: SessionFileEntry, change: SessionGitFile?, now: Insta
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
-    if (menu) JActionSheet(listOf(JAction(stringResource(R.string.files_insert_path), PhIcons.CursorText, onClick = insert),
-        JAction(stringResource(R.string.files_copy_path), PhIcons.Copy, onClick = copy)),
-        { menu = false }, entry.name)
+    if (menu) JActionSheet(buildList {
+        add(JAction(stringResource(R.string.files_insert_path), PhIcons.CursorText, onClick = insert))
+        add(JAction(stringResource(R.string.files_copy_path), PhIcons.Copy, onClick = copy))
+        rename?.let { add(JAction(stringResource(R.string.files_rename), PersonaIcons.edit, separatorBefore = true, onClick = it)) }
+        trash?.let { add(JAction(stringResource(R.string.files_trash), PersonaIcons.delete, destructive = true, separatorBefore = rename == null, onClick = it)) }
+    }, { menu = false }, entry.name)
 }
 
 /** The icon of a file by its kind: documents, images, code and config, anything else. */

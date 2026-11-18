@@ -1,11 +1,104 @@
 package extension
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestSchemaStep(t *testing.T) {
+	for _, step := range []int64{1, 250, 9007199254740991} {
+		t.Run(strconv.FormatInt(step, 10), func(t *testing.T) {
+			s, err := ParseSchema(json.RawMessage(`{"type":"object","properties":{"goal":{"type":"integer","x-step":` + strconv.FormatInt(step, 10) + `}}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.Fields[0].Step == nil || *s.Fields[0].Step != step {
+				t.Fatalf("step: %+v", s.Fields[0])
+			}
+			raw, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := `{"fields":[{"name":"goal","type":"integer","step":` + strconv.FormatInt(step, 10) + `}]}`
+			if string(raw) != want {
+				t.Fatalf("form: %s, want %s", raw, want)
+			}
+		})
+	}
+	s, err := ParseSchema(json.RawMessage(`{"type":"object","properties":{"goal":{"type":"integer"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(s)
+	if err != nil || s.Fields[0].Step != nil || strings.Contains(string(raw), `"step"`) {
+		t.Fatalf("absent step: %s, %v", raw, err)
+	}
+}
+
+func TestSchemaStepRefusesInvalidHints(t *testing.T) {
+	for _, value := range []string{`0`, `-1`, `1.5`, `1.0`, `1e2`, `"250"`, `true`, `false`, `null`, `[]`, `{}`, `9007199254740992`, `9223372036854775808`} {
+		t.Run(value, func(t *testing.T) {
+			_, err := ParseSchema(json.RawMessage(`{"type":"object","properties":{"goal":{"type":"integer","x-step":` + value + `}}}`))
+			if err == nil || !strings.Contains(err.Error(), "goal: x-step: a whole number from 1 to 9007199254740991") {
+				t.Fatalf("invalid x-step %s: %v", value, err)
+			}
+		})
+	}
+	for _, kind := range []string{"number", "string", "boolean", "array", "object"} {
+		t.Run(kind, func(t *testing.T) {
+			_, err := ParseSchema(json.RawMessage(`{"type":"object","properties":{"goal":{"type":"` + kind + `","x-step":250}}}`))
+			if err == nil || !strings.Contains(err.Error(), `"x-step" is not in the subset the forms draw for a `+kind) {
+				t.Fatalf("x-step on %s: %v", kind, err)
+			}
+		})
+	}
+}
+
+func TestSchemaStepDoesNotConstrainSavedValues(t *testing.T) {
+	ctx := context.Background()
+	r, store, _ := newTestRegistry(t)
+	pkg := t.TempDir()
+	writePackage(t, pkg, func(m map[string]any) {
+		m["configuration"] = json.RawMessage(`{"type":"object","properties":{
+			"goal":{"type":"integer","minimum":1000,"maximum":3000,"default":2100,"x-step":250},
+			"group":{"type":"object","properties":{"count":{"type":"integer","x-step":250,"enum":[2100,2350]}}}
+		}}`)
+	})
+	preview, err := r.Preview(ctx, pkg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Install(ctx, preview.ID, preview.Digest, "test"); err != nil {
+		t.Fatal(err)
+	}
+	const config = `{"goal":2100,"group":{"count":2350}}`
+	if err := r.SetConfig(ctx, "example-notes", json.RawMessage(config), "test"); err != nil {
+		t.Fatal(err)
+	}
+	p := r.Get("example-notes")
+	if !sameJSON(p.Record.Config, json.RawMessage(config)) || !sameJSON(r.Config(p), json.RawMessage(config)) {
+		t.Fatalf("off-grid values changed: saved %s, effective %s", p.Record.Config, r.Config(p))
+	}
+	reloaded := NewRegistry(r.dir, store, rot13{}, 202611100000)
+	if err := reloaded.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := reloaded.Get("example-notes"); got == nil || got.Problem != "" || !sameJSON(got.Record.Config, json.RawMessage(config)) {
+		t.Fatalf("saved off-grid configuration did not reload: %+v", got)
+	}
+	if p.Schema.Fields[1].Fields[0].Step == nil || *p.Schema.Fields[1].Fields[0].Step != 250 {
+		t.Fatal("nested integer lost its step")
+	}
+	for _, bad := range []string{`{"goal":999}`, `{"goal":3001}`, `{"goal":2100.5}`, `{"group":{"count":2101}}`} {
+		if err := r.SetConfig(ctx, "example-notes", json.RawMessage(bad), "test"); err == nil {
+			t.Errorf("existing constraint ignored: %s", bad)
+		}
+	}
+}
 
 const formSchema = `{"type": "object", "properties": {
   "url": {"type": "string", "title": "地址", "format": "uri"},

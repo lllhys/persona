@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings › Connectors › GitHub: where the sign-in comes from, and which GitHub events reach the Inbox. Same words as iOS. -->
+<resources>
+    <string name="settings_gh_sign_in_from">Sign In From</string>
+    <string name="settings_gh_sign_in_from_footer">Pick a computer to use its gh sign-in; device code sign-in doesn\'t depend on any computer. Switching signs out of the previous one.</string>
+    <string name="settings_gh_checking">Checking gh sign-in on your computers…</string>
+    <string name="settings_gh_device_code">Device Code Sign-In</string>
+    <string name="settings_gh_device_code_subtitle">No computer needed: enter a code on GitHub to authorize</string>
+    <string name="settings_gh_device_footer">Device-code authorization is stored encrypted on the hub; it\'s forgotten when you switch to gh on a computer.</string>
+    <string name="settings_gh_signed_in_as">gh signed in · %1$s</string>
+    <string name="settings_gh_signed_in">gh signed in</string>
+    <string name="settings_gh_signed_in_missing">%1$s · missing %2$s scope</string>
+    <string name="settings_gh_not_signed_in">gh not signed in</string>
+    <string name="settings_gh_no_gh">gh not installed</string>
+    <string name="settings_gh_too_old">personad is too old to read gh sign-in</string>
+    <string name="settings_gh_offline">Offline</string>
+    <string name="settings_gh_read_error">Can\'t read gh sign-in: %1$s</string>
+    <string name="settings_gh_read_failed">Can\'t read gh sign-in</string>
+    <string name="settings_gh_missing_header">Missing Permissions</string>
+    <string name="settings_gh_missing_device">Device code sign-in is missing the %1$s scope: switch to another sign-in method, then sign in with a device code again.</string>
+    <string name="settings_gh_missing_machine">gh on %1$s is missing the %2$s scope: run gh auth refresh -s %3$s on that computer, or use device code sign-in.</string>
+    <string name="settings_gh_this_computer">This computer</string>
+    <string name="settings_gh_mode_off">Off</string>
+    <string name="settings_gh_mode_default_branch">Default Branch Only</string>
+    <string name="settings_gh_mode_mine">Plus My PRs</string>
+    <string name="settings_gh_mode_all">All</string>
+    <string name="settings_gh_ci_failures">CI Failures</string>
+    <string name="settings_gh_mute_hint">Mute repository: owner/name</string>
+    <string name="settings_gh_add">Add</string>
+    <string name="settings_gh_inbox">Inbox</string>
+    <string name="settings_gh_ci_off">CI failures don\'t go to the Inbox.</string>
+    <string name="settings_gh_ci_default_branch">Only CI failures on the default branch go to the Inbox, as Needs you.</string>
+    <string name="settings_gh_ci_all">CI failures on every branch count as Needs you.</string>
+    <string name="settings_gh_ci_mine">CI failures on the default branch and your open PRs count as Needs you; other branches are FYI.</string>
+    <string name="settings_gh_inbox_failures">" Failures on the same branch are grouped into one item, reruns included; it's marked done automatically once a run passes, the branch is deleted, or the PR is merged. Automated branches (%1$s) aren't flagged."</string>
+    <string name="settings_gh_inbox_mentions">" @mentions, review requests, and requested changes from people count as Needs you; ones from bots are FYI. Muted repositories send nothing to the Inbox, and existing items are marked done."</string>
+    <string name="settings_gh_couldnt_save">Couldn\'t save: %1$s</string>
+    <string name="settings_gh_list_separator">", "</string>
+    <string name="settings_gh_unmute">Unmute</string>
+</resources>

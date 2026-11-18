@@ -2,7 +2,7 @@
 """The mock hub's mesh fields (scripts/mock/mock_hub.py, docs/archive/operations/plan-hub-mesh.md 2.6): absent by default, shaped like the
 contract when MOCK_HUB_NAME and the other MOCK_* mesh variables are set.
 
-    python3 scripts/mock/test_mock_hub_mesh.py      # ports 18761 and 18762 (MOCK_MESH_TEST_PORTS=a,b for others)
+    python3 scripts/mock/test_mock_hub_mesh.py      # two free ports the kernel picks (MOCK_MESH_TEST_PORTS=a,b to choose)
 
 Each class starts its own mock hubs and stops them (then checks the port is free) when it is done.
 """
@@ -22,8 +22,24 @@ from urllib.request import urlopen
 import uuid
 
 MOCK = Path(__file__).with_name("mock_hub.py")
-PORTS = [int(x) for x in os.environ.get("MOCK_MESH_TEST_PORTS", "18761,18762").split(",")]
 LOOPBACK = "127.0.0.1"
+
+
+def free_ports(n):
+    """n ports free now, the kernel's choice: a fixed one can be taken as the source port of any outgoing connection
+    where the ephemeral range covers it (10000-65535 on the hub release machine)."""
+    socks = [socket.socket() for _ in range(n)]
+    try:
+        for s in socks:
+            s.bind((LOOPBACK, 0))
+        return [s.getsockname()[1] for s in socks]
+    finally:
+        for s in socks:
+            s.close()
+
+
+PORTS = ([int(x) for x in os.environ["MOCK_MESH_TEST_PORTS"].split(",")] if os.environ.get("MOCK_MESH_TEST_PORTS")
+         else free_ports(2))
 MESH_KEYS = ("hub_id", "hub_name", "machine_uid", "route")
 NAMES = {"server": "工作服务器", "macbook": "工作 MacBook"}
 

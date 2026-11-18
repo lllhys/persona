@@ -744,7 +744,8 @@ func (e *Engine) writeDayRecap(ctx context.Context, id string, now time.Time) (c
 	sel, partial := selectChunks(chunks)
 	notes := st.readRecapNotes(id)
 	model := e.modelFor("kb.compress")
-	owner := prompts.KBOwner{Owner: e.ownerName()}
+	lang := e.outputLang(&r)
+	owner := e.writingOwner(lang)
 	day := e.dayRecapDay(&r, zone)
 	settled := true // every finished chunk read has its notes, or was given up
 	short := false  // the job's time left is the merge's: the chunks not noted yet are left out of it
@@ -908,7 +909,7 @@ func (e *Engine) writeDayRecap(ctx context.Context, id string, now time.Time) (c
 		e.recapFailed(id, target.N, false, now)
 		return called, nil
 	}
-	rc.Partial = partial
+	rc.Partial, rc.Language = partial, string(lang)
 	if r.Complete {
 		rc.Final, rc.FinalReason = true, FinalComplete
 	} else if target.Reason == RecapDueCutoff || !now.Before(e.dayCutoff(&r)) {

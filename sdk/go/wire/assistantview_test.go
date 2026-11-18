@@ -109,3 +109,31 @@ func TestStripAssistantFields(t *testing.T) {
 		t.Fatal("extension push changed")
 	}
 }
+
+func TestStripAssistantFieldsDropsAssistantOnlyTabs(t *testing.T) {
+	cases := map[string]Action{
+		"reply":     {ID: "switch", Reply: "One"},
+		"open":      {ID: "switch", Open: "https://example.com/one"},
+		"pop":       {ID: "switch", Pop: true},
+		"push page": {ID: "switch", Push: &Push{Page: "one"}},
+	}
+	for name, action := range cases {
+		t.Run(name, func(t *testing.T) {
+			v := View{
+				Tabs: &Tabs{
+					Name: "view", Value: "one",
+					Items:  []Tab{{Value: "one", Title: "One"}, {Value: "two", Title: "Two"}},
+					Action: action,
+				},
+				Sections: []Section{{Title: "keep me", Items: []Component{{Type: "text", Text: "body"}}}},
+			}
+			dropped := StripAssistantFields(&v)
+			if v.Tabs != nil || !reflect.DeepEqual(dropped, []string{"assistant_action"}) {
+				t.Fatalf("assistant-only tabs survived: tabs=%#v dropped=%v", v.Tabs, dropped)
+			}
+			if len(v.Sections) != 1 || v.Sections[0].Title != "keep me" || len(v.Sections[0].Items) != 1 {
+				t.Fatalf("sections changed while dropping tabs: %#v", v.Sections)
+			}
+		})
+	}
+}

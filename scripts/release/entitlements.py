@@ -11,9 +11,10 @@ groups whose bundle id was empty (2026-11-02).
   scripts/release/entitlements.py sign <unsigned .xcarchive>      # ad hoc, inside out, each bundle with its target's file
   scripts/release/entitlements.py check <.ipa | .pkg | .xcarchive | .app>  # every target's groups are in its signature
 
-The Mac app (PersonaMac, the same bundle id, a .pkg for the store) the same way. In an exported .ipa / .pkg the push
-entitlement (`aps-environment`, on a Mac `com.apple.developer.aps-environment`) must also say production: the archive
-says development, and only the App Store export changes it.
+In an exported .ipa / .pkg the push entitlement (`aps-environment`, on a Mac
+`com.apple.developer.aps-environment`) must also say production: the archive says development, and only the App Store
+export changes it. `check` also fails when any binary in the app links CallKit (check_no_callkit.py; App Review rejects
+that for China, docs/operations/release.md "No CallKit").
 
 Both read the targets from the Xcode project (`xcodebuild -showBuildSettings`, after xcodegen) and expand the build
 settings in each entitlements file; `$(AppIdentifierPrefix)` is the team's (the signature's own, when checking). A
@@ -28,6 +29,9 @@ import sys
 import tempfile
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import check_no_callkit  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROJECT = os.path.join(ROOT, "apple", "Persona.xcodeproj")
 VAR = re.compile(r"\$[({](\w+)[)}]")
@@ -37,6 +41,13 @@ APS = ("aps-environment", "com.apple.developer.aps-environment")  # iOS, macOS
 # cloud-signed export of an unsigned archive) silently drops it, and every push the hub marks time-sensitive then shows
 # as active (#1572).
 TIME_SENSITIVE = "com.apple.developer.usernotifications.time-sensitive"
+# The same for HealthKit background delivery (config.json app.health_background_delivery): without it a workout report
+# waits for Persona to open, while Settings says it comes right after the workout (#2526).
+HEALTH_BACKGROUND = "com.apple.developer.healthkit.background-delivery"
+# The same for Siri (config.json app.siri_calls, docs/operations/release.md "Siri calls"): without it Siri never hands
+# "call Persona using Persona" to the app's extension. Asked only of a target whose entitlements have it, so a build
+# with the switch off is checked as before.
+SIRI = "com.apple.developer.siri"
 
 
 def targets():
@@ -177,6 +188,12 @@ def check(path):
             if ents.get(TIME_SENSITIVE) and not have.get(TIME_SENSITIVE):
                 problems.append("%s: %s missing (time-sensitive pushes show as active; rerun asc_signing.py)"
                                 % (name, TIME_SENSITIVE))
+            if ents.get(HEALTH_BACKGROUND) and not have.get(HEALTH_BACKGROUND):
+                problems.append("%s: %s missing (workout reports wait for Persona to open; allow it on the App ID's profile)"
+                                % (name, HEALTH_BACKGROUND))
+            if ents.get(SIRI) and not have.get(SIRI):
+                problems.append("%s: %s missing (Siri can't call Persona; enable SIRIKIT with asc_signing.py --only, "
+                                "docs/operations/release.md \"Siri calls\")" % (name, SIRI))
             for k in (k for k in APS if k in ents):
                 if k not in have:
                     problems.append("%s: %s missing (no push)" % (name, k))
@@ -188,11 +205,18 @@ def check(path):
                     problems.append("%s: Info.plist %s = %s is not one of its keychain groups" % (name, k, v))
                 if k.endswith("AppGroup") and v not in app_groups:
                     problems.append("%s: Info.plist %s = %s is not one of its App Groups" % (name, k, v))
+        # No binary in the app links CallKit, the extensions' and the Watch app's included (#9290).
+        try:
+            macho, linked = check_no_callkit.scan(app)
+        except check_no_callkit.CheckError as error:
+            sys.exit("entitlements: CallKit check: %s" % error)
+        problems += ["links CallKit (App Review rejects it for China): %s" % line for line in linked]
         for p in problems:
             print(p)
         if problems:
             sys.exit("entitlements: %d problem(s) in %s" % (len(problems), path))
         print("entitlements ok: %d bundles in %s" % (len(bundles(app)), os.path.basename(path)))
+        print("no CallKit: %d Mach-O files checked" % macho)
 
 
 def main():

@@ -19,7 +19,7 @@
   "help_install_after": "Come back here once it's installed; this updates shortly after.",
   "use_api_key": "Use an API key",
   "help_login_title": "Sign in to Claude Code",
-  "help_login_body": "On {machine}, open Terminal, type this word, press Return and sign in once in the browser:",
+  "help_login_body": "Persona runs the Claude Code CLI on {machine}, and the Claude desktop app's sign-in doesn't count for it. Open Terminal there, run this command and sign in once in the browser:",
   "help_login_after": "When you're signed in, come back and send a message.",
   "help_what_title": "What Persona can do",
   "help_what_body": "Persona is your personal assistant. With a computer and a model connected, it can:",
@@ -33,7 +33,6 @@
   "help_model_claude": "You already use Claude Code: sign in once on that computer, nothing else to fill in.",
   "probe_ok": "Tried it. The answer: {answer}",
   "probe_failed": "Tried it, and it failed: {error}",
-  "resend": "Send again",
   "help_model_computer": "Either way, the main chat still runs on one of your computers today: pasting an API key alone, without a computer, is not enough to start.",
   "help_model_no_computer": "You have no computer connected yet: add one first.",
   "help_model_computer_not_ready": "Your computer is not ready yet; sort that out first: {step}"

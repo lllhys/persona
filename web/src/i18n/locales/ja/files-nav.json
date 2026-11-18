@@ -1,0 +1,21 @@
+{
+  "back": "戻る",
+  "forward": "進む",
+  "home": "ホームフォルダ",
+  "session": "セッション",
+  "read_only": "読み出しのみ",
+  "session_folder": "セッションのフォルダに戻る",
+  "find_in": "「{name}」内を検索",
+  "finding": "ファイルを一覧中…",
+  "find_failed": "このフォルダは検索できません",
+  "found_one": "「{name}」とその中のフォルダ・{count} 件",
+  "found_other": "「{name}」とその中のフォルダ・{count} 件",
+  "find_truncated": "このフォルダはファイルが多すぎて、すべては検索できません",
+  "link": "リンク",
+  "broken_link": "リンク切れ",
+  "link_to": "リンク → {target}",
+  "link_broken": "リンク切れ・{target} がありません",
+  "show_in_files": "ファイルパネルで表示",
+  "open_terminal": "ここでターミナルを開く",
+  "terminal_failed": "ターミナルを開けませんでした：{error}"
+}

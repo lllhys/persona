@@ -14,42 +14,18 @@ import (
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/clitext"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/managerupdate"
 	"github.com/nwverse/persona/server/internal/terminalmaintenance"
+	"github.com/nwverse/persona/server/internal/textfmt"
 	"github.com/nwverse/persona/server/internal/update"
 )
 
-// Usage is the help of `personad manager`.
-const Usage = `usage:
-  personad manager maintenance prepare|observe|recovery-recipe --help
-                       preserve exact-session recovery material; no exit, restore or update execution
-  personad manager update check|start|status|run|confirm|rollback --plan PATH
-                       inspect or activate one explicit independent manager release plan
-  personad manager update inventory --plan PATH --main ID --machine ID --machine-uid UID
-                       read persisted main identity and two complete local node activity snapshots; writes nothing
-  personad manager join <hub 地址> <安装码> [--dir 目录] [--database-url URL] [--fingerprint 指纹] [--install]
-                       用 App 里「新建助手」给的安装码换这个助手的 token，写进目录里的 manager.json
-                       （默认 ~/.persona/managers/<id>）；数据库是它自己的 Postgres：install 时在 Docker 里建
-                       （容器 persona-mgr-<id>-pg），或者 --database-url 给一个
-  personad manager join --builtin <hub address> [<code>] [--fingerprint <fingerprint>] [--install]
-                       bind the built-in manager's own service to the hub with a code from persona-hub manager-code
-                       (given, or in PERSONA_MANAGER_CODE, which other users of the machine cannot read; the binding
-                       goes into ~/.persona/managers/assistant/manager.json); --install: then install its service
-  personad manager run [--dir 目录] [--join <hub 地址> <安装码>]
-                       运行这个管理者（--join：目录里还没有 manager.json 时先换码，容器用）
-  personad manager install [--dir 目录]     建好它自己的 Postgres（Docker），装成常驻服务（Linux：systemd 用户服务；Mac：launchd）
-  personad manager uninstall [--dir 目录] [--purge]
-                       停掉并去掉常驻服务；它的数据库容器停掉、数据卷留着（--purge：连容器和数据卷一起删掉）
-  personad manager capabilities [--json]   只读列出这个程序支持的管理者能力
-  personad manager status [--dir 目录]      这台电脑上的管理者和它们的服务
-  personad manager install --builtin [--join <hub address>] | --check
-                       install the built-in manager's own service (Linux: systemd user unit persona-manager-assistant;
-                       Mac: launchd); --join: bind it first with the code in PERSONA_MANAGER_CODE, unless its binding
-                       works (persona-hub setup does this); --check: only say whether it can be installed here
-  personad manager uninstall --builtin    stop and remove that service; its binding and data stay
-  personad manager status --builtin       the built-in manager's binding and service
-`
+// Usage is the help of `personad manager` in l.
+func Usage(l i18n.Lang) string {
+	return i18n.T(l.Or(i18n.En), "manager-cli.usage")
+}
 
 // errUsage: the arguments are wrong; the caller prints Usage.
 var errUsage = errors.New("arguments")
@@ -86,8 +62,10 @@ func Main(ctx context.Context, build update.Build, args []string, stdout io.Writ
 		return cmdUninstall(ctx, e, args[1:])
 	case "status":
 		return cmdStatus(ctx, e, args[1:])
+	case "search-reindex":
+		return cmdSearchReindex(ctx, e, args[1:])
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, clitext.Named(Usage)) // as the program was run (persona-manager, personad)
+		fmt.Fprint(stdout, clitext.Named(Usage(e.l()))) // as the program was run (persona-manager, personad)
 		return nil
 	}
 	return errUsage
@@ -136,6 +114,19 @@ type ConfigError struct{ Err error }
 func (e ConfigError) Error() string { return e.Err.Error() }
 func (e ConfigError) Unwrap() error { return e.Err }
 
+// terminalError keeps a localized message without discarding the underlying cause.
+type terminalError struct {
+	text  string
+	cause error
+}
+
+func (e terminalError) Error() string { return e.text }
+func (e terminalError) Unwrap() error { return e.cause }
+
+func withTerminalCause(text string, cause error) error {
+	return terminalError{text: text, cause: cause}
+}
+
 // errHelp: -h was asked for; the flags' help is printed already.
 var errHelp = errors.New("help")
 
@@ -152,10 +143,7 @@ func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	if len(s) > 200 {
-		s = s[:200]
-	}
-	return s
+	return textfmt.Cut(s, 200)
 }
 
 // shellQuote makes s one word for sh.

@@ -92,8 +92,11 @@ type Connector struct {
 
 	mu     sync.Mutex
 	token  string
+	acct   account // account.go: whose the token is, and the epoch everything account-scoped is read under
 	status connector.Status
 	poke   chan struct{}
+	// repoll wakes Watch: the account changed (adopt), so the inbox is read as the new one now, not a poll later.
+	repoll chan struct{}
 	// rateLow: under a tenth of the hour's core requests are left (X-RateLimit-Remaining); only notifications are
 	// polled until rateReset.
 	rateLow   bool
@@ -129,7 +132,10 @@ type Connector struct {
 	secrets   connector.Secrets
 	dev       deviceLogin
 	devLoaded bool
-	pending   *devicePending
+	// devUnreadable: the last read of the secrets failed (the store is down, or the secret no longer opens).
+	devUnreadable bool
+	saving        sync.Mutex // one save of dev at a time (saveDevice)
+	pending       *devicePending
 }
 
 // noteRate records how many requests GitHub still allows, per quota (X-RateLimit-Resource): the hour's core requests
@@ -253,7 +259,8 @@ func New(cfg Config, machine string, fetch TokenSource) *Connector {
 	}
 	return &Connector{cfg: cfg, machine: machine, machineID: cfg.Auth.FromMachine, fetch: fetch, source: source, api: api,
 		web: "https://" + cfg.host(), client: httpClient(cfg), opts: cfg.Inbox,
-		status: connector.Status{State: connector.StateNotSignedIn, Error: waiting}, poke: make(chan struct{}, 1)}
+		status: connector.Status{State: connector.StateNotSignedIn, Error: waiting}, poke: make(chan struct{}, 1),
+		repoll: make(chan struct{}, 1)}
 }
 
 func (c *Connector) ID() string   { return "github" }
@@ -344,20 +351,18 @@ func (c *Connector) Run(ctx context.Context) {
 	}
 }
 
-// check asks GitHub who the token is (fetching one first if there is none) and records the answer.
+// check asks GitHub who the token is (fetching one first if there is none) and records the answer (adopt). A
+// failure is recorded only for the credential it was about: one replaced meanwhile has a check of its own.
 func (c *Connector) check(ctx context.Context) {
-	var user struct {
-		Login string `json:"login"`
-	}
-	h, err := c.Get(ctx, "/user", &user)
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	_, _, cred, err := c.credential(ctx, "", tokenAsked)
 	if err == nil {
-		c.scopes, c.scopesKnown = scopesOf(h)
-		c.status = connector.Status{State: connector.StateOK, Account: user.Login, LastSync: time.Now().UTC(), LastEvent: c.status.LastEvent}
 		return
 	}
-	c.status.State, c.status.Error = c.explain(err)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cred == c.acct.cred {
+		c.status.State, c.status.Error = c.explain(err)
+	}
 }
 
 // notSignedIn is the status of a GitHub with neither a device sign-in nor a computer's gh login.
@@ -392,41 +397,6 @@ func (c *Connector) explain(err error) (string, string) {
 
 var errUnauthorized = errors.New("GitHub says the token is not valid (401)")
 
-// currentToken is the token in memory, fetching one only when there is none or (refresh) GitHub refused it: a machine
-// that went offline leaves the one in memory in use.
-func (c *Connector) currentToken(ctx context.Context, refresh bool) (string, error) {
-	c.mu.Lock()
-	tok := c.token
-	c.mu.Unlock()
-	if tok != "" && !refresh {
-		return tok, nil
-	}
-	c.mu.Lock()
-	source, fetch := c.source, c.fetch
-	c.mu.Unlock()
-	if source == SourceDevice {
-		d := c.deviceState(ctx)
-		if d.Token == "" {
-			return "", errNoDeviceLogin
-		}
-		c.mu.Lock()
-		c.token = d.Token
-		c.mu.Unlock()
-		return d.Token, nil
-	}
-	if fetch == nil {
-		return "", ErrNoMachine
-	}
-	fresh, err := fetch(ctx, c.cfg.host())
-	if err != nil {
-		return "", err
-	}
-	c.mu.Lock()
-	c.token = fresh
-	c.mu.Unlock()
-	return fresh, nil
-}
-
 // Get reads path of the REST API into out (JSON; a *[]byte takes the body as it is; nil drops it), refetching the
 // token once if GitHub refuses it.
 func (c *Connector) Get(ctx context.Context, path string, out any) (http.Header, error) {
@@ -442,65 +412,76 @@ func (c *Connector) raw(ctx context.Context, path string) (string, error) {
 }
 
 // request sends one API request with the extra headers hdr and body (JSON), decoding the answer into out (as Get);
-// it returns the status (304 is not an error: out is left as it is).
+// it returns the status (304 is not an error: out is left as it is). The token is the account in use's
+// (credential); under a context bound to an account epoch (asEpoch) nothing is sent as another account.
 func (c *Connector) request(ctx context.Context, method, path string, hdr http.Header, body []byte, out any) (int, http.Header, error) {
-	tok, err := c.currentToken(ctx, false)
-	if err != nil {
-		return 0, nil, err
+	bound, scoped := boundEpoch(ctx)
+	need, refused := tokenAsIs, ""
+	if scoped {
+		need = tokenKnown
 	}
 	for attempt := 0; ; attempt++ {
-		resp, err := c.send(ctx, method, path, hdr, body, tok)
-		if errors.Is(err, errBadProxy) {
-			return 0, nil, err // names the setting, not the token: nothing to scrub, and explain must see it
-		}
+		tok, epoch, _, err := c.credential(ctx, refused, need)
 		if err != nil {
-			return 0, nil, errors.New(Scrub(err.Error()))
+			return 0, nil, err
 		}
-		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
-			resp.Body.Close()
-			// The machine may have signed in again since: ask it once more.
-			if tok, err = c.currentToken(ctx, true); err != nil {
-				return 0, nil, err
-			}
-			continue
+		if scoped && bound != epoch {
+			return 0, nil, errAccountChanged
 		}
-		defer resp.Body.Close()
-		c.noteRate(resp.Header)
-		limit := int64(8 << 20)
-		if _, text := out.(*[]byte); text {
-			limit = 32 << 20 // a job's log, of which the end is kept
+		code, h, err := c.roundTrip(ctx, method, path, hdr, body, out, tok)
+		if code != http.StatusUnauthorized || attempt > 0 {
+			return code, h, err
 		}
-		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, limit))
-		code := resp.StatusCode
-		switch {
-		case code == http.StatusUnauthorized:
-			return code, resp.Header, errUnauthorized
-		case code == http.StatusNotModified:
-			return code, resp.Header, nil
-		case code >= 300:
-			var e struct {
-				Message string `json:"message"`
-			}
-			_ = json.Unmarshal(raw, &e)
-			err := fmt.Errorf("GitHub %s %s: %d %s", method, path, code, Scrub(e.Message))
-			if code == http.StatusTooManyRequests || code == http.StatusForbidden {
-				// A secondary limit or the core quota holds for the whole token: whichever read runs into it pauses them all.
-				c.notePause(resp.Header, err)
-			}
-			return code, resp.Header, err
-		}
-		if readErr != nil {
-			return code, resp.Header, fmt.Errorf("GitHub %s %s: read response: %s", method, path, Scrub(readErr.Error()))
-		}
-		if text, ok := out.(*[]byte); ok {
-			*text = raw
-		} else if out != nil {
-			if err := json.Unmarshal(raw, out); err != nil {
-				return code, resp.Header, fmt.Errorf("GitHub %s %s: %v", method, path, err)
-			}
-		}
-		return code, resp.Header, nil
+		refused = tok // the machine may have signed in again since: ask it once more
 	}
+}
+
+// roundTrip sends one request with tok and reads its answer (request).
+func (c *Connector) roundTrip(ctx context.Context, method, path string, hdr http.Header, body []byte, out any, tok string) (int, http.Header, error) {
+	resp, err := c.send(ctx, method, path, hdr, body, tok)
+	if errors.Is(err, errBadProxy) {
+		return 0, nil, err // names the setting, not the token: nothing to scrub, and explain must see it
+	}
+	if err != nil {
+		return 0, nil, errors.New(Scrub(err.Error()))
+	}
+	defer resp.Body.Close()
+	code := resp.StatusCode
+	if code == http.StatusUnauthorized {
+		return code, resp.Header, errUnauthorized
+	}
+	c.noteRate(resp.Header)
+	limit := int64(8 << 20)
+	if _, text := out.(*[]byte); text {
+		limit = 32 << 20 // a job's log, of which the end is kept
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, limit))
+	switch {
+	case code == http.StatusNotModified:
+		return code, resp.Header, nil
+	case code >= 300:
+		var e struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(raw, &e)
+		err := fmt.Errorf("GitHub %s %s: %d %s", method, path, code, Scrub(e.Message))
+		if code == http.StatusTooManyRequests || code == http.StatusForbidden {
+			// A secondary limit or the core quota holds for the whole token: whichever read runs into it pauses them all.
+			c.notePause(resp.Header, err)
+		}
+		return code, resp.Header, err
+	}
+	if readErr != nil {
+		return code, resp.Header, fmt.Errorf("GitHub %s %s: read response: %s", method, path, Scrub(readErr.Error()))
+	}
+	if text, ok := out.(*[]byte); ok {
+		*text = raw
+	} else if out != nil {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return code, resp.Header, fmt.Errorf("GitHub %s %s: %v", method, path, err)
+		}
+	}
+	return code, resp.Header, nil
 }
 
 func (c *Connector) send(ctx context.Context, method, path string, hdr http.Header, body []byte, tok string) (*http.Response, error) {

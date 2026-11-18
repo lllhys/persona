@@ -45,6 +45,15 @@
     <string name="notify_resume">再開</string>
     <string name="notify_public_title">Personaから新しいメッセージ</string>
     <string name="notify_question_more_options">ほか %1$d 個</string>
+    <string name="notify_extension_action_done_title">拡張機能の操作が完了しました</string>
+    <string name="notify_extension_action_failed_title">拡張機能の操作が完了しませんでした</string>
+    <string name="notify_extension_action_expired_title">通知の有効期限が切れました</string>
+    <string name="notify_extension_action_unavailable">ハブに接続できません。再接続して拡張機能のページで再試行してください。</string>
+    <string name="notify_extension_action_page_expired">この拡張機能のページは利用できません。拡張機能を開いて再試行してください。</string>
+    <string name="notify_extension_action_wrong_scope">元のハブまたはアシスタントが見つかりません。再接続して拡張機能のページで再試行してください。</string>
+    <string name="notify_extension_action_failed_detail">拡張機能が操作を完了しませんでした。ページで確認して再試行してください。</string>
+    <string name="notify_extension_action_unconfirmed">拡張機能のページで結果を確認してください。操作は再実行しないでください。</string>
+    <string name="notify_extension_action_expired_detail">この通知は有効期限切れです。拡張機能のページで再試行してください。</string>
     <plurals name="notify_question_more">
         <item quantity="other">ほかに %1$d 問</item>
     </plurals>

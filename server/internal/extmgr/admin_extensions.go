@@ -258,6 +258,28 @@ func (h *Manager) adminExtensionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/admin/extensions/{id}/sandbox", func(w http.ResponseWriter, r *http.Request) {
 		h.putSandbox(w, r, adminActor) // the admin session's checks are the mux's (extension_sandbox.go)
 	})
+	// The hosts the owner allows a sandboxed extension (#5697, extension_egress_allow.go): the admin session only,
+	// like the sandbox switch; a device's credential has no route to them.
+	mux.HandleFunc("POST /api/v1/admin/extensions/{id}/egress/allow", one(func(w http.ResponseWriter, r *http.Request, ps *extensions, p *extension.Extension) {
+		var in struct {
+			Host string `json:"host"`
+		}
+		if !readAdminJSON(w, r, &in) {
+			return
+		}
+		if err := ps.allowHost(r.Context(), p, in.Host, adminActor); err != nil {
+			writeErrCode(w, http.StatusBadRequest, "invalid_host", err)
+			return
+		}
+		writeJSON(w, detailOut(r, ps.detail(r.Context(), ps.reg.Get(p.Record.ID))))
+	}))
+	mux.HandleFunc("DELETE /api/v1/admin/extensions/{id}/egress/allow", one(func(w http.ResponseWriter, r *http.Request, ps *extensions, p *extension.Extension) {
+		if err := ps.revokeHost(r.Context(), p, r.URL.Query().Get("host"), adminActor); err != nil {
+			writeErrCode(w, http.StatusBadRequest, "invalid_host", err)
+			return
+		}
+		writeJSON(w, detailOut(r, ps.detail(r.Context(), ps.reg.Get(p.Record.ID))))
+	}))
 	mux.HandleFunc("DELETE /api/v1/admin/extensions/{id}", one(func(w http.ResponseWriter, r *http.Request, ps *extensions, p *extension.Extension) {
 		var in struct {
 			KeepData bool `json:"keep_data"`

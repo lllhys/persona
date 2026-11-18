@@ -3,6 +3,9 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"github.com/nwverse/persona/server/internal/assistant/kbhistory"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -74,7 +77,7 @@ func TestHistoryTools(t *testing.T) {
 			t.Fatalf("plan lacks %q:\n%s", want, out)
 		}
 	}
-	p, ok, err := loadHistoryPlan(data, "chat")
+	p, ok, err := kbhistory.LoadPlan(data, "chat")
 	if err != nil || !ok || p.ApprovedAt != nil || len(p.Chats) != 3 {
 		t.Fatalf("plan %+v %v %v", p, ok, err)
 	}
@@ -116,7 +119,7 @@ func TestHistoryTools(t *testing.T) {
 	}
 
 	out = runHistoryTool(t, s, "kb_history_stop", `{"reason":"checking the group Secret Name"}`)
-	if st, stopped := readHistoryStop(data); !stopped || st.By != "tool" || st.Code != "asked" || st.Text != "checking the group Secret Name" || out != i18n.T(l, "assistant-kb_history.stop_done") {
+	if st, stopped := kbhistory.ReadStop(data); !stopped || st.By != "tool" || st.Code != "asked" || st.Text != "checking the group Secret Name" || out != i18n.T(l, "assistant-kb_history.stop_done") {
 		t.Fatalf("stop: %q %+v", out, st)
 	}
 	// The owner's words stay out of the log: they may name a chat or a person.
@@ -137,15 +140,15 @@ func TestHistoryTools(t *testing.T) {
 	if out != i18n.T(l, "assistant-kb_history.resume_done_slow", i18n.Args{"source": "chat"}) {
 		t.Fatalf("resume: %s", out)
 	}
-	if _, stopped := readHistoryStop(data); stopped {
+	if _, stopped := kbhistory.ReadStop(data); stopped {
 		t.Fatal("STOP stayed")
 	}
-	p, _, _ = loadHistoryPlan(data, "chat")
+	p, _, _ = kbhistory.LoadPlan(data, "chat")
 	if p.ApprovedAt == nil || len(p.Approved) != 3 || !p.Approved["m1"].Whole || p.Approved["g1"].Whole || p.ApprovedUnlisted == nil {
 		t.Fatalf("approval %+v", p)
 	}
 	// The two slow hours start with the first call, not with the approval.
-	if st := readHistoryStatus(data)["chat"]; !st.SlowPending || !st.SlowUntil.IsZero() {
+	if st := kbhistory.ReadStatus(data)["chat"]; !st.SlowPending || !st.SlowUntil.IsZero() {
 		t.Fatalf("slow start %+v", st)
 	}
 	if out := runHistoryTool(t, s, "kb_history_status", `{}`); !strings.Contains(out, i18n.T(l, "assistant-kb_history.status_slow_pending")) {
@@ -161,7 +164,7 @@ func TestHistoryTools(t *testing.T) {
 
 	// Reading less keeps the approval: a chat not read, a shorter back_days.
 	out = runHistoryTool(t, s, "kb_history_plan", `{"source":"chat","set":[{"chat":"d1","read":false}],"back_days":30}`)
-	if p, _, _ = loadHistoryPlan(data, "chat"); p.ApprovedAt == nil || strings.Contains(out, i18n.T(l, "assistant-kb_history.set_revoked")) {
+	if p, _, _ = kbhistory.LoadPlan(data, "chat"); p.ApprovedAt == nil || strings.Contains(out, i18n.T(l, "assistant-kb_history.set_revoked")) {
 		t.Fatalf("narrowed: %s", out)
 	}
 	if b := storedSelection(t, s).History["chat"].BackDays; b == nil || *b != 30 {
@@ -171,7 +174,7 @@ func TestHistoryTools(t *testing.T) {
 	for _, change := range []string{`"set":[{"chat":"g1","read":true,"store":true}]`, `"back_days":null`} {
 		runHistoryTool(t, s, "kb_history_resume", `{"source":"chat"}`)
 		out = runHistoryTool(t, s, "kb_history_plan", `{"source":"chat",`+change+`}`)
-		if p, _, _ = loadHistoryPlan(data, "chat"); p.ApprovedAt != nil || !strings.Contains(out, i18n.T(l, "assistant-kb_history.set_revoked")) {
+		if p, _, _ = kbhistory.LoadPlan(data, "chat"); p.ApprovedAt != nil || !strings.Contains(out, i18n.T(l, "assistant-kb_history.set_revoked")) {
 			t.Fatalf("%s kept the approval: %s", change, out)
 		}
 	}
@@ -185,7 +188,7 @@ func TestHistoryTools(t *testing.T) {
 		return assistantwire.HistoryChatsResult{Chats: append(renamed, connectorwire.HistoryChat{ID: "d2", Name: "Direct Two", Kind: "dm"})}, nil
 	})
 	out = runHistoryTool(t, s, "kb_history_plan", `{"source":"chat"}`)
-	p, _, _ = loadHistoryPlan(data, "chat")
+	p, _, _ = kbhistory.LoadPlan(data, "chat")
 	if p.ApprovedAt != nil || !strings.Contains(out, i18n.T(l, "assistant-kb_history.plan_changed", i18n.Args{"count": 1})) {
 		t.Fatalf("approval after new chats: %s", out)
 	}
@@ -199,7 +202,7 @@ func TestHistoryTools(t *testing.T) {
 		return nil, &rpc.Error{Code: "UPSTREAM_TIMEOUT", Message: "slow"}
 	})
 	out = runHistoryTool(t, s, "kb_history_plan", `{"source":"chat"}`)
-	stop, stopped := readHistoryStop(data)
+	stop, stopped := kbhistory.ReadStop(data)
 	if !stopped || stop.Code != "call_timeout" || stop.Args["method"] != "history_chats" || !strings.Contains(out, i18n.T(l, "assistant-kb_history.reason_call_timeout", i18n.Args{"method": "history_chats", "code": "upstream_timeout"})) {
 		t.Fatalf("a timed-out list: %+v %v\n%s", stop, stopped, out)
 	}
@@ -253,7 +256,7 @@ func TestHistoryToolsOff(t *testing.T) {
 	if n := len(fh.appParams(AppConnectors, assistantwire.ConnectorsHistoryChats)) + len(fh.appParams(AppConnectors, assistantwire.ConnectorsArchives)); n != 0 {
 		t.Fatalf("%d connector calls while off", n)
 	}
-	if _, ok, _ := loadHistoryPlan(data, "chat"); ok {
+	if _, ok, _ := kbhistory.LoadPlan(data, "chat"); ok {
 		t.Fatal("a plan was made while off")
 	}
 	// Stopping always works: it only writes STOP.
@@ -273,7 +276,7 @@ func TestHistoryConfigFromManagerJSON(t *testing.T) {
 	if !h.On() || len(h.Sources) != 2 || h.Sources[0].Name != "zeta" || h.Sources[1].Name != "alpha" {
 		t.Fatalf("history %+v", h)
 	}
-	z, a := historyPaceFor(h.Sources[0]), historyPaceFor(h.Sources[1])
+	z, a := kbhistory.PaceFor(h.Sources[0]), kbhistory.PaceFor(h.Sources[1])
 	if z.Profile != "standard" || z.Interval != (assistantwire.KBRange{4, 9}) || h.Sources[0].SearchIndexNeeded() {
 		t.Fatalf("zeta %+v", z)
 	}
@@ -303,7 +306,7 @@ func TestHistoryConfigFromManagerJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"sources":{"x":{"profile":"standard","slow_factor":2}}}`), &two); err != nil {
 		t.Fatal(err)
 	}
-	if p := historyPaceFor(two.Sources[0]); p.Interval != (assistantwire.KBRange{6, 16}) || p.Rest != (assistantwire.KBRange{4, 20}) {
+	if p := kbhistory.PaceFor(two.Sources[0]); p.Interval != (assistantwire.KBRange{6, 16}) || p.Rest != (assistantwire.KBRange{4, 20}) {
 		t.Fatalf("slow factor %+v", p)
 	}
 }
@@ -338,10 +341,68 @@ func TestHistoryToolsWaitForTheSelection(t *testing.T) {
 			t.Fatalf("%s %s: %s", call[0], call[1], out)
 		}
 	}
-	if p, ok, _ := loadHistoryPlan(data, "chat"); !ok || p.ApprovedAt != nil {
+	if p, ok, _ := kbhistory.LoadPlan(data, "chat"); !ok || p.ApprovedAt != nil {
 		t.Fatalf("plan %+v", p)
 	}
 	if ok, _ := st.memStore.Setting(context.Background(), kbSelectionKey, &json.RawMessage{}); ok {
 		t.Fatal("the selection was stored")
 	}
+}
+
+// A source that waits for the search index (needs_search_index, the default) waits until the knowledge base has
+// one: status and resume say so until the index lane (kb_lanes.go) has built it, and no longer afterwards. Without
+// the lane, or with an index that failed a check, the import would write into an archive search cannot keep up with.
+func TestHistoryWaitsForTheSearchIndexTheLaneBuilds(t *testing.T) {
+	cfg := &assistantwire.KBHistory{Enabled: true, Sources: []assistantwire.KBHistorySource{{Name: "chat"}}}
+	s, _, data := historyToolService(t, cfg, []connectorwire.HistoryChat{{ID: "d1", Name: "Direct One", Kind: "dm", Estimate: 10}})
+	ctx := context.Background()
+	e, l := kbEng(t, s), s.lang(ctx)
+	waits := i18n.T(l, "assistant-kb_history.needs_index")
+	state := i18n.T(l, "assistant-kb_history.state_needs_search_index")
+	runHistoryTool(t, s, "kb_history_plan", `{}`)
+
+	if e.Store.SearchIndexReady() || s.historyDriver(data).IsIndexed() {
+		t.Fatal("a new archive says it has a search index")
+	}
+	if out := runHistoryTool(t, s, "kb_history_status", `{}`); !strings.Contains(out, waits) || !strings.Contains(out, state) {
+		t.Fatalf("status before the index:\n%s", out)
+	}
+	if out := runHistoryTool(t, s, "kb_history_resume", `{"source":"chat"}`); !strings.Contains(out, waits) {
+		t.Fatalf("resume before the index:\n%s", out)
+	}
+
+	var lane *kbLane
+	for _, k := range s.kbLaneSet(&kbRounds{}).lanes {
+		if k.name == "index" {
+			lane = k
+		}
+	}
+	if lane == nil {
+		t.Fatal("the knowledge base has no index lane")
+	}
+	s.kbRunLane(ctx, e, lane)
+	if !e.Store.SearchIndexReady() || !s.historyDriver(data).IsIndexed() {
+		t.Fatal("no search index after the index lane ran")
+	}
+	if out := runHistoryTool(t, s, "kb_history_status", `{}`); strings.Contains(out, waits) || strings.Contains(out, state) {
+		t.Fatalf("status with the index:\n%s", out)
+	}
+	if out := runHistoryTool(t, s, "kb_history_resume", `{"source":"chat"}`); strings.Contains(out, waits) {
+		t.Fatalf("resume with the index:\n%s", out)
+	}
+	if kbhistory.Indexed(nil) { // not open: nothing says it has one
+		t.Fatal("no knowledge base, yet indexed")
+	}
+}
+
+// readAllLogs is every line of the import's logs under data.
+func readAllLogs(t *testing.T, data string) string {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(kbhistory.Dir(data), "log-*.jsonl"))
+	var b strings.Builder
+	for _, f := range files {
+		raw, _ := os.ReadFile(f)
+		b.Write(raw)
+	}
+	return b.String()
 }

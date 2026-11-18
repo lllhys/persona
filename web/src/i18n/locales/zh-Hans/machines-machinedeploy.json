@@ -1,4 +1,5 @@
 {
   "failed": "部署失败：{error}",
-  "requesting": "请求中"
+  "requesting": "请求中",
+  "details": "详情"
 }

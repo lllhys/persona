@@ -199,15 +199,15 @@ function ConnectorText({ item, problem, onRetry }: { item: InboxItem; problem?: 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             {c?.url && (
               <Button tone="secondary" icon="external" onClick={() => openLink(c.url!, item.title, item.manager)}>
-                {tightCJK(t("inbox-connectorthread.open_in", { name: item.account_name || item.source }))}
+                {item.source === "assistant" ? t("inbox-connectorthread.open_chat") : tightCJK(t("inbox-connectorthread.open_in", { name: item.account_name || item.source }))}
               </Button>
             )}
             {item.source !== "larkcli" && c?.reply_to && c.can_reply && <p className="min-w-0 text-[12px] text-ink-3">{t("inbox-connectorthread.reply_goes", { how: c.reply_to })}</p>}
           </div>
         )}
         {problem && <ConnectorReadNotice failure={problem} onRetry={onRetry} />}
-        <p className="text-[12px] font-medium text-ink-3">{t("inbox-connectorthread.content")}</p>
-        {context === null && !failure ? <Loading /> : failure ? (
+        {!onlyTitleAndSummary(item, context) && <p className="text-[12px] font-medium text-ink-3">{t("inbox-connectorthread.content")}</p>}
+        {onlyTitleAndSummary(item, context) ? null : context === null && !failure ? <Loading /> : failure ? (
           <p className="text-[12.5px] text-red">{t("inbox-connectorthread.content_failed", { error: failure })}</p>
         ) : (
           <div className="text-[13px] leading-relaxed break-words whitespace-pre-wrap text-ink select-text">{context || item.preview || t("inbox-connectorthread.no_collected_content")}</div>
@@ -215,6 +215,15 @@ function ConnectorText({ item, problem, onRetry }: { item: InboxItem; problem?: 
       </div>
     </div>
   );
+}
+
+/** The assistant's own row whose text is only its title and summary (or its Markdown `body`), already shown above: no
+ *  Content section. */
+function onlyTitleAndSummary(item: InboxItem, context: string | null): boolean {
+  if (item.source !== "assistant" || !item.summary) return false;
+  const flat = (s: string) => s.replace(/\s+/g, " ").trim();
+  const text = flat(context ?? item.preview ?? "");
+  return text === "" || [item.summary, item.body].some((s) => !!s && (text === flat(`${item.title} ${s}`) || text === flat(s)));
 }
 
 // ── the answer box ───────────────────────────────────────
@@ -410,7 +419,7 @@ function Bubble({ id, m, head, group, lit, onQuote, onReply }: {
                 <span className="truncate">{mediaLine(x)}</span>
               </p>
             ))}
-            {m.text && (id === "larkcli" ? <LarkInboxContent key={m.id} text={m.text} markdown={m.format === "markdown"} /> : m.format === "markdown" ? <Markdown text={m.text} small /> : <span className="whitespace-pre-wrap select-text">{m.text}</span>)}
+            {m.text && (id === "larkcli" ? <LarkInboxContent key={m.id} text={m.text} markdown={m.format === "markdown"} /> : m.format === "markdown" ? <Markdown text={m.text} small askImages /> : <span className="whitespace-pre-wrap select-text">{m.text}</span>)}
           </div>
         )}
         <span className="mt-0.5 flex items-center gap-1.5 px-1 text-[10.5px] text-ink-3 tabular-nums">
@@ -494,7 +503,7 @@ function GitHubThread({ id, item, page, older, onOlder, onSend }: {
           <GitHubHeader chat={chat} reference={ref} />
           {chat.body && (
             <Card id={id} who={chat.author} at={undefined} title={t("inbox-connectorthread.description_by", { name: chat.author?.name ?? "" })}>
-              <Markdown text={chat.body} small />
+              <Markdown text={chat.body} small askImages />
             </Card>
           )}
           {page.before && <div className="mt-3"><OlderButton busy={older} onClick={onOlder} /></div>}
@@ -594,7 +603,7 @@ function TimelineEntry({ id, m }: { id: string; m: ThreadMessage }) {
     );
   }
   if (m.kind === "check" && m.check) return <CheckRow check={m.check} at={m.at} />;
-  const text = m.text ? (m.format === "markdown" ? <Markdown text={m.text} small /> : <p className="whitespace-pre-wrap">{m.text}</p>) : null;
+  const text = m.text ? (m.format === "markdown" ? <Markdown text={m.text} small askImages /> : <p className="whitespace-pre-wrap">{m.text}</p>) : null;
   if (m.kind === "review") {
     return (
       <Card id={id} who={m.sender} at={m.at} url={m.url} tone={REVIEW_TONE[m.review ?? ""]} title={`${m.sender.name} ${reviewLabel(m.review)}`}>

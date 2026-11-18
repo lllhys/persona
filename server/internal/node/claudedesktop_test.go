@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -48,14 +49,36 @@ func useDesktopDirs(t *testing.T) (first, third string) {
 	t.Helper()
 	base := t.TempDir()
 	first, third = filepath.Join(base, "Claude"), filepath.Join(base, "Claude-3p")
-	old := claudeDesktopDirs
+	old, oldOpens := claudeDesktopDirs, claudeDesktopOpens
 	claudeDesktopDirs = func(string) []string { return []string{first, third} }
-	t.Cleanup(func() { claudeDesktopDirs = old })
+	claudeDesktopOpens = true // the Mac's app, on any system the tests run on
+	t.Cleanup(func() { claudeDesktopDirs, claudeDesktopOpens = old, oldOpens })
 	return first, third
 }
 
+// The index is read from macOS's Application Support and Windows' local app data, both builds' directories; another
+// system has none.
+func TestDesktopDataDirs(t *testing.T) {
+	home := filepath.Join("h", "me")
+	for goos, base := range map[string]string{
+		"darwin":  filepath.Join(home, "Library", "Application Support"),
+		"windows": filepath.Join(home, "AppData", "Local"),
+	} {
+		got := desktopDataDirs(goos, home)
+		want := []string{filepath.Join(base, "Claude"), filepath.Join(base, "Claude-3p")}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: %v, want %v", goos, got, want)
+		}
+	}
+	if got := desktopDataDirs("linux", home); got != nil {
+		t.Errorf("linux: %v", got)
+	}
+}
+
 // The offline list shows the desktop app's sessions as its sidebar does (#3304): not archived sessions, not a session's
-// earlier transcript once its current one is listed. Anything no entry names is listed as before.
+// earlier transcript once its current one is listed, and not a deleted session's (#8314): a transcript the desktop app
+// ran that no entry names, unless it was written in the last desktopEntryGrace. An entry that cannot be read keeps the
+// ids it mentions, another client's transcript is never judged by the index, and without an index all are listed.
 func TestOfflineListFollowsTheDesktopSidebar(t *testing.T) {
 	const (
 		main      = "dddddddd-0000-4000-8000-000000000001"
@@ -67,7 +90,8 @@ func TestOfflineListFollowsTheDesktopSidebar(t *testing.T) {
 		missing   = "dddddddd-0000-4000-8000-000000000007"
 		both      = "dddddddd-0000-4000-8000-000000000008" // named by an archived entry and by an unarchived one
 		firstApp  = "dddddddd-0000-4000-8000-000000000009" // archived in the first-party app
-		unnamed   = "dddddddd-0000-4000-8000-00000000000a" // a desktop transcript no entry names
+		unnamed   = "dddddddd-0000-4000-8000-00000000000a" // a desktop transcript no entry names: its session was deleted
+		fresh     = "dddddddd-0000-4000-8000-000000000015" // the same, written within desktopEntryGrace: the entry may follow
 		fork      = "dddddddd-0000-4000-8000-00000000000b" // Persona's "Branch to New Chat" copy, archived in the app
 		kept      = "dddddddd-0000-4000-8000-00000000000c" // kept, archived in the app
 		corrupted = "dddddddd-0000-4000-8000-00000000000d" // its entry cannot be read
@@ -95,6 +119,7 @@ func TestOfflineListFollowsTheDesktopSidebar(t *testing.T) {
 			writeEntrypointTranscript(t, dir, id, "claude-desktop-3p", time.Duration(i+1)*time.Minute)
 		}
 		writeEntrypointTranscript(t, dir, cli, "cli", time.Hour)
+		writeEntrypointTranscript(t, dir, fresh, "claude-desktop-3p", 30*time.Second)
 		first, third := useDesktopDirs(t)
 		if withIndex {
 			writeDesktopEntry(t, third, "main", main, false, []string{earlier, shared}, "")
@@ -126,7 +151,7 @@ func TestOfflineListFollowsTheDesktopSidebar(t *testing.T) {
 
 	got := listed(t, true)
 	want := map[string]bool{
-		main: true, btwOpen: true, gap: true, both: true, bothFirst: true, unnamed: true, fork: true, kept: true, cli: true,
+		main: true, btwOpen: true, gap: true, both: true, bothFirst: true, unnamed: false, fresh: true, fork: true, kept: true, cli: true,
 		corrupted: true, current2: true, newerOld: true, newerNow: true, oversized: true,
 		archived: false, btwDone: false, earlier: false, firstApp: false, oldOfDone: false, shared: false,
 	}
@@ -137,7 +162,7 @@ func TestOfflineListFollowsTheDesktopSidebar(t *testing.T) {
 	}
 	// Without the app's index every transcript is listed, as before.
 	got = listed(t, false)
-	for _, id := range append(transcripts, cli) {
+	for _, id := range append(transcripts, cli, fresh) {
 		if !got[id] {
 			t.Errorf("without an index %s is missing", id)
 		}
@@ -187,13 +212,6 @@ func TestClaudeDesktopIndexFollowsChanges(t *testing.T) {
 	os.Remove(p)
 	if hidden() {
 		t.Fatal("without an entry nothing is hidden")
-	}
-}
-
-func TestClaudeDesktopDirsAreMacOnly(t *testing.T) {
-	dirs := claudeDesktopDirs("/home/u")
-	if len(dirs) != 0 && (len(dirs) != 2 || !strings.HasSuffix(dirs[0], filepath.Join("Application Support", "Claude")) || !strings.HasSuffix(dirs[1], "Claude-3p")) {
-		t.Fatalf("dirs = %v", dirs)
 	}
 }
 
@@ -293,5 +311,47 @@ func TestDesktopSessionsHaveACountOfTheirOwn(t *testing.T) {
 	}
 	if listed[platform] {
 		t.Fatal("another platform's run is listed because the index names it")
+	}
+}
+
+// A session deleted in the app leaves the list at once: Delete writes deleted_<uuid> for the session's own id and for each
+// transcript it ran, so desktopEntryGrace is not waited out, whether or not this node read the entry before. A delete
+// whose markers name no transcript, or an entry removed without any, still waits it out; a transcript an entry names
+// is listed whatever a marker says.
+func TestDesktopSessionDeletedInTheAppLeavesAtOnce(t *testing.T) {
+	const (
+		deleted   = "dddddddd-2222-4000-8000-000000000001" // deleted in the app: markers for its id and its transcripts
+		earlier   = "dddddddd-2222-4000-8000-000000000002" // deleted's earlier transcript
+		localOnly = "dddddddd-2222-4000-8000-000000000003" // deleted, but the only marker names the session's own id
+		removed   = "dddddddd-2222-4000-8000-000000000004" // its entry went without a marker
+		named     = "dddddddd-2222-4000-8000-000000000005" // a marker names it, but so does an entry
+		kept      = "dddddddd-2222-4000-8000-000000000006"
+	)
+	n, home := testNode(t)
+	n.metas, n.bgScans = map[string]quickMeta{}, map[string]*bgScan{}
+	dir := filepath.Join(home, ".claude", "projects", "-src-app")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{deleted, earlier, localOnly, removed, named, kept} {
+		writeEntrypointTranscript(t, dir, id, "claude-desktop-3p", 10*time.Second) // all within desktopEntryGrace
+	}
+	_, third := useDesktopDirs(t)
+	index := filepath.Join(third, "claude-code-sessions", "account", "org")
+	writeDesktopEntry(t, third, "named", named, false, nil, "")
+	writeDesktopEntry(t, third, "kept", kept, false, nil, "")
+	for _, id := range []string{"aaaaaaaa-2222-4000-8000-000000000001", deleted, earlier, "aaaaaaaa-2222-4000-8000-000000000003", named} {
+		if err := os.WriteFile(filepath.Join(index, "deleted_"+id), []byte("1794736695195"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := map[string]bool{}
+	for _, s := range n.scanOffline() {
+		got[s.SessionID] = true
+	}
+	for id, want := range map[string]bool{deleted: false, earlier: false, localOnly: true, removed: true, named: true, kept: true} {
+		if got[id] != want {
+			t.Errorf("%s listed=%v, want %v", id, got[id], want)
+		}
 	}
 }

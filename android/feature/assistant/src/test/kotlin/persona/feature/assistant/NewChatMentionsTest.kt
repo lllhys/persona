@@ -74,10 +74,10 @@ class NewChatMentionsTest {
         override suspend fun show(machineId: String, cwd: String, hash: String) = throw UnsupportedOperationException()
     }
 
-    private fun mount(machine: Machine = Machine(), needs: List<NeedsYouLine> = emptyList()): Hub {
+    private fun mount(machine: Machine = Machine(), needs: List<NeedsYouLine> = emptyList(), still: Boolean = true): Hub {
         val hub = Hub(main)
         rule.setContent {
-            PersonaTheme(reduceMotion = true, style = AppStyle.Glass) {
+            PersonaTheme(reduceMotion = still, style = AppStyle.Glass) {
                 CompositionLocalProvider(LocalManagerRoster provides ManagerRoster(listOf(
                     HubManager("assistant", "Helper", online = true, isDefault = true),
                 ), "assistant")) {
@@ -139,6 +139,41 @@ class NewChatMentionsTest {
         assertEquals("@~/code/README.md ", field().fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.EditableText].text)
         type("@/nowhere/")
         rule.waitUntil(5_000) { rule.onAllNodesWithText("Nothing matches in this folder").fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    /** Glass's motion, with the clock under the test's hand: iOS's `withAnimation(Theme.Motion.standard)` around `ShellNeedsYou`. */
+    @Test fun whatNeedsYouFoldsAwayInTheStateMotionAndFoldsBack() {
+        mount(needs = listOf(NeedsYouLine.Agent(SessionKey("mac", "agent"), "r1", "plan", null, who = "weather-app", what = "Plan ready")), still = false)
+        rule.onNodeWithText("Plan ready", substring = true).assertIsDisplayed()
+        val full = rule.onNodeWithTag("shell-needs-aside").fetchSemanticsNode().size.height
+        rule.mainClock.autoAdvance = false
+        fun height() = rule.onNodeWithTag("shell-needs-aside").fetchSemanticsNode().size.height
+        rule.onNode(hasSetTextAction()).performClick()
+        field().performTextReplacement("@")
+        rule.mainClock.advanceTimeBy(60)
+        // Half way: still there, folding.
+        rule.onNodeWithText("Plan ready", substring = true).assertExists()
+        assertTrue("folding, $full to ${height()}", height() in 1 until full)
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.onAllNodesWithText("Plan ready", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithTag("shell-needs-aside").assertCountEquals(0)
+        // The @ typed away: back the same way.
+        field().performTextReplacement("Hello")
+        rule.mainClock.advanceTimeBy(60)
+        assertTrue("unfolding, ${height()} of $full", height() in 1 until full)
+        rule.mainClock.advanceTimeBy(1_000)
+        rule.onNodeWithText("Plan ready", substring = true).assertIsDisplayed()
+        assertEquals(full, height())
+    }
+
+    @Test fun theDockKeepsThePagesBackdropWhileWhatNeedsYouIsAside() {
+        mount(needs = listOf(NeedsYouLine.Agent(SessionKey("mac", "agent"), "r1", "plan", null, who = "weather-app", what = "Plan ready")))
+        rule.onAllNodesWithTag("needs-backdrop").assertCountEquals(1)
+        type("@")
+        rule.onAllNodesWithText("Plan ready", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithTag("needs-backdrop").assertCountEquals(1)
+        type("")
+        rule.onAllNodesWithTag("needs-backdrop").assertCountEquals(1)
     }
 
     @Test fun whatNeedsYouStepsAsideWhileTheListIsOpen() {

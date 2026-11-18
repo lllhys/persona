@@ -1,0 +1,166 @@
+{
+  "id": "window-selftest",
+  "manifestId": "adaptive-window-continuity",
+  "description": "Keep one Agent chat, its multiline draft, selection and focus alive through rotation, a real book posture, compact size and expanded restoration.",
+  "requires": {
+    "page": "chat:macbook/a1f3c2d4-0000-4000-8000-000000000001",
+    "fields": [
+      "selectedKey",
+      "draftHmac",
+      "selection.start",
+      "selection.end",
+      "focused",
+      "attachments"
+    ]
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "session": "chat",
+      "conversationKind": "agent"
+    },
+    {
+      "step": "tap",
+      "resource-id": "chat-composer-field"
+    },
+    {
+      "step": "text",
+      "text": "lower-case"
+    },
+    {
+      "step": "key",
+      "keycombination": [
+        "SHIFT_LEFT",
+        "ENTER"
+      ]
+    },
+    {
+      "step": "text",
+      "text": "second-line"
+    },
+    {
+      "step": "key",
+      "keycombination": [
+        "CTRL_LEFT",
+        "A"
+      ]
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "selection": {
+          "equals": {
+            "start": 0,
+            "end": 22
+          }
+        },
+        "focused": true,
+        "route": {
+          "matches": "/chat$"
+        }
+      }
+    },
+    {
+      "step": "capture",
+      "name": "01-expanded",
+      "state": "expanded"
+    },
+    {
+      "step": "rotate",
+      "orientation": "landscape"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "draftHmac": "unchanged",
+        "selection": "unchanged",
+        "focused": true,
+        "attachments": "unchanged",
+        "window.orientation": "landscape"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "02-rotated",
+      "state": "rotated"
+    },
+    {
+      "step": "posture",
+      "value": 2
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "draftHmac": "unchanged",
+        "selection": "unchanged",
+        "focused": true,
+        "attachments": "unchanged",
+        "deviceState": "HALF_OPENED",
+        "postureEvidenceType": "folding-feature"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-book-half-open",
+      "state": "book-half-open"
+    },
+    {
+      "step": "posture",
+      "value": 3
+    },
+    {
+      "step": "wm-size",
+      "size": "1080x2092",
+      "density": 360
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "draftHmac": "unchanged",
+        "selection": "unchanged",
+        "focused": true,
+        "attachments": "unchanged",
+        "window.widthDp": 480,
+        "deviceState": "OPENED"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "04-compact",
+      "state": "compact"
+    },
+    {
+      "step": "wm-size",
+      "reset": true,
+      "densityReset": true
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged",
+        "route": "unchanged",
+        "selectedKey": "unchanged",
+        "draftHmac": "unchanged",
+        "selection": "unchanged",
+        "focused": true,
+        "attachments": "unchanged",
+        "window.widthDp": 841,
+        "window.orientation": "landscape"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "05-expanded-restored",
+      "state": "expanded-restored"
+    }
+  ]
+}

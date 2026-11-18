@@ -1,5 +1,6 @@
 // Package updatetest builds tiny Go programs whose build info names their package the way builds of server/cmd/personad
-// and server/cmd/persona-node do, for tests of update.ProgramOf and of what refuses or picks a program by it.
+// and server/cmd/persona-node do, for tests of update.ProgramOf and of what refuses or picks a program by it; and serves
+// releases the way an update source does (Releases), for tests of what is downloaded while a newer one comes out.
 package updatetest
 
 import (

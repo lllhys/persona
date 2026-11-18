@@ -61,6 +61,21 @@ class AlwaysOfferTest {
         assertTrue(AnswerBuilder.build(labelled, AnswerAction.Always).allowed)
     }
 
+    /**
+     * #8143: a Paseo card naming only the engine (an older node's) can't name its agent, yet it stays another agent's card:
+     * no "Always allow in this session", Claude's alone, and "Always allow" only with what its TUI says it allows.
+     */
+    @Test fun aPaseoCardThatCantNameItsAgentIsStillAnotherAgentsCard() {
+        for (paseo in listOf(card.copy(agent = "paseo", agentLabelHint = "Paseo"), card.copy(agent = "paseo", agentLabelHint = "Grok"))) {
+            assertFalse(paseo.offersAlways)
+            assertFalse(AnswerBuilder.build(paseo, AnswerAction.Always).allowed)
+            assertEquals(null, paseo.alwaysScopeDetail)
+            val labelled = paseo.copy(alwaysLabel = "Only this command")
+            assertTrue(labelled.offersAlways)
+            assertEquals("总是同意", (labelled.alwaysActionLabel).zhAny())
+        }
+    }
+
     /** #3590 / #3941: where the manager says whether it keeps an "always allow", that decides, over the card's own rule. */
     @Test fun theManagersAlwaysHonoredDecides() {
         val own = card.copy(toolName = "iphone_do", alwaysHonored = false)

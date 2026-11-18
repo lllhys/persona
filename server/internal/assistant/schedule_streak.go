@@ -17,7 +17,7 @@ const streakLimit = 3
 // waits silently for its computer or model, so it neither counts nor ends the streak. Any run that went
 // through, a retry or a "Run now" included, ends the streak: the task works.
 func counted(r ScheduleRun) bool {
-	return r.Status == runOK || !r.Manual && !r.Retried && !r.NotReady
+	return r.Status == runOK || !r.Manual && !r.Retried && !r.NotReady && !r.ConditionSkipped
 }
 
 // runStreak counts ref's runs in a row that did not go through, newest first, and says whether one of them was

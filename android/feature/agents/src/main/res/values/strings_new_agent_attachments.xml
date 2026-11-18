@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- New Agent's attachments (#2321): iOS NewAgentAttachments / NewChatView words. Photos, Files, Take photo and the upload states are the composer's (feature/chat). -->
+<resources>
+    <string name="agents_attach_add">Add Images or Files</string>
+    <string name="agents_attach_launcher_hold">%1$s takes no attachments</string>
+    <string name="agents_attach_launcher_refusal">This launcher can\'t take attachments in the first message. Pick another launcher, or start with text and send the attachments in the session.</string>
+    <string name="agents_attach_uploading_hold">Waiting for the files to finish uploading</string>
+    <string name="agents_attach_moved">The files uploaded to “%1$s” were removed. Add them again for this computer.</string>
+    <string name="agents_attach_remove">Remove %1$s</string>
+    <string name="agents_attach_upload_failed">Couldn\'t send “%1$s”: %2$s</string>
+    <string name="agents_attach_photo_limit">Up to 4 at a time</string>
+</resources>

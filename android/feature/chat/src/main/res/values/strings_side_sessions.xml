@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Side sessions in their parent's chat (#7944): the top bar's control, the ⋯ menu's row and their sheet. -->
+    <string name="chat_side_sessions">Side sessions</string>
+    <string name="chat_side_sessions_count">Side sessions (%1$d)</string>
+    <string name="chat_side_sessions_needs_you">A side session needs you</string>
+    <string name="chat_side_sessions_empty">No side sessions</string>
+    <string name="chat_side_session_untitled">Side session</string>
+</resources>

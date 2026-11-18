@@ -16,8 +16,11 @@ export function workflowStatus(w: Workflow): WorkflowStatus {
   return (["failed", "killed", "stalled"] as const).find((s) => s === w.status) ?? "completed";
 }
 
-/** Its runs still running. */
+/** Its runs still running. On a summary row (`summary=1`) its `workflow_progress`, the newest running run without its
+ *  agents and phases, stands for them (#5888), even when the store kept an older complete row's `workflows`: fresh
+ *  summary counts win, as in `backgroundWork`. */
 export function runningWorkflows(s: Session | undefined): Workflow[] {
+  if (typeof s?.waiting === "boolean") return s.workflow_progress?.running ? [s.workflow_progress] : [];
   return (s?.workflows ?? []).filter((w) => w.running);
 }
 
@@ -42,7 +45,7 @@ export function workflowName(w: Workflow): string {
 /** "Verify 2/2", "Verify", "" */
 export function workflowPhase(w: Workflow): string {
   if (!w.phase) return "";
-  const n = w.phases?.length ?? 0;
+  const n = w.phases?.length || w.phase_count || 0; // a summary row's run has no phases, only how many (#5888)
   return w.phase_index && n ? `${w.phase} ${w.phase_index}/${n}` : w.phase;
 }
 
@@ -73,8 +76,9 @@ export function workflowShortLine(s: Session | undefined): string {
 export function workflowLine(s: Session | undefined, now: number): string {
   const runs = runningWorkflows(s);
   if (!runs.length) {
-    // an older hub: it only says a workflow runs
-    return (s?.running_workflows ?? 0) > 0 || (s?.background ?? []).some((b) => b.kind === "workflow") ? t("lib-workflows.running_in_background") : "";
+    // an older hub: it only says a workflow runs (a summary's background is an older row's, kept by the store)
+    const said = typeof s?.waiting === "boolean" ? (s.running_workflows ?? 0) > 0 : (s?.background ?? []).some((b) => b.kind === "workflow");
+    return said ? t("lib-workflows.running_in_background") : "";
   }
   const w = runs[0];
   const parts = [t("lib-workflows.line_name", { name: workflowName(w) }), workflowPhase(w), workflowCounts(w), workflowElapsed(w, now)].filter(Boolean);
@@ -384,8 +388,8 @@ export function workflowCalls(runs: Workflow[] | undefined): WorkflowCalls {
 }
 
 /** What the running bar says once the turn is over and a workflow keeps the agent working (#3434): the run it waits for
- *  (the first running one, as the rows say) and where its clock starts. Other background work (commands, Monitors,
- *  subagents) leaves the bar as it was. */
+ *  (the first running one, as the rows say) and where its clock starts. Background subagents, waiting commands and
+ *  working commands have their own selectors below and in background-work.ts. */
 export interface BackgroundLine {
   run: Workflow;
   /** Other runs running besides it. */
@@ -421,12 +425,27 @@ export interface WaitLine {
   since?: string;
 }
 
-export function backgroundWaitLine(s: Session | undefined): WaitLine | null {
-  if (!s || !backgroundWaiting(s)) return null;
-  const tasks = (s.background ?? []).filter((b) => b.kind === "shell" || b.kind === "monitor");
+function backgroundCommands(s: Session): NonNullable<Session["background"]> {
+  return (s.background ?? []).filter((b) => b.kind === "shell" || b.kind === "monitor");
+}
+
+function commandLine(tasks: NonNullable<Session["background"]>, since?: string): WaitLine {
   const first = tasks[0];
   const what = (first?.description || first?.command || "").split("\n")[0]!.trim();
-  return { what, more: Math.max(0, tasks.length - 1), ...(s.state_since ? { since: s.state_since } : {}) };
+  return { what, more: Math.max(0, tasks.length - 1), ...(since ? { since } : {}) };
+}
+
+export function backgroundWaitLine(s: Session | undefined): WaitLine | null {
+  if (!s || !backgroundWaiting(s)) return null;
+  return commandLine(backgroundCommands(s), s.state_since);
+}
+
+/** A real background command after the turn (#7341): the same first command and count as the wait line, but timed from
+ *  that command's own start. No listed command still returns the empty line, so the bar can show its label alone. */
+export function backgroundCommandLine(s: Session | undefined): WaitLine | null {
+  if (s?.background_working !== true) return null;
+  const tasks = backgroundCommands(s);
+  return commandLine(tasks, tasks[0]?.started_at);
 }
 
 /** The hub says the agent's turn is over and a workflow it launched keeps it working: the chat draws that turn finished. */

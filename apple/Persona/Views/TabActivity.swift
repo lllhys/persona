@@ -56,16 +56,23 @@ final class TabVisibilityState {
 
 @MainActor
 private struct TabVisibilityScope: ViewModifier {
+    let sceneAware: Bool
     let appear: () -> Void
     let disappear: () -> Void
     @Environment(\.tabIsActive) private var active
+    @Environment(\.scenePhase) private var phase
     @State private var state = TabVisibilityState()
+    private var inFront: Bool { active && (!sceneAware || VisibleScenePolicy.permits(phase)) }
 
     func body(content: Content) -> some View {
         content
-            .onAppear { state.update(mounted: true, active: active, appear: appear, disappear: disappear) }
-            .onDisappear { state.update(mounted: false, active: active, appear: appear, disappear: disappear) }
-            .onChange(of: active) { _, active in state.update(active: active, appear: appear, disappear: disappear) }
+            .onAppear { state.update(mounted: true, active: inFront, appear: appear, disappear: disappear) }
+            .onDisappear { state.update(mounted: false, active: inFront, appear: appear, disappear: disappear) }
+            .onChange(of: active) { _, _ in state.update(active: inFront, appear: appear, disappear: disappear) }
+            .onChange(of: phase) { _, _ in
+                guard sceneAware else { return }
+                state.update(active: inFront, appear: appear, disappear: disappear)
+            }
     }
 }
 
@@ -97,9 +104,10 @@ private struct TabActiveTask<ID: Hashable & Sendable>: ViewModifier {
 
 extension View {
     /// `onAppear` / `onDisappear` for work that belongs to the page in front: `appear` when the view is in the window and
-    /// its tab is picked, `disappear` when either stops.
-    func onTabVisibility(appear: @escaping () -> Void, disappear: @escaping () -> Void = {}) -> some View {
-        modifier(TabVisibilityScope(appear: appear, disappear: disappear))
+    /// its tab is picked, `disappear` when either stops. `sceneAware` additionally pauses polling while the scene is not
+    /// active. Business lifecycles such as voice keep the default: a scene transition is not a page departure.
+    func onTabVisibility(sceneAware: Bool = false, appear: @escaping () -> Void, disappear: @escaping () -> Void = {}) -> some View {
+        modifier(TabVisibilityScope(sceneAware: sceneAware, appear: appear, disappear: disappear))
     }
 
     /// `.task` for the page in front; on iOS and visionOS it also requires an active scene. Cancelled when ineligible,
@@ -202,7 +210,7 @@ extension View {
     /// are a crash (`NSToolbar … already contains an item with the identifier com.apple.SwiftUI.search`). On the Mac the
     /// field hangs off a view in the page's background, so the page's own views do not see `isSearching` /
     /// `dismissSearch`; use `isPresented` instead.
-    func pageSearchable(text: Binding<String>, isPresented: Binding<Bool>? = nil, placement: SearchFieldPlacement = .automatic,
+    func pageSearchable(text: Binding<String>, isPresented: Binding<Bool>? = nil, placement: SearchFieldPlacement? = nil,
                         prompt: String) -> some View {
         modifier(PageSearchable(text: text, isPresented: isPresented, placement: placement, prompt: prompt))
     }
@@ -211,9 +219,13 @@ extension View {
 private struct PageSearchable: ViewModifier {
     let text: Binding<String>
     let isPresented: Binding<Bool>?
-    let placement: SearchFieldPlacement
+    /// nil: the system's (`resolvedPlacement`).
+    let placement: SearchFieldPlacement?
     let prompt: String
     @Environment(\.tabIsActive) private var active
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var widthClass
+    #endif
 
     func body(content: Content) -> some View {
         #if os(macOS)
@@ -226,10 +238,23 @@ private struct PageSearchable: ViewModifier {
 
     @ViewBuilder private func field<V: View>(_ v: V) -> some View {
         if let isPresented {
-            v.searchable(text: text, isPresented: isPresented, placement: placement, prompt: Text(prompt))
+            v.searchable(text: text, isPresented: isPresented, placement: resolvedPlacement, prompt: Text(prompt))
         } else {
-            v.searchable(text: text, placement: placement, prompt: Text(prompt))
+            v.searchable(text: text, placement: resolvedPlacement, prompt: Text(prompt))
         }
+    }
+
+    /// iPadOS 18 puts an automatic field in a regular-width bar beside the title, and a wide one squeezed Inbox's title
+    /// to "In…" (#6730). There, before iOS 26, a page that names no placement gets the field under its title; iOS 26
+    /// folds it into a button, and compact widths keep the system's.
+    private var resolvedPlacement: SearchFieldPlacement {
+        if let placement { return placement }
+        #if os(iOS)
+        if #available(iOS 26.0, *) { return .automatic }
+        return widthClass == .regular ? .navigationBarDrawer(displayMode: .automatic) : .automatic
+        #else
+        return .automatic
+        #endif
     }
 }
 

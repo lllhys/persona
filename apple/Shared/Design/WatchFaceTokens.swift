@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The watch face's complications: the Milk Frog (`PetComplication`, docs/apple/persona.md "The Milk Frog on the
-/// watch"), Meeting Recording and All-Day Recording. The watch widget extension compiles this file without Theme, as it
+/// watch"), Record and All-Day Recording. The watch widget extension compiles this file without Theme, as it
 /// does `ExtensionSurfaceTokens`; the watch app's debug previews of the faces read it too.
 nonisolated enum WatchFaceTokens {
     /// The rectangular complication's words, and how far they may shrink to fit two lines.
@@ -14,8 +14,9 @@ nonisolated enum WatchFaceTokens {
     /// Behind the complication where the face shows a background (watchOS tints or drops it on others).
     static let background = Color.black
 
-    /// The Meeting Recording complication (docs/apple/recording.md「Apple Watch」): the system's red of a recording, its
-    /// symbol (`Theme.Icon.recording`, which the extension doesn't build) and the circular face's glyph size.
+    /// The Record complication (`MeetingRecordingComplication`, docs/apple/recording.md「Apple Watch」): the system's red
+    /// of a recording, its symbol (`Theme.Icon.recording`, which the extension doesn't build) and the circular face's
+    /// glyph size.
     static let recording = Color.red
     static let recordingSymbol = "waveform.circle.fill"
     static let recordingGlyph = Font.system(size: 26, weight: .semibold)

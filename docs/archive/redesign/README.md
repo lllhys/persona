@@ -16,7 +16,7 @@
 > **Changes from v2 to v3**:
 > - Rewritten for this scope: notifications use only persistent connections; FCM, Firebase, and Google login removed (D8). Public direct connectivity added (D9, [hub-changes.md](hub-changes.md) Section 1 rewritten). All iOS changes moved to “Later.”
 > - Chinese-ROM compatibility added ([android.md](android.md) 5.18): data-backed minSdk 31, vendor background/notification restrictions, readiness checklist, self-tests, distribution, and in-app updates.
-> - Added [flows.md](flows.md) (15 main-feature flowcharts), UI previews `prototypes/android/`, and 3 research notes.
+> - Added [flows.md](flows.md) (15 main-feature flowcharts), UI previews `prototypes/android/` (removed in #9030; see git history), and 3 research notes.
 
 This document set answers four questions:
 
@@ -34,7 +34,7 @@ This document set answers four questions:
 | [hub-changes.md](hub-changes.md) | Server changes (required / recommended / optional) | Read for the extent of hub changes |
 | [parity.md](parity.md) | Feature-parity matrix: 213 existing iOS features + redesign additions, Android approach and priority for each | Acceptance checklist |
 | [flows.md](flows.md) | Main-feature flows (Mermaid): pairing, route selection, persistent connection, notification approvals, sending, chat synchronization, Inbox | Read for how flows work |
-| [`prototypes/android/`](../../../prototypes/android) | Android UI previews (interactive HTML, light/dark) | Look here first |
+| `prototypes/android/` | Android UI previews (interactive HTML, light/dark); removed in #9030, see git history | Superseded |
 | [research/](research/) | 11 original research notes (code locations and sources) | Consult to verify evidence |
 
 ---

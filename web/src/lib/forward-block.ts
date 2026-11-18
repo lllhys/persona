@@ -11,6 +11,15 @@ import { parseUserText, type Context } from "./turns";
 /** The most of the original a forward carries; a longer one is cut with a line saying so. */
 export const FORWARD_LIMIT = 20_000;
 
+/** The most several forwarded at once carry together (#3838, spec/fixtures/forward several.json `budget`). */
+export const FORWARD_TOTAL = 60_000;
+
+/** Where each of `count` messages forwarded at once is cut: FORWARD_LIMIT, or an even share of FORWARD_TOTAL when that is
+ *  less (iOS ForwardMessage.limit(count:)). */
+export function forwardLimit(count: number): number {
+  return Math.min(FORWARD_LIMIT, Math.floor(FORWARD_TOTAL / Math.max(count, 1)));
+}
+
 /** `time` as written: ISO 8601 to the second with the sender's offset ("2026-11-11T10:24:00+08:00"; "Z" in UTC), as
  *  iOS's ISO8601DateFormatter writes it. "" for a time that does not read. */
 export function isoWithOffset(iso: string, at = new Date(iso)): string {
@@ -51,8 +60,8 @@ function quoteHeading(c: Context): string {
 
 /** What of `raw` (a message as the transcript has it) a forward carries: the words as the chat shows them, without the
  *  hub's metadata and transport blocks; the quotes and forwards it opened with as `> ` lines led by their heading; files
- *  on its computer by name; cut at FORWARD_LIMIT. */
-export function forwardBody(raw: string, machine?: string): string {
+ *  on its computer by name; cut at `limit` (FORWARD_LIMIT, or forwardLimit when several go at once). */
+export function forwardBody(raw: string, machine?: string, limit = FORWARD_LIMIT): string {
   const p = parseUserText(raw);
   const parts: string[] = [];
   for (const c of p.contexts) {
@@ -63,16 +72,16 @@ export function forwardBody(raw: string, machine?: string): string {
   for (const f of p.files) parts.push(machine ? t("chat-forwardto.file_on", { machine, name: f.name }) : t("chat-forwardto.file", { name: f.name }));
   const text = parts.join("\n\n");
   const chars = [...text];
-  if (chars.length <= FORWARD_LIMIT) return text;
-  return `${chars.slice(0, FORWARD_LIMIT).join("")}\n\n${t("chat-forwardto.cut")}`;
+  if (chars.length <= limit) return text;
+  return `${chars.slice(0, limit).join("")}\n\n${t("chat-forwardto.cut")}`;
 }
 
-/** The forward block for a message whose text, as the transcript has it, is `raw`. */
-export function forwardRef(raw: string, s: ForwardSource): ContextRef {
+/** The forward block for a message whose text, as the transcript has it, is `raw`; cut at `limit`. */
+export function forwardRef(raw: string, s: ForwardSource, limit = FORWARD_LIMIT): ContextRef {
   const attrs: Record<string, string> = { msg: s.item, role: s.role, author: s.role === "user" ? t("chat-forward.me") : s.author, chat: s.chat };
   if (s.project) attrs.project = s.project;
   if (s.machine) attrs.machine = s.machine;
   const time = s.time ? isoWithOffset(s.time) : "";
   if (time) attrs.time = time;
-  return { id: uuid(), kind: FORWARD_KIND, title: forwardHeading(attrs), url: forwardURL(s.mid, s.sid, s.item), text: forwardBody(raw, s.machine), attrs };
+  return { id: uuid(), kind: FORWARD_KIND, title: forwardHeading(attrs), url: forwardURL(s.mid, s.sid, s.item), text: forwardBody(raw, s.machine, limit), attrs };
 }

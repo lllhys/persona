@@ -228,6 +228,21 @@ class KnowledgePresentationTest {
         assertTrue(transcript(null).isEmpty())
     }
 
+    /** Persona's echo (#5905): kept on the hub with `echo: true`, not what the meeting said, so hidden as on the web and iOS; the minutes' times land on the meeting's lines. */
+    @Test fun recordingTranscriptHidesPersonasEcho() {
+        val segments = JsonCodec.decodeFromString<KnowledgeDetailResponse>(
+            """{"detail":{"kind":"recordings","id":"r1","path":"data/recordings/r1","segments":[
+            {"start":2,"end":9,"text":"Who owns the regression test?"},
+            {"start":10.3,"end":17,"text":"You kept the cap for this release.","echo":true},
+            {"start":10,"end":17.8,"text":"Bo owns the regression test."},
+            {"start":20,"end":24,"text":"Thanks, next item.","echo":false}]}}""",
+        ).detail.segments
+        val lines = transcript(segments)
+        assertEquals(listOf("Who owns the regression test?", "Bo owns the regression test.", "Thanks, next item."), lines.map { it.text })
+        // An item at 10 s (the minutes cite Bo) opens Bo's line, not the echo that began just after it.
+        assertEquals("Bo owns the regression test.", lines[segmentAt(lines, 10.0)!!].text)
+    }
+
     @Test fun recordingFactsFallBack() {
         val facts = RecordingFacts.of(JsonCodec.decodeFromString<JsonObject>(
             """{"started_at":"2026-11-05T14:00:00Z","ended_at":"2026-11-05T14:00:42Z"}"""))

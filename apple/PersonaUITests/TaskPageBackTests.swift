@@ -1,11 +1,11 @@
 import XCTest
 
-/// A task's agent page opened from its card's View has one way back (#2625). Beside the sidebar (regular width) it is
+/// A task's page opened from its row in In Progress has one way back (#2625; its receipt's View until #8237). Beside the sidebar (regular width) it is
 /// pushed: under iPhone Duo's side bars its buttons are the system's, in the side column, and the page hid the system's
 /// bar with its Back in it; with its own header it has that header's ‹ alone, no system bar over it. On a phone it is a
 /// sheet with its header's ✕ alone. `-sideBars YES` lays the chat out as under the Duo's side bars on any simulator.
-/// Against scripts/mock/mock_hub.py with MOCK_TASKS=1 (PERSONA_MOCK_HUB): the release task finished with a receipt,
-/// its View in the main chat. PERSONA_SHOTS keeps the screens.
+/// Against scripts/mock/mock_hub.py with MOCK_TASKS=1 (PERSONA_MOCK_HUB): the widget fix, working, its row in the main
+/// chat's In Progress. PERSONA_SHOTS keeps the screens.
 final class TaskPageBackTests: XCTestCase {
     private var hub = ""
 
@@ -18,7 +18,7 @@ final class TaskPageBackTests: XCTestCase {
         hub = h
     }
 
-    /// Pushed, under side bars: one Back (the system's bar's, from the page's items); it leads back, View again opens.
+    /// Pushed, under side bars: one Back (the system's bar's, from the page's items); it leads back, the row again opens.
     @MainActor func testUnderSideBarsThePushedPageHasOneBack() throws {
         try pushed(["-sideBars", "YES"], name: "side-bars")
     }
@@ -39,7 +39,7 @@ final class TaskPageBackTests: XCTestCase {
         XCTAssertEqual(backs(app).count, 0, "no system bar's back over the sheet's header")
         shot(app, "task-sheet-phone")
         close.firstMatch.tap()
-        XCTAssertTrue(view(app).waitForExistence(timeout: 10), "✕ did not lead back to the main chat")
+        XCTAssertTrue(chat(app).waitForExistence(timeout: 10), "✕ did not lead back to the main chat")
     }
 
     // MARK: -
@@ -54,9 +54,9 @@ final class TaskPageBackTests: XCTestCase {
         XCTAssertEqual(back.count, 1, "one way back, not two:\n\(app.debugDescription)")
         shot(app, "task-page-\(name)")
         back.firstMatch.tap()
-        XCTAssertTrue(view(app).waitForExistence(timeout: 10), "back did not lead to the main chat:\n\(app.debugDescription)")
+        XCTAssertTrue(chat(app).waitForExistence(timeout: 10), "back did not lead to the main chat:\n\(app.debugDescription)")
         openView(app)
-        XCTAssertTrue(back.firstMatch.waitForExistence(timeout: 10), "View did not open the page again")
+        XCTAssertTrue(back.firstMatch.waitForExistence(timeout: 10), "the row did not open the page again")
     }
 
     @MainActor private func launch(_ extra: [String]) -> XCUIApplication {
@@ -68,19 +68,26 @@ final class TaskPageBackTests: XCTestCase {
         return app
     }
 
-    @MainActor private func view(_ app: XCUIApplication) -> XCUIElement { app.buttons["看看"].firstMatch }
-
-    @MainActor private func backs(_ app: XCUIApplication) -> XCUIElementQuery {
-        app.buttons.matching(NSPredicate(format: "label IN %@", ["返回", "Back"]))
+    /// The widget fix's row in In Progress.
+    @MainActor private func view(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(identifier: "action-tray.task").matching(NSPredicate(format: "label CONTAINS %@", "修小组件横屏崩溃")).firstMatch
     }
 
-    /// The release task's View in the main chat (scrolled to).
+    /// The main chat's In Progress entry: the chat is on screen.
+    @MainActor private func chat(_ app: XCUIApplication) -> XCUIElement { app.buttons["action-bar.running"].firstMatch }
+
+    @MainActor private func backs(_ app: XCUIApplication) -> XCUIElementQuery {
+        // Under side bars a pushed page's Back is the system's (#9971), named by the page under it: its identifier says Back.
+        app.buttons.matching(NSPredicate(format: "identifier == 'BackButton' OR label IN %@", ["返回", "Back"]))
+    }
+
+    /// The widget fix's row: In Progress opened, the row tapped (it closes the tray and opens the task).
     @MainActor private func openView(_ app: XCUIApplication) {
+        let entry = chat(app)
+        XCTAssertTrue(entry.waitForExistence(timeout: 20), "no In Progress entry in the main chat:\n\(app.debugDescription)")
         let view = view(app)
-        // Up the chat to the receipt (a lazy list draws the rows near the screen only).
-        _ = app.descendants(matching: .any)["shell-composer-field"].firstMatch.waitForExistence(timeout: 20)
-        for _ in 0..<10 where !(view.exists && view.isHittable) { app.swipeDown(velocity: .slow); sleep(1) }
-        XCTAssertTrue(view.waitForExistence(timeout: 5), "no 看看 in the main chat:\n\(app.debugDescription)")
+        if !view.exists { entry.tap() }
+        XCTAssertTrue(view.waitForExistence(timeout: 10), "no widget fix row in In Progress:\n\(app.debugDescription)")
         view.tap()
     }
 

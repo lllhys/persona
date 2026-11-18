@@ -40,5 +40,5 @@ internal class ProtocolCompatibilityMockServer : Closeable {
 }
 
 /** Installed nodes from either naming generation send this exact diagnostic request, never an API call. */
-private fun portDiscoveryRequest(request: RecordedRequest): Boolean = request.method == "GET" && request.path == "/" &&
+internal fun portDiscoveryRequest(request: RecordedRequest): Boolean = request.method == "GET" && request.path == "/" &&
     request.getHeader("User-Agent") in setOf("jarvis-ports", "persona-ports")

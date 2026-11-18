@@ -22,5 +22,8 @@
   "dismissed": "この判断を非表示にしました。タスクは残り、どの選択肢も実行されません。",
   "undo_failed": "この判断を戻せませんでした。{error}",
   "missing_options": "この以前のレビューには回答できる選択肢がありません。タスクを開いて判断内容を確認できます。",
-  "confirm": "確認：{option}"
+  "confirm": "確認：{option}",
+  "dialog_open": "Agent のターミナルのダイアログ「{dialog}」を先に処理してから回答してください。",
+  "dialog_open_unnamed": "Agent のターミナルのダイアログを先に処理してから回答してください。",
+  "open_terminal": "ターミナルを開く"
 }

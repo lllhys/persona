@@ -113,7 +113,9 @@ func sessionHiddenByDeletion(s proto.Session, deleted map[string]time.Time) bool
 // ~200 KB on every push. list is never changed.
 func (h *Hub) shown(machine string, list []proto.Session) []proto.Session {
 	del := h.deletedAt(machine)
-	hidden := func(s *proto.Session) bool { return s.Archived && !s.Assistant || sessionHiddenByDeletion(*s, del) }
+	hidden := func(s *proto.Session) bool {
+		return s.IsDeleted() || s.Archived && !s.Assistant || sessionHiddenByDeletion(*s, del)
+	}
 	for i := range list {
 		if !hidden(&list[i]) {
 			continue

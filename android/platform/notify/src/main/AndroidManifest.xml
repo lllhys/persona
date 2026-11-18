@@ -16,6 +16,7 @@
                 android:value="Maintains the user's hub connection for agent interactions and local notifications without a push provider." />
         </service>
         <receiver android:name="persona.platform.notify.ActionReceiver" android:exported="false" />
+        <receiver android:name="persona.platform.notify.ExtensionNotificationActionReceiver" android:exported="false" />
         <receiver android:name="persona.platform.notify.BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

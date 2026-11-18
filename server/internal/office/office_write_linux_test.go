@@ -2,21 +2,32 @@ package office
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 )
 
+// limitedWriteEnv makes this test binary, run again for TestMainFailedWriteKeepsTheEarlierFile alone, its child:
+// "<limit> <markdown file>".
+const limitedWriteEnv = "PERSONA_OFFICE_TEST_LIMITED_WRITE"
+
 // A write that fails part way (here at the file size limit, as on a full disk) leaves the earlier file as it was: the
 // new one is written beside it and renamed over it only once it is complete. Linux only, for RLIMIT_FSIZE; Go ignores
-// SIGXFSZ, so the write just fails. The limit is the whole process's, which is safe because no test here is parallel.
+// SIGXFSZ, so the write just fails. The limit is a whole process's, so Main runs under it in a child process (this
+// test binary run again for this test): in this one it would cut off the test framework's own files too, go test's
+// test log among them, and the package would fail with every test passed (#8962).
 func TestMainFailedWriteKeepsTheEarlierFile(t *testing.T) {
+	if spec := os.Getenv(limitedWriteEnv); spec != "" {
+		limitedWrite(spec)
+	}
 	dir := t.TempDir()
 	md := filepath.Join(dir, "notes.md")
 	if err := os.WriteFile(md, []byte("# Plan\n\nOne paragraph.\n"), 0o644); err != nil {
@@ -50,21 +61,13 @@ func TestMainFailedWriteKeepsTheEarlierFile(t *testing.T) {
 	if old.Max < limit {
 		t.Skipf("the file size limit is already %d bytes", old.Max)
 	}
-	restore := sync.OnceFunc(func() {
-		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &old); err != nil {
-			t.Errorf("restoring the file size limit: %v", err)
-		}
-	})
-	t.Cleanup(restore)
-	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: limit, Max: old.Max}); err != nil {
-		t.Fatal(err)
-	}
+	child := exec.Command(os.Args[0], "-test.run=^TestMainFailedWriteKeepsTheEarlierFile$")
+	child.Env = append(os.Environ(), fmt.Sprintf("%s=%d %s", limitedWriteEnv, limit, md))
 	var errOut bytes.Buffer
-	code := Main([]string{"docx", md}, io.Discard, &errOut)
-	restore()
-
-	if code != 1 || !strings.Contains(errOut.String(), "file too large") {
-		t.Errorf("exit %d: %s", code, errOut.String())
+	child.Stderr = &errOut
+	var exit *exec.ExitError
+	if err := child.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 || !strings.Contains(errOut.String(), "file too large") {
+		t.Errorf("Main under the limit: %v: %s", err, errOut.String())
 	}
 	if after, err := os.ReadFile(doc); err != nil || !bytes.Equal(after, v1) {
 		t.Fatalf("the earlier file changed (%d bytes, was %d): %v", len(after), len(v1), err)
@@ -75,6 +78,25 @@ func TestMainFailedWriteKeepsTheEarlierFile(t *testing.T) {
 	if names := dirNames(t, dir); !slices.Equal(names, []string{"notes.docx", "notes.md"}) {
 		t.Errorf("left behind: %q", names)
 	}
+}
+
+// limitedWrite is the child of TestMainFailedWriteKeepsTheEarlierFile: Main converting the Markdown file under the file
+// size limit spec gives, its error output on stderr. It exits with Main's code, 3 when it could not set the limit.
+func limitedWrite(spec string) {
+	limit, md, _ := strings.Cut(spec, " ")
+	n, err := strconv.ParseUint(limit, 10, 64)
+	var old syscall.Rlimit
+	if err == nil {
+		err = syscall.Getrlimit(syscall.RLIMIT_FSIZE, &old)
+	}
+	if err == nil {
+		err = syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: n, Max: old.Max})
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s=%q: %v\n", limitedWriteEnv, spec, err)
+		os.Exit(3)
+	}
+	os.Exit(Main([]string{"docx", md}, io.Discard, os.Stderr))
 }
 
 // -o names a file of its kind only (docs/assistant/office.md, "No approval every time"), and a link by that name to

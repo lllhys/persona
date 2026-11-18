@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The queued messages at the top of the composer, as cindy's pending queue (#5327): each row's actions and the hub
-// requests they make, reordering from the handle by keyboard and by dragging, the fold past four rows, Send now's
-// confirmation, and relayed rows that only show. The markup checks are in ChatDock.test.tsx.
+// requests they make, reordering from the handle by keyboard and by dragging, the fold past four rows, Send now at one
+// press, and relayed rows that only show. The markup checks are in ChatDock.test.tsx.
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,18 +55,25 @@ describe("QueuePanel row actions", () => {
     expect(withdrawn).toEqual(["第二条", "第三条"]);
   });
 
-  it("asks before Send now, which hands the agent every queued message", async () => {
+  it("sends every queued message at one press, with no dialog; its tooltip and description say what happens", async () => {
     vi.mocked(api).mockResolvedValue({});
     render(<QueuePanel session={session} draftKey="qp-send" canEdit />);
-    click(within(2, "[data-send-now]"));
-    expect(api).not.toHaveBeenCalled();
-    const body = document.querySelector("[data-send-now-body]")!;
-    expect(body.textContent).toContain("Claude 会马上收到");
-    expect(document.querySelector('[role="dialog"] h2')!.textContent).toBe("现在就发送排队的 3 条消息？");
-    const go = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent === "立即发送")!;
-    click(go);
-    await settle();
+    const send = within(2, "[data-send-now]");
+    expect(send.getAttribute("aria-label")).toBe("现在就把排队的消息全部发给 Claude，不用等到下一步");
+    expect(document.getElementById(send.getAttribute("aria-describedby")!)!.textContent).toContain("Claude 会马上收到");
+    expect(send.title).toBe("现在就把排队的消息全部发给 Claude，不用等到下一步\nClaude 会马上收到，不用等到下一步。它正在跑的命令会转到后台继续；正在写的回复会带上你的消息重新开始。");
+    click(send);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(calls()).toEqual([["/sessions/m/s/queue/send-now", {}]]);
+    await settle();
+  });
+
+  it("says in the Persona chat's words what sending now does", () => {
+    const persona = { ...session, agent: undefined, assistant: true, queued: ["我的"] } as unknown as Session;
+    render(<QueuePanel session={persona} draftKey="qp-persona-send" canEdit persona="Nova" />);
+    const send = within(0, "[data-send-now]");
+    expect(send.getAttribute("aria-label")).toBe("现在就把排队的消息全部发给 Nova，不用等到下一步");
+    expect(document.getElementById(send.getAttribute("aria-describedby")!)!.textContent).toContain("Nova 会马上收到");
   });
 
   it("shows a spinner where the busy row's actions were and takes no other action meanwhile", async () => {
@@ -83,14 +90,36 @@ describe("QueuePanel row actions", () => {
     expect(within(1, "[data-queue-delete]").hasAttribute("disabled")).toBe(false);
   });
 
-  it("gives relayed rows no handle and no actions (#4342)", () => {
+  it("collapses the relayed rows into one line, which opens to their read-only rows (#4342, #6394)", () => {
     const persona = { ...session, agent: undefined, assistant: true, queued: ["我的", "来自「日报」：汇总"], queued_relayed: 1 } as unknown as Session;
     render(<QueuePanel session={persona} draftKey="qp-relayed" canEdit persona="Nova" />);
-    expect(rows()[1].querySelector("button")).toBeNull();
-    expect(rows()[1].querySelector("[data-queue-note]")!.textContent).toBe("其他对话");
+    // collapsed: the owner's row stays, the relayed one is only the summary line
+    expect(rows()).toHaveLength(1);
+    const summary = host.querySelector<HTMLElement>("[data-queue-relayed-summary]")!;
+    expect(summary.textContent).toContain("还有 1 条别的对话在排队");
+    expect(summary.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector("[data-queue-relayed-list]")).toBeNull();
     // the user's own row has nothing to move past
     expect(rows()[0].querySelector("[data-queue-handle]")).toBeNull();
     expect(rows()[0].querySelector("[data-send-now]")).not.toBeNull();
+    // open: the relayed row appears, still with no handle and no actions, and the note says where it came from
+    click(summary);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(rows()).toHaveLength(2);
+    expect(rows()[1].querySelector("button")).toBeNull();
+    expect(rows()[1].querySelector("[data-queue-note]")!.textContent).toBe("其他对话");
+    click(summary);
+    expect(host.querySelector("[data-queue-relayed-list]")).toBeNull();
+    expect(rows()).toHaveLength(1);
+  });
+
+  it("only shows a runtime Agent's queue: the node takes no edit, reorder or Send now there (#8142)", () => {
+    // a Claude Code Agent on Paseo: its queue is Claude Code's, read off its transcript
+    const paseo = { ...session, source_kind: "runtime", source_instance_id: "paseo", launcher: "my-claude" } as unknown as Session;
+    render(<QueuePanel session={paseo} draftKey="qp-runtime" canEdit />);
+    expect(texts()).toEqual(["第一条", "第二条", "第三条"]);
+    for (const r of rows()) expect(r.querySelector("button")).toBeNull();
+    expect(host.querySelector("[data-queue-explain]")).toBeNull();
   });
 });
 

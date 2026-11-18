@@ -6,6 +6,12 @@ import androidx.compose.ui.unit.dp
 /** Application chrome shared with the compact iPhone shell, independent of platform system bars. */
 internal object HomeTokens {
     const val drawerFraction = 0.82f
+
+    /** Flick faster than this, in dp/s, settles that way. The iPhone's 300 pt/s (`ShellPager.swift:193-196`). */
+    const val drawerFlickDpPerSecond = 300f
+
+    /** How far the half-way rule looks ahead, in seconds (`ShellPager.swift:195`). */
+    const val drawerProjectionSeconds = 0.2f
     val drawerMaximum = 380.dp
     val drawerPageRadius = 55.dp
     val drawerShadow = 24.dp

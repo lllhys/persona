@@ -1,0 +1,1644 @@
+{
+  "source": {
+    "previous_head": "96c1deb3052cce9e1cd46a8968f22bcf889ec110",
+    "main": "a74f49300d54054d28c4ca1549a41a9ffa31c6fb",
+    "merge_head": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+    "conflicts": [],
+    "upstream_changes": [
+      "#6286: automatic plain-run partitions, failed-test summary and resident home isolation",
+      "#6264: machine Claude test isolation",
+      "#6261: Codex effort validation",
+      "#6233: batch launcher switching"
+    ],
+    "upstream_attribution": "These changes are upstream work, not new implementation delivered by #5845."
+  },
+  "upstream_preservation": [
+    {
+      "path": "server/internal/node/partition_test.go",
+      "identical_to_main": true,
+      "sha256": "461d5984778fbcb98fedde85b90b9429d2a768111e39b29ef04db73d17a8a1e2"
+    },
+    {
+      "path": "server/internal/node/hostorca_test.go",
+      "identical_to_main": true,
+      "sha256": "f900c15fa35c9a78f0bdcf2dacf4c706fef1185589eeafe19b46eca41da30d57"
+    },
+    {
+      "path": "server/internal/node/resident_reload_unix_test.go",
+      "identical_to_main": true,
+      "sha256": "f16eb1919dcfec5e50a67837c6a616897ad988780e577316f6327466ea52b5bc"
+    },
+    {
+      "path": "server/internal/node/managed.go",
+      "identical_to_main": true,
+      "sha256": "1872ee008d7d664b50e59f2fd51ab6997ce558ab3b4c07c0d302d22387b2610e"
+    },
+    {
+      "path": "server/internal/node/managed_test.go",
+      "identical_to_main": true,
+      "sha256": "8a62fd13d2ed2d885f0169471575df30b63757c238572fec07d565d3713f3116"
+    },
+    {
+      "path": "server/internal/node/paseobridge.go",
+      "identical_to_main": true,
+      "sha256": "9a7440c6bc12ef680a1657c2d9e44772b63d4a8605e998f8029762fd70c40214"
+    },
+    {
+      "path": "server/internal/node/assistant_start_retry_test.go",
+      "identical_to_main": true,
+      "sha256": "37426bd3537d913d4232514282d008e852e4a1719d342a390918ab40c8aa26ca"
+    },
+    {
+      "path": "server/internal/node/control.go",
+      "identical_to_main": true,
+      "sha256": "1608348f8060c349a6a02c9c65748359c27254000833ff46609862fcc856291d"
+    },
+    {
+      "path": "server/internal/node/launcher_switch.go",
+      "identical_to_main": true,
+      "sha256": "780ee738cdb7616998e0aa4fd68af7afdbad7382a0fdd04d5e25a3a518d6f70f"
+    }
+  ],
+  "environment": {
+    "go": "go1.27.1 linux/amd64",
+    "database_url": "unset",
+    "outer_budget_s": 600,
+    "fixture": "fresh owned HOME/temp/runtime for each command; same shared warm Go caches",
+    "resource_conditions": "Major Go jobs are sequential. Host shared, not reserved; load and 32-CPU affinity are recorded in every receipt."
+  },
+  "notes": [
+    "#6286, #6264 and other upstream fixes are retained, not claimed as new work by #5845.",
+    "November 12 and the first November 13 synchronization measurements are historical and use their own source revisions.",
+    "Direct commands use upstream TestMain automatic partitions. JSON diagnostics use the existing explicit two-partition runner, because -json disables automatic splitting.",
+    "Diagnostic terminal manifests belong to diagnostic commands, not to raw direct commands, which do not emit per-test events.",
+    "Local Chrome sandbox failure does not identify the old external #5845 failure. Its cause remains unknown; no extra logs are requested."
+  ],
+  "runs": [
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:51:06.384068+00:00",
+      "command_wall_s": 15.362,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.8671875,
+        0.9609375,
+        0.90478515625
+      ],
+      "load_after": [
+        3.544921875,
+        1.58935546875,
+        1.11376953125
+      ],
+      "label": "synca74-regressions",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=20",
+        "-run",
+        "^(TestCodexReadyPollFindsOnlyTheMatchingRollout|TestCodexReadyPollKeepsCancellationAndDeadline|TestCodexReadyPollReportsLauncherFailure|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures|TestFakeCodexRequestWakesOnItsReply|TestFirstPromptStillOutlivesItsRequest|TestFixtureShellIsAlreadySettled|TestHerdrFixtureCancelsUnfinishedPromptChecks|TestReadyPollCancellationDoesNotReadTheHost|TestReadyPollFixtureKeepsTheStartDeadline|TestReadyPollKeepsFixtureAndProductionCadence)$",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 15.383,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:51:21.806828+00:00",
+      "command_wall_s": 143.588,
+      "cleanup_wall_s": 0.026,
+      "cpus": 32,
+      "load_before": [
+        3.544921875,
+        1.58935546875,
+        1.11376953125
+      ],
+      "load_after": [
+        1.29345703125,
+        1.48193359375,
+        1.15185546875
+      ],
+      "label": "synca74-risk-race",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=3",
+        "-run",
+        "^(TestAssistantAlwaysRechecksHub|TestAssistantBypassCLIControls|TestAssistantBypassCodexUnknownCommand|TestAssistantBypassCommandGate|TestAssistantBypassGateReportsPermissionMode|TestAssistantBypassNewCodexThreadPolicy|TestAssistantBypassOrdinaryCommands|TestAssistantBypassPreservesRuntimeSelection|TestAssistantBypassReadOnlyCompoundCommands|TestAssistantBypassResumePersistsDefault|TestAssistantBypassReviewCommands|TestAssistantBypassShellNames|TestAssistantBypassWrappedCommands|TestAssistantCodexAlwaysStaysAtHub|TestAssistantCodexTurnError|TestAssistantLarkAlwaysRechecksHub|TestAssistantUnselectedModeStartsBypass|TestClaudeQuestionCancelDeniesOnlyQuestionWithoutAnswer|TestCodexApprovalCardIsPlacedInTheConversationsDirectory|TestCodexApprovals|TestCodexArgsAndShell|TestCodexCancelledWaitStillCloses|TestCodexCleanupNeedsFreshProofPaneIsGone|TestCodexGetsRealWritableRoots|TestCodexReadyPoll.*|TestCodexReadyPollFindsOnlyTheMatchingRollout|TestCodexReadyPollKeepsCancellationAndDeadline|TestCodexReadyPollReportsLauncherFailure|TestCodexRetryAfterAbandonedPaneWasRemoved|TestCodexSharesTheAssistantMemory|TestCodexStalled.*|TestCodexStartAndTurns|TestCodexStartAnswersWithTheThread|TestCodexStartBypassLauncherArguments|TestCodexStartPermissionModes|TestCodexStartTrustsTheFolder|TestCodexStartsInSameDirectoryRunConcurrently|TestCodexTurnWithoutEffortOnAuto|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures|TestFakeCodexRequestWakesOnItsReply|TestFirstPromptStillOutlivesItsRequest|TestFixtureShellIsAlreadySettled|TestHealthChecksCountItsSubfolders|TestHerdrFixtureCancelsUnfinishedPromptChecks|TestHookCardsArePlacedInTheConversationsDirectory|TestMetaWithoutAHeadGoesByTheAssistantProject|TestModeFromCodex|TestOfflineAssistantConversationIsListedWhereItStarted|TestOwnedCodexQuestionCancelReturnsNoAnswers|TestPartitionFailuresNamed|TestPartitionTestLogsJoin|TestPartitionsRunEveryTestOnce|TestQuickMetaFindsAFirstPromptPastLongInstructions|TestQuickMetaKeepsAnAssistantConversationWhereItStarted|TestReadsOnlyMemory|TestReadyPoll.*|TestReadyPollCancellationDoesNotReadTheHost|TestReadyPollFixtureKeepsTheStartDeadline|TestReadyPollKeepsFixtureAndProductionCadence|TestResetAssistantPermissionsKillsUncooperativeChild|TestResetAssistantPermissionsRejectsTerminal|TestResetAssistantPermissionsRuntimeNeedsRestart|TestResetAssistantPermissionsWaitsForExit|TestResidentReloadReapsIdleProcessesBeforeTransportEnds|TestResolveAssistantKey|TestSharedCodexQuestionCancelIsOneEmptyReplyWithoutInterrupt|TestStartRecordPlacesARowAtRest|TestStoppedAssistantConversationStaysPut|TestTerminalQuestionCancelNeverSendsEscape|TestUnwrapShell)$",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 143.614,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:53:45.460483+00:00",
+      "command_wall_s": 88.674,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        1.29345703125,
+        1.48193359375,
+        1.15185546875
+      ],
+      "load_after": [
+        9.1767578125,
+        4.31494140625,
+        2.19775390625
+      ],
+      "label": "synca74-ci-build",
+      "command": [
+        "bash",
+        "scripts/ci/server.sh",
+        "build"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 88.695,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:55:14.194648+00:00",
+      "command_wall_s": 12.093,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        9.1767578125,
+        4.31494140625,
+        2.19775390625
+      ],
+      "load_after": [
+        7.91943359375,
+        4.20556640625,
+        2.18408203125
+      ],
+      "label": "synca74-live-compile",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-tags",
+        "herdrlive",
+        "-o",
+        "<fixed-main evidence>/node-live.test",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 12.114,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:55:26.347884+00:00",
+      "command_wall_s": 28.783,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        7.91943359375,
+        4.20556640625,
+        2.18408203125
+      ],
+      "load_after": [
+        10.32421875,
+        5.11767578125,
+        2.55126953125
+      ],
+      "label": "synca74-compile-main",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<fixed-main evidence>/main-bins",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main evidence>/main-export",
+      "sha": "a74f49300d54054d28c4ca1549a41a9ffa31c6fb",
+      "wall_s": 28.803,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:55:55.823715+00:00",
+      "command_wall_s": 24.49,
+      "cleanup_wall_s": 0.022,
+      "cpus": 32,
+      "load_before": [
+        10.32421875,
+        5.11767578125,
+        2.55126953125
+      ],
+      "load_after": [
+        8.32373046875,
+        5.07421875,
+        2.60595703125
+      ],
+      "label": "synca74-compile-head",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<fixed-main evidence>/head-bins",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 24.512,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:56:21.043934+00:00",
+      "command_wall_s": 218.665,
+      "cleanup_wall_s": 0.027,
+      "cpus": 32,
+      "load_before": [
+        8.32373046875,
+        5.07421875,
+        2.60595703125
+      ],
+      "load_after": [
+        1.16064453125,
+        3.5,
+        2.53955078125
+      ],
+      "label": "synca74-direct-eight-main",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main evidence>/main-export",
+      "sha": "a74f49300d54054d28c4ca1549a41a9ffa31c6fb",
+      "wall_s": 218.692,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "named_failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "node_partitions": [
+        {
+          "part": 3,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 99.4
+        },
+        {
+          "part": 6,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 111.0
+        },
+        {
+          "part": 4,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 114.4
+        },
+        {
+          "part": 5,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 115.2
+        },
+        {
+          "part": 1,
+          "of": 6,
+          "listed_roots": 427,
+          "wall_s": 176.5
+        },
+        {
+          "part": 2,
+          "of": 6,
+          "listed_roots": 427,
+          "wall_s": 182.2
+        }
+      ],
+      "per_test_terminal_counts_available": false,
+      "node_partition_reconciliation": {
+        "inventoried_roots": 2558,
+        "listed_root_total": 2558,
+        "unique_partition_indices": true,
+        "all_partitions_reported": true
+      },
+      "package_results": [
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/apierr",
+          "elapsed_s": 0.028
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistant",
+          "elapsed_s": 216.044
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantskills",
+          "elapsed_s": 0.025
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantwire",
+          "elapsed_s": 0.004
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/hub",
+          "elapsed_s": 132.118
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/i18n",
+          "elapsed_s": 1.38
+        },
+        {
+          "status": "FAIL",
+          "package": "github.com/nwverse/persona/server/internal/node",
+          "elapsed_s": 182.216
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/prompts",
+          "elapsed_s": 0.262
+        }
+      ]
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T04:59:59.775713+00:00",
+      "command_wall_s": 218.522,
+      "cleanup_wall_s": 0.027,
+      "cpus": 32,
+      "load_before": [
+        1.16064453125,
+        3.5,
+        2.53955078125
+      ],
+      "load_after": [
+        0.8564453125,
+        2.5419921875,
+        2.39697265625
+      ],
+      "label": "synca74-direct-eight-head",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 218.549,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "named_failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "node_partitions": [
+        {
+          "part": 1,
+          "of": 6,
+          "listed_roots": 429,
+          "wall_s": 70.6
+        },
+        {
+          "part": 4,
+          "of": 6,
+          "listed_roots": 428,
+          "wall_s": 83.5
+        },
+        {
+          "part": 5,
+          "of": 6,
+          "listed_roots": 428,
+          "wall_s": 91.3
+        },
+        {
+          "part": 3,
+          "of": 6,
+          "listed_roots": 429,
+          "wall_s": 111.7
+        },
+        {
+          "part": 6,
+          "of": 6,
+          "listed_roots": 428,
+          "wall_s": 113.9
+        },
+        {
+          "part": 2,
+          "of": 6,
+          "listed_roots": 429,
+          "wall_s": 122.1
+        }
+      ],
+      "per_test_terminal_counts_available": false,
+      "node_partition_reconciliation": {
+        "inventoried_roots": 2571,
+        "listed_root_total": 2571,
+        "unique_partition_indices": true,
+        "all_partitions_reported": true
+      },
+      "package_results": [
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/apierr",
+          "elapsed_s": 0.028
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistant",
+          "elapsed_s": 215.848
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantskills",
+          "elapsed_s": 0.027
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantwire",
+          "elapsed_s": 0.004
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/hub",
+          "elapsed_s": 130.38
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/i18n",
+          "elapsed_s": 1.396
+        },
+        {
+          "status": "FAIL",
+          "package": "github.com/nwverse/persona/server/internal/node",
+          "elapsed_s": 122.165
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/prompts",
+          "elapsed_s": 0.254
+        }
+      ]
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T05:03:38.365780+00:00",
+      "command_wall_s": 218.708,
+      "cleanup_wall_s": 0.028,
+      "cpus": 32,
+      "load_before": [
+        0.8564453125,
+        2.5419921875,
+        2.39697265625
+      ],
+      "load_after": [
+        5.39697265625,
+        3.236328125,
+        2.65087890625
+      ],
+      "label": "synca74-direct-five-main",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<fixed-main evidence>/main-export",
+      "sha": "a74f49300d54054d28c4ca1549a41a9ffa31c6fb",
+      "wall_s": 218.736,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "named_failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "node_partitions": [
+        {
+          "part": 3,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 99.5
+        },
+        {
+          "part": 6,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 111.2
+        },
+        {
+          "part": 5,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 114.0
+        },
+        {
+          "part": 4,
+          "of": 6,
+          "listed_roots": 426,
+          "wall_s": 114.7
+        },
+        {
+          "part": 1,
+          "of": 6,
+          "listed_roots": 427,
+          "wall_s": 175.8
+        },
+        {
+          "part": 2,
+          "of": 6,
+          "listed_roots": 427,
+          "wall_s": 181.9
+        }
+      ],
+      "per_test_terminal_counts_available": false,
+      "node_partition_reconciliation": {
+        "inventoried_roots": 2558,
+        "listed_root_total": 2558,
+        "unique_partition_indices": true,
+        "all_partitions_reported": true
+      },
+      "package_results": [
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistant",
+          "elapsed_s": 216.244
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantskills",
+          "elapsed_s": 0.027
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantwire",
+          "elapsed_s": 0.004
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/hub",
+          "elapsed_s": 135.44
+        },
+        {
+          "status": "FAIL",
+          "package": "github.com/nwverse/persona/server/internal/node",
+          "elapsed_s": 181.987
+        }
+      ]
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T05:07:17.143802+00:00",
+      "command_wall_s": 218.842,
+      "cleanup_wall_s": 0.028,
+      "cpus": 32,
+      "load_before": [
+        5.39697265625,
+        3.236328125,
+        2.65087890625
+      ],
+      "load_after": [
+        2.7958984375,
+        3.7490234375,
+        3.0517578125
+      ],
+      "label": "synca74-direct-five-head",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<PR checkout>",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 218.869,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "named_failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "node_partitions": [
+        {
+          "part": 1,
+          "of": 6,
+          "listed_roots": 429,
+          "wall_s": 71.8
+        },
+        {
+          "part": 4,
+          "of": 6,
+          "listed_roots": 428,
+          "wall_s": 83.7
+        },
+        {
+          "part": 5,
+          "of": 6,
+          "listed_roots": 428,
+          "wall_s": 91.1
+        },
+        {
+          "part": 3,
+          "of": 6,
+          "listed_roots": 429,
+          "wall_s": 112.6
+        },
+        {
+          "part": 6,
+          "of": 6,
+          "listed_roots": 428,
+          "wall_s": 116.9
+        },
+        {
+          "part": 2,
+          "of": 6,
+          "listed_roots": 429,
+          "wall_s": 123.3
+        }
+      ],
+      "per_test_terminal_counts_available": false,
+      "node_partition_reconciliation": {
+        "inventoried_roots": 2571,
+        "listed_root_total": 2571,
+        "unique_partition_indices": true,
+        "all_partitions_reported": true
+      },
+      "package_results": [
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistant",
+          "elapsed_s": 216.322
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantskills",
+          "elapsed_s": 0.025
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/assistantwire",
+          "elapsed_s": 0.003
+        },
+        {
+          "status": "ok",
+          "package": "github.com/nwverse/persona/server/internal/hub",
+          "elapsed_s": 134.709
+        },
+        {
+          "status": "FAIL",
+          "package": "github.com/nwverse/persona/server/internal/node",
+          "elapsed_s": 123.33
+        }
+      ]
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T05:10:56.054374+00:00",
+      "command_wall_s": 409.927,
+      "cleanup_wall_s": 0.027,
+      "cpus": 32,
+      "load_before": [
+        2.7958984375,
+        3.7490234375,
+        3.0517578125
+      ],
+      "load_after": [
+        2.15966796875,
+        3.36669921875,
+        3.2119140625
+      ],
+      "label": "synca74-partitioned-main",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main evidence>/main-export/server",
+      "sha": "a74f49300d54054d28c4ca1549a41a9ffa31c6fb",
+      "wall_s": 409.955,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-13T05:17:46.049480+00:00",
+      "command_wall_s": 327.455,
+      "cleanup_wall_s": 0.028,
+      "cpus": 32,
+      "load_before": [
+        2.15966796875,
+        3.36669921875,
+        3.2119140625
+      ],
+      "load_after": [
+        1.40771484375,
+        2.3291015625,
+        2.83251953125
+      ],
+      "label": "synca74-partitioned-head",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<PR checkout>/server",
+      "sha": "c428e8bfcdbb13b55a7f169ae48a8201769fae14",
+      "wall_s": 327.483,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    }
+  ],
+  "checks": [
+    {
+      "label": "guards",
+      "command": [
+        "env",
+        "CI_BASE_SHA=a74f49300d54054d28c4ca1549a41a9ffa31c6fb",
+        "bash",
+        "scripts/ci/guards.sh"
+      ],
+      "wall_s": 24.808,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_paths",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_paths.py"
+      ],
+      "wall_s": 0.665,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_go_paths",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_go_paths.py"
+      ],
+      "wall_s": 0.264,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_sections",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_sections.py"
+      ],
+      "wall_s": 1.266,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_wire",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_wire.py"
+      ],
+      "wall_s": 0.464,
+      "exit": 0
+    },
+    {
+      "label": "test_go_partitions",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_go_partitions.py"
+      ],
+      "wall_s": 0.064,
+      "exit": 0
+    },
+    {
+      "label": "test_go_test_partitioned",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_go_test_partitioned.py"
+      ],
+      "wall_s": 0.265,
+      "exit": 0
+    },
+    {
+      "label": "test_server_test_env",
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_server_test_env.py"
+      ],
+      "wall_s": 6.375,
+      "exit": 0
+    }
+  ],
+  "regression_audit": {
+    "root_count": 13,
+    "identity_count": 25,
+    "terminal_count": 500,
+    "states": {
+      "pass": 500
+    },
+    "all_20_pass": true
+  },
+  "race_selected_patterns": [
+    "TestAssistantAlwaysRechecksHub",
+    "TestAssistantBypassCLIControls",
+    "TestAssistantBypassCodexUnknownCommand",
+    "TestAssistantBypassCommandGate",
+    "TestAssistantBypassGateReportsPermissionMode",
+    "TestAssistantBypassNewCodexThreadPolicy",
+    "TestAssistantBypassOrdinaryCommands",
+    "TestAssistantBypassPreservesRuntimeSelection",
+    "TestAssistantBypassReadOnlyCompoundCommands",
+    "TestAssistantBypassResumePersistsDefault",
+    "TestAssistantBypassReviewCommands",
+    "TestAssistantBypassShellNames",
+    "TestAssistantBypassWrappedCommands",
+    "TestAssistantCodexAlwaysStaysAtHub",
+    "TestAssistantCodexTurnError",
+    "TestAssistantLarkAlwaysRechecksHub",
+    "TestAssistantUnselectedModeStartsBypass",
+    "TestClaudeQuestionCancelDeniesOnlyQuestionWithoutAnswer",
+    "TestCodexApprovalCardIsPlacedInTheConversationsDirectory",
+    "TestCodexApprovals",
+    "TestCodexArgsAndShell",
+    "TestCodexCancelledWaitStillCloses",
+    "TestCodexCleanupNeedsFreshProofPaneIsGone",
+    "TestCodexGetsRealWritableRoots",
+    "TestCodexReadyPoll.*",
+    "TestCodexReadyPollFindsOnlyTheMatchingRollout",
+    "TestCodexReadyPollKeepsCancellationAndDeadline",
+    "TestCodexReadyPollReportsLauncherFailure",
+    "TestCodexRetryAfterAbandonedPaneWasRemoved",
+    "TestCodexSharesTheAssistantMemory",
+    "TestCodexStalled.*",
+    "TestCodexStartAndTurns",
+    "TestCodexStartAnswersWithTheThread",
+    "TestCodexStartBypassLauncherArguments",
+    "TestCodexStartPermissionModes",
+    "TestCodexStartTrustsTheFolder",
+    "TestCodexStartsInSameDirectoryRunConcurrently",
+    "TestCodexTurnWithoutEffortOnAuto",
+    "TestFakeCodexReplyMatchesItsRequest",
+    "TestFakeCodexRequestCancellationAndDeadline",
+    "TestFakeCodexRequestTransportFailures",
+    "TestFakeCodexRequestWakesOnItsReply",
+    "TestFirstPromptStillOutlivesItsRequest",
+    "TestFixtureShellIsAlreadySettled",
+    "TestHealthChecksCountItsSubfolders",
+    "TestHerdrFixtureCancelsUnfinishedPromptChecks",
+    "TestHookCardsArePlacedInTheConversationsDirectory",
+    "TestMetaWithoutAHeadGoesByTheAssistantProject",
+    "TestModeFromCodex",
+    "TestOfflineAssistantConversationIsListedWhereItStarted",
+    "TestOwnedCodexQuestionCancelReturnsNoAnswers",
+    "TestPartitionFailuresNamed",
+    "TestPartitionTestLogsJoin",
+    "TestPartitionsRunEveryTestOnce",
+    "TestQuickMetaFindsAFirstPromptPastLongInstructions",
+    "TestQuickMetaKeepsAnAssistantConversationWhereItStarted",
+    "TestReadsOnlyMemory",
+    "TestReadyPoll.*",
+    "TestReadyPollCancellationDoesNotReadTheHost",
+    "TestReadyPollFixtureKeepsTheStartDeadline",
+    "TestReadyPollKeepsFixtureAndProductionCadence",
+    "TestResetAssistantPermissionsKillsUncooperativeChild",
+    "TestResetAssistantPermissionsRejectsTerminal",
+    "TestResetAssistantPermissionsRuntimeNeedsRestart",
+    "TestResetAssistantPermissionsWaitsForExit",
+    "TestResidentReloadReapsIdleProcessesBeforeTransportEnds",
+    "TestResolveAssistantKey",
+    "TestSharedCodexQuestionCancelIsOneEmptyReplyWithoutInterrupt",
+    "TestStartRecordPlacesARowAtRest",
+    "TestStoppedAssistantConversationStaysPut",
+    "TestTerminalQuestionCancelNeverSendsEscape",
+    "TestUnwrapShell"
+  ],
+  "owned_lock_probe": [
+    {
+      "label": "main5474-clear",
+      "source": "5474a23c63c7abd61a3d1126f675796987fc7bbe",
+      "command": [
+        "<evidence directory>/sync-main-5474a23c6/main-bins/node.test",
+        "-test.run=^TestResidentReloadReapsIdleProcessesBeforeTransportEnds$",
+        "-test.count=3",
+        "-test.v",
+        "-test.timeout=30s"
+      ],
+      "exit": 0,
+      "wall_s": 0.634,
+      "pass": 3,
+      "fail": 0,
+      "lock_preserved": true,
+      "assertion": null
+    },
+    {
+      "label": "main5474-held-lock",
+      "source": "5474a23c63c7abd61a3d1126f675796987fc7bbe",
+      "command": [
+        "<evidence directory>/sync-main-5474a23c6/main-bins/node.test",
+        "-test.run=^TestResidentReloadReapsIdleProcessesBeforeTransportEnds$",
+        "-test.count=3",
+        "-test.v",
+        "-test.timeout=30s"
+      ],
+      "exit": 1,
+      "wall_s": 0.03,
+      "pass": 0,
+      "fail": 3,
+      "lock_preserved": true,
+      "assertion": "a resident node is already running (<owned fixture>/node-attach.sock.run is locked)"
+    },
+    {
+      "label": "pr96-clear",
+      "source": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "command": [
+        "<evidence directory>/sync-main-5474a23c6/head-bins/node.test",
+        "-test.run=^TestResidentReloadReapsIdleProcessesBeforeTransportEnds$",
+        "-test.count=3",
+        "-test.v",
+        "-test.timeout=30s"
+      ],
+      "exit": 0,
+      "wall_s": 0.634,
+      "pass": 3,
+      "fail": 0,
+      "lock_preserved": true,
+      "assertion": null
+    },
+    {
+      "label": "pr96-held-lock",
+      "source": "d875f617235a466d7a3a20fae3327443e450dc73",
+      "command": [
+        "<evidence directory>/sync-main-5474a23c6/head-bins/node.test",
+        "-test.run=^TestResidentReloadReapsIdleProcessesBeforeTransportEnds$",
+        "-test.count=3",
+        "-test.v",
+        "-test.timeout=30s"
+      ],
+      "exit": 1,
+      "wall_s": 0.029,
+      "pass": 0,
+      "fail": 3,
+      "lock_preserved": true,
+      "assertion": "a resident node is already running (<owned fixture>/node-attach.sock.run is locked)"
+    },
+    {
+      "label": "pr96-upstream-isolation-overlay-clear",
+      "source": "96c1deb3052cce9e1cd46a8968f22bcf889ec110 + upstream shortHome overlay only",
+      "command": [
+        "<owned-lock evidence>/node-fixed.test",
+        "-test.run=^TestResidentReloadReapsIdleProcessesBeforeTransportEnds$",
+        "-test.count=3",
+        "-test.v",
+        "-test.timeout=30s"
+      ],
+      "exit": 0,
+      "wall_s": 0.632,
+      "pass": 3,
+      "fail": 0,
+      "lock_preserved": true,
+      "assertion": null
+    },
+    {
+      "label": "pr96-upstream-isolation-overlay-held-lock",
+      "source": "96c1deb3052cce9e1cd46a8968f22bcf889ec110 + upstream shortHome overlay only",
+      "command": [
+        "<owned-lock evidence>/node-fixed.test",
+        "-test.run=^TestResidentReloadReapsIdleProcessesBeforeTransportEnds$",
+        "-test.count=3",
+        "-test.v",
+        "-test.timeout=30s"
+      ],
+      "exit": 0,
+      "wall_s": 0.634,
+      "pass": 3,
+      "fail": 0,
+      "lock_preserved": true,
+      "assertion": null
+    }
+  ],
+  "suite_audits": {
+    "main": {
+      "root_counts": {
+        "pass": 7069,
+        "skip": 405,
+        "fail": 1
+      },
+      "identity_counts": {
+        "pass": 16832,
+        "skip": 612,
+        "fail": 1
+      },
+      "inventory_roots": 7475,
+      "missing_roots": 0,
+      "unexpected_roots": 0,
+      "duplicate_runs": 0,
+      "duplicate_terminals": 0,
+      "unfinished": 0,
+      "failed_roots": [
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "private_manifest_sha256": "3d9c354c9d9770fec9ac1f9fe7e736fbbb5825b1224f83912d7606c92fbe9b1b",
+      "summed_root_elapsed_s": 1141.93
+    },
+    "head": {
+      "root_counts": {
+        "pass": 7081,
+        "skip": 405,
+        "fail": 2
+      },
+      "identity_counts": {
+        "pass": 16856,
+        "skip": 612,
+        "fail": 2
+      },
+      "inventory_roots": 7488,
+      "missing_roots": 0,
+      "unexpected_roots": 0,
+      "duplicate_runs": 0,
+      "duplicate_terminals": 0,
+      "unfinished": 0,
+      "failed_roots": [
+        "TestAgentsSwitchFilterBusyAndMovedMeanwhile",
+        "TestPreviewDrivesARealBrowser"
+      ],
+      "private_manifest_sha256": "f39099babe3dc5f57f2abb8bcc57c7397c58123a19d1d8d1dc4c8b70dd41bb0a",
+      "summed_root_elapsed_s": 944.28
+    }
+  },
+  "terminal_comparison": {
+    "common_identities": 17445,
+    "removed_identities": 0,
+    "added_identities": 25,
+    "changed_common_states": 1,
+    "changed_root_names": [
+      "TestAgentsSwitchFilterBusyAndMovedMeanwhile"
+    ]
+  },
+  "slowest_common_roots": [
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestAssistantBypassShellNames",
+      "main_elapsed_s": 25.68,
+      "head_elapsed_s": 2.02,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestStartSubmitsImageAndLongPaste",
+      "main_elapsed_s": 23.99,
+      "head_elapsed_s": 4.31,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestAssistantProfileCompatibility",
+      "main_elapsed_s": 17.83,
+      "head_elapsed_s": 18.18,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestCodexStartTrustsTheFolder",
+      "main_elapsed_s": 17.43,
+      "head_elapsed_s": 15.11,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/hub",
+      "test": "TestCenterServiceConnector",
+      "main_elapsed_s": 16.16,
+      "head_elapsed_s": 16.17,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/hub",
+      "test": "TestCenterOneComputerTwoPaths",
+      "main_elapsed_s": 14.45,
+      "head_elapsed_s": 14.65,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestAssistantMCPRegistrationAtStart",
+      "main_elapsed_s": 11.99,
+      "head_elapsed_s": 12.13,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestCodexStartBypassLauncherArguments",
+      "main_elapsed_s": 11.67,
+      "head_elapsed_s": 0.73,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestEngineSwitchHoldsTheEarlierSessionWhileItResumesIt",
+      "main_elapsed_s": 10.71,
+      "head_elapsed_s": 3.35,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestHerdrStartRidesOutABlinkOfClaude",
+      "main_elapsed_s": 10.55,
+      "head_elapsed_s": 7.01,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestCodexStartPermissionModes",
+      "main_elapsed_s": 10.47,
+      "head_elapsed_s": 0.29,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestTheMacStaysAwakeWhileOperatedOrWatched",
+      "main_elapsed_s": 9.61,
+      "head_elapsed_s": 9.6,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestClaudeWithoutEngineStateIsReadyByItsInputBox",
+      "main_elapsed_s": 8.06,
+      "head_elapsed_s": 8.06,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestLauncherSwitchWaitsWhileBusy",
+      "main_elapsed_s": 8.01,
+      "head_elapsed_s": 8.01,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestAssistantResumeFollowsTheTranscriptOverARecordedProfile",
+      "main_elapsed_s": 8,
+      "head_elapsed_s": 8.23,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestTerminalLoopCancelsContextOnNaturalEnd",
+      "main_elapsed_s": 7.6,
+      "head_elapsed_s": 7.6,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestHerdrStartWaitsForASlowShell",
+      "main_elapsed_s": 7.54,
+      "head_elapsed_s": 4.01,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestStartUltracodeRefusalStillStartsAndPrompts",
+      "main_elapsed_s": 7.39,
+      "head_elapsed_s": 3.6,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestHerdrSendResumesWithTheHubsLauncher",
+      "main_elapsed_s": 6.68,
+      "head_elapsed_s": 4.15,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestLCUOldProcessExitDoesNotFailTheNewSession",
+      "main_elapsed_s": 6.22,
+      "head_elapsed_s": 6.22,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestEngineSwitchFallsBackToAFreshSession",
+      "main_elapsed_s": 6.15,
+      "head_elapsed_s": 1.37,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestAssistantResumeModel",
+      "main_elapsed_s": 6.15,
+      "head_elapsed_s": 6.09,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestLauncherSwitchFailureRollsBack",
+      "main_elapsed_s": 6.09,
+      "head_elapsed_s": 3.98,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestEngineSwitchStopsWhenTheStartMayHaveTheMessage",
+      "main_elapsed_s": 6.04,
+      "head_elapsed_s": 5.31,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/assistant",
+      "test": "TestTaskReceipt",
+      "main_elapsed_s": 6.02,
+      "head_elapsed_s": 6.02,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestTheOldWayServesTheRest",
+      "main_elapsed_s": 6.01,
+      "head_elapsed_s": 6.01,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestNoLockHoldsUntilLetGoOrRunOut",
+      "main_elapsed_s": 6.01,
+      "head_elapsed_s": 6.01,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/hub",
+      "test": "TestLockTestDispatcherSleepsWhenIdleAndWakesOnSchedule",
+      "main_elapsed_s": 6,
+      "head_elapsed_s": 6,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestHerdrStartThroughTheFirstRunScreens",
+      "main_elapsed_s": 5.81,
+      "head_elapsed_s": 5.51,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    },
+    {
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "test": "TestRunAgentInAShellPane",
+      "main_elapsed_s": 5.61,
+      "head_elapsed_s": 2.13,
+      "main_state": [
+        "pass"
+      ],
+      "head_state": [
+        "pass"
+      ]
+    }
+  ],
+  "diagnostic_state_difference": {
+    "test": "TestAgentsSwitchFilterBusyAndMovedMeanwhile",
+    "package": "internal/assistant",
+    "assertion": "agents_switch_test.go:154: moved meanwhile, switched anyway: [session.modes session.switch session.modes session.modes session.switch session.modes]",
+    "full_json_main": "pass",
+    "full_json_head": "fail",
+    "direct_five_and_eight_main_and_head": "pass for this root (assistant package passes in all four commands)",
+    "source": "Introduced upstream in #6233; assistant and related package source are identical to fixed main a74f49300. The test is absent at the older external verifier source 96c1deb30.",
+    "classification": "Unresolved single observed state difference, not established as a regression, existing failure, environment failure, or flake. It cannot explain the older external verifier failure at 96c1deb30.",
+    "follow_up": "Further targeted main/head reproduction is required on the source being reviewed before assigning a cause."
+  },
+  "publication_document_checks": [
+    {
+      "label": "test_doc_paths",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_paths.py"
+      ],
+      "wall_s": 0.652,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_go_paths",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_go_paths.py"
+      ],
+      "wall_s": 0.275,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_sections",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_sections.py"
+      ],
+      "wall_s": 1.248,
+      "exit": 0
+    },
+    {
+      "label": "test_doc_wire",
+      "command": [
+        "python3",
+        "scripts/test/test_doc_wire.py"
+      ],
+      "wall_s": 0.441,
+      "exit": 0
+    }
+  ]
+}

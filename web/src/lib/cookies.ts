@@ -150,3 +150,44 @@ export function sitesOf(cookies: Cookie[], now = Date.now() / 1000): CookieSite[
 export function picked(sites: CookieSite[], ticked: Set<string>): Cookie[] {
   return sites.filter((s) => ticked.has(s.site)).flatMap((s) => s.cookies);
 }
+
+/** How many sites a computer's page lists in place; more fold behind one summary row that opens the whole list
+ *  (docs/design/DESIGN_SYSTEM.md ("Long lists on a detail page"), #5821). */
+export const SITES_IN_PLACE = 3;
+
+/** The whole list's order: by name, or the soonest to expire first (expired ones on top, those that end with the browser last). */
+export type SiteOrder = "name" | "expiry";
+
+const until = (s: CookieSiteNow) => (s.expires ? Date.parse(s.expires) : NaN);
+const byName = (a: CookieSiteNow, b: CookieSiteNow) => (a.domain < b.domain ? -1 : a.domain > b.domain ? 1 : 0);
+
+/** Every cookie of the site has expired: its latest one is past. */
+export function siteExpired(s: CookieSiteNow, now = Date.now()): boolean {
+  const at = until(s);
+  return Number.isFinite(at) && at <= now;
+}
+
+/** The sites whose domain holds `query` (any case), in `order`. */
+export function siteList(sites: CookieSiteNow[], query: string, order: SiteOrder): CookieSiteNow[] {
+  const q = query.trim().toLowerCase();
+  const shown = q ? sites.filter((s) => s.domain.toLowerCase().includes(q)) : [...sites];
+  if (order === "name") return shown.sort(byName);
+  const key = (s: CookieSiteNow) => {
+    const at = until(s);
+    return Number.isFinite(at) ? at : Infinity;
+  };
+  return shown.sort((a, b) => key(a) - key(b) || byName(a, b));
+}
+
+/** What the folded section says: how many sites, when the first still signed in expires, how many have expired. */
+export function siteSummary(sites: CookieSiteNow[], now = Date.now()): { count: number; first?: number; expired: number } {
+  let first: number | undefined;
+  let expired = 0;
+  for (const s of sites) {
+    const at = until(s);
+    if (!Number.isFinite(at)) continue;
+    if (at <= now) expired++;
+    else if (first === undefined || at < first) first = at;
+  }
+  return { count: sites.length, first, expired };
+}

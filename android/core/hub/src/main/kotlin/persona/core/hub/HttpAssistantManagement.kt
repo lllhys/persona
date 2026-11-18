@@ -1,6 +1,7 @@
 package persona.core.hub
 
 import persona.core.contracts.JsonCodec
+import persona.core.contracts.decodeStandingAuthorizations
 import persona.core.contracts.Session
 import persona.core.contracts.SessionKey
 import persona.core.contracts.api.*
@@ -77,6 +78,14 @@ class HttpAssistantManagement private constructor(
     override suspend fun revokeAlwaysGrant(session: SessionKey, keyHash: String): Boolean =
         (request("DELETE", listOf("api", "v1", "assistant", "conversations", session.sessionId, "always", keyHash), client = compactHttp)
             ["restart_required"] as? JsonPrimitive)?.booleanOrNull ?: false
+
+    override suspend fun standingAuthorizations() = decodeStandingAuthorizations(assistant("GET", "standing-authorizations"))
+
+    override suspend fun revokeStandingAuthorization(id: String) {
+        require(id.isNotBlank())
+        // One path segment, so a slash or a question mark in an id cannot change the route.
+        assistant("DELETE", "standing-authorizations", id)
+    }
     // The hub waits up to 12 s for the computer's self-check, and a probe runs a real one-word turn on top of it.
     override suspend fun readiness(probe: Boolean): AssistantReadiness = JsonCodec.decodeFromJsonElement(
         request("GET", listOf("api", "v1", "assistant", "readiness"), client = if (probe) runHttp else http,
@@ -141,6 +150,20 @@ class HttpAssistantManagement private constructor(
         require(session.sessionId.isNotBlank())
         assistant("POST", "conversations", session.sessionId, "unarchive", body = buildJsonObject { })
     }
+    override suspend fun setConversationTags(session: SessionKey, tags: List<String>) {
+        require(session.sessionId.isNotBlank())
+        assistant("PUT", "conversations", session.sessionId, "tags", body = buildJsonObject {
+            put("tags", JsonArray(tags.map(::JsonPrimitive)))
+        })
+    }
+    override suspend fun searchChats(query: String, limit: Int): AssistantSearchAnswer? = try {
+        val q = query.trim().take(200)
+        if (q.isEmpty()) AssistantSearchAnswer()
+        else JsonCodec.decodeFromJsonElement(request("GET", listOf("api", "v1", "assistant", "search"),
+            query = mapOf("q" to q, "limit" to limit.coerceIn(1, 50).toString())))
+    } catch (failure: HubFailure) {
+        if (failure.status == 404) null else throw failure
+    }
     override suspend fun archivedConversations(): List<Session> {
         val out = request("GET", listOf("api", "v1", "assistant"), query = mapOf("archived" to "1"))
         val machine = (out["machine_id"] as? JsonPrimitive)?.contentOrNull.orEmpty()
@@ -169,6 +192,11 @@ class HttpAssistantManagement private constructor(
         val out = refusals { request("POST", listOf("api", "v1", "assistant", "main", "new"), body, compactHttp) }
         return NewMainResult((out["archived"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
             (out["carried"] as? JsonPrimitive)?.booleanOrNull == true)
+    }
+    override suspend fun clearMainConversation(expect: String?): String {
+        val body = buildJsonObject { expect?.takeIf(String::isNotBlank)?.let { put("expect", it) } }
+        val out = refusals { request("POST", listOf("api", "v1", "assistant", "main", "clear"), body, compactHttp) }
+        return (out["archived"] as? JsonPrimitive)?.contentOrNull.orEmpty()
     }
     /** A 409 with a code is the hub refusing the action for a reason it words itself ("Answering", "Main chat already changed"…). */
     private inline fun <T> refusals(block: () -> T): T = try { block() } catch (failure: HubFailure) {
@@ -208,6 +236,25 @@ class HttpAssistantManagement private constructor(
         assistant("PUT", "memory", memoryName(name), body = buildJsonObject { put("content", content) })
     }
     override suspend fun deleteMemory(name: String) { assistant("DELETE", "memory", memoryName(name)) }
+    override suspend fun places(): List<SavedPlace> = assistant("GET", "places").list("places")
+    private fun placeId(id: String): String {
+        require(id.isNotBlank() && id != "." && id != ".." && '/' !in id && '\\' !in id)
+        return id
+    }
+    private fun SavedPlace.writeBody(): JsonObject = buildJsonObject {
+        put("name", name)
+        put("address", address)
+        put("latitude", latitude)
+        put("longitude", longitude)
+        put("radius_meters", radiusMeters)
+    }
+    override suspend fun savePlace(place: SavedPlace): SavedPlace {
+        val body = place.writeBody()
+        val out = if (place.id.isBlank()) assistant("POST", "places", body = body)
+        else assistant("PUT", "places", placeId(place.id), body = body)
+        return JsonCodec.decodeFromJsonElement(out.getValue("place"))
+    }
+    override suspend fun deletePlace(id: String) { assistant("DELETE", "places", placeId(id)) }
     override suspend fun skills(): AssistantSkills = try {
         val out = request("GET", listOf("api", "v1", "skills"))
         AssistantSkills((out["machine_id"] as? JsonPrimitive)?.contentOrNull.orEmpty(), (out["machine"] as? JsonPrimitive)?.contentOrNull,

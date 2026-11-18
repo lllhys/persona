@@ -324,15 +324,26 @@ fun ExtensionCatalogPage(
     if (removing && extension != null) UninstallDialog(extension.label, onDismiss = { removing = false }, installedVersion = extension.installed,
         members = names.named(packMembers)) { keep, members ->
         removing = false
-        scope.launch { if (model.uninstall(keep, members = members)) feedback?.notice(ExtensionText.uninstalled(res, extension.label, members, model.removal)) }
+        scope.launch {
+            if (model.uninstall(keep, members = members) && model.state.value.removalNotice == null) {
+                feedback?.notice(ExtensionText.uninstalled(res, extension.label, members, model.removal))
+            }
+        }
     }
     // Others depend on it (#5611): asked as on its own page, then removed with them switched off.
     state.cascade?.let { ask ->
         val name = extension?.label ?: extensionId
         JDialog({ model.dismissCascade() }, title = stringResource(R.string.settings_ext_dependents_title), text = ExtensionText.cascade(res, ask, name),
             destructive = true, confirm = stringResource(R.string.settings_ext_dependents_remove) to {
-                scope.launch { if (model.confirmCascade()) feedback?.notice(ExtensionText.uninstalled(res, name, ask.members, model.removal)) }
+                scope.launch {
+                    if (model.confirmCascade() && model.state.value.removalNotice == null) {
+                        feedback?.notice(ExtensionText.uninstalled(res, name, ask.members, model.removal))
+                    }
+                }
             })
+    }
+    state.removalNotice?.let { notice ->
+        ExtensionRemovalWarningsSheet(notice, onDone = model::dismissRemovalNotice)
     }
     state.partial?.let { PackPartialDialog(it, extension?.label ?: extensionId, names) { model.dismissPartial() } }
 }
@@ -504,7 +515,9 @@ internal fun UninstallDialog(
     var keep by remember { mutableStateOf(true) }
     var withMembers by remember { mutableStateOf(false) }
     val version = installedVersion?.takeIf { it.isNotBlank() } ?: stringResource(R.string.settings_extension_missing)
-    val text = stringResource(R.string.settings_extension_remove_version, version) + "\n\n" + stringResource(R.string.settings_ext_uninstall_text)
+    val cleanup = stringResource(if (keep) R.string.settings_ext_uninstall_keep_result else R.string.settings_ext_uninstall_delete_data_result)
+    val text = stringResource(R.string.settings_extension_remove_version, version) + "\n\n" +
+        stringResource(R.string.settings_ext_uninstall_text) + "\n\n" + cleanup
     JDialog(onDismiss, title = stringResource(R.string.settings_ext_uninstall_title, name), text = text,
         confirm = stringResource(R.string.settings_ext_uninstall) to { onConfirm(keep, withMembers && members.isNotEmpty()) }, destructive = true) {
         UninstallChoice(keep, { keep = it }, stringResource(R.string.settings_ext_keep_data), stringResource(R.string.settings_ext_keep_data_hint), "uninstall-keep-data")

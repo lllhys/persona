@@ -1,7 +1,8 @@
 import XCTest
 
 /// The shell's Assistant | Agents switch after a page from the drawer (docs/apple/ios.md「New shell」): open Knowledge (or Inbox, Scheduled Tasks,
-/// Machines), go back, switch to Agents: the Agents list must be what is drawn, not just the switch saying so (TestFlight 70:
+/// Machines), go back to the conversation (its row in the place's drawer, or the edge swipe: a place's root has ☰ and no Back,
+/// docs/design/sidebar-navigation.md), switch to Agents: the Agents list must be what is drawn, not just the switch saying so (TestFlight 70:
 /// the switch said Agents over the empty chat); switch back: Assistant again. Swiped back from Knowledge with its search open, the
 /// root kept a system navigation bar that pushed the top bar ~106 pt down: a tap on the switch where it belongs hit
 /// the empty bar (`RootBarHidden`).
@@ -9,8 +10,9 @@ final class ShellSwitchTests: XCTestCase {
     private var app: XCUIApplication!
     private var finger: ShellFinger!
 
-    override func setUp() {
+    override func setUpWithError() throws {
         continueAfterFailure = false
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("the iPhone shell's switch: the iPad has its sidebar column and tabs") }
     }
 
     @MainActor @discardableResult private func see(_ e: XCUIElement, _ what: String, timeout: TimeInterval = 10) -> XCUIElement {
@@ -89,8 +91,9 @@ final class ShellSwitchTests: XCTestCase {
         reachable(chatComposer, "助手 again after \(how)")
     }
 
-    /// Back from a pushed page: the back button, or the edge swipe as a finger does it (held, slow; a quick flick is
-    /// not taken for the edge gesture on iOS 27 simulators).
+    /// Back from a place to the conversation: the place's ☰ and the conversation's row in the drawer (a place's root has
+    /// no Back, #7799), or the edge swipe as a finger does it (held, slow; a quick flick is not taken for the edge
+    /// gesture on iOS 27 simulators).
     @MainActor private func back(from page: XCUIElement, swipe: Bool) {
         for _ in 0..<3 where page.exists {
             sleep(1) // once the push has settled (a tap during its animation can be lost)
@@ -100,7 +103,8 @@ final class ShellSwitchTests: XCTestCase {
                     .press(forDuration: 0.1, thenDragTo: w.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)),
                            withVelocity: .slow, thenHoldForDuration: 0.1)
             } else {
-                page.buttons["BackButton"].firstMatch.tap()
+                see(page.buttons["shell-place-sidebar"].firstMatch, "☰ on the place").tap()
+                see(button("sidebar-main"), "the conversation in the place's drawer").tap()
             }
             _ = page.waitForNonExistence(timeout: 3)
         }
@@ -112,7 +116,7 @@ final class ShellSwitchTests: XCTestCase {
         launchShell()
         see(button("assistant-sidebar-button"), "☰", timeout: 15)
         for (from, swipe) in [("助手", false), ("Agents", true), ("助手", true), ("Agents", false)] {
-            let how = "\(title) from \(from), back by \(swipe ? "swipe" : "button")"
+            let how = "\(title) from \(from), back by \(swipe ? "swipe" : "the drawer")"
             if from == "Agents" {
                 finger.switchTo(agents: true, "Agents before \(how)")
                 reachable(button("agents-new"), "Agents before \(how)")

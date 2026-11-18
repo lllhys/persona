@@ -174,6 +174,7 @@ func (s *Service) insertDecision(ctx context.Context, st todoStore, row db.TodoD
 		if row.Source == db.DecisionManual {
 			s.askTodoDecided(context.WithoutCancel(ctx), row) // the owner's call on a question's to-do (ask_todo.go)
 		}
+		s.parkDecided(context.WithoutCancel(ctx), row) // what a parked task waited for may have come (parked.go)
 	}
 	if err == nil && ok && postable(row) {
 		s.threadPost(row.TodoID, threadEvent{kind: threadDecision, text: decisionLine(row)})

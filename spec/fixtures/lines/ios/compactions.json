@@ -1,0 +1,574 @@
+{
+  "schema_version": 1,
+  "domain": "lines",
+  "description": "Current iOS (apple/) only: a compaction's continuation (「已从压缩的上下文继续」) and idle note join its boundary. Not part of the shared corpus that Android's LinesFixtureTest replays; the iOS replay in ../README.md checks these cases exactly.",
+  "cases": [
+    {
+      "name": "compaction_continuation_joins_its_boundary_mid_turn",
+      "description": "A compaction mid-turn: the boundary and the continuation after it are one compaction step in the work line; the continuation is no step of its own.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatStore.compactions (the continuation is a note of its boundary) / buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: flatLines / workItems / isCompaction",
+        "apple/PersonaTests/ChatLinesTests.swift: aCompactionMidTurnIsOneStepOfItsWork"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "做"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Bash"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "ok",
+            "tool_use_id": "call_a"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "system",
+            "kind": "notice",
+            "text": "上下文已压缩"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "system",
+            "kind": "notice",
+            "text": "已从压缩的上下文继续"
+          },
+          {
+            "id": "6#0",
+            "seq": 6,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_b",
+            "tool_name": "Read"
+          },
+          {
+            "id": "7#0",
+            "seq": 7,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "ok",
+            "tool_use_id": "call_b"
+          },
+          {
+            "id": "8#0",
+            "seq": 8,
+            "role": "assistant",
+            "kind": "text",
+            "text": "好了"
+          }
+        ],
+        "open_work": [
+          "w-1#0"
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "做",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": true,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Bash",
+                "result_id": "3#0",
+                "result_text": "ok",
+                "running": false,
+                "type": "tool"
+              },
+              {
+                "id": "4#0",
+                "text": "上下文已压缩",
+                "type": "notice"
+              },
+              {
+                "call_id": "call_b",
+                "failed": false,
+                "id": "6#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": "7#0",
+                "result_text": "ok",
+                "running": false,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 2"
+            ],
+            "summary_short": [
+              "工具 2"
+            ],
+            "thoughts": 0,
+            "tools": 2,
+            "type": "work",
+            "unresolved_tools": 0
+          },
+          {
+            "first": true,
+            "group_id": "w-1#0",
+            "id": "w-1#0/2#0",
+            "is_input": false,
+            "separator_before": false,
+            "step": {
+              "call_id": "call_a",
+              "failed": false,
+              "id": "2#0",
+              "image_count": 0,
+              "name": "Bash",
+              "result_id": "3#0",
+              "result_text": "ok",
+              "running": false,
+              "type": "tool"
+            },
+            "type": "work_step"
+          },
+          {
+            "first": false,
+            "group_id": "w-1#0",
+            "id": "w-1#0/4#0",
+            "is_input": false,
+            "separator_before": true,
+            "step": {
+              "id": "4#0",
+              "text": "上下文已压缩",
+              "type": "notice"
+            },
+            "type": "work_step"
+          },
+          {
+            "first": false,
+            "group_id": "w-1#0",
+            "id": "w-1#0/6#0",
+            "is_input": false,
+            "separator_before": true,
+            "step": {
+              "call_id": "call_b",
+              "failed": false,
+              "id": "6#0",
+              "image_count": 0,
+              "name": "Read",
+              "result_id": "7#0",
+              "result_text": "ok",
+              "running": false,
+              "type": "tool"
+            },
+            "type": "work_step"
+          },
+          {
+            "count": 3,
+            "group_id": "w-1#0",
+            "id": "w-1#0-end",
+            "is_input": false,
+            "separator_before": true,
+            "type": "work_end"
+          },
+          {
+            "id": "8#0",
+            "is_input": false,
+            "text": "好了",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": "8#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0",
+              "4#0",
+              "tools-6#0",
+              "8#0"
+            ],
+            "process_ids": [
+              "tools-2#0",
+              "4#0",
+              "tools-6#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 2,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "from_test": "aCompactionMidTurnIsOneStepOfItsWork"
+    },
+    {
+      "name": "idle_compaction_after_answer_is_one_divider",
+      "description": "A compaction while idle: the boundary, the continuation and the idle note are one divider after the answer, not part of the exchange's work line.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatStore.compactions (the continuation and the idle note join the boundary) / buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: flatLines (an idle compaction after the answer) / workItems",
+        "apple/PersonaTests/ChatLinesTests.swift: anIdleCompactionAfterWorkIsAfterTheAnswer / anIdleCompactionIsOneDivider"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "看一下"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Bash"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "ok",
+            "tool_use_id": "call_a"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "text",
+            "text": "看完了"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "system",
+            "kind": "notice",
+            "text": "上下文已压缩"
+          },
+          {
+            "id": "6#0",
+            "seq": 6,
+            "role": "system",
+            "kind": "notice",
+            "text": "已从压缩的上下文继续"
+          },
+          {
+            "id": "7#0",
+            "seq": 7,
+            "role": "system",
+            "kind": "notice",
+            "text": "Compacted while idle, before the prompt cache expired · turn off with \"idleCompaction\": false in settings.json"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "看一下",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Bash",
+                "result_id": "3#0",
+                "result_text": "ok",
+                "running": false,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 0
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "text": "看完了",
+            "type": "reply"
+          },
+          {
+            "id": "5#0",
+            "is_input": false,
+            "text": "上下文已压缩",
+            "type": "notice"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": "4#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0",
+              "4#0",
+              "5#0"
+            ],
+            "process_ids": [
+              "tools-2#0",
+              "5#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    },
+    {
+      "name": "compaction_continuation_alone_is_a_divider",
+      "description": "A continuation whose boundary is on an older page stands in for it as a divider and does not join the next message.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatStore.compactions (a continuation without its boundary stands in for it) / buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: flatLines (only compactions: dividers, no work line)",
+        "apple/PersonaTests/ChatLinesTests.swift: aSummaryAloneOrACodexNoticeIsADivider"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "system",
+            "kind": "notice",
+            "text": "已从压缩的上下文继续"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "user",
+            "kind": "text",
+            "text": "继续"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "assistant",
+            "kind": "text",
+            "text": "好的，接着做"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": false,
+            "text": "已从压缩的上下文继续",
+            "type": "notice"
+          },
+          {
+            "id": "2#0",
+            "is_input": true,
+            "text": "继续",
+            "type": "user"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "text": "好的，接着做",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0"
+            ],
+            "process_ids": [
+              "1#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [],
+            "wake_ids": []
+          },
+          {
+            "answer_id": "3#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "2#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "2#0",
+              "3#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "2#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "from_test": "aSummaryAloneOrACodexNoticeIsADivider"
+    },
+    {
+      "name": "manual_compaction_is_a_divider_after_the_command",
+      "description": "/compact: the boundary with its compaction data and the continuation are one divider after the command, with no work line to open.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatStore.compactions / buildRows / ChatBlock.build",
+        "apple/Persona/Views/Chat/ChatLines.swift: flatLines (only compactions: dividers, no work line)",
+        "apple/PersonaTests/ChatLinesTests.swift: aManualCompactionIsADividerAfterTheCommand"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "/compact"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "system",
+            "kind": "notice",
+            "text": "上下文已压缩",
+            "compact": {
+              "trigger": "manual",
+              "pre_tokens": 151467
+            }
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "system",
+            "kind": "notice",
+            "text": "已从压缩的上下文继续"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "/compact",
+            "type": "user"
+          },
+          {
+            "id": "2#0",
+            "is_input": false,
+            "text": "上下文已压缩",
+            "type": "notice"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "2#0"
+            ],
+            "process_ids": [
+              "2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "from_test": "aManualCompactionIsADividerAfterTheCommand"
+    }
+  ]
+}

@@ -32,6 +32,18 @@ enum class TodoListSort(val key: String) {
     }
 }
 
+/**
+ * What the list's sections are ([key] is what the device keeps): the status sections (the default), or one section per
+ * direction of the hub's tree (#4352), offered only while the hub has the tree.
+ */
+enum class TodoListGrouping(val key: String) {
+    Status("status"), Direction("direction");
+
+    companion object {
+        fun of(key: String?): TodoListGrouping = entries.firstOrNull { it.key == key } ?: Status
+    }
+}
+
 /** When a to-do is due, for the filter: its moment, or the start of its day in [zone]; null without either. */
 fun Todo.filterDue(zone: ZoneId): Instant? = parseTime(dueAt) ?: dueDay?.atStartOfDay(zone)?.toInstant()
 

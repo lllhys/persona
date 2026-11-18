@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/link"
 )
 
@@ -49,7 +50,7 @@ func (f sshPairFlags) build(rawLink string) (*link.SSH, error) {
 		return nil, nil
 	}
 	if strings.TrimSpace(f.server) == "" {
-		return nil, errors.New("用了 --ssh-target 或 --ssh-always 时要一起填 --ssh <服务器>")
+		return nil, link.NewTextError("link-cli.ssh_flags_require_server", nil)
 	}
 	always := f.always
 	if !f.alwaysSet {
@@ -140,10 +141,10 @@ func sshCmd(e *env, args []string) error {
 			return enc.Encode(sshStatusJSON{SSH: cur, DefaultTarget: defTarget})
 		}
 		if c == nil || c.SSH == nil {
-			fmt.Fprintln(e.stdout, "没有设 SSH 隧道（persona-link ssh <服务器> 设一个）。")
+			fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_none"))
 			return nil
 		}
-		fmt.Fprintf(e.stdout, "SSH 隧道：%s → %s（%s）\n", c.SSH.Server, c.SSH.Target, sshRouteText(c.SSH.Always))
+		fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_current", i18n.Args{"server": c.SSH.Server, "target": c.SSH.Target, "route": sshRouteText(c.SSH.Always)}))
 		return nil
 	}
 
@@ -157,9 +158,9 @@ func sshCmd(e *env, args []string) error {
 			enc.SetIndent("", "  ")
 			return enc.Encode(sshStatusJSON{SSH: nil})
 		}
-		fmt.Fprintln(e.stdout, "已移除 SSH 隧道。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_removed"))
 		if link.Running(cfgPath) {
-			fmt.Fprintln(e.stdout, "在运行的 persona-link 正在切回直连。")
+			fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_switch_direct"))
 		}
 		return nil
 	}
@@ -196,7 +197,7 @@ func sshCmd(e *env, args []string) error {
 				rep.Server, rep.Target = strings.TrimSpace(server), strings.TrimSpace(target)
 			}
 			if err == nil {
-				rep.Message = fmt.Sprintf("经 SSH 连上了 %s 上的 hub。", rep.Target)
+				rep.Message = i18n.T(i18n.Default, "link-cli.ssh_test_success", i18n.Args{"target": rep.Target})
 			} else {
 				var se *link.SSHError
 				if errors.As(err, &se) {
@@ -221,7 +222,7 @@ func sshCmd(e *env, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(e.stdout, "经 SSH 连上了 %s 上的 hub。\n", norm.Target)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_test_success", i18n.Args{"target": norm.Target}))
 		return nil
 	}
 
@@ -229,7 +230,7 @@ func sshCmd(e *env, args []string) error {
 		return errUsage
 	}
 	if strings.TrimSpace(server) == "" {
-		return errors.New("要填 SSH 服务器地址：persona-link ssh <服务器>")
+		return link.NewTextError("link-cli.ssh_server_required", nil)
 	}
 	saved, err := link.SetSSH(cfgPath, &link.SSH{Server: server, Target: target, Always: always})
 	if err != nil {
@@ -241,16 +242,16 @@ func sshCmd(e *env, args []string) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(sshStatusJSON{SSH: saved})
 	}
-	fmt.Fprintf(e.stdout, "已设好 SSH 隧道：%s → %s（%s）。\n", saved.Server, saved.Target, sshRouteText(saved.Always))
+	fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_set", i18n.Args{"server": saved.Server, "target": saved.Target, "route": sshRouteText(saved.Always)}))
 	if link.Running(cfgPath) {
-		fmt.Fprintln(e.stdout, "在运行的 persona-link 正在按新设置重连。")
+		fmt.Fprintln(e.stdout, terminalText("link-cli.ssh_reconnect"))
 	}
 	return nil
 }
 
 func sshRouteText(always bool) string {
 	if always {
-		return "总是走 SSH"
+		return terminalText("link-cli.ssh_route_always")
 	}
-	return "先试直连，不通再走 SSH"
+	return terminalText("link-cli.ssh_route_fallback")
 }

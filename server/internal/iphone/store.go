@@ -33,9 +33,14 @@ type Record struct {
 	// before Bonjour when set.
 	Address string `json:"address,omitempty"`
 	// LastHost / LastPort is the last address a session came up on: the fallback when Bonjour finds nothing.
-	LastHost string    `json:"last_host,omitempty"`
-	LastPort int       `json:"last_port,omitempty"`
-	PairedAt time.Time `json:"paired_at"`
+	LastHost string `json:"last_host,omitempty"`
+	LastPort int    `json:"last_port,omitempty"`
+	// AutoPrepare: the owner prepared this phone from the app once (its developer disk image mounted, StartPrepare),
+	// which allows this computer to mount it again by itself whenever the phone comes back without it, as after
+	// every restart (#8199). Each mount asks Apple's signing server for the phone's ticket (iphone-bridge.md
+	// "mount_ddi"). Forgetting the phone drops it with the record.
+	AutoPrepare bool      `json:"auto_prepare,omitempty"`
+	PairedAt    time.Time `json:"paired_at"`
 }
 
 // Record.Transport values.

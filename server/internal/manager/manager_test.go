@@ -20,6 +20,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistant"
 	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/compat"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/update"
 )
 
@@ -48,7 +49,7 @@ func isolate(t *testing.T) string {
 	t.Setenv("PERSONA_HOME", filepath.Join(home, ".persona"))
 	t.Setenv("PERSONA_HOME", filepath.Join(home, ".persona"))
 	t.Setenv("PERSONA_DATABASE_URL", "")
-	t.Setenv("PERSONA_DATABASE_URL", "")
+	t.Setenv("PERSONA_LANG", "zh-Hans") // legacy output goldens are explicitly Chinese
 	return home
 }
 
@@ -60,7 +61,7 @@ func TestJoin(t *testing.T) {
 	srv := httptest.NewServer(j)
 	defer srv.Close()
 	ctx := context.Background()
-	noDocker := func(context.Context) error { return ConfigError{errNoDocker} }
+	noDocker := func(context.Context) error { return ConfigError{noDockerError(i18n.ZhHans)} }
 	docker := func(context.Context) error { return nil }
 	var ce ConfigError
 	if _, _, err := Join(ctx, JoinOptions{Hub: srv.URL, Code: "mi_good", CheckDocker: noDocker}); !errors.As(err, &ce) ||

@@ -7,10 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./store", () => ({ onHubEvent: () => () => {} }));
 vi.mock("../ui/atoms", () => ({ toast: vi.fn() }));
 
-import {
-  fetchInboxTree, getInbox, itemKey, itemRoute, listInboxMutes, listInboxPolicies, muteItem, reloadInbox, removeInboxPolicy, replaceItem,
-  resetInboxForTests, saveInboxPolicy, setAllDone, setDone, unmuteInbox, type InboxItem,
-} from "./inbox";
+import { getInbox, itemKey, itemRoute, muteItem, reloadInbox, replaceItem, resetInboxForTests, saveInboxPolicy, setAllDone, setDone, type InboxItem } from "./inbox";
+import { fetchInboxTree, listInboxMutes, listInboxPolicies, removeInboxPolicy, unmuteInbox } from "./inbox-page";
 import { resetManagerChoice, setRosterDefault } from "./manager-choice";
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 9, 30, 10, 0) - minutes * 60_000).toISOString();

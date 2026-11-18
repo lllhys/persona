@@ -7,7 +7,6 @@
   "profile": "Profile",
   "sidebar": "Sidebar",
   "empty_title": "What can I do for you?",
-  "empty_body_machines": "I can read your calendar, Lark, email and knowledge base, and get things done on {machines}.",
   "empty_body": "I can read your calendar, Lark, email and knowledge base, and get things done on your computers.",
   "ask_placeholder": "What can {name} do for you today?",
   "empty_body_setup": "One more step before we start. Here's what's missing.",

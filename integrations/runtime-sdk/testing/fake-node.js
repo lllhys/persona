@@ -12,20 +12,20 @@ import { Peer, RpcError } from '../lib/wire.js'
  *   path (default: a fresh temp one); whether hello says a hub is connected (default true; setHub changes it and tells
  *   the runtime); the node's features; the hub's tools mcp.tools answers (n.tools changes them); strict: a card for a
  *   session the runtime's last list does not have is refused, as the node refuses it.
- * @returns {Promise<{ path: string, ready: Promise<void>, hello: any, peer: Peer, events: {event: string, params: any}[],
+ * @returns {Promise<{ path: string, ready: Promise<void>, hello: any, peer: Peer, peers: Set<Peer>, events: {event: string, params: any}[],
  *   last(event: string): any, all(event: string): any[], asked: any[], refused: any[], resolve: (ix: any) => any,
  *   close(): void }>}
  *   Also: tools / toolCalls / callTool (how mcp.call answers), refuseHello (an RpcError hello answers with, or none),
  *   holdHello (a promise the next hellos wait on before they are answered, or none),
  *   offer (a package {name, hash, version, files} this node carries: hello offers it to a runtime running another hash
- *   of it, runtime.package answers it) and packageCalls (the runtime.package calls).
+ *   of it, runtime.package answers it; offerUpdates false leaves only runtime.package) and packageCalls (the runtime.package calls).
  */
 export async function startFakeNode(t, opts = {}) {
   const dir = opts.path ? undefined : mkdtempSync('/tmp/jrt-') // unix socket paths are short on macOS: not under $TMPDIR
   const path = opts.path ?? join(dir, 'runtime.sock')
-  const n = { path, events: [], hello: undefined, peer: undefined, asked: [], refused: [], resolve: () => ({ dismiss: true }), hub: opts.hub ?? true, hellos: 0,
+  const n = { path, events: [], hello: undefined, peer: undefined, peers: new Set(), asked: [], refused: [], resolve: () => ({ dismiss: true }), hub: opts.hub ?? true, hellos: 0,
     tools: opts.tools ?? [], toolCalls: [], callTool: (params) => ({ content: [{ type: 'text', text: `${params.name} ran` }], is_error: false }),
-    refuseHello: undefined, offer: undefined, packageCalls: [] }
+    refuseHello: undefined, offer: undefined, offerUpdates: true, packageCalls: [] }
   let connected
   n.ready = new Promise((r) => { connected = r })
   const server = createServer((socket) => {
@@ -40,7 +40,7 @@ export async function startFakeNode(t, opts = {}) {
           n.peer = p
           setImmediate(connected)
           const res = { protocol: 1, node_version: 'fake', hub: n.hub, features: opts.features ?? ['prefer_running', 'resume_argv', 'handover'] }
-          if (n.offer && params?.package?.name === n.offer.name && params.package.hash !== n.offer.hash) {
+          if (n.offerUpdates !== false && n.offer && params?.package?.name === n.offer.name && params.package.hash !== n.offer.hash) {
             res.update = { name: n.offer.name, hash: n.offer.hash, version: n.offer.version ?? 'fake' }
           }
           return res
@@ -68,6 +68,8 @@ export async function startFakeNode(t, opts = {}) {
       },
       onEvent: (event, params) => n.events.push({ event, params }),
     })
+    n.peers.add(p)
+    void p.done.finally(() => n.peers.delete(p))
   })
   await new Promise((r) => server.listen(path, r))
   n.last = (event) => n.events.filter((e) => e.event === event).at(-1)?.params

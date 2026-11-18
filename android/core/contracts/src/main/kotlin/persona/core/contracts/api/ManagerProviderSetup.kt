@@ -8,7 +8,9 @@ internal class ManagerProviderSetup(private val source: ProviderSetup, manager: 
     private val owner = RequestManager(manager)
     override val builtinPresets get() = source.builtinPresets
     override val launcherScope get() = source.launcherScope
+    override val launcherImportParse get() = source.launcherImportParse
     override fun forManager(manager: String) = source.forManager(manager)
+    override fun ownsMachine(id: String) = source.ownsMachine(id)
     override suspend fun presets() = withContext(owner) { source.presets() }
     override suspend fun add(provider: NewProvider) = withContext(owner) { source.add(provider) }
     override suspend fun create(provider: NewProvider) = withContext(owner) { source.create(provider) }
@@ -20,6 +22,7 @@ internal class ManagerProviderSetup(private val source: ProviderSetup, manager: 
     override suspend fun remove(name: String) = withContext(owner) { source.remove(name) }
     override suspend fun restore(name: String) = withContext(owner) { source.restore(name) }
     override suspend fun check(name: String, machine: String?) = withContext(owner) { source.check(name, machine) }
-    override suspend fun importPreview(machine: String) = withContext(owner) { source.importPreview(machine) }
-    override suspend fun import(machine: String, providers: List<String>) = withContext(owner) { source.import(machine, providers) }
+    override suspend fun importPreview(machine: String, alias: String?) = withContext(owner) { source.importPreview(machine, alias) }
+    override suspend fun import(machine: String, providers: List<String>, alias: String?) = withContext(owner) { source.import(machine, providers, alias) }
+    override suspend fun parse(text: String) = withContext(owner) { source.parse(text) }
 }

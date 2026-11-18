@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -57,7 +58,7 @@ func TestStalledStartReportsDoNotChangeExistingHealth(t *testing.T) {
 		s.StartEnded(ctx, StartEnded{MachineID: "l4", Launcher: "work", Code: proto.CodeAgentStartStalled, Error: "stalled"})
 		s.followStarts(ctx, DeviceSessions{MachineID: "l4", Sessions: []proto.Session{{SessionID: "pending", Launcher: "work", StartErrorCode: proto.CodeAgentStartStalled, StartError: "stalled"}}})
 		synctest.Wait()
-		if got := healthState(s, "l4", "work"); got != before {
+		if got := healthState(s, "l4", "work"); !reflect.DeepEqual(got, before) {
 			t.Fatalf("stalled start changed existing health: before %+v, after %+v", before, got)
 		}
 		if len(f.checked) != 0 {
@@ -137,5 +138,41 @@ func TestStartTabRefusalsLeaveLauncherHealth(t *testing.T) {
 	}
 	if startStalled(&rpc.Error{Code: proto.CodeLauncherMissing}) {
 		t.Error("launcher_missing left out")
+	}
+}
+
+// A start whose own wait ran out (the node's link stuck, taskStartTimeout spent) or was cancelled learned nothing of the
+// launcher: no failing record, no follow-up probe, and a record already there stays as it was. A node's own timeout
+// text still counts (TestLauncherHealthRoundAndDetour).
+func TestStartWaitEndedSaysNothingOfTheLauncher(t *testing.T) {
+	for name, err := range map[string]error{
+		"deadline":         fmt.Errorf("session.start: %w", context.DeadlineExceeded),
+		"canceled":         context.Canceled,
+		"relayed deadline": &rpc.Error{Message: context.DeadlineExceeded.Error()},
+		"relayed canceled": &rpc.Error{Message: context.Canceled.Error()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := launcherHealthHubOn(t, newStorelessService)
+			synctest.Test(t, func(t *testing.T) {
+				ctx := context.Background()
+				s.recordStartFailure(ctx, "l4", "work", err)
+				synctest.Wait()
+				if r, ok := s.launcherHealth(ctx, "l4", "work"); ok {
+					t.Fatalf("an ended wait counted: %+v", r)
+				}
+				before := s.recordHealth(ctx, "box", "work", healthResult{ok: true, source: healthSourceCheck})
+				s.recordStartFailure(ctx, "box", "work", err)
+				synctest.Wait()
+				if got := healthState(s, "box", "work"); !reflect.DeepEqual(got, before) {
+					t.Fatalf("an ended wait changed the record: before %+v, after %+v", before, got)
+				}
+				if len(f.checked) != 0 {
+					t.Fatalf("an ended wait was probed: %v", f.checked)
+				}
+			})
+		})
+	}
+	if startWaitEnded(&rpc.Error{Message: "session.start: context deadline exceeded"}) || startWaitEnded(errors.New("session.start: context deadline exceeded")) {
+		t.Fatal("a node's own timeout text taken for the hub's ended wait")
 	}
 }

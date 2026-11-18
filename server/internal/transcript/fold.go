@@ -1,6 +1,7 @@
 package transcript
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,14 +19,23 @@ const (
 	foldThinkingPreviewChars = 512
 )
 
-// FoldWork replaces each run of the agent's work in a page — tool calls with their results and images, thoughts —
-// with one KindFold item that counts it (proto.Fold). The prompts, replies and notices stay as they are. A chat shows
-// that work folded into one line, yet a long Codex exchange made the phone's first page 1400 rows and a megabyte of
-// it (docs/protocol/protocol.md "Folded work").
-//
+// FoldWork replaces each run of the agent's work in a historical page — tool calls with their results and images,
+// thoughts and Codex commentary — with one KindFold item that counts it (proto.Fold). The prompts, final replies and
+// notices stay as they are. A chat shows that work folded into one line, yet a long Codex exchange made the phone's
+// first page 1400 rows and a megabyte of it (docs/protocol/protocol.md "Folded work").
+func FoldWork(items []proto.Item) []proto.Item {
+	return foldWork(items, false)
+}
+
+// FoldWorkLatest is FoldWork for the latest page: its newest commentary may still be the running turn's current
+// answer, so it stays visible until a final answer follows it.
+func FoldWorkLatest(items []proto.Item) []proto.Item {
+	return foldWork(items, true)
+}
+
 // A call whose result is not in the page (still running) and a result whose call is not (on an older page) are not
 // folded: the app pairs them with what comes later or earlier, and a fold hides them from that.
-func FoldWork(items []proto.Item) []proto.Item {
+func foldWork(items []proto.Item, latestPage bool) []proto.Item {
 	uses, results, agents := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	taskUses := map[string]proto.Item{}
 	for _, it := range items {
@@ -40,10 +50,26 @@ func FoldWork(items []proto.Item) []proto.Item {
 			results[it.ToolUseID] = true
 		}
 	}
-	inFold := func(it proto.Item) bool {
+	// The latest commentary is the turn's current answer until a final answer follows it. Keep it visible on a
+	// running page; once a final answer exists, all earlier commentary belongs to the completed work.
+	latestNarration := -1
+	if latestPage {
+		for i := len(items) - 1; i >= 0; i-- {
+			if items[i].Role == "assistant" && items[i].Kind == proto.KindText {
+				if items[i].Narration {
+					latestNarration = i
+				}
+				break
+			}
+		}
+	}
+	inFold := func(index int) bool {
+		it := items[index]
 		switch it.Kind {
 		case proto.KindThinking:
 			return true
+		case proto.KindText:
+			return it.Narration && index != latestNarration
 		case proto.KindToolUse, proto.KindToolResult, proto.KindImage: // a tool's image goes with its call
 			// a subagent's call stays on the page: the chat draws it as a card, which never folds (#5602)
 			return it.ToolUseID != "" && uses[it.ToolUseID] && results[it.ToolUseID] && !agents[it.ToolUseID]
@@ -52,13 +78,13 @@ func FoldWork(items []proto.Item) []proto.Item {
 	}
 	out := make([]proto.Item, 0, len(items))
 	for i := 0; i < len(items); {
-		if !inFold(items[i]) {
+		if !inFold(i) {
 			out = append(out, items[i])
 			i++
 			continue
 		}
 		j, size := i, 0
-		for j < len(items) && inFold(items[j]) {
+		for j < len(items) && inFold(j) {
 			size += len(items[j].Text) + len(items[j].ToolInput)
 			j++
 		}
@@ -78,12 +104,17 @@ func FoldWork(items []proto.Item) []proto.Item {
 
 func fold(run []proto.Item) proto.Item {
 	first, last := run[0], run[len(run)-1]
-	fo := &proto.Fold{Items: len(run), Until: last.TS, ThroughSeq: last.Seq, ThroughID: last.ID}
+	fo := &proto.Fold{Items: len(run), Until: last.TS, ThroughSeq: last.Seq, ThroughID: last.ID, ToolNames: []string{}}
 	latestThought := -1
 	for i, it := range run {
 		switch {
 		case it.Kind == proto.KindToolUse:
 			fo.Tools++
+			if it.ToolName != "" && len(fo.ToolNames) < proto.FoldToolNamesMax && !slices.Contains(fo.ToolNames, it.ToolName) {
+				fo.ToolNames = append(fo.ToolNames, it.ToolName)
+			}
+		case it.Kind == proto.KindToolResult && it.IsError:
+			fo.Errors++
 		case it.Kind == proto.KindThinking && strings.TrimSpace(it.Text) != "":
 			fo.Thoughts++
 			latestThought = i
@@ -97,6 +128,7 @@ func fold(run []proto.Item) proto.Item {
 	}
 	fo.Changes = foldChanges(run)
 	fo.Usage = foldUsage(run)
+	fo.Sources = foldSources(run)
 	return proto.Item{ID: "fold:" + first.ID, Seq: first.Seq, TS: first.TS, Role: "assistant", Kind: proto.KindFold, Fold: fo}
 }
 

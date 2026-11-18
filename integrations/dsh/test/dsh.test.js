@@ -45,6 +45,11 @@ function controller() {
       return s ? { asOfSeq: s.events.at(-1)?.seq ?? -1, values: s.values ?? {} } : null
     },
     pages: [],
+    selectedModels: [],
+    async selectModel(req) {
+      c.selectedModels.push({ ...req, at: Date.now() })
+      return { ok: true }
+    },
     async page({ address, throughSeq, beforeSeq, maxMessages }) {
       c.pages.push(address)
       // DSH pages a subagent only through its parent's address, and refuses its plain one.
@@ -84,7 +89,7 @@ const text = (seq, role, body) => role === 'user'
   : { type: 'assistant/message', seq, time: 0, surfaceOp: 'append', data: { message: { role: 'assistant', content: [{ type: 'text', text: body }] } } }
 
 async function setup(t, opts = {}) {
-  const n = await startFakeNode(t, { tools: opts.tools })
+  const n = await startFakeNode(t, { tools: opts.tools, features: opts.features })
   const ctl = controller()
   const ev = bus()
   const answered = []
@@ -98,6 +103,7 @@ async function setup(t, opts = {}) {
     agents: opts.agents,
     permissionPresets: opts.permissionPresets,
     jobs: opts.jobs,
+    models: opts.models,
   }, { socketPath: n.path, pushDelayMs: 5, retryMs: 20, interactions: opts.interactions, maxSessions: opts.maxSessions,
     runtime: opts.runtime, name: opts.name, launcher: opts.launcher, assistant: opts.assistant, presets: opts.presets })
   t.after(() => rt.stop())
@@ -162,6 +168,43 @@ test('pages history back from the end, by turns, before a seq, after a seq and o
   const range = await n.peer.call('session.items', { session_id: 'session-p', from_seq: 2, through_seq: 3 })
   assert.deepEqual(range.items.map((i) => i.text), ['a1', 'two'])
   await assert.rejects(n.peer.call('session.items', { session_id: 'nope' }), /没有会话/)
+})
+
+test('catch-up over more than 2,000 DSH events begins at the requested cursor', async (t) => {
+  const { n, ctl, rt } = await setup(t)
+  const events = Array.from({ length: 2501 }, (_, seq) => text(seq, seq % 2 === 0 ? 'user' : 'assistant', `message ${seq}`))
+  ctl.add('session-long', {}, events)
+  rt.start()
+  await n.ready
+
+  const result = await n.peer.call('session.items', { session_id: 'session-long', after_seq: 100 })
+  assert.equal(result.from_seq, 100, 'the batch must continue from the caller cursor')
+  assert.equal(result.to_seq, 600, 'the first 500 item-producing events form the first page')
+  assert.equal(result.more_after, true)
+  assert.equal(result.items.length, 500)
+  assert.equal(result.items[0].text, 'message 100')
+  assert.equal(result.items.at(-1).text, 'message 599')
+})
+
+test('a bounded catch-up window does not jump over non-displayed records', async (t) => {
+  const { n, ctl, rt } = await setup(t)
+  const events = Array.from({ length: 2501 }, (_, seq) => ({ type: 'model/changed', seq, time: 0, data: {} }))
+  events[2500] = text(2500, 'assistant', 'tail')
+  ctl.add('session-long', {}, events)
+  rt.start()
+  await n.ready
+
+  const first = await n.peer.call('session.items', { session_id: 'session-long', after_seq: 100 })
+  assert.equal(first.from_seq, 100)
+  assert.equal(first.to_seq, 2100)
+  assert.equal(first.more_after, true)
+  assert.deepEqual(first.items, [])
+
+  const second = await n.peer.call('session.items', { session_id: 'session-long', after_seq: first.to_seq })
+  assert.equal(second.from_seq, 2100)
+  assert.equal(second.to_seq, 2501)
+  assert.equal(second.more_after, false)
+  assert.deepEqual(second.items.map((item) => item.text), ['tail'])
 })
 
 test('sends with the client message id, queued when idle and steered while working', async (t) => {
@@ -308,6 +351,119 @@ test('a watch that starts mid-message gets the whole live text so far, not just 
   await until('delta', () => n.all('session.delta').length > 0)
   assert.equal(n.last('session.delta').text, 'Hello')
 })
+
+async function firstInteractionAfterAdmission(t, kind, { automatic = false, beforeStart = false } = {}) {
+  const n = await startFakeNode(t, { strict: true })
+  const ev = bus()
+  const sessions = new Map()
+  let browserAnswers = 0
+  let inventoryAtCard
+  let promptAdmitted
+  const admitted = new Promise((resolve) => { promptAdmitted = resolve })
+  const ctl = {
+    async list() { return { items: [...sessions.values()] } },
+    async create({ cwd }) {
+      sessions.set('session-new', { sessionId: 'session-new', cwd, updatedAt: Date.now(), running: false, blank: true })
+      return { sessionId: 'session-new' }
+    },
+    async prompt() {
+      // The real controller acknowledges inbox admission, rather than holding prompt open until the model turn ends.
+      sessions.get('session-new').blank = false
+      promptAdmitted()
+      return { accepted: true }
+    },
+  }
+  const rt = createDshRuntime({ controller: ctl, on: ev.on, hasLiveClient: () => true },
+    { socketPath: n.path, pushDelayMs: 5000, retryMs: 20, interactions: automatic ? undefined : 'phone' })
+  t.after(() => rt.stop())
+  rt.start()
+  await n.ready
+  await until('initial empty inventory', () => n.last('runtime.sessions'))
+  const starting = n.peer.call('session.start', { cwd: '/w/new', prompt: 'run the first tool' })
+  let startSettled = false
+  starting.then(() => { startSettled = true }, () => { startSettled = true })
+  if (beforeStart) {
+    await admitted
+    assert.equal(startSettled, false, 'the initial prompt settled, but the outer session.start RPC has not')
+  } else {
+    await starting
+  }
+  assert.ok(!n.last('runtime.sessions').sessions.some((s) => s.session_id === 'session-new'), 'the ordinary inventory push is still delayed')
+
+  const agent = { session: { id: 'session-new' } }
+  const plan = { id: 'review', question: 'Approve?', detail: '# Plan\n1. do it', options: [{ label: 'Approve' }, { label: 'Keep planning' }], intent: { kind: 'plan-review', approve: 'Approve' } }
+  const question = { id: 'q1', question: 'Which db?', options: [{ label: 'pg' }, { label: 'sqlite' }] }
+  const event = kind === 'permission' ? 'approval/request' : 'user-questions/request'
+  const payload = kind === 'permission'
+    ? { agent, toolName: 'bash', callId: 'first-call' }
+    : { agent, questions: [kind === 'plan' ? plan : question] }
+  n.resolve = () => {
+    inventoryAtCard = n.last('runtime.sessions')
+    if (kind === 'permission') return { allow: true }
+    if (kind === 'plan') return { approve: true }
+    return { answers: { 'Which db?': 'pg' } }
+  }
+  const fromBrowser = () => { browserAnswers++; return 'browser-answer' }
+  const result = await ev.waterfall(event, payload, fromBrowser)
+  if (beforeStart) await starting
+
+  assert.equal(browserAnswers, 0, 'the first post-admission interaction must not fall through to the browser')
+  assert.equal(n.asked.length, 1, 'exactly one phone card')
+  assert.equal(n.refused.length, 0, 'the node saw the session before its card')
+  assert.ok(inventoryAtCard?.sessions?.some((s) => s.session_id === 'session-new'), 'runtime.sessions containing the new id is published before interaction.create')
+  assert.equal(n.asked[0].kind, kind)
+  if (kind === 'permission') assert.equal(result, 'allowed-once')
+  if (kind === 'plan') assert.deepEqual(result, { answers: [{ id: 'review', selected: ['Approve'] }] })
+  if (kind === 'question') assert.deepEqual(result, { answers: [{ id: 'q1', selected: ['pg'] }] })
+}
+
+for (const [kind, label] of [['permission', 'approval'], ['question', 'question'], ['plan', 'plan review']]) {
+  test(`the first ${label} after immediate prompt admission goes to the phone before delayed inventory (#8203)`, async (t) => {
+    await firstInteractionAfterAdmission(t, kind)
+  })
+  test(`automatic mode keeps the after-start ${label} control on the phone (#8203)`, async (t) => {
+    await firstInteractionAfterAdmission(t, kind, { automatic: true })
+  })
+  test(`automatic mode routes the first ${label} after prompt admission but before session.start resolves (#8203)`, async (t) => {
+    await firstInteractionAfterAdmission(t, kind, { automatic: true, beforeStart: true })
+  })
+}
+
+for (const [label, error] of [
+  ['failure', new Error('initial prompt failed')],
+  ['cancellation', Object.assign(new Error('initial prompt cancelled'), { name: 'AbortError' })],
+]) {
+  test(`automatic mode leaves no phone-driven eligibility after initial prompt ${label} (#8203)`, async (t) => {
+    const n = await startFakeNode(t, { strict: true })
+    const ev = bus()
+    const sessions = new Map()
+    const ctl = {
+      async list() { return { items: [...sessions.values()] } },
+      async create({ cwd }) {
+        sessions.set('session-new', { sessionId: 'session-new', cwd, updatedAt: Date.now(), running: false, blank: true })
+        return { sessionId: 'session-new' }
+      },
+      async prompt() { throw error },
+    }
+    const rt = createDshRuntime({ controller: ctl, on: ev.on, hasLiveClient: () => true },
+      { socketPath: n.path, pushDelayMs: 5000, retryMs: 20 })
+    t.after(() => rt.stop())
+    rt.start()
+    await n.ready
+    await until('initial empty inventory', () => n.last('runtime.sessions'))
+    await assert.rejects(n.peer.call('session.start', { cwd: '/w/new', prompt: 'run the first tool' }), new RegExp(error.message))
+
+    let browserAnswers = 0
+    const result = await ev.waterfall('approval/request', {
+      agent: { session: { id: 'session-new' } }, toolName: 'bash', callId: 'after-failed-start',
+    }, () => { browserAnswers++; return 'browser-answer' })
+    assert.equal(result, 'browser-answer')
+    assert.equal(browserAnswers, 1, 'an unknown unlisted automatic session stays with its local UI')
+    assert.equal(n.asked.length, 0, 'a failed start leaves no phantom phone card')
+    assert.equal(n.refused.length, 0)
+    assert.ok(!n.last('runtime.sessions').sessions.some((s) => s.session_id === 'session-new'))
+  })
+}
 
 test('approvals of a session the phone drives go to the phone first; a dismissed card goes to the browser', async (t) => {
   const { n, ctl, ev, rt } = await setup(t)
@@ -508,6 +664,330 @@ test('the assistant\'s conversations: hello says so, the snapshot goes first, th
   assert.deepEqual(ctl.prompts.at(-1).content.map((b) => b.text), ['plain'])
 })
 
+test('assistant presets are active before prompt admission in both directions, without duplicate Plan sets (#8168)', async (t) => {
+  const id = 'assistant-modes'
+  const session = { id }
+  const agents = { get: (sessionId) => sessionId === id ? { session } : undefined }
+  const events = []
+  let activePreset = 'workspace-write'
+  const permissionPresets = { set: (target, name) => {
+    assert.equal(target, session)
+    activePreset = name
+    events.push(`set:${name}`)
+  } }
+  const { n, ctl, ev, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  const prompt = ctl.prompt.bind(ctl)
+  ctl.prompt = async (request) => {
+    events.push(`prompt:${request.content.at(-1).text}:${activePreset}`)
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+
+  const send = (text, mode, client_msg_id) => n.peer.call('session.send', { session_id: id, text, assistant: true, mode, client_msg_id })
+  await send('full access', 'bypassPermissions', 'mode-1')
+  ev.emit('session/event', { id }, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+  await send('inspect only', 'plan', 'mode-2')
+  await send('inspect only', 'plan', 'mode-2') // a retry shares the first send's answer
+  await send('still inspect', 'plan', 'mode-3')
+  await send('full access again', 'bypassPermissions', 'mode-4')
+
+  assert.deepEqual(events, [
+    'set:danger-full-access',
+    'prompt:full access:danger-full-access',
+    'set:read-only',
+    'prompt:inspect only:read-only',
+    'prompt:still inspect:read-only',
+    'set:danger-full-access',
+    'prompt:full access again:danger-full-access',
+  ])
+  assert.deepEqual(ctl.prompts.map((request) => request.requestId), ['mode-1', 'mode-2', 'mode-3', 'mode-4'])
+  assert.equal(ctl.prompts[0].mode, 'queue')
+  assert.ok(ctl.prompts.slice(1).every((request) => request.mode === 'steer'), 'a running session still steers every later prompt')
+})
+
+test('concurrent warm Plan and bypass sends admit each prompt under its own preset (#8168)', async (t) => {
+  const id = 'assistant-concurrent-warm'
+  const session = { id }
+  const agents = { get: (sessionId) => sessionId === id ? { session } : undefined }
+  const events = []
+  let activePreset = 'workspace-write'
+  const permissionPresets = { set: (target, name) => {
+    assert.equal(target, session)
+    activePreset = name
+    events.push(`set:${name}`)
+  } }
+  const { n, ctl, ev, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  const prompt = ctl.prompt.bind(ctl)
+  ctl.prompt = async (request) => {
+    events.push(`prompt:${request.content.at(-1).text}:${activePreset}`)
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+  ev.emit('session/event', { id }, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+
+  const send = (text, mode, client_msg_id) => n.peer.call('session.send', { session_id: id, text, assistant: true, mode, client_msg_id })
+  await Promise.all([
+    send('plan', 'plan', 'warm-plan'),
+    send('bypass', 'bypassPermissions', 'warm-bypass'),
+  ])
+
+  assert.deepEqual(events, [
+    'set:read-only',
+    'prompt:plan:read-only',
+    'set:danger-full-access',
+    'prompt:bypass:danger-full-access',
+  ])
+  assert.deepEqual(ctl.prompts.map((request) => [request.requestId, request.mode]), [
+    ['warm-plan', 'steer'],
+    ['warm-bypass', 'steer'],
+  ])
+})
+
+test('concurrent sends sharing a cold resume keep Plan read-only through prompt admission (#8168)', async (t) => {
+  const id = 'assistant-concurrent-cold'
+  const live = new Map()
+  const agents = { get: (sessionId) => live.get(sessionId) }
+  const events = []
+  let activePreset = 'danger-full-access'
+  let resumeCount = 0
+  let releaseResume
+  const resume = new Promise((resolve) => { releaseResume = resolve })
+  const permissionPresets = { set: (session, name) => {
+    activePreset = name
+    events.push(`set:${name}`)
+  } }
+  const { n, ctl, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  ctl.add(id, { cwd: '/home/u/.persona/assistant' })
+  ctl.resolveAgent = (sessionId) => {
+    resumeCount++
+    return resume.then(() => {
+      const agent = { session: { id: sessionId } }
+      live.set(sessionId, agent)
+      return { agent }
+    })
+  }
+  const prompt = ctl.prompt.bind(ctl)
+  ctl.prompt = async (request) => {
+    events.push(`prompt:${request.content.at(-1).text}:${activePreset}`)
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+
+  const send = (text, mode, client_msg_id) => n.peer.call('session.send', { session_id: id, text, assistant: true, mode, client_msg_id })
+  const pending = Promise.all([
+    send('plan', 'plan', 'cold-plan'),
+    send('bypass', 'bypassPermissions', 'cold-bypass'),
+  ])
+  await until('the shared cold resume', () => resumeCount > 0)
+  await new Promise((resolve) => setImmediate(resolve))
+  releaseResume()
+  await pending
+
+  assert.deepEqual(events, [
+    'set:read-only',
+    'prompt:plan:read-only',
+    'set:danger-full-access',
+    'prompt:bypass:danger-full-access',
+  ])
+  assert.equal(resumeCount, 1, 'the later send reuses the Agent resumed by the first')
+  assert.deepEqual(ctl.prompts.map((request) => [request.requestId, request.mode]), [
+    ['cold-plan', 'queue'],
+    ['cold-bypass', 'queue'],
+  ])
+})
+
+test('prompt admission is serialized per session, not globally or until a model turn ends (#8168)', async (t) => {
+  const ids = ['assistant-queue-a', 'assistant-queue-b']
+  const sessions = new Map(ids.map((id) => [id, { id }]))
+  const agents = { get: (id) => sessions.has(id) ? { session: sessions.get(id) } : undefined }
+  const active = new Map(ids.map((id) => [id, 'workspace-write']))
+  const events = []
+  const admitted = []
+  let releaseFirst
+  const firstAdmission = new Promise((resolve) => { releaseFirst = resolve })
+  const permissionPresets = { set: (session, name) => {
+    active.set(session.id, name)
+    events.push(`${session.id}:set:${name}`)
+  } }
+  const { n, ctl, ev, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  const prompt = ctl.prompt.bind(ctl)
+  ctl.prompt = async (request) => {
+    admitted.push(request.requestId)
+    events.push(`${request.sessionId}:prompt:${request.content.at(-1).text}:${active.get(request.sessionId)}`)
+    if (request.requestId === 'queue-a-plan') await firstAdmission
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+  for (const id of ids) ev.emit('session/event', { id }, { type: 'turn/start', seq: 1, data: { turn: 1 } })
+
+  const send = (id, text, mode, client_msg_id) => n.peer.call('session.send', { session_id: id, text, assistant: true, mode, client_msg_id })
+  const pending = Promise.all([
+    send(ids[0], 'plan', 'plan', 'queue-a-plan'),
+    send(ids[0], 'bypass', 'bypassPermissions', 'queue-a-bypass'),
+    send(ids[1], 'other plan', 'plan', 'queue-b-plan'),
+  ])
+  await until('the other session admits while the first admission is pending', () => admitted.includes('queue-b-plan'))
+  assert.ok(!admitted.includes('queue-a-bypass'), 'the second send to the same session waits for prompt admission')
+  releaseFirst()
+  await pending
+
+  assert.deepEqual(admitted, ['queue-a-plan', 'queue-b-plan', 'queue-a-bypass'])
+  assert.deepEqual(events.filter((event) => event.startsWith(ids[0])), [
+    `${ids[0]}:set:read-only`,
+    `${ids[0]}:prompt:plan:read-only`,
+    `${ids[0]}:set:danger-full-access`,
+    `${ids[0]}:prompt:bypass:danger-full-access`,
+  ])
+  assert.deepEqual(events.filter((event) => event.startsWith(ids[1])), [
+    `${ids[1]}:set:read-only`,
+    `${ids[1]}:prompt:other plan:read-only`,
+  ])
+  assert.ok(ctl.prompts.every((request) => request.mode === 'steer'), 'both turns stay open; only admission is awaited')
+})
+
+for (const failure of ['resolution', 'preset']) test(`a queued ${failure} failure rejects only its own send and permits a client id retry (#8168)`, async (t) => {
+  const id = `assistant-${failure}-queue-failure`
+  const session = { id }
+  const live = new Map(failure === 'preset' ? [[id, { session }]] : [])
+  const agents = { get: (sessionId) => live.get(sessionId) }
+  let shouldFail = true
+  let activePreset = 'danger-full-access'
+  const admitted = []
+  const permissionPresets = { set: (target, name) => {
+    if (failure === 'preset' && shouldFail) {
+      shouldFail = false
+      throw new Error('preset failed')
+    }
+    activePreset = name
+  } }
+  const { n, ctl, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  ctl.resolveAgent = async (sessionId) => {
+    if (shouldFail) {
+      shouldFail = false
+      return { error: new Error('resolution failed') }
+    }
+    const agent = { session: { id: sessionId } }
+    live.set(sessionId, agent)
+    return { agent }
+  }
+  const prompt = ctl.prompt.bind(ctl)
+  ctl.prompt = async (request) => {
+    admitted.push([request.requestId, activePreset])
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+
+  const send = (text, mode, client_msg_id) => n.peer.call('session.send', { session_id: id, text, assistant: true, mode, client_msg_id })
+  const results = await Promise.allSettled([
+    send('do not admit', 'plan', `retry-${failure}`),
+    send('next prompt', 'bypassPermissions', `after-${failure}`),
+  ])
+  assert.equal(results[0].status, 'rejected')
+  assert.match(results[0].reason.message, new RegExp(`${failure} failed`))
+  assert.equal(results[1].status, 'fulfilled')
+  assert.deepEqual(admitted, [[`after-${failure}`, 'danger-full-access']])
+
+  await send('retry after the queued failure', 'plan', `retry-${failure}`)
+  assert.deepEqual(admitted, [
+    [`after-${failure}`, 'danger-full-access'],
+    [`retry-${failure}`, 'read-only'],
+  ])
+})
+
+test('an initial Plan prompt resolves a cold Agent and applies read-only before admission (#8168)', async (t) => {
+  const id = 'assistant-cold'
+  const live = new Map()
+  const agents = { get: (sessionId) => live.get(sessionId) }
+  const events = []
+  let activePreset = 'danger-full-access'
+  const permissionPresets = { set: (session, name) => {
+    activePreset = name
+    events.push(`set:${name}`)
+  } }
+  const { n, ctl, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  ctl.add(id, { cwd: '/home/u/.persona/assistant' })
+  ctl.resolveAgent = async (sessionId) => {
+    events.push('resolve')
+    const agent = { session: { id: sessionId } }
+    live.set(sessionId, agent)
+    return { agent }
+  }
+  const prompt = ctl.prompt.bind(ctl)
+  ctl.prompt = async (request) => {
+    events.push(`prompt:${activePreset}`)
+    // The real controller resolves a cold Agent while admitting the prompt; that is too late to protect this turn.
+    const found = await ctl.resolveAgent(request.sessionId)
+    if ('error' in found) throw found.error
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+
+  await n.peer.call('session.send', { session_id: id, text: 'inspect after restart', assistant: true, mode: 'plan', client_msg_id: 'cold-plan' })
+
+  assert.deepEqual(events.slice(0, 3), ['resolve', 'set:read-only', 'prompt:read-only'])
+  assert.equal(activePreset, 'read-only')
+  assert.equal(ctl.prompts.length, 1)
+  assert.equal(ctl.prompts[0].requestId, 'cold-plan')
+  assert.equal(ctl.prompts[0].mode, 'queue')
+})
+
+test('a cold Agent resolution failure admits no assistant Plan prompt (#8168)', async (t) => {
+  const id = 'assistant-resolution-failure'
+  const agents = { get: () => undefined }
+  const set = []
+  let activePreset = 'danger-full-access'
+  const { n, ctl, rt } = await setup(t, { assistant: true, agents, permissionPresets: { set: (...args) => set.push(args) } })
+  ctl.resolveAgent = async () => ({ error: new Error('cold resume failed') })
+  const prompt = ctl.prompt.bind(ctl)
+  const admitted = []
+  ctl.prompt = async (request) => {
+    admitted.push(activePreset)
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+
+  await assert.rejects(
+    n.peer.call('session.send', { session_id: id, text: 'do not run with full access', assistant: true, mode: 'plan' }),
+    /cold resume failed/,
+  )
+  assert.deepEqual(admitted, [])
+  assert.equal(activePreset, 'danger-full-access')
+  assert.equal(ctl.prompts.length, 0)
+  assert.equal(set.length, 0)
+})
+
+test('a preset setter failure admits no assistant Plan prompt under the previous full access (#8168)', async (t) => {
+  const id = 'assistant-set-failure'
+  const session = { id }
+  const agents = { get: () => ({ session }) }
+  let activePreset = 'danger-full-access'
+  const permissionPresets = { set: () => { throw new Error('read-only is unavailable') } }
+  const { n, ctl, rt } = await setup(t, { assistant: true, agents, permissionPresets })
+  const prompt = ctl.prompt.bind(ctl)
+  const admitted = []
+  ctl.prompt = async (request) => {
+    admitted.push(activePreset)
+    return prompt(request)
+  }
+  rt.start()
+  await n.ready
+
+  await assert.rejects(
+    n.peer.call('session.send', { session_id: id, text: 'do not run with full access', assistant: true, mode: 'plan' }),
+    /read-only is unavailable/,
+  )
+  assert.deepEqual(admitted, [])
+  assert.equal(activePreset, 'danger-full-access')
+  assert.equal(ctl.prompts.length, 0)
+})
+
 test('the assistant\'s approvals go to the phone even with the Web GUI open; its memory writes are not asked', async (t) => {
   const { n, ctl, ev, rt } = await setup(t, { assistant: true, liveClient: true })
   ctl.add('session-asst', { cwd: '/home/u/.persona/assistant' })
@@ -558,15 +1038,22 @@ test('the assistant\'s own tools are only for its conversations, called as the a
   const { n, ctl, rt } = await setup(t, { assistant: true, registerTool, tools: n0.tools })
   ctl.add('session-asst', { cwd: '/home/u/.persona/assistant' })
   n.tools = n0.tools
-  const plainTools = n0.tools
-  const withAssistant = [...plainTools, { name: 'ask_user', description: 'Ask', input_schema: { type: 'object' } }]
+  const plainTools = [...n0.tools, { name: 'report_to_supervisor', description: 'Report', input_schema: { type: 'object' } }]
+  const withAssistant = [...n0.tools, { name: 'ask_user', description: 'Ask', input_schema: { type: 'object' } }]
   rt.start()
   await n.ready
   await until('listed', () => n.last('runtime.sessions'))
   // The fake node lists the same tools whatever is asked: make it answer as a hub does.
   n.peer.onRequest = ((orig) => async (m, p) => (m === 'mcp.tools' ? { tools: p?.assistant ? withAssistant : plainTools } : orig(m, p)))(n.peer.onRequest)
   await rt.refreshTools()
-  await until('registered', () => registered.size === 2 * mcpToolNames('example').length)
+  await until('registered', () => registered.size === 3 * mcpToolNames('example').length)
+  const report = registered.get('mcp__persona__report_to_supervisor')
+  assert.equal(report.opts.when({ agent: { session: { id: 'session-asst' } } }), false)
+  assert.equal(report.opts.when({ agent: { session: { id: 'session-other' } } }), true)
+  await report.def.execute({ kind: 'progress' }, { agent: { session: { id: 'session-other' } } })
+  assert.deepEqual(n.toolCalls.at(-1), {
+    name: 'report_to_supervisor', args: { kind: 'progress' }, session_id: 'session-other',
+  })
   const ask = registered.get('mcp__persona__ask_user')
   assert.equal(typeof ask.opts?.when, 'function')
   assert.equal(ask.opts.when({ agent: { session: { id: 'session-asst' } } }), true)
@@ -576,6 +1063,232 @@ test('the assistant\'s own tools are only for its conversations, called as the a
   assert.deepEqual(n.toolCalls.at(-1), { name: 'ask_user', args: {}, session_id: 'session-asst', assistant: true })
   await registered.get('mcp__persona__phone_contacts').def.execute({}, { agent: { session: { id: 'session-other' } } })
   assert.equal(n.toolCalls.at(-1).assistant, undefined)
+})
+
+test('leader tools activate only for the calling leader and invoke the hub as its Agent', async (t) => {
+  const registered = new Map()
+  const registerTool = (def, opts) => {
+    registered.set(def.name, { def, opts })
+    return () => registered.delete(def.name)
+  }
+  const { n, ctl, rt } = await setup(t, { registerTool, features: ['leader_tools'] })
+  ctl.add('session-leader')
+  ctl.add('session-worker')
+  let leader = 'session-leader'
+  const plan = { name: 'task_plan', description: 'Plan', input_schema: { type: 'object' } }
+  rt.start()
+  await n.ready
+  const original = n.peer.onRequest
+  n.peer.onRequest = async (method, params) => {
+    if (method !== 'mcp.tools' || !params.leader_only) return original(method, params)
+    return { tools: !params.session_id || params.session_id === leader ? [plan] : [] }
+  }
+  await rt.refreshTools()
+  const registeredPlan = await until('leader tools registered', () => registered.get('mcp__persona__task_plan'))
+  const context = id => ({ agent: { session: { id } }, signal: new AbortController().signal })
+  const leaderStep = context('session-leader')
+  const workerStep = context('session-worker')
+  assert.equal(await registeredPlan.opts.when(leaderStep), true)
+  assert.equal(await registeredPlan.opts.when(workerStep), false)
+  await assert.rejects(registeredPlan.def.execute({}, workerStep), /unavailable to this session/)
+  await registeredPlan.def.execute({ tasks: [] }, leaderStep)
+  assert.deepEqual(n.toolCalls, [{ name: 'task_plan', args: { tasks: [] }, session_id: 'session-leader' }])
+  leader = ''
+  assert.equal(await registeredPlan.opts.when(context('session-leader')), false)
+})
+
+test('an Agent leader and an assistant keep their own schemas for the same tool name', async (t) => {
+  const registry = () => {
+    const tools = new Map()
+    return {
+      tools,
+      register(def, opts) {
+        tools.set(def.name, { def, opts })
+        return () => tools.delete(def.name)
+      },
+    }
+  }
+  const globalTools = registry()
+  const agentTools = registry()
+  const assistantTools = registry()
+  const assistantCwd = '/home/u/.persona/assistant'
+  const assistant = { session: { id: 'session-assistant', header: { cwd: assistantCwd } }, ctx: { tools: assistantTools } }
+  const leader = { session: { id: 'session-leader' }, ctx: { tools: agentTools } }
+  const { n, ctl, ev, rt } = await setup(t, {
+    assistant: true, registerTool: globalTools.register, features: ['leader_tools'],
+    agents: { list: () => [assistant] },
+  })
+  ctl.add(assistant.session.id, { cwd: assistantCwd })
+  ctl.add(leader.session.id)
+  rt.start()
+  await n.ready
+  const original = n.peer.onRequest
+  n.peer.onRequest = (method, params) => {
+    if (method !== 'mcp.tools') return original(method, params)
+    if (params.assistant) return { tools: [{ name: 'task_plan', description: 'Assistant plan' }] }
+    if (params.leader_only) return { tools: [{ name: 'task_plan', description: 'Restricted leader plan' }] }
+    return { tools: [] }
+  }
+  await rt.refreshTools()
+  const name = 'mcp__persona__task_plan'
+  const globalPlan = await until('assistant plan', () => globalTools.tools.get(name))
+  ev.emit('agent/created', { agent: leader })
+  const scopedPlan = agentTools.tools.get(name)
+  assert.equal(assistantTools.tools.size, 0)
+  assert.equal(globalPlan.def.description, 'Assistant plan')
+  assert.equal(scopedPlan.def.description, 'Restricted leader plan')
+  assert.equal(globalPlan.opts.when({ agent: assistant }), true)
+  assert.equal(globalPlan.opts.when({ agent: leader }), false)
+  assert.equal(await scopedPlan.opts.when({ agent: leader }), true)
+  await globalPlan.def.execute({}, { agent: assistant })
+  await scopedPlan.def.execute({}, { agent: leader })
+  assert.deepEqual(n.toolCalls, [
+    { name: 'task_plan', args: {}, session_id: assistant.session.id, assistant: true },
+    { name: 'task_plan', args: {}, session_id: leader.session.id },
+  ])
+  rt.stop()
+  assert.equal(agentTools.tools.size, 0)
+})
+
+test('advertises DSH configured models as launchers in hello and launchers.models (#5572)', async (t) => {
+  const dshModels = [
+    {
+      provider: 'deepseek',
+      name: 'DeepSeek',
+      models: [
+        { id: 'deepseek-chat', name: 'DeepSeek V3', default: true },
+        { id: 'deepseek-reasoner', name: 'DeepSeek R1' },
+      ],
+    },
+    {
+      provider: 'anthropic',
+      name: 'Anthropic',
+      models: [
+        { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' },
+      ],
+    },
+  ]
+  const { n, rt } = await setup(t, { models: dshModels })
+  rt.start()
+  await n.ready
+  assert.equal(n.hello.caps.models, true)
+  assert.ok(Array.isArray(n.hello.launchers))
+  const dshLauncher = n.hello.launchers.find((l) => l.name === 'dsh')
+  assert.ok(dshLauncher, 'main dsh launcher is advertised')
+  assert.equal(dshLauncher.model, 'DeepSeek V3')
+  assert.equal(dshLauncher.models.length, 3)
+
+  const anthropicLauncher = n.hello.launchers.find((l) => l.name === 'anthropic')
+  assert.ok(anthropicLauncher, 'provider group launcher is advertised')
+  assert.equal(anthropicLauncher.models.length, 1)
+
+  const res = await n.peer.call('launchers.models', {})
+  assert.equal(res.agent, 'dsh')
+  assert.ok(res.models.some((m) => m.id === 'deepseek-chat'))
+})
+
+test('reads models from the session controller modelCatalog when nothing else provides them (#6451)', async (t) => {
+  const { n, ctl, rt } = await setup(t)
+  assert.equal(ctl.listModels, undefined)
+  assert.equal(ctl.models, undefined)
+  ctl.modelCatalog = async () => ({
+    groups: [
+      { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek V3' }, { id: 'deepseek-reasoner', name: 'DeepSeek R1' }] },
+      { id: 'anthropic', name: 'Anthropic', models: [{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5' }] },
+    ],
+  })
+  rt.start()
+  await n.ready
+  const res = await n.peer.call('launchers.models', {})
+  assert.deepEqual(res.models.map((m) => m.id).sort(), ['claude-opus-5-5', 'deepseek-chat', 'deepseek-reasoner'])
+  const names = (await n.peer.call('launchers.models', {})).models.map((m) => m.name)
+  assert.ok(names.includes('DeepSeek V3'))
+})
+
+test('keeps reading models from controller.listModels when modelCatalog is absent (#6451)', async (t) => {
+  const { n, ctl, rt } = await setup(t)
+  ctl.listModels = async () => [{ provider: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek V3' }] }]
+  rt.start()
+  await n.ready
+  const res = await n.peer.call('launchers.models', {})
+  assert.deepEqual(res.models.map((m) => m.id), ['deepseek-chat'])
+})
+
+test('selects model before sending the first prompt when model is specified (#5572)', async (t) => {
+  const dshModels = [
+    {
+      provider: 'deepseek',
+      models: [{ id: 'deepseek-chat', name: 'DeepSeek V3', default: true }],
+    },
+    {
+      provider: 'anthropic',
+      models: [{ id: 'claude-opus-5-5', name: 'Claude Opus 5.5' }],
+    },
+  ]
+  const { n, ctl, rt } = await setup(t, { models: dshModels })
+  rt.start()
+  await n.ready
+
+  const { session } = await n.peer.call('session.start', {
+    cwd: '/w/new',
+    model: 'claude-opus-5-5',
+    prompt: 'hello model',
+  })
+  assert.equal(session.session_id, 'session-new')
+  assert.equal(ctl.selectedModels.length, 1)
+  assert.deepEqual(ctl.selectedModels[0], {
+    sessionId: 'session-new',
+    provider: 'anthropic',
+    model: 'claude-opus-5-5',
+    at: ctl.selectedModels[0].at,
+  })
+  assert.equal(ctl.prompts.length, 1)
+  assert.equal(ctl.prompts[0].sessionId, 'session-new')
+
+  // Supports provider/model notation
+  await n.peer.call('session.start', {
+    cwd: '/w/new2',
+    model: 'anthropic/claude-opus-5-5',
+  })
+  assert.equal(ctl.selectedModels.length, 2)
+  assert.equal(ctl.selectedModels[1].provider, 'anthropic')
+  assert.equal(ctl.selectedModels[1].model, 'claude-opus-5-5')
+
+  // Supports provider group launcher
+  await n.peer.call('session.start', {
+    cwd: '/w/new3',
+    launcher: 'anthropic',
+    model: 'claude-opus-5-5',
+  })
+  assert.equal(ctl.selectedModels.length, 3)
+  assert.equal(ctl.selectedModels[2].provider, 'anthropic')
+  assert.equal(ctl.selectedModels[2].model, 'claude-opus-5-5')
+})
+
+test('refuses session start with a clear error when model is unknown (#5572)', async (t) => {
+  const dshModels = [
+    {
+      provider: 'deepseek',
+      models: [{ id: 'deepseek-chat', name: 'DeepSeek V3', default: true }],
+    },
+  ]
+  const { n, ctl, rt } = await setup(t, { models: dshModels })
+  rt.start()
+  await n.ready
+
+  await assert.rejects(
+    n.peer.call('session.start', {
+      cwd: '/w/new',
+      model: 'nonexistent-model',
+      prompt: 'hello',
+    }),
+    (err) => {
+      assert.match(err.message, /nonexistent-model/)
+      return true
+    }
+  )
+  assert.equal(ctl.selectedModels.length, 0)
+  assert.equal(ctl.prompts.length, 0)
 })
 
 // ---- subagents and background work (docs/integrations/dsh.md "Subagents and background tasks") ----
@@ -714,3 +1427,68 @@ test('an approval card offers 本会话总是同意; always still answers DSH wi
   n.resolve = () => ({ allow: false, always: true })
   assert.equal(await ev.waterfall('approval/request', { agent, toolName: 'bash', callId: 'call_b' }, browser), 'rejected')
 })
+
+test('a session with no open turn and running background commands reports background and done status (#5981)', async (t) => {
+  const { n, ctl, rt } = await setup(t)
+  ctl.add('session-bg', {
+    cwd: '/w/app',
+    running: true, // DSH controller reports running: true because of the background task
+    projections: {
+      kind: 'cached',
+      asOfSeq: 10,
+      values: {
+        title: 'Background job session',
+        turnBoundary: { openTurnStartSeq: null, lastStepBoundary: { kind: 'end' }, lastTurn: 2 },
+        approvalState: { turnOpen: false },
+        contextTimeline: {
+          commands: [
+            { id: 'cmd-bg-1', background: true, status: 'running', command: 'sleep 300', startedAt: 1_700_000_000_000 },
+          ],
+        },
+      },
+    },
+  })
+  rt.start()
+  await n.ready
+  await until('session-bg is listed', () => rowOf(n, 'session-bg'))
+  const row = rowOf(n, 'session-bg')
+  assert.equal(row.status, 'done', 'foreground status should be done when no turn is open')
+  assert.deepEqual(row.background, [{
+    id: 'cmd-bg-1',
+    kind: 'shell',
+    description: 'sleep 300',
+    command: 'sleep 300',
+    started_at: new Date(1_700_000_000_000).toISOString(),
+  }])
+})
+
+test('a session waiting on a DSH Web dialog reports blocked with attention reason (#5980)', async (t) => {
+  const { n, ctl, ev, rt } = await setup(t) // default: liveClient = true, interactions = auto
+  ctl.add('session-dialog', { cwd: '/w/app', running: true })
+  rt.start()
+  await n.ready
+  await until('session-dialog is listed', () => rowOf(n, 'session-dialog'))
+  assert.equal(rowOf(n, 'session-dialog')?.status, 'working')
+
+  // When an approval is handed to Web GUI and still pending
+  let resolveBrowser
+  const browserPromise = new Promise((resolve) => { resolveBrowser = resolve })
+  const agent = { session: { id: 'session-dialog' } }
+
+  const waterfallPromise = ev.waterfall('approval/request', { agent, toolName: 'bash', callId: 'call_dialog' }, () => browserPromise)
+
+  await until('session-dialog is marked blocked', () => rowOf(n, 'session-dialog')?.status === 'blocked')
+  const blockedRow = rowOf(n, 'session-dialog')
+  assert.equal(blockedRow.status, 'blocked')
+  assert.equal(blockedRow.attention_reason, 'waiting for an answer in DSH Web')
+
+  // When Web GUI settles the request
+  resolveBrowser('allowed-once')
+  assert.equal(await waterfallPromise, 'allowed-once')
+
+  await until('session-dialog clears blocked state', () => rowOf(n, 'session-dialog')?.status !== 'blocked')
+  const settledRow = rowOf(n, 'session-dialog')
+  assert.equal(settledRow.attention_reason, undefined)
+})
+
+

@@ -38,6 +38,8 @@ data class ExtensionOperation(
     val next: String? = null,
     /** The manager whose it is, from its push (pushManager); null in a list, which is the default manager's. */
     val manager: String? = null,
+    /** Cleanup left for the user after a successful uninstall; the operation still succeeded. */
+    val warnings: List<String>? = null,
 ) {
     val active: Boolean get() = state == Running || state == NeedsConsent
     val failed: Boolean get() = state == Failed

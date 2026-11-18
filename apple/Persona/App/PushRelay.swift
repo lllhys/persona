@@ -1,5 +1,6 @@
 import Foundation
 import os
+import PersonaWire
 
 /// The push relay this build registers with (docs/operations/push-relay.md): it holds the app's APNs key and pushes for hubs that
 /// have none. The phone registers its device token here and hands the grant it gets, with its public key, to its own hub;
@@ -15,10 +16,13 @@ nonisolated enum PushRelay {
     }
 
     private struct Cached: Codable { var relay: String; var token: String; var env: String; var topic: String; var grant: String }
-    private static let account = "push-relay-grant"
+    static let account = "push-relay-grant"
+    /// The grant for the PushKit token of urgent calls, kept apart from the notifications' one.
+    static let voipAccount = "push-relay-voip-grant"
 
     /// The grant for this device token: the cached one while relay, token, environment and app are the same, else a new one.
-    static func grant(relay: URL, token: String, env: String, topic: String, session: URLSession = .shared) async throws -> String {
+    static func grant(relay: URL, token: String, env: String, topic: String, account: String = account,
+                      session: URLSession = .shared) async throws -> String {
         if let data = Keychain.load(account: account), let c = try? JSONDecoder().decode(Cached.self, from: data),
            c.relay == relay.absoluteString, c.token == token, c.env == env, c.topic == topic {
             return c.grant

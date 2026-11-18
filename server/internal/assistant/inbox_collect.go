@@ -2,7 +2,7 @@ package assistant
 
 import (
 	"context"
-	"maps"
+	"slices"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
@@ -62,6 +62,9 @@ func (s *Service) InboxCollected(ctx context.Context, r assistantwire.InboxRound
 		for kind, d := range src.Kinds {
 			b.kinds[src.ID+"/"+kind] = d
 		}
+		if src.Via != "" {
+			b.vias[src.ID] = inboxVia{connector: src.Via, source: src.ViaSource, chats: src.Chats}
+		}
 	}
 	b.srcMu.Unlock()
 	b.mu.Lock()
@@ -98,6 +101,7 @@ func (s *Service) InboxCollected(ctx context.Context, r assistantwire.InboxRound
 		b.roundWrite(it)
 	}
 	changed = append(changed, b.roundMuted(b.applyMutes(now))...)
+	changed = b.followMerged(append(changed, b.releaseMembers()...), now)
 	changed, todo := b.sortBatch(batch, changed, now)
 	b.applyRuledPolicies(changed)
 	b.settleRound()
@@ -112,6 +116,7 @@ func (s *Service) InboxCollected(ctx context.Context, r assistantwire.InboxRound
 		s.inboxChanged(ctx, nil) // nothing came in, but which sources could be read did (saveInbox tells otherwise)
 	}
 	s.triageInbox(ctx)
+	s.settleInbox(ctx) // "Needs you" events the owner answered in the source, or that were closed there (inbox_settle.go)
 	s.translateInbox(ctx)
 	s.admitInbox(ctx, batch, todo)
 	return nil
@@ -140,23 +145,32 @@ func (b *inboxBook) recordReads(r assistantwire.InboxRound) bool {
 		changed = changed || b.readErrs[id] != code
 	}
 	b.readErrs = next
-	mail := b.mailReadErrs
-	if _, there := r.Names["mail"]; r.Mail != nil || r.Names != nil && !there {
-		mail = map[string]assistantwire.InboxMailFailed{}
-		if r.Mail != nil {
-			for _, f := range r.Mail.Failed {
-				if f.ID != "" && f.ReadError != "" {
-					mail[f.ID] = f
-				}
-			}
-		}
-	}
-	changed = changed || !maps.Equal(mail, b.mailReadErrs)
-	b.mailReadErrs = mail
-	return changed
+	mailChanged := b.recordMailReads(r)
+	return changed || mailChanged
 }
 
 // ---- the connectors' ----
+
+// withoutCounts are a source's generic things with no extra.count, for one that does not say what it means there
+// (InboxSource.Counts): each of their moves counts one, as it always did.
+func withoutCounts(things []connector.InboxThing) []connector.InboxThing {
+	var out []connector.InboxThing
+	for i, t := range things {
+		if t.Extra == nil || t.Extra.Count == 0 {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(things)
+		}
+		x := *t.Extra
+		x.Count = 0
+		out[i].Extra = &x
+	}
+	if out == nil {
+		return things
+	}
+	return out
+}
 
 // collectSource applies one connector's things: its batches go to be related to events (in the background), a
 // migrated connector's things with extra keep the items' own blocks, the others become generic items; then the open
@@ -167,8 +181,9 @@ func (s *Service) collectSource(ctx context.Context, src assistantwire.InboxSour
 	if len(src.Things) == 0 && !src.Settles {
 		return nil
 	}
-	// Batches of new messages go to the model, not the list.
-	things := s.relateBatches(ctx, src, src.Things)
+	// State reports update their existing events; batches of new messages go to the model, not the list.
+	things, changed := s.applyGroupStates(ctx, src, src.Things)
+	things = s.relateBatches(ctx, src, things)
 	var own []connector.InboxThing // a migrated connector's things that keep the inbox's own item shape
 	if src.Migrated {
 		generic := things[:0:0]
@@ -181,7 +196,9 @@ func (s *Service) collectSource(ctx context.Context, src assistantwire.InboxSour
 		}
 		things = generic
 	}
-	var changed []*InboxItem
+	if !src.Counts {
+		things = withoutCounts(things)
+	}
 	b.mu.Lock()
 	changed = append(changed, b.applyConnector(src.ID, src.Name, things, time.Now())...)
 	changed = append(changed, b.applyMigrated(src.ID, own, time.Now())...)

@@ -13,9 +13,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -147,6 +150,50 @@ class MachinesShotsTest {
                 rule.onNodeWithText(offline).assertExists()
                 rule.onNodeWithText(mac.error!!).assertExists() // the hub's own words stay, after the plain ones
             }
+        }
+    }
+
+    @Config(sdk = [35], qualifiers = "zh-w400dp-h5200dp-xhdpi", fontScale = 2f)
+    @Test fun simplifiedChineseAgentsAtMaximumText() = agentShowAll("zh", "显示全部 6 个", "收起")
+
+    @Config(sdk = [35], qualifiers = "en-w400dp-h5200dp-xhdpi", fontScale = 2f)
+    @Test fun englishAgentsAtMaximumText() = agentShowAll("en", "Show all 6", "Show less")
+
+    @Config(sdk = [35], qualifiers = "ja-w400dp-h5200dp-xhdpi", fontScale = 2f)
+    @Test fun japaneseAgentsAtMaximumText() = agentShowAll("ja", "すべて表示（6件）", "折りたたむ")
+
+    private fun agentShowAll(language: String, showAll: String, showLess: String) {
+        val repository = object : SessionsRepository {
+            override val machines = MutableStateFlow(listOf(lab))
+            override val sessions = MutableStateFlow((1..6).map { index ->
+                Session("lab", "agent-$index", title = "Agent $index", cwd = "/work/example", status = "working")
+            })
+            override suspend fun refresh() = Unit
+        }
+        val model = MachinesViewModel(api, repository, "lab") { now }
+        runBlocking { model.load(MetricRange.Hour) }
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                Box(Modifier.testTag("agents-shot").width(400.dp).height(5200.dp).background(PersonaTheme.palette.background)) {
+                    MachinesScreen("lab", model, navigator)
+                }
+            }
+        }
+        for (s in AppStyle.entries) for (dk in listOf(false, true)) {
+            rule.runOnIdle { style = s; dark = dk }
+            rule.waitForIdle()
+            rule.onNodeWithText(showAll).performScrollTo().assertIsDisplayed()
+            var bitmap = rule.onNodeWithTag("agents-shot").captureToImage().asAndroidBitmap()
+            File(out(), "machines-agents-$language-${s.name.lowercase()}-${if (dk) "dark" else "light"}-collapsed.png")
+                .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            rule.onNodeWithText(showAll).performClick()
+            rule.onNodeWithText(showLess).performScrollTo().assertIsDisplayed()
+            bitmap = rule.onNodeWithTag("agents-shot").captureToImage().asAndroidBitmap()
+            File(out(), "machines-agents-$language-${s.name.lowercase()}-${if (dk) "dark" else "light"}-expanded.png")
+                .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            rule.onNodeWithText(showLess).performClick()
         }
     }
 }

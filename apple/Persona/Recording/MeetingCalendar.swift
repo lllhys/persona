@@ -7,7 +7,7 @@ import Foundation
 /// once, after a meeting recording it started has begun, `MeetingRecorder`).
 nonisolated enum MeetingCalendar {
     /// One event as `pick` sees it (EventKit's objects can't be made in a test).
-    struct Candidate: Equatable, Sendable {
+    struct Candidate: Hashable, Sendable {
         var id: String?
         var title: String
         var start: Date
@@ -40,6 +40,40 @@ nonisolated enum MeetingCalendar {
     /// `meeting(at:)` off the main thread: EventKit's reads are synchronous calls to its daemon.
     static func meetingOffMain(at date: Date = .now) async -> RecordingMeeting? {
         await Task.detached { meeting(at: date) }.value
+    }
+
+    /// Today's meetings on now or still to come (#8731, the Meetings home's Upcoming Meetings), earliest first, at most
+    /// `limit`; none without access.
+    static func upcoming(at date: Date = .now, limit: Int = 3) -> [Candidate] {
+        guard canRead else { return [] }
+        let store = EKEventStore()
+        let dayEnd = Calendar.current.startOfDay(for: date).addingTimeInterval(24 * 3600)
+        let predicate = store.predicateForEvents(withStart: date.addingTimeInterval(-24 * 3600), end: dayEnd, calendars: nil)
+        return upcoming(store.events(matching: predicate).map(Candidate.init), at: date, dayEnd: dayEnd, limit: limit)
+    }
+
+    /// `upcoming(at:limit:)` off the main thread.
+    static func upcomingOffMain(at date: Date = .now, limit: Int = 3) async -> [Candidate] {
+        await Task.detached { upcoming(at: date, limit: limit) }.value
+    }
+
+    /// Every event between `from` and `to` (#8731 G2, the reminders), off the main thread; none without access.
+    static func eventsOffMain(from: Date, to: Date) async -> [Candidate] {
+        await Task.detached {
+            guard canRead else { return [] }
+            let store = EKEventStore()
+            return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil)).map(Candidate.init)
+        }.value
+    }
+
+    /// Of `events`, the ones `pick` would count (not all-day, declined or untitled) that have not ended at `date` and start
+    /// before `dayEnd`, earliest first (by start, then end), at most `limit`.
+    static func upcoming(_ events: [Candidate], at date: Date, dayEnd: Date, limit: Int) -> [Candidate] {
+        Array(events.filter { e in
+            !e.allDay && !e.declined && !e.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && date < e.end && e.start < dayEnd
+        }
+        .sorted { a, b in a.start == b.start ? a.end < b.end : a.start < b.start }
+        .prefix(limit))
     }
 
     /// How early a meeting counts as on: people sit down and start recording before the hour.

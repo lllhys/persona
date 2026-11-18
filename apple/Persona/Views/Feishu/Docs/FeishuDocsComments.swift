@@ -60,9 +60,7 @@ struct FeishuDocsCommentsView: View {
         .macSheetDone { dismiss() }
         #else
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { dismiss() } label: { Label("Close", systemImage: Theme.Icon.close) }
-            }
+            SheetClose { dismiss() }
         }
         #endif
         .refreshable { await model?.load() }

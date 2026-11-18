@@ -3,6 +3,7 @@ package assistant
 import (
 	"context"
 	"github.com/nwverse/persona/server/internal/closeout"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -169,7 +170,8 @@ func deliveryStage(state string) string {
 }
 
 // setTaskDelivery keeps d as task id's delivery, with its stages (the same setting), and on the todo.
-func (s *Service) setTaskDelivery(ctx context.Context, id string, d TodoDelivery) {
+// False leaves the previous state intact so deterministic supervision cannot consume a failed write.
+func (s *Service) setTaskDelivery(ctx context.Context, id string, d TodoDelivery) bool {
 	b := &s.reports
 	b.stageWriting.Lock()
 	defer b.stageWriting.Unlock()
@@ -177,23 +179,27 @@ func (s *Service) setTaskDelivery(ctx context.Context, id string, d TodoDelivery
 	if !s.loadStagesLocked(ctx) {
 		b.mu.Unlock()
 		s.logf("task %s: delivery %s not kept: the stages could not be read", id, d.State)
-		return
+		return false
 	}
 	cur := b.stages[id]
 	if dd := cur.Delivery; dd != nil && dd.State == d.State && dd.Gate == d.Gate && dd.Unblock == d.Unblock {
 		b.mu.Unlock()
-		return
+		return true
 	}
 	cur.Delivery = &d
 	if stage := deliveryStage(d.State); stageIndex(stage) > stageIndex(cur.Stage) {
 		cur.Stage = stage
 	}
-	b.stages[id] = cur
+	next := maps.Clone(b.stages)
+	next[id] = cur
 	if st := s.store(); st != nil {
-		if err := st.PutSetting(ctx, reportStagesKey, b.stages); err != nil {
+		if err := st.PutSetting(ctx, reportStagesKey, next); err != nil {
 			s.logf("task %s: delivery: %v", id, err)
+			b.mu.Unlock()
+			return false
 		}
 	}
+	b.stages = next
 	b.mu.Unlock()
 	s.todos.mu.Lock()
 	if t := s.todos.todos[id]; t != nil {
@@ -201,6 +207,7 @@ func (s *Service) setTaskDelivery(ctx context.Context, id string, d TodoDelivery
 	}
 	s.todos.mu.Unlock()
 	s.todosChanged(ctx)
+	return true
 }
 
 // doneNeedsDelivery: a finished task closes only once live (assistant.done_needs_delivery, off by default).
@@ -229,7 +236,8 @@ func deliverySummary(t Todo) string {
 	return out
 }
 
-// snapshotApprovals are the open tasks held for the user's nod, oldest first (at most ten).
+// snapshotApprovals are the open tasks held for the user's nod, oldest first (scopeSnapshot shows a conversation the
+// oldest snapshotApprovalLimit of its own).
 func (s *Service) snapshotApprovals(ctx context.Context, web string) []prompts.SnapshotApproval {
 	var list []Todo
 	for _, t := range s.todosOf(ctx, "*") {
@@ -246,10 +254,7 @@ func (s *Service) snapshotApprovals(ctx context.Context, web string) []prompts.S
 		}
 		out = append(out, prompts.SnapshotApproval{ID: t.ID, Title: clip(oneLine(t.Title), 60), Stage: deliveryLabels[t.Delivery.State],
 			Gate: clip(oneLine(gate), 60),
-			Link: todoLink(web, t.ID)})
-		if len(out) == 10 {
-			break
-		}
+			Link: todoLink(web, t.ID), Owner: todoOwner(t)})
 	}
 	return out
 }

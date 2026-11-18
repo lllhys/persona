@@ -13,8 +13,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
@@ -133,5 +135,63 @@ class MachinesParityShotsTest {
                 .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             expected.forEach { assertTrue("$d shows $it", rule.onAllNodesWithText(it, substring = true).fetchSemanticsNodes().isNotEmpty()) }
         }
+    }
+
+    @Config(sdk = [35], qualifiers = "en-w1100dp-h3000dp-xhdpi")
+    @Test fun concernGridInEveryStyleAndAppearance() {
+        val machines = listOf(
+            Machine("normal", name = "Normal", online = true),
+            Machine("mismatch", name = "Mismatch", online = true, nodeMismatch = true),
+            Machine("needs", name = "Needs agents", online = true),
+            Machine("warning", name = "Warning", online = true),
+            Machine("critical", name = "Critical", online = true),
+            Machine("offline", name = "Offline", online = false),
+            Machine("pending", name = "Pending", online = true, trust = "pending"),
+        )
+        val warning = MetricSample(now - 1, cpu = 80.0)
+        val critical = MetricSample(now - 1, cpu = 95.0, memUsed = 95, memTotal = 100, diskUsed = 95, diskTotal = 100)
+        val metrics = machines.associate { machine ->
+            machine.id to MachineMetrics(machine.id, online = machine.online, latest = when (machine.id) {
+                "warning" -> warning
+                "critical" -> critical
+                else -> null
+            })
+        }
+        val api = object : MachineMetricsApi {
+            override suspend fun dashboard() = MetricsDashboard(metrics.values.toList(), step = 10)
+            override suspend fun history(machineId: String, range: MetricRange) = error("list only")
+        }
+        val agents = (1..6).map { Session("needs", "waiting-$it", title = "Waiting $it", state = "needs_you", status = "blocked") }
+        val repository = object : SessionsRepository {
+            override val machines = MutableStateFlow(machines)
+            override val sessions = MutableStateFlow(agents)
+            override suspend fun refresh() = Unit
+        }
+        val model = MachinesViewModel(api, repository, null) { now }
+        runBlocking { model.load(MetricRange.Hour) }
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        rule.setContent {
+            PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                Box(Modifier.testTag("concern-shot").width(1100.dp).height(3000.dp).background(PersonaTheme.palette.background)) {
+                    MachinesScreen(null, model, navigator)
+                }
+            }
+        }
+        for (s in AppStyle.entries) for (dk in listOf(false, true)) {
+            rule.runOnIdle { style = s; dark = dk }
+            rule.waitForIdle()
+            val bitmap = rule.onNodeWithTag("concern-shot").captureToImage().asAndroidBitmap()
+            File(out(), "machines-concern-grid-${s.name.lowercase()}-${if (dk) "dark" else "light"}.png").outputStream()
+                .use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
+        rule.onNodeWithText("6 of 7 online · 6 needing attention · 6 agents need you").assertExists()
+        val pending = rule.onNodeWithText("Pending").getUnclippedBoundsInRoot().top
+        val criticalTop = rule.onNodeWithText("Critical").getUnclippedBoundsInRoot().top
+        val needsTop = rule.onNodeWithText("Needs agents").getUnclippedBoundsInRoot().top
+        val normal = rule.onNodeWithText("Normal").getUnclippedBoundsInRoot().top
+        assertTrue(pending < criticalTop)
+        assertTrue(criticalTop < needsTop)
+        assertTrue(needsTop < normal)
     }
 }

@@ -62,7 +62,7 @@ fun HomeAgentFilters(bays: List<Bay>, selected: Int, onSelect: (Int) -> Unit, mo
                 .padding(horizontal = Tokens.Space.m, vertical = Tokens.Space.s),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
                 bay.icon?.let { icon -> tone?.let { JIcon(icon, null, size = Tokens.Size.iconXS, tint = it.dot, selected = true, decorative = true) } }
-                    ?: bay.status?.let { JStatusDot(it, waiting = bay.waiting) }
+                    ?: bay.status?.let { JStatusDot(it, waiting = bay.waiting, breathes = false) } // still, as iOS's chips
                 Text(bay.label, style = PersonaTheme.type.callout.copy(fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Medium),
                     color = if (chosen) tint else palette.ink, maxLines = 1, softWrap = false)
                 if (index != 0) bay.count?.let { Text("$it", style = PersonaTheme.type.callout, color = if (chosen) tint else palette.ink2, maxLines = 1) }

@@ -59,10 +59,10 @@ func (f *uploadNode) handle(_ context.Context, method string, params json.RawMes
 		if f.refuse != "" {
 			return nil, &rpc.Error{Code: f.refuse, Message: "refused", Data: json.RawMessage(`{"name":"a.txt"}`)}
 		}
-		if f.noDest && (p.Dest == proto.UploadDestDir || p.Dest == proto.UploadDestInbox) {
-			return nil, errors.New(`unknown upload destination "dir"`)
+		if f.noDest && (p.Dest == proto.UploadDestDir || p.Dest == proto.UploadDestInbox || p.Dest == proto.UploadDestAttachment) {
+			return nil, errors.New(`unknown upload destination "` + p.Dest + `"`)
 		}
-		if (p.Dest == proto.UploadDestDir || p.Dest == proto.UploadDestInbox) && !f.noEcho {
+		if (p.Dest == proto.UploadDestDir || p.Dest == proto.UploadDestInbox || p.Dest == proto.UploadDestAttachment) && !f.noEcho {
 			return map[string]any{"upload_id": "u1", "dest": p.Dest}, nil
 		}
 		if p.HealthDir != "" && !f.noHealthEcho {
@@ -471,7 +471,7 @@ func TestInboxUploadNeedsTheSwitch(t *testing.T) {
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"code":"`+proto.CodeFileTransferDisabled+`"`) || len(f.calls) != 0 {
 			t.Errorf("%s: %d %s %v", name, rec.Code, rec.Body, f.calls)
 		}
-		for _, q := range []string{"name=a.txt", "name=a.txt&dest=terminal", "name=a.txt&dest=dir&dir=~"} {
+		for _, q := range []string{"name=a.txt", "name=a.txt&dest=terminal", "name=a.txt&dest=dir&dir=~", "name=a.txt&dest=attachment"} {
 			f.calls, f.begins = nil, nil
 			rec = httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/machines/m1/files?"+q, strings.NewReader("hi")))
@@ -479,5 +479,47 @@ func TestInboxUploadNeedsTheSwitch(t *testing.T) {
 				t.Errorf("%s, %s with the switch off: %d %s", name, q, rec.Code, rec.Body)
 			}
 		}
+	}
+}
+
+// A chat attachment to keep (#8361) goes to the node with dest=attachment, up to the chat's limit. A node from before
+// it never fails the send: one that refuses the destination gets the upload again without it (its temp directory, as
+// chat attachments always went), one that ignores it already opened it there; neither is aborted.
+func TestUploadAttachment(t *testing.T) {
+	f := &uploadNode{}
+	rec := httptest.NewRecorder()
+	uploadHub(t, f).ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/machines/m1/files?name=a.pdf&dest=attachment", strings.NewReader("hi")))
+	if rec.Code != 200 || len(f.begins) != 1 || f.begins[0]["dest"] != proto.UploadDestAttachment || f.data.String() != "hi" || f.aborted {
+		t.Fatalf("%d %s %v", rec.Code, rec.Body, f.begins)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/machines/m1/files?name=a.mov&dest=attachment", strings.NewReader("x"))
+	req.ContentLength = proto.MaxUploadBytes + 1
+	rec = httptest.NewRecorder()
+	f = &uploadNode{}
+	uploadHub(t, f).ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || len(f.calls) != 0 {
+		t.Fatalf("over the chat's limit: %d %v", rec.Code, f.calls)
+	}
+
+	refuses := &uploadNode{noDest: true}
+	rec = httptest.NewRecorder()
+	uploadHub(t, refuses).ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/machines/m1/files?name=a.pdf&dest=attachment", strings.NewReader("hi")))
+	if rec.Code != 200 || len(refuses.begins) != 2 || refuses.begins[1]["dest"] != nil || refuses.data.String() != "hi" || refuses.aborted {
+		t.Fatalf("refusing node: %d %s %v", rec.Code, rec.Body, refuses.begins)
+	}
+
+	ignores := &uploadNode{noEcho: true}
+	rec = httptest.NewRecorder()
+	uploadHub(t, ignores).ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/machines/m1/files?name=a.pdf&dest=attachment", strings.NewReader("hi")))
+	if rec.Code != 200 || len(ignores.begins) != 1 || ignores.data.String() != "hi" || ignores.aborted {
+		t.Fatalf("ignoring node: %d %s %v", rec.Code, rec.Body, ignores.calls)
+	}
+
+	old := &uploadNode{old: true}
+	rec = httptest.NewRecorder()
+	uploadHub(t, old).ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/machines/m1/files?name=a.pdf&dest=attachment", strings.NewReader("hi")))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"code":"node_outdated"`) {
+		t.Fatalf("node without uploads: %d %s", rec.Code, rec.Body)
 	}
 }

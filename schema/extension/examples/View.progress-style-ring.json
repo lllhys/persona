@@ -1,0 +1,14 @@
+{
+  "sections": [
+    {
+      "items": [
+        {
+          "type": "progress",
+          "label": "Goal",
+          "ratio": 0.625,
+          "style": "ring"
+        }
+      ]
+    }
+  ]
+}

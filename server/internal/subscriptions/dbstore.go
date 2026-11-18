@@ -15,11 +15,13 @@ type DB interface {
 	CreateSubscription(ctx context.Context, r db.SubscriptionRow) error
 	UpdateSubscription(ctx context.Context, r db.SubscriptionRow, prev int64) (bool, error)
 	DeleteSubscription(ctx context.Context, id string) error
+	DeleteSubscriptionAt(ctx context.Context, id string, prev int64) (bool, error)
 	LeaseSubscription(ctx context.Context, id string, now, until time.Time) (bool, error)
 	SubscriptionSeen(ctx context.Context, id string, uids []string) (map[string]bool, error)
 	CommitSubscriptionRun(ctx context.Context, id string, merge func(data []byte, revision int64) ([]byte, error),
-		seen []db.SubscriptionSeenRow, items []db.SubscriptionItemRow, now time.Time) error
+		seen []db.SubscriptionSeenRow, items []db.SubscriptionItemRow, read []string, now time.Time) error
 	SubscriptionItems(ctx context.Context, id string, q db.SubscriptionItemsQuery) ([]db.SubscriptionItemRow, error)
+	SubscriptionItem(ctx context.Context, id, uid string) (*db.SubscriptionItemRow, error)
 	PruneSubscriptionItems(ctx context.Context, id string, before time.Time) error
 }
 
@@ -35,27 +37,31 @@ type kept struct {
 }
 
 type keptRun struct {
-	Tool            string     `json:"tool"`
-	ToolFingerprint string     `json:"tool_fingerprint"`
-	SourceMin       int        `json:"source_min,omitempty"`
-	MaxCallsPerHour int        `json:"max_calls_per_hour,omitempty"`
-	SinceAt         *time.Time `json:"since_at,omitempty"`
-	ShapeMisses     int        `json:"shape_misses,omitempty"`
-	SnapshotHash    string     `json:"snapshot_hash,omitempty"`
-	RunState        string     `json:"run_state,omitempty"`
-	Runs            []Run      `json:"runs,omitempty"`
-	InboxFrom       *time.Time `json:"inbox_from,omitempty"`
-	InboxCatchup    *time.Time `json:"inbox_catchup,omitempty"`
-	KBFrom          *time.Time `json:"kb_from,omitempty"`
-	CatchupFrom     *time.Time `json:"catchup_from,omitempty"`
-	Baseline        *time.Time `json:"baseline,omitempty"`
+	Tool            string        `json:"tool"`
+	ToolFingerprint string        `json:"tool_fingerprint"`
+	SourceMin       int           `json:"source_min,omitempty"`
+	MaxCallsPerHour int           `json:"max_calls_per_hour,omitempty"`
+	SinceAt         *time.Time    `json:"since_at,omitempty"`
+	Continuation    *Continuation `json:"continuation,omitempty"`
+	ShapeMisses     int           `json:"shape_misses,omitempty"`
+	SnapshotHash    string        `json:"snapshot_hash,omitempty"`
+	RunState        string        `json:"run_state,omitempty"`
+	Runs            []Run         `json:"runs,omitempty"`
+	InboxFrom       *time.Time    `json:"inbox_from,omitempty"`
+	InboxCatchup    *time.Time    `json:"inbox_catchup,omitempty"`
+	KBFrom          *time.Time    `json:"kb_from,omitempty"`
+	CatchupFrom     *time.Time    `json:"catchup_from,omitempty"`
+	Baseline        *time.Time    `json:"baseline,omitempty"`
+	InboxGroup      string        `json:"inbox_group,omitempty"`
+	InboxGroupFrom  *time.Time    `json:"inbox_group_from,omitempty"`
+	Migrated        *time.Time    `json:"migrated,omitempty"`
 }
 
 func encode(s Subscription) ([]byte, error) {
 	return json.Marshal(kept{Subscription: s, Keep: keptRun{Tool: s.Tool, ToolFingerprint: s.ToolFingerprint, SourceMin: s.SourceMin,
-		MaxCallsPerHour: s.MaxCallsPerHour, SinceAt: s.SinceAt, ShapeMisses: s.ShapeMisses, SnapshotHash: s.SnapshotHash,
+		MaxCallsPerHour: s.MaxCallsPerHour, SinceAt: s.SinceAt, Continuation: s.Continuation, ShapeMisses: s.ShapeMisses, SnapshotHash: s.SnapshotHash,
 		RunState: s.RunState, Runs: s.Runs, InboxFrom: s.InboxFrom, InboxCatchup: s.InboxCatchup, KBFrom: s.KBFrom,
-		CatchupFrom: s.CatchupFrom, Baseline: s.Baseline}})
+		CatchupFrom: s.CatchupFrom, Baseline: s.Baseline, InboxGroup: s.InboxGroup, InboxGroupFrom: s.InboxGroupFrom, Migrated: s.Migrated}})
 }
 
 func decode(data []byte) (Subscription, error) {
@@ -65,9 +71,10 @@ func decode(data []byte) (Subscription, error) {
 	}
 	s := k.Subscription
 	s.Tool, s.ToolFingerprint, s.SourceMin, s.MaxCallsPerHour = k.Keep.Tool, k.Keep.ToolFingerprint, k.Keep.SourceMin, k.Keep.MaxCallsPerHour
-	s.SinceAt, s.ShapeMisses, s.SnapshotHash, s.RunState, s.Runs = k.Keep.SinceAt, k.Keep.ShapeMisses, k.Keep.SnapshotHash, k.Keep.RunState, k.Keep.Runs
+	s.SinceAt, s.Continuation, s.ShapeMisses, s.SnapshotHash, s.RunState, s.Runs = k.Keep.SinceAt, k.Keep.Continuation, k.Keep.ShapeMisses, k.Keep.SnapshotHash, k.Keep.RunState, k.Keep.Runs
 	s.InboxFrom, s.InboxCatchup, s.KBFrom = k.Keep.InboxFrom, k.Keep.InboxCatchup, k.Keep.KBFrom
 	s.CatchupFrom, s.Baseline = k.Keep.CatchupFrom, k.Keep.Baseline
+	s.InboxGroup, s.InboxGroupFrom, s.Migrated = k.Keep.InboxGroup, k.Keep.InboxGroupFrom, k.Keep.Migrated
 	return s, nil
 }
 
@@ -135,6 +142,10 @@ func (d *DBStore) DeleteSubscription(ctx context.Context, id string) error {
 	return d.db.DeleteSubscription(ctx, id)
 }
 
+func (d *DBStore) DeleteSubscriptionAt(ctx context.Context, id string, prev int64) (bool, error) {
+	return d.db.DeleteSubscriptionAt(ctx, id, prev)
+}
+
 func (d *DBStore) LeaseSubscription(ctx context.Context, id string, now, until time.Time) (bool, error) {
 	return d.db.LeaseSubscription(ctx, id, now, until)
 }
@@ -163,7 +174,7 @@ func (d *DBStore) CommitRun(ctx context.Context, c RunCommit) error {
 		}
 		applyRun(&cur, c, revision == c.Revision)
 		return encode(cur)
-	}, seen, items, c.Now)
+	}, seen, items, c.Read, c.Now)
 }
 
 func (d *DBStore) HeldItems(ctx context.Context, id string, q ItemQuery) ([]Held, error) {
@@ -181,6 +192,19 @@ func (d *DBStore) HeldItems(ctx context.Context, id string, q ItemQuery) ([]Held
 		out = append(out, Held{Seq: r.Seq, Stored: r.CreatedAt, Item: it})
 	}
 	return out, nil
+}
+
+func (d *DBStore) HeldItem(ctx context.Context, id, uid string) (*Held, error) {
+	r, err := d.db.SubscriptionItem(ctx, id, uid)
+	if err != nil || r == nil {
+		return nil, err
+	}
+	var it Item
+	if err := json.Unmarshal(r.Data, &it); err != nil {
+		return nil, nil // a row this build cannot read, as HeldItems leaves it out
+	}
+	it.SubscriptionID, it.UID = id, r.UID
+	return &Held{Seq: r.Seq, Stored: r.CreatedAt, Item: it}, nil
 }
 
 func (d *DBStore) PruneItems(ctx context.Context, id string, before time.Time) error {

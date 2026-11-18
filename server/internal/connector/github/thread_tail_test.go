@@ -47,7 +47,8 @@ func newTailAPI(t *testing.T, count int, links304 bool) (*Connector, *tailAPI) {
 	srv := httptest.NewServer(http.HandlerFunc(a.serveHTTP))
 	t.Cleanup(srv.Close)
 	c := New(Config{}, "", nil)
-	c.api, c.token = srv.URL, "synthetic-token"
+	c.api = srv.URL
+	signedInAs(c, "synthetic-token")
 	c.status = connector.Status{State: connector.StateOK, Account: "example-user"}
 	return c, a
 }
@@ -311,7 +312,8 @@ func TestCachedListPaginationContracts(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := New(Config{}, "", nil)
-			c.api, c.token = srv.URL, "synthetic-token"
+			c.api = srv.URL
+			signedInAs(c, "synthetic-token")
 			rows, err := cachedList[threadComment](c, context.Background(), tailPaths[0]+"?filter=example")
 			if (err != nil) != tc.fail || len(rows) != tc.want || hits != 1 {
 				t.Fatalf("rows=%d error=%v requests=%d", len(rows), err, hits)
@@ -348,7 +350,8 @@ func TestCachedListFailureRetryAndCancellation(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := New(Config{}, "", nil)
-			c.api, c.token = srv.URL, "synthetic-token"
+			c.api = srv.URL
+			signedInAs(c, "synthetic-token")
 			if _, err := cachedList[threadComment](c, ctx, tailPaths[0]); err == nil {
 				t.Fatal("failed read returned a partial window")
 			}
@@ -406,7 +409,8 @@ func TestCachedPageMetadataAndValidators(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(Config{}, "", nil)
-	c.api, c.token = srv.URL, "synthetic-token"
+	c.api = srv.URL
+	signedInAs(c, "synthetic-token")
 	for n := int32(0); n <= 4; n++ {
 		stage.Store(n)
 		expireThreadCache(c)
@@ -557,7 +561,8 @@ func TestThreadLateTailResponse(t *testing.T) {
 				defer srv.Close()
 				defer finish()
 				c := New(Config{}, "", nil)
-				c.api, c.token = srv.URL, "synthetic-token"
+				c.api = srv.URL
+				signedInAs(c, "synthetic-token")
 				c.status = connector.Status{State: connector.StateOK, Account: "example-user"}
 				ctx := context.Background()
 				if conditional {

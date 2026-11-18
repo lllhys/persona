@@ -32,7 +32,7 @@ const (
 // Codes of a rewind that did not happen (a dialog_open / input_draft refusal keeps its own).
 const (
 	rewindBusy        = "rewind_busy"        // the session is working or waiting on a dialog
-	rewindUnsupported = "rewind_unsupported" // not a Claude session of this machine, or nothing to type into
+	rewindUnsupported = "rewind_unsupported" // this session has no supported native rewind
 	rewindNothing     = "rewind_nothing"     // Claude has no prompt to go back to
 	rewindMismatch    = "rewind_mismatch"    // the prompt is not where the app saw it
 	rewindFailed      = "rewind_failed"      // the screen was not what a step needed
@@ -163,6 +163,32 @@ func (n *Node) rewind(ctx context.Context, id string, o rewindOpts) (map[string]
 	defer n.typing.lock(id)()
 	if n.isAssistantSession(id) {
 		return nil, rewindError(rewindUnsupported, "助手的对话不能回退。")
+	}
+	if s, h, ok := n.runtimes.rowOf(id); ok {
+		h.mu.Lock()
+		supported := h.hello.Caps.Rewind
+		h.mu.Unlock()
+		// Files only where the row offers them (capabilities.rewind_code, from what the runtime's agent can do).
+		code := s.Capabilities != nil && s.Capabilities.RewindCode != nil && *s.Capabilities.RewindCode
+		if !supported || s.IsSubagent || strings.Contains(id, subagentSep) || o.Restore != RestoreConversation && !code ||
+			s.Capabilities != nil && s.Capabilities.Rewind != nil && !*s.Capabilities.Rewind {
+			return nil, rewindError(rewindUnsupported, "This session does not support the requested rewind.")
+		}
+		if s.Status == proto.StatusWorking || s.Status == proto.StatusBlocked || s.Status == proto.StatusOffline {
+			return nil, rewindError(rewindBusy, "Wait for the session to become idle before rewinding.")
+		}
+		cctx, cancel := context.WithTimeout(ctx, rewindTotalLimit)
+		defer cancel()
+		var res map[string]any
+		params := map[string]any{"session_id": id, "prompt": o.Prompt, "occurrence": o.Occurrence, "restore": o.Restore}
+		if o.PromptsAfter != nil {
+			params["prompts_after"] = *o.PromptsAfter
+		}
+		err := h.peer.Call(cctx, "session.rewind", params, &res)
+		return res, err
+	}
+	if _, known := n.codexSource(id); known {
+		return n.rewindCodex(ctx, id, o)
 	}
 	pane, err := n.paneFor(ctx, id)
 	if err != nil {

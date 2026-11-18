@@ -66,7 +66,7 @@ class ConnectShotsTest {
     @Config(sdk = [35], qualifiers = "ja-w400dp-h1600dp-xhdpi")
     @Test fun japanese() = shots("ja", R.string.settings_pairing_manual)
 
-    private enum class Shot { Welcome, Connect, Manual, ManualInvalid, Confirm, Failed, Hubs, HubUpdate, Endpoints, Engine }
+    private enum class Shot { Welcome, WelcomeGuide, WelcomeOtherWays, Connect, Manual, ManualInvalid, Confirm, Failed, Hubs, HubUpdate, Endpoints, Engine }
 
     private val pairing = object : PairingService {
         override val isPaired = MutableStateFlow(false)
@@ -140,7 +140,9 @@ class ConnectShotsTest {
                 Box(Modifier.testTag("shot").width(400.dp).height(1500.dp).background(PersonaTheme.palette.background)) {
                     key(shot, style, dark) {
                         when (shot) {
-                            Shot.Welcome -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {})
+                            // The build config has no guide address here: no "No hub yet?" link.
+                            Shot.Welcome, Shot.WelcomeOtherWays -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {}, gettingStartedUrl = null)
+                            Shot.WelcomeGuide -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {}, gettingStartedUrl = "https://guide.example.com/start")
                             Shot.Connect, Shot.Manual, Shot.ManualInvalid -> PairingScreen(pairing, sessions, onReady = {}, onDiagnostics = {}, skipWelcome = true)
                             Shot.Confirm -> PairingScreen(pairing, sessions, initialLink = link, onReady = {}, onDiagnostics = {})
                             Shot.Failed -> PairingScreen(pairing, sessions, initialLink = "persona://pair?token=x", onReady = {}, onDiagnostics = {})
@@ -168,6 +170,11 @@ class ConnectShotsTest {
             if (next == Shot.Connect) {
                 rule.onNodeWithText(rule.activity.getString(R.string.settings_password_login_title)).assertExists()
                 rule.onNodeWithText(rule.activity.getString(manualLabel)).assertDoesNotExist()
+            }
+            if (next == Shot.WelcomeOtherWays) {
+                rule.onNode(hasText(rule.activity.getString(R.string.settings_pairing_other_ways)) and hasClickAction()).performClick()
+                rule.waitForIdle()
+                rule.onNodeWithText("personad hub pair").assertExists()
             }
             if (next == Shot.Manual || next == Shot.ManualInvalid) {
                 rule.onNode(hasText(rule.activity.getString(R.string.settings_password_login_pairing)) and hasClickAction()).performClick()

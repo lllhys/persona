@@ -145,7 +145,7 @@ describe("provider discovery ownership", () => {
   it("does not save A's deferred models into B after closing and reopening (#1314)", async () => {
     await draw(a);
     click("settings-providerwizard.discover");
-    expect(pending[0]!.body).toEqual({ name: "provider-a", base_url: "https://a.example.com", auth: "bearer", api: "messages" });
+    expect(pending[0]!.body).toEqual({ name: "provider-a", base_url: "https://a.example.com", auth: "bearer", api: "messages", agent: "claude" });
     click("common.cancel");
     await draw(b);
     await settle(pending[0]!, "success");
@@ -376,7 +376,9 @@ describe("the Connect step's own check (#4881)", () => {
     click("settings-providerwizard.test");
     expect(pending.map((r) => r.path)).toEqual(["/api/v1/launchers/test"]);
     click("settings-providerwizard.next");
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe(t("lib-launcher-presets.name_invalid"));
+    // said under the startup ID, which takes the focus (audit item 19)
+    expect(document.getElementById(nameInput().getAttribute("aria-describedby")!)?.textContent).toBe(t("lib-launcher-presets.name_invalid"));
+    expect(document.activeElement).toBe(nameInput());
     expect(urlInput().value).toBe("https://a.example.com");
     // a check started by hand is the check: nothing more is sent by itself
     await advance(AUTO * 3);
@@ -571,7 +573,9 @@ describe("the Connect step's own check (#4881)", () => {
     type(keyInput(), "example-key-a");
     type(urlInput(), "https://api.exa");
     click("settings-providerwizard.next");
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe(t("lib-launcher-presets.name_invalid"));
+    // said under the startup ID, which takes the focus (audit item 19)
+    expect(document.getElementById(nameInput().getAttribute("aria-describedby")!)?.textContent).toBe(t("lib-launcher-presets.name_invalid"));
+    expect(document.activeElement).toBe(nameInput());
     await advance(AUTO * 3);
     expect(pending).toHaveLength(0);
   });

@@ -7,6 +7,8 @@
     <string name="assistant_profile">アシスタントのプロフィール</string>
     <string name="assistant_got_it">OK</string>
     <string name="assistant_composer_placeholder">%1$sに質問…</string>
+    <string name="assistant_model_setup_title">アシスタントのモデルを接続</string>
+    <string name="assistant_model_setup_detail">アシスタントは%1$sで動作しています。このClaude Code設定ではモデルに接続できません。既存のプロバイダーを選ぶか、お使いのゲートウェイを追加してください。</string>
     <string name="assistant_info_settings">アシスタントの設定</string>
     <string name="assistant_info_knowledge">ナレッジ</string>
     <string name="assistant_info_schedule">定期タスク</string>
@@ -32,6 +34,8 @@
     <string name="assistant_voice_chat">音声チャット</string>
     <string name="assistant_compact">コンテキストを圧縮</string>
     <string name="assistant_new_main">新しいメインチャット</string>
+    <string name="assistant_clear_context">コンテキストをクリア</string>
+    <string name="assistant_clear_context_failed">コンテキストをクリアできませんでした：%1$s</string>
     <string name="assistant_archive">アーカイブ</string>
     <string name="assistant_archived">アーカイブ済み</string>
     <string name="assistant_copy_session_id">セッションIDをコピー</string>
@@ -70,13 +74,24 @@
     <string name="assistant_greeting_noon">こんにちは</string>
     <string name="assistant_greeting_afternoon">こんにちは</string>
     <string name="assistant_greeting_evening">こんばんは</string>
-    <string name="assistant_home_lead">メッセージや予定、手元の作業をお任せください。</string>
-    <string name="assistant_home_note">送信した内容はメインチャットに入ります。オフラインのときは、まずこの端末に保存されます。</string>
+    <string name="assistant_home_lead_main">ここはあなたのメインチャットです。ここで話したことは覚えておきます。コンピューター、スマホ、メール、Lark、整理済みのプロジェクトを確認でき、物事を見守って時間になったらお知らせすることもできます。</string>
+    <string name="assistant_home_lead_side">新しいサイドチャットを始めます。コンピューター、スマホ、メール、Lark、整理済みのプロジェクトを確認でき、物事を見守って時間になったらお知らせすることもできます。</string>
+    <string name="assistant_time_just_now">たった今</string>
+    <plurals name="assistant_time_minutes_ago">
+        <item quantity="other">%1$d分前</item>
+    </plurals>
+    <string name="assistant_time_yesterday">昨日</string>
     <string name="assistant_online_devices">オンラインのデバイス</string>
     <string name="assistant_this_phone">このスマホ</string>
     <string name="assistant_phone_tools_unavailable">スマホのツールは利用不可</string>
     <string name="assistant_phone_permissions_pending">スマホの権限を確認待ち</string>
     <string name="assistant_search_chats">チャットを検索</string>
+    <string name="assistant_hide_sidebar">サイドバーを非表示</string>
+    <string name="assistant_search_partial">以前のチャットを整理中です。まだ表示されないものがあります。</string>
+    <plurals name="assistant_full_search_chats">
+        <item quantity="other">%1$d件のチャット</item>
+    </plurals>
+    <string name="assistant_full_search_no_results">「%1$s」の結果はありません</string>
     <string name="assistant_start_main">メインチャットを開始</string>
     <string name="assistant_main_chat">メインチャット</string>
     <!-- The drawer's newest eligible chats, between 常驻 and All chats (#4922, #5196) -->
@@ -101,8 +116,13 @@
     <string name="assistant_open_settings">設定</string>
     <string name="assistant_make_leader">常駐にする</string>
     <string name="assistant_end_leader">常駐をやめる</string>
-    <string name="assistant_leader_working">作業中 %1$d</string>
+    <string name="assistant_make_leader_title">常駐にしますか？</string>
+    <string name="assistant_make_leader_text">このチャットは常駐に移り、「最近」には出なくなります。</string>
+    <string name="assistant_end_leader_title">常駐をやめますか？</string>
+    <string name="assistant_end_leader_text">「%1$s」は「最近」に戻ります。進行中のタスクはメインチャットの監督に戻り、終了や削除はされません。</string>
     <string name="assistant_leader_needs_you">対応待ち %1$d</string>
+    <string name="assistant_direction_todos_of">%1$s の ToDo</string>
+    <string name="assistant_direction_agents_of">%1$s の Agent</string>
     <string name="assistant_conversation_actions">チャットの操作</string>
     <string name="assistant_demo_title">体験モード</string>
     <string name="assistant_demo_notice">内容はこの体験中のみ保存されます。</string>
@@ -163,6 +183,16 @@
     <string name="assistant_rename_field">セッション名</string>
     <string name="assistant_save">保存</string>
     <string name="assistant_renamed">名前を変更しました</string>
+    <string name="assistant_edit_tags_menu">タグを編集…</string>
+    <string name="assistant_tags_title">タグを編集</string>
+    <string name="assistant_tags_filter">タグで絞り込み</string>
+    <string name="assistant_tags_add">追加</string>
+    <string name="assistant_tags_placeholder">タグを追加</string>
+    <string name="assistant_tags_remove">%1$s を削除</string>
+    <string name="assistant_tags_hint">Enter で追加します。タグは %1$d 個まで、各 %2$d 文字以内です。</string>
+    <string name="assistant_tag_too_long">各タグは %1$d 文字以内で入力してください。</string>
+    <string name="assistant_tag_count_limit">1つのチャットに設定できるタグは %1$d 個までです。</string>
+    <string name="assistant_tags_saved">「%1$s」のタグを保存しました</string>
     <string name="assistant_copy_diagnostics">診断情報をコピー</string>
     <string name="assistant_diagnostics_copied">診断情報をコピーしました</string>
     <string name="assistant_end_menu">終了…</string>

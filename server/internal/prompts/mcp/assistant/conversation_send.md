@@ -1,4 +1,4 @@
-Send a message to another Persona conversation (not this one). If it is running, the message waits until its current turn ends; if the user is talking in it, until they have been quiet for 2 minutes. The result says which. The message arrives marked as coming from this conversation, so the other side can answer with conversation_send. Conversations passing messages back and forth are limited (a few hops from the user's message, a few messages per pair in ten minutes): don't reply just to acknowledge.
+Message another conversation. It waits for a running turn or 2 min of user quiet. Marked as from this one; replies use conversation_send. Few hops per user message (main: no cap; a wake-up resets; a first reply adds none); long back-and-forth is cut. Past the rate it queues: the result says when, no resend. Don't reply just to acknowledge. Follow policy refusals; don't retry. Owner-verbatim words to main stay allowed: start with them. Handing on a user request: set quote (free once).
 
 ```json
 {
@@ -11,6 +11,10 @@ Send a message to another Persona conversation (not this one). If it is running,
     },
     "text": {
       "type": "string"
+    },
+    "quote": {
+      "type": "string",
+      "description": "\"latest\" or a message id: the user's words, carried verbatim"
     }
   }
 }

@@ -106,6 +106,8 @@ data class ModelPurpose(
     @SerialName("id") val id: String,
     @SerialName("name") val name: String = "",
     @SerialName("group") val group: String = "",
+    /** What the purpose is for, one sentence in the request's language (#5086); a task's, an extension's and an older hub's have none. */
+    @SerialName("description") val description: String? = null,
     /** launcher | api | extension. */
     @SerialName("kind") val kind: String = "launcher",
     @SerialName("parent") val parent: String? = null,
@@ -122,6 +124,9 @@ data class ModelPurpose(
     @SerialName("provider_ids") val providerIds: List<String>? = null,
 ) {
     val displayName: String get() = name.ifBlank { id }
+
+    /** [description] when it says something. */
+    val about: String? get() = description?.trim()?.takeIf(String::isNotEmpty)
 
     fun supports(field: String): Boolean = field in (fields ?: listOf("provider", "model"))
 

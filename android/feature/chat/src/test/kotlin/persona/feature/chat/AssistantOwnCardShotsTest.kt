@@ -68,7 +68,7 @@ class AssistantOwnCardShotsTest {
         val sent = mutableListOf<Resolution>()
         rule.setContent {
             PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
-                val panel = assistantStack(pending, chat, emptySet(), reviewed = null) { null }.cards
+                val panel = pending.filter { it.sessionKey == chat }
                 Column(Modifier.testTag("shot").width(400.dp).background(PersonaTheme.palette.background)) {
                     InteractionPanel(panel, null, 600.dp, null, emptySet(), { _, r -> sent += r; pending = emptyList() }, null, {})
                 }
@@ -103,7 +103,7 @@ class AssistantOwnCardShotsTest {
             val density = Density(LocalDensity.current.density, if (large) 1.6f else 1f)
             CompositionLocalProvider(LocalConfiguration provides configuration, LocalDensity provides density) {
                 PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
-                    val panel = assistantStack(listOf(titled), chat, emptySet(), reviewed = null) { null }.cards
+                    val panel = listOf(titled).filter { it.sessionKey == chat }
                     Column(Modifier.testTag("shot").width(400.dp).background(PersonaTheme.palette.background)) {
                         InteractionPanel(panel, null, 600.dp, null, emptySet(), { _, _ -> }, null, {})
                     }

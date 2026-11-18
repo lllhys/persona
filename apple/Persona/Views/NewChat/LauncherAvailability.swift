@@ -43,12 +43,15 @@ extension Launcher {
 
 /// New Agent's launcher list (`LauncherPicker`) and the pick it starts with.
 nonisolated enum LauncherChoices {
-    /// The rows for a search: every launcher whose name or model has the query, blocked ones too (grayed with why,
-    /// never hidden, the decision in #1643).
+    /// The rows for a search: every launcher whose name, title (Paseo's "Grok", #8261) or model has the query, blocked
+    /// ones too (grayed with why, never hidden, the decision in #1643).
     static func shown(_ launchers: [Launcher], query: String) -> [Launcher] {
         let q = query.trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return launchers }
-        return launchers.filter { $0.name.localizedCaseInsensitiveContains(q) || ($0.model ?? "").localizedCaseInsensitiveContains(q) }
+        return launchers.filter {
+            $0.name.localizedCaseInsensitiveContains(q) || ($0.displayName ?? "").localizedCaseInsensitiveContains(q)
+                || ($0.model ?? "").localizedCaseInsensitiveContains(q)
+        }
     }
 
     /// The grayed-out launchers under their reasons, for a menu that can only title a section (Run Agent Here's picker):

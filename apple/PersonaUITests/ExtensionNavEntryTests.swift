@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 /// Extensions' main-navigation pages (nav_page) opened straight from the navigation (#2961): the new shell's drawer on
@@ -51,6 +52,42 @@ final class ExtensionNavEntryTests: XCTestCase {
         checkEntry(app, "drawer")
     }
 
+    /// The usage place's root has ☰ and no Back; the extension page it pushes has Back and no ☰.
+    @MainActor func testTheUsageRootAndItsSubPageHaveOneLeadingButton() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad, "the shell's drawer is the phone's")
+        let app = try launch(["-tab", "assistant", "-dev.openChat", "", "-demo.on", "NO"])
+        let face = app.buttons["assistant-sidebar-button"]
+        XCTAssertTrue(face.waitForExistence(timeout: 15), app.debugDescription)
+        face.tap()
+        checkEntry(app, "usage")
+        let bar = app.navigationBars["用量"] // i18n-ignore: the mock extension's title
+        XCTAssertTrue(bar.waitForExistence(timeout: 10))
+        XCTAssertFalse(bar.buttons["BackButton"].exists, "the usage root has Back beside ☰")
+        assertSides(bar, leading: 1, trailing: 0, "usage root")
+        XCTAssertTrue(app.buttons["shell-place-sidebar"].exists)
+
+        let detail = app.buttons["查看用量明细"] // i18n-ignore: the mock's made-up detail
+        for _ in 0..<10 where !(detail.exists && detail.isHittable) {
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(detail.isHittable, "no usage detail row after scrolling:\n\(app.debugDescription)")
+        detail.tap()
+        let child = app.navigationBars["用量明细"] // i18n-ignore: the mock's detail title
+        XCTAssertTrue(child.waitForExistence(timeout: 10), "the usage detail did not push:\n\(app.debugDescription)")
+        XCTAssertTrue(child.buttons["BackButton"].exists)
+        assertSides(child, leading: 1, trailing: 0, "usage sub-page")
+        XCTAssertFalse(app.buttons["shell-place-sidebar"].exists, "the usage sub-page has ☰ beside Back")
+        shot(app, "usage-subpage")
+    }
+
+    @MainActor private func assertSides(_ bar: XCUIElement, leading: Int, trailing: Int, _ name: String) {
+        let center = bar.frame.midX
+        let left = bar.children(matching: .button).allElementsBoundByIndex.filter { $0.frame.midX < center }
+        let right = bar.children(matching: .button).allElementsBoundByIndex.filter { $0.frame.midX > center }
+        XCTAssertEqual(left.count, leading, "\(name): leading controls: \(bar.debugDescription)")
+        XCTAssertLessThanOrEqual(right.count, max(trailing, 1), "\(name): more than one trailing control: \(bar.debugDescription)")
+    }
+
     @MainActor func testTheIPadSidebarListsTheExtensionsPages() throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "the sidebar column is iPad's")
         for orientation in [UIDeviceOrientation.landscapeLeft, .portrait] {
@@ -66,5 +103,18 @@ final class ExtensionNavEntryTests: XCTestCase {
             app.terminate()
         }
         XCUIDevice.shared.orientation = .portrait
+    }
+
+    /// Landscape evidence holds the real page for an outer simctl capture; XCUITest's own landscape image can be wrong.
+    @MainActor func testTheIPadUsagePageInLandscapeViaSimctl() throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom != .pad, "the iPad's persistent sidebar")
+        guard let dir = env["PERSONA_SHOTS"] else { throw XCTSkip("PERSONA_SHOTS chooses the evidence directory") }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = try launch(["-tab", "assistant"])
+        checkEntry(app, "landscape-simctl")
+        let window = app.windows.firstMatch
+        XCTAssertGreaterThan(window.frame.width, window.frame.height)
+        // Hold for the outer `simctl io screenshot`; XCUITest's own landscape image may be rotated or black-framed.
+        sleep(30)
     }
 }

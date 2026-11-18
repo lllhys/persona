@@ -8,7 +8,10 @@ import Foundation
 struct OpenPersonaAssistantIntent: AppIntent {
     nonisolated static let title: LocalizedStringResource = "Open Persona Assistant"
     nonisolated static let description = IntentDescription("Opens Persona's assistant page so you can talk or type.")
+    @available(iOS 26.0, *)
     nonisolated static var supportedModes: IntentModes { .foreground(.immediate) }
+    // iOS 18 has no supportedModes: it opens the app this way.
+    nonisolated static var openAppWhenRun: Bool { true }
 
     nonisolated init() {}
 
@@ -20,11 +23,41 @@ struct OpenPersonaAssistantIntent: AppIntent {
     }
 }
 
+/// Opens a new assistant conversation and asks its composer to start dictating once it is visible.
+struct OpenPersonaDictationIntent: AppIntent {
+    nonisolated static let title: LocalizedStringResource = "Dictate to Persona"
+    nonisolated static let description = IntentDescription("Opens a new conversation and starts dictation.")
+    @available(iOS 26.0, *)
+    nonisolated static var supportedModes: IntentModes { .foreground(.immediate) }
+    // iOS 18 has no supportedModes: it opens the app this way.
+    nonisolated static var openAppWhenRun: Bool { true }
+
+    nonisolated init() {}
+
+    /// The same entry for the intent and its DEBUG stand-in; tests can supply a model other than the app's singleton.
+    #if !WIDGET_EXTENSION
+    @MainActor static func open(_ model: AppModel) {
+        model.shellSettings = false
+        model.openNewAssistantForDictation()
+    }
+    #endif
+
+    nonisolated func perform() async throws -> some IntentResult {
+        #if !WIDGET_EXTENSION
+        await MainActor.run { Self.open(AppModel.shared) }
+        #endif
+        return .result()
+    }
+}
+
 /// Opens Persona on the Agents tab (personal agents are one tap from there).
 struct OpenPersonaAgentsIntent: AppIntent {
     nonisolated static let title: LocalizedStringResource = "Open Persona Agents"
     nonisolated static let description = IntentDescription("Opens the Agents tab in Persona.")
+    @available(iOS 26.0, *)
     nonisolated static var supportedModes: IntentModes { .foreground(.immediate) }
+    // iOS 18 has no supportedModes: it opens the app this way.
+    nonisolated static var openAppWhenRun: Bool { true }
 
     nonisolated init() {}
 

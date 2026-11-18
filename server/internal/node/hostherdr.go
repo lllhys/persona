@@ -42,6 +42,7 @@ var (
 	_ host.Controller   = (*herdrHost)(nil)
 	_ host.FullClienter = (*herdrHost)(nil)
 	_ host.Worktreer    = (*herdrHost)(nil)
+	_ host.EnvLauncher  = (*herdrHost)(nil)
 )
 
 // herdrPaneEnv is the variable herdr sets in every pane; herdrSessionEnv and herdrSocketEnv say which server's
@@ -62,10 +63,16 @@ const (
 // environment, it would be authoritative for everything run there later.
 const herdrAgentEnv = "HERDR_AGENT"
 
-// herdrAgentName is what herdr calls an agent of kind, "" for one it has no integration for (a compatible CLI, pi: left to its
-// own detection) and on Windows, where herdr does not read HERDR_AGENT.
+// herdrAgentName is what herdr calls an agent of kind, "" for one it has no integration for (a compatible CLI: left to its
+// own detection) and on Windows, where herdr does not read HERDR_AGENT. pi, the Cursor CLI and the Antigravity CLI
+// are integrations herdr ships (herdr 0.9.5: pi, cursor, antigravity_cli), so a wrapper that execs them under another
+// name is still recognised.
 func herdrAgentName(kind string) string {
-	if runtime.GOOS != "windows" && (kind == "claude" || kind == "codex") {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+	switch kind {
+	case "claude", "codex", piAgent, cursorAgent, agyAgent:
 		return kind
 	}
 	return ""
@@ -259,6 +266,15 @@ func (h *herdrHost) PaneReportResume(ctx context.Context, pane host.PaneRef, sou
 		return err
 	}
 	return t.c.PaneReportResume(ctx, t.id, source, agent, sessionID, argv)
+}
+
+// serverID is herdr.Client.ServerID of the server the pane is in; "" when it cannot tell.
+func (h *herdrHost) serverID(ctx context.Context, pane host.PaneRef) string {
+	t, err := h.target(ctx, pane.ID)
+	if err != nil || t.c == nil {
+		return ""
+	}
+	return t.c.ServerID()
 }
 
 // has runs `herdr <args> --help` once: whether this herdr knows the command.

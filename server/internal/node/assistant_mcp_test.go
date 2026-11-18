@@ -158,8 +158,8 @@ func TestClaudeAssistantMCPAndToolsWiring(t *testing.T) {
 		}
 		return cfg.MCPServers
 	}
-	mcpJSON, flags := n.claudeAssistantMCPAndTools("sess-123", "", true)
-	got := servers(mcpJSON)
+	flags := n.claudeAssistantMCPAndTools("sess-123", "", true)
+	got := servers(mcpFlag(t, flags, "--mcp-config"))
 	if _, ok := got["persona"]; !ok {
 		t.Fatal("missing persona mcp server")
 	}
@@ -179,7 +179,7 @@ func TestClaudeAssistantMCPAndToolsWiring(t *testing.T) {
 	}
 
 	// Negotiating away the built-in alias must not weaken extension deny rules.
-	_, canonicalFlags := n.claudeAssistantMCPAndTools("sess-123", "", false)
+	canonicalFlags := n.claudeAssistantMCPAndTools("sess-123", "", false)
 	if mcpFlag(t, canonicalFlags, "--disallowedTools") != mcpFlag(t, flags, "--disallowedTools") {
 		t.Fatalf("extension deny rules changed: %v", canonicalFlags)
 	}
@@ -189,8 +189,8 @@ func TestClaudeAssistantMCPAndToolsWiring(t *testing.T) {
 
 	// Turned off on this machine: no server and no --disallowedTools.
 	t.Setenv("PERSONA_EXAMPLE_AGENT", "")
-	mcpJSONOff, flagsOff := n.claudeAssistantMCPAndTools("sess-123", "", true)
-	if _, ok := servers(mcpJSONOff)["example"]; ok {
+	flagsOff := n.claudeAssistantMCPAndTools("sess-123", "", true)
+	if _, ok := servers(mcpFlag(t, flagsOff, "--mcp-config"))["example"]; ok {
 		t.Fatal("example server should not be present when turned off")
 	}
 	if slices.Contains(flagsOff, "--disallowedTools") {

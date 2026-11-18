@@ -1,5 +1,6 @@
 // Overview: what needs you, what is running, what just finished — Beautiful UI's Task Rows — and the computers.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SESSIONS_HIERARCHY_FEATURE } from "../lib/child-sessions";
 import { homeKey } from "../lib/folded-rows";
 import { ago, interactionCanAnswer, sessionCan, sessionPreview, shortDuration, sourceSubtitle, sessionTitle, stateOf, tabLabel } from "../lib/format";
 import { usePendingLine } from "../lib/card-answer";
@@ -8,6 +9,8 @@ import { interactionAsk } from "../lib/inbox";
 import { interactionKicker } from "../lib/row-line";
 import { answerLines, type Resolution } from "../lib/answered";
 import { quickAnswers, withHeld, type HeldRow, type QuickChoice } from "../lib/quick-answers";
+import { cardTapKey } from "../lib/card-tap-key";
+import { currentViewId, TapGuardSurface, useTapGuard, useTapGuardView } from "../lib/tap-guard";
 import { optionDisplay, permissionDetail } from "../lib/tool-detail";
 import { cardToolName } from "../lib/turns";
 import { plainMarkdown } from "../lib/plain-markdown";
@@ -19,8 +22,9 @@ import { machineDeployment } from "../lib/machine-deploy";
 import { classifyConnection } from "../lib/node-health";
 import { href, navigate, onLinkClick, type Route } from "../lib/router";
 import { useScrollMemory } from "../lib/scroll-memory";
-import { useScopedAgentSessions, useScopedCounts, useScopedInteractions, useScopedMachines, useScopedTodos } from "../lib/current-assistant";
+import { useScopedAgentListStatus, useScopedAgentSessions, useScopedCounts, useScopedInteractions, useScopedMachines, useScopedTodos } from "../lib/current-assistant";
 import { getSession, useStore, withTaskRows } from "../lib/store";
+import { retryAgentList } from "../lib/sessions";
 import { discardOutbox, outboxEntry, queueToSession, retryOutboxEntry } from "../lib/outbox";
 import { homeTasks, type HomeTask } from "../lib/home-tasks";
 import { heldDelivery, makeSessionLookup, orphanedLine, TODO_STATUS_INFO, TODO_TONE_CLASS, todoStatusLabel } from "../lib/todos";
@@ -28,6 +32,7 @@ import { BUSY_MOTION, spinStyle } from "../lib/busy-motion";
 import type { AgentState, Interaction, Machine, Session } from "../lib/types";
 import { Button, Collapse, cx, EASE, IconButton, Loading, useNow } from "../ui/atoms";
 import { RecommendedTag } from "../ui/RecommendedTag";
+import { Tag } from "./assistant/parts";
 import { StatusMark } from "../ui/StatusMark";
 import { Icon } from "../ui/icons";
 import { MarkSeenDialog } from "./AgentMenus";
@@ -44,6 +49,8 @@ function greeting() {
 }
 
 export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; onToggleSidebar: () => void }) {
+  // stamp the opened overview before its first rows are read: a row arriving later is judged against the open-grace
+  useTapGuardView(overviewTapSurface, currentViewId());
   // with several assistants, the current one's computers, cards, agents and tasks (docs/assistant/managers.md "Clients")
   const machines = useScopedMachines();
   const interactions = useScopedInteractions();
@@ -52,13 +59,36 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
   const agentSessions = useScopedAgentSessions();
   const sessions = useMemo(() => answeredSessions(agentSessions, interactions, answered), [agentSessions, interactions, answered]);
   const loaded = useStore((s) => s.loaded);
+  // connected, the hub's first answers are still on their way: "Loading", not "Connecting to the hub"
+  const online = useStore((s) => s.conn === "online");
   const noMachines = loaded && machines.length === 0;
   const counts = useScopedCounts();
+  // The list the agents and counts come from (a paging hub's first pages, or with several assistants the complete list)
+  // may not have been read yet, or its read failed: then nobody knows how many agents there are, and the page says so
+  // instead of counting none. `whole`: it holds every agent, so each computer's can be counted.
+  const { status: list, whole } = useScopedAgentListStatus();
+  // Only hierarchy hubs receive the roots counts that exclude folded children and Assistant conversations.
+  const hubAgentCounts = useStore((s) => s.features.includes(SESSIONS_HIERARCHY_FEATURE)
+    ? s.sessionCounts?.active_agents_by_machine : undefined);
+  const agentCounts = useMemo(() => {
+    if (list !== "loaded") return undefined;
+    if (!whole) return hubAgentCounts && new Map(Object.entries(hubAgentCounts));
+    const byMachine = new Map<string, number>();
+    for (const s of agentSessions) {
+      if (stateOf(s) !== "offline") byMachine.set(s.machine_id, (byMachine.get(s.machine_id) ?? 0) + 1);
+    }
+    return byMachine;
+  }, [list, whole, hubAgentCounts, agentSessions]);
   const now = useNow(5000, counts.working > 0);
 
   // the agents of one herdr tab are one row (#2320), filed under the most urgent of them; a card waiting counts as
   // something to do, and "Mark all as seen" marks every unread agent, wherever its tab is filed
   const { groups, unread, markAllAt, quiet } = useMemo(() => homeOverview(sessions, interactions), [sessions, interactions]);
+  // the list's read failed: the line under the greeting says so, with Retry (with no computer, adding one comes first)
+  const failed = loaded && list === "failed" && !(quiet && noMachines);
+  // what the line under the greeting says while the agents are not known: connecting, loading, or the failure ("" once
+  // they are, and the counts sentence takes its place)
+  const lineState = failed ? t("home.agents_failed") : !loaded ? (online ? t("home.loading") : t("home.connecting")) : !(quiet && noMachines) && list === "loading" ? t("home.loading") : "";
   // every open task with where it stands (#6450, the web side of the Lark bot's /tasks)
   const todos = useScopedTodos();
   const taskRows = useStore((s) => s.taskRows);
@@ -101,9 +131,14 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
           <div style={{ animation: `fade-up 420ms ${EASE} both` }}>
             <h1 className="text-[22px] font-semibold tracking-tight text-ink">{greeting()}</h1>
             <div className="mt-1 flex items-center gap-2">
-              <p className="min-w-0 flex-1 text-[13.5px] text-ink-2">
-                {!loaded ? t("home.connecting") : quiet ? noMachines ? t("home.no_machines_summary") : t("home.all_quiet") : t("home.summary", { list: [counts.needs && t("home.summary_needs", { count: counts.needs }), counts.working && stateCount("working", counts.working), counts.unread && stateCount("unread", counts.unread)].filter(Boolean).join(t("home.summary_separator")) })}
+              {failed && <Icon name="alertCircle" size={14} className="shrink-0 text-red" />}
+              {/* the line's state is a live region, mounted throughout so a screen reader hears it change, to the failure
+                  too; the counts sentence stays out of it, or each agent's start and finish would be read out again */}
+              <p className={cx("min-w-0 text-[13.5px] text-ink-2", !failed && "flex-1")}>
+                <span role="status">{lineState}</span>
+                {!lineState && (quiet ? (noMachines ? t("home.no_machines_summary") : t("home.all_quiet")) : summary(counts, interactions.length))}
               </p>
+              {failed && <Button size="sm" icon="retry" onClick={retryAgentList}>{t("home.retry")}</Button>}
               {loaded && markAllAt === "summary" && markAll}
             </div>
           </div>
@@ -170,7 +205,7 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
               title={t("home.tasks")}
               count={tasks.total}
               right={tasks.total > tasks.rows.length && <a href={href({ name: "todos" })} onClick={(e) => onLinkClick(e, { name: "todos" })} className="text-[12px] text-ink-3 hover:text-ink-2">{t("home.tasks_all")}</a>}
-              grid
+              grid="tasks"
             >
               {tasks.rows.map((r) => (
                 <TaskCard key={r.todo.id} task={r} />
@@ -199,7 +234,7 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
             </Group>
           )}
 
-          {loaded && quiet && interactions.length === 0 && held.length === 0 && (
+          {loaded && quiet && interactions.length === 0 && held.length === 0 && (noMachines || list === "loaded") && (
             <div className="flex flex-col items-start gap-3 rounded-card bg-surface p-4 shadow-card">
               <span className={cx("flex size-8 items-center justify-center rounded-full", noMachines ? "bg-field text-ink-2" : "bg-green-tint text-green")}>
                 <Icon name={noMachines ? "machine" : "check"} size={15} stroke={noMachines ? undefined : 2.6} />
@@ -218,7 +253,8 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
             <Group title={t("home.computers")} count={machines.length} right={<a href={href({ name: "machines" })} onClick={(e) => onLinkClick(e, { name: "machines" })} className="text-[12px] text-ink-3 hover:text-ink-2">{t("home.monitor")}</a>}>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 @min-[60rem]:grid-cols-3 @min-[84rem]:grid-cols-4 @min-[110rem]:grid-cols-5">
                 {machines.map((m) => {
-                  const mine = m.online ? sessions.filter((s) => s.machine_id === m.id && stateOf(s) !== "offline") : [];
+                  const count = agentCounts && (agentCounts.get(m.id) ?? 0);
+                  const line = m.online ? [count !== undefined && t("home.machine_agents", { count }), m.system?.name].filter(Boolean).join(" · ") || t("home.online") : offlineLine(m);
                   const hub = hubLabel(m, machines);
                   const detail = { name: "machine" as const, mid: m.id };
                   return (
@@ -231,7 +267,7 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
                           <span className="truncate text-[13px] font-medium text-ink">{m.name}</span>
                           {hub && <span className="shrink-0 truncate text-[11.5px] text-ink-3">{hub}</span>}
                         </span>
-                        <span className="block truncate text-[11.5px] text-ink-3" title={!m.online && m.error && offlineLine(m) !== m.error ? m.error : undefined} data-machine-line>{m.online ? t("home.machine_agents", { count: mine.length }) + (m.system?.name ? ` · ${m.system.name}` : "") : offlineLine(m)}</span>
+                        <span className="block truncate text-[11.5px] text-ink-3" title={!m.online && m.error && offlineLine(m) !== m.error ? m.error : undefined} data-machine-line>{line}</span>
                       </span>
                       <span className={cx("size-2 shrink-0 rounded-full", m.online ? "bg-green" : "bg-line-strong")} title={m.online ? t("home.online") : t("home.offline")} />
                     </a>
@@ -245,6 +281,14 @@ export function Home({ onNewAgent, onToggleSidebar }: { onNewAgent: () => void; 
       <MarkSeenDialog list={confirmSeen} onClose={() => setConfirmSeen(null)} />
     </div>
   );
+}
+
+/** The line under the greeting: how many agents need you, work and finished unseen. With none of them, the cards
+ *  that wait (a Persona conversation's, whose agent is not counted) are what needs you: never an empty sentence. */
+function summary(counts: { needs: number; working: number; unread: number }, cards: number): string {
+  const parts = [counts.needs && t("home.summary_needs", { count: counts.needs }), counts.working && stateCount("working", counts.working), counts.unread && stateCount("unread", counts.unread)].filter(Boolean);
+  if (parts.length) return t("home.summary", { list: parts.join(t("home.summary_separator")) });
+  return cards ? t("home.summary_cards", { count: cards }) : t("home.all_quiet");
 }
 
 // Marks every unread agent seen, after the dialog says how many (MarkSeenDialog).
@@ -261,10 +305,12 @@ function MarkAllSeen({ count, onClick }: { count: number; onClick: () => void })
 // answering) only once each still has room for its question and buttons.
 const GRID = {
   rows: "grid grid-cols-1 items-start gap-1.5 @min-[60rem]:grid-cols-2 @min-[100rem]:grid-cols-3",
+  // task cards differ in height (a stage bar or not): a row stretches them to one height, the agent line at the bottom
+  tasks: "grid grid-cols-1 items-stretch gap-1.5 @min-[60rem]:grid-cols-2 @min-[100rem]:grid-cols-3",
   cards: "grid grid-cols-1 items-start gap-1.5 @min-[84rem]:grid-cols-2 @min-[120rem]:grid-cols-3",
 };
 
-function Group({ title, count, children, right, hint, grid }: { title: string; count: number; children: React.ReactNode; right?: React.ReactNode; hint?: string; grid?: true | "cards" }) {
+function Group({ title, count, children, right, hint, grid }: { title: string; count: number; children: React.ReactNode; right?: React.ReactNode; hint?: string; grid?: true | "cards" | "tasks" }) {
   return (
     <section>
       <div className={cx("flex items-baseline gap-2", hint ? "mb-1" : "mb-2.5")}>
@@ -288,21 +334,27 @@ function TaskCard({ task: { todo, status, agents } }: { task: HomeTask }) {
   const orphan = status !== "needs_you" ? orphanedLine(todo) : undefined;
   const line = [held && t(`todos.delivery_${held.state}`), agents > 0 && t("todos.agent_count", { count: agents })].filter(Boolean).join(" · ");
   return (
-    <div className="flex flex-col gap-2 rounded-card bg-surface px-3 py-2.5 shadow-card" data-task={todo.id}>
+    <div className="flex h-full flex-col gap-2 rounded-card bg-surface px-3 py-2.5 shadow-card" data-task={todo.id}>
       <div className="flex min-w-0 items-center gap-2">
         <a href={href(to)} onClick={(e) => onLinkClick(e, to)} className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink hover:underline">
           {todo.title}
         </a>
+        {todo.kind === "concern" && <Tag><span data-testid="todo-concern">{t("todos.concern")}</span></Tag>}
         <span className={cx("inline-flex h-5 shrink-0 items-center rounded-full bg-field px-1.5 text-[11px] font-medium whitespace-nowrap", TODO_TONE_CLASS[TODO_STATUS_INFO[status].tone])}>{todoStatusLabel(todo, status)}</span>
       </div>
       <TodoStageBar stage={todo.stage} stageKind={todo.stage_kind} prURL={todo.pr_url} />
-      {line && <p className={cx("truncate text-[11.5px]", held ? "text-orange" : "text-ink-3")}>{line}</p>}
-      {/* nobody is working on it (#3618): the hub's finding and why; a card that waits for the user says that instead */}
-      {orphan && (
-        <p data-orphaned-line className="truncate text-[11.5px] text-ink-3">
-          <span className="font-medium text-orange">{orphan.lead}</span>
-          {orphan.reason && <> · {orphan.reason}</>}
-        </p>
+      {/* the lines under the stage bar sit at the card's bottom, so a row of cards of one height lines up */}
+      {(line || orphan) && (
+        <div className="mt-auto flex flex-col gap-2">
+          {line && <p className={cx("truncate text-[11.5px]", held ? "text-orange" : "text-ink-3")}>{line}</p>}
+          {/* nobody is working on it (#3618): the hub's finding and why; a card that waits for the user says that instead */}
+          {orphan && (
+            <p data-orphaned-line className="truncate text-[11.5px] text-ink-3">
+              <span className="font-medium text-orange">{orphan.lead}</span>
+              {orphan.reason && <> · {orphan.reason}</>}
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -381,6 +433,7 @@ function ContinueAction({ s, title, several }: { s: Session; title: string; seve
   const [failed, setFailed] = useState<{ id: string; why: string } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const refocus = useRef(false);
+  const attempt = useRef(0);
   useEffect(() => {
     if (!to && refocus.current) {
       refocus.current = false;
@@ -395,13 +448,16 @@ function ContinueAction({ s, title, several }: { s: Session; title: string; seve
     const words = text.trim();
     if (!to || !words || phase === "sending") return;
     const { machine_id: mid, session_id: sid } = to;
+    const attempted = attempt.current;
     setPhase("sending");
     // the line again after a failure is the outbox's Retry of that message (same id while the hub never answered, so
     // it goes in once); changed, the old one is dropped and this one goes as new
     const prev = failed && outboxEntry(mid, sid, failed.id);
     if (prev && prev.text !== words) discardOutbox(mid, sid, prev.id);
     const r = prev?.state === "failed" && prev.text === words ? retryOutboxEntry(mid, sid, prev.id) : queueToSession(mid, sid, { text: words });
-    if (await r.sent) {
+    const ok = await r.sent;
+    if (attempted !== attempt.current) return;
+    if (ok) {
       setFailed(null);
       setText("");
       setPhase("sent");
@@ -437,7 +493,7 @@ function ContinueAction({ s, title, several }: { s: Session; title: string; seve
         </form>
       ) : (
         <div className="flex">
-          <Button tone="secondary" icon="send" onClick={() => { setTo(s); setPhase("idle"); }}>
+          <Button tone="secondary" icon="send" onClick={() => { attempt.current++; setTo(s); setPhase("idle"); }}>
             {t("home.continue")}
             {/* every row has one: the row's title tells them apart to a screen reader */}
             <span className="sr-only">{t("home.continue_label", { title })}</span>
@@ -454,13 +510,22 @@ function ContinueAction({ s, title, several }: { s: Session; title: string; seve
 
 const ANSWERED_HOLD_MS = 1600;
 
+/** The overview's rows share one guard surface (#8161): opening Overview exempts its first rows for this grace. */
+const overviewTapSurface = new TapGuardSurface(1000);
+
+/** Tests: the module-level surface outlives any one render, so each test starts with a freshly opened overview. */
+export function resetOverviewTapGuardForTest(): void {
+  overviewTapSurface.reset();
+}
+
 /** A row's one-tap answers (lib/quick-answers.ts), under its words; the one being sent spins, the others wait. An answer
  *  on its way from anywhere (this row, the chat's card, a notification) holds them all too, also after leaving Overview
  *  and coming back, and the row says which one, as the chat's card does (#2793). */
 function QuickAnswers({ ix, choices, sending, onPick }: { ix: Interaction; choices: QuickChoice[]; sending?: string; onPick: (c: QuickChoice) => void }) {
   const { pending, line } = usePendingLine(ix);
+  const { ref } = useTapGuard(overviewTapSurface, `${ix.id}${cardTapKey(ix)}`, currentViewId(), "button");
   return (
-    <div className="flex flex-wrap gap-1.5 px-3 pb-2 pl-10.5">
+    <div ref={ref} className="flex flex-wrap gap-1.5 px-3 pb-2 pl-10.5">
       {line && <p data-row-pending role="status" className="basis-full truncate text-[12px] text-ink-2">{line}</p>}
       {choices.map((c) => {
         const shown = optionDisplay(c.label);

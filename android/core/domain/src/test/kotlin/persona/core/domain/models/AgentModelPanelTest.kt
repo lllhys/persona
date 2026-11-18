@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import persona.core.contracts.PendingSwitch
 import persona.core.contracts.Session
+import persona.core.contracts.SessionCapabilities
 import persona.core.contracts.api.AgentLauncher
 import persona.core.contracts.api.AgentModel
 import persona.core.contracts.api.LauncherModels
@@ -100,6 +101,65 @@ class AgentModelPanelTest {
         val working = agent.copy(status = "working", state = "working")
         assertEquals(PanelReason.Busy, AgentModelPanel.panel(working, launchers, ::read, switching).state.busy)
         assertNull(AgentModelPanel.panel(agent, launchers, ::read, switching).state.busy)
+    }
+
+    // #6294 (the web's canSwitchModel): a runtime's session switches its model where its node says so, on its own launcher
+    // only (POST …/modes {model}, then {effort}); the node moves no runtime's session to another launcher.
+    @Test fun aRuntimesSessionSwitchesItsModelWhereItsNodeSays() {
+        val paseo = agent.copy(sourceKind = "runtime", paneId = null,
+            capabilities = SessionCapabilities(read = true, send = true, interrupt = true, approve = true, model = true))
+        assertTrue(AgentModelPanel.canSwitchModel(paseo))
+        assertTrue(AgentModelPanel.switches(paseo).first)
+        assertFalse(AgentModelPanel.switchesLauncher(paseo, switching))
+        assertEquals(listOf(ModeStep.Model("sonnet"), ModeStep.Effort("low")),
+            AgentModelPanel.pickPlan(paseo, PanelConfig("example", "sonnet", "low"), { lists[it] }, switching))
+        assertNull(AgentModelPanel.pickPlan(paseo, PanelConfig("work", "glm-5.3"), { lists[it] }, switching))
+        val panel = AgentModelPanel.panel(paseo, launchers, ::read, switching)
+        assertNull(panel.providers.first { it.id == "example" }.unavailable)
+        assertEquals(PanelReason.OtherProvider, panel.providers.first { it.id == "work" }.unavailable)
+        assertEquals(listOf("example"), panel.state.recommended)
+        // The node's no, no sending, not running, or a Persona chat: its model stays.
+        assertFalse(AgentModelPanel.canSwitchModel(paseo.copy(capabilities = paseo.capabilities!!.copy(model = false))))
+        assertFalse(AgentModelPanel.canSwitchModel(paseo.copy(capabilities = paseo.capabilities!!.copy(send = false))))
+        assertFalse(AgentModelPanel.canSwitchModel(paseo.copy(status = "offline", state = "offline")))
+        assertFalse(AgentModelPanel.canSwitchModel(paseo.copy(assistant = true)))
+        assertEquals(PanelReason.ModelFixed("claude"),
+            AgentModelPanel.panel(paseo.copy(capabilities = paseo.capabilities!!.copy(model = false)), launchers, ::read, switching)
+                .providers.first { it.id == "example" }.unavailable)
+        // An older node says nothing: a session with a source keeps its model, as before; any agent the node says yes for switches.
+        assertFalse(AgentModelPanel.canSwitchModel(paseo.copy(capabilities = SessionCapabilities(read = true, send = true))))
+        assertTrue(AgentModelPanel.canSwitchModel(paseo.copy(agent = "agy")))
+        // Claude Code in a terminal, nothing said: as before.
+        assertTrue(AgentModelPanel.canSwitchModel(agent) && AgentModelPanel.switchesLauncher(agent, switching))
+    }
+
+    // #8143: Paseo calls every provider but Claude Code and Codex "paseo"; each is an engine of its own, named and marked as
+    // itself: the panel never says "paseo", and moving to another provider or to Claude Code needs a new conversation.
+    @Test fun eachOfPaseosOtherProvidersIsItsOwnEngine() {
+        val caps = SessionCapabilities(read = true, send = true, interrupt = true, approve = true, modes = false, model = true)
+        val grok = agent.copy(agent = "paseo", agentLabelHint = "My Grok", launcher = "grok", model = "grok-5", effort = null,
+            sourceKind = "runtime", spaceKind = "paseo", paneId = null, capabilities = caps)
+        val paseo = listOf(AgentLauncher("claude"), AgentLauncher("grok", agentType = "paseo"), AgentLauncher("kimi", agentType = "paseo"),
+            AgentLauncher("codex", agentType = "codex"))
+        val models = mapOf("grok" to LauncherModels("paseo", listOf(AgentModel("grok-5", "Grok 5", isDefault = true, efforts = listOf("low", "high")))),
+            "kimi" to LauncherModels("paseo", listOf(AgentModel("kimi-k3", "Kimi K3"))))
+        assertEquals("grok", AgentModelPanel.engine(grok))
+        assertEquals(listOf("claude", "grok", "kimi", "codex"), paseo.map { AgentModelPanel.launcherEngine(it.name, it.agentType) })
+        val panel = AgentModelPanel.panel(grok, paseo, { ModelList(read = true, list = models[it]) }, switching)
+        assertEquals(listOf("claude", "grok", "kimi", "codex"), panel.providers.map { it.engine })
+        assertNull(panel.providers.first { it.id == "grok" }.unavailable)
+        assertEquals(PanelReason.OtherEngine("grok", "claude"), panel.providers.first { it.id == "claude" }.unavailable)
+        assertEquals(PanelReason.OtherEngine("grok", "kimi"), panel.providers.first { it.id == "kimi" }.unavailable)
+        assertEquals(listOf("low", "high"), panel.providers.first { it.id == "grok" }.models?.single()?.efforts)
+        assertEquals(PillSetup("grok", "grok", "Grok 5", null), AgentModelPanel.pill(grok, ModelList(read = true, list = models["grok"]), paseo).setup)
+        // Its own models and their efforts switch at once.
+        assertEquals(listOf(ModeStep.Effort("high")), AgentModelPanel.pickPlan(grok, PanelConfig("grok", "grok-5", "high"), { models[it] }, switching))
+        assertNull(AgentModelPanel.pickPlan(grok, PanelConfig("kimi", "kimi-k3"), { models[it] }, switching))
+        // What the words call them: its own by its label, the others by their launcher's; Claude Code and Codex keep theirs.
+        assertEquals(mapOf("grok" to "My Grok", "kimi" to "kimi"), AgentModelPanel.engineNames(grok, paseo))
+        assertEquals(mapOf("grok" to "grok", "kimi" to "kimi"), AgentModelPanel.engineNames(agent, paseo))
+        // A row with no launcher at all stays the catch-all, never Claude Code.
+        assertEquals("paseo", AgentModelPanel.engine(grok.copy(launcher = null)))
     }
 
     @Test fun aCodexThreadKeepsItsModel() {

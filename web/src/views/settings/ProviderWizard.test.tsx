@@ -451,8 +451,9 @@ describe("ProviderWizard from presets", () => {
     await act(async () => button("保存")!.click());
     expect(calls.find((c) => c.method === "PUT" && c.path.endsWith("/launchers/chat"))?.body).toMatchObject({
       headers: "", env: "", proxy: "", no_proxy: "", timeout_ms: 0, compact_window: 0, max_context: 0,
-      effort: "", opus_model: "", sonnet_model: "", haiku_model: "", fable_model: "", subagent_force: false,
+      opus_model: "", sonnet_model: "", haiku_model: "", fable_model: "", subagent_force: false,
     });
+    expect(calls.find((c) => c.method === "PUT" && c.path.endsWith("/launchers/chat"))?.body).not.toHaveProperty("effort");
   });
 
   it("keeps the Chat Completions protocol when editing", async () => {
@@ -661,6 +662,46 @@ describe("ProviderWizard names", () => {
     type(keyInput(), "sk-test-123456");
   }
 
+  // audit item 19: Next with nothing filled in said why at the foot of a scrolled dialog, out of sight; each field now
+  // says its own problem, the first takes the focus and is brought into view, and a fixed field stops saying it
+  it("says what each empty field needs under it when Next is pressed, focusing and showing the first", async () => {
+    const scrolled: Element[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this); };
+    await custom();
+    const id = field("启动 ID")!;
+    const url = urlInput();
+    expect(id.getAttribute("aria-invalid")).toBeNull();
+    expect(url.getAttribute("aria-invalid")).toBeNull();
+    expect(keyInput().getAttribute("aria-invalid")).toBeNull();
+    act(() => button("下一步")!.click());
+    expect(addModelInput()).toBeNull();
+    expect(alertText()).toBeUndefined();
+    expect(id.getAttribute("aria-invalid")).toBe("true");
+    expect(note(id)).toBe("要填启动 ID");
+    expect(url.getAttribute("aria-invalid")).toBe("true");
+    expect(note(url)).toBe("要填地址");
+    expect(keyInput().getAttribute("aria-invalid")).toBe("true");
+    expect(note(keyInput())).toBe("要填 API Key");
+    // a red edge in place of the field's inset (an added edge would lose to the inset)
+    for (const input of [id, url, keyInput()]) {
+      expect(input.className).toContain("shadow-[inset_0_0_0_1px_var(--red)]");
+      expect(input.className).not.toContain("shadow-inset-field");
+    }
+    expect(document.activeElement).toBe(id);
+    expect(scrolled.at(-1)?.contains(id)).toBe(true);
+    expect(scrolled.at(-1)?.textContent).toContain("要填启动 ID");
+    // the next press goes to the first field still wrong
+    type(id, "team_relay");
+    expect(id.getAttribute("aria-invalid")).toBeNull();
+    act(() => button("下一步")!.click());
+    expect(document.activeElement).toBe(url);
+    connect();
+    expect(url.getAttribute("aria-invalid")).toBeNull();
+    expect(keyInput().getAttribute("aria-invalid")).toBeNull();
+    act(() => button("下一步")!.click());
+    expect(addModelInput()).not.toBeNull();
+  });
+
   it("names a new gateway in any language and leaves its startup ID to the hub", async () => {
     autoName();
     await custom();
@@ -692,7 +733,11 @@ describe("ProviderWizard names", () => {
     type(field("显示名")!, "Team relay");
     connect();
     act(() => button("下一步")!.click());
-    expect(alertText()).toBe("要填启动 ID");
+    // said under the field, which takes the focus (audit item 19)
+    expect(alertText()).toBeUndefined();
+    expect(id.getAttribute("aria-invalid")).toBe("true");
+    expect(note(id)).toBe("要填启动 ID");
+    expect(document.activeElement).toBe(id);
     type(id, "team_relay");
     act(() => button("下一步")!.click());
     expect(addModelInput()).not.toBeNull();
@@ -713,8 +758,9 @@ describe("ProviderWizard names", () => {
     act(() => button("更多选项")!.click());
     expect(button("更多选项")!.getAttribute("aria-expanded")).toBe("false");
     act(() => button("下一步")!.click());
-    expect(alertText()).toBe("启动 ID 只能用字母、数字、_ 和 -，以字母或 _ 开头");
+    expect(note(field("启动 ID")!)).toBe("启动 ID 只能用字母、数字、_ 和 -，以字母或 _ 开头");
     expect(button("更多选项")!.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(field("启动 ID"));
     expect(addModelInput()).toBeNull();
   });
 
@@ -729,7 +775,8 @@ describe("ProviderWizard names", () => {
     expect(button("测试连接")!.disabled).toBe(false);
     expect(button("获取模型列表")!.disabled).toBe(false);
     act(() => button("下一步")!.click());
-    expect(alertText()).toBe("显示名最多 64 个字，不能换行");
+    expect(note(display)).toBe("显示名最多 64 个字，不能换行");
+    expect(document.activeElement).toBe(display);
     type(display, "字".repeat(64));
     expect(display.getAttribute("aria-invalid")).toBeNull();
     act(() => button("下一步")!.click());
@@ -811,5 +858,64 @@ describe("ProviderWizard names", () => {
       act(() => button(kind)!.click());
       expect(hint(), kind).toBe(want);
     }
+  });
+});
+
+// A gateway that lists more models than the wizard checks by itself (AUTO_CHECK): what was found is one click from where
+// it was fetched, a filter narrows a long list, and any row can be made the default, which checks it.
+describe("ProviderWizard with many models", () => {
+  const many = Array.from({ length: 20 }, (_, i) => ({ id: `gw-model-${String(i + 1).padStart(2, "0")}`, context_window: 200000 }));
+  const saved: ProviderView = { name: "gw", base_url: "https://gw.example.com", model: "m1", has_key: true, auth: "bearer", models: [{ id: "m1" }] };
+  async function fetchModels(list: Record<string, unknown>[]) {
+    discovered = list;
+    act(() => root.render(<><ProviderWizard existing={saved} onClose={() => {}} onSaved={() => {}} /><Toasts /></>));
+    await flush();
+    await act(async () => button("获取模型列表")!.click());
+    await flush();
+  }
+  const rows = () => [...document.body.querySelectorAll<HTMLElement>("li[data-model]")].map((r) => r.dataset.model);
+  const checked = () => [...document.body.querySelectorAll('[role="checkbox"][aria-checked="true"]')].map((b) => b.closest("li")?.getAttribute("data-model"));
+  const filter = () => document.body.querySelector<HTMLInputElement>('input[placeholder="筛选模型"]');
+
+  it("goes to Choose models from the line of the models found", async () => {
+    await fetchModels([{ id: "m1" }, ...many]);
+    const found = [...document.body.querySelectorAll('[role="status"]')].find((s) => s.textContent?.includes("找到 21 个模型。"))!;
+    expect(found.textContent).not.toContain("下一步");
+    act(() => [...found.querySelectorAll("button")].find((b) => b.textContent === "选择模型")!.click());
+    expect(rows()).toHaveLength(21);
+    expect(checked()).toEqual(["m1"]);
+  });
+
+  it("filters a long list by ID and name, and says when nothing matches", async () => {
+    await fetchModels([{ id: "m1" }, ...many, { id: "gw-x", name: "Example Long Name" }]);
+    act(() => button("下一步")!.click());
+    type(filter()!, "MODEL-1");
+    expect(rows()).toEqual(many.slice(9, 19).map((m) => m.id));
+    type(filter()!, "long name");
+    expect(rows()).toEqual(["gw-x"]);
+    type(filter()!, "no-such-model");
+    expect(rows()).toEqual([]);
+    expect(text()).toContain("没有匹配的模型。");
+  });
+
+  it("has no filter for a short list", async () => {
+    await fetchModels([{ id: "m1" }, { id: "m2" }]);
+    act(() => button("下一步")!.click());
+    expect(rows()).toEqual(["m1", "m2"]);
+    expect(filter()).toBeNull();
+  });
+
+  it("makes an unchecked model the default in one step, checking it, and saves both", async () => {
+    await fetchModels([{ id: "m1" }, ...many]);
+    act(() => button("下一步")!.click());
+    const row = document.body.querySelector<HTMLElement>('li[data-model="gw-model-05"]')!;
+    act(() => [...row.querySelectorAll("button")].find((b) => b.textContent === "设为默认")!.click());
+    expect(checked()).toEqual(["m1", "gw-model-05"]);
+    expect(row.textContent).toContain("默认");
+    await act(async () => button("保存")!.click());
+    await flush();
+    const put = calls.find((c) => c.method === "PUT")!;
+    expect(put.body).toMatchObject({ model: "gw-model-05" });
+    expect((put.body!.models as { id: string }[]).map((m) => m.id)).toEqual(["m1", "gw-model-05"]);
   });
 });

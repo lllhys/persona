@@ -144,47 +144,61 @@ internal fun rememberPanelPrefs(scope: PanelScope): MutableState<PanelPrefs> {
     return state
 }
 
-/** An engine's mark (claude, codex…) as the pill and the rows draw it. */
-internal fun engineMark(engine: String): AgentMarkSpec = when (engine) {
-    "claude" -> AgentMarkSpec(AgentMarkKind.Claude, "Claude Code", null)
-    "codex" -> AgentMarkSpec(AgentMarkKind.Codex, "Codex", null)
-    "trae", "trae-cli", "traecli" -> AgentMarkSpec(AgentMarkKind.Trae, "TRAE", null)
-    else -> AgentMarkSpec(null, engine, null)
+/**
+ * An engine's mark (claude, codex…) as the pill and the rows draw it: the design system's own mark where it has one
+ * ([knownAgentMark]), else the letter of [name], the name the chat knows the engine by (a Paseo provider's,
+ * [AgentModelPanel.engineNames]), or of the engine's id.
+ */
+internal fun engineMark(engine: String, name: String? = null): AgentMarkSpec = when (val kind = knownAgentMark(engine)) {
+    AgentMarkKind.Claude -> AgentMarkSpec(kind, "Claude Code", null)
+    AgentMarkKind.Codex -> AgentMarkSpec(kind, "Codex", null)
+    AgentMarkKind.Trae -> AgentMarkSpec(kind, "TRAE", null)
+    null -> AgentMarkSpec(null, name?.takeIf(String::isNotBlank) ?: engine, null)
 }
 
 /** An effort as the pill says it: Very high is "Extra" there (the web's pill-only word), the rest their names. */
 internal fun pillEffort(id: String, res: Resources): String =
     if (id == "xhigh") res.getString(R.string.chat_modelpill_effort_xhigh_short) else SessionModes.effortLabel(id, res) ?: id
 
-/** The panel's words of a chat: why rows are off, the efforts' and engines' names, the waiting switch's note. */
-internal fun panelWords(res: Resources): ModelPanelWords = ModelPanelWords(
-    reason = { reason ->
-        when (reason) {
-            PanelReason.OtherProvider -> res.getString(R.string.chat_modelpanel_other_provider)
-            is PanelReason.OtherEngine -> res.getString(R.string.chat_modelpanel_other_engine, engineMark(reason.from).name, engineMark(reason.to).name)
-            is PanelReason.ModelFixed -> res.getString(R.string.chat_modelpanel_model_fixed, engineMark(reason.engine).name)
-            PanelReason.Locked -> res.getString(R.string.chat_modelpanel_locked)
-            PanelReason.Busy -> res.getString(R.string.chat_modelpanel_busy)
-            PanelReason.ProviderGone -> res.getString(R.string.chat_modelpill_provider_gone)
-            is PanelReason.Hub -> reason.words
-        }
-    },
-    effort = { SessionModes.effortLabel(it, res) ?: it },
-    engine = { engineMark(it).name },
-    note = { note ->
-        when (note) {
-            is PanelNote.Pending -> res.getString(R.string.chat_modelpanel_pending_note, note.provider)
-            PanelNote.Engine -> res.getString(R.string.chat_modelpanel_engine_note)
-        }
-    },
-    mark = { engineMark(it) },
-)
+/**
+ * The panel's words of a chat: why rows are off, the efforts' and engines' names, the waiting switch's note. [names]:
+ * what the chat calls the engines that are a provider of their own ([AgentModelPanel.engineNames]).
+ */
+internal fun panelWords(res: Resources, names: Map<String, String> = emptyMap()): ModelPanelWords {
+    fun mark(engine: String) = engineMark(engine, names[engine])
+    return ModelPanelWords(
+        reason = { reason ->
+            when (reason) {
+                PanelReason.OtherProvider -> res.getString(R.string.chat_modelpanel_other_provider)
+                is PanelReason.OtherEngine -> res.getString(R.string.chat_modelpanel_other_engine, mark(reason.from).name, mark(reason.to).name)
+                is PanelReason.ModelFixed -> res.getString(R.string.chat_modelpanel_model_fixed, mark(reason.engine).name)
+                PanelReason.Locked -> res.getString(R.string.chat_modelpanel_locked)
+                PanelReason.Busy -> res.getString(R.string.chat_modelpanel_busy)
+                PanelReason.ProviderGone -> res.getString(R.string.chat_modelpill_provider_gone)
+                is PanelReason.Hub -> reason.words
+            }
+        },
+        effort = { SessionModes.effortLabel(it, res) ?: it },
+        engine = { mark(it).name },
+        note = { note ->
+            when (note) {
+                is PanelNote.Pending -> res.getString(R.string.chat_modelpanel_pending_note, note.provider)
+                PanelNote.Engine -> res.getString(R.string.chat_modelpanel_engine_note)
+            }
+        },
+        mark = { mark(it) },
+    )
+}
 
-/** The pill's content and spoken words for a setup ([pending]: the next message's, while a switch waits). */
-internal fun pillContent(view: PillView, pending: PillSetup?, ultracode: Boolean, res: Resources): Pair<ModelPillContent, String> {
+/**
+ * The pill's content and spoken words for a setup ([pending]: the next message's, while a switch waits); [names] as in
+ * [panelWords].
+ */
+internal fun pillContent(view: PillView, pending: PillSetup?, ultracode: Boolean, res: Resources,
+    names: Map<String, String> = emptyMap()): Pair<ModelPillContent, String> {
     val shown = pending ?: view.setup
     val model = shown.model
-    val content = ModelPillContent(shown.provider, model, engineMark(shown.engine), shown.effort?.let { pillEffort(it, res) },
+    val content = ModelPillContent(shown.provider, model, engineMark(shown.engine, names[shown.engine]), shown.effort?.let { pillEffort(it, res) },
         ultracode = ultracode && pending == null, pending = pending != null,
         loading = res.getString(R.string.chat_modelpill_loading).takeIf { view.loading && pending == null },
         failed = view.failed && pending == null)
@@ -261,9 +275,11 @@ internal fun AgentModelPill(
         }
     }
     val launchers = lists.launchers[machine]
+    // A Paseo provider is named and marked as itself, never as Paseo (#8143): its own by its label, the others by their launcher's.
+    val names = remember(session.agent, session.agentLabelHint, session.launcher, launchers) { AgentModelPanel.engineNames(session, launchers) }
     val view = AgentModelPanel.pill(session, lists.list(machine, own), launchers)
     val pending = AgentModelPanel.pendingPill(session, { lists.list(machine, it) }, launchers, res.getString(R.string.chat_modelpill_default_model))
-    val (content, spoken) = pillContent(view, pending, Ultracode.on(session), res)
+    val (content, spoken) = pillContent(view, pending, Ultracode.on(session), res, names)
     val (model, effort) = AgentModelPanel.switches(session)
     val editable = online && state.available && (model || effort)
     JModelPill(content, spoken, if (model || effort) ({ open = true }) else null, Modifier.testTag("model-pill"), width = width, open = open,
@@ -283,7 +299,7 @@ internal fun AgentModelPill(
     var ultracodeAsk by remember(session.key) { mutableStateOf<Ultracode.Ask?>(null) }
     val latest by rememberUpdatedState(session)
     LaunchedEffect(session, ultracodeAsk) { ultracodeAsk?.let { ask -> if (Ultracode.spent(session, ask)) ultracodeAsk = null } }
-    JModelPanel(panel.providers, panel.state, prefs, { prefs = it }, remember(res) { panelWords(res) },
+    JModelPanel(panel.providers, panel.state, prefs, { prefs = it }, remember(res, names) { panelWords(res, names) },
         onPick = { config ->
             val plan = AgentModelPanel.pickPlan(session, config, { lists.list(machine, it).list }, features) ?: return@JModelPanel
             picking = true
@@ -357,15 +373,23 @@ fun PersonaModelPill(
     LaunchedEffect(management) {
         try { config = management?.config() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { }
     }
-    LaunchedEffect(management, machineId, open) {
+    LaunchedEffect(management, machineId, open, session?.rev) {
         val api = management ?: return@LaunchedEffect
-        if (machineId.isEmpty() || (!open && lists.assistant[machineId] != null)) return@LaunchedEffect
+        if (machineId.isEmpty()) return@LaunchedEffect
+        // A hub push that bumps the conversation (rev) re-reads even while the panel is closed, so the pill keeps
+        // matching the effective Main chat model after a hub-side change (#6542). With no rev to watch, read once and
+        // let opening the panel refresh it; the in-flight guard in readMachine drops a duplicate read.
+        if (!open && session?.rev == null && lists.assistant[machineId] != null) return@LaunchedEffect
         lists.readMachine(lists.assistant, machineId, { api.assistantLauncherList(machineId) })
     }
     val kept = PersonaModelPanel.MODEL_PICK in features
     val shownSession = session?.let { s -> drawn?.takeIf { it.rev == s.rev }?.let { s.copy(modelPick = it.pick) } ?: s }
     val chat = PersonaModelPanel.Chat(shownSession, isMain = session != null && config?.main == session.sessionId, kept = kept,
         config = config?.launcher, pagePick = pagePick)
+    // Only the main conversation has a per-conversation model pick (#6911): a leader, the background supervisor or
+    // another assistant conversation draws no pill and follows the default or what it started with. The new-chat page
+    // (session null) keeps its starter pick, which goes with the main conversation's start.
+    if (session != null && !chat.isMain) return
     val info = lists.assistant[machineId]
     val setup = PersonaModelPanel.setup(chat, info)
     LaunchedEffect(management, machineId, setup.provider) {

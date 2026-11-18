@@ -55,6 +55,7 @@ func TestAskUserNoWaitTakesNoDefaultAfterTheUserWroteInTheChat(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			presenceTimes(t, 200*time.Millisecond, time.Hour)
+			ownerTurnTimes(t, 200*time.Millisecond, time.Hour)
 			e := newAskTodoEnv(t, nil)
 			stopHolds(t, e.s)
 			ix, _ := e.askLater(c.args)

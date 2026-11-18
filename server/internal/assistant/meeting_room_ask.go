@@ -31,8 +31,12 @@ const (
 	askRoomUnavailble = "room_unavailable"
 )
 
-// How often an ask in the room looks at it; tests shorten it.
-var askRoomPoll = time.Second
+// How often an ask in the room looks at it, and how long it waits for a turn running there before it goes; tests
+// shorten them.
+var (
+	askRoomPoll = time.Second
+	askRoomWait = askTimeout
+)
 
 // askMsgID is the client_msg_id of attempt k of ask id.
 func askMsgID(id string, k int) string { return fmt.Sprintf("ask-%s-%d", id, k) }
@@ -148,7 +152,7 @@ func (s *Service) answerRoomTurn(ctx context.Context, e *kb.Engine, id string, a
 		if attempt.K == 0 {
 			attempt = kb.AskAttempt{K: 1, MsgID: askMsgID(a.ID, 1)}
 		}
-		if !s.roomWaitFree(ctx, machine, session) {
+		if !s.roomWaitFree(ctx, e, id, machine, session) {
 			return failAsk(a, askInterrupted)
 		}
 		attempt.Base = s.lastSeq(ctx, machine, session)
@@ -244,12 +248,29 @@ func (s *Service) roomCannotAnswer(e *kb.Engine, id string) {
 	s.roomAsksFallBack(id)
 }
 
-// roomWaitFree waits while machine's room runs a turn (a batch): an ask goes after it. False when ctx ended.
-func (s *Service) roomWaitFree(ctx context.Context, machine, session string) bool {
-	deadline := time.Now().Add(askTimeout)
-	for time.Now().Before(deadline) {
+// roomWaitFree waits while recording id's room on machine runs a turn (a batch), at most askRoomWait; a room started
+// with lean batches also while its conversation is being compacted (#8253): its row shows it running, or the manager
+// asked for one that has not ended (roomCompactPending), as long as a compaction may run (roomCompactLost, the node's
+// own limit). An ask goes after it, never into a compaction. False when ctx ended.
+func (s *Service) roomWaitFree(ctx context.Context, e *kb.Engine, id, machine, session string) bool {
+	began := time.Now()
+	lean := false
+	for first := true; ; first = false {
 		row, found, err := s.attendeeRow(ctx, machine, session)
-		if err == nil && (!found || !roomWorking(row)) {
+		var ln kb.MeetingRoomLean
+		if first || lean { // an older room's record is not read again
+			if m, _, merr := e.MeetingRead(id); merr == nil && m.Room != nil && m.Room.Batching >= kb.RoomBatchingLean {
+				lean, ln = true, m.Room.Lean
+			}
+		}
+		switch {
+		case lean && (found && roomCompacting(row) || roomCompactPending(ln, row, found && err == nil, s.attendNow())):
+			if time.Since(began) >= roomCompactLost {
+				return true
+			}
+		case err == nil && (!found || !roomWorking(row)):
+			return true
+		case time.Since(began) >= askRoomWait:
 			return true
 		}
 		t := time.NewTimer(askRoomPoll)
@@ -260,7 +281,6 @@ func (s *Service) roomWaitFree(ctx context.Context, machine, session string) boo
 		case <-t.C:
 		}
 	}
-	return true
 }
 
 // roomAskMessage is the message ask a sends recording r's room: a typed or spoken question as it is (the owner's
@@ -270,7 +290,7 @@ func (s *Service) roomAskMessage(ctx context.Context, e *kb.Engine, id string, r
 	if a.QuestionSource != askHeard {
 		return a.Question, nil, ""
 	}
-	l, err := awaitLive(ctx, e, id, a.LiveNext)
+	l, err := s.awaitHeard(ctx, e, id, *a)
 	if err != nil {
 		return "", nil, askModelError
 	}

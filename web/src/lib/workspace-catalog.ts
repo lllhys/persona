@@ -10,7 +10,21 @@ export interface HostWorkspace {
   parent_source_id?: string; project_id?: string; project_name?: string; project_path?: string;
   is_main?: boolean; unread?: boolean; sidebar_status?: string; workspace_kind?: string;
   head?: string; index?: number; branch?: string; online?: boolean; available?: boolean; last_seen?: string;
+  /** An engine runtime's worktree that the runtime made and removes with it (Paseo's, #6297): the ones it deletes. */
+  owned?: boolean;
+  /** The host's workspace pin, synchronized independently of Persona's own session and project pins. */
+  pinned_at?: string;
 }
+
+/** A valid host pin's time; an old hub or an unpinned workspace has no timestamp. */
+export function workspacePinTime(workspace?: Pick<HostWorkspace, "pinned_at">): number | undefined {
+  const time = Date.parse(workspace?.pinned_at ?? "");
+  return Number.isFinite(time) ? time : undefined;
+}
+
+/** A workspace branch or repository follows its newest visible host pin before its ordinary sort order. */
+export const byWorkspacePin = (a: { latestPinTime?: number }, b: { latestPinTime?: number }) =>
+  (b.latestPinTime ?? -Infinity) - (a.latestPinTime ?? -Infinity);
 /** Discovered targets always carry their credential/manager partition and human label. */
 export interface WorkspaceTarget extends RuntimeWorkspaceTarget {
   owner: string;

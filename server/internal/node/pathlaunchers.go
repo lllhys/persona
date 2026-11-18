@@ -365,7 +365,7 @@ func wrapperScript(text string) (wrapper, bool) {
 					break
 				}
 				front := map[string]string{}
-				i := shellcmd.CommandIndex(words, front)
+				i, reset := shellcmd.CommandEnvironment(words, front)
 				if i < 0 {
 					continue
 				}
@@ -380,7 +380,7 @@ func wrapperScript(text string) (wrapper, bool) {
 					return wrapper{}, false // a script that runs claude for its own ends, no wrapper
 				}
 				w := wrapper{env: map[string]string{}, branch: guarded}
-				if !envIgnored(words[:i]) {
+				if !reset {
 					for k := range exported {
 						if v, ok := vars[k]; ok {
 							w.env[k] = v
@@ -399,17 +399,6 @@ func wrapperScript(text string) (wrapper, bool) {
 		}
 	}
 	return wrapper{}, false
-}
-
-// envIgnored: `env -i` (--ignore-environment, or POSIX `env -`) in front of the command: claude gets only what is set
-// after it.
-func envIgnored(front []string) bool {
-	for i, w := range front {
-		if w == "env" && i+1 < len(front) && (front[i+1] == "-i" || front[i+1] == "--ignore-environment" || front[i+1] == "-") {
-			return true
-		}
-	}
-	return false
 }
 
 // separators are what joins each segment of line to the next: "|", "||", "&&", ";", "&" or "" (a new line); a

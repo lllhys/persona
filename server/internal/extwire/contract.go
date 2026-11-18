@@ -22,6 +22,13 @@ const (
 	// ScopeLeadersRead: being told of the leader conversations (leader.changed) and what they report (leader.report),
 	// and listing them (GET /api/v1/assistant/leaders); #3484.
 	ScopeLeadersRead = "leaders.read"
+	// ScopeAssistantDispatchPolicy: reading and writing the assistant's dispatch policy
+	// (GET/PUT /api/v1/assistant/dispatch-policy), the organization rule for which conversations may hand out work.
+	ScopeAssistantDispatchPolicy = "assistant.dispatch_policy"
+	// ScopeAssistantStartDefaults: reading the Agent presets a task can start with on a computer and reading and
+	// writing the defaults task Agents start with (GET /api/v1/assistant/worker-presets, GET/PUT
+	// /api/v1/assistant/start-defaults).
+	ScopeAssistantStartDefaults = "assistant.start_defaults"
 	// ScopeAgentsPermissionMode: changing the permission mode of a conversation the extension opened itself, and of no
 	// other (the hub checks who opened it: hub/extension_modes.go).
 	ScopeAgentsPermissionMode = "agents.permission_mode"
@@ -31,6 +38,12 @@ const (
 	// ScopeAssistantRead: reading the assistant's own-space conversations, the user's and the assistant's words
 	// (assistant.conversations, assistant.messages; #1288). assistant.ask does not include it.
 	ScopeAssistantRead = "assistant.read"
+	// ScopeAssistantMemoryRead: listing the assistant's own-space memory entries (assistant.memory), read-only; the
+	// health space's memory is never included and writing it stays with full credentials.
+	ScopeAssistantMemoryRead = "assistant.memory.read"
+	// ScopeTranscription: handing the extension's own audio to the transcription the owner chose for meetings
+	// (transcription.start / audio / finish / cancel), never a key and never anyone else's audio (#8485).
+	ScopeTranscription = "transcription"
 	// ScopeCallPrefix and an extension's id: calling that extension's own HTTP (/api/v1/extensions/<id>/…).
 	ScopeCallPrefix = "extensions.call:"
 )

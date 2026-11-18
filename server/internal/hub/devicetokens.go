@@ -251,7 +251,7 @@ func (h *Hub) lookupToken(ctx context.Context, tok string) (principal, bool, err
 // GET is not harmless for being a GET (one reads any file of a computer, one runs a launcher), so none gets through for
 // its method. Something new the watch needs goes here.
 var (
-	answerReads = lazyre.New(`^/api/v1/(machines|sessions|sessions/archived|interactions|inbox|workspace-board|workspaces|sessions/[^/]+/[^/]+/items|` +
+	answerReads = lazyre.New(`^/api/v1/(machines|sessions|sessions/archived|interactions|inbox|saved-agent-searches|workspace-board|workspace-board/activity(?:/[1-9][0-9]*)?|workspaces|sessions/[^/]+/[^/]+/items|` +
 		`extensions/-/(widgets|shortcuts)|personas/nwverse/pet/[A-Za-z0-9_-][A-Za-z0-9._-]*\.(json|png))$`)
 	// The watch draws extensions' widgets on its faces and runs their shortcuts (docs/extensions/extensions.md "System-level placements").
 	// It also fetches the built-in Milk Frog's art for its row and face, and only that: pet/ of the nwverse package
@@ -288,7 +288,7 @@ func allowed(p principal, method, path string) bool {
 // terminal, pressing more than a menu's key, filling in a card's fields and making a tool's approval stand (always) are
 // for a full device. A screen card's own "don't ask again" is one of its options, and the watch shows it.
 func answerMayResolve(r proto.Resolution) bool {
-	if r.Text != "" || len(r.PreKeys) > 0 || r.Always || r.Message != "" || len(r.Values) > 0 || r.Action != "" || len(r.Content) > 0 {
+	if r.Text != "" || r.EditedText != "" || len(r.PreKeys) > 0 || r.Always || r.Message != "" || len(r.Values) > 0 || r.Action != "" || len(r.Content) > 0 {
 		return false
 	}
 	return len(r.Keys) == 0 || len(r.Keys) == 1 && answerKey.MatchString(r.Keys[0])

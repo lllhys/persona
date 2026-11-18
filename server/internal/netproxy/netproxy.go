@@ -1,6 +1,5 @@
-// Package netproxy parses the http:// proxies hub.json gives for outbound traffic (google.proxy, a connector's
-// proxy) and builds HTTP clients that use them. Proxy addresses are deployment-specific: they live only in a hub's
-// own hub.json, never in code, docs or tests.
+// Package netproxy parses outbound HTTP proxies, plus SOCKS5 where a caller supports it, and builds HTTP clients.
+// Proxy addresses are deployment-specific: they live only in local configuration, never in code, docs or tests.
 package netproxy
 
 import (

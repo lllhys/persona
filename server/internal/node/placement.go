@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 	"time"
 
@@ -271,10 +270,10 @@ func (n *Node) placeIn(s *proto.Session, a host.Agent) {
 	n.mu.Unlock()
 	s.SpaceKind, s.SpaceID, s.SlotID = kind, a.WorkspaceID, a.TabID
 	if wok {
-		s.SpaceName, s.SpaceIndex, s.ParentSpaceID = w.Label, w.Number, w.ParentID
+		s.SpaceName, s.SpaceIndex, s.ParentSpaceID = w.Label, int32(w.Number), w.ParentID
 	}
 	if tok {
-		s.SlotName, s.SlotIndex = t.Label, t.Number
+		s.SlotName, s.SlotIndex = t.Label, int32(t.Number)
 	}
 	s.PaneIndex = nil
 	if piok {
@@ -355,6 +354,12 @@ func (n *Node) setAgentsAt(agents []host.Agent, epoch uint64, heard map[string]b
 			codex = append(codex, a)
 			continue
 		}
+		if a.Agent == cursorAgent || a.Agent == agyAgent { // a work agent herdr detects (workagent.go): its own row
+			if id := otherSession(a); id != "" {
+				other[id] = a
+			}
+			continue
+		}
 		if piFamily(a.Agent) { // its session: herdr's integration, or the extension in it (pi.go, pifamily.go)
 			family = append(family, a)
 			continue
@@ -407,8 +412,12 @@ func (n *Node) setAgentsAt(agents []host.Agent, epoch uint64, heard map[string]b
 	}
 	n.notePanes(unknown)
 	n.mu.Unlock()
+	var omps []familyNote
 	for _, a := range family {
 		id := n.piSession(a)
+		if a.Agent == ompAgent && a.PaneID != "" {
+			omps = append(omps, familyNote{pane: a.PaneID, session: id}) // the panes that may write a file ompdisk.go lists
+		}
 		if id == "" {
 			id = otherSession(a) // nothing reported its session yet: the pane is the row, terminal only (pi.go)
 		}
@@ -418,6 +427,7 @@ func (n *Node) setAgentsAt(agents []host.Agent, epoch uint64, heard map[string]b
 			}
 		}
 	}
+	n.noteFamilyPanes(omps)
 	for _, a := range opencode {
 		id := n.opencodeSession(a)
 		if id == "" {
@@ -494,19 +504,30 @@ func (n *Node) setAgentsAt(agents []host.Agent, epoch uint64, heard map[string]b
 			continue
 		}
 		home := n.codexPaneHome(a.PaneID)
-		id := a.SessionID()
+		reported := a.SessionID() // what the host says the pane runs now, not what the node remembers of the pane
+		id := reported
 		if id != "" {
 			id = mainThread(home, id) // a subagent's id stands for its conversation
 		}
+		sub := id != reported
 		if id == "" {
 			n.mu.Lock()
 			id = n.panes[a.PaneID]
 			n.mu.Unlock()
 		}
-		if named := n.codexByTitle(a, id, m); named != "" {
+		if named, claimed := n.codexByTitle(a, id, m); named != "" {
 			id = named
-		} else if strings.LastIndex(a.Title, " | ") > 0 {
-			id = "" // an unrecognised current title must not reuse a stale pane binding either
+		} else if claimed {
+			id = "" // the title names another pane's thread: keeping the stale reported one would misroute this row
+		} else if _, match, ok := codexTitleName(a.Title); ok && (reported == "" ||
+			(!sub && threadTitle(home, id) != "" && !threadFormerlyNamed(home, id, match))) {
+			// An unrecognised current title must not reuse a stale pane binding either, nor a thread the host named
+			// that the index knows under another name (a /resume in Codex since). A reported thread the index has no
+			// name for is not contradicted by a name the index lacks, so the host's word stands: left out, the pane
+			// was listed nowhere and its thread only as its app-server's row, with no terminal (#7538). Nor is a
+			// reported subagent contradicted by its conversation's name, which is not the name of the thread reported,
+			// nor a renamed thread by the name the index gave it before (a rename on the app-server the title missed).
+			id = ""
 		}
 		if id != "" {
 			id = n.codexPublicID(home, id)

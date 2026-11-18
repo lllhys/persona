@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/lazyre"
+	"github.com/nwverse/persona/server/internal/node/nodekit"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -50,10 +51,5 @@ func ghToken(ctx context.Context, host string) (map[string]any, error) {
 	return map[string]any{"token": token}, nil
 }
 
-func firstLine(s string) string {
-	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
-	if len(s) > 200 {
-		s = s[:200]
-	}
-	return s
-}
+// firstLine lives in nodekit, shared with the subpackages.
+var firstLine = nodekit.FirstLine

@@ -8,7 +8,7 @@
   "undo": "元に戻す",
   "unarchived": "「{title}」のアーカイブを解除しました",
   "undo_failed": "元に戻せませんでした：{error}",
-  "copy_id": "セッション ID をコピー",
+  "copy_id": "セッションIDをコピー",
   "end": "終了…",
   "end_confirm": "終了を確認",
   "ended": "チャットを終了しました。履歴は残ります",
@@ -18,5 +18,10 @@
   "end_leader": "常駐をやめる",
   "leader_made": "「{title}」を常駐にしました",
   "leader_ended": "「{title}」の常駐をやめました。任せた仕事はそのままです",
-  "leader_failed": "変更できませんでした：{error}"
+  "leader_failed": "変更できませんでした：{error}",
+  "delete": "削除…",
+  "make_leader_confirm": "常駐にする（確認）",
+  "make_leader_confirm_detail": "このチャットは常駐に移り、「最近」には出なくなります。",
+  "end_leader_confirm": "常駐をやめる（確認）",
+  "end_leader_confirm_detail": "チャットは「最近」に戻ります。進行中のタスクはメインチャットの監督に戻り、終了や削除はされません。"
 }

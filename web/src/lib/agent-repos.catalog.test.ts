@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildRepoMachineTree, sessionWorkspace, showsWorktreeLevel, type RepoCatalogOptions, type RepoWorktree } from "./agent-repos";
+import { buildRepoMachineTree, hasWorkspacePin, sessionWorkspace, showsWorktreeLevel, type RepoCatalogOptions, type RepoWorktree } from "./agent-repos";
+import { repoMachinesByUpdate } from "./agent-sort";
 import type { HostWorkspace } from "./workspace-catalog";
 import type { Machine, Session } from "./types";
 
@@ -11,6 +12,134 @@ const flatten = (rows: RepoWorktree[]): RepoWorktree[] => rows.flatMap((w) => [w
 const rows = (all: Session[], opts: RepoCatalogOptions) => buildRepoMachineTree(all, machines, opts).flatMap((m) => m.repos.flatMap((r) => flatten(r.worktrees)));
 
 describe("catalog-backed By repo projection", () => {
+  it("orders pinned workspaces by newest pin ahead of main and keeps equal paths as independent workspaces", () => {
+    const catalog = [
+      workspace("main", { source: "paseo", is_main: true, cwd: "/code/shared" }),
+      workspace("older", { source: "paseo", pinned_at: "2026-11-15T10:00:00Z", cwd: "/code/shared" }),
+      workspace("newer-b", { source: "paseo", pinned_at: "2026-11-16T10:00:00Z", title: "Same name", cwd: "/code/shared" }),
+      workspace("newer-a", { source: "paseo", pinned_at: "2026-11-16T10:00:00Z", title: "Same name", cwd: "/code/shared" }),
+      workspace("invalid", { source: "paseo", pinned_at: "not-a-date", cwd: "/code/shared" }),
+    ];
+    const ordered = rows([], options(catalog));
+    expect(ordered.map((w) => w.workspace?.source_id)).toEqual(["newer-a", "newer-b", "older", "main", "invalid"]);
+    expect(new Set(ordered.map((w) => w.key)).size).toBe(catalog.length);
+    expect(ordered.every((w) => w.sessions.length === 0)).toBe(true);
+    expect(rows([], options([...catalog].reverse())).map((w) => w.key)).toEqual(ordered.map((w) => w.key));
+    expect(catalog.map((w) => w.source_id)).toEqual(["main", "older", "newer-b", "newer-a", "invalid"]);
+  });
+
+  it("lifts pinned descendants and their repository without changing parentage or pinning ancestors", () => {
+    const catalog = [
+      workspace("ordinary", { project_id: "alpha", project_name: "Alpha" }),
+      workspace("main", { is_main: true, project_name: "Zeta" }),
+      workspace("parent", { project_name: "Zeta" }),
+      workspace("ordinary-child", { parent_source_id: "parent", is_main: true }),
+      workspace("pinned-child", { parent_source_id: "parent", pinned_at: "2026-11-16T10:00:00Z" }),
+    ];
+    const tree = buildRepoMachineTree([], machines, options(catalog));
+    expect(tree[0].repos.map((r) => r.name)).toEqual(["Zeta", "Alpha"]);
+    const parent = tree[0].repos[0].worktrees[0];
+    expect(parent.workspace?.source_id).toBe("parent");
+    expect(parent.workspace?.pinned_at).toBeUndefined();
+    expect(parent.children.map((w) => w.workspace?.source_id)).toEqual(["pinned-child", "ordinary-child"]);
+    expect(tree[0].repos[0].worktrees[1].workspace?.source_id).toBe("main");
+    const updated = repoMachinesByUpdate(tree);
+    expect(updated[0].repos.map((r) => r.name)).toEqual(["Zeta", "Alpha"]);
+    expect(updated[0].repos[0].worktrees[0].children.map((w) => w.workspace?.source_id)).toEqual(["pinned-child", "ordinary-child"]);
+    expect(rows([], options(catalog, { search: "ordinary" })).map((w) => w.workspace?.source_id))
+      .toEqual(["ordinary", "parent", "ordinary-child"]);
+  });
+
+  it("retains an offline computer's saved conversation only with an exact unarchived host pin", () => {
+    const catalog = [workspace("pinned", { source: "paseo", pinned_at: "2026-11-16T10:00:00Z" })];
+    const saved = session("saved", "project-a", { space_kind: "paseo", workspace_id: "pinned", state: "offline", status: "offline" });
+    expect(hasWorkspacePin(saved, catalog)).toBe(true);
+    for (const patch of [{ archived: true }, { workspace_id: undefined }, { space_kind: "herdr" }, { space_kind: undefined }, { machine_id: "machine-b" }, { manager: "other" }]) {
+      expect(hasWorkspacePin({ ...saved, ...patch }, catalog, "manager-a")).toBe(false);
+    }
+    expect(hasWorkspacePin({ ...saved, workspace_id: undefined, space_id: "pinned" }, catalog)).toBe(false);
+    const stopped = machines.map((m) => ({ ...m, online: false }));
+    const tree = buildRepoMachineTree([saved, { ...saved, session_id: "archived", archived: true }], stopped, options(catalog));
+    expect(tree[0].repos[0].worktrees[0].sessions).toEqual([saved]);
+  });
+
+  it("restores ordinary order on unpin while retaining exact identities across hosts and machines", () => {
+    const catalog = [workspace("main", { source: "paseo", is_main: true }),
+      workspace("shared", { source: "paseo", pinned_at: "2026-11-16T10:00:00Z" }),
+      workspace("shared", { source: "herdr" }), workspace("shared", { source: "paseo", machine_id: "machine-b" })];
+    const before = rows([], options(catalog));
+    const after = rows([], options(catalog.map((w) => ({ ...w, pinned_at: undefined }))));
+    expect(before.filter((w) => w.workspace?.pinned_at).map((w) => w.target)).toEqual([
+      expect.objectContaining({ machineId: "machine-a", host: "paseo", workspaceId: "shared" }),
+    ]);
+    expect(after.filter((w) => w.workspace?.source === "paseo" && w.target?.machineId === "machine-a")
+      .map((w) => w.workspace?.source_id)).toEqual(["main", "shared"]);
+    expect(after.map((w) => w.key).sort()).toEqual(before.map((w) => w.key).sort());
+  });
+
+  const runtime = (id: string, patch: Partial<Session> = {}) => session(id, "/code/app", {
+    source_kind: "runtime", space_kind: "agy", cwd: "/code/app", repo_root: "/code/app", worktree: "/code/app", workspace_cwd: "/code/app", ...patch,
+  });
+  const native = () => workspace("native", { source: "herdr", cwd: "/code/app", title: "app", project_id: undefined, project_name: undefined });
+
+  it("groups native and logical-folder runtime Agents at one verified checkout exactly once", () => {
+    const catalog = [native()];
+    const codex = session("codex", "native", { space_kind: "herdr", workspace_id: "native", cwd: "/code/app", repo_root: "/code/app", worktree: "/code/app" });
+    const agents = [codex, runtime("agy"), runtime("other-agy"), runtime("omp", { space_kind: "omp-history" })];
+    const tree = buildRepoMachineTree(agents, machines, options(catalog));
+    expect(tree[0].repos).toHaveLength(1);
+    expect(tree[0].repos[0].count).toBe(4);
+    const worktrees = tree[0].repos[0].worktrees;
+    expect(worktrees).toHaveLength(1);
+    expect(new Set(worktrees[0].sessions.map((s) => s.session_id))).toEqual(new Set(agents.map((s) => s.session_id)));
+    expect(worktrees[0].navigationTree).toHaveLength(4);
+    expect(worktrees[0].target?.workspaceId).toBe("native");
+    expect(sessionWorkspace(agents[1], catalog, "manager-a")).toBeUndefined();
+  });
+
+  it("keeps runtime pinned navigation in the shared row without drawing or counting it twice", () => {
+    const regular = runtime("regular"), pinned = runtime("pinned", { state: "needs_you", status: "blocked" });
+    const tree = buildRepoMachineTree([regular], machines, options([native()], { navigationSessions: [regular, pinned], hideEmpty: true }));
+    expect(tree[0].repos).toHaveLength(1); expect(tree[0].repos[0].count).toBe(1);
+    const row = tree[0].repos[0].worktrees[0];
+    expect(row.sessions).toEqual([regular]); expect(row.directSessions).toEqual([pinned, regular]);
+    expect(row.navigationTree).toEqual([pinned, regular]);
+    expect(rows([regular], options([native()], { search: "regular" }))[0].sessions).toEqual([regular]);
+  });
+
+  it("requires verified checkout metadata and preserves explicit native bindings", () => {
+    const catalog = [native()];
+    for (const agent of [runtime("unverified", { worktree: undefined }), runtime("explicit", { workspace_id: "missing" }),
+      runtime("native-binding", { space_kind: "herdr", space_id: "missing" }), runtime("foreign-manager", { manager: "manager-b" }),
+      runtime("clone", { cwd: "/other/app", repo_root: "/other/app", worktree: "/other/app" }), runtime("different-tree", { worktree: "/code/app/.worktrees/other" })]) {
+      expect(rows([agent], options(catalog)).find((row) => row.workspace === catalog[0])?.sessions).toEqual([]);
+    }
+  });
+
+  it("retains ambiguous host identities, including when one source is hidden", () => {
+    const catalog = [native(), workspace("other", { cwd: "/code/app" })];
+    for (const hiddenSources of [undefined, ["orca"]]) {
+      const actual = rows([runtime("runtime")], options(catalog, { hiddenSources }));
+      expect(actual.filter((row) => row.workspace).every((row) => row.sessions.length === 0)).toBe(true);
+      expect(actual.filter((row) => !row.workspace).flatMap((row) => row.sessions).map((s) => s.session_id)).toEqual(["runtime"]);
+    }
+  });
+
+  it("normalizes checkout paths while retaining computer partitions", () => {
+    const catalog = [native(), { ...native(), id: "other-machine", machine_id: "machine-b" }];
+    const actual = rows([runtime("local"), runtime("remote", { machine_id: "machine-b" })], options(catalog));
+    expect(actual.filter((row) => row.workspace).map((row) => row.sessions.map((s) => s.session_id))).toEqual([["local"], ["remote"]]);
+    const windows = workspace("windows", { cwd: "C:\\code\\app", source: "herdr" });
+    expect(rows([runtime("windows", { cwd: "c:/code/app/src", worktree: "c:/code/app/", repo_root: "c:/code/app" })], options([windows]))[0].sessions).toHaveLength(1);
+  });
+
+  it("retains a runtime Agent when its catalog source is hidden among other visible sources", () => {
+    const agent = runtime("runtime");
+    const catalog = [native(), workspace("unrelated")];
+    const tree = buildRepoMachineTree([agent], machines, options(catalog, { hiddenSources: ["herdr"], navigationSessions: [agent] }));
+    expect(tree.flatMap((m) => m.repos.flatMap((r) => r.worktrees.flatMap((w) => w.sessions)))).toEqual([agent]);
+  });
+
   it("preserves three empty ancestors, a standalone empty workspace, metadata and zero Agent counts", () => {
     const catalog = [workspace("root", { is_main: true }), workspace("middle", { parent_source_id: "root" }), workspace("leaf", { parent_source_id: "middle", workspace_kind: "folder", head: "abc" }), workspace("standalone")];
     const tree = buildRepoMachineTree([], machines, options(catalog));
@@ -51,6 +180,17 @@ describe("catalog-backed By repo projection", () => {
     expect(sessionWorkspace(session("foreign", "b", { cwd: "/code/a", space_kind: "herdr", workspace_id: "b" }), catalog)).toBeUndefined();
     expect(sessionWorkspace(session("unknown", "missing", { cwd: "/code/a" }), catalog)).toBeUndefined();
     expect(sessionWorkspace(session("other-manager", "a", { manager: "manager-b" }), catalog, "manager-a")).toBeUndefined();
+  });
+
+  it("binds a Paseo Agent to its workspace by id, not its project; an empty Paseo workspace is a row of the project", () => {
+    const paseo = (id: string, patch: Partial<HostWorkspace> = {}) => workspace(id, { source: "paseo", project_id: "prj_app", project_name: "app", workspace_kind: "git", ...patch });
+    const catalog = [paseo("wks_main", { cwd: "/code/app", is_main: true }), paseo("wks_fix", { cwd: "/paseo/worktrees/abc/fix", is_main: false, branch: "fix" })];
+    const agent = session("paseo-1", "prj_app", { space_kind: "paseo", host: "paseo", source_kind: "runtime", workspace_id: "wks_fix", cwd: "/paseo/worktrees/abc/fix" });
+    expect(sessionWorkspace(agent, catalog)?.source_id).toBe("wks_fix");
+    expect(sessionWorkspace({ ...agent, workspace_id: undefined }, catalog)).toBeUndefined();
+    const tree = buildRepoMachineTree([agent], machines, options(catalog));
+    expect(tree[0].repos.map((r) => [r.name, r.count])).toEqual([["app", 1]]);
+    expect(flatten(tree[0].repos[0].worktrees).map((w) => [w.name, w.sessions.length])).toEqual([["wks_main", 0], ["wks_fix", 1]]);
   });
 
   it("attributes unbound native Agents only to a unique deepest containing directory and respects worktree markers", () => {

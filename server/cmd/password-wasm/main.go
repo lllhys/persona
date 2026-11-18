@@ -20,11 +20,13 @@ func main() {
 		defer func() {
 			if recover() != nil {
 				client = nil
+				// i18n-ignore: legacy browser-WASM JSON error; web/public/pake/worker.js parses this protocol, not a terminal.
 				result = `{"error":"密码验证失败，请重试"}`
 			}
 		}()
 		var in struct{ Op, Password, Message, Identity string }
 		if len(args) != 1 || json.Unmarshal([]byte(args[0].String()), &in) != nil {
+			// i18n-ignore: legacy browser-WASM JSON error; web/public/pake/worker.js parses this protocol, not a terminal.
 			return `{"error":"无效的验证请求"}`
 		}
 		message, err := base64.StdEncoding.DecodeString(in.Message)
@@ -87,6 +89,7 @@ func main() {
 		}
 		if err != nil {
 			client = nil
+			// i18n-ignore: legacy browser-WASM JSON error; web/public/pake/worker.js parses this protocol, not a terminal.
 			return `{"error":"密码不正确或验证未完成，请重试"}`
 		}
 		b, _ := json.Marshal(map[string]string{"message": base64.StdEncoding.EncodeToString(out)})

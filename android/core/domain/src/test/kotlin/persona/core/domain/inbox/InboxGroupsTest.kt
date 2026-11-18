@@ -107,6 +107,32 @@ class InboxGroupsTest {
         assertEquals(emptyList<Pair<String, Int>>(), InboxGroups.doneCounts(emptyList(), 0, now, zone))
     }
 
+    @Test fun doneCountsAcrossMidnightDoNotCountJustNowTwice() {
+        val midnightZone = ZoneId.of("America/Anchorage")
+        val now = LocalDateTime.of(2026, 11, 15, 0, 1).atZone(midnightZone).toInstant()
+        val doneAt = LocalDateTime.of(2026, 11, 14, 23, 59).atZone(midnightZone).toInstant()
+        assertEquals("yesterday", InboxGroups.timeKey(doneAt, now, midnightZone))
+        assertEquals("just", InboxGroups.timeKey(doneAt, now, midnightZone, recent = true))
+        assertEquals(listOf("just"), InboxGroups.done(listOf(doneAt), now, midnightZone) { it }.map { it.key })
+
+        val counts = InboxGroups.doneCounts(listOf(doneAt.atZone(midnightZone).toLocalDate() to 1), justNow = 1, now = now, zone = midnightZone)
+        assertEquals(listOf("just" to 1), counts)
+        assertEquals(1, counts.sumOf { it.second })
+    }
+
+    @Test fun doneCountsAcrossMidnightAtMidnightAndTenPast() {
+        val midnightZone = ZoneId.of("America/Anchorage")
+        val yesterday = LocalDateTime.of(2026, 11, 14, 12, 0).atZone(midnightZone).toLocalDate()
+        for (minute in listOf(0, 10)) {
+            val now = LocalDateTime.of(2026, 11, 15, 0, minute).atZone(midnightZone).toInstant()
+            val today = now.atZone(midnightZone).toLocalDate()
+            val counts = InboxGroups.doneCounts(listOf(yesterday to 2, today to 1), justNow = 2, now = now, zone = midnightZone)
+            val label = "at 00:${minute.toString().padStart(2, '0')}"
+            assertEquals(label, listOf("just" to 2, "yesterday" to 1), counts)
+            assertEquals(label, 3, counts.sumOf { it.second })
+        }
+    }
+
     @Test fun aGroupsSpan() {
         assertEquals(local(11, 8, 0) to local(11, 9, 0), InboxGroups.span("yesterday", now, zone))
         assertEquals(local(11, 5, 0) to local(11, 6, 0), InboxGroups.span("d:2026-11-05", now, zone))

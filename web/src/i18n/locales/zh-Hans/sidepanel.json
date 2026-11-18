@@ -1,4 +1,6 @@
 {
+  "conversation_tasks": "会话任务",
+  "conversation_tasks_empty": "此会话暂无任务。",
   "resize_label": "拖动调整面板宽度",
   "resize_title": "拖动调整宽度",
   "files": "文件",
@@ -6,8 +8,10 @@
   "close": "关闭面板",
   "preview": "预览",
   "review": "评审",
+  "changes": "变更",
   "team": "协同",
   "background": "后台任务",
   "task": "任务",
-  "agent": "Agent"
+  "agent": "Agent",
+  "sides": "分支会话"
 }

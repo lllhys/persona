@@ -51,6 +51,9 @@ func (s *Service) muted(machineID, sessionID string) bool {
 // mutedAs is muted for a machine under the id the apps know, its session in space (empty: none known).
 func (s *Service) mutedAs(machineID, sessionID, space string) bool {
 	p := s.loadMutes(context.Background())
+	if len(p.Sessions) == 0 && len(p.Spaces) == 0 {
+		return false
+	}
 	key := machineID + "/" + sessionID
 	if slices.Contains(p.Sessions, key) {
 		return true

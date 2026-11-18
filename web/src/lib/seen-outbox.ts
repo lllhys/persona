@@ -38,9 +38,20 @@ export type SeenMarks = Readonly<Record<string, SeenMark>>;
 
 const expired = (m: SeenMark, now: number) => now - m.markedAt > SEEN_KEEP_MS;
 
-/** A mark for `s` as the page has it now; only an unread one waits for the hub. */
+/** Finished and not seen yet: Unread, or Just finished (seen as far as its state goes, but nobody looked, #9751). */
+export function unseen(s: Session): boolean {
+  const st = stateOf(s);
+  return st === "unread" || (st === "idle" && Boolean(s.work?.just_finished));
+}
+
+/** `s` as seen: no longer Unread, nor Just finished. */
+export function seenCopy(s: Session): Session {
+  return { ...s, state: "idle", ...(s.work?.just_finished ? { work: { ...s.work, just_finished: false } } : {}) };
+}
+
+/** A mark for `s` as the page has it now; only an unseen one (Unread or Just finished) waits for the hub. */
 export function newMark(s: Session, now: number, localSeenAt?: string): SeenMark | undefined {
-  if (stateOf(s) !== "unread") return undefined;
+  if (!unseen(s)) return undefined;
   return { seenBefore: timeMs(s.seen_at), updatedBefore: timeMs(s.updated_at), localSeenAt, markedAt: now, sentAt: now, route: "socket", answered: false };
 }
 
@@ -53,9 +64,9 @@ export function markOver(s: Session, m: SeenMark, now: number): boolean {
   return recorded || newTurn || st === "working" || st === "needs_you" || expired(m, now);
 }
 
-/** The row as the page shows it: an unread one whose mark still waits for the hub is seen. */
+/** The row as the page shows it: an unseen one whose mark still waits for the hub is seen. */
 export function heldSeen(s: Session, m: SeenMark | undefined, now: number): Session {
-  return m && stateOf(s) === "unread" && !markOver(s, m, now) ? { ...s, state: "idle" } : s;
+  return m && unseen(s) && !markOver(s, m, now) ? seenCopy(s) : s;
 }
 
 /** `rows` as the page shows them; the same array when no mark holds any of them. */

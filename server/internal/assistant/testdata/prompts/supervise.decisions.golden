@@ -1,9 +1,9 @@
 📋 督办：你派出去的任务有 5 个要你处理
-（这是 Persona 的督办消息，不是用户发的。这一轮默认折叠在主对话的督办记录中，不会推送给用户：要用户知道的事你用 notify_user 推，要用户决定的用 ask_user 问。）
+（这是 Persona 的督办消息，不是用户发的。）
 <persona-supervision level="triage" />
 
-1. 任务「Finish the migration」（todo_3）：用户回答不了你发的决定，回的是「你来定」
-   验收标准：派活时没写，按任务本身要的结果判断
+1. 任务「Finish the migration」（todo_3，signal=owner_cannot_answer）：用户回答不了你发的决定，回的是「你来定」
+   验收标准：未记录
    当时发给用户的决定（why_owner=irreversible，不会默认执行）：Drop the old table?
    - 任务来历（hub 记的）：From the main conversation, 2026-11-07: “Finish the migration” · Now: migrated, old table still there
    - 选项「Drop it」：the old rows cannot be restored
@@ -11,17 +11,17 @@
    - 推荐：Drop it
    - 等待的代价：The disk fills up in two weeks
 
-2. 任务「Fix the login crash」（todo_4）：用户回答不了你发的决定，回的是「这不是我要的」
-   验收标准：派活时没写，按任务本身要的结果判断
+2. 任务「Fix the login crash」（todo_4，signal=owner_cannot_answer）：用户回答不了你发的决定，回的是「这不是我要的」
+   验收标准：未记录
    当时发给用户的决定（why_owner=priority）：Canary or everyone?
    - 选项「Canary」：10% today
    - 选项「Everyone」：all users today
    - 推荐：Canary
 
-3. 任务「Fix the login crash」（todo_5）：用户回答不了你发的决定，回的是「先讲清背景」
-   验收标准：派活时没写，按任务本身要的结果判断
+3. 任务「Fix the login crash」（todo_5，signal=owner_cannot_answer）：用户回答不了你发的决定，回的是「先讲清背景」
+   验收标准：未记录
 
-4. 任务「Finish the migration」（todo_1）：要用户拍板的决定等了超过一天还没人回答，再给用户看之前先交回你核对
+4. 任务「Finish the migration」（todo_1，signal=recheck）：要用户拍板的决定等了超过一天还没人回答，已交回督办
    验收标准：old table gone
    当时发给用户的决定（why_owner=irreversible，不会默认执行）：Drop the old table?
    - 任务来历（hub 记的）：From the main conversation, 2026-11-07: “Finish the migration” · Now: migrated, old table still there
@@ -30,31 +30,5 @@
    - 推荐：Drop it
    - 等待的代价：The disk fills up in two weeks
 
-5. 任务「Tidy the docs」（todo_2）：标着等用户决定，但用户那边没有能回答的东西（没有问题、选项或推荐）（waits for the user to look）
-   验收标准：派活时没写，按任务本身要的结果判断
-
-怎么处理（你是这些任务的负责人，处理而不是转述）：
-- 带收尾记录的：那是 Agent 自己填的，合并、部署、验证都要你照常核对，对不上就按 rework 处理并指出哪一项不属实。
-- 等你验收的：先自己核对每条验收标准（PR 是否合并、CI 是否通过、截图是否贴了、线上是否验证过；用 gh、agent_read 看证据），再用 task_review 给结论：都满足 accepted（做出来的结论是做不了也算，outcome 写 cannot）；有缺口 rework，逐条写清缺什么；要用户拍板的 needs_user，而且必须是用户答得了的决定：why_owner 写为什么只有用户能定（irreversible 不可撤回、visible_to_others 别人看得到、priority 先做哪个、acceptance 要用户亲眼验收、only_owner_knows 只有用户知道的事实），reason 一句话写要定什么，recommend 写你推荐的选项，options 写 2 到 4 个选项（推荐的放第一个，每个的 leads_to 写选了会怎样），cost_of_waiting 一句话写等下去的代价；缺一样会被拒绝。等得起的决定加 can_wait: true（12 小时内没有期限，等下去的代价低，今天没有人因此卡住）：不推送、不发卡，立刻进用户的「等你处理」，下一次每日简报里和别的一起列出来让用户回答。只有简报来得及才会留给简报：下一次每日简报要在 24 小时内，而且离期限还有至少 12 小时（默认期限是 24 小时，也就是 12 小时内有简报；能等更久的把 deadline 写长）；irreversible、visible_to_others、12 小时内到期的照常推送，没开每日简报或简报来不及时也照常推送（结果里会说明）。留给简报的决定不要再自己问用户或推送；leader 留给简报的决定先不告诉主对话，没有简报送到、hub 改为推送时才告诉。拿不准就不加。不属于这五类的不要找用户：自己拍板让 Agent 继续、rework，或者关掉；只是在等别的事的任务也不是决定，用 parked 搁置：reason 一句话写在等什么，waiting_on 写等的是哪一类（owner_priority 等用户定先做哪个、someone_else 等别人、external_event 等外部的事、date 等到某个时间），until 写等到什么时候（比如 3d、36h，或 RFC 3339 时间；不写是 24 小时，最长 30 天）。搁置的任务还开着，但不进用户的「等你处理」，期间不报卡住、停下、没人做、超时，到时间 hub 交回你一次；只有 owner_priority 会列进用户的每日简报。发给它的 Agent 任何消息都会结束搁置，所以要交代的先交代、再搁置。任务来历和现状由 hub 自己补，不用你写。可撤回的决定 24 小时没人回答就按 recommend 执行（要别的期限就写 deadline）；irreversible 和 visible_to_others 永远不会默认执行，每天再提醒用户一次。返工满 2 轮后再 rework 也一样：要么带上这些字段变成决定，要么 accepted / cancelled。accepted 和 needs_user 会给用户发一张结论卡（结论、reason 一句依据、link 一个链接），这些就不用再推给用户。已部署的任务你 accepted 后由你标为验收通过，用户不用再点「通过」；只有真要用户亲眼看的（比如要别人看的界面改动）才加 user_check，让请验收卡等用户。带独立评审的：评审结论只是证据之一，不代替你核对；还剩阻断问题的，属实又改不了就 needs_user，把问题写进 reason。
-- 验收按任务简报：「验收标准」是简报当前的标准（已经算上记录在案的范围调整），task_review 的 checks 照它逐条写、用原文；简报之外多做的写进 also_done。要改标准只能用 task_scope（写清改了什么、为什么），不要在 prompt 或交接说明里悄悄改；换 Agent 接手、换电脑重试、拆出一部分时，task_plan 的新任务带 continues 指向原任务，沿用同一份简报。
-- hub 没判断出来是不是做完了的：看「Agent 最后说的」（不够就 agent_read 看它前面的交差报告），做完了就按上面验收的做法核对后 task_review，没做完按「停下没做完」那条处理。
-- 决定交回你核对的：先核对它依据的事实还成立不（版本、分支、PR 状态、谁在做；用 gh、agent_read 看）。还成立、还要用户定的，用 task_review needs_user 按现在的事实重发一次；已经不用用户定的，自己拍板后 agent_send 让它继续，或 task_review accepted / cancelled 关掉。不要原样留着：hub 只交回这一次。
-- 用户那边没有能回答的东西的：这是以前留下的 needs_user。看任务现在的状态三选一：真要用户定，用 task_review needs_user 按完整字段重发；只是在等别的事（别人、某个时间、实验范围），那不是决定，先 agent_send 交代清楚，再用 task_review parked 搁置（reason、waiting_on、until），到时间 hub 交回你；不用做了或其实做完了，核对后 task_review cancelled / accepted。hub 只交回这一次。
-- 用户回「你来定」的：你自己拍板，agent_send 告诉任务的 Agent 照哪个做，写明你做了什么假设，并让它用 todo_decision_add 把这个决定和假设记到任务的决定里；不要再拿同一件事问用户，原样重发会被拒绝。标着「不会默认执行」的（不可撤回，或别人看得到）你不能替用户走这一步：用 task_review needs_user 重发成只有两个选项的批准（做 / 不做），每个 leads_to 写清后果。
-- 用户回「这不是我要的」的：hub 已经停掉这个任务 Agent 的自动跟进。对照上面的任务来历和它实际做的（agent_read 看）：跑偏了就 rework 重新划定范围，或 task_review cancelled 取消；没跑偏，用两句话向用户说明它和用户原话的关系（task_review needs_user 重发时写进 reason，或 notify_user）。你 task_review 或 agent_send 之后自动跟进才恢复。
-- 用户回「先讲清背景」的：同一个决定用 task_review needs_user 重发，reason 里先写短背景（这是什么、为什么有这件事、已经做了什么），选项和推荐不变，别的都不动。
-- 决定交回你核对的：先核对它依据的事实还成立不（版本、分支、PR 状态、谁在做；用 gh、agent_read 看）。还成立、还要用户定的，用 task_review needs_user 按现在的事实重发一次；已经不用用户定的，自己拍板后 agent_send 让它继续，或 task_review accepted / cancelled 关掉。不要原样留着：hub 只交回这一次。
-- 用户那边没有能回答的东西的：这是以前留下的 needs_user。看任务现在的状态三选一：真要用户定，用 task_review needs_user 按完整字段重发；只是在等别的事（别人、某个时间、实验范围），那不是决定，先 agent_send 交代清楚，再用 task_review parked 搁置（reason、waiting_on、until），到时间 hub 交回你；不用做了或其实做完了，核对后 task_review cancelled / accepted。hub 只交回这一次。
-- 用户回「你来定」的：你自己拍板，agent_send 告诉任务的 Agent 照哪个做，并写一句你做了什么假设（留在任务记录里）；不要再拿同一件事问用户，原样重发会被拒绝。标着「不会默认执行」的（不可撤回，或别人看得到）你不能替用户走这一步：用 task_review needs_user 重发成只有两个选项的批准（做 / 不做），每个 leads_to 写清后果。
-- 用户回「这不是我要的」的：hub 已经停掉这个任务 Agent 的自动跟进。对照上面的任务来历和它实际做的（agent_read 看）：跑偏了就 rework 重新划定范围，或 task_review cancelled 取消；没跑偏，用两句话向用户说明它和用户原话的关系（task_review needs_user 重发时写进 reason，或 notify_user）。你 task_review 或 agent_send 之后自动跟进才恢复。
-- 用户回「先讲清背景」的：同一个决定用 task_review needs_user 重发，reason 里先写短背景（这是什么、为什么有这件事、已经做了什么），选项和推荐不变，别的都不动。
-- 停下没做完 / 在等回答的：能自己拍板的就自己拍（agent_send 回它，或 interaction_answer 回答它的卡片），按用户以前的交代和项目惯例选；真要用户决定的才问用户，一句话说清选项。
-- Agent 主动汇报的：要你拍板的直接回它（agent_send），真要用户定的才问用户；卡住的帮它解开或换个走法；说做完的按它给的证据先核对，hub 判断它停下后再 task_review；只是进度的知道就行，不用回它。
-- 方向错了、在空等（sleep、反复轮询）、反复失败、和别的 Agent 撞车的：用 agent_interrupt 停下它这一轮，then 里写清改成怎么做（已经做了的不会回滚，要撤回就让它自己撤）；只是补一句话不用打断，用 agent_send。
-- 没有进展的：用 agent_read 看它在干什么，卡住了就催一句或换个走法；几个任务抢同一份资源（编译、模拟器）就排好先后告诉它们。
-- 没有 Agent 在做了的：任务还开着，但不会有人自己接着做，三选一。还要做、Agent 的上下文还有用：agent_send 让它接着做（发消息会把关掉的 Agent 在新标签里恢复；因为报错停下的，先看括号里的错误，是上下文超长、模型不可用这类重试也没用的就不要原样继续）。原来的 Agent 用不了了（报错重试无用、电脑离线一时回不来）：task_plan 重新派一个，prompt 里写清做到哪了，再用 task_review cancelled 取消旧的。已经不用做了或其实做完了：核对后 task_review（accepted 或 cancelled）关掉。电脑离线的先看快照里那台电脑是不是回来了，只是暂时离线又不急的可以等，不要反复派。
-- 被打断的：能重试就让它继续（agent_send「继续」）或重新派；重复派了的用 task_review cancelled 取消多余的那个。
-- 没开起来的：先弄清为什么。标签还保留着的，用 task_start_screen 看屏；shell 停在提问上、或 Agent 自己的画面卡住，就用 task_start_keys 按键解开（什么键都可以直接按，reason 写一句为什么），再 task_retry 在同一个标签里重新启动；标签没了或已彻底失败的，判断值得再试就 task_retry 开新标签。每个任务最多重试 3 次，hub 不会自动重试。重试后开起来的，用 notify_user 告诉用户「重试后开起来了」和原因。没开起来的这一轮结束前必须用 notify_user 告诉用户结果，一句话：开起来了；重试后开起来了（原因：…）；或者还是没开起来，原因 + 建议（比如去那台电脑看一下那个标签、更新 node）。不要 silent，也不要 task_review cancelled，除非用户说过不要这个任务了。
-- 做完还有下游的事（部署、关 issue、发 TestFlight）：拆成新任务（task_plan）或安排跟进（schedule_followup），不要只记在对话里。
-- 先确认 Agent 最后这一轮在推进本任务，而不是回复跨会话问题、别的对话或巡检；后者不算交差。只要是误报就纠正任务状态，不要向用户复述「误报」。
-- 只把要用户决定的事和已验收的结果告诉用户。不需要用户知道时，调用 supervision_finish，visibility="silent"，summary 写一句处理结论，然后结束；记录保留在折叠的督办轮次内，不要再写给用户看的回复。notify_user、ask_user、task_review 的用户结论卡会提升为可见；明确需要在主对话展示而不推送时，supervision_finish 的 visibility="user"。已提升的轮次不能再静默。推送、提问或结论卡本身就是给用户的话：发完后用 supervision_finish 结束这一轮，不要再写回复（不要说「已经推送给你了」「这轮没有别的事」之类）。
+5. 任务「Tidy the docs」（todo_2，signal=undecidable）：标着等用户决定，但用户那边没有能回答的东西（没有问题、选项或推荐）（waits for the user to look）
+   验收标准：未记录

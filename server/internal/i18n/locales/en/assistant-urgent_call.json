@@ -1,0 +1,14 @@
+{
+  "store": "Couldn't read or save the urgent call settings. Try again.",
+  "read_only": "This device can't change urgent calls.",
+  "invalid": "These urgent call settings aren't valid.",
+  "not_found": "This call is no longer there.",
+  "state": "This call has already moved on.",
+  "test_title": "Test call",
+  "test_body": "Persona is checking that urgent calls reach this iPhone.",
+  "missed_title": "Missed urgent call: {title}",
+  "declined_title": "Call declined: {title}",
+  "rule_add": "Call you about: {text}",
+  "rule_update": "Change \"{old}\" to: {text}",
+  "rule_remove": "Stop calling you about: {text}"
+}

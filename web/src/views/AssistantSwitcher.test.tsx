@@ -154,6 +154,28 @@ describe("the sidebar's assistant switcher", () => {
     expect(rows().map((r) => r.textContent).filter((x) => x === "新建助手" || x === "管理助手…")).toEqual(["新建助手", "管理助手…"]);
   });
 
+  it("leaves out the built-in assistant while it is hidden, still counting it, and goes back to the default from it (#9055)", async () => {
+    const hidden: ManagerList = {
+      default: "m-1",
+      managers: ROSTER.managers.map((m) =>
+        m.id === "assistant" ? { ...m, default: false, hide: true, hidden: true } : m.id === "m-1" ? { ...m, default: true } : m,
+      ),
+    };
+    act(() => chooseManager("assistant")); // picked before it was hidden
+    hub.roster = hidden;
+    act(() => setRoster(hidden));
+    expect(shownManager()).toBe("m-1");
+    await render();
+    await open();
+    const radios = [...document.body.querySelectorAll<HTMLElement>("[role=menuitemradio]")];
+    expect(radios).toHaveLength(2);
+    expect(radios.some((r) => r.textContent?.includes("助手"))).toBe(false);
+    expect(radios[1].textContent).toContain("家里");
+    // the hidden one still runs: the Default tag still goes by every installed assistant
+    expect(radios[0].textContent).toContain("工作默认");
+    expect(radios[0].getAttribute("aria-checked")).toBe("true");
+  });
+
   it("switches the whole app to the one picked, and leaves another assistant's page for its own", async () => {
     await render({ name: "session", mid: "mac", sid: "s9" });
     await open();
@@ -209,7 +231,9 @@ describe("the sidebar's assistant switcher", () => {
     expect(head().textContent).toContain("助手");
     expect(head().textContent).toContain("在线 · server");
     expect(head().getAttribute("data-assistant-switcher")).toBe("assistant");
-    expect(head().querySelector("[data-assistant-avatar]")?.getAttribute("data-assistant-avatar")).toBe("assistant");
+    // The default assistant's head is the look's face, not the first-letter disc (#6401).
+    expect(head().querySelector("[data-assistant-avatar]")).toBeNull();
+    expect(head().querySelector("svg")).not.toBeNull();
     expect(head().querySelector("[data-avatar-status=green]")).not.toBeNull();
     expect(head().querySelector("[data-avatar-waiting]")).toBeNull();
     await open();
@@ -221,7 +245,7 @@ describe("the sidebar's assistant switcher", () => {
     expect(radios[0].textContent).toContain("助手");
     expect(radios[0].textContent).not.toContain("默认");
     expect(radios[0].querySelector("[data-menu-badge]")).toBeNull();
-    expect(rows().slice(1).map((r) => r.textContent)).toEqual(["新建助手", "管理助手…", "跟随系统", "浅色", "深色", "设置", "断开这个浏览器"]);
+    expect(rows().slice(1).map((r) => r.textContent)).toEqual(["新建助手", "管理助手…", "跟随系统", "浅色", "深色", "设置", "断开这个浏览器…"]);
     await choose("设置");
     expect(navigate).toHaveBeenCalledWith({ name: "settings" });
   });
@@ -233,7 +257,9 @@ describe("the sidebar's assistant switcher", () => {
     expect(head().textContent).toContain("离线");
     expect(head().textContent).not.toContain("Persona");
     expect(head().getAttribute("data-assistant-switcher")).toBe("m-only");
-    expect(head().querySelector("[data-assistant-avatar]")?.getAttribute("data-assistant-avatar")).toBe("m-only");
+    // It is the roster's default, so its head is the look's face even with a custom name (#6401).
+    expect(head().querySelector("[data-assistant-avatar]")).toBeNull();
+    expect(head().querySelector("svg")).not.toBeNull();
     expect(head().querySelector("[data-avatar-status=grey]")).not.toBeNull();
     await open();
     expect(document.body.querySelectorAll("[role=menuitemradio]")).toHaveLength(1);
@@ -244,7 +270,8 @@ describe("the sidebar's assistant switcher", () => {
     setRoster({ default: "assistant", managers: [ROSTER.managers[0], ROSTER.managers[3]] });
     await render();
     expect(head().textContent).toContain("助手");
-    expect(head().querySelector("[data-assistant-avatar]")).not.toBeNull();
+    expect(head().querySelector("[data-assistant-avatar]")).toBeNull();
+    expect(head().querySelector("svg")).not.toBeNull();
     expect(head().querySelector("[data-avatar-waiting]")).toBeNull();
     await open();
     expect(document.body.querySelector<HTMLElement>("[role=menu]")!.style.width).toBe("264px");
@@ -309,7 +336,7 @@ describe("the sidebar's assistant switcher", () => {
     await open();
     expect(document.body.querySelector<HTMLElement>("[role=menu]")!.style.width).toBe("220px");
     expect(menuHeader()).toBe("外观");
-    expect(rows().map((r) => r.textContent)).toEqual(["跟随系统", "浅色", "深色", "设置", "断开这个浏览器"]);
+    expect(rows().map((r) => r.textContent)).toEqual(["跟随系统", "浅色", "深色", "设置", "断开这个浏览器…"]);
   });
 
   it("uses the same product form when the fresh roster has only an installing assistant", async () => {
@@ -331,7 +358,8 @@ describe("the sidebar's assistant switcher", () => {
     setRoster({ default: "assistant", managers: [ROSTER.managers[0], ROSTER.managers[1]] });
     await render();
     expect(head().textContent).toContain("助手");
-    expect(head().querySelector("[data-assistant-avatar]")).not.toBeNull();
+    expect(head().querySelector("[data-assistant-avatar]")).toBeNull();
+    expect(head().querySelector("svg")).not.toBeNull();
     await open();
     expect(document.body.querySelectorAll("[role=menuitemradio]")).toHaveLength(2);
     await choose("工作");
@@ -342,7 +370,8 @@ describe("the sidebar's assistant switcher", () => {
     expect(shownManager()).toBe("assistant");
     expect(head().textContent).toContain("助手");
     expect(head().textContent).not.toContain("Persona");
-    expect(head().querySelector("[data-assistant-avatar]")).not.toBeNull();
+    expect(head().querySelector("[data-assistant-avatar]")).toBeNull();
+    expect(head().querySelector("svg")).not.toBeNull();
     expect(head().querySelector("[data-avatar-waiting]")).toBeNull();
     await open();
     const radios = [...document.body.querySelectorAll<HTMLElement>("[role=menuitemradio]")];
@@ -364,7 +393,7 @@ describe("the sidebar's assistant switcher", () => {
     await open();
     expect(document.body.querySelector<HTMLElement>("[role=menu]")!.style.width).toBe("220px");
     expect(menuHeader()).toBe("外观");
-    expect(rows().map((r) => r.textContent)).toEqual(["跟随系统", "浅色", "深色", "设置", "断开这个浏览器"]);
+    expect(rows().map((r) => r.textContent)).toEqual(["跟随系统", "浅色", "深色", "设置", "断开这个浏览器…"]);
     expect(rows().some((r) => r.textContent === "新建助手")).toBe(false);
   });
 

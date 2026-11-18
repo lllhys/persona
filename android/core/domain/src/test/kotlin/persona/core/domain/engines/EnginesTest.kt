@@ -81,4 +81,62 @@ class EnginesTest {
         assertEquals("已切换引擎", (Engines.saved(machine()).zh()).zhAny())
         assertEquals("已保存，连上后生效", (Engines.saved(machine(online = false)).zh()).zhAny())
     }
+
+    // No terminal engine (#3302): the empty host set, which the hub says in `engine_hosts` while `engine` still says herdr.
+    private fun withHosts(hosts: List<String>?, online: Boolean = true, engines: List<DetectedEngine> = listOf(herdr)) =
+        machine(online = online, engines = engines).copy(engineHosts = hosts)
+
+    /** Screens that judge by herdr read this: the empty set is none, everything else is `engine` as reported (a blank one stays blank). */
+    @Test fun judgedFollowsTheChoiceAndLeavesOlderHubsAsTheyWere() {
+        assertEquals(Engines.NONE, Engines.judged(withHosts(emptyList()).copy(engine = "herdr")))
+        assertEquals("herdr", Engines.judged(withHosts(listOf("herdr")).copy(engine = "herdr")))
+        assertEquals("herdr", Engines.judged(withHosts(null).copy(engine = "herdr")))
+        assertEquals("orca", Engines.judged(withHosts(listOf("orca")).copy(engine = "orca")))
+        assertEquals("", Engines.judged(withHosts(null).copy(engine = "")))
+    }
+
+    @Test fun noTerminalEngineIsReadFromTheEmptyHostSetOnly() {
+        assertTrue(Engines.isNone(withHosts(emptyList())))
+        // Not chosen, not detected, offline and an older hub are not "none": only the empty set is.
+        assertFalse(Engines.isNone(withHosts(listOf("herdr"))))
+        assertFalse(Engines.isNone(withHosts(null)))
+        assertFalse(Engines.isNone(withHosts(null, online = false, engines = emptyList())))
+        assertFalse(Engines.isNone(withHosts(listOf("orca"), engines = listOf(herdr.copy(available = false)))))
+        assertEquals(Engines.NONE, Engines.current(withHosts(emptyList())))
+        assertEquals(Engines.NONE, Engines.initialChoice(withHosts(emptyList(), online = false)))
+        assertEquals("herdr", Engines.current(withHosts(listOf("herdr"))))
+        assertEquals("herdr", Engines.current(withHosts(null)))
+    }
+
+    @Test fun noTerminalEngineIsListedLastAndOnlyForAHubWithHostSets() {
+        assertEquals(listOf("herdr", "herdr-core", "none"), Engines.options(withHosts(listOf("herdr"), engines = listOf(herdr, core))).map { it.id })
+        assertEquals(listOf("herdr", "herdr-core", "orca", "tern", "paseo", "cindy", "none"), Engines.options(withHosts(listOf("herdr"), engines = emptyList())).map { it.id })
+        assertEquals(listOf("herdr"), Engines.options(withHosts(null)).map { it.id })
+        assertFalse(Engines.options(withHosts(null, engines = emptyList())).any { it.id == Engines.NONE })
+        assertTrue(Engines.options(withHosts(emptyList())).last().available)
+        assertTrue(Engines.canSelect(Engines.NONE, withHosts(listOf("herdr"))))
+        // Needs no detection and works offline; an older hub would refuse it.
+        assertTrue(Engines.canSelect(Engines.NONE, withHosts(emptyList(), online = false, engines = emptyList())))
+        assertFalse(Engines.canSelect(Engines.NONE, withHosts(null)))
+        assertFalse("none is no hub engine id", Engines.known.any { it.id == Engines.NONE })
+    }
+
+    @Test fun noTerminalEngineHasItsOwnWordsAndNothingToDetect() {
+        val none = withHosts(emptyList())
+        assertEquals("没有终端引擎", Engines.currentLabel(none).zh())
+        assertEquals("没有终端引擎", Engines.label(Engines.NONE, withHosts(listOf("herdr"))).zh())
+        assertEquals("No terminal engine", Engines.currentName(none))
+        // An engine's name is still the hub's, then the known one.
+        assertEquals("herdr", Engines.currentLabel(withHosts(listOf("herdr"))).zh())
+        assertEquals("只显示桌面 App 的会话", Engines.detail(Engines.NONE)?.zh())
+        assertFalse(Engines.showsDetection(Engines.NONE))
+        assertTrue(Engines.showsDetection("herdr"))
+        assertTrue(Engines.footer(none).zh().startsWith("显示桌面 App 的会话，不能从手机新建或继续会话"))
+        assertTrue(Engines.footer(withHosts(emptyList(), online = false)).zh().startsWith("机器离线，选择会在连接后生效。显示桌面 App 的会话"))
+        // The note follows what is picked, not only what is saved, and goes back when herdr is picked again.
+        val herdrNow = withHosts(listOf("herdr"))
+        assertTrue(Engines.footer(herdrNow, Engines.NONE).zh().startsWith("显示桌面 App 的会话"))
+        assertTrue(Engines.footer(none, "herdr").zh().startsWith("只显示所选引擎里的会话"))
+        assertEquals("已保存，连上后生效", Engines.saved(withHosts(emptyList(), online = false)).zh())
+    }
 }

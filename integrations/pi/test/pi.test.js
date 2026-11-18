@@ -38,14 +38,32 @@ const msg = (id, parentId, role, text) => ({ type: 'message', id, parentId, time
 function piSession(id, cwd = '/w/app', entries = [], mode = 'rpc') {
   const handlers = new Map()
   const sm = sessionManager(id, cwd, entries)
-  const ui = { confirms: [], selects: [], answer: undefined }
+  // hang: a dialog nobody at the computer answers — it ends only when its signal takes it back (pi-web with no
+  // browser open). dialogs: each dialog's options ({signal}), to see it taken back.
+  // reply(v): the user answers the dialogs that hang.
+  const ui = { confirms: [], selects: [], inputs: [], dialogs: [], answer: undefined, hang: false, open: [] }
+  ui.reply = (v) => { for (const r of ui.open.splice(0)) r(v) }
+  const dialog = (opts) => {
+    ui.dialogs.push(opts)
+    if (!ui.hang) return Promise.resolve(ui.answer)
+    return new Promise((resolve) => {
+      ui.open.push(resolve)
+      if (opts?.signal?.aborted) return resolve(undefined)
+      opts?.signal?.addEventListener('abort', () => resolve(undefined), { once: true })
+    })
+  }
+  // A turn's abort signal as pi has it (ctx.signal; the tool's signal): abort() ends it; stuck: abort() does nothing.
+  let turn = new AbortController()
   const ctx = {
-    sessionManager: sm, mode, hasUI: true, model: { id: 'model-x' }, signal: undefined, aborted: 0,
-    abort() { ctx.aborted++ },
+    sessionManager: sm, mode, hasUI: true, model: { id: 'model-x' }, aborted: 0, stuck: false,
+    get signal() { return turn.signal },
+    newTurn() { turn = new AbortController() },
+    stopTurn() { turn.abort(new Error('stopped')) }, // the turn stopped from outside pi's ctx (pi-web's Stop)
+    abort() { ctx.aborted++; if (!ctx.stuck) turn.abort(new Error('aborted')) },
     ui: {
-      confirm: async (t, m) => { ui.confirms.push([t, m]); return ui.answer === true },
-      select: async (t, o) => { ui.selects.push([t, o]); return ui.answer },
-      input: async () => ui.answer,
+      confirm: async (t, m, opts) => { ui.confirms.push([t, m]); return (await dialog(opts)) === true },
+      select: (t, o, opts) => { ui.selects.push([t, o]); return dialog(opts) },
+      input: (t, _placeholder, opts) => { ui.inputs.push(t); return dialog(opts) },
     },
   }
   const pi = {
@@ -74,14 +92,19 @@ async function setup(t, opts = {}) {
     },
     web: opts.web ? { port: 30141, host: '127.0.0.1', password: 'pw' } : undefined,
     fetch: async (url, init) => {
+      if (init.method === 'GET') { // pi-web's debug snapshot: which sessions a browser has open
+        if (!opts.debug) return new Response('not found', { status: 404 })
+        return new Response(JSON.stringify(opts.debug()), { status: 200 })
+      }
       posts.push({ url, body: JSON.parse(init.body), auth: init.headers.authorization })
+      if (opts.onPost) await opts.onPost(url, JSON.parse(init.body))
       return new Response(JSON.stringify(opts.reply ?? { success: true, sessionId: 'new-1' }), { status: 200 })
     },
     pid: 4242,
     paneId: opts.paneId,
   }
   const host = createPiHost(deps, { socketPath: n.path, retryMs: 20, pushDelayMs: 5, approve: opts.approve, answerFirst: opts.answerFirst, listDisk: opts.listDisk,
-    update: opts.update, instance: opts.instance })
+    update: opts.update, instance: opts.instance, interruptSettleMs: opts.interruptSettleMs })
   t.after(() => host.stop())
   return { n, host, posts }
 }
@@ -124,9 +147,14 @@ test('pages the branch; sends into the turn (steer while working); interrupts; r
   await n.peer.call('session.send', { session_id: 's-p', text: 'go on', client_msg_id: 'm1' }) // a retry
   assert.equal(a.pi.sent.length, 1)
   await a.fire('agent_start')
-  await n.peer.call('session.send', { session_id: 's-p', text: 'also this', images: [{ mime: 'image/png', data: 'AAAA' }], client_msg_id: 'm2' })
+  const queued = await n.peer.call('session.send', { session_id: 's-p', text: 'also this', images: [{ mime: 'image/png', data: 'AAAA' }], client_msg_id: 'm2' })
   assert.deepEqual(a.pi.sent.at(-1), { content: [{ type: 'text', text: 'also this' }, { type: 'image', data: 'AAAA', mimeType: 'image/png' }], opts: { deliverAs: 'steer' } })
-  await n.peer.call('session.interrupt', { session_id: 's-p' })
+  assert.deepEqual(queued, { ok: true, queued: true }, 'a message steered into a running turn says it is queued')
+  const stopping = n.peer.call('session.interrupt', { session_id: 's-p' })
+  await until('aborted', () => a.ctx.aborted === 1)
+  await a.fire('agent_settled')
+  assert.deepEqual(await stopping, { ok: true, settled: true }, 'stopped once the turn ended')
+  assert.deepEqual(await n.peer.call('session.interrupt', { session_id: 's-p' }), { ok: true, settled: true }, 'an idle session has nothing to stop')
   assert.equal(a.ctx.aborted, 1)
   await n.peer.call('session.rename', { session_id: 's-p', title: 'Build fix' })
   assert.deepEqual(a.pi.names, ['Build fix'])
@@ -358,24 +386,151 @@ test('总是同意 on a pi card is kept in the session: later calls of that tool
   assert.equal(n.asked.length, 4, 'the resumed session does not ask either')
 })
 
-test('ask_user: the phone answers when it drives the session; otherwise pi\'s own dialog', async (t) => {
+/** A session with ask_user, listed on the node; opts go to setup. */
+async function askSetup(t, opts = {}) {
   const { Type } = await import('./typebox-stub.js')
-  const { n, host } = await setup(t, { answerFirst: 'phone' })
-  const a = piSession('s-q')
-  host.register(a.pi, { Type })
+  const env = await setup(t, opts)
+  const a = piSession(opts.id ?? 's-q')
+  env.host.register(a.pi, { Type })
   const tool = a.pi.tools.find((x) => x.name === 'ask_user')
   assert.ok(tool, 'ask_user registered')
   await a.fire('session_start')
-  await n.ready
-  await until('listed', () => n.last('runtime.sessions'))
-  n.resolve = (ix) => ({ answers: { [ix.questions[0].question]: 'sqlite' } })
-  const res = await tool.execute('q1', { question: 'Which database?', options: ['postgres', 'sqlite'] }, undefined, undefined, a.ctx)
+  await env.n.ready
+  await until('listed', () => env.n.last('runtime.sessions'))
+  const status = () => env.n.last('runtime.sessions')?.sessions.find((r) => r.session_id === a.sm.getSessionId())?.status
+  const ask = (id, params) => tool.execute(id, params, a.ctx.signal, undefined, a.ctx)
+  return { ...env, a, tool, status, ask }
+}
+
+/** A phone that has not answered yet: resolve(answer) answers the card it holds. */
+function heldPhone(n) {
+  let answer
+  n.resolve = () => new Promise((r) => { answer = r })
+  return (res) => answer(res)
+}
+
+test('ask_user_phone_card_answers_while_local_dialog_hangs', async (t) => {
+  // answerFirst auto and a dialog here: the card still goes to the phone at once, beside the dialog nobody answers.
+  const { n, a, status, ask } = await askSetup(t)
+  a.ui.hang = true
+  const answer = heldPhone(n)
+  const asked = ask('q1', { question: 'Which database?', options: ['postgres', 'sqlite'] })
+  await until('card on the phone', () => n.asked.length === 1)
+  assert.deepEqual(n.asked[0].questions[0].options.map((o) => o.label), ['postgres', 'sqlite'])
+  assert.equal(a.ui.selects.length, 1, 'the local dialog is open too')
+  await until('listed as needing you', () => status() === 'blocked')
+  answer({ answers: { 'Which database?': 'sqlite' } })
+  const res = await asked
   assert.equal(res.content[0].text, 'The user answered: sqlite')
-  assert.deepEqual(n.asked.at(-1).questions[0].options.map((o) => o.label), ['postgres', 'sqlite'])
-  n.resolve = () => ({ dismiss: true })
-  a.ui.answer = 'postgres'
-  const local = await tool.execute('q2', { question: 'Which database?', options: ['postgres', 'sqlite'] }, undefined, undefined, a.ctx)
-  assert.equal(local.content[0].text, 'The user answered: postgres')
+  assert.equal(a.ui.dialogs[0].signal.aborted, true, 'the local dialog is taken back')
+  await until('no longer blocked', () => status() !== 'blocked')
+})
+
+test('ask_user_local_dialog_answers_and_withdraws_phone_card', async (t) => {
+  const { n, a, ask } = await askSetup(t)
+  a.ui.hang = true
+  heldPhone(n) // the phone never answers
+  const asked = ask('q2', { question: 'Name it?' })
+  await until('card on the phone', () => n.asked.length === 1)
+  assert.equal(a.ui.inputs.length, 1, 'free text: an input dialog')
+  a.ui.reply('persona') // the user types it in pi's dialog
+  const res = await asked
+  assert.equal(res.content[0].text, 'The user answered: persona')
+  await until('the card is taken back', () => n.all('interaction.cancel').some((c) => c.id === n.asked[0].id))
+})
+
+test('ask_user_phone_handed_back_leaves_local_dialog_waiting', async (t) => {
+  const { n, a, ask } = await askSetup(t)
+  a.ui.hang = true
+  const answer = heldPhone(n)
+  const asked = ask('q4', { question: 'Go?', options: ['yes', 'no'] })
+  await until('card on the phone', () => n.asked.length === 1)
+  answer({ dismiss: true }) // handed back to the computer
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(a.ui.dialogs[0].signal.aborted, false, 'the dialog still asks')
+  a.ctx.abort()
+  assert.equal((await asked).details.answer, null)
+})
+
+test('ask_user_without_dialog_or_hub_does_not_wait', async (t) => {
+  const { n, a, ask } = await askSetup(t)
+  a.ctx.hasUI = false
+  n.setHub(false)
+  await new Promise((r) => setTimeout(r, 50))
+  const res = await ask('q5', { question: 'Go?' })
+  assert.equal(res.content[0].text, 'The user did not answer.')
+  assert.equal(n.asked.length, 0)
+})
+
+test('send_while_ask_user_waits_answers_the_question', async (t) => {
+  const { n, a, status, ask } = await askSetup(t)
+  a.ui.hang = true
+  heldPhone(n)
+  await a.fire('agent_start')
+  const asked = ask('q6', { question: 'Which branch?' })
+  await until('card on the phone', () => n.asked.length === 1)
+  await until('blocked', () => status() === 'blocked')
+  const res = await n.peer.call('session.send', { session_id: 's-q', text: 'main', client_msg_id: 'm-a' })
+  assert.deepEqual(res, { ok: true }, 'delivered: it answered the question, nothing queued')
+  assert.equal((await asked).content[0].text, 'The user answered: main')
+  assert.equal(a.pi.sent.length, 0, 'not steered behind the question')
+  assert.equal(a.ui.dialogs[0].signal.aborted, true, 'the dialog is taken back')
+  await until('the card is taken back', () => n.all('interaction.cancel').some((c) => c.id === n.asked[0].id))
+  // Once the question is over, a send to the running turn is queued again, and says so.
+  const later = await n.peer.call('session.send', { session_id: 's-q', text: 'and then', client_msg_id: 'm-b' })
+  assert.deepEqual(later, { ok: true, queued: true })
+  assert.deepEqual(a.pi.sent.at(-1).opts, { deliverAs: 'steer' })
+})
+
+test('interrupt_cancels_a_turn_stuck_in_ask_user', async (t) => {
+  // The hang this fixes: nobody at the computer, nobody on the phone; Stop must end the turn.
+  const { n, a, status, ask } = await askSetup(t)
+  a.ui.hang = true
+  heldPhone(n)
+  await a.fire('agent_start')
+  const asked = ask('q7', { question: 'Deploy now?', options: ['yes', 'no'] })
+  await until('blocked', () => status() === 'blocked')
+  const stopping = n.peer.call('session.interrupt', { session_id: 's-q' })
+  const res = await asked // the tool gives up on the turn's signal
+  assert.equal(res.content[0].text, 'The question was withdrawn: the user stopped this turn.')
+  assert.equal(a.ui.dialogs[0].signal.aborted, true, 'the dialog is taken back')
+  await until('the card is taken back', () => n.all('interaction.cancel').some((c) => c.id === n.asked[0].id))
+  await a.fire('agent_settled') // pi ends the turn once the tool returned
+  assert.deepEqual(await stopping, { ok: true, settled: true })
+})
+
+test('interrupt_reports_failure_when_the_turn_does_not_end', async (t) => {
+  const { n, a } = await askSetup(t, { interruptSettleMs: 60 })
+  a.ctx.stuck = true
+  await a.fire('agent_start')
+  await assert.rejects(n.peer.call('session.interrupt', { session_id: 's-q' }), (err) => err.code === 'interrupt_timeout')
+})
+
+test('interrupt_inside_pi_web_uses_its_own_stop', async (t) => {
+  let a
+  const { n, posts } = await askSetup(t, {
+    web: true,
+    // pi-web's Stop aborts the turn (and its extension dialogs) itself.
+    onPost: async (_url, body) => { if (body.type === 'abort') a.ctx.stopTurn() },
+  }).then((env) => { a = env.a; return env })
+  await a.fire('agent_start')
+  const stopping = n.peer.call('session.interrupt', { session_id: 's-q' })
+  await until('pi-web asked to stop', () => posts.some((p) => p.body.type === 'abort'))
+  assert.match(posts.at(-1).url, /\/api\/agent\/s-q$/)
+  assert.equal(a.ctx.aborted, 0, 'not pi\'s own abort when pi-web took it')
+  await a.fire('agent_settled')
+  assert.deepEqual(await stopping, { ok: true, settled: true })
+})
+
+test('pi_web_counts_a_browser_only_when_one_has_the_session_open', async (t) => {
+  let streams = 0
+  const { n, a, host } = await askSetup(t, { web: true, approve: ['bash'], debug: () => ({ sessions: [{ sessionId: 's-q', eventStreams: streams }] }) })
+  // No browser: the approval goes to the phone first (answerFirst auto), not to a dialog nobody sees.
+  n.resolve = () => ({ allow: true })
+  assert.equal(await a.fire('tool_call', { toolName: 'bash', toolCallId: 'c1', input: { command: 'ls' } }), undefined)
+  assert.equal(n.asked.length, 1)
+  assert.equal(a.ui.confirms.length, 0)
+  assert.equal(host.runtime.phoneFirst('s-q'), true)
 })
 
 test('inside pi-web\'s server the extension lists only what runs there, as runtime pi-web', async (t) => {
@@ -455,7 +610,7 @@ test('the companion gives sessions that ran in herdr a resume command, and never
   await n.ready
   await until('listed', () => n.last('runtime.sessions')?.sessions.length === 2)
   const rows = Object.fromEntries(n.last('runtime.sessions').sessions.map((s) => [s.session_id, s]))
-  assert.deepEqual(rows['s-herdr'].resume_argv, ['pi', '--session', herdrFile])
+  assert.deepEqual(rows['s-herdr'].resume_argv, ['pi', '--approve', '--session', herdrFile], 'resumed in a pane nobody watches: no Trust prompt (#9462)')
   assert.equal(rows['s-web'].resume_argv, undefined, 'last ran in pi-web: woken there')
   // A node that did not resume it (an older one) reaches the companion: refused, not opened in pi-web.
   await assert.rejects(n.peer.call('session.send', { session_id: 's-herdr', text: 'x', client_msg_id: 'h1' }), /herdr/)

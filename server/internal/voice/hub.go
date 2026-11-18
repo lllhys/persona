@@ -211,6 +211,25 @@ func (h *hubClient) session(ctx context.Context, machine, id string) (*proto.Ses
 	return nil, nil
 }
 
+// liveRoom is a recording's room conversation as GET /api/v1/recordings/{id}/live tells it
+// (docs/assistant/meeting-minutes.md "Fields on GET …/live and detail.meta"): its state (an open set), and its ids once
+// it has started.
+type liveRoom struct {
+	State     string `json:"state"`
+	MachineID string `json:"machine_id"`
+	SessionID string `json:"session_id"`
+}
+
+// meetingRoom is recording id's room (GET …/live?parts=room, full credentials: the hub's own token takes it); nil when
+// the recording has none (not a room meeting, or a manager from before rooms).
+func (h *hubClient) meetingRoom(ctx context.Context, id string) (*liveRoom, error) {
+	var out struct {
+		Room *liveRoom `json:"room"`
+	}
+	err := h.call(ctx, "GET", "/api/v1/recordings/"+url.PathEscape(id)+"/live?parts=room", nil, &out)
+	return out.Room, err
+}
+
 // machineOnline: the hub has machine id connected (false when it does not know it).
 func (h *hubClient) machineOnline(ctx context.Context, id string) (bool, error) {
 	m, err := h.machine(ctx, id)

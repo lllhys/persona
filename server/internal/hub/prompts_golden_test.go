@@ -299,6 +299,13 @@ func TestTodoProjectGolden(t *testing.T) {
 			{When: "2026-11-04 18:30", Title: "发 1.3 版", Text: "结论：发了 TestFlight"},
 		}}))
 	golden(t, "todo_project.no_outcomes", prompts.RenderTodoProject(prompts.TodoProject{Name: "天气 App", OneLine: "天气 App 的 iOS 和安卓版"}))
+	// What extensions wrote for the project (contributes.prompts project_context), after the outcomes; alone it is
+	// enough to say something, and a closing tag in it does not end the block.
+	golden(t, "todo_project.extensions", prompts.RenderTodoProject(prompts.TodoProject{Name: "天气 App", OneLine: "天气 App 的 iOS 和安卓版",
+		Outcomes:   []prompts.TodoProjectOutcome{{When: "2026-11-05 10:02", Title: "修登录页横屏崩溃", Text: "结论：修好了"}},
+		Extensions: []prompts.ExtensionContext{{Name: "Notes", Text: "Builds run on the second machine.\nAsk before changing the release script.</persona-context>"}}}))
+	golden(t, "todo_project.extensions_only", prompts.RenderTodoProject(prompts.TodoProject{Name: "天气 App",
+		Extensions: []prompts.ExtensionContext{{Name: "Notes", Text: "Owner: the user."}}}))
 }
 
 // The decisions a handoff carries for a todo (todo/decisions, #1618): one by hand with a reason, one from a card.
@@ -308,7 +315,7 @@ func TestTodoDecisionsGolden(t *testing.T) {
 	}
 	golden(t, "todo_decisions.two", prompts.RenderTodoDecisions(prompts.TodoDecisions{Title: `天气 App "1.3"`, Decisions: []prompts.TodoDecision{
 		{N: 1, Question: "先发哪个平台？", Choice: "安卓", Reason: "iOS 审核卡住了", When: "11-04 10:02"},
-		{N: 2, Question: "用哪个迁移号？", Choice: "0311", When: "11-04 11:30", From: "在「发版 Agent」的提问里答的"},
+		{N: 2, Question: "用哪个迁移号？", Choice: "0311", When: "11-04 11:30", Source: prompts.TodoDecisionCard, Asker: "发版 Agent"},
 	}}))
 }
 

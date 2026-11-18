@@ -1,4 +1,5 @@
 {
+  "skills_changed": "执行环境已变化，草稿已保留。请移除所选技能并重新选择。",
   "cmd_continue_word": "/继续",
   "cmd_continue_desc": "让它接着做",
   "cmd_continue_text": "继续",
@@ -19,7 +20,6 @@
   "undo": "撤销",
   "image_too_large": "{name} 太大了（图片最多 8 MB）",
   "images_only": "这里只能发图片",
-  "uploaded": "已传到电脑：{path}",
   "file_too_large": "文件太大（最多 200 MB）",
   "upload_failed": "上传失败：{error}",
   "suggestion": "{suggestion}（Tab 填入）",
@@ -40,5 +40,13 @@
   "more_actions": "更多操作",
   "add_more": "添加文件、图片等",
   "queue": "排队发送",
-  "queue_hint": "排队发送：等 Agent 做完再发（Enter）"
+  "queue_hint": "排队发送：等 Agent 做完再发（Enter）",
+  "cmd_permissions_desc": "切换权限模式",
+  "files_uploading": "文件还在上传，传完再发送",
+  "too_many_files": "一条消息最多 {max} 个文件",
+  "see_files": "请看附件",
+  "file_waiting": "等待中",
+  "file_failed": "失败 · 点击重试",
+  "file_cancel": "取消上传 {name}",
+  "file_retry": "重试 {name}"
 }

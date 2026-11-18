@@ -172,7 +172,7 @@ func (s *Service) heldEscalates(ctx context.Context, t Todo, a *acceptAsk) bool 
 
 // heldForBriefing: a is a decision that waits for a briefing to bring it to the owner.
 func heldForBriefing(a *acceptAsk) bool {
-	return a != nil && decideAsk(a) && a.ForBriefing && !a.AskedAt.IsZero() && a.AcceptedAt.IsZero()
+	return a != nil && decideAsk(a) && a.ForBriefing && !a.AskedAt.IsZero() && a.AcceptedAt.IsZero() && a.AgentReply == nil
 }
 
 // waitsForBriefing: task id's decision is kept and held for a briefing.

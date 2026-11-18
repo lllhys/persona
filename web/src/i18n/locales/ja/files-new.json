@@ -1,0 +1,12 @@
+{
+  "new": "新規",
+  "new_folder": "新規フォルダ",
+  "new_text": "新規テキストファイル",
+  "untitled_folder": "名称未設定フォルダ",
+  "untitled_text": "名称未設定.txt",
+  "in_folder": "「{name}」に作成します。",
+  "in_folder_opens": "「{name}」に作成し、作成後に開きます。",
+  "name": "名前",
+  "create": "作成",
+  "cancel": "キャンセル"
+}

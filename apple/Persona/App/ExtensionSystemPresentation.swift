@@ -1,6 +1,7 @@
 import Observation
 import SwiftUI
 import UserNotifications
+import PersonaWire
 
 /// A system entry point kept in AppModel. The action is claimed before it is sent; a change of appearance or a rebuilt window only redraws, never replays the write.
 @Observable final class ExtensionSystemOpen: Identifiable {
@@ -38,11 +39,11 @@ extension AppModel {
         return true
     }
 
-    /// Settings › Extensions › `id`: what an extension's `open_url` persona://settings/extensions/<id> opens (#5906). An
-    /// extension page shown over everything closes first.
-    func openExtensionSettings(_ id: String) {
+    /// Settings › Extensions › `id`: what an extension's `open_url` persona://settings/extensions/<id> opens (#5906), of
+    /// `manager` (nil: the current assistant's). An extension page shown over everything closes first.
+    func openExtensionSettings(_ id: String, manager: String? = nil) {
         extensionOpen = nil
-        settingsPath = NavigationPath([SettingsPage.plugins, SettingsPage.plugin(id)])
+        settingsPath = NavigationPath([SettingsPage.plugins, SettingsPage.plugin(id, manager: manager)])
         #if os(macOS)
         MacShellState.shared.go(.settings, self)
         #else
@@ -51,10 +52,14 @@ extension AppModel {
     }
 
     /// Opens `url` when it is an extension's settings link (`ExtensionSettingsLink`); false for any other, which the
-    /// caller opens as before.
-    func openIfExtensionSettings(_ url: URL) -> Bool {
+    /// caller opens as before. An extension page's link opens that page's assistant's copy of the extension (the
+    /// default's by its id, `settingsRoute`): a built-in one is in every assistant, and the current one's is another.
+    func openIfExtensionSettings(_ url: URL, from owner: ExtensionSettingsOwner = .current) -> Bool {
         guard let id = ExtensionSettingsLink.extensionID(url) else { return false }
-        openExtensionSettings(id)
+        switch owner {
+        case .current: openExtensionSettings(id)
+        case .page(let manager): openExtensionSettings(id, manager: settingsRoute(manager))
+        }
         return true
     }
 
@@ -67,6 +72,29 @@ extension AppModel {
         Task { await askPersona(text) }
         return true
     }
+
+    /// The pages' Source Relationships row (#5741): Settings › Inbox Sources › Source Relationships, from Settings or from
+    /// the Inbox's sheet of the pages (which closes as Settings opens).
+    func openIfSourcesGraph(_ url: URL) -> Bool {
+        guard SubscriptionsUI.isGraph(url) else { return false }
+        extensionOpen = nil
+        settingsPath = NavigationPath([SettingsPage.inboxSources, SettingsPage.sourcesGraph])
+        #if os(macOS)
+        MacShellState.shared.go(.settings, self)
+        #else
+        selectedTab = .settings
+        #endif
+        return true
+    }
+}
+
+/// Whose extension settings an extension's settings link opens (`AppModel.openIfExtensionSettings`).
+nonisolated enum ExtensionSettingsOwner: Equatable {
+    /// The current assistant's: a link in a chat's card.
+    case current
+    /// An extension page's manager's, as its requests name it: nil for the default's (the sidebar's and notifications'
+    /// pages, read naming none).
+    case page(String?)
 }
 
 /// Reuses the regular extension pages with their links, push/pop and invalidation refresh; no separate renderer for notifications.
@@ -86,9 +114,7 @@ private struct ExtensionSystemPresentation: ViewModifier {
                     }
                 }
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done [Extension System Presentation c0b3fb]") { app.extensionOpen = nil }.lineLimit(1)
-                    }
+                    SheetClose { app.extensionOpen = nil }
                 }
             }
             .environment(app)

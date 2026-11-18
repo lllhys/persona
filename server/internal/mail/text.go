@@ -5,6 +5,7 @@ import (
 	"html"
 	"io"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/emersion/go-imap/v2"
@@ -37,9 +38,9 @@ func snippetOf(sections []imapclient.FetchBodySectionBuffer) string {
 		body = dropSplitQPEscape(body)
 	}
 	raw := append(append([]byte{}, header...), body...)
-	text := textFromRaw(raw)
+	text := textFromRawCut(raw, cut)
 	if text == "" {
-		text = textFromRaw(body) // no usable header: try the body alone
+		text = textFromRawCut(body, cut) // no usable header: try the body alone
 	}
 	if cut {
 		text = dropSplitRune(text)
@@ -78,8 +79,27 @@ func dropSplitRune(s string) string {
 	return s
 }
 
+// splitReference is the start of an HTML character reference at the end of a text: its "&" and what of the name or
+// number follows, without the ";" that would end it.
+var splitReference = lazyre.New(`&(?:#[0-9]{0,7}|#[xX][0-9a-fA-F]{0,6}|[A-Za-z][A-Za-z0-9]{0,31})?$`)
+
+// dropSplitReference drops a character reference a byte cut left unfinished at the end of s: html.UnescapeString would
+// leave "&nb" as it is, and read "&#82", the start of "&#8212;", as an "R".
+func dropSplitReference(s string) string {
+	if i := strings.LastIndexByte(s, '&'); i >= 0 && len(s)-i <= 34 {
+		if loc := splitReference.FindStringIndex(s[i:]); loc != nil {
+			return s[:i]
+		}
+	}
+	return s
+}
+
 // textFromRaw extracts readable text from a possibly truncated raw message.
-func textFromRaw(raw []byte) string {
+func textFromRaw(raw []byte) string { return textFromRawCut(raw, false) }
+
+// textFromRawCut is textFromRaw for a raw message that was cut where cut says so: a character reference the cut left
+// unfinished at the end of an HTML part is dropped (dropSplitReference).
+func textFromRawCut(raw []byte, cut bool) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -89,14 +109,14 @@ func textFromRaw(raw []byte) string {
 	if e == nil {
 		return ""
 	}
-	return textFromEntity(e, 0)
+	return textFromEntity(e, 0, cut)
 }
 
 const textFromEntityMaxDepth = 20 // real mail is shallow; a cap stops a crafted nest from blowing the stack
 
 // textFromEntity returns the first non-empty text/* part, depth-first; multipart parts (e.g. alternative inside mixed)
 // are descended into.
-func textFromEntity(e *gomessage.Entity, depth int) string {
+func textFromEntity(e *gomessage.Entity, depth int, cut bool) string {
 	if depth > textFromEntityMaxDepth {
 		return ""
 	}
@@ -110,7 +130,7 @@ func textFromEntity(e *gomessage.Entity, depth int) string {
 			if p == nil || (err != nil && !gomessage.IsUnknownCharset(err)) {
 				return "" // end of this multipart (or a truncated tail)
 			}
-			if text := textFromEntity(p, depth+1); text != "" {
+			if text := textFromEntity(p, depth+1, cut); text != "" {
 				return text
 			}
 		}
@@ -119,7 +139,7 @@ func textFromEntity(e *gomessage.Entity, depth int) string {
 	if !strings.HasPrefix(mt, "text/") {
 		return ""
 	}
-	return renderText(mt, readAllTolerant(e.Body, 8<<10))
+	return renderText(mt, readAllTolerant(e.Body, 8<<10), cut)
 }
 
 // readAllTolerant reads at most n bytes, ignoring decode errors at a truncated
@@ -134,45 +154,146 @@ func readAllTolerant(r io.Reader, n int) string {
 }
 
 // renderText converts text/plain or text/html to preview text.
-func renderText(mediaType string, s string) string {
+func renderText(mediaType string, s string, cut bool) string {
 	if strings.HasPrefix(mediaType, "text/html") {
+		if cut {
+			s = dropSplitReference(s)
+		}
 		return stripHTML(s)
 	}
 	return s
 }
 
-// stripHTML removes tags and script/style content and unescapes entities.
+// stripHTML removes tags, comments and script, style and title content and unescapes entities.
 func stripHTML(s string) string {
 	var b strings.Builder
 	lower := asciiLower(s) // same length as s: tags are matched at s's offsets
 	i := 0
+	var last byte // the last byte written
 	for i < len(s) {
 		if s[i] != '<' {
 			b.WriteByte(s[i])
+			last = s[i]
 			i++
 			continue
 		}
-		end := strings.IndexByte(s[i:], '>')
+		if strings.HasPrefix(s[i:], "<!--") {
+			end := strings.Index(s[i+len("<!--"):], "-->")
+			if end < 0 {
+				break // the rest is a comment
+			}
+			i += len("<!--") + end + len("-->")
+			continue
+		}
+		end := tagEnd(s, i)
 		if end < 0 {
 			break
 		}
-		tag := lower[i : i+end+1]
-		i += end + 1
-		if strings.HasPrefix(tag, "<script") || strings.HasPrefix(tag, "<style") {
-			closing := "</script"
-			if strings.HasPrefix(tag, "<style") {
-				closing = "</style"
-			}
-			j := strings.Index(lower[i:], closing)
+		tag := lower[i : end+1]
+		i = end + 1
+		if name := bodyHidden(tag); name != "" {
+			j := strings.Index(lower[i:], "</"+name)
 			if j < 0 {
 				break // a preview cut off inside a <style> block: the rest is CSS, not text
 			}
 			i += j
 		} else if strings.HasPrefix(tag, "<br") || strings.HasPrefix(tag, "</p") || strings.HasPrefix(tag, "</div") {
 			b.WriteByte(' ')
+			last = ' '
+		} else if isBlockTag(tag) && b.Len() > 0 && !strings.ContainsRune(" \t\r\n", rune(last)) {
+			b.WriteByte(' ')
+			last = ' '
 		}
 	}
-	return html.UnescapeString(b.String())
+	return dropPadding(html.UnescapeString(b.String()))
+}
+
+// isPadding: the characters a mail pads its hidden preheader with, so that mail apps pull no body text into the
+// preview, and that strings.Fields does not take for white space: zero-width space, non-joiner and joiner, word
+// joiner, byte order mark, soft hyphen and combining grapheme joiner.
+func isPadding(r rune) bool {
+	switch r {
+	case '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff', '\u00ad', '\u034f':
+		return true
+	}
+	return false
+}
+
+// dropPadding is s without runs of padding characters that stand next to white space or at an end of s. A run between
+// two other characters is part of a word and stays: U+200C in Persian and Indic words, U+200D in emoji sequences and
+// Indic conjuncts, U+00AD where a word may be broken.
+func dropPadding(s string) string {
+	if !strings.ContainsFunc(s, isPadding) {
+		return s
+	}
+	rs := []rune(s)
+	out := make([]rune, 0, len(rs))
+	for i := 0; i < len(rs); {
+		if !isPadding(rs[i]) {
+			out = append(out, rs[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(rs) && isPadding(rs[j]) {
+			j++
+		}
+		if i > 0 && j < len(rs) && !unicode.IsSpace(rs[i-1]) && !unicode.IsSpace(rs[j]) {
+			out = append(out, rs[i:j]...)
+		}
+		i = j
+	}
+	return string(out)
+}
+
+// tagEnd is the index of the ">" that ends the tag s[i] (a "<") starts, -1 when there is none: a ">" inside a quoted
+// attribute value (one opened right after "=") does not end it.
+func tagEnd(s string, i int) int {
+	var quote byte
+	for j := i + 1; j < len(s); j++ {
+		switch c := s[j]; {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			k := j - 1
+			for k > i && (s[k] == ' ' || s[k] == '\t' || s[k] == '\r' || s[k] == '\n') {
+				k--
+			}
+			if s[k] == '=' {
+				quote = c
+			}
+		case c == '>':
+			return j
+		}
+	}
+	return -1
+}
+
+// bodyHidden is the name of the element tag (lower-cased) opens when what it holds is no part of the text: script,
+// style and title; "" for any other tag.
+func bodyHidden(tag string) string {
+	for _, name := range []string{"script", "style", "title"} {
+		if rest, ok := strings.CutPrefix(tag, "<"+name); ok && rest != "" && strings.IndexByte(">/ \t\r\n", rest[0]) >= 0 {
+			return name
+		}
+	}
+	return ""
+}
+
+// blockTags are the elements that lay out what is inside them apart from what is around them, as a paragraph does:
+// table cells and rows, lists and their items, headings and block quotes.
+var blockTags = map[string]bool{"td": true, "th": true, "tr": true, "table": true, "li": true, "ul": true, "ol": true,
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "blockquote": true}
+
+// isBlockTag reports whether tag, lower-cased, starts or ends one of blockTags.
+func isBlockTag(tag string) bool {
+	name := strings.TrimPrefix(strings.TrimPrefix(tag, "<"), "/")
+	if end := strings.IndexFunc(name, func(r rune) bool { return !('a' <= r && r <= 'z' || '0' <= r && r <= '9') }); end >= 0 {
+		name = name[:end]
+	}
+	return blockTags[name]
 }
 
 // asciiLower lowers A–Z only, byte for byte. strings.ToLower can change the length (U+0130 and the Kelvin sign lower

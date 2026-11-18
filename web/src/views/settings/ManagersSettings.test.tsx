@@ -271,6 +271,31 @@ describe("设置 › 助手", () => {
     expect(calls.at(-1)).toMatchObject({ path: "/managers/m-2", method: "PATCH", json: { name: "家" } });
   });
 
+  it("has a switcher switch on the built-in assistant only: off while it is the default, else it sends hide (#9055)", async () => {
+    const sw = () => document.body.querySelector<HTMLButtonElement>('[role="switch"][aria-label="在切换器里显示"]');
+    await render();
+    await answer(0, ROSTER);
+    await click(row("助手"));
+    expect(sw()?.getAttribute("aria-checked")).toBe("true");
+    expect(sw()?.disabled).toBe(true); // the default: the hub would refuse to hide it
+    expect(text()).toContain("它是默认助手或名下有电脑，所以切换器里仍显示它");
+    await click(button("完成"));
+    await click(row("工作"));
+    expect(sw()).toBeNull();
+  });
+
+  it("hides the built-in assistant from the switcher when it is not the default, and shows it again (#9055)", async () => {
+    const sw = () => document.body.querySelector<HTMLButtonElement>('[role="switch"][aria-label="在切换器里显示"]');
+    const other = { ...ROSTER, default: "m-1", managers: ROSTER.managers.map((m) => ({ ...m, default: m.id === "m-1" })) };
+    await render();
+    await answer(0, other);
+    await click(row("助手"));
+    expect(sw()?.disabled).toBe(false);
+    expect(text()).toContain("关掉后，这个助手不是默认、名下也没有电脑时，切换器里不显示它");
+    await click(sw()!);
+    expect(calls.at(-1)).toMatchObject({ path: "/managers/assistant", method: "PATCH", json: { hide: true } });
+  });
+
   it("has one push switch per manager: turning it off sends only muted_managers, and a refusal puts it back", async () => {
     await render();
     await answer(0, ROSTER);

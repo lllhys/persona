@@ -22,16 +22,18 @@ func (m minutesModel) JSONMax(_ context.Context, _, _ string, _ int, out any) er
 	return json.Unmarshal([]byte(m.reply), out)
 }
 
-// A meeting recording through the phone's routes: its minutes are written, pushed once, read back by the detail, the
-// reconciliation and kb_get / kb_list; confirmed action items become to-dos once, however often the app asks.
+// A meeting recording through the phone's routes: its minutes are written, pushed once, read back by the detail (the
+// summary card's overview too, #6563), the reconciliation and kb_get / kb_list; confirmed action items become to-dos
+// once, however often the app asks, the overview kept as it was.
 func TestMinutesHTTP(t *testing.T) {
 	f := newFakeHub()
 	// The push also goes to the Lark bot and the channels from goroutines of their own: they must not log into a
 	// finished test.
 	s := kbServiceOn(t, f, newKBStore(), t.TempDir(), func(string, ...any) {})
 	e := kbEng(t, s)
-	model := minutesModel{reply: `{"title":"发布评审","points":[{"text":"导出丢条目","line":1}],` +
-		`"decisions":[{"text":"先保留上限","line":2}],"actions":[{"who":"Bo","what":"补上回归测试","by":"周五","due_date":"2026-11-13","line":3},{"what":"发邮件","line":3}]}`}
+	model := minutesModel{reply: `{"title":"发布评审","headline":"导出先保留上限","conclusions":[{"text":"先**保留**上限","line":2}],` +
+		`"topics":[{"title":"导出","icon":"progress","points":[{"text":"导出**丢条目**","line":1}],"decisions":[{"text":"先保留上限","line":2}]}],` +
+		`"actions":[{"who":"Bo","what":"补上回归测试","by":"周五","due_date":"2026-11-13","line":3},{"what":"发邮件","line":3}]}`}
 	e.Model, e.ModelFor = model, func(string) kb.Model { return model }
 	server := httptest.NewServer(s)
 	defer server.Close()
@@ -84,10 +86,19 @@ func TestMinutesHTTP(t *testing.T) {
 			Minutes kb.Minutes     `json:"minutes"`
 		} `json:"detail"`
 	}
-	_ = json.Unmarshal([]byte(request("GET", "/api/v1/kb/recordings/"+id, "", nil, 200)), &detail)
+	raw := request("GET", "/api/v1/kb/recordings/"+id, "", nil, 200)
+	_ = json.Unmarshal([]byte(raw), &detail)
 	if detail.Detail.Meta["minutes_state"] != "ready" || detail.Detail.Meta["kind"] != "meeting" || detail.Detail.Minutes.Version != 1 ||
 		len(detail.Detail.Minutes.Actions) != 2 || detail.Detail.Minutes.Actions[0].At != 20 {
 		t.Fatalf("detail %+v", detail.Detail)
+	}
+	// The summary card rides along: the points and decisions are its bullets, plain, their bold places in strong.
+	card := detail.Detail.Minutes.Overview
+	if card == nil || card.Headline != "导出先保留上限" || len(card.Conclusions) != 1 || len(card.Groups) != 1 || len(card.Groups[0].Topics) != 1 ||
+		len(card.Groups[0].Topics[0].Bullets) != 2 || card.Groups[0].Topics[0].Bullets[0].Text != "导出丢条目" ||
+		strings.Join(card.Groups[0].Topics[0].Bullets[0].Strong, ",") != "丢条目" || !card.Groups[0].Topics[0].Bullets[1].Decision ||
+		detail.Detail.Minutes.Points[0].Text != "导出丢条目" || !strings.Contains(raw, `"strong":["丢条目"]`) {
+		t.Fatalf("overview %+v in %s", card, raw)
 	}
 
 	// Confirming: one to-do per action, the same one however often; the minutes say which.
@@ -98,7 +109,8 @@ func TestMinutesHTTP(t *testing.T) {
 	}
 	_ = json.Unmarshal([]byte(request("POST", todosPath, "", map[string]any{"version": 1, "actions": []string{"a1"}}, 200)), &out)
 	if len(out.Todos) != 1 || out.Todos[0].Title != "Bo: 补上回归测试" || out.Todos[0].DueDate != "2026-11-13" ||
-		!strings.Contains(out.Todos[0].Notes, "发布评审") || out.Minutes.Actions[0].TodoID != out.Todos[0].ID || out.Minutes.Actions[1].TodoID != "" {
+		!strings.Contains(out.Todos[0].Notes, "发布评审") || out.Minutes.Actions[0].TodoID != out.Todos[0].ID || out.Minutes.Actions[1].TodoID != "" ||
+		out.Minutes.Overview == nil || out.Minutes.Markdown != detail.Detail.Minutes.Markdown {
 		t.Fatalf("confirmed %+v", out)
 	}
 	first := out.Todos[0].ID
@@ -127,7 +139,8 @@ func TestMinutesHTTP(t *testing.T) {
 
 	// The assistant reads them: kb_get prints the minutes before the transcript, kb_list marks the recording.
 	got, err := s.toolKB(context.Background(), "kb_get", json.RawMessage(`{"kind":"recordings","id":"`+id+`"}`))
-	if err != nil || !strings.Contains(got, "minutes.md:\n# 发布评审") || !strings.Contains(got, "transcript.md:") ||
+	if err != nil || !strings.Contains(got, "minutes.md:\n# 发布评审") || !strings.Contains(got, "## 核心结论") || !strings.Contains(got, "已决定：先保留上限") ||
+		!strings.Contains(got, "transcript.md:") ||
 		strings.Index(got, "minutes.md:") > strings.Index(got, "transcript.md:") {
 		t.Fatalf("kb_get: %v\n%s", err, got)
 	}
@@ -241,5 +254,42 @@ func TestMinutesPastMeetingTools(t *testing.T) {
 	open, closed, _ := strings.Cut(want, " (the whole day) (")
 	if !strings.Contains(out, open+" (the whole day) (") || !strings.Contains(out, ")\n"+closed) {
 		t.Fatalf("kb_get recording, the action items:\n%s\nwant\n%s", out, want)
+	}
+}
+
+// kb_get on a meeting imported from a connected app lists the recording whose calendar match is an overlapping event
+// but whose imported meeting it is (#8872).
+func TestKBGetImportedMeetingListsItsRecording(t *testing.T) {
+	f := newFakeHub()
+	s := kbServiceOn(t, f, newKBStore(), t.TempDir(), func(string, ...any) {})
+	setSettings(t, s, func(v *Settings) { v.Timezone = "Asia/Shanghai" })
+	loc, _ := time.LoadLocation("Asia/Shanghai")
+	e := kbEng(t, s)
+	e.Model, e.ModelFor = nil, nil // the round matches, writes no minutes
+	start := time.Now().In(loc).Truncate(time.Hour).AddDate(0, 0, -3)
+	for _, it := range []*kb.Item{
+		{Kind: kb.KindEvent, ID: "e1", Title: "Design review", At: start.Add(-5 * time.Minute)},
+		{Kind: kb.KindMeeting, ID: "m1", Title: "Design review (video)", At: start.Add(time.Minute), URL: "https://meet.example.com/m1"},
+	} {
+		if err := e.Store.PutItem(it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const id = "55555555-5555-4555-8555-555555555555"
+	up := kb.RecordingUpload{Revision: 1, StartedAt: start, Duration: 120, Device: "phone", Complete: true, Kind: kb.RecordingMeeting,
+		Segments: []kb.RecordingSegment{{Start: 0, End: 9, Text: "we keep the cap"}}}
+	if st, err := e.PutRecording(id, up, start.Add(3*time.Minute)); err != nil || st.Status != kb.RecordingStored {
+		t.Fatalf("put: %v %v", st, err)
+	}
+	e.WriteMinutes(context.Background(), 2)
+	if r, _ := e.Store.Recording(id); r.Meeting == nil || r.Meeting.ID != "e1" || r.ImportedMeeting == nil || r.ImportedMeeting.ID != "m1" {
+		t.Fatalf("matched %+v, imported %+v", r.Meeting, r.ImportedMeeting)
+	}
+	for _, kind := range []string{"meetings", "events"} {
+		id1 := map[string]string{"meetings": "m1", "events": "e1"}[kind]
+		out, err := runTool(s, "c1", "kb_get", map[string]any{"kind": kind, "id": id1})
+		if err != nil || !strings.Contains(out, "\nRecorded at it (kb_get kind=recordings for the minutes and the transcript):\n- "+id+" · ") {
+			t.Fatalf("kb_get %s:\n%s (%v)", kind, out, err)
+		}
 	}
 }

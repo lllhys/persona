@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +55,8 @@ func (r deployResult) held() bool {
 
 // prForge answers what a deploy check asks of where the PR lives.
 type prForge interface {
+	// IsPR distinguishes a pull request from an issue or a confirmed missing item.
+	IsPR(ctx context.Context, repo string, number int) (bool, error)
 	// PRMerge: whether PR number of repo (owner/name) is merged, and its merge commit.
 	PRMerge(ctx context.Context, repo string, number int) (merged bool, sha string, err error)
 	// Contains: whether head contains base in repo; found false when either is not a commit of repo.
@@ -74,7 +77,8 @@ type deployProbe struct {
 	cache map[string]deployCached // by PR URL + hub commit
 	seen  map[string]prSeen       // by todo id: when sweepPRs last checked an open to-do's PR (memory only)
 	// githubDown: GitHub failed to answer until then (a hub that cannot reach it waits on no timeouts meanwhile).
-	githubDown time.Time
+	githubDown    time.Time
+	githubFailure error
 
 	// listPaths are where the deployed-commits file is looked for (nil: deployedFiles; tests set their own), files
 	// the ones read (deployed_commits.go).
@@ -86,6 +90,8 @@ type deployProbe struct {
 type prSeen struct {
 	hub, state string
 	at         time.Time
+	statusPR   string
+	statusAt   time.Time
 }
 
 type deployCached struct {
@@ -96,7 +102,8 @@ type deployCached struct {
 // deployCacheFor is how long a result other than deployIn is reused (deployIn holds for good for that hub commit).
 const deployCacheFor = 2 * time.Minute
 
-// describeHash is the commit in a version as deploy.sh and publish.sh write it, "$(git describe --always --dirty)-$BUILD":
+// describeHash is the commit in a version as deploy.sh and publish.sh write it, "$(git describe --tags --match 'v[0-9]*'
+// --always --dirty)-$BUILD":
 // <tag>-<n>-g<hash>[-dirty]-<build>, or with no tag <hash>[-dirty]-<build>.
 var describeHash = lazyre.New(`(?:-g|^)([0-9a-f]{7,40})(?:-dirty)?-[0-9]{12}$`)
 
@@ -159,6 +166,12 @@ func (s *Service) checkDeployed(ctx context.Context, pr string) deployResult {
 	if hub == "" {
 		return deployResult{State: deployUnverified}
 	}
+	// A repaired receipt is stronger than a cached outage, including during a GitHub pause.
+	if l := s.deployedListFor(hub); l != nil && strings.EqualFold(l.repo, repo) {
+		if sha, ok := l.prs[number]; ok {
+			return deployResult{State: deployIn, Hub: hub, Merge: sha}
+		}
+	}
 	key := pr + "\x00" + hub
 	p := &s.deploy
 	p.mu.Lock()
@@ -202,15 +215,25 @@ func (s *Service) compareGitHub(ctx context.Context, repo string, number int, hu
 	p := &s.deploy
 	p.mu.Lock()
 	down := time.Now().Before(p.githubDown)
+	reason, resume := p.githubFailure, p.githubDown
 	p.mu.Unlock()
 	if down {
-		return deployResult{State: deployUnknown, Hub: hub, Err: errors.New("GitHub did not answer a moment ago")}
+		return deployResult{State: deployUnknown, Hub: hub, Err: fmt.Errorf("GitHub verification paused until %s; original failure: %v", resume.UTC().Format(time.RFC3339), reason)}
 	}
 	r := s.compareGitHubNow(ctx, repo, number, hub)
-	if r.State == deployUnknown {
+	if r.State == deployUnknown && !errors.Is(r.Err, errForgeNotFound) && !errors.Is(r.Err, errForgeUnprocessable) {
+		var response *githubReadError
+		if errors.As(r.Err, &response) && response.kind == "permission" {
+			// Authorization failures are not evidence that GitHub is down for other PRs.
+			s.logf("deploy verification unavailable: %v; no global pause for permission errors", r.Err)
+			return r
+		}
 		p.mu.Lock()
 		p.githubDown = time.Now().Add(githubPause)
+		p.githubFailure = r.Err
+		resume := p.githubDown
 		p.mu.Unlock()
+		s.logf("deploy verification unavailable: %v; paused until %s", r.Err, resume.UTC().Format(time.RFC3339))
 	}
 	return r
 }
@@ -361,9 +384,20 @@ func (s *Service) saveStagesLocked(ctx context.Context, id string) {
 	}
 }
 
+// prStatusPassMost bounds one pass of PR observations (sweepPRStatusesBounded), apart from the deploy checks' time.
+var prStatusPassMost = time.Minute
+
+// sweepPRStatusesBounded is sweepPRStatuses with its own deadline (prStatusPassMost).
+func (s *Service) sweepPRStatusesBounded(now time.Time) {
+	ctx, cancel := context.WithTimeout(context.Background(), prStatusPassMost)
+	defer cancel()
+	s.sweepPRStatuses(ctx, now)
+}
+
 // sweepDeploys looks again at the held tasks: once the running hub contains the work, the task is deployed (its
 // delivery live, its stage deploy) and asked to be verified; a task gone or watched too long is let go.
 func (s *Service) sweepDeploys(now time.Time) {
+	defer s.sweepParkRepliesBounded(now)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	b := &s.reports
@@ -379,6 +413,10 @@ func (s *Service) sweepDeploys(now time.Time) {
 		}
 	}
 	b.mu.Unlock()
+	// The PR facts come after the deploy checks, with a time of their own: slow or hanging forge reads for many PRs
+	// never use up this pass's time before the hub's commit, sweepPRs and the watches have run. They run even when the
+	// hub's health cannot be read (they do not need it).
+	defer s.sweepPRStatusesBounded(now)
 	hub, err := s.runningHubCommit(ctx)
 	if err != nil {
 		s.logf("deploys: the hub's health: %v", err)
@@ -457,7 +495,9 @@ func (s *Service) sweepPRs(ctx context.Context, now time.Time, hub string, watch
 		if p.seen == nil || len(p.seen) > 2000 {
 			p.seen = map[string]prSeen{}
 		}
-		p.seen[t.ID] = prSeen{hub: hub, state: r.State, at: now}
+		seen := p.seen[t.ID]
+		seen.hub, seen.state, seen.at = hub, r.State, now
+		p.seen[t.ID] = seen
 		p.mu.Unlock()
 		switch r.State {
 		case deployIn:
@@ -483,9 +523,8 @@ func (s *Service) unwatchDeploy(ctx context.Context, id string, since time.Time)
 	}
 }
 
-// githubForge is GitHub's REST API: through the hub's GitHub connector when it is signed in (via), else directly, with
-// GH_TOKEN or GITHUB_TOKEN from the environment when set (the repository may be public: without a token it is read as
-// anyone may).
+// githubForge uses the signed-in connector, else the hub user's authenticated GitHub CLI.
+// Production never falls back to anonymous HTTP. Custom API bases are used by transport tests.
 type githubForge struct {
 	base   string
 	client *http.Client
@@ -511,7 +550,10 @@ func (s *Service) forge() prForge {
 	return g
 }
 
-var errForgeNotFound = errors.New("not found")
+var (
+	errForgeNotFound      = errors.New("not found")
+	errForgeUnprocessable = errors.New("unprocessable entity")
+)
 
 // connectorNotFound: the connector's error for a 404 or 422 ("GitHub GET <path>: 404 …").
 var connectorNotFound = lazyre.New(`: (404|422)\b`)
@@ -519,10 +561,28 @@ var connectorNotFound = lazyre.New(`: (404|422)\b`)
 func (g githubForge) get(ctx context.Context, path string, out any) error {
 	if g.via != nil {
 		if ok, err := g.via(ctx, path, out); ok {
-			if err != nil && connectorNotFound.MatchString(err.Error()) {
-				return errForgeNotFound
+			if err != nil {
+				if m := connectorNotFound.FindStringSubmatch(err.Error()); m != nil {
+					if m[1] == "422" {
+						return errForgeUnprocessable
+					}
+					return errForgeNotFound
+				}
 			}
 			return err
+		}
+	}
+	token := ""
+	if g.base == "https://api.github.com" {
+		if _, err := exec.LookPath("gh"); err == nil {
+			return githubCLIGet(ctx, path, out)
+		}
+		token = strings.TrimSpace(os.Getenv("GH_TOKEN"))
+		if token == "" {
+			token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+		}
+		if token == "" {
+			return fmt.Errorf("authenticated GitHub CLI unavailable and no environment authorization (no anonymous fallback)")
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.base+path, nil)
@@ -531,24 +591,64 @@ func (g githubForge) get(ctx context.Context, path string, out any) error {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "persona-hub")
-	for _, k := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if tok := strings.TrimSpace(os.Getenv(k)); tok != "" {
-			req.Header.Set("Authorization", "Bearer "+tok)
-			break
-		}
+	client := g.client
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+		// Environment authorization is only for this host, never a redirected request.
+		authenticated := *client
+		authenticated.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		client = &authenticated
 	}
-	resp, err := g.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("GitHub network error: %s", githubDiagnostic(err.Error()))
 	}
 	defer resp.Body.Close()
 	switch {
-	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnprocessableEntity:
-		return errForgeNotFound // compare answers 404 (or 422) for a commit the repository does not have
+	case resp.StatusCode == http.StatusNotFound:
+		// Preserve diagnostics while keeping the compare endpoint's missing-commit semantics.
+		return fmt.Errorf("%w: %w", errForgeNotFound, githubResponseError(resp))
+	case resp.StatusCode == http.StatusUnprocessableEntity:
+		return fmt.Errorf("%w: %w", errForgeUnprocessable, githubResponseError(resp))
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("GitHub answered %d", resp.StatusCode)
+		return githubResponseError(resp)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+}
+
+func (g githubForge) IsPR(ctx context.Context, repo string, number int) (bool, error) {
+	var issue struct {
+		PR *struct{} `json:"pull_request"`
+	}
+	err := g.get(ctx, fmt.Sprintf("/repos/%s/issues/%d", repo, number), &issue)
+	if errors.Is(err, errForgeNotFound) {
+		// Issue access and PR access can differ. A readable repository alone does not establish PR permissions.
+		var pr struct {
+			Number int `json:"number"`
+		}
+		err := g.get(ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, number), &pr)
+		if err == nil {
+			if pr.Number != number {
+				return false, fmt.Errorf("PR identity could not be confirmed for %s#%d", repo, number)
+			}
+			return true, nil
+		}
+		if !errors.Is(err, errForgeNotFound) {
+			return false, err
+		}
+		var prs []struct{}
+		if err := g.get(ctx, "/repos/"+repo+"/pulls?state=all&per_page=1", &prs); err != nil {
+			return false, err
+		}
+		if prs == nil {
+			return false, fmt.Errorf("PR access could not be confirmed for %s", repo)
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return issue.PR != nil, nil
 }
 
 func (g githubForge) PRMerge(ctx context.Context, repo string, number int) (bool, string, error) {
@@ -562,13 +662,18 @@ func (g githubForge) PRMerge(ctx context.Context, repo string, number int) (bool
 	return pr.Merged, pr.SHA, nil
 }
 
+// compareEmptyPage is a page number well past page 1; GitHub caps a compare at 10,000 commits.
+const compareEmptyPage = 1000
+
 func (g githubForge) Contains(ctx context.Context, repo, base, head string) (bool, bool, error) {
 	var c struct {
 		Status string `json:"status"`
 	}
-	// per_page=1: only the status is read, not the commits and files between them
-	err := g.get(ctx, fmt.Sprintf("/repos/%s/compare/%s...%s?per_page=1", repo, base, head), &c)
-	if errors.Is(err, errForgeNotFound) {
+	// Only the status is read. per_page=1 alone still returns the first commit and up to 300 files with their patches
+	// (1.3 MB on a busy main). Files come only on page 1, and status, ahead_by and behind_by repeat on every page, so a
+	// high page number carries the status with no files and at most one commit.
+	err := g.get(ctx, fmt.Sprintf("/repos/%s/compare/%s...%s?per_page=1&page=%d", repo, base, head, compareEmptyPage), &c)
+	if errors.Is(err, errForgeNotFound) || errors.Is(err, errForgeUnprocessable) {
 		return false, false, nil
 	}
 	if err != nil {

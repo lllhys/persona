@@ -130,8 +130,8 @@ does. The proposal says so plainly instead of claiming more.
 
 **A1, the agent sandbox on by default on the hub machine.** It is already built (`docs/server/agent-sandbox.md`):
 bubblewrap on Linux, `sandbox-exec` on macOS. It is off by default. Turning it on hides `hub.json`, the keys,
-`managers/`, `launcher-settings/` and the `run/` sockets from the starts it wraps: the assistant (CLI and Agent SDK),
-managed launchers and `codex-start`.
+`managers/`, `launcher-settings/` and the `run/` sockets from the starts it wraps: the assistant, managed launchers
+and `codex-start`.
 
 - **Stops**: T1 for wrapped starts. The token, the database password and `secret.key` cannot be read, so the API,
   the database and the sealed secrets are out of reach the easy way.

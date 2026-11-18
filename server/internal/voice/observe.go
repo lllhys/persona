@@ -220,7 +220,7 @@ func (t *tracker) observe(ctx context.Context) {
 func (t *tracker) revive(r *voiceRun, msg *proto.Item) {
 	r.restart(clock())
 	r.Base, r.MsgIDs, r.Probe, r.Seen = msg.Seq-1, []string{msg.ClientMsgID}, "", true
-	r.Code, r.Message, r.Draft, r.Clearable = "", "", "", ""
+	r.Code, r.Message, r.Draft, r.Clearable, r.resendable = "", "", "", "", false
 	t.link.watch(linkKey{r.MachineID, r.SessionID}, r.Base)
 	t.runs = append(t.runs, r)
 	t.set(r, runWorking)

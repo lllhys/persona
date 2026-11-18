@@ -1,8 +1,8 @@
 import SwiftUI
 
 // What Persona sent to its tasks' agents (`routed` items it wrote, #1542, docs/assistant/unified-entry.md "Messages to agents"):
-// never the user's bubble. A message on its own is one folded line on the left (`AgentSentLine`); a task's card lists every
-// one sent to it (`TaskSentList`), and the hand-off sent together with the card is drawn only there (`SentToAgents`).
+// never the user's bubble. A message on its own is one folded line on the left (`AgentSentLine`); the hand-off sent
+// together with a task's card is drawn like any other (nothing applies `SentToAgents.takenIn` now, docs/design/task-cards.md §5.1).
 
 /// One of Persona's messages to a task's agent in the conversation: a capsule like the answered and review lines, with
 /// its mark (a stop when Persona cut in first), where it went and the first line. A tap opens the whole text with Copy,
@@ -127,91 +127,3 @@ struct AgentSentText: View {
     }
 }
 
-/// On a task's card: what Persona sent to its agent, "N instructions sent"; a tap lists them (time and first line), and a tap
-/// on one opens its whole text. Nothing when it sent none (a task the user started from a plan).
-struct TaskSentList: View {
-    var todoID: String
-    var conversation: String
-    @State private var open = false
-    @State private var shown: String?
-    @State private var unfold = Unfolding()
-    @Environment(\.chatPin) private var pin
-    private var store: TasksStore { .shared }
-    /// The chat keeps the tapped line where it is while what it opens comes in under it (#3757).
-    private var headKey: String { "sent-list-" + todoID }
-
-    var body: some View {
-        let sent = SentToAgents.sent(store.feed(conversation), todo: todoID)
-        if !sent.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                Button {
-                    Haptics.tap()
-                    toggleInPlace(pin, headKey, animation: Theme.Motion.state, unfold: $unfold, closing: open) { open.toggle() }
-                } label: {
-                    HStack(spacing: Theme.Space.xs) {
-                        ThemedIcon(Theme.Icon.routeToTask).font(Theme.Font.labelStrong)
-                        Text(String(localized: "\(sent.count) instructions sent")).lineLimit(1)
-                        ThemedIcon(Theme.Icon.disclosure)
-                            .font(Theme.Font.labelStrong)
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(open ? 90 : 0))
-                        Spacer(minLength: 0)
-                    }
-                    .font(Theme.Font.captionMedium)
-                    .foregroundStyle(.secondary)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("task-sent")
-                .accessibilityValue(open ? String(localized: "Expanded") : String(localized: "Collapsed [Assistant Sidebar e64447]"))
-                .chatPinned(headKey)
-                if open {
-                    ForEach(sent) { entry($0) }
-                        .unfolding(unfold)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-        }
-    }
-
-    private func entry(_ item: FeedItem) -> some View {
-        let text = item.text ?? ""
-        let isOpen = shown == item.id
-        return VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Button {
-                Haptics.tap()
-                toggleInPlace(pin, "sent-entry-" + item.id, animation: Theme.Motion.state, closing: isOpen) {
-                    shown = isOpen ? nil : item.id
-                }
-            } label: {
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                    Text(AssistantScheduleText.hm(item.at))
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                        .fixedSize()
-                    if item.interrupted {
-                        ThemedIcon(Theme.Icon.interrupt).font(Theme.Font.label).foregroundStyle(.secondary)
-                    }
-                    Text(ExchangeText.plain(SentToAgents.firstLine(text)))
-                        .font(Theme.Font.secondary)
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    ThemedIcon(Theme.Icon.disclosure)
-                        .font(Theme.Font.labelStrong)
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("task-sent-entry")
-            .chatPinned("sent-entry-" + item.id)
-            if isOpen { AgentSentText(text: text).transition(.opacity) }
-        }
-        .padding(.horizontal, Theme.Space.m)
-        .padding(.vertical, Theme.Space.s)
-        .background(Theme.Fill.well, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
-    }
-}

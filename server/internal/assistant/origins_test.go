@@ -154,6 +154,11 @@ func TestInboxAgentOriginAndTitle(t *testing.T) {
 	if got := titleIn(h.f, id); !strings.HasSuffix(got, " | 收件箱 | 张三问 1013 合了吗") {
 		t.Fatalf("title %q", got)
 	}
+	for _, v := range h.f.lastSnapshot().Sessions {
+		if v.SessionID == id && !v.Archived {
+			t.Fatal("a new Inbox handling chat must stay out of the default conversation lists")
+		}
+	}
 }
 
 func TestGuessOrigin(t *testing.T) {

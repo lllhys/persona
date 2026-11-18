@@ -2,11 +2,13 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/apns"
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/compat"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/relayproto"
@@ -15,6 +17,7 @@ import (
 // send alerts every device whose settings take it (nil: all of them).
 // A device that chose "Phone Muted" gets none while a desktop app is connected (desktops.go), and a desktop app that is
 // connected gets none of these: it shows them itself. What was asked for explicitly (nil) goes to it all the same.
+// The hub's own alerts (pairing, a computer joining) always pass the grading filter: they are P0.
 func (p *Pusher) send(payload map[string]any, collapseID string, wants func(NotifyPrefs) bool) {
 	p.sendLocalized(func(i18n.Lang) map[string]any { return payload }, collapseID, wants)
 }
@@ -31,15 +34,76 @@ func (p *Pusher) sendLocalizedQuiet(build localized, collapseID string, wants fu
 
 // sendLocalizedQuietTo is sendLocalizedQuiet that tells sent each device the push goes to (nil: nobody).
 func (p *Pusher) sendLocalizedQuietTo(build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, sent func(Device)) {
-	p.sendFrom("", build, collapseID, wants, rule, sent)
+	p.sendFromPolicy("", pushPolicy{level: assistantwire.LevelP0}, build, collapseID, wants, rule, nil, sent)
 }
 
 // sendFrom is sendLocalizedQuietTo for a push manager asked for (notify.request, its extensions' pushes, a computer's
 // personad notify): none to a device that turned that manager's pushes off (NotifyPrefs.MutedManagers), whatever else
 // it takes. "" is the hub's own push. wants keeps its meaning: nil (asked for explicitly) still goes past Phone Muted
-// and to an open desktop. Returns the selected count and the reachable count before preferences are applied.
+// and to an open desktop. Returns the selected count and the reachable count before preferences are applied. Such a
+// push defaults to P1 for grading; callers that know its urgency use sendFromPolicy.
 func (p *Pusher) sendFrom(manager string, build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, sent func(Device)) (selected, reachable int) {
-	return p.sendFromTo(manager, build, collapseID, wants, rule, nil, sent)
+	selected, reachable, _ = p.sendFromPolicy(manager, pushPolicy{level: assistantwire.LevelP1, manager: manager}, build, collapseID, wants, rule, nil, sent)
+	return selected, reachable
+}
+
+// pushPolicyWithSource keeps the destination the push already carries. Every production alert payload uses the same
+// machine_id / session_id pair; a decision also has a todo object. The related-key conventions stay in deliverPushFrom:
+// a free-form key from notify_user must not become a typed source merely by looking like one.
+func pushPolicyWithSource(policy pushPolicy, payload map[string]any) pushPolicy {
+	if policy.todoID == "" {
+		policy.todoID = todoID(payload["todo"])
+	}
+	machine, _ := payload["machine_id"].(string)
+	session, _ := payload["session_id"].(string)
+	if policy.machineID == "" {
+		policy.machineID = machine
+	}
+	if policy.sessionID == "" {
+		policy.sessionID = session
+	}
+	return policy
+}
+
+// sendFromPolicy is sendFrom with the push's grading policy (level, related key and the held-push record's text).
+// heldReason is "" when the push went out, else why the grading filter held it (lnmode.go): a caller that answers the
+// model (the assistant's notify_user) tells it the notice reached the briefing instead of the phone.
+func (p *Pusher) sendFromPolicy(manager string, policy pushPolicy, build localized, collapseID string, wants func(NotifyPrefs) bool, rule quietRule, only func(Device) bool, sent func(Device)) (selected, reachable int, heldReason string) {
+	if p == nil {
+		return 0, 0, ""
+	}
+	if p.lnModeOn() { // off: nothing below runs and the push goes exactly as before
+		policy.manager = manager
+		payload := build(i18n.Default)
+		policy = pushPolicyWithSource(policy, payload)
+		if policy.title == "" || policy.body == "" {
+			// The held-push record's text, from the alert when the caller gave none. A payload need not have one (an
+			// extension's push_localized may carry no aps at all).
+			aps, _ := payload["aps"].(map[string]any)
+			alert, _ := aps["alert"].(map[string]any)
+			if t, _ := alert["title"].(string); policy.title == "" {
+				policy.title = t
+			}
+			if b, _ := alert["body"].(string); policy.body == "" {
+				policy.body = b
+			}
+		}
+		if allow, reason := p.applyLn(policy); !allow {
+			// Held back for every device; the selection counts as zero. The WebSocket still carries it (callers run
+			// notifyWSFrom themselves), so the app's lists and briefings keep updating.
+			return 0, 0, reason
+		}
+	} else {
+		// The switch is off, so applyLn never runs; the daily delivery counts still record one logical push.
+		policy.manager = manager
+		level := policy.level
+		if level == "" {
+			level = assistantwire.LevelP1
+		}
+		p.recordSent(policy, level, p.now())
+	}
+	selected, reachable = p.sendFromTo(manager, build, collapseID, wants, rule, only, sent)
+	return selected, reachable, ""
 }
 
 // sendFromTo is sendFrom to the devices only takes (nil: every device), before their settings decide.
@@ -79,8 +143,33 @@ func (p *Pusher) sendFromTo(manager string, build localized, collapseID string, 
 // not sealed: iOS reads a Live Activity's content-state itself (docs/operations/push-relay.md "Live Activities are plaintext").
 // The returned channel closes after the attempt and its retries, so revocation can wait before forgetting the device.
 func (p *Pusher) sendLiveActivity(d Device, token string, payload map[string]any, priority string, gone func()) <-chan struct{} {
+	return p.sendLiveActivityThen(d, token, payload, priority, gone, nil)
+}
+
+// pushResult is what came of one Live Activity push once its retries are over (pushOutcome is where an alert went).
+type pushResult int
+
+const (
+	pushAccepted pushResult = iota // APNs took it (directly, or the relay said it did)
+	// pushRefused: it was never sent, or APNs or the relay answered with a status other than 200 (410 included): it
+	// is not on the phone.
+	pushRefused
+	// pushUnknown: no answer at all (a network error or timeout on the last try), so it may have reached APNs all the
+	// same and be on the phone.
+	pushUnknown
+)
+
+// sendLiveActivityThen is sendLiveActivity that tells outcome (nil: nobody) what came of the push, before the returned
+// channel closes. It runs on the push's own goroutine, or on the caller's when nothing is sent.
+func (p *Pusher) sendLiveActivityThen(d Device, token string, payload map[string]any, priority string, gone func(), outcome func(pushResult)) <-chan struct{} {
 	done := make(chan struct{})
+	tell := func(o pushResult) {
+		if outcome != nil {
+			outcome(o)
+		}
+	}
 	if p == nil || token == "" || !p.reachable(d) {
+		tell(pushRefused)
 		close(done)
 		return done
 	}
@@ -89,27 +178,37 @@ func (p *Pusher) sendLiveActivity(d Device, token string, payload map[string]any
 	if p.relayed(d) {
 		aps, _ := payload["aps"].(map[string]any)
 		p.notePush(d, nil, event, "relay", "attempt", 0, int64(len(body)), 0)
+		p.sends.Add(1)
 		go func() {
+			defer p.sends.Done()
 			defer close(done)
 			started := time.Now()
 			res, err := p.postRelay(d, relayproto.PushRequest{Type: "liveactivity", Priority: priority, Token: token, APS: aps})
 			p.noteRelayResult(d, nil, event, err, res.gone, int64(len(body)), time.Since(started))
-			if err != nil {
+			switch {
+			case err != nil:
 				p.logf("relay live activity %s: %v", d.Name, err)
-			} else if res.gone {
+				tell(sendFailure(err))
+			case res.gone:
 				gone()
+				tell(pushRefused)
+			default:
+				tell(pushAccepted)
 			}
 		}()
 		return done
 	}
 	p.notePush(d, nil, event, "apns", "attempt", 0, int64(len(body)), 0)
+	p.sends.Add(1)
 	go func() {
+		defer p.sends.Done()
 		defer close(done)
 		started := time.Now()
 		res, err := p.sendDirect(d, apns.Request{Token: token, Env: d.APNSEnv, Topic: d.Topic, PushType: "liveactivity", Priority: priority, Body: body})
 		p.noteDirectResult(d, nil, event, err, res.Status, int64(len(body)), time.Since(started))
 		if err != nil {
 			p.logf("apns live activity %s: %v", d.Name, err)
+			tell(sendFailure(err))
 			return
 		}
 		if res.Status != 200 {
@@ -117,9 +216,22 @@ func (p *Pusher) sendLiveActivity(d Device, token string, payload map[string]any
 			if res.Gone() {
 				gone()
 			}
+			tell(pushRefused)
+			return
 		}
+		tell(pushAccepted)
 	}()
 	return done
+}
+
+// sendFailure is the outcome of a send that returned err: refused when it was never sent or the relay answered with a
+// status (relayRefusal), unknown when nothing answered.
+func sendFailure(err error) pushResult {
+	var refusal *relayRefusal
+	if errors.Is(err, errNotSent) || errors.As(err, &refusal) {
+		return pushRefused
+	}
+	return pushUnknown
 }
 
 // wakeDevices sends a silent background push to the devices in ids: iOS gives the app ~30 s to connect and run a
@@ -251,7 +363,9 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 				continue
 			}
 			p.notePush(d, nil, event, "relay", "attempt", 0, int64(len(body)), 0)
+			p.sends.Add(1)
 			go func(d Device) {
+				defer p.sends.Done()
 				started := time.Now()
 				res, err := p.postRelay(d, relayproto.PushRequest{Type: pushType, Priority: priority, CollapseID: relayCollapseID(collapseID), Sealed: sealed})
 				p.noteRelayResult(d, nil, event, err, res.gone, int64(len(body)), time.Since(started))
@@ -268,7 +382,9 @@ func (p *Pusher) sendBuiltWith(build localized, collapseID, pushType, priority s
 			continue
 		}
 		p.notePush(d, nil, event, "apns", "attempt", 0, int64(len(body)), 0)
+		p.sends.Add(1)
 		go func(d Device) {
+			defer p.sends.Done()
 			sent := time.Now()
 			res, err := p.sendDirect(d, apns.Request{Token: d.APNSToken, Env: d.APNSEnv, Topic: d.Topic,
 				PushType: pushType, Priority: priority, CollapseID: collapseID, Body: body})

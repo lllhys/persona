@@ -15,6 +15,23 @@ struct PersonaShortcuts: AppShortcutsProvider {
             shortTitle: "Talk to Persona",
             systemImageName: "waveform.badge.mic" // icon: App Shortcuts take only a literal
         )
+        #if os(iOS)
+        // A call to Persona (#9290), no entitlement needed: "Hey Siri, call Persona", AirPods included. Siri may take a
+        // "call <name>" phrase as a phone call of its own (the Simulator's did), so one phrase leads with the name.
+        AppShortcut(
+            intent: CallPersonaIntent(),
+            phrases: [
+                "Call \(.applicationName)",
+                "Start a call with \(.applicationName)",
+                "Give \(.applicationName) a call",
+                "Make a call with \(.applicationName)",
+                "Phone \(.applicationName)",
+                "\(.applicationName) call",
+            ],
+            shortTitle: "Call Persona",
+            systemImageName: "phone.arrow.up.right" // icon: App Shortcuts take only a literal (Theme.Icon.callPersona)
+        )
+        #endif
         AppShortcut(
             intent: AskPersonaIntent(),
             phrases: [
@@ -79,6 +96,9 @@ struct PersonaShortcuts: AppShortcutsProvider {
             shortTitle: "Approve First",
             systemImageName: "checkmark.shield" // icon: App Shortcuts take only a literal
         )
+        // Apple allows ten App Shortcuts. On the phone Call Persona (#9290) takes this one's place: Run Extension Action
+        // asks which action and can't take its values by voice, so it stays an action in Shortcuts there.
+        #if !os(iOS)
         AppShortcut(
             intent: RunExtensionActionIntent(),
             phrases: ["Run an extension action in \(.applicationName)"],
@@ -86,6 +106,7 @@ struct PersonaShortcuts: AppShortcutsProvider {
             // AppShortcuts metadata requires a literal; mirrored from ExtensionSurfaceTokens.actionIcon.
             systemImageName: "puzzlepiece.extension" // icon: App Shortcuts take only a literal
         )
+        #endif
         AppShortcut(
             intent: AddTodoIntent(),
             phrases: [
@@ -101,14 +122,17 @@ struct PersonaShortcuts: AppShortcutsProvider {
         #if os(iOS)
         AppShortcut(
             intent: StartMeetingRecordingIntent(),
+            // Start Meeting since #8731; the Record phrases keep working.
             phrases: [
+                "Start a meeting with \(.applicationName)",
+                "\(.applicationName), start a meeting",
                 "Record with \(.applicationName)",
                 "Record a meeting with \(.applicationName)",
                 "Record this meeting with \(.applicationName)",
                 "Start recording in \(.applicationName)",
                 "\(.applicationName), record the meeting",
             ],
-            shortTitle: "Record [Recordings Section ef2821]",
+            shortTitle: "Start Meeting",
             systemImageName: "waveform.circle" // icon: App Shortcuts take only a literal (Theme.Icon.recording)
         )
         #endif

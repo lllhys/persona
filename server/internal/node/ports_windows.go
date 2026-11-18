@@ -62,13 +62,10 @@ func processStart(pid uint32) time.Time {
 	return time.Unix(0, created.Nanoseconds())
 }
 
-// winListeners are pids' listening TCP sockets, IPv4 and IPv6.
-func winListeners(pids []int) ([]listener, error) {
-	want := make(map[int]bool, len(pids))
-	for _, p := range pids {
-		want[p] = true
-	}
-	var out []listener
+// winListeners are the listening TCP sockets, IPv4 and IPv6, of the processes owners has and of those whose
+// environment names one of roots' panes (paneListeners, which adds those to owners).
+func winListeners(owners map[int]string, roots map[string][]int, panesOf func(pid int) []string) ([]listener, error) {
+	var all []listener
 	for _, t := range []struct {
 		af    uint32
 		parse func([]byte) []listener
@@ -77,13 +74,9 @@ func winListeners(pids []int) ([]listener, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, l := range t.parse(b) {
-			if want[l.pid] {
-				out = append(out, l)
-			}
-		}
+		all = append(all, t.parse(b)...)
 	}
-	return out, nil
+	return paneListeners(all, owners, roots, panesOf), nil
 }
 
 // tcpTable is GetExtendedTcpTable's listener table for one address family, grown until it fits (a socket opened

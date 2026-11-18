@@ -1,0 +1,16 @@
+● Bash(npm run build)
+  ⎿  Done
+
+  Ran 2 shell commands
+  ⎿  You've hit your weekly limit · resets Nov 14, 9am (UTC)
+
+✻ Baked for 21m 36s · done 3:28 AM
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   What do you want to do?
+
+   ❯ 1. Stop and wait for limit to reset
+     2. Wait here, then continue automatically at Nov 14, 9am
+     3. Switch to usage credits
+
+   Enter to confirm · Esc to cancel

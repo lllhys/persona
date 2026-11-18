@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "contribution": "projects",
+      "kind": "project_context",
+      "path": "agent/projects",
+      "limit": 1536,
+      "bytes": 4210,
+      "state": "adopted",
+      "hash": "1b2c3d4e5f607182",
+      "files": ["weather-app", "release-tools"],
+      "truncated": true,
+      "detail": "cut at the limit: release-tools"
+    },
+    {
+      "contribution": "inbox",
+      "kind": "inbox_context",
+      "path": "inbox/context.md",
+      "limit": 1024,
+      "bytes": 640,
+      "state": "adopted",
+      "hash": "a1b2c3d4e5f60718",
+      "never_quote": 12
+    }
+  ]
+}

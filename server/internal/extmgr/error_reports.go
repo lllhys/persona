@@ -121,7 +121,7 @@ func (h *Manager) errorScrubber(extra []string) *errreport.Scrubber {
 	}
 	for _, m := range h.machinesNow() {
 		m.mu.Lock()
-		names = append(names, m.cfg.Name, m.cfg.ID, m.cfg.SSHHost, m.info.Hostname, filepath.Base(m.info.Home))
+		names = append(names, m.name(), m.cfg.ID, m.sshHost(), m.info.Hostname, filepath.Base(m.info.Home))
 		m.mu.Unlock()
 	}
 	return errreport.NewScrubber(names...)

@@ -38,10 +38,29 @@ func TestUsageLimitReset(t *testing.T) {
 		{"You've hit your session limit · resets 4:20pm (Asia/Shanghai)", at, time.Date(2026, 9, 25, 16, 20, 0, 0, sh), true},
 		{"You've hit your session limit · resets 4pm (Asia/Shanghai)", at, time.Date(2026, 9, 25, 16, 0, 0, 0, sh), true},
 		{"You've hit your session limit · resets at 4pm (Asia/Shanghai)", at, time.Date(2026, 9, 25, 16, 0, 0, 0, sh), true},
-		// Earlier in the day than the error: tomorrow's.
-		{"You've hit your session limit · resets 2:05am (Asia/Shanghai)", at, time.Date(2026, 9, 26, 2, 5, 0, 0, sh), true},
-		{"You've hit your session limit · resets 12am (Asia/Shanghai)", at, time.Date(2026, 9, 26, 0, 0, 0, 0, sh), true},
+		// Earlier in the day than the error: tomorrow's (a weekly limit's time alone is at most 24 hours off).
+		{"You've hit your weekly limit · resets 2:05am (Asia/Shanghai)", at, time.Date(2026, 9, 26, 2, 5, 0, 0, sh), true},
+		{"You've hit your Opus limit · resets 12am (Asia/Shanghai)", at, time.Date(2026, 9, 26, 0, 0, 0, 0, sh), true},
+		{"You've hit your limit · resets 9am (Asia/Shanghai)", at, time.Date(2026, 9, 26, 9, 0, 0, 0, sh), true},
 		{"You've hit your session limit · resets 12:30pm (Asia/Shanghai)", at, time.Date(2026, 9, 25, 12, 30, 0, 0, sh), true},
+		// A 5-hour limit resets within five hours (#9386): read three minutes after its reset, the time is the reset
+		// just past, not tomorrow's; before the reset it is today's; across midnight tomorrow's.
+		{"You've hit your 5-hour limit · resets 1:10pm (Asia/Shanghai)", time.Date(2026, 11, 16, 13, 13, 0, 0, sh),
+			time.Date(2026, 11, 16, 13, 10, 0, 0, sh), true},
+		{"You've hit your session limit · resets 2:05am (Asia/Shanghai)", at, time.Date(2026, 9, 25, 2, 5, 0, 0, sh), true},
+		{"You've hit your 5-hour limit · resets 1:10pm (Asia/Shanghai)", time.Date(2026, 11, 16, 9, 30, 0, 0, sh),
+			time.Date(2026, 11, 16, 13, 10, 0, 0, sh), true},
+		{"You've hit your 5-hour limit · resets 2am (Asia/Shanghai)", time.Date(2026, 11, 16, 23, 50, 0, 0, sh),
+			time.Date(2026, 11, 17, 2, 0, 0, 0, sh), true},
+		{"You've hit your 5-hour limit · resets 4:50am (Asia/Shanghai)", time.Date(2026, 11, 16, 23, 50, 0, 0, sh),
+			time.Date(2026, 11, 17, 4, 50, 0, 0, sh), true},
+		{"Error: You've hit your 5-hour limit · resets 1:10pm (UTC)\nretrying", time.Date(2026, 11, 16, 13, 13, 0, 0, time.UTC),
+			time.Date(2026, 11, 16, 13, 10, 0, 0, time.UTC), true},
+		// Only the line with the reset names its limit: a weekly limit after a mention of the 5-hour one is tomorrow's.
+		{"Earlier: 5-hour limit\nYou've hit your weekly limit · resets 1:10pm (UTC)", time.Date(2026, 11, 16, 13, 13, 0, 0, time.UTC),
+			time.Date(2026, 11, 17, 13, 10, 0, 0, time.UTC), true},
+		{"You've hit your weekly limit · resets 1:10pm (Asia/Shanghai)", time.Date(2026, 11, 16, 13, 13, 0, 0, sh),
+			time.Date(2026, 11, 17, 13, 10, 0, 0, sh), true},
 		{"You've hit your weekly limit · resets Sep 28, 4pm (America/New_York)", at, time.Date(2026, 9, 28, 16, 0, 0, 0, ny), true},
 		{"You've hit your weekly limit · resets Sep 28 at 4:30pm (America/New_York)", at, time.Date(2026, 9, 28, 16, 30, 0, 0, ny), true},
 		{"You've hit your weekly limit · resets Jan 2, 2027, 9am (UTC)", at, time.Date(2027, 1, 2, 9, 0, 0, 0, time.UTC), true},

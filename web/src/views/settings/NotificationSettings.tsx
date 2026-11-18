@@ -2,6 +2,9 @@
 // about: "When something needs you" and "When an agent finishes" ("Don't notify" / "Long tasks only" / "Every time"). The two choices are kept by the hub per device
 // (GET / PUT /devices/{id}/prefs, lib/notify.ts), as the phone's are. The "Alert sound" switch sits here too, under the system
 // one (#4057): it is this browser's alone (lib/attention.ts), so it shows while the hub's prefs load, and it follows them.
+// Under them, "When Persona is closed": this browser's Web Push (#7459, WebPushSettings.tsx), and in the desktop app on a Mac
+// "Show at the MacBook notch" (#7669, DesktopIslandSettings.tsx). Last, after the note that the rest is this browser's:
+// low-distraction mode, the hub's switch for every device (#8157, LowDistractionSettings.tsx).
 import { useCallback, useEffect, useState } from "react";
 import { formatDate, t } from "../../i18n";
 import { errorText, isAbort } from "../../lib/api";
@@ -9,7 +12,10 @@ import { setAttentionSoundEnabled, useAttentionSoundSetting } from "../../lib/at
 import { DEFAULT_QUIET, durationText, loadNotifyPrefs, notifyPrefsGeneration, saveNotifyPrefs, setSystemNotify, setSystemNotifyAlways, useNotifyPrefs, useNotifyPrefsGeneration, useSystemNotify, type DonePref, type Permission, type QuietHours } from "../../lib/notify";
 import { Button, cx, Loading, toast } from "../../ui/atoms";
 import { Icon } from "../../ui/icons";
+import { LowDistractionSettings } from "./LowDistractionSettings";
 import { Group, Pill, Row, Switch } from "./SettingsParts";
+import { WebPushSettings } from "./WebPushSettings";
+import { DesktopIslandSettings } from "./DesktopIslandSettings";
 
 const DONE: { v: DonePref; key: string }[] = [
   { v: "off", key: "settings-notifications.done_off" },
@@ -91,7 +97,7 @@ export function NotificationSettings() {
   return (
     <>
       <Group title={t("settings-notifications.system_title")} anchor="system" footer={systemFooter(system.permission, systemActive, system.always)}>
-        <Row icon="bell" label={t("settings-notifications.system")} hint={permissionHint(system.permission, system.on, system.always)}>
+        <Row icon="bell" anchor="notify-system" label={t("settings-notifications.system")} hint={permissionHint(system.permission, system.on, system.always)}>
           {system.permission === "denied" && <Pill tone="orange">{t("settings-notifications.denied_pill")}</Pill>}
           <Switch
             on={systemActive}
@@ -101,13 +107,17 @@ export function NotificationSettings() {
           />
         </Row>
         {/* depends on the switch above (#2451): reads off and can't be changed until notifications go out at all */}
-        <Row icon="appWindow" label={t("settings-notifications.system_always")} hint={t(systemActive ? "settings-notifications.system_always_hint" : "settings-notifications.system_always_needs")}>
+        <Row icon="appWindow" anchor="notify-system-always" label={t("settings-notifications.system_always")} hint={t(systemActive ? "settings-notifications.system_always_hint" : "settings-notifications.system_always_needs")}>
           <Switch on={systemActive && system.always} onChange={setSystemNotifyAlways} disabled={!systemActive} label={t("settings-notifications.system_always")} />
         </Row>
       </Group>
 
+      <WebPushSettings />
+
+      <DesktopIslandSettings />
+
       <Group footer={t("settings-notifications.sound_footer")}>
-        <Row icon="volume" label={t("settings-notifications.sound")} hint={t("settings-notifications.sound_hint")}>
+        <Row icon="volume" anchor="notify-sound" label={t("settings-notifications.sound")} hint={t("settings-notifications.sound_hint")}>
           <Switch on={sound} onChange={setAttentionSoundEnabled} label={t("settings-notifications.sound")} />
         </Row>
       </Group>
@@ -130,7 +140,7 @@ export function NotificationSettings() {
       {ready && (
         <>
           <Group footer={t("settings-notifications.input_footer")}>
-            <Row icon="hand" label={t("settings-notifications.input")} hint={t("settings-notifications.input_hint")}>
+            <Row icon="hand" anchor="notify-input" label={t("settings-notifications.input")} hint={t("settings-notifications.input_hint")}>
               <Switch on={prefs.input} onChange={(input) => void save({ input })} label={t("settings-notifications.input")} />
             </Row>
           </Group>
@@ -167,6 +177,7 @@ export function NotificationSettings() {
           <Group footer={t("settings-notifications.quiet_footer")}>
             <Row
               icon="moon"
+              anchor="notify-quiet"
               label={t("settings-notifications.quiet")}
               hint={quiet.enabled ? t("settings-notifications.quiet_range", { start: clockText(quiet.start), end: clockText(quiet.end) }) : t("settings-notifications.quiet_hint")}
             >
@@ -199,6 +210,11 @@ export function NotificationSettings() {
       )}
 
       <p className="px-1 text-[11.5px] leading-relaxed text-ink-3">{t("settings-notifications.device_note")}</p>
+
+      {/* the hub's, for every device (#8157): after the note that says the rows above are this browser's */}
+      <div className="mt-6">
+        <LowDistractionSettings />
+      </div>
     </>
   );
 }

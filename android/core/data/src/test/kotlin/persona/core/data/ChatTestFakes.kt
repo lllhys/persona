@@ -81,7 +81,7 @@ internal class MemoryOutboxStore : OutboxStore {
     override suspend fun bindMainConversation(session: SessionKey) {
         main = session
         entries.value = entries.value.map {
-            if (it.mainTarget && it.session == PendingMainConversation) it.copy(session = session) else it
+            if (it.mainTarget && it.session == PendingMainConversation) it.copyForDelivery(session = session) else it
         }
     }
     override suspend fun releaseMainCreation() { if (main == null) creationClaimed = false }
@@ -97,14 +97,14 @@ internal class MemoryOutboxStore : OutboxStore {
         val old = entries.value.single { it.clientMessageId == id }
         if (old.state !in from) return false
         transitions += old.state to to
-        entries.value = entries.value.map { if (it == old) it.copy(state = to, error = error) else it }
+        entries.value = entries.value.map { if (it == old) it.copyForDelivery(state = to, error = error) else it }
         return true
     }
     override suspend fun transition(id: String, from: Set<OutboxState>, to: OutboxState, error: String?, opId: String): Boolean =
         transition(id, from, to, error).also { moved ->
-            if (moved) entries.value = entries.value.map { if (it.clientMessageId == id) it.copy(opId = opId) else it }
+            if (moved) entries.value = entries.value.map { if (it.clientMessageId == id) it.copyForDelivery(opId = opId) else it }
         }
     override suspend fun recoverInterrupted() {
-        entries.value = entries.value.map { if (it.state == OutboxState.Sending) it.copy(state = OutboxState.Unknown) else it }
+        entries.value = entries.value.map { if (it.state == OutboxState.Sending) it.copyForDelivery(state = OutboxState.Unknown) else it }
     }
 }

@@ -4,7 +4,8 @@
 // sent again on its own: it is checked against the newest page, or its local copy removed.
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { errorText } from "../../lib/api";
-import { nextLarkPosition, replyLarkMessage, sendLarkMessage, type LarkMention, type LarkMessage } from "../../lib/inbox";
+import { type LarkMention, type LarkMessage } from "../../lib/inbox";
+import { nextLarkPosition, replyLarkMessage, sendLarkMessage } from "../../lib/inbox-page";
 import { fileOutcomeUnknown, releaseLarkAttachments, sendLarkAttachment, type LarkAttachment, type LarkAttachmentRoute } from "../../lib/lark-attachments";
 import { useItemManager } from "../../lib/manager-choice";
 import { t } from "../../i18n";

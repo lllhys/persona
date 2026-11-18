@@ -10,5 +10,8 @@
   "folder": "Folder",
   "session_dir": "Session folder",
   "reading_folder": "Reading folder…",
-  "no_match_in_folder": "Nothing matches in this folder"
+  "no_match_in_folder": "Nothing matches in this folder",
+  "skills_loading": "Loading skills for this assistant and execution environment…",
+  "skills_error": "Skills unavailable here. Ordinary chat and other references still work.",
+  "skills_partial": "Verified local skills only. This runtime may have additional skills."
 }

@@ -37,9 +37,10 @@ func versionNode(t *testing.T, empty int32, version string) (*rpc.Peer, *atomic.
 }
 
 func shortClaudeVersionRetry(t *testing.T) {
-	saved := claudeVersionRetry
-	claudeVersionRetry = []time.Duration{5 * time.Millisecond, 10 * time.Millisecond}
-	t.Cleanup(func() { claudeVersionRetry = saved })
+	saved := claudeVersionRetry.Load()
+	short := []time.Duration{5 * time.Millisecond, 10 * time.Millisecond}
+	claudeVersionRetry.Store(&short)
+	t.Cleanup(func() { claudeVersionRetry.Store(saved) })
 }
 
 func TestAMissingClaudeVersionIsAskedForAgain(t *testing.T) {

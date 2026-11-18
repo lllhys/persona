@@ -1,27 +1,35 @@
-// Machines: every computer's CPU / memory / disk now and over the last hour (docs/server/machines.md), as Insight Cards. "Add computer"
+// Machines: every computer's CPU / memory / network now and over the last hour (docs/server/machines.md), as Insight Cards. "Add computer"
 // (feature machines_add) adds one from here, and a computer waiting to be confirmed (trust pending) says so on its card.
-import { memo, useCallback, useEffect, useId, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { storedValue, storeValue } from "../lib/compatibility";
+import { concernOf, launcherFailing, machineAlerts, orderMachines, type AlertKind, type LauncherHealthRecord } from "../lib/machine-alerts";
 import { t as tr } from "../i18n";
-import { foldRows } from "../lib/folded-rows";
 import { canAddComputer, isPending, machineErrorText, neverConnected } from "../lib/add-computer";
 import { api, enc, errorText } from "../lib/api";
 import { readinessChanged } from "../lib/readiness";
-import { bytes, stateOf } from "../lib/format";
+import { stateOf } from "../lib/format";
 import { hubLabel, routeText } from "../lib/mesh";
 import { machineDeployment } from "../lib/machine-deploy";
 import { classifyConnection } from "../lib/node-health";
 import { href, navigate, onLinkClick, type Route } from "../lib/router";
 import { currentRoster, managerOrder, multiManager, offlineManagerOf, useRoster } from "../lib/managers";
 import { defaultManager, withManager } from "../lib/manager-choice";
-import { useStore } from "../lib/store";
+import { onHubEvent, useStore } from "../lib/store";
+import { useFullAgentSessions } from "../lib/sessions";
 import { documentPage, visiblePoll } from "../lib/visible-poll";
-import type { Machine, MachineMetrics, MetricPoint, Session } from "../lib/types";
+import type { Machine, MachineMetrics, Session } from "../lib/types";
 import { Button, cx, EASE, IconButton, Loading, toast } from "../ui/atoms";
 import { Icon } from "../ui/icons";
 import { Empty } from "./assistant/parts";
 import { AddComputer, type PendingComputer } from "./machines/AddComputer";
 import { HelpDialog } from "./assistant/Readiness";
 import { MachineDeploy } from "./machines/MachineDeploy";
+import { MachineMetricsSummary } from "./machines/MachineMetricsSummary";
+import { AlertChips } from "./machines/MachineAlertChips";
+import { MachineAlertSheet } from "./machines/MachineAlertSheet";
+import { MachineCapabilities } from "./machines/MachineCapabilities";
+import { Segmented } from "./assistant/parts";
+export { Spark } from "./machines/MachineMetricsSummary";
 import { useScopedMachines } from "../lib/current-assistant";
 import { t } from "../i18n";
 import { addTokens, formatTokens, hitRate, percentText, totalTokens, type UsageTokens } from "../lib/tokens";
@@ -38,6 +46,32 @@ export function Machines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const [answering, setAnswering] = useState("");
   const [metrics, setMetrics] = useState<MachineMetrics[] | null>(null);
   const [error, setError] = useState("");
+  // Each computer's agents. A hub that pages its Agents list pushes no sessions, so the store holds none of them: they
+  // are read as the Agents list reads them (each parent once, folded; the assistant's conversations are no agents),
+  // and until that read is in, a card says so rather than "No agents running".
+  const full = useFullAgentSessions();
+  const agents = useMemo(() => agentCounts(full.sessions), [full.sessions]);
+  const known: AgentsKnown = full.loaded ? "yes" : full.error ? "failed" : "loading";
+  const [view, setView] = useState<MachinesView>(() => (storedValue(VIEW_KEY) === "capabilities" ? "capabilities" : "cards"));
+  const chooseView = (v: MachinesView) => {
+    storeValue(VIEW_KEY, v);
+    setView(v);
+  };
+  // The alert sheet (#8037): one for the page, outside every card, on one computer's alert.
+  const [sheet, setSheet] = useState<{ mid: string; kind: AlertKind } | null>(null);
+  const openAlert = useCallback((mid: string, kind: AlertKind) => setSheet({ mid, kind }), []);
+  const records = useLauncherHealth();
+  const issues = useMemo(() => {
+    const by = new Map<string, number>();
+    for (const r of records.list) if (launcherFailing(r)) by.set(r.machine, (by.get(r.machine) ?? 0) + 1);
+    return by;
+  }, [records.list]);
+  const launcherIssues = useCallback((mid: string) => issues.get(mid) ?? 0, [issues]);
+  // the cards with something wrong first, as the apps order them (MachineConcern)
+  const ordered = useMemo(() => orderMachines(machines, (m) => {
+    const mm = metrics?.find((x) => x.machine_id === m.id);
+    return concernOf(m, machineAlerts({ machine: m, metrics: mm, launchers: issues.get(m.id) ?? 0, managerOffline: !!offlineManagerOf(roster, m) }), agents.get(m.id)?.[2] ?? 0);
+  }), [machines, metrics, issues, roster, agents]);
 
   useEffect(() => {
     let dead = false;
@@ -71,7 +105,7 @@ export function Machines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   }, []);
 
   // Stable callbacks, so the memoized cards keep their props when the page renders again.
-  const reconnect = useCallback(async (id: string) => {
+  const reconnect = useCallback(async (id: string): Promise<void> => {
     try {
       await api(`/machines/${encodeURIComponent(id)}/reconnect`, { method: "POST" });
       toast(t("machines.reconnecting"), "ok");
@@ -105,7 +139,9 @@ export function Machines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     <div className="flex h-full flex-col">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-4">
         <IconButton icon="sidebar" label={t("machines.sidebar")} onClick={onToggleSidebar} className="lg:hidden" />
-        <h1 className="flex-1 text-[14px] font-semibold text-ink">{t("machines.title")}</h1>
+        <h1 className="text-[14px] font-semibold text-ink">{t("machines.title")}</h1>
+        <div className="flex-1" />
+        {machines.length > 0 && <Segmented compact value={view} onChange={chooseView} label={t("machines.view_label")} options={[{ v: "cards", label: t("machines.view_cards") }, { v: "capabilities", label: t("machines.view_capabilities") }]} />}
         <span className="text-[11.5px] text-ink-3 max-sm:hidden">{t("machines.refresh_interval", { seconds: 10 })}</span>
         {machines.length > 0 && canAdd && add}
       </header>
@@ -128,11 +164,16 @@ export function Machines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
               </Empty>
             </div>
           )}
-          {machines.map((m) => (
+          {view === "capabilities" && machines.length > 0 && (
+            <div className="col-span-full">
+              <MachineCapabilities machines={machines} metrics={metrics} launcherIssues={launcherIssues} onAlert={openAlert} />
+            </div>
+          )}
+          {view === "cards" && ordered.map((m, index) => (
               <MachineCard
                 key={m.id}
                 m={m}
-                index={machines.indexOf(m)}
+                index={index}
                 metrics={metrics?.find((x) => x.machine_id === m.id)}
                 hub={hubLabel(m, machines)}
                 route={routeText(m, machines)}
@@ -142,10 +183,16 @@ export function Machines({ onToggleSidebar }: { onToggleSidebar: () => void }) {
                 onAnswer={answer}
                 onAddAgain={addAgain}
                 managerOffline={offlineManagerOf(roster, m)?.name}
+                agents={agents.get(m.id)?.[0] ?? 0}
+                working={agents.get(m.id)?.[1] ?? 0}
+                known={known}
+                launcherIssues={issues.get(m.id) ?? 0}
+                onAlert={openAlert}
               />
           ))}
         </div>
       </div>
+      <AlertSheetHost sheet={sheet} machines={machines} metrics={metrics} sessions={full.sessions} known={known} records={records} launcherIssues={launcherIssues} roster={roster} onKind={openAlert} onClose={() => setSheet(null)} onReconnect={reconnect} />
       <AddComputer open={!!adding} again={adding?.again} onClose={() => setAdding(null)} />
       {helping && <HelpDialog topic="add_computer" machine="" step={null} onClose={() => setHelping(false)} onAction={() => {}} />}
     </div>
@@ -165,23 +212,31 @@ type CardProps = {
   onAddAgain: (again: PendingComputer) => void;
   /** Its manager's name when that manager is offline (several managers): why it is offline, and no Reconnect. */
   managerOffline?: string;
+  /** Its agents that are not offline, and how many of them work; `known`: whether the list they come from is in. */
+  agents: number;
+  working: number;
+  known: AgentsKnown;
+  /** Launchers failing or blocked on it (docs/server/launcher-health.md). */
+  launcherIssues: number;
+  /** Opens the alert sheet on one of its alerts. */
+  onAlert: (mid: string, kind: AlertKind) => void;
 };
 
-// One computer's card. It is memoized and reads only its own computer's agents from the store: a sessions push about
-// another computer leaves its props and its counts as they were, so it (and its Stat, Spark, MachineDeploy) does not
-// render again. Nor does a machines push that only moved last_seen on (sameCard).
-const MachineCard = memo(function MachineCard({ m, index, metrics: mm, hub, route, canAdd, answering, onReconnect, onAnswer, onAddAgain, managerOffline }: CardProps) {
-  // each parent once, in its folded state: its child sessions are not agents of their own here either (#5120)
-  const [agents, working] = useStore((s) => (m.online ? agentCounts(s.sessions[m.id] && foldRows(s.sessions[m.id])) : NO_AGENTS));
-  const l = mm?.latest;
-  const memPct = l?.mem_used && l.mem_total ? (l.mem_used / l.mem_total) * 100 : undefined;
-  const diskPct = l?.disk_used && l.disk_total ? (l.disk_used / l.disk_total) * 100 : undefined;
+type AgentsKnown = "yes" | "loading" | "failed";
+
+// One computer's card. It is memoized and gets its own computer's agents as numbers: a change to another computer's
+// agents leaves its props as they were, so it (and its Stat, Spark, MachineDeploy) does not render again. Nor does a
+// machines push that only moved last_seen on (sameCard).
+const MachineCard = memo(function MachineCard({ m, index, metrics: mm, hub, route, canAdd, answering, onReconnect, onAnswer, onAddAgain, managerOffline, agents, working, known, launcherIssues, onAlert }: CardProps) {
   const detail = { name: "machine" as const, mid: m.id };
   const { expectedDisconnect } = machineDeployment(m);
   const pending = isPending(m);
   // why it is offline: the hub's error_code in our words, else from the error text, and what to do
   const coded = pending ? "" : machineErrorText(m.error_code);
   const connFailure = expectedDisconnect || pending || coded || managerOffline ? null : classifyConnection(m);
+  // what is wrong, as chips (#8037); the deployment strip below says the version's and a failed update's itself
+  const alerts = machineAlerts({ machine: m, metrics: mm, launchers: launcherIssues, managerOffline: !!managerOffline }).filter((a) => a.kind !== "mismatch" && a.kind !== "deploy_failed");
+  const versions = [m.claude_version && `claude ${m.claude_version}`, m.herdr_version && `herdr ${m.herdr_version}`].filter(Boolean).join(" · ");
   return (
     <section onClick={(e) => openFromCard(e, detail)} className="cursor-pointer overflow-hidden rounded-card bg-surface shadow-card" style={{ animation: `fade-up 420ms ${EASE} ${index * 60}ms both` }}>
       <div className="flex items-start gap-3 px-4 pt-3.5">
@@ -257,22 +312,15 @@ const MachineCard = memo(function MachineCard({ m, index, metrics: mm, hub, rout
           {connFailure.next}
         </p>
       )}
-      <MachineDeploy machine={m} className="mt-2" />
-      <div className={cx("grid gap-px px-4 pt-3", mm?.usage ? "grid-cols-4" : "grid-cols-3")}>
-        <Stat label="CPU" value={l?.cpu !== undefined ? `${Math.round(l.cpu)}%` : "—"} warn={(l?.cpu ?? 0) > 85} />
-        <Stat label={t("machines.memory")} value={memPct !== undefined ? `${Math.round(memPct)}%` : "—"} sub={l?.mem_used ? `${bytes(l.mem_used)} / ${bytes(l.mem_total)}` : undefined} warn={(memPct ?? 0) > 90} />
-        <Stat label={t("machines.disk")} value={diskPct !== undefined ? `${Math.round(diskPct)}%` : "—"} sub={l?.disk_total ? t("machines.disk_free", { size: bytes((l.disk_total ?? 0) - (l.disk_used ?? 0)) }) : undefined} warn={(diskPct ?? 0) > 90} />
-        {mm?.usage && (
-          <Stat label={t("machines-usage.tokens")} value={t("machines-usage.per_minute_value", { n: formatTokens(mm.usage.per_minute) })} sub={t("machines-usage.today_value", { n: formatTokens(totalTokens(mm.usage.today)) })} />
-        )}
-      </div>
-      <div className="px-2 pt-2">
-        <Spark points={mm?.points ?? []} />
-      </div>
-      <div className="flex items-center justify-between border-t border-line px-4 py-2 text-[11.5px] text-ink-3">
-        <span className="whitespace-nowrap">{pending && !m.online ? t("machines.never_connected") : !m.online ? expectedDisconnect ? t("machines.waiting_node") : t("machines.unreachable") : agents ? working ? t("machines.agents_working", { count: agents, working }) : t("machines.agents", { count: agents }) : t("machines.no_agents")}</span>
+      {/* an offline card has no metrics under them: the chips keep their own room above the footer */}
+      <AlertChips alerts={alerts} onOpen={(kind) => onAlert(m.id, kind)} className={m.online ? undefined : "mb-3"} />
+      <MachineDeploy machine={m} className="mt-2" onDetails={() => onAlert(m.id, m.deploy_error ? "deploy_failed" : "mismatch")} />
+      <MachineMetricsSummary machine={m} metrics={mm} />
+      {/* the gap keeps the state and the versions apart when the versions have to shorten */}
+      <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-2 text-[11.5px] text-ink-3">
+        <span className="whitespace-nowrap" data-agents={m.online && !pending ? known : undefined}>{pending && !m.online ? t("machines.never_connected") : !m.online ? expectedDisconnect ? t("machines.waiting_node") : t("machines.unreachable") : known === "loading" ? t("machines-machinedetail.agents_loading") : known === "failed" ? t("machines-machinedetail.agents_failed") : agents ? working ? t("machines.agents_working", { count: agents, working }) : t("machines.agents", { count: agents }) : t("machines.no_agents")}</span>
         <span className="flex min-w-0 items-center gap-3">
-          <span className="truncate font-mono max-sm:hidden">{[m.claude_version && `claude ${m.claude_version}`, m.herdr_version && `herdr ${m.herdr_version}`].filter(Boolean).join(" · ")}</span>
+          <span className="truncate font-mono max-sm:hidden" title={versions || undefined}>{versions}</span>
           <a href={href(detail)} onClick={(e) => onLinkClick(e, detail)} className="shrink-0 whitespace-nowrap text-ink-2 hover:text-ink">{t("machines.details")}</a>
         </span>
       </div>
@@ -289,20 +337,97 @@ function sameCard(a: CardProps, b: CardProps): boolean {
 
 const cardKey = (m: Machine) => JSON.stringify({ ...m, last_seen: !!m.last_seen });
 
-const NO_AGENTS: readonly [number, number] = [0, 0];
-
-// The computer's agents that are not offline (the assistant's conversations are not agents), and how many of them work.
-function agentCounts(list: Session[] | undefined): readonly [number, number] {
-  let count = 0;
-  let working = 0;
-  for (const s of list ?? []) {
+/** By computer: its agents that are not offline (the assistant's conversations are not agents), and how many of them
+ *  work. */
+function agentCounts(list: readonly Session[]): Map<string, readonly [number, number, number]> {
+  const by = new Map<string, [number, number, number]>();
+  for (const s of list) {
     if (s.assistant) continue;
     const st = stateOf(s);
     if (st === "offline") continue;
-    count++;
-    if (st === "working") working++;
+    const n = by.get(s.machine_id) ?? [0, 0, 0];
+    n[0]++;
+    if (st === "working") n[1]++;
+    if (st === "needs_you") n[2]++;
+    by.set(s.machine_id, n);
   }
-  return [count, working];
+  return by;
+}
+
+type MachinesView = "cards" | "capabilities";
+const VIEW_KEY = "persona.machines.view";
+
+/** The launcher health records (GET /api/v1/launchers/health), kept current by the hub's `launcher_health` events and
+ *  read again every minute while the page is shown; none from a hub without them. `merge` takes records a check returned. */
+function useLauncherHealth(): { list: LauncherHealthRecord[]; merge: (records: LauncherHealthRecord[]) => void } {
+  const [list, setList] = useState<LauncherHealthRecord[]>([]);
+  const merge = useCallback((records: LauncherHealthRecord[]) => {
+    if (!records.length) return;
+    setList((now) => {
+      const key = (r: LauncherHealthRecord) => `${r.machine}\u0000${r.launcher}`;
+      const next = new Map(now.map((r) => [key(r), r]));
+      for (const r of records) next.set(key(r), r);
+      return [...next.values()];
+    });
+  }, []);
+  useEffect(() => {
+    let dead = false;
+    const load = () => {
+      api<{ records?: LauncherHealthRecord[] }>("/launchers/health").then(
+        (r) => !dead && setList(r.records ?? []),
+        () => {}, // an older hub has none: no launcher alerts
+      );
+    };
+    const stop = visiblePoll(load, 60_000, documentPage);
+    const off = onHubEvent("launcher_health", (msg) => {
+      const record = (msg as { record?: LauncherHealthRecord }).record;
+      if (record?.machine && record.launcher) merge([record]);
+    });
+    return () => {
+      dead = true;
+      stop();
+      off();
+    };
+  }, [merge]);
+  return { list, merge };
+}
+
+/** The alert sheet for the computer and alert asked for; closed (with its exit) when none is. */
+function AlertSheetHost({ sheet, machines, metrics, sessions, known, records, launcherIssues, roster, onKind, onClose, onReconnect }: {
+  sheet: { mid: string; kind: AlertKind } | null;
+  machines: Machine[];
+  metrics: MachineMetrics[] | null;
+  sessions: readonly Session[];
+  known: AgentsKnown;
+  records: { list: LauncherHealthRecord[]; merge: (records: LauncherHealthRecord[]) => void };
+  launcherIssues: (mid: string) => number;
+  roster: ReturnType<typeof useRoster>;
+  onKind: (mid: string, kind: AlertKind) => void;
+  onClose: () => void;
+  onReconnect: (id: string) => Promise<void>;
+}) {
+  const m = sheet ? machines.find((x) => x.id === sheet.mid) : undefined;
+  const mm = m ? metrics?.find((x) => x.machine_id === m.id) : undefined;
+  const agents = useMemo(() => (m ? sessions.filter((s) => s.machine_id === m.id && !s.assistant && stateOf(s) !== "offline") : []), [m, sessions]);
+  const alerts = m ? machineAlerts({ machine: m, metrics: mm, launchers: launcherIssues(m.id), managerOffline: !!offlineManagerOf(roster, m) }) : [];
+  return (
+    <MachineAlertSheet
+      machine={m}
+      kind={sheet?.kind ?? "memory"}
+      alerts={alerts}
+      metrics={mm}
+      agents={agents}
+      agentsKnown={known}
+      machines={machines}
+      allMetrics={metrics}
+      records={records.list}
+      launcherIssues={launcherIssues}
+      onKind={(kind) => m && onKind(m.id, kind)}
+      onClose={onClose}
+      onReconnect={onReconnect}
+      onRecords={records.merge}
+    />
+  );
 }
 
 // Elements that keep their own click inside a card (the links, Reconnect, Deploy …).
@@ -321,8 +446,8 @@ function openFromCard(e: React.MouseEvent<HTMLElement>, to: Route) {
 // computer's share in shades of the text ink (the four kinds' colors are the charts').
 function TodayTokens({ machines, metrics }: { machines: Machine[]; metrics: MachineMetrics[] | null }) {
   const shares = machines
-    .map((m) => ({ name: m.name, usage: metrics?.find((x) => x.machine_id === m.id)?.usage }))
-    .filter((s): s is { name: string; usage: NonNullable<MachineMetrics["usage"]> } => !!s.usage);
+    .map((m) => ({ id: m.id, name: m.name, usage: metrics?.find((x) => x.machine_id === m.id)?.usage }))
+    .filter((s): s is { id: string; name: string; usage: NonNullable<MachineMetrics["usage"]> } => !!s.usage);
   if (!shares.length) return null;
   const today = shares.reduce<UsageTokens>((a, s) => addTokens(a, s.usage.today), {});
   const all = totalTokens(today);
@@ -339,12 +464,12 @@ function TodayTokens({ machines, metrics }: { machines: Machine[]; metrics: Mach
           <div className="min-w-[220px] flex-1 pb-1">
             <div className="flex h-2 gap-0.5 overflow-hidden rounded-full" aria-hidden>
               {ranked.map((s, i) => (
-                <div key={s.name} className="h-2 bg-ink" style={{ flexGrow: totalTokens(s.usage.today), opacity: shade(i) }} />
+                <div key={s.id} className="h-2 bg-ink" style={{ flexGrow: totalTokens(s.usage.today), opacity: shade(i) }} />
               ))}
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11.5px]">
               {ranked.map((s, i) => (
-                <span key={s.name} className="flex items-center gap-1 whitespace-nowrap">
+                <span key={s.id} className="flex items-center gap-1 whitespace-nowrap">
                   <span aria-hidden className="inline-block size-2 rounded-full bg-ink" style={{ opacity: shade(i) }} />
                   <span className="text-ink-2">{s.name}</span>
                   <span className="text-ink-3 tabular-nums">{formatTokens(totalTokens(s.usage.today))}</span>
@@ -365,49 +490,5 @@ function Stat({ label, value, sub, warn }: { label: string; value: string; sub?:
       <div className={cx("font-mono text-[18px] leading-tight font-medium tabular-nums", warn ? "text-red" : "text-ink")}>{value}</div>
       {sub && <div className="truncate text-[10.5px] text-ink-3">{sub}</div>}
     </div>
-  );
-}
-
-// CPU over the last hour; gaps break the line. Each card draws its own Spark, so the gradient id is per instance:
-// a shared id would be a duplicate on the page and could resolve to another card's (possibly unmounted) gradient.
-export function Spark({ points }: { points: MetricPoint[] }) {
-  const fill = `cpu-fill-${useId().replace(/:/g, "")}`;
-  const W = 440,
-    H = 56;
-  const real = points.filter((p) => !p.gap && p.cpu !== undefined);
-  if (real.length < 2) return <div className="flex h-14 items-center justify-center text-[11.5px] text-ink-3">{t("machines.no_history")}</div>;
-  const t0 = points[0].t,
-    t1 = points[points.length - 1].t || t0 + 1;
-  const x = (t: number) => ((t - t0) / Math.max(1, t1 - t0)) * W;
-  const y = (v: number) => H - 3 - (Math.min(100, Math.max(0, v)) / 100) * (H - 6);
-  const runs: MetricPoint[][] = [[]];
-  for (const p of points) {
-    if (p.gap || p.cpu === undefined) {
-      if (runs[runs.length - 1].length) runs.push([]);
-    } else runs[runs.length - 1].push(p);
-  }
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-14 w-full" role="img" aria-label={t("machines.cpu_last_hour")}>
-      <defs>
-        <linearGradient id={fill} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0" stopColor="var(--accent)" stopOpacity="0.18" />
-          <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      {[25, 50, 75].map((v) => (
-        <line key={v} x1={0} x2={W} y1={y(v)} y2={y(v)} stroke="var(--line)" strokeWidth={1} vectorEffect="non-scaling-stroke" strokeDasharray="2 4" />
-      ))}
-      {runs
-        .filter((r) => r.length > 1)
-        .map((r, i) => {
-          const line = r.map((p) => `${x(p.t).toFixed(1)},${y(p.cpu!).toFixed(1)}`).join(" ");
-          return (
-            <g key={i}>
-              <polygon points={`${x(r[0].t)},${H} ${line} ${x(r[r.length - 1].t)},${H}`} fill={`url(#${fill})`} />
-              <polyline points={line} fill="none" stroke="var(--accent)" strokeWidth={1.6} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
-            </g>
-          );
-        })}
-    </svg>
   );
 }

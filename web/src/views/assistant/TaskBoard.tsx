@@ -10,7 +10,9 @@ import { dockAgents, isRemovable, mostUrgentAgent, openAsk, type Todo, type Todo
 import { usageLimitLabel } from "../../lib/usage-limit";
 import { sessionTitle } from "../../lib/format";
 import { stateName } from "../../lib/state-labels";
+import { openMergePRs, triage } from "../../lib/todo-triage";
 import { t } from "../../i18n";
+import { TaskWaitInfo } from "./TaskWaitInfo";
 import { Dialog, IconButton, Menu } from "../../ui/atoms";
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon } from "../../ui/icons";
@@ -23,6 +25,7 @@ const BOARD_TITLE: Record<BoardSectionKey, string> = {
   waiting: stateName("needs_you"),
   review: t("assistant-tasks.review_pending"),
   working: stateName("working"),
+  parked: t("todos.section_parked"),
   unread: stateName("unread"),
   stopped: stateName("follow_up"),
   done: stateName("done"),
@@ -54,7 +57,8 @@ export function TaskBoard({ open, conversation, onClose }: { open: boolean; conv
   const [menuFor, setMenuFor] = useState<{ todo: Todo; el: HTMLElement } | null>(null);
   const sections = useMemo(() => {
     if (!open) return [];
-    const rows = todos.filter((td) => td.origin === conversation).map((todo) => ({ todo, status: statusOf(todo, lookup, plans) }));
+    const now = Date.now();
+    const rows = todos.filter((td) => td.origin === conversation).map((todo) => ({ todo, status: statusOf(todo, lookup, plans), parked: triage(todo, lookup, now).section === "parked" }));
     return boardSections(rows, dockAgents(answeredSessions(Object.values(sessions).flat(), interactions, answered), todos, conversation, main));
   }, [open, todos, sessions, conversation, main, lookup, plans, interactions, answered]);
   const subtitle = (todo: Todo, status: TodoStatus) => {
@@ -69,21 +73,22 @@ export function TaskBoard({ open, conversation, onClose }: { open: boolean; conv
     return [where, now].filter(Boolean).join(" · ");
   };
   return (
-    <Dialog open={open} onClose={onClose} title={t("assistant-tasks.board_title")} width={480}>
+    <Dialog open={open} onClose={onClose} title={t("assistant-task-actions.board_title")} width={480}>
       {sections.length === 0 ? (
-        <Empty icon="todo" title={t("assistant-tasks.board_empty_title")}>
-          {t("assistant-tasks.board_empty_body")}
+        <Empty icon="todo" title={t("assistant-task-actions.board_empty_title")}>
+          {t("assistant-task-actions.board_empty_body")}
         </Empty>
       ) : (
         <div className="flex flex-col gap-4" data-testid="task-board">
           {sections.map((sec) => (
-            <section key={sec.key} aria-label={BOARD_TITLE[sec.key]}>
+            <section key={sec.key} data-board-section={sec.key} aria-label={BOARD_TITLE[sec.key]}>
               <h3 className="mb-1 px-1 text-[12px] font-medium text-ink-3">
-                {t("assistant-tasks.board_section", { title: BOARD_TITLE[sec.key], count: sec.rows.length + sec.agents.length })}
+                {t("assistant-task-actions.board_section", { title: BOARD_TITLE[sec.key], count: sec.rows.length + sec.agents.length })}
               </h3>
               <div className="divide-y divide-line overflow-hidden rounded-card bg-field">
                 {sec.rows.map(({ todo, status }) => (
-                  <div key={todo.id} className="flex items-center hover:bg-hover">
+                  <div key={todo.id} className="min-w-0 hover:bg-hover">
+                    <div className="flex items-center">
                     <button
                       type="button"
                       onClick={() => {
@@ -98,17 +103,20 @@ export function TaskBoard({ open, conversation, onClose }: { open: boolean; conv
                       className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left"
                     >
                       <span className="flex w-4 shrink-0 justify-center">
-                        <TaskMark status={status} />
+                        <TaskMark status={sec.key === "parked" ? "waiting" : status} />
                       </span>
                       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                         <span className="truncate text-[13.5px] font-medium text-ink">{todo.title}</span>
-                        <span className="truncate text-[12px] text-ink-3">{subtitle(todo, status)}</span>
+                        {sec.key !== "parked" && <span className="truncate text-[12px] text-ink-3">{subtitle(todo, status)}</span>}
                       </span>
                       <Icon name="chevronRight" size={13} className="shrink-0 text-ink-3" />
                     </button>
                     {isRemovable(status) && (
-                      <IconButton icon="trash" label={t("assistant-tasks.board_remove", { title: todo.title })} onClick={() => removeTaskNow(todo)} className="mr-1.5" />
+                      <IconButton icon="trash" label={t("assistant-task-actions.board_remove", { title: todo.title })} onClick={() => removeTaskNow(todo)} className="mr-1.5" />
                     )}
+                    </div>
+                    {sec.key === "parked" &&
+                      <div className="px-3 pb-2.5"><TaskWaitInfo todo={todo} merges={openMergePRs(todo, Date.now())} /></div>}
                   </div>
                 ))}
                 {sec.agents.map(({ session: s, state }) => (

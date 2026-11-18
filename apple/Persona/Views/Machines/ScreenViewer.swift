@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 // A Mac's VNC (docs/extensions/computer-use.md「Live view」, #1343): opened from a machine's page, a tool, the running work or a
 // chat's ··· menu (`AppModel.openVNC`), it comes up in the small window (VNCPiP) when this device keeps the Mac's
@@ -54,30 +55,49 @@ struct ScreenOpen: Identifiable, Hashable {
 @MainActor enum AppOrientation {
     /// The live screen's page is up (ScreenWindow).
     private(set) static var screenUp = false
-    private static var phone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
+    /// The way the page's rotate button turned it (#6196): it stays so, however the phone is held, until the button
+    /// turns it back or the page closes. Nil: it turns with the phone.
+    private(set) static var screenTurned: UIInterfaceOrientationMask?
+    static var phone: Bool { UIDevice.current.userInterfaceIdiom == .phone }
 
     static var mask: UIInterfaceOrientationMask {
         guard phone else { return .all }
-        return screenUp ? .allButUpsideDown : .portrait
+        guard screenUp else { return .portrait }
+        return screenTurned ?? .allButUpsideDown
     }
 
     /// The live screen's page came up (landscape allowed: the phone turns to how it is held) or went (back upright).
     static func screen(_ up: Bool, in scene: UIWindowScene?) {
         guard up != screenUp else { return }
         screenUp = up
+        screenTurned = nil
         guard let scene else { return }
-        // UIKit asks the shell's controllers, and what they present (a machine's page in a sheet), not the screen
-        // window's: every one of them reads the policy again.
+        reread(scene)
+        // Closed on its side: upright again now, not when the phone next turns.
+        if !up, phone, scene.effectiveGeometry.interfaceOrientation != .portrait {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        }
+    }
+
+    /// The page's rotate button (#6196, iPhone only): the page on its side, or upright again, and kept so while it is up.
+    /// Works with Portrait Orientation Lock on, where turning the phone does nothing.
+    static func turnScreen(landscape: Bool, in scene: UIWindowScene?) {
+        guard phone, screenUp, let scene else { return }
+        let to: UIInterfaceOrientationMask = landscape ? .landscape : .portrait
+        screenTurned = to
+        reread(scene)
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: to))
+    }
+
+    /// UIKit asks the shell's controllers, and what they present (a machine's page in a sheet), not the screen window's:
+    /// every one of them reads the policy again.
+    private static func reread(_ scene: UIWindowScene) {
         for w in scene.windows {
             var c = w.rootViewController
             while let v = c {
                 v.setNeedsUpdateOfSupportedInterfaceOrientations()
                 c = v.presentedViewController
             }
-        }
-        // Closed on its side: upright again now, not when the phone next turns.
-        if !up, phone, scene.effectiveGeometry.interfaceOrientation != .portrait {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
         }
     }
 }
@@ -127,6 +147,14 @@ struct ScreenOpen: Identifiable, Hashable {
         AppOrientation.screen(false, in: window?.windowScene ?? before?.windowScene)
         #endif
     }
+
+    #if os(iOS)
+    /// The page's rotate button (#6196): on its side when it is upright, else upright.
+    func turn() {
+        guard let scene = window?.windowScene else { return }
+        AppOrientation.turnScreen(landscape: !scene.effectiveGeometry.interfaceOrientation.isLandscape, in: scene)
+    }
+    #endif
 }
 
 /// The page fading in as it opens, and out again as it closes, then the window goes.

@@ -6,6 +6,7 @@ import (
 )
 
 func TestCheckNodeStdioArgs(t *testing.T) {
+	t.Setenv("PERSONA_LANG", "zh-Hans")
 	for _, args := range [][]string{nil, {"--stdio"}} {
 		if err := checkNodeStdioArgs(args); err != nil {
 			t.Errorf("%q: %v", args, err)

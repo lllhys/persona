@@ -39,14 +39,16 @@ object PairingModule {
         updates: AppUpdates, diagnostics: SettingsDiagnostics, devices: WiredDeviceSettings, runtime: ConnectionRuntime,
         machines: MachineManagement, models: ModelConfiguration, extensions: ExtensionManagement, providers: ProviderSetup,
         connectors: ConnectorsManagement, channels: ChannelManagement, platform: persona.android.platform.PlatformPairing,
-        hubUpdates: HubUpdates, managers: HubManagers, sent: HubSent, translation: TranslationSettings, triage: AgentTriage, capsule: persona.android.capsule.CapsuleRuntime,
+        hubUpdates: HubUpdates, managers: HubManagers, sent: HubSent, translation: TranslationSettings, triage: AgentTriage, knowledgeSelection: KnowledgeSelection, capsule: persona.android.capsule.CapsuleRuntime,
         attempts: PairingAttempts, application: Application, readiness: AssistantReadinessSource, feishuBot: FeishuBotSettings,
+        standing: StandingAuthorizationsSource,
     ) = SettingsServices(pairing, connection, sessions, updates, diagnostics, binding = devices.binding,
         // Explicit: the runtime cannot be a ConnectionEndpoints itself (its HubConnection.state has another type).
         disconnect = { pairing.unpair() }, endpoints = runtime.endpoints, machines = machines, models = models, extensions = extensions, providers = providers,
         channels = channels, feishuBot = feishuBot, hubUpdates = hubUpdates, managers = managers, sent = sent,
         hubs = runtime.hubGroups, tunnels = runtime.hubTunnels, addHub = platform.adding, connectors = connectors,
-        translation = translation, triage = triage, capsule = capsule, pairingAttempts = attempts, readiness = readiness,
+        translation = translation, triage = triage, knowledgeSelection = knowledgeSelection, capsule = capsule, pairingAttempts = attempts, readiness = readiness,
+        standing = standing,
         appUpdateStore = persona.feature.settings.AppUpdateStore(application, updates, devices.binding),
         desktops = (application as PersonaApp).desktops, clearCacheFiles = { files -> persona.core.data.CacheClearing.delete(files) })
 }
@@ -118,6 +120,11 @@ class WiredPairingService @Inject constructor(application: Application, private 
     override suspend fun check(): AppUpdate? = lock.withLock {
         val saved = runtime.activeCredentials() ?: return@withLock null
         activeClient().checkUpdate(saved.deviceToken)
+    }
+
+    override suspend fun lookup(): AppUpdateLookup = lock.withLock {
+        val saved = requireNotNull(runtime.activeCredentials()) { "Updates require a paired hub" }
+        activeClient().lookupUpdate(saved.deviceToken)
     }
 
     override suspend fun download(update: AppUpdate, destination: OutputStream) = lock.withLock {

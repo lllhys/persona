@@ -1,9 +1,11 @@
-One of the user's Persona to-dos in full: its title, state, priority, due date, reminder (and whether it was pushed), when it was made and changed, the conversation and plan it came from when it is a task, its notes, the agents that work or worked on it, and the decisions in force on it.
+Read a to-do's title/state, priority, due/reminder and push status, timestamps, origin/plan, notes, agents, decisions and canonical repository/issue/PR associations. Maintain links with todo_repository_links_add or the revision-checked set tools; associations do not prove completion.
 
 ```json
 {
   "type": "object",
-  "required": ["id"],
+  "required": [
+    "id"
+  ],
   "properties": {
     "id": {
       "type": "string",

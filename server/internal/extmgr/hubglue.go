@@ -110,14 +110,15 @@ func (h *Manager) askerCwd(by asker) string {
 	if by.session == "" {
 		return ""
 	}
+	cwd := ""
 	if m := h.machineByID(by.machine); m != nil {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		for _, s := range m.sessions {
-			if s.SessionID == by.session {
-				return s.Cwd
+		h.findSession(m, func(s *proto.Session) bool {
+			if s.SessionID != by.session {
+				return false
 			}
-		}
+			cwd = s.Cwd
+			return true
+		})
 	}
-	return ""
+	return cwd
 }

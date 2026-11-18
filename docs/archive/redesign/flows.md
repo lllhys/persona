@@ -3,7 +3,7 @@
 > **Since 2026-10-31, the parts of this document about Android's look, layout and interaction are superseded by [Android interface styles and design system](../../android/android-design.md)**: the user asked for the visuals and interaction to be redone as a whole, as three interface styles: Glass (default), Morning Paper and Board. This document remains the spec for features, data, protocol and gates.
 
 > Draft (2026-10-30), part of the [redesign proposal](README.md). This round only lands on Android and the hub; iOS does not change.
-> The diagrams are written in Mermaid, which GitHub and most Markdown previews render directly; the same diagrams are also in the UI preview ([`prototypes/android/flows.html`](../../../prototypes/android/flows.html)).
+> The diagrams are written in Mermaid, which GitHub and most Markdown previews render directly; the same diagrams are also in the UI preview (`prototypes/android/flows.html`, removed in #9030).
 > Under each diagram is the matching spec section; when a diagram and the spec disagree, the spec wins and the diagram gets fixed.
 
 | # | Flow | Spec |

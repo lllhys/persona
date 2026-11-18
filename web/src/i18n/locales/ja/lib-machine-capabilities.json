@@ -1,0 +1,15 @@
+{
+  "when_online": "接続すると表示されます",
+  "not_read": "読み込めませんでした",
+  "tools_node_outdated": "このコンピュータの Persona を更新すると表示されます",
+  "tools_hub_outdated": "hub を更新すると表示されます",
+  "tools_forbidden": "完全に信頼されたデバイスが必要です",
+  "target_offline": "オフライン",
+  "target_pending": "未承認または未接続",
+  "same_system": "同じシステム",
+  "free_memory": "メモリ空き {size}",
+  "missing_tool": "{tool} なし",
+  "reason_memory": "メモリ {value}",
+  "reason_disk": "ディスク {value}",
+  "reason_cpu": "CPU {value}"
+}

@@ -26,17 +26,10 @@ struct RenameWorktreeSheet: View {
             .navigationTitle(String(localized: "worktree.rename", defaultValue: "Rename Worktree…"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(busy) }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button { Task { await save() } } label: {
-                        Text("Save")
-                            #if os(iOS) || os(visionOS)
-                            .foregroundStyle(.white)
-                            #endif
-                    }
-                        .formButton(prominent: true)
-                        .disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .accessibilityIdentifier("worktree.rename.save")
+                SheetClose(disabled: busy) { dismiss() }
+                SheetConfirm(id: "worktree.rename.save", name: String(localized: "Save"),
+                             disabled: busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                    Task { await save() }
                 }
             }
             .disabled(busy)

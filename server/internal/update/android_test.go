@@ -144,6 +144,77 @@ func TestSyncAndroidPublishesTheRelease(t *testing.T) {
 	}
 }
 
+type androidGitHubTransport struct{ host string }
+
+func (t androidGitHubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req = req.Clone(req.Context())
+	req.URL.Scheme = "http"
+	req.URL.Host = t.host
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// GitHub's latest release can have no Android assets. Its newest earlier stable release that has them is the one to
+// publish; draft and prerelease assets do not replace the stable channel.
+func TestSyncAndroidFindsPreviousGitHubRelease(t *testing.T) {
+	r := newAndroidRelease("0.3.0", 300)
+	incomplete := newAndroidRelease("0.3.1", 301)
+	served := 0
+	download := "https://github.com/nwverse/persona/releases/download/"
+	assets := func(tag string, withAPK bool) []map[string]any {
+		out := []map[string]any{{"name": "android.json", "browser_download_url": download + tag + "/android.json"}}
+		if withAPK {
+			out = append(out, map[string]any{"name": r.manifest["name"], "browser_download_url": download + tag + "/" + r.manifest["name"].(string)})
+		}
+		return out
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/repos/nwverse/persona/releases":
+			if req.URL.Query().Get("per_page") != "100" {
+				http.Error(w, "missing page size", http.StatusBadRequest)
+				return
+			}
+			switch req.URL.Query().Get("page") {
+			case "1":
+				// Force the fallback past the first 100 stable releases without Android assets.
+				releases := make([]map[string]any, 100)
+				for i := range releases {
+					releases[i] = map[string]any{"assets": []map[string]any{}}
+				}
+				json.NewEncoder(w).Encode(releases)
+			case "2":
+				json.NewEncoder(w).Encode([]map[string]any{
+					{"tag_name": "v0.3.2-draft", "draft": true, "assets": assets("v0.3.2-draft", true)},
+					{"tag_name": "v0.3.2-rc.1", "prerelease": true, "assets": assets("v0.3.2-rc.1", true)},
+					{"tag_name": "v0.3.1", "assets": assets("v0.3.1", false)},
+					{"tag_name": "v0.3.0", "assets": assets("v0.3.0", true)},
+				})
+			default:
+				http.Error(w, "unexpected page", http.StatusBadRequest)
+			}
+		case "/nwverse/persona/releases/download/v0.3.1/android.json":
+			json.NewEncoder(w).Encode(incomplete.manifest)
+		case "/nwverse/persona/releases/download/v0.3.0/android.json":
+			json.NewEncoder(w).Encode(r.manifest)
+		case "/nwverse/persona/releases/download/v0.3.0/" + r.manifest["name"].(string):
+			served++
+			w.Write(r.apk)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer srv.Close()
+	client := &http.Client{Transport: androidGitHubTransport{host: strings.TrimPrefix(srv.URL, "http://")}}
+	dir := t.TempDir()
+	got, rel, err := SyncAndroid(context.Background(), client, "https://github.com/nwverse/persona/releases/latest/download", dir)
+	if err != nil || got != AndroidUpdated || rel == nil || rel.VersionCode != 300 || served != 1 {
+		t.Fatalf("sync: %v %+v %v, %d downloads", got, rel, err, served)
+	}
+	if m := readManifest(t, dir); m["version_name"] != "0.3.0" {
+		t.Fatalf("latest.json: %v", m)
+	}
+}
+
 // A newer release replaces the published one; the one it replaces stays for phones that read it, the ones before go.
 // What an interrupted sync left goes too; a publisher's staging directory stays.
 func TestSyncAndroidReplacesAndPrunes(t *testing.T) {

@@ -56,6 +56,12 @@ export interface PanesResponse {
   hosts: PaneHostDTO[];
 }
 
+/** The engine a computer's "New terminal" opens in when it has no workspace to put one in: the first host that opens
+ *  tabs, where the node opens a new workspace in the home folder (`{kind, cwd: "~"}`). */
+export function homeShellHost(resp?: PanesResponse): string | undefined {
+  return resp?.hosts.find((h) => h.new_tab)?.kind;
+}
+
 // ── the tree ─────────────────────────────────────────────
 
 /** A pane's badge: an agent's state, or none for a plain shell. */

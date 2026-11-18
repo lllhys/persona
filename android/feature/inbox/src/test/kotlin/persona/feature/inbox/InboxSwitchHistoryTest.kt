@@ -91,7 +91,7 @@ class InboxSwitchHistoryTest {
         rule.setContent {
             PersonaTheme(darkTheme = false, reduceMotion = true) {
                 CompositionLocalProvider(LocalManagerRoster provides roster) {
-                    Box(Modifier.width(400.dp).height(1500.dp)) { InboxScreen(inbox, navigator) }
+                    Box(Modifier.width(400.dp).height(1500.dp)) { OnAll { InboxScreen(inbox, navigator) } }
                 }
             }
         }

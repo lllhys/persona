@@ -106,11 +106,11 @@ func TestRestoreUpdate(t *testing.T) {
 	if err := update.Save(update.PendingPath(dir), pending); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := restoreUpdateIn(dir, 3, nil); ok {
+	if _, ok, err := restoreUpdateIn(dir, 3, nil); ok || err != nil {
 		t.Fatal("restored for another build")
 	}
-	bin, ok := restoreUpdateIn(dir, 2, errors.New("cannot migrate"))
-	if !ok || bin != target {
+	bin, ok, err := restoreUpdateIn(dir, 2, errors.New("cannot migrate"))
+	if err != nil || !ok || bin != target {
 		t.Fatalf("restore = %q %v", bin, ok)
 	}
 	if b, _ := os.ReadFile(target); string(b) != "old" {
@@ -123,7 +123,7 @@ func TestRestoreUpdate(t *testing.T) {
 	if _, err := os.Stat(update.PendingPath(dir)); !os.IsNotExist(err) {
 		t.Fatal("the pending marker stayed")
 	}
-	if _, ok := restoreUpdateIn(dir, 2, nil); ok {
+	if _, ok, err := restoreUpdateIn(dir, 2, nil); ok || err != nil {
 		t.Fatal("restored twice")
 	}
 }
@@ -142,8 +142,8 @@ func TestRestoreUpdateRunsTheHubsProgram(t *testing.T) {
 	if err := update.Save(update.PendingPath(dir), pending); err != nil {
 		t.Fatal(err)
 	}
-	bin, ok := restoreUpdateIn(dir, 2, nil)
-	if !ok || bin != hubBin {
+	bin, ok, err := restoreUpdateIn(dir, 2, nil)
+	if err != nil || !ok || bin != hubBin {
 		t.Fatalf("restore = %q %v, want %q", bin, ok, hubBin)
 	}
 	for path, want := range map[string]string{target: "old personad", hubBin: "old persona-hub"} {

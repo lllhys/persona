@@ -3,7 +3,8 @@ import SwiftUI
 
 // Settings › Appearance (2026-11-01): laid out like Connectors, one row per thing that changes how the app looks
 // (Avatar, Theme Color, Interface Style, Light & Dark on iPhone and iPad), each opening its own page; the first three are apart (docs/apple/ios.md「设计语言」).
-// Glow While Replying is a switch in place, not a page: it is one on/off choice (iOS only, `ComposerGlow`).
+// Glow While Replying is a switch in place, not a page: it is one on/off choice (iOS only, `ComposerGlow`); so is
+// Return Key Sends beside it, the composer's other choice (iOS only, `ReturnSends`, #8178).
 // The home screen icon is the Avatar's, not a row of its own (#3203). Picking anything
 // there rebuilds the whole tree (`AppModel.look`); the settings path lives in AppModel, so the
 // rebuilt app is back on the same page.
@@ -14,8 +15,13 @@ struct AppearanceSection: View {
     var settingsHome = true
     #if os(iOS)
     private let layoutDisplay = AgentListDisplayChoice()
+    @StoredValue(NavigationLayout.key) private var navigation = ""
     #endif
     @StoredValue(ComposerGlowPrefs.enabledKey) private var composerGlow = false
+    #if os(iOS)
+    @StoredValue(ReturnSends.enabledKey) private var returnSends = false
+    #endif
+    @StoredValue(ScreenshotBannerPrefs.enabledKey) private var screenshotBanner = ScreenshotBannerPrefs.enabledByDefault
 
     var body: some View {
         Section {
@@ -45,6 +51,15 @@ struct AppearanceSection: View {
                     .accessibilityIdentifier("settings-language")
                 }
                 #if os(iOS)
+                // Merged or Separate (#6332, #4206): where the sidebar layout is built (`NavigationLayout.offered`).
+                if NavigationLayout.offered {
+                    NavigationLink(value: SettingsPage.navigation) {
+                        SettingsRow(title: String(localized: "Sidebar [Appearance]"), symbol: Theme.Icon.sidebar, tint: Theme.Hue.teal,
+                                    value: NavigationLayout.effectiveNow(picked: navigation).title, look: .oneLine)
+                    }
+                    .settingsListRow(SettingsPage.navigation)
+                    .accessibilityIdentifier("settings-navigation")
+                }
                 // How the Agents list draws its agents on iPhone and iPad (#2530); the Mac and Vision Pro keep their look.
                 NavigationLink(value: SettingsPage.layout) {
                     SettingsRow(title: String(localized: "Agents List Layout"), symbol: Theme.Icon.listView, tint: Theme.Hue.orange,
@@ -67,6 +82,20 @@ struct AppearanceSection: View {
                                       symbol: Theme.Icon.composerGlow, tint: Theme.Hue.purple,
                                       accessibilityID: "settings-composer-glow", isOn: $composerGlow)
                 }
+                #if os(iOS)
+                SettingsSwitchRow(title: String(localized: "Return Key Sends"),
+                                  detail: String(localized: "Send with Return; Shift-Return starts a new line"),
+                                  symbol: Theme.Icon.enter, tint: Theme.Hue.blue,
+                                  accessibilityID: "settings-return-sends", isOn: $returnSends)
+                // A chat's screenshots show the assistant's banner where the top bar is (#9508); not offered where the
+                // system has no layer to keep the bar out of a screenshot.
+                if ScreenshotBanner.isAvailable {
+                    SettingsSwitchRow(title: String(localized: "Persona Banner in Screenshots"),
+                                      detail: String(localized: "Screenshots and screen recordings of chats show your assistant's picture and name at the top"),
+                                      symbol: Theme.Icon.screenshotBanner, tint: Theme.persona,
+                                      accessibilityID: "settings-screenshot-banner", isOn: $screenshotBanner)
+                }
+                #endif
             }
             .bareListRow()
         } header: {
@@ -169,7 +198,10 @@ struct StyleSettingsPage: View {
                 }
                 .accessibilityIdentifier("text-size")
             } footer: {
-                Text("One step smaller or larger than the system's Text Size.")
+                VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                    Text("One step smaller or larger than the system's Text Size.")
+                    Text("Buttons and bars stop growing at the system's Extra Extra Extra Large size; messages and other reading text keep growing.")
+                }
             }
         }
         .themedGroupedPage()

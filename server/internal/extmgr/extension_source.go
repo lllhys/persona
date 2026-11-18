@@ -111,7 +111,7 @@ func (ps *extensions) confineSource(ctx context.Context, p *extension.Extension,
 			}
 		}
 		g := p.Record.Granted
-		px.Register(id, egress.Rule{Hosts: g.Network, Hub: len(g.Hub) > 0, Targets: ps.settingsTargets(id)})
+		px.Register(id, egress.Rule{Hosts: g.Network, Hub: len(g.Hub) > 0, Targets: ps.settingsTargets(id), Owner: ps.ownerTargets(p.Record.StorageKey())})
 		if err := px.ListenRuntimeUnix(id, sock); err != nil {
 			px.Unregister(id)
 			return "", nil, nil, nil, dispose, err

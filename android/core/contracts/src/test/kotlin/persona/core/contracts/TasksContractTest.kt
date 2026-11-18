@@ -1,8 +1,11 @@
 package persona.core.contracts
 
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import persona.core.contracts.api.ScheduledTask
 
 /** The unified entry's wire shapes (docs/protocol/protocol.md "Tasks and the chat feed") decode, and its events enter the stream. */
 class TasksContractTest {
@@ -38,6 +41,17 @@ class TasksContractTest {
         val item = JsonCodec.decodeFromString<FeedItem>("""{"id":"f1","kind":"review","ref":"t1","body":{"verdict":"accepted"}}""")
         assertEquals("review", item.kind)
         assertEquals("accepted", item.field("verdict"))
+    }
+
+    @Test fun scheduledTaskInboxValuesDecodeAndOnlySetValuesAreWritten() {
+        for (mode in listOf("", "worthy", "every")) {
+            val task = JsonCodec.decodeFromString<ScheduledTask>("""{"id":"t1","title":"Briefing","prompt":"Report","inbox":"$mode","push":"asked"}""")
+            val edited = task.editable()
+            assertEquals(mode, edited["inbox"]?.jsonPrimitive?.content)
+            assertEquals("asked", edited["push"]?.jsonPrimitive?.content)
+        }
+        val olderHub = JsonCodec.decodeFromString<ScheduledTask>("""{"id":"t1","title":"Briefing","prompt":"Report"}""")
+        assertFalse(olderHub.editable().containsKey("inbox"))
     }
 
     /** A scheduled briefing must reach the feed renderer instead of decoding as an unknown item (#4053). */
@@ -84,6 +98,12 @@ class TasksContractTest {
         val event = ServerEvent.decode("""{"type":"assistant_feed","conversation":"main","item":$raw}""") as AssistantFeedEvent
         assertEquals(item, event.item)
         assertEquals(item, JsonCodec.decodeFromString<FeedItem>(JsonCodec.encodeToString(FeedItem.serializer(), item)))
+    }
+
+    @Test fun todoKindDecodesAndAnOlderHubDefaultsToOrdinary() {
+        assertEquals("concern", JsonCodec.decodeFromString<Todo>("""{"id":"c","kind":"concern"}""").kind)
+        assertEquals("", JsonCodec.decodeFromString<Todo>("""{"id":"t"}""").kind)
+        assertEquals("future-kind", JsonCodec.decodeFromString<Todo>("""{"id":"u","kind":"future-kind"}""").kind)
     }
 
     @Test fun unknownKindsAndTodosDecode() {

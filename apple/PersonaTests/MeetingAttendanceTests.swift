@@ -1,10 +1,11 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Persona in a recorded meeting (#2981; contract docs/assistant/meeting-minutes.md「Attending a meeting」, the phone's side
 /// docs/apple/recording.md「Persona in meetings」): what an upload carries, the live log's rules, sending it, asking by a
-/// tap, when an answer is said out loud, and Persona's own voice left out of the transcript.
+/// tap, when an answer is said out loud, and Persona's echo hidden in the transcript (#5905).
 @MainActor struct MeetingAttendanceTests {
     private let agent = SessionKey(machineID: "mac", sessionID: "s1")
 
@@ -25,6 +26,20 @@ import Testing
 
     private func line(_ start: Double, _ end: Double, _ text: String = "line") -> RecordingSentence {
         RecordingSentence(start: start, end: end, text: text)
+    }
+
+    /// A stretch Persona spoke in, with the answer it said there (#5905), as the recording keeps it (JSON).
+    private func span(_ start: Double, _ end: Double, _ text: String) throws -> RecordingSpan {
+        try JSONDecoder().decode(RecordingSpan.self, from: JSONSerialization.data(withJSONObject: ["start": start, "end": end, "text": text]))
+    }
+
+    /// The upload as a hub that lists `meeting_echo` gets it (the last hub heard listed it), and as before.
+    private func uploaded(_ e: RecordingEntry, hubEcho: Bool) throws -> [String: Any] {
+        let store = UserDefaults.standard, key = "recording.meeting.echo"
+        let saved = store.object(forKey: key)
+        defer { store.set(saved, forKey: key) }
+        store.set(hubEcho, forKey: key)
+        return try json(e)
     }
 
     // MARK: The upload
@@ -275,19 +290,19 @@ import Testing
     private func live(_ library: RecordingLibrary, open: RecordingSpan? = nil,
                       post: @escaping (UUID, Int, [RecordingSentence]) async throws -> MeetingLive.Answer = { _, from, s in .init(next: from + s.count) },
                       settled: Bool = true) -> MeetingLive {
-        MeetingLive(deps: MeetingLive.Deps(post: post, settled: { _ in settled }, upload: { _ in }, openSpan: { _ in open },
-                                           wait: { _ in }), library: library)
+        MeetingLive(deps: MeetingLive.Deps(post: post, settled: { _ in settled }, upload: { _ in },
+                                           openSpans: { _ in open.map { [$0] } ?? [] }, wait: { _ in }), library: library)
     }
 
     private func library() throws -> RecordingLibrary {
         RecordingLibrary(root: FileManager.default.temporaryDirectory.appending(path: "meeting-live-\(UUID())"))
     }
 
-    /// What ended while attending and isn't Persona's voice joins the log once; positions never move after.
+    /// What ended while attending and isn't Persona's echo joins the log once; positions never move after.
     @Test func theLiveLogIsAppendOnly() throws {
         let lib = try library()
         var e = meeting(.listener, lines: [line(1, 4, "a"), line(5, 9, "b"), line(10, 15, "Persona's own"), line(16, 20, "  ")])
-        e.attendance?.spoken = [RecordingSpan(start: 10, end: 15)]
+        e.attendance?.spoken = [try span(10, 15, "Persona's own answer.")]
         try lib.save(e)
         let sender = live(lib)
         #expect(sender.append(e.id))
@@ -302,13 +317,15 @@ import Testing
         #expect(lib.entry(e.id)?.attendance?.live.map(\.text) == ["a", "b", "c"])
     }
 
-    /// A line Persona is saying right now (its stretch not closed yet) stays out too.
+    /// A line Persona is saying right now (its stretch not closed yet, with the answer being said) stays out too; what
+    /// someone else says meanwhile goes in (#5905).
     @Test func theVoiceBeingSaidStaysOut() throws {
         let lib = try library()
-        let e = meeting(.participant, lines: [line(1, 4, "question"), line(5, 12, "answer being said")])
+        let e = meeting(.participant, lines: [line(1, 4, "question"), line(5, 9, "The answer being said."),
+                                              line(9.5, 12, "Bo owns the regression test.")])
         try lib.save(e)
-        live(lib, open: RecordingSpan(start: 5, end: 12)).append(e.id)
-        #expect(lib.entry(e.id)?.attendance?.live.map(\.text) == ["question"])
+        live(lib, open: try span(5, 12, "The answer being said, and more of it.")).append(e.id)
+        #expect(lib.entry(e.id)?.attendance?.live.map(\.text) == ["question", "Bo owns the regression test."])
     }
 
     /// From where the hub is, in order; nothing before the hub has the attendance.
@@ -556,17 +573,71 @@ import Testing
         #expect(ask.exchanges(for: other.id).count == 1)
     }
 
-    // MARK: Persona's own voice
+    // MARK: Persona's echo (#5905)
 
-    /// A line at least half inside a stretch Persona spoke in is its own, not the meeting's: out of the transcript and
-    /// the upload.
-    @Test func personasOwnVoiceIsLeftOutOfTheTranscript() throws {
+    /// Someone who speaks while Persona answers is the meeting, not Persona's echo: the time alone says nothing, the words
+    /// must be the answer's. The line stays in the transcript, the upload (unmarked) and the live log.
+    @Test func anotherVoiceInsideTheSpanIsTheMeetings() throws {
+        let all = ["Who owns the test?", "Bo owns the regression test.", "Thanks, next item."]
+        var e = meeting(.participant, lines: [line(2, 9, all[0]), line(10.2, 17.8, all[1]), line(18, 25, all[2])])
+        e.attendance?.spoken = [try span(10, 17.5, "You kept the cap.")]
+        #expect(e.sentences.map(\.text) == all)
+        for hubEcho in [false, true] {
+            let segments = try #require(try uploaded(e, hubEcho: hubEcho)["segments"] as? [[String: Any]])
+            #expect(segments.map { $0["text"] as? String } == all, "hub echo \(hubEcho)")
+            #expect(segments.allSatisfy { $0["echo"] == nil }, "hub echo \(hubEcho)")
+        }
+        let lib = try library()
+        try lib.save(e)
+        live(lib).append(e.id)
+        #expect(lib.entry(e.id)?.attendance?.live.map(\.text) == all)
+    }
+
+    /// Persona's answer heard by the microphone is its echo: hidden in the transcript, kept on the recording, and uploaded
+    /// marked with the stretches (and what was said in them) to a hub that lists `meeting_echo`; to one that doesn't it
+    /// is left out, as before.
+    @Test func personasEchoIsHiddenAndUploadedMarked() throws {
+        var e = meeting(.participant, lines: [line(2, 9, "Who owns the test?"), line(10.2, 17.8, "you kept the cap, Bo owns it"),
+                                              line(18, 25, "Thanks, next item.")])
+        e.attendance?.spoken = [try span(10, 17.5, "You kept the cap. Bo owns it.")]
+        #expect(e.sentences.map(\.text) == ["Who owns the test?", "Thanks, next item."])
+        #expect(e.segments[0].sentences?.count == 3, "kept on the recording")
+
+        let before = try uploaded(e, hubEcho: false)
+        #expect((before["segments"] as? [[String: Any]])?.map { $0["text"] as? String } == ["Who owns the test?", "Thanks, next item."])
+        #expect(before["spoken"] == nil)
+
+        let marked = try uploaded(e, hubEcho: true)
+        let segments = try #require(marked["segments"] as? [[String: Any]])
+        #expect(segments.map { $0["text"] as? String } == ["Who owns the test?", "you kept the cap, Bo owns it", "Thanks, next item."])
+        #expect(segments.map { $0["echo"] as? Bool } == [nil, true, nil])
+        let spoken = try #require(marked["spoken"] as? [[String: Any]])
+        #expect(spoken.count == 1)
+        #expect(spoken.first?["start"] as? Double == 10 && spoken.first?["end"] as? Double == 17.5)
+        #expect(spoken.first?["text"] as? String == "You kept the cap. Bo owns it.")
+    }
+
+    /// A stretch saved before #5905 has no text: it keeps the time rule (at least half of the line inside it), so an old
+    /// recording reads as it did.
+    @Test func aStretchWithoutTextKeepsTheTimeRule() throws {
         var e = meeting(.participant, lines: [line(2, 9, "Who owns the test?"), line(10.2, 17.8, "Bo owns the regression test."),
                                               line(18, 25, "Thanks, next item.")])
         #expect(e.sentences.count == 3)
         e.attendance?.spoken = [RecordingSpan(start: 10, end: 17.5)]
         #expect(e.sentences.map(\.text) == ["Who owns the test?", "Thanks, next item."])
-        #expect(RecordingUpload(e).segments.map(\.text) == ["Who owns the test?", "Thanks, next item."])
+        let segments = try uploaded(e, hubEcho: false)["segments"] as? [[String: Any]]
+        #expect(segments?.map { $0["text"] as? String } == ["Who owns the test?", "Thanks, next item."])
+    }
+
+    /// The last hub's `meeting_echo` is kept from every hello, beside `meeting_attendance` only.
+    @Test func theHubsEchoFlagIsKept() {
+        let store = UserDefaults(suiteName: "meeting-echo-\(UUID())")!
+        MeetingAttendanceDefaults.remember(hello: ["meeting_attendance", "meeting_echo"], role: nil, store)
+        #expect(store.bool(forKey: "recording.meeting.echo"))
+        MeetingAttendanceDefaults.remember(hello: ["meeting_attendance"], role: nil, store)
+        #expect(!store.bool(forKey: "recording.meeting.echo"))
+        MeetingAttendanceDefaults.remember(hello: ["meeting_echo"], role: nil, store)
+        #expect(!store.bool(forKey: "recording.meeting.echo"), "only beside meeting_attendance")
     }
 
     @Test func aSpanHoldsLinesAtLeastHalfInsideIt() {
@@ -595,5 +666,16 @@ import Testing
         off.attendance = nil
         let plain = RecordingActivity.content(entry: off, recording: true, interrupted: false, elapsed: 10, previous: nil, now: .now, answer: "x")
         #expect(plain.persona == nil && plain.answer == nil)
+    }
+
+    /// The B2 experiment (#8731): the speaker turned on mid-meeting turns echo cancellation on only where the switch is on,
+    /// never on the simulator (voice processing doesn't run there); the speaker turned off changes nothing. Off by default.
+    @Test func echoCancellationWithTheSpeakerIsAnExperiment() throws {
+        #expect(MeetingRecorder.echoWithSpeaker(speaks: true, experiment: true, simulator: false))
+        #expect(!MeetingRecorder.echoWithSpeaker(speaks: true, experiment: false, simulator: false))
+        #expect(!MeetingRecorder.echoWithSpeaker(speaks: true, experiment: true, simulator: true))
+        #expect(!MeetingRecorder.echoWithSpeaker(speaks: false, experiment: true, simulator: false))
+        let store = try #require(UserDefaults(suiteName: "meeting-echo-\(UUID())"))
+        #expect(!store.bool(forKey: MeetingRecorder.echoWithSpeakerKey))
     }
 }

@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import persona.core.contracts.Session
 import persona.core.contracts.Subagent
 import persona.core.domain.lines.SubagentStatus
 
@@ -26,6 +27,19 @@ class SubagentCardTextTest {
         val bare = SubagentCardText.meta(res, null, 42, assistant = false)
         assertNull(bare.model); assertNull(bare.tokens); assertNull(bare.uses)
         assertEquals("42 s", bare.took)
+    }
+
+    /** #8143: what ran it is the chat's own agent, a Paseo provider by its own name; Claude Code only for Claude's. */
+    @Test fun whatRanItIsTheChatsAgent() {
+        val grok = Session(sessionId = "paseo-1", agent = "paseo", agentLabelHint = "My Grok", launcher = "grok")
+        assertEquals("My Grok", subagentHarness(grok, res))
+        assertEquals("grok", subagentHarness(grok.copy(agentLabelHint = "Paseo"), res))
+        assertEquals("Codex", subagentHarness(Session(sessionId = "s", agent = "codex"), res))
+        assertEquals("Claude Code", subagentHarness(Session(sessionId = "s", agent = "claude", launcher = "my-claude"), res))
+        assertEquals("My Grok", SubagentCardText.meta(res, agent, 65, assistant = false, harness = subagentHarness(grok, res)).harness)
+        // Nothing said (a preview, a card outside an Agent's chat): Claude Code, as before; a Persona conversation names none.
+        assertEquals("Claude Code", SubagentCardText.meta(res, agent, 65, assistant = false, harness = null).harness)
+        assertNull(SubagentCardText.meta(res, agent, 65, assistant = true, harness = "Grok").harness)
     }
 
     @Test fun theFourStatusWords() {

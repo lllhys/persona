@@ -107,7 +107,6 @@ func (n *Node) assistantSendRuntime(ctx context.Context, h *runtimeConn, id, cwd
 	n.assistantRuntimeSkills(cwd)
 	memDir := n.memoryDir(cwd)
 	turn := map[string]any{"assistant": true, "memory_dir": memDir}
-	instructions := ""
 	if pickedModel != "" {
 		turn["model"] = pickedModel
 	}
@@ -127,7 +126,7 @@ func (n *Node) assistantSendRuntime(ctx context.Context, h *runtimeConn, id, cwd
 			return "", err
 		}
 		id = s.SessionID
-		instructions = n.runtimeInstructions(cwd, memDir)
+		st.AwaitingFirstMessage = true
 	}
 	n.noteModes(id, mode, pickedEffort)
 	if m := n.assistantModeOf(id); m != "" {
@@ -141,9 +140,13 @@ func (n *Node) assistantSendRuntime(ctx context.Context, h *runtimeConn, id, cwd
 		n.state.put(id, st)
 	}
 	n.persistModes(id, mode, pickedEffort)
+	if strings.TrimSpace(text) == "" && len(images) == 0 {
+		awaitList(n.notifySessionsSoon())
+		return id, nil
+	}
 	live, commit := n.turnContext(id, n.assistantContext(id))
-	if instructions != "" {
-		live = strings.TrimSpace(instructions + "\n" + live)
+	if st.AwaitingFirstMessage {
+		live = strings.TrimSpace(n.runtimeInstructions(cwd, memDir) + "\n" + live)
 	}
 	params := map[string]any{"session_id": id, "text": text, "images": images}
 	// The message's own client_msg_id, none when it came without one (#5225): a runtime may put the id it is sent with
@@ -164,7 +167,7 @@ func (n *Node) assistantSendRuntime(ctx context.Context, h *runtimeConn, id, cwd
 		return "", fmt.Errorf("%s: %w", h.label(), err)
 	}
 	commit()
-	n.notifySessions()
+	awaitList(n.notifySessionsSoon()) // as a Claude conversation's send: not the whole list's time
 	return id, nil
 }
 
@@ -212,7 +215,7 @@ func (n *Node) runtimeStartWith(ctx context.Context, h *runtimeConn, params map[
 	if err := h.peer.Call(cctx, "session.start", params, &res); err != nil {
 		return nil, err
 	}
-	return n.listStarted(h, res.Session)
+	return n.listStarted(h, res.Session, "")
 }
 
 // runtimeInstructions is the first message's instructions for an assistant on a runtime: the memory it shares with

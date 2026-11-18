@@ -54,5 +54,7 @@
   "waiting_pair": "等你在{name}里发给机器人…",
   "waiting_auth": "等你授权…",
   "verifying": "正在验证…",
-  "next": "下一步"
+  "next": "下一步",
+  "summary": "{count} 个已连接",
+  "summary_with_errors": "{on} 个已连接 · {bad} 个出错"
 }

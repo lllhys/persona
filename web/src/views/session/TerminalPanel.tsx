@@ -16,6 +16,7 @@ import { registerShortcut } from "../../lib/shortcuts";
 import { getSession, useStore } from "../../lib/store";
 import { lineCount } from "../../lib/terminal";
 import { isPaneAddress } from "../../lib/terminals";
+import { schemeScope, useTerminalAppearance } from "../../lib/terminal-appearance";
 import { shouldRefocus, terminalMenu, wantsOwnMenu, type TerminalMenuKey } from "../../lib/terminal-details";
 import { FIND_CLOSED, findReducer, isFindShortcut, queryFromSelection } from "../../lib/terminal-search";
 import {
@@ -97,6 +98,8 @@ function PaneTerminal({
   const lastTop = useRef(0);
   const lastHeight = useRef(0);
   const lastOlder = useRef(0);
+  // the terminal's own light / dark (Terminal settings › Appearance): its screen takes that scheme's tokens
+  const scheme = schemeScope(useTerminalAppearance());
 
   useEffect(() => {
     const f = new TerminalFeed(mid, sid);
@@ -282,8 +285,10 @@ function PaneTerminal({
           onScroll={onScroll}
           onWheel={onWheel}
           onContextMenu={onContextMenu}
+          data-terminal-scheme={scheme}
           className={cx(
             "relative min-h-0 flex-1 p-2 transition-[opacity,filter] duration-300 [overflow-anchor:none]",
+            scheme && "bg-page",
             drawn ? "overflow-x-hidden overflow-y-auto" : v?.pinned || older.length ? "overflow-auto" : "overflow-hidden",
             v?.stale && v.loaded && "opacity-45 grayscale",
             v?.dropping && "ring-2 ring-inset ring-accent",
@@ -518,7 +523,7 @@ export function TerminalPanel({
   // failed one shows its error there for as long as the Agent is still not running.
   const [paneOffline, setPaneOffline] = useState(false);
   const resume = useResume(mid, sid);
-  const agentRow = Boolean(session && !session.source_kind && !session.assistant && !isPaneAddress(sid));
+  const agentRow = Boolean(session && (!session.source_kind || isStoppedAgent(session)) && !session.assistant && !isPaneAddress(sid));
   const resumable = agentRow && (isStoppedAgent(session) || (paneOffline && stateOf(session!) === "offline") || resume.phase === "resuming");
 
   const dir = cwd || session?.cwd || "";

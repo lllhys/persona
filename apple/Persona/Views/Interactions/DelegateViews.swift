@@ -236,9 +236,7 @@ struct ReanswerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Text("Cancel").lineLimit(1) }
-                }
+                SheetClose { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { send() } label: {
                         if sending { ProgressView().controlSize(.small) } else { Text("Send").lineLimit(1) }

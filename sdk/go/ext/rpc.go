@@ -2,6 +2,7 @@ package ext
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -80,7 +81,7 @@ func (p *peer) serve(ctx context.Context, r io.Reader) error {
 			if p.onEvent != nil {
 				p.onEvent(f.Event, f.Params)
 			}
-		case f.ID != "":
+		case f.ID != "" && (f.Result != nil || f.Error != nil):
 			p.mu.Lock()
 			ch := p.pending[f.ID]
 			delete(p.pending, f.ID)
@@ -106,7 +107,8 @@ func (p *peer) handle(ctx context.Context, f frame) {
 	} else if b, merr := json.Marshal(res); merr != nil {
 		out.Error = &Error{Message: merr.Error()}
 	} else {
-		out.Result = b
+		_ = p.writeMarshaled(out, "result", b)
+		return
 	}
 	_ = p.write(out)
 }
@@ -130,6 +132,58 @@ func (p *peer) write(f frame) error {
 		return err
 	}
 	b = append(b, '\n')
+	return p.writeLine(b)
+}
+
+// writeMarshaled appends a successful json.Marshal payload without checking and copying it through RawMessage
+// again. f contains only ID, Method and Event; field is params or result, after those fields on the wire.
+func (p *peer) writeMarshaled(f frame, field string, payload []byte) error {
+	fields := [...]struct{ key, value string }{{"id", f.ID}, {"method", f.Method}, {"event", f.Event}}
+	// Marshal can produce deeply nested Go values that RawMessage's validation rejects. Count all containers
+	// (even in strings and siblings) conservatively before leaving encoding/json's 10,000-depth check out.
+	standard := len(payload) >= 20000 && bytes.Count(payload, []byte{'['})+bytes.Count(payload, []byte{'{'}) >= 10000
+	size := 1 + len(field) + 3 + len(payload) + 2
+	for _, v := range fields {
+		for i := 0; i < len(v.value); i++ {
+			if c := v.value[i]; c < 0x20 || c >= 0x7f || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+				standard = true
+				break
+			}
+		}
+		if v.value != "" {
+			size += len(v.key) + len(v.value) + 6
+		}
+	}
+	if standard {
+		if field == "params" {
+			f.Params = payload
+		} else {
+			f.Result = payload
+		}
+		return p.write(f)
+	}
+	b := make([]byte, 0, size)
+	b = append(b, '{')
+	for _, v := range fields {
+		if v.value == "" {
+			continue
+		}
+		b = append(b, '"')
+		b = append(b, v.key...)
+		b = append(b, '"', ':', '"')
+		b = append(b, v.value...)
+		b = append(b, '"')
+		b = append(b, ',')
+	}
+	b = append(b, '"')
+	b = append(b, field...)
+	b = append(b, '"', ':')
+	b = append(b, payload...)
+	b = append(b, '}', '\n')
+	return p.writeLine(b)
+}
+
+func (p *peer) writeLine(b []byte) error {
 	p.wmu.Lock()
 	defer p.wmu.Unlock()
 	select {
@@ -137,7 +191,7 @@ func (p *peer) write(f frame) error {
 		return ErrClosed
 	default:
 	}
-	_, err = p.w.Write(b)
+	_, err := p.w.Write(b)
 	return err
 }
 
@@ -159,7 +213,7 @@ func (p *peer) call(ctx context.Context, method string, params, out any) error {
 	if err != nil {
 		return err
 	}
-	if err := p.write(frame{ID: id, Method: method, Params: raw}); err != nil {
+	if err := p.writeMarshaled(frame{ID: id, Method: method}, "params", raw); err != nil {
 		return err
 	}
 	select {
@@ -183,5 +237,5 @@ func (p *peer) notify(event string, params any) error {
 	if err != nil {
 		return err
 	}
-	return p.write(frame{Event: event, Params: raw})
+	return p.writeMarshaled(frame{Event: event}, "params", raw)
 }

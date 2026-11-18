@@ -1,145 +1,182 @@
-// Run against mock_worktree_migration.py with dedicated loopback origins.
-// node web/e2e/sidebar-groups.mjs <web origin> <mock origin> <artifacts>
-import assert from "node:assert/strict";
+// The sidebar's groups (#9071) in a real browser against the mock hub, in Simplified Chinese: extensions' nav_pages name
+// 工作台 / 资产 / 家里 and their pages come in under those headings; Settings › General › Sidebar pages makes 生活 (first
+// named "Life", then renamed), moves built-in and extension pages between groups (the user's choice over the
+// manifest's), moves Pages to the end, and removes a group with Undo, no page lost; a second browser (another device)
+// draws the same arrangement from the hub. `--old-hub`: a hub without the route keeps the arrangement in the browser.
+// Light and dark screenshots of the sidebar and of the settings editor at 1440 × 900 and 390 × 844.
+//
+// Start the mock with MOCK_EXTENSIONS=1 MOCK_EXTENSION_COLUMNS=1 MOCK_SIDEBAR_GROUPS=1 (and MOCK_NAVIGATION=off for
+// --old-hub), and Vite (or `vite preview`) pointing at it (PERSONA_HUB_URL). The run sets the mock's arrangement.
+// node web/e2e/sidebar-groups.mjs <loopback web URL> <artifact directory> [--old-hub] [Chromium executable]
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 
-const [web, hub, output] = process.argv.slice(2);
-assert([web, hub].every((url) => /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(url ?? "")) && output);
-assert.equal((await (await fetch(`${hub}/mock/worktree-migration`)).json()).fixture, "worktree-migration");
-mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ channel: "chrome" });
+const args = process.argv.slice(2);
+const oldHub = args.includes("--old-hub");
+const [base, shots, executable] = args.filter((a) => a !== "--old-hub");
+if (!base || !shots || !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/.test(base)) {
+  console.error("usage: node web/e2e/sidebar-groups.mjs <loopback web URL> <artifact directory> [--old-hub] [Chromium executable]");
+  process.exit(2);
+}
+mkdirSync(shots, { recursive: true });
+const watchdog = setTimeout(() => {
+  console.error("RESULT: sidebar-groups timed out (300s)");
+  process.exit(124);
+}, 300_000);
+const root = base.replace(/\/$/, "");
 const results = [];
-const expandSessions = (sessions) => sessions.flatMap((s) => s.assistant ? [s] : [s, ...Array.from({ length: 24 }, (_, i) => ({ ...s, session_id: `${s.session_id}-copy-${i}`, title: `Synthetic Agent ${i + 1}`, pane_id: `${s.pane_id}-copy-${i}` }))]);
-const expandTodos = (todos) => todos.map((todo) => ({ ...todo, agents: (todo.agents ?? []).flatMap((a) => [a, ...Array.from({ length: 24 }, (_, i) => ({ ...a, session_id: `${a.session_id}-copy-${i}` }))]) }));
+const check = (name, ok, detail) => {
+  results.push({ name, ok: Boolean(ok), detail });
+  console.log(`${ok ? "ok  " : "FAIL"} ${name}${detail === undefined ? "" : ` ${JSON.stringify(detail)}`}`);
+};
+
+const browser = await chromium.launch(executable ? { executablePath: executable } : { channel: "chrome" });
+
+async function device({ width, height, theme = "light" }) {
+  const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme, deviceScaleFactor: 2, serviceWorkers: "block", hasTouch: width < 640 });
+  await context.addInitScript((theme) => {
+    localStorage.setItem("persona.theme", theme);
+    localStorage.setItem("persona.language", "zh-Hans");
+  }, theme);
+  await context.route("**/*", (route) => (new URL(route.request().url()).origin === new URL(root).origin ? route.continue() : route.abort()));
+  const p = await context.newPage();
+  await p.goto(`${root}/?token=mock`);
+  await p.waitForFunction(() => localStorage.getItem("persona.token"));
+  await p.waitForLoadState("networkidle");
+  return { context, p };
+}
+
+const navigation = (p, method, body) =>
+  p.evaluate(async ([method, body]) => {
+    const r = await fetch("/api/v1/navigation", { method, headers: { Authorization: `Bearer ${localStorage.getItem("persona.token")}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return r.status === 200 ? r.json() : { status: r.status };
+  }, [method, body]);
+
+/** The wide sidebar's (or the drawer's) groups as drawn: heading, then the pages' names under it. */
+const sidebarGroups = (p) =>
+  p.evaluate(() =>
+    [...document.querySelectorAll("[data-sidebar-column] [data-sidebar-group-heading]")]
+      .map((h) => [h.textContent.trim(), [...(h.parentElement?.querySelectorAll("a") ?? [])].map((a) => a.textContent.trim().replace(/[\d/]+$/, ""))])
+      .filter((_, i, all) => i < all.findIndex(([title]) => title.startsWith("Persona"))),
+  );
+
+async function editor(p, width) {
+  await p.goto(root + (width < 640 ? "/settings?tab=general" : "/settings"));
+  const group = p.locator('[data-settings-group="sidebar-pages"]');
+  await group.waitFor({ timeout: 20_000 });
+  return group;
+}
+const moveTo = (group, page, to) => group.locator(`li[data-page="${page}"] select`).selectOption({ label: to });
+async function newGroup(p, group, name) {
+  await group.getByRole("button", { name: "新建分组" }).click();
+  await group.getByLabel("分组名称").fill(name);
+  await group.getByRole("button", { name: "保存" }).click();
+  await p.waitForFunction((n) => [...document.querySelectorAll('[data-settings-group="sidebar-pages"] h3')].some((h) => h.textContent === n), name);
+}
+
+let failed = false;
 try {
-  for (const width of (process.env.SIDEBAR_WIDTHS?.split(",").map(Number) ?? [1440, 390])) for (const theme of ["light", "dark"]) for (const textSize of ["standard", "large"]) {
-    const context = await browser.newContext({ viewport: { width, height: 900 }, hasTouch: width === 390, colorScheme: theme, reducedMotion: "reduce" });
-    await context.addInitScript(({ theme, textSize }) => {
-      localStorage.setItem("persona.token", "synthetic-worktree-token");
-      localStorage.setItem("persona.language", "en");
-      localStorage.setItem("persona.theme", theme);
-      localStorage.setItem("persona.agentGrouping", "repo");
-      localStorage.setItem("persona.text-size", textSize);
-    }, { theme, textSize });
-    // Keep every original identity, and make each synthetic group long enough to scroll through.
-    await context.route("**/api/v1/sessions", async (route) => {
-      const response = await route.fetch();
-      if (response.status() === 304) return route.fulfill({ response });
-      const text = await response.text();
-      if (!text.trim()) return route.fulfill({ response });
-      const body = JSON.parse(text);
-      if (body.sessions) body.sessions = expandSessions(body.sessions);
-      await route.fulfill({ response, json: body });
-    });
-    await context.route("**/api/v1/todos", async (route) => {
-      const response = await route.fetch();
-      if (response.status() === 304) return route.fulfill({ response });
-      const text = await response.text();
-      if (!text.trim()) return route.fulfill({ response });
-      const body = JSON.parse(text);
-      if (body.todos) body.todos = expandTodos(body.todos);
-      await route.fulfill({ response, json: body });
-    });
-    await context.routeWebSocket(/.*/, (socket) => {
-      const server = socket.connectToServer();
-      server.onMessage((message) => {
-        const body = JSON.parse(String(message));
-        if (body.type === "sessions" && body.sessions) body.sessions = expandSessions(body.sessions);
-        if (body.type === "todos" && body.todos) body.todos = expandTodos(body.todos);
-        socket.send(JSON.stringify(body));
-      });
-    });
-    const page = await context.newPage();
-    page.setDefaultTimeout(15000);
-    const failures = [];
-    page.on("pageerror", (error) => failures.push(String(error)));
-    await page.goto(`${web}/agents`);
-    const sidebar = width === 390 ? page.getByRole("main") : page.locator("aside:visible");
-    const grouping = sidebar.getByRole("radiogroup", { name: "Group agents by" });
-    await grouping.waitFor();
-    await page.screenshot({ path: join(output, `${width}-${theme}-${textSize}-controls.png`) });
-    for (const mode of (process.env.SIDEBAR_GROUPINGS?.split(",") ?? ["To-do", "Machine", "Repo", "Project", "Status"])) {
-      const segment = grouping.getByRole("radio").filter({ hasText: new RegExp(`^${mode}$`) });
-      assert.equal(await segment.count(), 1, `${mode} grouping is offered`);
-      await segment.click();
-      const open = sidebar.getByRole("button", { name: "Expand all", exact: true });
-      if (await open.count()) await open.click();
-      await page.waitForTimeout(500); // Collapse releases its animation clipping after settling.
-      const check = await grouping.evaluate((bar) => {
-        const content = bar.closest("[data-sidebar-agents]");
-        const scroller = bar.closest("[data-sidebar-rows]") ?? bar.closest("main").querySelector(".overflow-y-auto");
-        scroller.scrollTop = 0;
-        const groups = [...content.querySelectorAll("[data-sidebar-group]")].filter((el) => el.parentElement.closest("[data-sidebar-group]")?.parentElement?.hasAttribute("data-sidebar-agents"));
-        const long = groups.filter((el) => el.getBoundingClientRect().height > 160);
-        const target = long[0];
-        if (!target) return { long: 0 };
-        const heading = target.querySelector(":scope > [data-sidebar-group-heading]");
-        const top = Number.parseFloat(getComputedStyle(heading).top);
-        scroller.scrollTop += heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top - top + 60;
-        return { long: long.length, pinned: Math.abs(heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top - top), personaBottom: scroller.querySelector("[data-sidebar-sticky]")?.getBoundingClientRect().bottom ?? scroller.getBoundingClientRect().top, headingTop: heading.getBoundingClientRect().top };
-      });
-      assert(check.long > 0, `${mode} fixture has a scrollable group`);
-      assert(check.pinned < 2, `${mode} heading pins to the scroller: ${JSON.stringify(check)}`);
-      assert(check.headingTop >= check.personaBottom - 1, `${mode} preserves Persona`);
-      const nested = await grouping.evaluate((bar) => {
-        const scroller = bar.closest("[data-sidebar-rows]") ?? bar.closest("main").querySelector(".overflow-y-auto");
-        const child = [...bar.closest("[data-sidebar-agents]").querySelectorAll("[data-sidebar-group] [data-sidebar-group]")].find((el) => el.getBoundingClientRect().height > scroller.clientHeight + 120);
-        if (!child) return { checked: false };
-        const parent = child.parentElement.closest("[data-sidebar-group]").querySelector(":scope > [data-sidebar-group-heading]");
-        const heading = child.querySelector(":scope > [data-sidebar-group-heading]");
-        const top = Number.parseFloat(getComputedStyle(heading).top);
-        scroller.scrollTop += heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top - top + 60;
-        return { checked: true, pinned: Math.abs(heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top - top) < 2, stacked: heading.getBoundingClientRect().top >= parent.getBoundingClientRect().bottom - 1 };
-      });
-      if (nested.checked) assert(nested.pinned && nested.stacked, `Nested headings stack and pin: ${JSON.stringify(nested)}`);
-      const toolbar = await grouping.evaluate((bar) => {
-        const root = bar.closest("[data-sidebar-agents]");
-        const header = root.querySelector("[data-sidebar-agents-controls]").parentElement;
-        const scroller = bar.closest("[data-sidebar-rows]") ?? bar.closest("main").querySelector(".overflow-y-auto");
-        const top = Number.parseFloat(getComputedStyle(header).top);
-        const rect = header.getBoundingClientRect();
-        const element = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-        return { pinned: Math.abs(rect.top - scroller.getBoundingClientRect().top - top) < 2, unobscured: header.contains(element), onlyOneAction: root.querySelectorAll("[data-sidebar-agents-controls] button[title='Collapse all'], [data-sidebar-agents-controls] button[title='Expand all']").length === 1 };
-      });
-      assert(toolbar.pinned && toolbar.unobscured && toolbar.onlyOneAction, `Toolbar stays pinned, clear and has one action: ${JSON.stringify(toolbar)}`);
-      await page.screenshot({ path: join(output, `${width}-${theme}-${textSize}-${mode.toLowerCase()}.png`) });
-      const transition = await grouping.evaluate((bar) => {
-        const scroller = bar.closest("[data-sidebar-rows]") ?? bar.closest("main").querySelector(".overflow-y-auto");
-        const groups = [...bar.closest("[data-sidebar-agents]").querySelectorAll("[data-sidebar-group]")].filter((el) => el.parentElement.closest("[data-sidebar-group]")?.parentElement?.hasAttribute("data-sidebar-agents") && el.getBoundingClientRect().height > 160);
-        if (groups.length < 2) return { siblings: false };
-        const saved = scroller.scrollTop;
-        const first = groups[0].querySelector(":scope > [data-sidebar-group-heading]");
-        const second = groups[1].querySelector(":scope > [data-sidebar-group-heading]");
-        const top = Number.parseFloat(getComputedStyle(second).top);
-        scroller.scrollTop += second.getBoundingClientRect().top - scroller.getBoundingClientRect().top - top + 30;
-        const replaced = first.getBoundingClientRect().bottom <= second.getBoundingClientRect().top + 1;
-        const actualTop = second.getBoundingClientRect().top;
-        const desiredTop = scroller.getBoundingClientRect().top + top;
-        const pinned = Math.abs(actualTop - desiredTop) < 2;
-        scroller.scrollTop = saved;
-        const restored = Math.abs(first.getBoundingClientRect().top - scroller.getBoundingClientRect().top - Number.parseFloat(getComputedStyle(first).top)) < 2;
-        return { siblings: true, replaced, pinned, restored, actualTop, desiredTop, scrollTop: scroller.scrollTop, maxScroll: scroller.scrollHeight - scroller.clientHeight };
-      });
-      if (transition.siblings) assert(transition.replaced && transition.pinned && transition.restored, `${mode} switches siblings and restores on reverse scroll: ${JSON.stringify(transition)}`);
-      await sidebar.getByRole("button", { name: "Collapse all", exact: true }).click();
-      await page.waitForTimeout(500);
-      assert.equal(await grouping.evaluate((bar) => [...bar.closest("[data-sidebar-agents]").querySelectorAll("[data-sidebar-group-heading] button[aria-expanded]")].filter((b) => !b.closest("[data-sidebar-agents-controls]")).every((b) => b.getAttribute("aria-expanded") === "false")), true);
-      results.push({ width, theme, textSize, mode, ...check, ...transition, nested, toolbar });
-    }
-    assert.deepEqual(failures, []);
-    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    // Finish intercepted polling responses before closing the context aborts their bodies.
-    await context.unrouteAll({ behavior: "wait" });
+  if (oldHub) {
+    const { context, p } = await device({ width: 1440, height: 900 });
+    check("the hub has no navigation route", (await navigation(p, "GET")).status === 404);
+    const group = await editor(p, 1440);
+    await newGroup(p, group, "生活");
+    await moveTo(group, "health", "生活");
+    check("the arrangement stays in this browser", JSON.parse(await p.evaluate(() => localStorage.getItem("sidebar.pages"))).assign?.health?.startsWith("u:"));
+    check("the setting says so", (await group.textContent()).includes("只存在这个浏览器里"));
+    await p.goto(`${root}/`);
+    await p.waitForLoadState("networkidle");
+    const drawn = await sidebarGroups(p);
+    check("the sidebar draws it after a reload", drawn.some(([t, pages]) => t === "生活" && pages.includes("健康")), drawn);
     await context.close();
+  } else {
+    const laptop = await device({ width: 1440, height: 900 });
+    const { p } = laptop;
+    await navigation(p, "PUT", { pages: { order: [], shown: [], hidden: [] } });
+    await p.reload();
+    await p.waitForLoadState("networkidle");
+    let drawn = await sidebarGroups(p);
+    check("an extension's nav_page comes in under the group it names", drawn.some(([t, pages]) => t === "工作台" && pages.includes("Today")), drawn);
+
+    const group = await editor(p, 1440);
+    // the extensions' pages past the first three wait under More: put them in the list
+    // (pages switched on by hand count toward the three, so every extension page is switched on, the ones in the list too)
+    for (let pass = 0; pass < 2; pass++) {
+      for (const on of await group.locator('li[data-page^="p:"] [role="switch"]').all()) {
+        if ((await on.getAttribute("aria-checked")) !== "true") await on.click();
+      }
+    }
+    await newGroup(p, group, "Life");
+    await group.getByRole("button", { name: "重命名Life" }).click();
+    await group.getByLabel("分组名称").fill("生活");
+    await group.getByRole("button", { name: "保存" }).click();
+    for (const [page, to] of [["home", "工作台"], ["inbox", "工作台"], ["todos", "工作台"], ["health", "生活"], ["routines", "生活"], ["p:example-console/calendar", "生活"], ["kb", "资产"], ["machines", "家里"]]) {
+      await moveTo(group, page, to);
+    }
+    // Today first in 工作台
+    const up = group.locator('li[data-page="p:example-today/today"]').getByRole("button", { name: "把「Today」上移" });
+    while (await up.isEnabled()) await up.click();
+    // 生活 right after 工作台, and Pages to the end
+    for (let i = 0; i < 2; i++) await group.locator(`[data-page-group^="u:"]`).first().getByRole("button", { name: "把「生活」上移" }).click();
+    for (let i = 0; i < 4; i++) await group.locator('[data-page-group=""]').getByRole("button", { name: "把「页面」下移" }).click();
+    // a group made and removed: its page goes back, and Undo brings the group back
+    await newGroup(p, group, "临时");
+    await moveTo(group, "terminal", "临时");
+    await group.getByRole("button", { name: "移除临时" }).click();
+    await p.getByRole("button", { name: "撤销" }).waitFor();
+    const afterRemove = await p.evaluate(() => JSON.parse(localStorage.getItem("sidebar.pages")));
+    check("removing a group gives its page back", !Object.values(afterRemove.assign ?? {}).some((g) => afterRemove.groups.every((x) => x.id !== g)) && !afterRemove.groups.some((g) => g.title === "临时"));
+    await p.getByRole("button", { name: "撤销" }).click();
+    await p.waitForFunction(() => JSON.parse(localStorage.getItem("sidebar.pages")).groups.some((g) => g.title === "临时"));
+    check("Undo brings the removed group back", true);
+    await group.getByRole("button", { name: "移除临时" }).click();
+    await p.waitForFunction(() => !JSON.parse(localStorage.getItem("sidebar.pages")).groups.some((g) => g.title === "临时"));
+
+    await p.goto(`${root}/`);
+    await p.waitForLoadState("networkidle");
+    drawn = await sidebarGroups(p);
+    check("the groups in the user's order: 工作台, 生活, 资产, 家里, then Pages", JSON.stringify(drawn.map(([t]) => t)) === JSON.stringify(["工作台", "生活", "资产", "家里", "页面"]), drawn);
+    const under = Object.fromEntries(drawn);
+    check("built-in and extension pages mixed in the groups, Today first", under["工作台"]?.[0] === "Today" && under["工作台"]?.includes("总览") && under["工作台"]?.includes("Today") && under["生活"]?.includes("健康"), under);
+    check("the user's choice over the manifest's: Calendar in 生活", under["生活"]?.includes("Calendar") && !under["工作台"]?.includes("Calendar"), under);
+    check("no page lost", ["总览", "收件箱", "健康", "Today", "Lark", "Calendar", "Assets", "Home devices", "设置"].every((n) => drawn.some(([, pages]) => pages.includes(n))), drawn);
+    const hub = await navigation(p, "GET");
+    check("the hub keeps the arrangement", hub.pages?.groups?.some((g) => g.title === "生活"), hub.pages);
+
+    // another device draws it from its hello
+    const phone = await device({ width: 1440, height: 900 });
+    await phone.p.waitForFunction(() => (JSON.parse(localStorage.getItem("sidebar.pages") ?? "{}").groups ?? []).some((g) => g.title === "生活"), null, { timeout: 20_000 });
+    const there = await sidebarGroups(phone.p);
+    check("another device draws the same groups", JSON.stringify(there) === JSON.stringify(drawn), there);
+    await phone.context.close();
+
+    for (const theme of ["light", "dark"]) {
+      for (const [width, height] of [[1440, 900], [390, 844]]) {
+        const d = await device({ width, height, theme });
+        await d.p.waitForFunction(() => (JSON.parse(localStorage.getItem("sidebar.pages") ?? "{}").groups ?? []).some((g) => g.title === "生活"), null, { timeout: 20_000 });
+        if (width < 640) {
+          await d.p.getByRole("button", { name: /侧边栏/ }).first().click();
+          await d.p.waitForTimeout(500); // the drawer slides in
+          const groups = await sidebarGroups(d.p);
+          check(`${theme} ${width}: the drawer has the groups below its grid`, groups.some(([t]) => t === "工作台"), groups.map(([t]) => t));
+        }
+        await d.p.screenshot({ path: join(shots, `sidebar-${theme}-${width}.png`) });
+        const s = await editor(d.p, width);
+        await s.evaluate((e) => e.scrollIntoView({ block: "start" }));
+        await d.p.screenshot({ path: join(shots, `editor-${theme}-${width}.png`) });
+        await d.context.close();
+      }
+    }
+    await laptop.context.close();
   }
-} catch (error) {
-  for (const context of browser.contexts()) for (const page of context.pages()) {
-    await page.screenshot({ path: join(output, "failure.png") });
-    console.error(await page.locator("aside").evaluateAll((els) => els.map((el) => ({ rect: el.getBoundingClientRect().toJSON(), text: el.textContent.slice(0, 150) }))));
-  }
-  throw error;
-} finally { await browser.close(); }
-writeFileSync(join(output, "results.json"), JSON.stringify(results, null, 2));
-console.log(`PASS ${results.length} grouping / viewport / theme combinations`);
+} catch (e) {
+  failed = true;
+  console.error(e);
+}
+clearTimeout(watchdog);
+await browser.close();
+writeFileSync(join(shots, oldHub ? "results-old-hub.json" : "results.json"), JSON.stringify(results, null, 2));
+const ok = !failed && results.length > 0 && results.every((r) => r.ok);
+console.log(`RESULT: sidebar-groups ${ok ? "passed" : "failed"} (${results.filter((r) => r.ok).length}/${results.length})`);
+process.exit(ok ? 0 : 1);

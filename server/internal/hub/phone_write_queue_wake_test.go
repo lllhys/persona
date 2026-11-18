@@ -47,6 +47,7 @@ func TestPhoneWriteQueueReturnsWhileWakePushWaits(t *testing.T) {
 	t.Cleanup(unblock) // Release the held request before directHub closes its server.
 	h.store = setupTestDB(t)
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "phone", Platform: "ios", Tools: []proto.Tool{{Name: "phone_reminders_create"}}})
+	waitHelloWrites(t, h)
 	result := make(chan proto.ToolResult, 1)
 	go func() {
 		result <- h.callPhone(context.Background(), "phone_reminders_create", json.RawMessage(`{"title":"queued with a wake","queue_if_offline":true}`))
@@ -109,6 +110,7 @@ func phoneWakeTestHub(t *testing.T, configured bool) (*Hub, *fleetPushSink, *pho
 		}
 	}
 	h.setPhoneTools(db.PhoneToolRegistration{DeviceID: "phone", Platform: "ios", Tools: []proto.Tool{{Name: "phone_reminders_create"}}})
+	waitHelloWrites(t, h)
 	return h, sink, store
 }
 

@@ -156,7 +156,13 @@ func TestPasswordGuide(t *testing.T) {
 			t.Errorf("PasswordGuide(%q) = %q, want it to mention %q", email, got, want)
 		}
 	}
-	for _, email := range []string{"a@gmail.com", "a@icloud.com", "a@example.com", "nope"} {
+	for email, want := range map[string]string{"a@gmail.com": "myaccount.google.com/apppasswords", "a@googlemail.com": "apppasswords",
+		"a@icloud.com": "account.apple.com"} {
+		if got := PasswordGuide(i18n.ZhHans, email); !strings.Contains(got, want) || !strings.Contains(got, "专用密码") {
+			t.Errorf("PasswordGuide(%q) = %q, want it to mention %q", email, got, want)
+		}
+	}
+	for _, email := range []string{"a@outlook.com", "a@example.com", "nope"} {
 		if got := PasswordGuide(i18n.En, email); got != "" {
 			t.Errorf("PasswordGuide(%q) = %q, want none", email, got)
 		}

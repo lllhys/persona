@@ -60,6 +60,27 @@ data class BriefFailed(
 
 data class BriefProgress(val id: String, val title: String = "", val stage: String? = null, val stageKind: String? = null)
 
+/** The settings page of this app a recommended mechanism is turned on at. */
+enum class BriefSetupPage { SessionTriage, SupervisorModel, StandingAuthorizations }
+
+/**
+ * One line of the week's recommended setup (#5085, docs/assistant/assistant.md "Recommended setup"): [text] is the hub's
+ * whole line (its count, its cost, where it is turned on), drawn as it came; [id] names the mechanism.
+ */
+data class BriefSetup(val id: String, val text: String, val count: Int = 0) {
+    /**
+     * Where this app turns the mechanism on, for those it has a page for: Session triage's three switches, the
+     * background supervisor's model purpose (#5805), and standing authorizations (#9247). Null for the others (the
+     * remembered kinds of task, the delegate, leaders and the reviews have no page here) and for a mechanism a newer hub names.
+     */
+    val page: BriefSetupPage? get() = when (id) {
+        "triage_decide", "triage_auto_continue", "triage_wake" -> BriefSetupPage.SessionTriage
+        "supervisor_tier" -> BriefSetupPage.SupervisorModel
+        "standing_authorizations" -> BriefSetupPage.StandingAuthorizations
+        else -> null
+    }
+}
+
 data class BriefBody(
     val title: String = "",
     val hours: Int = 12,
@@ -74,6 +95,8 @@ data class BriefBody(
     val laterTotal: Int = 0,
     val progress: List<BriefProgress> = emptyList(),
     val progressTotal: Int = 0,
+    /** The recommended-setup lines, on the first briefing of a week that names something; empty otherwise and from an older hub. */
+    val setup: List<BriefSetup> = emptyList(),
 ) {
     val pastMore: Int get() = (doneTotal + failedTotal - done.size - failed.size).coerceAtLeast(0)
     val laterMore: Int get() = (laterTotal - later.size).coerceAtLeast(0)
@@ -117,9 +140,13 @@ val FeedItem.brief: BriefBody? get() {
             BriefProgress(it, row.text("title").orEmpty(), row.text("stage"), row.text("stage_kind"))
         }
     }
+    val setup = body.rows("setup").mapNotNull { row ->
+        val id = row.text("id")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        row.text("text")?.takeIf(String::isNotBlank)?.let { BriefSetup(id, it, row.whole("count") ?: 0) }
+    }
     return BriefBody(body.text("title").orEmpty(), body.whole("hours") ?: 12,
         (body["waiting_unknown"] as? JsonPrimitive)?.contentOrNull == "true", waiting, done,
         maxOf(body.whole("done_total") ?: 0, done.size), failed, maxOf(body.whole("failed_total") ?: 0, failed.size),
         accept, later, maxOf(body.whole("later_total") ?: 0, later.size), progress,
-        maxOf(body.whole("progress_total") ?: 0, progress.size))
+        maxOf(body.whole("progress_total") ?: 0, progress.size), setup)
 }

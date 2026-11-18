@@ -53,9 +53,13 @@ func joinCounter(t *testing.T) (*httptest.Server, func() int) {
 	n := 0
 	joins := builtinJoins()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		n++
-		mu.Unlock()
+		// Only a trade counts: a Persona node on the machine running these tests probes this server among an agent's
+		// ports with a GET / of its own (node/ports.go), which is no join.
+		if r.Method == http.MethodPost && r.URL.Path == bus.JoinPath {
+			mu.Lock()
+			n++
+			mu.Unlock()
+		}
 		joins.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)

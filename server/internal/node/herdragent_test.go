@@ -31,7 +31,7 @@ func TestHerdrAgentOnlyInHerdrPanes(t *testing.T) {
 		{herdr, "claude", "claude"},
 		{herdr, "codex", "codex"},
 		{herdr, traexAgent, ""},
-		{herdr, piAgent, ""},
+		{herdr, piAgent, "pi"},
 		{orca, "claude", ""},
 		{orca, "codex", ""},
 	} {

@@ -10,6 +10,8 @@
   "rejected": "打回",
   "rejected_feedback": "打回：{feedback}",
   "allowed": "允许",
+  "allowed_edited": "允许（已编辑）",
+  "denied_reason": "拒绝：{reason}",
   "always_allowed": "总是允许",
   "denied": "拒绝",
   "handled": "已处理",

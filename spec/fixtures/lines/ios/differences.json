@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "domain": "lines",
+  "description": "Where current iOS (apple/) differs from the lines corpus. The corpus stays the shared contract that Android's LinesFixtureTest checks; the iOS replay in ../README.md applies these entries to it before comparing, and fails on an entry that no longer changes anything or names a case or turn the corpus does not have.",
+  "turn_wake_state": {
+    "why": "#2996 removed Turn.afterWake with the wake chip and its drawer, so a turn has no after_wake_ids. Since #9140 a wake opens a turn of its own on every client, so no turn has a wake pending inside it or a tail after its answer: has_pending_wake is false on every turn, and the list below is empty.",
+    "source": [
+      "apple/Shared/ChatStore.swift: Turn.wakes / ChatBlock.build",
+      "apple/PersonaTests/ChatStoreTests.swift: aBackgroundWakeOpensItsOwnExchange",
+      "apple/PersonaTests/WakeReplyOrderTests.swift: theAnswerBeforeAWakeStaysWhileTheWokenWorkRunsStreamsAndEnds",
+      "apple/PersonaTests/ChatLinesTests.swift: aWakeOpensItsOwnWorkLineAndLeavesTheAnswerBeforeIt"
+    ],
+    "drop": "after_wake_ids",
+    "set": "has_pending_wake",
+    "pending": []
+  },
+  "cases": [
+    {
+      "name": "regular_user_images",
+      "why": "The picture is a transcript entry of its own, so since #1015 (by entry since #2112) it is a message of its own that opens the next turn, not a picture above the text before it.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (sameMessage by Item.entry) / ChatRow.userInput",
+        "apple/PersonaTests/ChatLinesTests.swift: aPictureSentAloneIsAMessageOfItsOwn / aPictureAfterItsTextStaysWithItsMessage"
+      ],
+      "replace": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "请检查示例项目",
+            "type": "user"
+          },
+          {
+            "id": "img-2#0",
+            "is_input": false,
+            "item_ids": [
+              "2#0"
+            ],
+            "type": "user_images"
+          },
+          {
+            "id": "3#0",
+            "is_input": false,
+            "text": "检查完成",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": "3#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "2#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "2#0",
+              "3#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "2#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      }
+    },
+    {
+      "name": "absorbed_user_images",
+      "why": "Since #2112 user pictures are user input: the queued pictures join the turn's users, never its process; the lines are unchanged.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (users.append for every userInput; process holds no user input)",
+        "apple/PersonaTests/SupervisionTests.swift: imageOnlyQueuedInputAfterSupervisionOpensANewTurn / sameEntryTextAndImagesStayInTheSupervisionRound"
+      ],
+      "turn_fields": {
+        "1#0": {
+          "process_ids": [
+            "tools-2#0"
+          ],
+          "user_ids": [
+            "1#0",
+            "3#0",
+            "4#0",
+            "5#0"
+          ]
+        }
+      }
+    },
+    {
+      "name": "photos_after_wake_stay_with_message",
+      "why": "Since #2112 the picture sent with the message is user input: it joins the woken turn's users, not its process; it still stays with its message.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (users.append for every userInput; process holds no user input)",
+        "apple/PersonaTests/SupervisionTests.swift: imageOnlyQueuedInputAfterSupervisionOpensANewTurn / sameEntryTextAndImagesStayInTheSupervisionRound",
+        "apple/PersonaTests/ChatStoreTests.swift: picturesSentAfterAWakeStayWithTheirMessage"
+      ],
+      "turn_fields": {
+        "3#0": {
+          "process_ids": [
+            "3#0",
+            "4#0"
+          ],
+          "user_ids": [
+            "message#0",
+            "message#1"
+          ]
+        }
+      }
+    },
+    {
+      "name": "tool_images_belong_to_call",
+      "why": "The user picture is a transcript entry of its own, so since #1015 (by entry since #2112) it opens its own turn with the tool call and the answer: the work line is w-2#0, which open_work does not open.",
+      "source": [
+        "apple/Shared/ChatStore.swift: ChatBlock.build (sameMessage by Item.entry) / ChatRow.userInput",
+        "apple/PersonaTests/ChatLinesTests.swift: aPictureSentAloneIsAMessageOfItsOwn / aPictureAfterItsTextStaysWithItsMessage"
+      ],
+      "replace": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "请检查示例项目",
+            "type": "user"
+          },
+          {
+            "id": "img-2#0",
+            "is_input": false,
+            "item_ids": [
+              "2#0"
+            ],
+            "type": "user_images"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-2#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "3#0",
+                "image_count": 1,
+                "name": "Bash",
+                "result_id": "4#0",
+                "result_text": "ok",
+                "running": false,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 0
+          },
+          {
+            "id": "vi-2#0",
+            "image_ids": [
+              "d:iVBORw0KGgo=12"
+            ],
+            "is_input": false,
+            "type": "viewed"
+          },
+          {
+            "id": "6#0",
+            "is_input": false,
+            "text": "检查完成",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": null,
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": "6#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "2#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "2#0",
+              "tools-3#0",
+              "6#0"
+            ],
+            "process_ids": [
+              "tools-3#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "2#0"
+            ],
+            "wake_ids": []
+          }
+        ]
+      }
+    }
+  ]
+}

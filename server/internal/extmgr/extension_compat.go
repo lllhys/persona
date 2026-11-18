@@ -160,6 +160,8 @@ type legacyUIPlace struct {
 	Opens         string           `json:"opens,omitempty"`
 	Badge         *extension.Badge `json:"badge,omitempty"`
 	Connector     string           `json:"connector,omitempty"`
+	// Group as on the new path: an app old enough for these keys reads no group and ignores it
+	Group *extension.UIGroup `json:"group,omitempty"`
 }
 
 func legacyUIPlaces(us []UIPlace) []legacyUIPlace {

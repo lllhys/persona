@@ -144,7 +144,7 @@ class AndroidTagReleaseTest(unittest.TestCase):
         directory.mkdir()
         (directory / "unsigned.apk").write_bytes(b"PK unsigned")
         built = dict(repository="example/app", source_sha=self.commit, unsigned_sha256=worker.digest(directory / "unsigned.apk"),
-                     package="org.example.persona", version_code=100001, version_name="0.3.0")
+                     package="org.example.persona", version_code=100001, version_name="0.3.0", build_commit=self.commit)
         worker.atomic_json(directory / "build.json", built)
         config = dict(self.config, application_id="org.example.persona")
 

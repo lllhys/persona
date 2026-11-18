@@ -5,7 +5,7 @@
 // PromptComposer.swift): files this chat's tools touched and the session's folder (a query with a slash browses that folder
 // on the session's computer: `src/` lists src), the hub's workspaces in the Persona assistant, other sessions. Picking a
 // folder keeps browsing, a file types `@path `, a workspace or a session becomes a context chip (Composer.tsx).
-import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type Ref } from "react";
 import { api, enc } from "../../lib/api";
 import { BUSY_MOTION } from "../../lib/busy-motion";
 import type { FsListing } from "../../lib/files";
@@ -19,6 +19,7 @@ import { hasFinePointer } from "../../lib/viewport";
 import { cx, EASE } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { t } from "../../i18n";
+import type { MentionSkill, SkillSource } from "../../lib/skill-mentions";
 
 export interface MentionSource {
   /** The session's folder: relative paths and the first listing start here. */
@@ -29,9 +30,12 @@ export interface MentionSource {
   files: () => string[];
   /** Offer the hub's workspaces (GET /workspaces): the Persona assistant, which works on any computer. */
   workspaces?: boolean;
+  /** Execution catalog. Ordinary Agents use session-owned facts; environment changes invalidate visible rows. */
+  skills?: SkillSource;
 }
 
 export type MentionRow =
+  | { kind: "skill"; id: string; skill: MentionSkill }
   | { kind: "file"; id: string; name: string; detail: string; insert: string; dir: boolean }
   | { kind: "workspace"; id: string; name: string; detail: string; workspace: Workspace }
   | { kind: "session"; id: string; name: string; detail: string; session: Session };
@@ -47,6 +51,7 @@ export interface ComposerPanelHandle {
 }
 
 type Entry = { kind: "action"; action: PanelAction; label: string; icon: IconName; hint?: string; checked?: boolean } | { kind: "row"; row: MentionRow };
+type PanelSkills = { rows: (query: string) => MentionRow[]; loading: boolean };
 
 const NO_SESSIONS: Record<string, Session[]> = {};
 const NO_MACHINES: Machine[] = [];
@@ -56,7 +61,7 @@ const EMPTY_PER_GROUP = 3;
 
 /** The rows for what is typed; the folder listings come from the session's computer (`/fs`), read once per folder while
  *  the panel is open. */
-export function useMentionRows(query: string, source: MentionSource | undefined, machineId: string | undefined): { rows: MentionRow[]; loading: boolean } {
+export function useMentionRows(query: string, source: MentionSource | undefined, machineId: string | undefined, skills?: PanelSkills): { rows: MentionRow[]; loading: boolean } {
   const sessions = useStore((s) => (source ? s.sessions : NO_SESSIONS));
   const machines = useStore((s) => (source ? s.machines : NO_MACHINES));
   const workspaces = useWorkspaces(Boolean(source?.workspaces));
@@ -110,7 +115,7 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
       }));
     }
     const q = query.toLowerCase();
-    const out: MentionRow[] = [];
+    const out: MentionRow[] = skills?.rows(q) ?? [];
     const used = new Set<string>();
     for (const p of files) {
       const rel = relPath(p, cwd);
@@ -132,11 +137,12 @@ export function useMentionRows(query: string, source: MentionSource | undefined,
     for (const s of otherSessions(Object.values(sessions).flat(), source.self, q)) {
       out.push({ kind: "session", id: `session:${s.machine_id}/${s.session_id}`, name: displayTitle(s), detail: sessionDetail(s), session: s });
     }
-    return out.slice(0, MAX_ROWS);
+    // A large skill inventory must not crowd the existing resource groups out of the empty panel.
+    return (q.trim() ? out : firstOfEach(out)).slice(0, MAX_ROWS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, source, listing, sessions, cwd, files, workspaces, machines]);
+  }, [query, source, listing, sessions, cwd, files, workspaces, machines, skills?.rows]);
 
-  return { rows, loading: (loading && !listing) || (Boolean(source?.workspaces) && workspaces === null) };
+  return { rows, loading: Boolean((loading && !listing) || (source?.workspaces && workspaces === null) || skills?.loading) };
 }
 
 /** The hub's workspaces, read once each time the panel opens (null while reading; empty when the hub can't say). */
@@ -155,17 +161,11 @@ function useWorkspaces(on: boolean): Workspace[] | null {
   return list;
 }
 
-function rowIcon(r: MentionRow): IconName {
-  if (r.kind === "session") return "chat";
-  if (r.kind === "workspace") return "folder";
-  return r.dir ? "folder" : "file";
-}
-
 /** With an empty query, a few of each resource: the files used here, the folder's first entries, workspaces, sessions. */
 function firstOfEach(rows: MentionRow[]): MentionRow[] {
   const seen = new Map<string, number>();
   return rows.filter((r) => {
-    const group = r.id.slice(0, r.id.indexOf(":"));
+    const group = r.id.split(":", 1)[0];
     const n = seen.get(group) ?? 0;
     seen.set(group, n + 1);
     return n < EMPTY_PER_GROUP;
@@ -182,6 +182,7 @@ export function ComposerPanel({
   onPick,
   onClose,
   handle,
+  skills,
 }: {
   /** "plus": opened from the + with its own search box; "at": a typed @, filtered by `query`. */
   from: "plus" | "at";
@@ -196,20 +197,25 @@ export function ComposerPanel({
   /** Esc, Backspace in an empty search, a click outside: `refocus` puts the caret back in the message box. */
   onClose: (refocus: boolean) => void;
   handle?: Ref<ComposerPanelHandle>;
+  skills?: PanelSkills & {
+    row: (skill: MentionSkill, common: ComponentProps<"button">) => ReactNode;
+    status?: ReactNode;
+  };
 }) {
   const [search, setSearch] = useState("");
   const q = from === "plus" ? search : query;
+  const searchLabel = t("chat-composerpanel.search");
   const browsing = Boolean(source && browseTarget(q, source.cwd));
   const empty = !q.trim();
-  const { rows, loading } = useMentionRows(q, source, machineId);
+  const { rows, loading } = useMentionRows(q, source, machineId, skills);
 
   const entries = useMemo<Entry[]>(() => {
-    const actions: Entry[] = [];
+    const actions: Extract<Entry, { kind: "action" }>[] = [];
     if (attach) {
       actions.push({ kind: "action", action: "attach", label: t(attach === "files" ? "chat-composerpanel.add_files" : "chat-composerpanel.add_images"), icon: "clip", hint: attach === "files" ? t("chat-composerpanel.add_files_hint") : undefined });
     }
     if (plan) actions.push({ kind: "action", action: "plan", label: modeTitle("plan"), icon: "list", checked: plan.on });
-    const resources: Entry[] = (empty ? firstOfEach(rows) : rows).map((row) => ({ kind: "row", row }));
+    const resources: Entry[] = rows.map((row) => ({ kind: "row", row }));
     if (browsing) return resources;
     if (empty) return [...actions, ...resources];
     // a typed query is a resource first: an Add row comes after them, and only when a word of it starts with the query,
@@ -219,7 +225,7 @@ export function ComposerPanel({
       const l = label.toLowerCase();
       return l.startsWith(lq) || l.split(/[\s…]+/).some((w) => w.startsWith(lq));
     };
-    return [...resources, ...actions.filter((a) => a.kind === "action" && starts(a.label))];
+    return [...resources, ...actions.filter((a) => starts(a.label))];
   }, [attach, plan, rows, empty, browsing, q]);
 
   const [active, setActive] = useState(0);
@@ -247,10 +253,10 @@ export function ComposerPanel({
   useImperativeHandle(handle, () => ({ key }));
 
   // the glide highlight (the slash menu's): one fill moving to the active row
-  const rowRefs = useRef(new Map<number, HTMLElement>());
+  const rowRefs = useRef<(HTMLElement | null)[]>([]);
   const [box, setBox] = useState<{ top: number; height: number } | null>(null);
   useLayoutEffect(() => {
-    const el = rowRefs.current.get(current);
+    const el = rowRefs.current[current];
     setBox(el ? { top: el.offsetTop, height: el.offsetHeight } : null);
     el?.scrollIntoView({ block: "nearest" });
   }, [current, entries]);
@@ -274,20 +280,18 @@ export function ComposerPanel({
     if (from === "plus" && hasFinePointer()) searchBox.current?.focus({ preventScroll: true });
   }, [from]);
 
-  const addRows = entries.filter((e) => e.kind === "action").length;
+  const hasActions = entries.some((e) => e.kind === "action");
   const row = (e: Entry, i: number) => {
     const on = i === current;
     const common = {
       ref: (el: HTMLElement | null) => {
-        if (el) rowRefs.current.set(i, el);
-        else rowRefs.current.delete(i);
+        rowRefs.current[i] = el;
       },
       type: "button" as const,
       role: "option",
       "aria-selected": on,
-      onMouseDown: (ev: React.MouseEvent) => ev.preventDefault(),
       // on a move, not on entering: the panel opening under a resting pointer leaves the first row active
-      onMouseMove: () => setActive((a) => (a === i ? a : i)),
+      onMouseMove: () => setActive(i),
       onClick: () => choose(e),
     };
     if (e.kind === "action") {
@@ -300,9 +304,10 @@ export function ComposerPanel({
       );
     }
     const r = e.row;
+    if (r.kind === "skill") return skills?.row(r.skill, common);
     return (
       <button key={r.id} {...common} title={r.detail ? `${r.name} · ${r.detail}` : r.name} className="relative z-10 flex h-[44px] w-full items-center gap-2 rounded-[8px] px-[10px] text-left text-[14px] text-ink">
-        <Icon name={rowIcon(r)} size={16} className="shrink-0 text-ink-3" />
+        <Icon name={r.kind === "session" ? "chat" : r.kind === "workspace" || r.dir ? "folder" : "file"} size={16} className="shrink-0 text-ink-3" />
         <span className="min-w-0 truncate">{r.name}</span>
         {r.detail && <span className="ml-auto max-w-[min(240px,50%)] shrink-0 truncate pl-2 text-[12px] text-ink-3">{r.detail}</span>}
       </button>
@@ -335,8 +340,8 @@ export function ComposerPanel({
             type="text"
             value={search}
             data-composer-panel-search
-            aria-label={t("chat-composerpanel.search")}
-            placeholder={t("chat-composerpanel.search")}
+            aria-label={searchLabel}
+            placeholder={searchLabel}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing || e.keyCode === 229) {
@@ -359,8 +364,8 @@ export function ComposerPanel({
       )}
       <div role="listbox" aria-label={t("chat-composerpanel.label")} className="min-h-0 flex-1 overflow-y-auto">
         <div className="relative">
-          <span aria-hidden className="pointer-events-none absolute inset-x-0 rounded-[8px] bg-hover" style={{ top: box?.top ?? 0, height: box?.height ?? 0, opacity: box ? 1 : 0, transition: `top 200ms ${EASE}, height 200ms ${EASE}` }} />
-          {empty && !browsing && addRows > 0 && <div className="flex h-6 items-center px-[10px] text-[12px] font-medium text-ink-3">{t("chat-composerpanel.add")}</div>}
+          <span aria-hidden className="pointer-events-none absolute inset-x-0 rounded-[8px] bg-hover" style={{ ...box, opacity: box ? 1 : 0, transition: `top 200ms ${EASE}, height 200ms ${EASE}` }} />
+          {empty && !browsing && hasActions && <div className="flex h-6 items-center px-[10px] text-[12px] font-medium text-ink-3">{t("chat-composerpanel.add")}</div>}
           {entries.map(row)}
         </div>
         {loading && !rows.length && (
@@ -370,12 +375,13 @@ export function ComposerPanel({
         )}
         {!loading && !entries.length && (from === "at" || !empty) && (
           <div className="flex h-10 items-center justify-center text-[13px] text-ink-3">
-            {browsing ? t("chat-composerpanel.no_match_in_folder") : empty ? t("chat-composerpanel.search") : t("chat-composerpanel.no_match")}
+            {browsing ? t("chat-composerpanel.no_match_in_folder") : empty ? searchLabel : t("chat-composerpanel.no_match")}
           </div>
         )}
       </div>
+      {skills?.status}
       {/* under the rows, not scrolled with them: what typing after the @ does */}
-      {from === "at" && empty && entries.length > 0 && <div className="mt-1.5 shrink-0 border-t border-line px-[10px] pt-2 pb-1 text-[12px] text-ink-3">{t("chat-composerpanel.search")}</div>}
+      {from === "at" && empty && entries.length > 0 && <div className="mt-1.5 shrink-0 border-t border-line px-[10px] pt-2 pb-1 text-[12px] text-ink-3">{searchLabel}</div>}
     </div>
   );
 }

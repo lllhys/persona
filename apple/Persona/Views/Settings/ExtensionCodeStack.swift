@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 // Drawing the code page's blocks (ExtensionCodePage.swift): one lazy stack, each block a row; the tabs over the page,
 // a single file's lines, the phone's directory pages.
@@ -46,6 +47,15 @@ struct CodeBlockStack: View {
                     withAnimation(Theme.Motion.layout) { proxy.scrollTo(Self.diffAnchor(path), anchor: .top) }
                     state.scrollTo = nil
                 }
+                .onChange(of: state.jump) { _, id in
+                    guard let id else { return }
+                    state.jump = nil
+                    // After the diff it is in has unfolded and been laid out.
+                    Task { @MainActor in
+                        await Task.yield()
+                        withAnimation(Theme.Motion.layout) { proxy.scrollTo(Self.threadAnchor(id), anchor: .center) }
+                    }
+                }
             }
         } else {
             VStack(alignment: .leading, spacing: Theme.Space.flush) { rows }
@@ -53,6 +63,7 @@ struct CodeBlockStack: View {
     }
 
     static func diffAnchor(_ path: String) -> String { "diff-anchor:" + path }
+    static func threadAnchor(_ id: String) -> String { "thread-anchor:" + id }
 
     @ViewBuilder private var rows: some View {
         if let lookPicker {
@@ -67,7 +78,10 @@ struct CodeBlockStack: View {
         }
         ForEach(blocks) { b in
             block(b)
-            if case .gap(let id) = b, id.hasPrefix("gap:"), let lines = model.fileLines[String(id.dropFirst(4))] {
+            // Lines that came for a component (a native stream page's), drawn under it; a diff with `context` shows its
+            // own in its gaps.
+            if case .gap(let id) = b, id.hasPrefix("gap:"), let lines = model.fileLines[String(id.dropFirst(4))],
+               diffs[lines.path]?.context == nil {
                 CodeFileBlock(code: .init(key: "context:" + id, path: lines.path,
                                          text: lines.lines.joined(separator: "\n"), startLine: lines.start),
                               model: model, link: $link, fills: false)
@@ -112,6 +126,7 @@ struct CodeBlockStack: View {
                     }
                     if let more { ExtensionMoreRow(more: more, model: model, link: $link) }
                 }
+                .environment(\.extensionCardInset, CardStyle.padding)
                 .card()
                 if let footer, !footer.isEmpty {
                     Text(footer).font(Theme.Font.label).foregroundStyle(.secondary).padding(.horizontal, Theme.Space.xs)
@@ -133,22 +148,27 @@ struct CodeBlockStack: View {
                 .padding(.horizontal, Theme.Space.page).padding(.vertical, Theme.Space.s)
         case .diffHeader(_, let key, let d, let folded):
             CodeDiffFileHeader(path: d.path, oldPath: d.oldPath, status: d.status, additions: d.additions,
-                               deletions: d.deletions, folded: folded) {
-                withAnimation(Theme.Motion.state) { state.toggle(diff: key, collapsed: d.collapsed == true && !(d.hunks ?? []).isEmpty) }
+                               deletions: d.deletions, folded: folded,
+                               similarity: d.status == "renamed" ? d.similarity : nil,
+                               generated: CodeReview.isGenerated(d.path, said: d.generated),
+                               viewed: state.isViewed(d), setViewed: { setViewed(d, key: key, $0) }) {
+                withAnimation(Theme.Motion.state) { state.toggle(diff: key, initially: state.initiallyFolded(d)) }
             }
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.control, topTrailingRadius: Theme.Radius.control))
             .padding(.horizontal, Theme.Space.page)
             .id(Self.diffAnchor(d.path))
         case .hunk(_, let d, let i, let header):
-            CodeHunkHeader(header: header, expand: d.expand.map { a in { run(a, ["path": d.path, "hunk": String(i), "direction": "up"]) } })
+            CodeHunkHeader(header: header, expand: d.context != nil ? nil : d.expand.map { a in { run(a, ["path": d.path, "hunk": String(i), "direction": "up"]) } })
                 .padding(.horizontal, Theme.Space.page)
         case .diffLine(_, let key, let d, let line, let language, let digits):
             CodeDiffRow(line: line, language: language, digits: digits,
                         comment: d.comment == nil ? nil : { compose(key, line) })
+                .overlay { if picked(key, line) { pickedFill } }
                 .padding(.horizontal, Theme.Space.page)
         case .diffPair(_, let key, let d, let left, let right, let language, let digits):
             CodeDiffPairRow(left: left, right: right, language: language, digits: digits,
                             comment: d.comment == nil ? nil : { compose(key, $0) })
+                .overlay { if picked(key, left) || picked(key, right) { pickedFill } }
                 .padding(.horizontal, Theme.Space.page)
         case .diffNote(_, let text):
             Text(text).font(Theme.Font.secondary).foregroundStyle(.secondary)
@@ -180,8 +200,32 @@ struct CodeBlockStack: View {
             .foregroundStyle(Theme.accent)
             .background(Theme.Fill.chip)
             .padding(.horizontal, Theme.Space.page)
-        case .inlineThread(let id, _, let t):
-            inlineThread(id: id, t)
+        case .inlineThread(let id, let d, let t):
+            inlineThread(id: id, d, t).id(Self.threadAnchor(id))
+        case .diffFolded(_, let key, let note):
+            Button {
+                withAnimation(Theme.Motion.state) { state.setFolded(key, false, initially: true) }
+            } label: {
+                HStack(spacing: Theme.Space.s) {
+                    Text(note).foregroundStyle(.secondary)
+                    Text("Show").foregroundStyle(Theme.accent)
+                }
+                .font(Theme.Font.caption)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(Theme.Space.m)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .background(Theme.Fill.chip.opacity(0.5))
+            .padding(.horizontal, Theme.Space.page)
+            .accessibilityIdentifier("code-diff-folded-\(key)")
+        case .reviewTools(_, let files, let viewed, let open):
+            reviewTools(files: files, viewed: viewed, open: open)
+        case .gapBar(_, let key, let d, let g, let hidden, let first, let last, let header):
+            CodeGapBar(name: "code-gap-\(key)-\(g.at)", hidden: hidden, first: first, last: last, header: header,
+                       busy: state.gapBusy.contains(CodePageState.gapKey(key, g.at))) { way in showGap(d, key: key, g, way) }
+                .padding(.horizontal, Theme.Space.page)
         case .inlineComposer(let id, let d, let anchor):
             inlineComposer(id: id, d: d, anchor: anchor)
         case .threadTitle(_, let title, let resolved):
@@ -223,7 +267,9 @@ struct CodeBlockStack: View {
             }
             .padding(.horizontal, Theme.Space.s)
         } else {
-            CodeTreeRowView(row: row, selected: t.selected == n.path, drills: drills) { tapTree(tree: tree, node: n, t: t) }
+            CodeTreeRowView(row: row, selected: t.selected == n.path, drills: drills, viewed: !n.isDir && viewedFile(n.path, entry: n.entry)) {
+                tapTree(tree: tree, node: n, t: t)
+            }
                 .padding(.horizontal, Theme.Space.s)
         }
     }
@@ -245,27 +291,187 @@ struct CodeBlockStack: View {
         }
     }
 
-    // MARK: Inline comments
-
-    private func compose(_ key: String, _ line: CodeDiffLine) {
-        guard let a = line.anchor else { return }
-        withAnimation(Theme.Motion.state) { state.compose(.init(diff: key, side: a.side, line: a.line)) }
+    /// A file in the tree marked viewed: its diff's mark when the page has its diff, else the tree's.
+    private func viewedFile(_ path: String, entry: CodeTreeEntry?) -> Bool {
+        if let d = diffs[path] { return state.isViewed(d) }
+        return entry?.viewed == true
     }
 
-    private func inlineThread(id: String, _ t: ExtensionThread) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            if t.pending == true || t.outdated == true || t.resolved == true {
+    /// The page's diffs by path, for the tree's viewed marks.
+    private var diffs: [String: ExtensionDiffComponent] {
+        var out: [String: ExtensionDiffComponent] = [:]
+        for case .diff(let d) in (model.view?.sections ?? []).flatMap(\.items) where out[d.path] == nil { out[d.path] = d }
+        return out
+    }
+
+    // MARK: Code review (UI version 5)
+
+    /// Over a page of diffs: how many are viewed, the threads still open (a tap goes to the next one), and the
+    /// page's display options in a menu (docs/design/DESIGN_SYSTEM.md "List controls": display is never a chip).
+    private func reviewTools(files: Int, viewed: Int, open: [(block: String, diff: String, folded: Bool)]) -> some View {
+        HStack(spacing: Theme.Space.m) {
+            if files > 1 {
+                HStack(spacing: Theme.Space.s) {
+                    ProgressView(value: Double(viewed), total: Double(files))
+                        .tint(Theme.positive)
+                        .scaledFrame(width: Theme.Size.box56)
+                    Text("\(viewed) / \(files) viewed").monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(String(localized: "\(viewed) / \(files) viewed"))
+                .accessibilityIdentifier("code-review-viewed")
+            }
+            if !open.isEmpty {
+                Button { jump(open) } label: {
+                    Label { Text("\(open.count) unresolved") } icon: { ThemedIcon(Theme.Icon.message) }
+                        .labelStyle(.titleAndIcon)
+                        .lineLimit(1)
+                        .scaledFrame(minHeight: Theme.Size.tapTarget)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.cautionText)
+                .accessibilityHint(String(localized: "Goes to the next one"))
+                .accessibilityIdentifier("code-review-unresolved")
+            }
+            Spacer(minLength: 0)
+            Menu {
+                Toggle(String(localized: "Ignore Whitespace"), isOn: Binding(get: { state.whitespace }, set: { on in
+                    withAnimation(Theme.Motion.state) { state.setWhitespace(on) }
+                }))
+            } label: {
+                ThemedIcon(Theme.Icon.more)
+                    .foregroundStyle(.secondary)
+                    .scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel(String(localized: "Display Options"))
+            .accessibilityIdentifier("code-review-options")
+        }
+        .font(Theme.Font.caption)
+        .padding(.leading, Theme.Space.page)
+        .padding(.trailing, Theme.Space.s)
+    }
+
+    /// More of a gap's lines: those already here at once, the rest asked of the extension's `context` (the new side,
+    /// `to` "end" when the file's length is not known yet); nothing more shows when none come.
+    private func showGap(_ d: ExtensionDiffComponent, key: String, _ g: CodeReview.Gap, _ way: CodeReview.Reveal) {
+        let r = CodeReview.reveal(g, shown: state.shown(key, g.at), way)
+        let cache = state.lineCaches[d.path]
+        guard let context = d.context, cache?.has(r.need.from, r.need.to) != true else {
+            withAnimation(Theme.Motion.state) { state.setShown(key, g.at, r.shown) }
+            return
+        }
+        state.setGapBusy(key, g.at, true)
+        Task {
+            let o = await model.quiet(context, with: ["path": d.path, "side": "new", "from": String(r.need.from),
+                                                      "to": r.need.to.map(String.init) ?? "end"])
+            state.setGapBusy(key, g.at, false)
+            guard let lines = o.lines, lines.path == d.path else {
+                if o.error != nil { ExtensionOutcome.show(o, app: app, link: $link) }
+                return
+            }
+            state.put(lines)
+            var shown = r.shown
+            // All of a file whose length was not known: as far as it goes.
+            if shown.top == Int.max {
+                let last = state.lineCaches[d.path]?.total ?? (lines.start + lines.lines.count - 1)
+                shown.top = max(0, last - g.from + 1)
+            }
+            withAnimation(Theme.Motion.state) { state.setShown(key, g.at, shown) }
+        }
+    }
+
+    /// The next open thread: its diff unfolded, scrolled to.
+    private func jump(_ open: [(block: String, diff: String, folded: Bool)]) {
+        state.lastJump = (state.lastJump + 1) % open.count
+        let t = open[state.lastJump]
+        if state.isFolded(t.diff, initially: t.folded) {
+            withAnimation(Theme.Motion.state) { state.setFolded(t.diff, false, initially: t.folded) }
+        }
+        state.jump = t.block
+    }
+
+    /// Marked viewed or not at once (and folded when checked); sent with the extension's `mark_viewed` when it has
+    /// one, put back when that fails.
+    private func setViewed(_ d: ExtensionDiffComponent, key: String, _ v: Bool) {
+        let mark = withAnimation(Theme.Motion.state) { state.setViewed(d, key: key, v) }
+        guard let action = d.markViewed, !action.id.isEmpty else { return }
+        Task {
+            let o = await model.quiet(action, with: ["path": d.path, "viewed": v ? "true" : "false"])
+            guard o.error != nil else { return }
+            withAnimation(Theme.Motion.state) { state.viewedFailed(d.path, attempt: mark.attempt, before: mark.before) }
+            ExtensionOutcome.show(o, app: app, link: $link)
+        }
+    }
+
+    // MARK: Inline comments
+
+    /// A line number tapped: the comment box on it, or (another line on the same side) on the lines between.
+    private func compose(_ key: String, _ line: CodeDiffLine) {
+        guard let a = line.anchor else { return }
+        withAnimation(Theme.Motion.state) { state.pick(.init(diff: key, side: a.side, line: a.line)) }
+    }
+
+    /// A line the comment being written is on.
+    private func picked(_ key: String, _ line: CodeDiffLine?) -> Bool {
+        guard let c = state.composing, c.start != nil, let a = line?.anchor else { return false }
+        return c.covers(key, a.side, a.line)
+    }
+
+    private var pickedFill: some View {
+        Rectangle().fill(Theme.accent.opacity(Theme.Quote.fillOpacity)).allowsHitTesting(false)
+    }
+
+    /// The text of a diff's lines on the new side, `from`…`to`: from its hunks, else from the lines that came for its
+    /// gaps (UI version 5): what a suggestion starts from, and what one in a comment changes.
+    private func newLines(_ d: ExtensionDiffComponent, _ from: Int, _ to: Int) -> [String] {
+        guard from <= to else { return [] }
+        var byNumber: [Int: String] = [:]
+        for l in state.lines(of: d.hunks ?? []).joined() where l.kind != .del && l.kind != .note {
+            if let n = l.new { byNumber[n] = l.text }
+        }
+        let cache = state.lineCaches[d.path]
+        return (from...to).map { byNumber[$0] ?? cache?.line($0) ?? "" }
+    }
+
+    private func inlineThread(id: String, _ d: ExtensionDiffComponent, _ t: ExtensionThread) -> some View {
+        // A resolved thread is folded to its first comment until opened.
+        let folded = t.resolved == true && t.comments.count > 1 && !state.openThreads.contains(id)
+        let comments = folded ? Array(t.comments.prefix(1)) : t.comments
+        // What a suggestion in it changes: the lines it is on (new side).
+        let original = t.side == "new" && d.suggestions == true ? newLines(d, t.startLine ?? t.line, t.line) : nil
+        return VStack(alignment: .leading, spacing: Theme.Space.s) {
+            if t.pending == true || t.outdated == true || t.resolved == true || t.resolve != nil {
                 HStack(spacing: Theme.Space.s) {
                     if t.pending == true { Chip(text: String(localized: "Draft"), look: .neutral).lineLimit(1) }
                     if t.outdated == true { Chip(text: String(localized: "Outdated [Extension Code Stack 1148b6]"), look: .neutral).lineLimit(1) }
                     if t.resolved == true { Chip(text: String(localized: "Resolved"), look: .tint(Theme.positive)).lineLimit(1) }
+                    Spacer(minLength: 0)
+                    // Resolve / reopen (UI version 5): {thread, resolved}.
+                    if let r = t.resolve, let thread = t.id {
+                        Button { run(r, ["thread": thread, "resolved": t.resolved == true ? "false" : "true"]) } label: {
+                            Text(t.resolved == true ? String(localized: "Reopen") : String(localized: "Resolve")).lineLimit(1)
+                        }
+                        .font(Theme.Font.caption)
+                        .buttonStyle(.borderless)
+                        .disabled(model.running != nil)
+                        .accessibilityIdentifier("code-thread-resolve-\(thread)")
+                    }
                 }
             }
-            ForEach(Array(t.comments.enumerated()), id: \.offset) { _, c in
+            ForEach(Array(comments.enumerated()), id: \.offset) { _, c in
                 CodeCommentView(author: c.author, avatar: c.avatar?.url, at: c.at, markdown: c.body ?? "",
-                                badge: c.badge.map { ($0.text, $0.tone) }, event: c.event == true, link: $link)
+                                badge: c.badge.map { ($0.text, $0.tone) }, event: c.event == true, link: $link, original: original)
             }
-            if let r = t.reply {
+            if folded {
+                Button { withAnimation(Theme.Motion.state) { state.openThread(id) } } label: {
+                    Text("\(t.comments.count - 1) more comments").font(Theme.Font.caption).lineLimit(1)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("code-thread-more-\(t.id ?? id)")
+            }
+            if let r = t.reply, !folded {
                 CodeComposerView(placeholder: String(localized: "Reply…"), text: draft(id),
                                  buttons: [(String(localized: "Reply"), nil, r.id, { send(r, id: id, ["body": draftText(id)]) })],
                                  running: model.running, identifier: "code-thread-reply-\(t.id ?? id)")
@@ -279,23 +485,71 @@ struct CodeBlockStack: View {
         .accessibilityLabel(String(localized: "Comments on line \(t.line)"))
     }
 
+    /// The comment being written on a line or lines: sent alone (`comment`) or as a draft of the pending review
+    /// (`draft`, UI version 5; first once a review is under way), with a suggestion started from the lines when the
+    /// extension takes them (`suggestions`). Another line number on the same side picks the lines between.
     private func inlineComposer(id: String, d: ExtensionDiffComponent, anchor: CodePageState.Anchor) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Text(anchor.side == "old" ? String(localized: "Comment on old line \(anchor.line)") : String(localized: "Comment on line \(anchor.line)"))
-                .font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
-            CodeComposerView(placeholder: String(localized: "Write a comment…"), text: draft(id),
-                             buttons: [(String(localized: "Cancel"), nil, "cancel", { withAnimation(Theme.Motion.state) { state.compose(nil) } }),
-                                       (String(localized: "Comments"), nil, d.comment?.id ?? "comment", {
-                                           guard let a = d.comment else { return }
-                                           send(a, id: id, ["path": d.path, "side": anchor.side, "line": String(anchor.line),
-                                                            "body": draftText(id)]) { state.compose(nil) }
-                                       })],
+        let values = { () -> [String: String] in
+            var v = ["path": d.path, "side": anchor.side, "line": String(anchor.line), "body": draftText(id)]
+            if let s = anchor.start { v["start_line"] = String(s) }
+            return v
+        }
+        let close = { withAnimation(Theme.Motion.state) { state.compose(nil) } }
+        let comment: ComposerButton? = d.comment.map { a in
+            (title: String(localized: "Comment"), tone: nil, id: a.id, run: { send(a, id: id, values()) { close() } })
+        }
+        let toReview: ComposerButton? = d.draft.map { a in
+            (title: String(localized: "Add to Review"), tone: nil, id: a.id, run: { send(a, id: id, values()) { close() } })
+        }
+        let reviewing = (model.view?.review?.count ?? 0) > 0
+        let buttons: [ComposerButton] = (reviewing ? [toReview, comment] : [comment, toReview]).compactMap { $0 }
+        return VStack(alignment: .leading, spacing: Theme.Space.s) {
+            HStack(spacing: Theme.Space.s) {
+                Text(caption(anchor)).font(Theme.Font.caption).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
+                if d.suggestions == true, anchor.side == "new" {
+                    Button { suggest(d, anchor, id: id) } label: {
+                        Label { Text("Suggest Change").lineLimit(1) } icon: { ThemedIcon(Theme.Icon.edit) }
+                    }
+                    .font(Theme.Font.caption)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("code-inline-suggest")
+                }
+                Button(action: close) {
+                    ThemedIcon(Theme.Icon.close)
+                        .foregroundStyle(.secondary)
+                        .scaledFrame(width: Theme.Size.wellS, height: Theme.Size.wellS)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(String(localized: "Cancel"))
+                .accessibilityIdentifier("code-inline-cancel")
+            }
+            CodeComposerView(placeholder: String(localized: "Write a comment…"), text: draft(id), buttons: buttons,
                              running: model.running, identifier: "code-inline-comment")
         }
         .padding(Theme.Space.m)
         .background(Theme.pageBackground)
         .overlay(alignment: .leading) { Rectangle().fill(Theme.accent).frame(width: Theme.Size.line * 2) }
         .padding(.horizontal, Theme.Space.page)
+    }
+
+    typealias ComposerButton = (title: String, tone: String?, id: String, run: () -> Void)
+
+    private func caption(_ a: CodePageState.Anchor) -> String {
+        switch (a.side == "old", a.start) {
+        case (true, let s?): String(localized: "Comment on old lines \(s)–\(a.line)")
+        case (false, let s?): String(localized: "Comment on lines \(s)–\(a.line)")
+        case (true, nil): String(localized: "Comment on old line \(a.line)")
+        case (false, nil): String(localized: "Comment on line \(a.line)")
+        }
+    }
+
+    /// A suggestion started from the lines the comment is on, as they are now, after what is written.
+    private func suggest(_ d: ExtensionDiffComponent, _ a: CodePageState.Anchor, id: String) {
+        let block = CodeReview.suggestionBlock(newLines(d, a.start ?? a.line, a.line))
+        let now = draftText(id)
+        state.drafts[id] = now.isEmpty ? block : now + "\n" + block
     }
 
     private func draft(_ id: String) -> Binding<String> {
@@ -425,7 +679,7 @@ struct CodeBreadcrumbView: View {
             line
             ScrollView(.horizontal) { line }
                 .scrollIndicators(.hidden)
-                .scrollEdgeEffectHidden(true, for: .all)
+                .scrollEdgeEffectHiddenWhenSupported(true, for: .all)
                 .contentMargins(.vertical, Theme.Space.flush, for: .scrollContent)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -467,7 +721,7 @@ struct CodeTabsBar: View {
             row
             ScrollView(.horizontal) { row }
                 .scrollIndicators(.hidden)
-                .scrollEdgeEffectHidden(true, for: .all)
+                .scrollEdgeEffectHiddenWhenSupported(true, for: .all)
                 .contentMargins(.vertical, Theme.Space.flush, for: .scrollContent)
                 .scrollClipDisabled()
         }
@@ -644,7 +898,18 @@ struct CodeFileBlock: View {
     }
 
     func tap(_ i: Int) -> Bool { false }
-    func menu(_ i: Int) -> UIMenu? { file.menu(i) }
+
+    /// The file's line menu, and a link to the line when the extension gives `line_url` (UI version 5).
+    func menu(_ i: Int) -> UIMenu? {
+        guard let menu = file.menu(i), let link = CodeReview.lineLink(code.lineUrl, start: i + (code.startLine ?? 1)) else {
+            return file.menu(i)
+        }
+        return menu.replacingChildren(menu.children + [
+            UIAction(title: String(localized: "Copy Link to Line"), image: UIImage(systemName: Theme.Icon.link)) { _ in
+                UIPasteboard.general.url = link
+            },
+        ])
+    }
 }
 
 // MARK: Narrow pages

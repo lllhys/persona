@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/managerconf"
 )
 
 // dev runs `personad extension dev`: build, hang the extension on this machine's hub, print its log, and on each
@@ -127,12 +128,12 @@ func (c *extensionClient) stream(ctx context.Context, path string, w io.Writer) 
 	if _, perr := strconv.Atoi(port); err != nil || perr != nil {
 		return errors.New("hub.json listen has no valid port")
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+net.JoinHostPort("127.0.0.1", port)+path, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", managerconf.CLIHubURL(c.cfg.Listen)+path, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.cfg.Token)
-	res, err := (&http.Client{Transport: &http.Transport{Proxy: nil}}).Do(req)
+	res, err := (&http.Client{Transport: &http.Transport{Proxy: nil, DialContext: managerconf.CLIDial}}).Do(req)
 	if err != nil {
 		return err
 	}

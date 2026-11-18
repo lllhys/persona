@@ -36,6 +36,9 @@ export type VoiceAvailability =
   | { kind: "available"; extensionID: string }
   /** No conversation to bind (the assistant's home before there is one). */
   | { kind: "noConversation" }
+  /** A meeting's room conversation (origin `meeting`, #3862): it takes only the iPhone's meeting calls, and the extension
+   *  refuses an ordinary call bound to it (`meeting_room`). */
+  | { kind: "meetingRoom" }
   /** The conversation cannot take messages from here (a read-only source). */
   | { kind: "readOnly" }
   /** The hub has no voice extension running (none, switched off, or a hub too old to list them). */
@@ -67,12 +70,19 @@ export function readInfo(body: unknown): VoiceInfo {
   return { protocol, features, setup };
 }
 
+/** The origin of a meeting's room conversation (docs/assistant/meeting-minutes.md "The room conversation"). */
+export const MEETING_ROOM_ORIGIN = "meeting";
+
 /**
  * Whether `session`'s page offers a call. `extensions`: the hub's list (undefined while not known); `info`: the picked
  * extension's /info. A call hands things over only where typing could (the composer's own rule, `sessionCan(…, "send")`).
+ * A meeting's room offers none: the room may be heard by others, and an ordinary call would bring the voice's own tools
+ * (knowledge search, the agents) in front of it, so the extension refuses one (docs/assistant/meeting-minutes.md
+ * "Phase 4: realtime voice in the meeting"). Its follow-up (origin `meeting_followup`) is an ordinary conversation.
  */
 export function evaluate(o: { session: Session | undefined; extensions: readonly HubExtension[] | undefined; info: VoiceInfoState | undefined; browser: VoiceBrowser }): VoiceAvailability {
   if (!o.session) return { kind: "noConversation" };
+  if (o.session.origin === MEETING_ROOM_ORIGIN) return { kind: "meetingRoom" };
   if (!sessionCan(o.session, "send")) return { kind: "readOnly" };
   if (!o.extensions) return { kind: "unknown" };
   const voice = pickVoice(o.extensions);
@@ -101,7 +111,7 @@ export function evaluate(o: { session: Session | undefined; extensions: readonly
 /**
  * What the composer shows: `start` a call, `explain` why not (something the user can act on: set the extension up,
  * update it, open the hub over HTTPS, another browser), or nothing (`null`: no voice on this hub, a credential that may
- * only answer, a read-only chat, not known yet). The web's "+" picks files straight away (no menu, as on iOS), so the
+ * only answer, a read-only chat, a meeting's room, not known yet). The web's "+" picks files straight away (no menu, as on iOS), so the
  * explanation is the voice button's own; with no voice extension the composer stays as it was.
  */
 export function entryMode(a: VoiceAvailability): "start" | "explain" | null {

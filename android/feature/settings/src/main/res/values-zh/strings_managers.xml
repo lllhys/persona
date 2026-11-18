@@ -57,12 +57,16 @@
         <item quantity="other">它的 %1$d 台电脑会回到 hub 自己的助手。</item>
     </plurals>
     <string name="settings_managers_delete_sources">它的来源（比如邮箱账号）存在它自己的库里，不先移到别的助手，就会随它一起删掉。</string>
+    <string name="settings_managers_show_in_switcher">在切换器里显示</string>
+    <string name="settings_managers_switcher_note">关掉后，这个助手不是默认、名下也没有电脑时，切换器里不显示它</string>
+    <string name="settings_managers_switcher_in_use">它是默认助手或名下有电脑，所以切换器里仍显示它</string>
+    <string name="settings_managers_switcher_unsupported">这台 hub 的版本还不能让切换器不显示它，升级 hub 后再来</string>
     <string name="settings_managers_needs_update">需要更新</string>
     <string name="settings_managers_needs_update_note">它的 personad 版本较旧，还不读自己的设置（manager.json），在用内置的默认值。请在它所在的电脑上更新 personad。</string>
     <string name="settings_switcher_line">%1$s · %2$s</string>
     <string name="settings_switcher_switched">已切换到 %1$s</string>
     <string name="settings_switcher_manage">管理助手…</string>
-    <string name="settings_group_assistant">%1$s 的设置</string>
+    <string name="settings_group_assistant">%1$s的设置</string>
     <string name="settings_group_assistant_switch">切换</string>
     <string name="settings_group_assistant_footer">只显示「%1$s」自己的内容。要改别的助手，先切换过去。</string>
     <string name="settings_group_device">这台设备</string>

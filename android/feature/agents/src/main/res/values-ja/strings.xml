@@ -17,6 +17,15 @@
     <plurals name="agents_summary_requests">
         <item quantity="other">%1$d件の判断を待っています</item>
     </plurals>
+    <plurals name="agents_feed_needs_you">
+        <item quantity="other">%1$d件が要対応</item>
+    </plurals>
+    <plurals name="agents_feed_offline">
+        <item quantity="other">%1$d件が停止中</item>
+    </plurals>
+    <plurals name="agents_feed_new">
+        <item quantity="other">新着 %1$d件</item>
+    </plurals>
     <plurals name="agents_summary_working">
         <item quantity="other">%1$d個のエージェントが作業中</item>
     </plurals>
@@ -56,6 +65,10 @@
     <string name="agents_count_pair">%1$s、%2$s</string>
     <string name="agents_flag_space_pinned">ピン留め中のスペース</string>
     <string name="agents_flag_space_muted">ミュート中のスペース</string>
+    <string name="agents_kind_todo">ToDo</string>
+    <plurals name="agents_count_todos">
+        <item quantity="other">ToDo %1$d件</item>
+    </plurals>
     <string name="agents_kind_space">スペース</string>
     <string name="agents_view_todo">ToDoを表示</string>
     <string name="agents_history_unknown_folder">不明なフォルダ</string>
@@ -71,6 +84,10 @@
     <string name="agents_grouping_state">状態別</string>
     <string name="agents_grouping_todo">ToDo別</string>
     <string name="agents_grouping_project">プロジェクト別</string>
+    <string name="agents_grouping_machine">マシン別</string>
+    <string name="agents_grouping_app">アプリ別</string>
+    <string name="agents_grouping_recent">最近使用した項目</string>
+    <string name="agents_grouping_direction">常駐別</string>
     <string name="agents_menu_compact">コンパクト表示</string>
     <string name="agents_menu_detailed">詳細表示</string>
     <string name="agents_menu_display">表示</string>
@@ -266,6 +283,12 @@
     <string name="agents_new_parent">上の階層へ</string>
     <string name="agents_new_no_subdirectories">このディレクトリにはサブフォルダがありません</string>
     <string name="agents_new_git_repo">Gitリポジトリ</string>
+    <string name="agents_workspace_title">ワークスペース</string>
+    <string name="agents_workspace_main">メインのチェックアウト</string>
+    <string name="agents_workspace_folder">フォルダ</string>
+    <string name="agents_workspace_other">その他のワークスペース</string>
+    <string name="agents_workspace_choose_folder">フォルダで選ぶ</string>
+    <string name="agents_workspace_kind_branch">%1$s · %2$s</string>
     <string name="agents_new_retry_open">もう一度開く</string>
     <string name="agents_new_tab_in">「%1$s」に新しいタブ</string>
     <string name="agents_new_online">オンライン</string>
@@ -276,6 +299,7 @@
     <string name="agents_new_prefill_offline">「%1$s」はオフラインのため、別のマシンを選びました。接続後に戻せます</string>
     <string name="agents_new_reload">オプションを再読み込み</string>
     <string name="agents_new_agent_type">エージェントの種類</string>
+    <string name="agents_new_type_other">その他のエージェント</string>
     <string name="agents_new_launcher_this_time">ランチャー（今回だけ変更）</string>
     <string name="agents_new_launcher">ランチャー</string>
     <string name="agents_new_search_launcher">ランチャーまたはモデルを検索</string>
@@ -283,6 +307,7 @@
     <string name="agents_new_follow_config">モデル設定に従う</string>
     <string name="agents_new_permission_mode">権限モード</string>
     <string name="agents_new_bypass_warning">すべて許可すると、ファイルの編集やコマンドの実行で確認されなくなります。</string>
+    <string name="agents_new_provider_mode_hint">「すべて許可」を選ばない限り、このエージェントは自身の承認設定に従います。あとからチャットで切り替えることもできます。</string>
     <string name="agents_new_effort">思考の強さ</string>
     <string name="agents_new_no_effort">このモデルは思考の強さを調整できません</string>
     <string name="agents_new_first_message_codex">最初のメッセージ（Codexでは必須）</string>
@@ -318,6 +343,7 @@
     <string name="agents_model_failed_detail">%1$s\n開始には影響しません。デフォルトのモデルを使います</string>
     <string name="agents_model_retry">再試行</string>
     <string name="agents_model_sheet_note">「%1$s」の%2$sのモデルです。ターミナルで/modelと入力したときと同じです。今回の起動だけに使います。</string>
+    <string name="agents_model_sheet_note_provider">「%1$s」で使えるモデルです。今回の起動だけに使います。</string>
     <string name="agents_model_configured">モデル設定：%1$s</string>
     <string name="agents_new_error_pending">前回の起動結果はまだ確認されていません。結果を確認してください</string>
     <string name="agents_new_error_record">起動記録を読み込めません。閉じてからもう一度お試しください</string>
@@ -362,6 +388,7 @@
     <string name="agents_todos_done">完了</string>
     <string name="agents_todo_reopen_failed">ToDoを再開できませんでした：%1$s</string>
     <string name="agents_todo_auto_done">自動完了</string>
+    <string name="agents_todo_concern">関心事</string>
     <string name="agents_todo_state_needs_you">要対応</string>
     <string name="agents_todo_state_unread">確認待ち</string>
     <string name="agents_todo_state_working">進行中</string>
@@ -518,6 +545,9 @@
     <string name="agents_todos_filter_button">絞り込みと並べ替え</string>
     <string name="agents_todos_filter_show">表示</string>
     <string name="agents_todos_sort_by">並べ替え</string>
+    <string name="agents_todos_group_by">グループ化</string>
+    <string name="agents_todos_group_status">状態</string>
+    <string name="agents_todos_group_direction">常駐</string>
     <string name="agents_todos_filter_all">すべて</string>
     <string name="agents_todos_filter_no_due">期限なし</string>
     <string name="agents_todos_filter_today">今日</string>
@@ -538,7 +568,12 @@
         <item quantity="other">%d 件</item>
     </plurals>
     <string name="agents_todo_restore">戻す</string>
+    <string name="agents_todo_seen">了解</string>
+    <string name="agents_todo_seen_moved">「完了」に移動しました</string>
+    <string name="agents_todo_seen_undo">元に戻す</string>
+    <string name="agents_todo_seen_failed">操作できませんでした：%1$s</string>
     <string name="agents_todo_pr_moved">%1$s · %2$sに更新</string>
+    <string name="agents_todo_for_briefing">この判断は次のブリーフィングと一緒に届きます</string>
     <string name="agents_todo_pr">PR</string>
     <string name="agents_todo_state_accepted">検収済み</string>
     <plurals name="agents_todos_related">
@@ -565,6 +600,20 @@
     <string name="agents_todo_calendar_change_due_of">期限を変更：%1$s…</string>
     <string name="agents_todo_calendar_date">日付</string>
     <string name="agents_todo_calendar_time">時刻</string>
+    <string name="agents_todo_calendar_mode_day">日</string>
+    <string name="agents_todo_calendar_mode_week">週</string>
+    <string name="agents_todo_calendar_mode_month">月</string>
+    <string name="agents_todo_calendar_previous_day">前の日</string>
+    <string name="agents_todo_calendar_next_day">次の日</string>
+    <string name="agents_todo_calendar_previous_week">前の週</string>
+    <string name="agents_todo_calendar_next_week">次の週</string>
+    <string name="agents_todo_calendar_show_day">この日を表示</string>
+    <string name="agents_todo_calendar_due">期限</string>
+    <string name="agents_todo_calendar_add">追加</string>
+    <string name="agents_todo_calendar_add_hint">リマインダー、優先度、メモはToDoのページで設定します。</string>
+    <plurals name="agents_todo_calendar_open">
+        <item quantity="other">ToDo %1$d 件</item>
+    </plurals>
     <plurals name="agents_todo_calendar_undated">
         <item quantity="other">期限なし %1$d 件</item>
     </plurals>

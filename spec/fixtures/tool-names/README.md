@@ -17,7 +17,7 @@ client's resources and are not in these cases.
 | Another server's MCP tool reads "<Server> · <Tool>", even when its bare name is a built-in tool's; Persona's own tools and built-in tools have no such label. | `mcp_*` |
 | The tables match a tool on its own name, but another server's tool on its whole name, which no table has. | `table_name_*` |
 | An unknown tool's subject is the first of `description`, `title`, `subject`, `name`, `file_path`, `filePath`, `notebook_path`, `path`, `url`, `uri`, `query`, `pattern`, `command`, `prompt` with words in it (a path by its last part, else its first line), else its first string by field name; numbers, flags and blank strings say nothing. | `subject_*` |
-| A row's subject: another server's tool by that rule; Claude Code's tools by their own fields (the to-do, "#3", "to · summary", "select:" as names, a file and line). | `row_*` |
+| A row's subject: another server's tool by that rule; Claude Code's tools by their own fields (the to-do, "#3", "to · summary", "select:" as names, a file and line). Two subjects are words of their own, in English here: several findings by their count ("2 findings"), and a wake-up that gives no reason by its delay as a work line writes a time ("5 min", "1m 20s", "1 hr 5 min"). | `row_*` |
 | A shell tool's detail is its command line: Bash `$ `, PowerShell `PS> `, Monitor `$ ` or its WebSocket's address; no other tool has one, nor another server's tool of the same name. | `command_*` |
 | An unknown tool's arguments: the subject fields first, then the rest by name; each labelled in words; text on one line, or up to 3 when it has lines of its own, blank lines closed up; a token (no spaces, ASCII) in the code face, a sentence in the text face; numbers, flags and `null` in the code face (numbers as a Double prints: `1e+20`); lists of plain values joined with ", "; anything nested as one line of JSON with sorted keys; empty strings, lists and objects left out; a value cut at 300 characters. | `arguments_*` |
 
@@ -40,5 +40,3 @@ client's resources and are not in these cases.
   `toolSubject` in `Rows.kt`).
 - iOS reads these cases in a later change (`docs/plans/android-ios-alignment/phase-4-staying-aligned.md`, R2); until then
   `ToolNamingTests` holds the same cases. Where they disagree, iOS is the reference and these cases follow.
-- Not here yet: iOS's count of several findings ("2 findings") and a ScheduleWakeup's delay without a reason, both
-  localized words.

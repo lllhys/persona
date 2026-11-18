@@ -249,6 +249,12 @@ data class PreviewManifest(
     @SerialName("extension_pack") val extensionPack: List<ExtensionPackMember> = emptyList(),
 )
 
-/** What an uninstall removed (#1154): [removedMembers] the pack's members that went with it; null from a hub that doesn't say. */
+/**
+ * What an uninstall removed (#1154): [removedMembers] the pack's members that went with it; null from a hub that doesn't say.
+ * [warnings] is cleanup left for the user after a successful uninstall, not a failure to retry.
+ */
 @Serializable
-data class ExtensionRemoval(@SerialName("removed_members") val removedMembers: List<String>? = null)
+data class ExtensionRemoval(
+    @SerialName("removed_members") val removedMembers: List<String>? = null,
+    val warnings: List<String>? = null,
+)

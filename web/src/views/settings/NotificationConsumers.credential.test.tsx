@@ -31,6 +31,8 @@ beforeEach(async () => {
     if (String(input).endsWith("/managers")) {
       return Promise.resolve(new Response(JSON.stringify({ default: "example-manager", managers: [{ id: "example-manager", name: "Example manager", default: true, online: true, host: "example-computer", os: "linux" }] })));
     }
+    // the hub-wide low-distraction switch at the end of Settings › Notifications (#8157): off, as on a fresh hub
+    if (String(input).endsWith("/push/ln-mode")) return Promise.resolve(new Response(JSON.stringify({ enabled: false })));
     if (!String(input).endsWith("/prefs")) throw new Error(`Unexpected synthetic request: ${String(input)}`);
     return new Promise<Response>((resolve, reject) => {
       const signal = init?.signal;

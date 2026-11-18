@@ -11,13 +11,13 @@ const ZH = join(__dirname, "../i18n/locales/zh-Hans");
 
 /** The names only an agent's or a task's state has (lib-state-labels.json). Done, Unknown, Interrupted… also name other
  *  things (a tool call, a project, a CI check), so they are not checked. */
-const NAMES = ["需要你", "工作中", "完成未看", "已看", "未运行", "待唤醒", "待你回复", "待跟进", "全部标为已看"];
+const NAMES = ["需要你", "工作中", "完成未看", "已看", "未运行", "待唤醒", "待你回复", "刚做完待看", "待跟进", "全部标为已看"];
 
 /** Names a page used before #3415 for one of those states. */
 const OLD = ["等你", "在做", "待查看", "做完", "做完了", "做完了，还没看", "停着", "等你处理", "需要你处理", "正在工作", "待回答", "全部标为已读"];
 
-/** The same word meaning something else: a file marked reviewed, an inbox item's tier. */
-const OTHER_MEANING = new Set(["extensions-review.viewed", "lib-inbox.tier_action"]);
+/** The same word meaning something else: an inbox item's tier. (A file marked viewed in a code review says 已查看, #6072.) */
+const OTHER_MEANING = new Set(["lib-inbox.tier_action"]);
 
 function others(): [string, string][] {
   const out: [string, string][] = [];
@@ -35,7 +35,7 @@ describe("state names", () => {
     expect(STATE_LABEL).toEqual({ needs_you: "需要你", working: "工作中", unread: "完成未看", idle: "已看", offline: "未运行", unknown: "未知" });
     const names: Record<StateName, string> = {
       needs_you: "需要你", working: "工作中", unread: "完成未看", idle: "已看", offline: "未运行", unknown: "未知",
-      waiting: "待唤醒", bg_waiting: "后台等待中", awaits_reply: "待你回复", done: "已完成", interrupted: "中断了", follow_up: "待跟进", task_waiting: "等待中", not_started: "未开始", failed: "没开起来",
+      waiting: "待唤醒", bg_waiting: "后台等待中", awaits_reply: "待你回复", just_finished: "刚做完待看", done: "已完成", interrupted: "中断了", follow_up: "待跟进", task_waiting: "等待中", not_started: "未开始", failed: "没开起来",
     };
     for (const [s, name] of Object.entries(names)) expect(stateName(s as StateName)).toBe(name);
     expect(stateCount("needs_you", 2)).toBe("2 个需要你");

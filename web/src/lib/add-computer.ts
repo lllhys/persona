@@ -18,10 +18,10 @@ export type ComputerOS = "mac" | "linux" | "windows";
 export const COMPUTER_OSES: readonly ComputerOS[] = ["mac", "linux", "windows"];
 
 /** How to build and install Persona Link on a Mac until there is a download (docs/assistant/onboarding.md decision 1). */
-export const PERSONA_LINK_INSTALL_DOC = "https://github.com/nwverse/persona/blob/master/docs/operations/persona-link-install.md";
+export const PERSONA_LINK_INSTALL_DOC = "https://github.com/nwverse/persona/blob/main/docs/operations/persona-link-install.md";
 
 /** How to install persona-link on a headless Linux when the hub has no install script (docs/operations/link.md "Linux (headless)"). */
-export const LINK_LINUX_DOC = "https://github.com/nwverse/persona/blob/master/docs/operations/link.md#linuxheadless";
+export const LINK_LINUX_DOC = "https://github.com/nwverse/persona/blob/main/docs/operations/link.md#linux-headless";
 
 // The hub does not keep the system a computer was added as (only its node reports one, once it connects), so the
 // dialog remembers it per machine id: a new code for a computer that never connected then shows the same instructions.

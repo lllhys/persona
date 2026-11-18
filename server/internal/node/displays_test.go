@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -38,6 +39,22 @@ func TestParseDisplaysRefusesWhatItCannotRead(t *testing.T) {
 }
 
 // Displays are read only while Screen Sharing answers.
+// Each display's pixels per point (#9314) comes through, rounded to a quarter; one AppKit left out stays 0 (an old
+// node's displays have none either). The script asks AppKit for it.
+func TestParseDisplaysKeepsTheScale(t *testing.T) {
+	out := []byte(`[{"id":1,"scale":1,"frame":{"origin":{"x":0,"y":0},"size":{"width":1920,"height":1080}}},` +
+		`{"id":23,"scale":2,"frame":{"origin":{"x":1920,"y":59},"size":{"width":540,"height":1021}}},` +
+		`{"id":4,"scale":1.4999,"frame":{"origin":{"x":-800,"y":0},"size":{"width":800,"height":600}}},` +
+		`{"id":5,"frame":{"origin":{"x":0,"y":1080},"size":{"width":800,"height":600}}}]`)
+	got := parseDisplays(out)
+	if len(got) != 4 || got[0].Scale != 1 || got[1].Scale != 2 || got[1].Y != 0 || got[2].Scale != 1.5 || got[3].Scale != 0 {
+		t.Fatalf("got %+v", got)
+	}
+	if !strings.Contains(displaysScript, "backingScaleFactor") {
+		t.Fatal("the script does not read the scale")
+	}
+}
+
 func TestScreenDisplaysOnlyWithScreenSharing(t *testing.T) {
 	asked := 0
 	old := readDisplays

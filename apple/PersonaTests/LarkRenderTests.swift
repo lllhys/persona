@@ -1,11 +1,46 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor
 struct LarkRenderTests {
     private func parts(_ json: String) throws -> [LarkPart] {
         try JSON.decoder.decode([LarkPart].self, from: Data(json.utf8))
+    }
+
+    /// A run compared without `Color` identity: `LarkColor.text` builds a fresh dynamic provider on every call, so two
+    /// equal-looking runs whose style carries a color never compare equal. The color's presence is compared instead.
+    private struct ComparableRun: Equatable {
+        var kind: String
+        var text: String
+        var bold = false
+        var italic = false
+        var underline = false
+        var dotted = false
+        var strike = false
+        var code = false
+        var hasColor = false
+        var hasBackground = false
+        var size: CGFloat?
+        var link: URL?
+    }
+
+    private func comparable(_ runs: [LarkInline]) -> [ComparableRun] {
+        runs.map { run in
+            switch run {
+            case .text(let text, let style):
+                ComparableRun(kind: "text", text: text, bold: style.bold, italic: style.italic, underline: style.underline,
+                              dotted: style.dotted, strike: style.strike, code: style.code, hasColor: style.color != nil,
+                              hasBackground: style.background != nil, size: style.size, link: style.link)
+            case .emoji(let key, let fallback):
+                ComparableRun(kind: "emoji", text: key + "/" + fallback)
+            case .symbol(let name, let color):
+                ComparableRun(kind: "symbol", text: name, hasColor: color != nil)
+            case .image(let url):
+                ComparableRun(kind: "image", text: url)
+            }
+        }
     }
 
     @Test func decodesMessageWithPartsReplyAndReactions() throws {
@@ -57,6 +92,56 @@ struct LarkRenderTests {
         // javascript: links stay text
         let unsafe = LarkFormat.cardMarkdown("<a href=\"javascript:alert(1)\">x</a>", style: LarkRunStyle())
         if case .text(_, let s) = unsafe[0] { #expect(s.link == nil) }
+    }
+
+    @Test func cardMarkdownRepeatedCallsKeepRunsAndStyles() {
+        var base = LarkRunStyle()
+        base.bold = true
+        base.underline = true
+        var firstLink = base
+        firstLink.link = URL(string: "https://example.com/a")
+        var secondLink = base
+        secondLink.link = URL(string: "https://example.com/b")
+        var colored = base
+        colored.color = LarkColor.text("red")
+        let input = "😀前<A data-id=\"1\" HREF=\"https://example.com/a\">链</A>中<a title=next HREF=https://example.com/b>次</a><FONT title=x COLOR=red>色</FONT><BR>后"
+        let expected: [LarkInline] = [
+            .text("😀前", base), .text("链", firstLink), .text("中", base), .text("次", secondLink),
+            .text("色", colored), .text("\n", base), .text("后", base),
+        ]
+        for _ in 0..<20 {
+            #expect(comparable(LarkFormat.cardMarkdown(input, style: base)) == comparable(expected))
+        }
+    }
+
+    @Test func cardMarkdownPreservesUnicodeAndMalformedMarkup() {
+        var base = LarkRunStyle()
+        base.strike = true
+        var linked = base
+        linked.link = URL(string: "https://example.com/ok")
+        let input = "😀x<a href=\"https://example.com/ok\">ok</a>🧪<a href='https://bad.example'>broken"
+        let expected: [LarkInline] = [
+            .text("😀x", base), .text("ok", linked), .text("🧪<a href='https://bad.example'>broken", base),
+        ]
+        #expect(LarkFormat.cardMarkdown(input, style: base) == expected)
+        #expect(LarkFormat.cardMarkdown("<a title='x'>plain</a>", style: base) == [.text("plain", base)])
+    }
+
+    @Test func cardMarkdownThroughNestedCardNodes() {
+        let text = "前<font color=red>热</font><a href='https://example.com/nested'>链</a>"
+        let node = LarkCardNode(.object([
+            "tag": .string("markdown"),
+            "children": .array([.object([
+                "tag": .string("markdown_emphasis"),
+                "children": .array([.object(["tag": .string("plain_text"), "text": .string(text)])]),
+            ])]),
+        ]))
+        var style = LarkRunStyle()
+        style.italic = true
+        let expected = comparable(LarkFormat.cardMarkdown(text, style: style))
+        #expect(comparable(LarkCardRuns.runs(node, inMarkdown: true)) == expected)
+        #expect(comparable(LarkCardRuns.runs(node, inMarkdown: true)) == expected)
+        #expect(comparable(LarkCardRuns.runs(node, inMarkdown: false)) == comparable([.text(text, style)]))
     }
 
     @Test func lingoTermsUseUTF16Offsets() {

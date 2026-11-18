@@ -1,7 +1,7 @@
 // What Persona sent to its tasks' agents (#1542): only a routed item marked from "assistant" is Persona's; a task's card
 // takes in the hand-off written right after it (same task, same conversation), never a later message or the user's.
 import { describe, expect, it } from "vitest";
-import { displayLines, firstLine, HAND_OFF_MS, sentByPersona, sentTo, shownFeed, takenIn, type FeedItem } from "./feed";
+import { displayLines, drawnFeed, firstLine, HAND_OFF_MS, sentByPersona, sentTo, shownFeed, takenIn, type FeedItem } from "./feed";
 
 // a local noon, so a few minutes either way stay the same day in any time zone
 const t0 = new Date(2026, 10, 8, 12, 0, 0).getTime();
@@ -64,5 +64,16 @@ describe("sent to agents (#1542)", () => {
     expect(firstLine("\n\n  把内存降下来，目标是不再被杀掉。  \n\n背景：\n- 一周 14 次")).toBe("把内存降下来，目标是不再被杀掉。");
     expect(firstLine("（督办：验收没通过，第 1 轮返工，最多 2 轮）\r\n逐条验收：")).toBe("（督办：验收没通过，第 1 轮返工，最多 2 轮）");
     expect(firstLine(" \n \n")).toBe("");
+  });
+});
+
+// A task's card comes once, when it is handed out (#8237): its receipts, its Agent's reports and its reviews stay in the
+// feed for the trays and are not among the chat's lines; everything else is, in order.
+describe("what a Persona conversation draws of its feed", () => {
+  it("leaves out how a task goes on", () => {
+    const kinds = ["plan", "task", "receipt", "answered", "report", "routed", "review", "message", "today"];
+    const items = kinds.map((kind, i): FeedItem => ({ id: `f${i}`, conversation: "c1", at: at(i * 1000), kind, ref: "t1" } as FeedItem));
+    expect(drawnFeed(items).map((i) => i.kind)).toEqual(["plan", "task", "answered", "routed", "message", "today"]);
+    expect(displayLines([], items).map((l) => (l.kind === "feed" ? l.item.kind : l.kind))).not.toContain("receipt");
   });
 });

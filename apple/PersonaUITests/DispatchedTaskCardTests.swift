@@ -47,14 +47,24 @@ final class DispatchedTaskCardTests: XCTestCase {
         try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/iphone-\(appearance)-\(name).png"))
     }
 
+    /// The first card can sit under the Assistant tabs. `isHittable` is then true while a tap lands on the tab, so
+    /// keep scrolling until the whole card is between the tab bar and the dock. Their frames come from the app.
     @MainActor private func link(_ app: XCUIApplication, _ id: String) -> XCUIElement {
         let link = app.buttons["dispatch.task.\(id)"]
+        let tabs = app.buttons["shell-assistant"]
+        let dock = app.otherElements["action-bar"]
         let deadline = Date.now.addingTimeInterval(30)
-        while !(link.exists && link.isHittable) && Date.now < deadline {
-            usleep(500_000)
-            if !(link.exists && link.isHittable) { app.swipeDown(velocity: .slow) }
+        while Date.now < deadline {
+            if link.exists {
+                let frame = link.frame
+                let top = tabs.exists ? tabs.frame.maxY : app.frame.minY
+                let bottom = dock.exists ? dock.frame.minY : app.frame.maxY
+                if link.isHittable, frame.minY >= top, frame.maxY <= bottom { return link }
+                if frame.minY < top { app.swipeDown(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
+            }
+            usleep(400_000)
         }
-        XCTAssertTrue(link.exists && link.isHittable, "no dispatch link for \(id):\n\(app.debugDescription)")
+        XCTFail("no dispatch link for \(id):\n\(app.debugDescription)")
         return link
     }
 
@@ -85,8 +95,9 @@ final class DispatchedTaskCardTests: XCTestCase {
     @MainActor func testStandaloneOpensItsAgentAndBackReturnsToAssistant() throws {
         let app = launch()
         let one = link(app, "todo_task_widget")
-        XCTAssertTrue(one.label.contains("派出 1 件：修小组件横屏崩溃"), one.label)
-        XCTAssertTrue(one.label.contains("打开"), one.label)
+        // one card: the title, how the Agent came to it, when it last moved and its state, in one element
+        XCTAssertTrue(one.label.contains("给天气 App 加主屏幕小组件"), one.label)
+        XCTAssertFalse(one.label.contains("派出"), "the old \"Dispatched\" line is back: \(one.label)")
         try shot(app, "one")
         one.tap()
         assertPush(app, title: "给天气 App 加主屏幕小组件", session: "macbook/a1f3c2d4-0000-4000-8000-000000000001")
@@ -101,7 +112,7 @@ final class DispatchedTaskCardTests: XCTestCase {
         let app = launch()
         let starting = link(app, "todo_dispatch_starting")
         starting.tap()
-        XCTAssertTrue(app.staticTexts["正在开 Agent"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["正在开 Agent"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.staticTexts["检查启动状态"].exists, "another task's detail opened")
         XCTAssertFalse(app.otherElements["action-tray.running"].exists)
         try shot(app, "starting")
@@ -109,11 +120,13 @@ final class DispatchedTaskCardTests: XCTestCase {
         XCTAssertTrue(app.buttons["关闭"].firstMatch.waitForNonExistence(timeout: 5))
 
         let first = link(app, "todo_task_tests")
-        XCTAssertTrue(first.label.contains("补齐网络层的单元测试") && first.label.contains("打开"), first.label)
+        XCTAssertTrue(first.label.contains("补齐网络层的单元测试"), first.label)
         XCTAssertEqual(app.buttons.matching(identifier: "dispatch.task.todo_task_tests").count, 1, "duplicate per-task feed link")
         XCTAssertEqual(app.buttons.matching(identifier: "dispatch.task.todo_task_release").count, 1)
-        XCTAssertTrue(app.staticTexts["未启动的计划任务"].exists)
-        XCTAssertFalse(app.buttons["未启动的计划任务"].exists, "failed plan slot has an invented target")
+        let unstarted = app.descendants(matching: .any)["dispatch.unstarted"].firstMatch
+        XCTAssertTrue(unstarted.exists)
+        XCTAssertTrue(unstarted.label.contains("未启动的计划任务") && unstarted.label.contains("Unavailable"), unstarted.label)
+        XCTAssertFalse(app.buttons["dispatch.unstarted"].exists, "failed plan slot has an invented target")
         try shot(app, "many")
         first.tap()
         assertPush(app, title: "补齐网络层的单元测试", session: "macbook/a1f3c2d4-0000-4000-8000-000000000002")

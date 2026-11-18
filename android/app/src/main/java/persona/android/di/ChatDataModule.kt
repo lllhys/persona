@@ -27,6 +27,6 @@ object ChatDataModule {
 @Singleton
 class ChatDataOwner @Inject constructor(application: Application, runtime: ConnectionRuntime, stacks: GroupStacks) {
     private val app = application as PersonaApp
-    val storage = ScopedChatStorage(runtime, app.scope)
+    val storage = ScopedChatStorage(application, runtime, app.scope)
     val wiring: StateFlow<ChatAppBindings?> = stacks.selected.map { it?.bindings }.stateIn(app.scope, SharingStarted.Eagerly, null)
 }

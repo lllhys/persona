@@ -1,13 +1,15 @@
 // The full surface of a terminal panel (docs/integrations/terminal.md "Full herdr UI"): herdr's own client, in a PTY on the
 // computer, drawn by xterm — its sidebar, tabs and splits, driven from here. The feed is full.ts; what the page shares
 // with the single-pane surface (the key bar, the find bar, the right-click menu, the saved commands) is the same
-// components. The header's controls for this surface are drawn into the panel's header through `slot`.
+// components. The header's controls for this surface are drawn into the panel's header through `slot`; its gear has
+// only Appearance (the terminal's light / dark, which herdr is told), the one setting of Single pane's that is this surface's too.
 import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { t } from "../../../i18n";
 import { shouldRefocus, terminalMenu, type TerminalMenuKey } from "../../../lib/terminal-details";
 import { FIND_CLOSED, findReducer, isFindShortcut, queryFromSelection } from "../../../lib/terminal-search";
 import { STATUS_LABEL, canReconnect, type FullStatus } from "../../../lib/terminal-mode";
+import { schemeScope, useTerminalAppearance } from "../../../lib/terminal-appearance";
 import { Button, cx, IconButton, Loading, Menu, type MenuItem } from "../../../ui/atoms";
 import { Icon } from "../../../ui/icons";
 import { FindBar } from "./FindBar";
@@ -17,6 +19,7 @@ import { acquireFeed, releaseFeed } from "./full-registry";
 import { KeyBar } from "./KeyBar";
 import { saveKeyBar, savedKeyBar } from "./keybar-pref";
 import { ShortcutsEditor } from "./Shortcuts";
+import { AppearanceRow, OptionsPopover } from "./TerminalOptions";
 import { UploadStatus } from "./UploadStatus";
 
 const nothing = () => () => {};
@@ -83,8 +86,11 @@ export function FullTerminal({
   const unseen = useUnseen(root);
   const [keyBar, setKeyBar] = useState(savedKeyBar);
   const [editing, setEditing] = useState(false);
+  const [options, setOptions] = useState<HTMLElement | null>(null);
   const [find, dispatchFind] = useReducer(findReducer, FIND_CLOSED);
   const [menu, setMenu] = useState<{ x: number; y: number; selection: boolean } | null>(null);
+  // the terminal's own light / dark (Terminal settings › Appearance): its screen takes that scheme's tokens
+  const scheme = schemeScope(useTerminalAppearance());
   const delayAtMount = useRef(delay);
   const sidAtMount = useRef(sid);
   const token = useRef({}).current;
@@ -105,6 +111,10 @@ export function FullTerminal({
   // asked as well as `unseen` (an effect that has not run yet at the first render): a kept terminal behind the one
   // shown must not take the feed from it.
   const on = live && !unseen;
+  // the gear goes with the header's controls
+  useEffect(() => {
+    if (!on) setOptions(null);
+  }, [on]);
   useLayoutEffect(() => {
     if (!feed || !on || root.current?.closest("[inert]")) return;
     feed.claim(token, host.current!, viewport.current!, sid, firstClaim.current ? delayAtMount.current : 0);
@@ -210,6 +220,15 @@ export function FullTerminal({
       )}
       {onFiles && cwd && <IconButton icon="folder" label={t("terminal-full.files")} onClick={onFiles} className="max-lg:hidden" />}
       <IconButton icon="keyboard" label={keyBar ? t("terminal-full.keybar_hide") : t("terminal-full.keybar_show")} active={keyBar} onClick={() => chooseKeyBar(!keyBar)} />
+      <IconButton
+        icon="gear"
+        label={t("terminal-full.settings")}
+        active={Boolean(options)}
+        onClick={(e) => {
+          const target = e.currentTarget;
+          setOptions((o) => (o ? null : target));
+        }}
+      />
       <IconButton icon="retry" label={t("terminal-full.reconnect")} onClick={() => feed?.reconnect()} disabled={!feed} />
     </>
   );
@@ -225,7 +244,12 @@ export function FullTerminal({
     >
       {slot && on && createPortal(actions, slot)}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        <div ref={viewport} onContextMenu={onContextMenu} className={cx("relative min-h-0 flex-1 overflow-hidden p-2", v?.dropping && "ring-2 ring-inset ring-accent")}>
+        <div
+          ref={viewport}
+          onContextMenu={onContextMenu}
+          data-terminal-scheme={scheme}
+          className={cx("relative min-h-0 flex-1 overflow-hidden p-2", scheme && "bg-page", v?.dropping && "ring-2 ring-inset ring-accent")}
+        >
           <div ref={host} className="h-full w-full font-mono" />
         </div>
         {feed && v && find.open && (
@@ -267,6 +291,11 @@ export function FullTerminal({
         )}
       </div>
       {feed && v && v.ready && keyBar && <KeyBar feed={feed} v={v} onEditShortcuts={() => setEditing(true)} />}
+      {options && (
+        <OptionsPopover anchor={options} label={t("terminal-full.settings")} onClose={() => setOptions(null)}>
+          <AppearanceRow />
+        </OptionsPopover>
+      )}
       {menu && (
         <Menu
           items={menuItems()}

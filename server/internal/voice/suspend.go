@@ -33,6 +33,13 @@ import (
 // and waking are not drops: they do not count toward maxReconnects (a session paused after pauseAfter held
 // stableAfter, which starts that count over); a wake is tried wakeMost times in a row before the call ends
 // (upstream_failed).
+//
+// Hold (#9290, feature hold): the app's hold frame says the call is on hold (a system call the user put on hold, or
+// one they took another call over). The upstream is paused at once, whatever the conversation is doing and however
+// lately anyone spoke, and nothing wakes it while it lasts: what comes to say (a result, a card, a refusal) and the
+// lines the user types wait, and the app's audio is dropped (the user is talking to someone else: none of it is for
+// the model, nor kept for the wake). The hold's off wakes it as something to say does, and what waited goes then.
+// A meeting call and protocol 1 ignore it (the app sends it only on a system call, after a ready that lists hold).
 
 var (
 	// pauseAfter is how long the call is quiet while its conversation works before the upstream is closed
@@ -70,6 +77,11 @@ type suspension struct {
 	failed int       // tries of a wake that failed in a row
 	flush  bool      // a flushRing sends what is kept: one at a time, so it goes out in order
 	pauses int       // how often the call paused (the log)
+	// onHold: the app put the call on hold (holdFrame): it pauses at once and nothing wakes it till the hold is off.
+	// holdAt is when the last hold began, holds how many there were (the log).
+	onHold bool
+	holdAt time.Time
+	holds  int
 }
 
 // ring is the app's audio of the last span bytes, oldest first.
@@ -116,8 +128,14 @@ func (c *conversation) quietSince() time.Time {
 // pauseDue: the upstream may be paused now (mu held).
 func (c *conversation) pauseDue(now time.Time) bool {
 	switch {
-	case !c.ready || c.up == nil || c.version < 2 || c.closed || !c.sus.works || c.sus.state != "":
+	case !c.ready || c.up == nil || c.version < 2 || c.closed || c.sus.state != "":
 		return false // ready first: the version is set before it, outside mu
+	case c.meeting != nil:
+		return false // a meeting call never pauses: it is there for the next Talk (meeting.go); it takes no hold either
+	case c.sus.onHold:
+		return true // the user is on another call: at once, whatever the conversation does, whatever waits to be said
+	case !c.sus.works:
+		return false
 	case len(c.queue) > 0 || len(c.pending) > 0 || c.askCur != "" || c.user != nil:
 		return false // something to say, a handover waiting for its call, a card asked, the user's line open
 	}
@@ -131,11 +149,27 @@ func (c *conversation) maybePause(now time.Time) {
 		c.mu.Unlock()
 		return
 	}
+	c.pause(now)
+	c.mu.Unlock()
+}
+
+// pause closes the upstream session that is up (mu held): the call pauses (maybePause), or a session woken as the call
+// went on hold again is paused before what was kept goes to it (flushRing). What that session had goes with it: its
+// delegations, acks, reply under way (a response.create the next one is asked for goes at once) and what the app had
+// not played of its speech (on hold the app clears it). The lines typed on hold are kept for the hold's off; the app's
+// audio kept while waking is not (the user is on another call now: the next session would hear it long after).
+func (c *conversation) pause(now time.Time) {
 	s := &c.sus
 	if time.Since(c.connectedAt) >= stableAfter {
 		c.reconnects = 0 // as a drop of it would (lost): it held
 	}
-	s.state, s.at, s.voice, s.ring, s.texts, s.spoke = linkPaused, now, barge{}, ring{}, nil, false
+	quiet := now.Sub(c.quietSince()).Round(time.Second)
+	texts := s.texts // none unless on hold (holdText): a quiet pause comes only once the last wake's are out
+	if !s.onHold {
+		texts = nil
+	}
+	s.state, s.at, s.voice, s.ring, s.texts, s.spoke = linkPaused, now, barge{}, ring{}, texts, false
+	s.flush, s.failed = false, 0 // the session is up: a wake that brought it did not fail
 	s.pauses++
 	c.gen++ // its delegations go with it: what comes back for them is said
 	c.ready = false
@@ -143,14 +177,20 @@ func (c *conversation) maybePause(now time.Time) {
 	c.up = nil
 	clear(c.unacked) // that session's: an ack or refusal of it never comes
 	c.replied = nil
+	c.replying, c.createOwed = false, false // as lost: the old reply's end never comes, and the next session has none under way
 	c.dropAudio, c.cutAt, c.barge = false, time.Time{}, barge{}
+	if c.pace.playEnd.After(now) {
+		c.pace.playEnd = now // a hold mid-speech: the app drops what it had not played (a quiet pause is long past it)
+	}
 	c.closeAsst()
 	c.closeUser()
 	c.owed = owedAnswer{} // nothing is owed by a session that is gone after a minute's quiet (nudge.go)
 	c.sendApp(map[string]any{"type": "link", "state": linkPaused})
-	c.logf("paused the upstream (%d): session %d closed, the conversation works and nobody spoke for %v", s.pauses, sessionNo(c.gen-1),
-		now.Sub(c.quietSince()).Round(time.Second))
-	c.mu.Unlock()
+	if s.onHold {
+		c.logf("paused the upstream (%d): session %d closed, the call is on hold", s.pauses, sessionNo(c.gen-1))
+	} else {
+		c.logf("paused the upstream (%d): session %d closed, the conversation works and nobody spoke for %v", s.pauses, sessionNo(c.gen-1), quiet)
+	}
 	go func() { // its reader sees the new gen and stops
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = writeJSON(ctx, up, w.close())
@@ -188,11 +228,12 @@ func (c *conversation) held(b []byte, voiced bool) bool {
 	return true
 }
 
-// holdText keeps a line the user typed while the upstream is paused or waking (mu held): whether it was kept. It is
-// sent to the new session after the ring, and is what was said from then on, not before the pause (the session's
-// instructions do not have it: remember happens as it is sent).
+// holdText keeps a line the user typed while the upstream is paused or waking, or the call is on hold (mu held):
+// whether it was kept. It is sent to the new session after the ring, and is what was said from then on, not before the
+// pause (the session's instructions do not have it: remember happens as it is sent). On hold it is kept whatever the
+// upstream does (a reconnect, a session up that is about to pause), and goes once the hold is off.
 func (c *conversation) holdText(text string) bool {
-	if c.sus.state == "" {
+	if c.sus.state == "" && !c.sus.onHold {
 		return false
 	}
 	c.takeBack(text)
@@ -208,16 +249,61 @@ func (c *conversation) takeBack(text string) {
 	}
 }
 
-// rouse begins to wake a paused upstream (mu held); why is what woke it (the log).
+// rouse begins to wake a paused upstream (mu held); why is what woke it (the log). Nothing wakes one on hold: what
+// would have woken it waits for the hold's off (holdFrame).
 func (c *conversation) rouse(why string) {
 	s := &c.sus
-	if s.state != linkPaused || c.closed {
+	if s.state != linkPaused || c.closed || s.onHold {
 		return
 	}
 	s.state, s.at = linkWaking, time.Now()
 	c.sendApp(map[string]any{"type": "link", "state": linkWaking})
 	c.logf("waking the upstream: %s", why)
 	go c.wakeUp()
+}
+
+// holdFrame takes the app's hold frame (#9290): the call goes on hold (on) or comes back. On hold the upstream is
+// paused at once (pauseDue) and nothing wakes it; back, it wakes as for something to say, and what waited goes then.
+// A repeated on or off changes nothing. Protocol 1 and a meeting call ignore it (logged once): the app sends it only
+// on a system call, after a ready that lists hold, and a meeting call never pauses.
+func (c *conversation) holdFrame(on bool) {
+	c.mu.Lock()
+	s := &c.sus
+	switch {
+	case c.version < 2 || c.meeting != nil:
+		if !c.holdIgnored {
+			c.holdIgnored = true
+			c.logf("hold frames on a %s: ignored", map[bool]string{true: "meeting call", false: "protocol 1 call"}[c.meeting != nil])
+		}
+		c.mu.Unlock()
+		return
+	case on == s.onHold:
+		c.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	s.onHold = on
+	if on {
+		s.holds++
+		s.holdAt = now
+		c.logf("hold %d: on", s.holds)
+		c.mu.Unlock()
+		c.maybePause(now) // live: paused now; reconnecting or waking: once it is up (the speaker's next look)
+		return
+	}
+	c.logf("hold %d: off after %v", s.holds, logDur(now.Sub(s.holdAt)))
+	c.rouse("the call is off hold")
+	if s.state == "" && len(s.texts) > 0 {
+		// Not paused (the hold came as it reconnected, and went before its session was up or paused): the lines typed
+		// meanwhile go as a wake's do, once that session is up (this flush, or the reconnect's after connect).
+		s.state, s.at = linkWaking, now
+		go c.flushRing()
+	}
+	c.mu.Unlock()
+	select { // not paused: what waits goes now
+	case c.wake <- struct{}{}:
+	default:
+	}
 }
 
 // wakeUp opens the new session (connect: its instructions tell it what was said and what is waited on, and link{live}
@@ -261,6 +347,9 @@ func (c *conversation) wakeUp() {
 // If the session drops before all of it is out, the rest stays kept: lost reconnects, and the reconnected session gets
 // it (lost calls this once it is up). One flush runs at a time; one that finds another running leaves it to that one,
 // which goes on with whichever session is up.
+//
+// The call went on hold again as it woke (#9290): the session is paused before anything more goes to it, and the lines
+// typed are kept for the hold's off (pause).
 func (c *conversation) flushRing() {
 	c.mu.Lock()
 	if c.sus.state != linkWaking || c.sus.flush {
@@ -276,6 +365,11 @@ func (c *conversation) flushRing() {
 			c.sus.flush = false
 			c.mu.Unlock()
 			return // the session dropped: lost reconnects, and the reconnected one gets what is kept
+		}
+		if c.sus.onHold {
+			c.pause(time.Now())
+			c.mu.Unlock()
+			return
 		}
 		var out []any
 		frames, text := c.sus.ring.take(), ""

@@ -1,0 +1,8 @@
+{
+  "send_to": "あなたの身分で Lark の「{chat}」にメッセージを送ります",
+  "reply_to": "あなたの身分で Lark の「{chat}」にある {sender} さんのメッセージに返信します",
+  "reply_in_chat": "あなたの身分で Lark の「{chat}」のメッセージに返信します",
+  "topic_suffix": "（トピックへの返信）",
+  "original": "元のメッセージ：{text}",
+  "outgoing": "本文：\n{text}"
+}

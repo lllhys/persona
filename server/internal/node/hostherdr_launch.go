@@ -12,16 +12,26 @@ import (
 
 // CreateSpace opens the workspace on the own server: pane-less work never goes to a named session.
 func (h *herdrHost) CreateSpace(ctx context.Context, cwd, label string) (*host.Created, error) {
-	c, err := h.c.WorkspaceCreate(ctx, cwd, label)
-	return fromHerdrCreated("", c), err
+	return h.CreateSpaceEnv(ctx, cwd, label, nil)
 }
 
 func (h *herdrHost) CreateSlot(ctx context.Context, space, cwd, label string) (*host.Created, error) {
+	return h.CreateSlotEnv(ctx, space, cwd, label, nil)
+}
+
+// CreateSpaceEnv is CreateSpace whose first pane's shell starts with env added (host.EnvLauncher).
+func (h *herdrHost) CreateSpaceEnv(ctx context.Context, cwd, label string, env []string) (*host.Created, error) {
+	c, err := h.c.WorkspaceCreate(ctx, cwd, label, env...)
+	return fromHerdrCreated("", c), err
+}
+
+// CreateSlotEnv is CreateSlot whose pane's shell starts with env added (host.EnvLauncher).
+func (h *herdrHost) CreateSlotEnv(ctx context.Context, space, cwd, label string, env []string) (*host.Created, error) {
 	t, err := h.target(ctx, space)
 	if err != nil {
 		return nil, err
 	}
-	c, err := t.c.TabCreate(ctx, t.id, cwd, label)
+	c, err := t.c.TabCreate(ctx, t.id, cwd, label, env...)
 	return fromHerdrCreated(t.session, c), err
 }
 
@@ -105,11 +115,37 @@ func (h *herdrHost) Split(ctx context.Context, pane host.PaneRef, direction, cwd
 // CreateWorktree has herdr check the branch out at path and open it as a workspace grouped under the source one, in
 // the source one's session.
 func (h *herdrHost) CreateWorktree(ctx context.Context, space, branch, path string) (*host.Created, error) {
+	return h.createWorktree(ctx, space, "", "", branch, path)
+}
+
+// CreateWorktreeFromMain starts from a linked checkout's main repository with base as the linked checkout's HEAD. A
+// fresh layout of the source session decides whether the main checkout has its own workspace; cached layouts are not used.
+func (h *herdrHost) CreateWorktreeFromMain(ctx context.Context, space, mainRoot, base, branch, path string) (*host.Created, error) {
+	return h.createWorktree(ctx, space, mainRoot, base, branch, path)
+}
+
+func (h *herdrHost) createWorktree(ctx context.Context, space, mainRoot, base, branch, path string) (*host.Created, error) {
 	t, err := h.target(ctx, space)
 	if err != nil {
 		return nil, err
 	}
-	c, err := t.c.WorktreeCreate(ctx, t.id, branch, path)
+	space = t.id
+	if mainRoot != "" {
+		if l, layoutErr := layoutOf(ctx, t.c, ""); layoutErr == nil {
+			for _, s := range l.Spaces {
+				if s.Cwd != "" && realPath(s.Cwd) == realPath(mainRoot) {
+					space, mainRoot = s.ID, ""
+					break
+				}
+			}
+		}
+	}
+	var c *herdr.WorktreeCreated
+	if mainRoot != "" {
+		c, err = t.c.WorktreeCreateFromCwd(ctx, mainRoot, branch, path, base)
+	} else {
+		c, err = t.c.WorktreeCreate(ctx, space, branch, path, base)
+	}
 	if err != nil {
 		return nil, err
 	}

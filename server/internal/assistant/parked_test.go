@@ -12,9 +12,45 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
+// testParkEvidence is a source-backed park fixture for admission tests. Its receipt was sent before the test starts.
+func testParkEvidence(kind, target, sourceURL, wake string) map[string]any {
+	evidence := map[string]any{"kind": kind, "target": target, "wake": wake}
+	switch kind {
+	case "person_reply":
+		evidence["contact"] = map[string]any{"channel": "GitHub discussion", "url": "https://example.com/messages/42", "sender": "task supervisor",
+			"sent_at": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), "request": "Please reply with the agreed decision.", "status": "sent"}
+	case "merge_review":
+		evidence["url"], evidence["ready"] = sourceURL, true
+		evidence["contact"] = map[string]any{"channel": "GitHub review request", "url": "https://example.com/messages/43", "sender": "task supervisor",
+			"sent_at": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), "request": "Please review and merge this ready change.", "status": "sent"}
+	case "external_event":
+		evidence["url"] = sourceURL
+	}
+	return evidence
+}
+
 // waitingPark is a complete parked review: the task waits for someone else, for three days.
 func waitingPark() map[string]any {
-	return map[string]any{"verdict": "parked", "reason": "The design team has to pick the icon set first", "waiting_on": "someone_else", "until": "3d"}
+	return map[string]any{"verdict": "parked", "reason": "The design team has to pick the icon set first", "waiting_on": "someone_else", "until": "3d",
+		"evidence": testParkEvidence("person_reply", "design team", "", "The design team replies with its icon choice")}
+}
+
+// seedLegacyPark records an old park directly in the persisted supervision ledger. Legacy owner_priority rows remain
+// readable, but new task_review admissions must use needs_user for an owner decision.
+func seedLegacyPark(t *testing.T, s *Service, id, reason, waitingOn, until string) {
+	t.Helper()
+	at := time.Now().UTC()
+	deadline, err := parseParkUntil(until, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.updateSupervision(context.Background(), id, func(v *Supervision) bool {
+		v.State = reviewParked
+		v.Reviews = append(v.Reviews, TaskReview{At: at, Verdict: reviewParked, Reason: reason, Until: deadline, WaitingOn: waitingOn, Parks: 1})
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // noSessions is a lookup that finds no session: the to-do's agents are closed.
@@ -43,8 +79,9 @@ func TestParkedIsRefusedWithoutEachRequiredField(t *testing.T) {
 	}{
 		{"no reason", func(a map[string]any) { delete(a, "reason") }, "reason (one sentence: what the task waits for)"},
 		{"a blank reason", func(a map[string]any) { a["reason"] = "  " }, "reason (one sentence: what the task waits for)"},
-		{"no waiting_on", func(a map[string]any) { delete(a, "waiting_on") }, "waiting_on (what kind of thing it waits on: owner_priority, someone_else, external_event, date)"},
+		{"no waiting_on", func(a map[string]any) { delete(a, "waiting_on") }, "waiting_on (what kind of thing it waits on: someone_else, external_event, date)"},
 		{"a waiting_on that is none of them", func(a map[string]any) { a["waiting_on"] = "later" }, "waiting_on ("},
+		{"an owner decision is not a park", func(a map[string]any) { a["waiting_on"] = parkOwnerPriority }, "owner_priority is an owner decision: use needs_user"},
 		{"an until that is no time", func(a map[string]any) { a["until"] = "soon" }, `until "soon": give a duration`},
 		{"an until past 30 days", func(a map[string]any) { a["until"] = "31d" }, "must be between 1 minute and 30 days"},
 		{"an until that passed", func(a map[string]any) { a["until"] = "2020-01-01T00:00:00Z" }, "must be between 1 minute and 30 days"},
@@ -70,7 +107,7 @@ func TestParkedIsRefusedWithoutEachRequiredField(t *testing.T) {
 	}
 	// A needs_user that is no decision is told it can park (#3926's refusal).
 	if _, err := reviewErr(s, todo.ID, map[string]any{"verdict": "needs_user", "note": "waits for the experiment's scope"}); err == nil ||
-		!strings.Contains(err.Error(), "park it (parked, with reason, waiting_on and until)") {
+		!strings.Contains(err.Error(), "park it (parked, with reason, waiting_on, evidence and until)") {
 		t.Fatalf("the needs_user refusal does not offer parking: %v", err)
 	}
 	// Only the task's supervisor parks it, as for the other verdicts.
@@ -112,8 +149,9 @@ func TestParkedTaskIsNotInNeedsYouAndRaisesNoSignals(t *testing.T) {
 	forgetSignals(t, s)
 	pushes := len(f.pushed())
 	start := time.Now()
-	got, err := reviewErr(s, todo.ID, map[string]any{"verdict": "parked", "reason": "The design team has to pick the icon set first",
-		"waiting_on": "someone_else", "until": "5d"})
+	args := waitingPark()
+	args["until"] = "5d"
+	got, err := reviewErr(s, todo.ID, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +262,8 @@ func TestParkedDueComesOnceAtItsTimeAndAfterARestart(t *testing.T) {
 	s.superviseWatch(ctx, due.Add(time.Minute))
 	waitFor(t, "the parked_due message", func() bool { return len(f.notices()) > before })
 	n := f.notices()[before]
-	for _, want := range []string{"搁置到期了", "The design team has to pick the icon set first", "等别人", "已经连续搁置 1 次", "还能再搁置 3 次",
-		"搁置到期的：先看等的那件事发生了没有"} {
+	for _, want := range []string{"搁置到期了", "The design team has to pick the icon set first", "等别人", "已经连续搁置 1 次", "剩余搁置次数 3",
+		"signal=parked_due"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the message lacks %q:\n%s", want, n)
 		}
@@ -367,10 +405,7 @@ func TestDigestListsATaskParkedForTheOwnersPriorityCall(t *testing.T) {
 	if open := digest(); len(open) != 0 {
 		t.Fatalf("a task parked for someone else is in the owner's digest: %+v", open)
 	}
-	if _, err := reviewErr(s, todo.ID, map[string]any{"verdict": "parked", "reason": "Whether this goes ahead of the billing work",
-		"waiting_on": "owner_priority", "until": "7d"}); err != nil {
-		t.Fatal(err)
-	}
+	seedLegacyPark(t, s, todo.ID, "Whether this goes ahead of the billing work", parkOwnerPriority, "7d")
 	open := digest()
 	if len(open) != 1 || open[0].Parked != "Whether this goes ahead of the billing work" || open[0].Decide || open[0].Need != "" {
 		t.Fatalf("digest = %+v", open)

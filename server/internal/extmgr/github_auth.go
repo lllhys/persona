@@ -156,7 +156,7 @@ func (h *Manager) githubAuthNow(ctx context.Context, c *github.Connector, ext *p
 	defer cancel()
 	var wg sync.WaitGroup
 	for i, m := range ms {
-		out[i] = githubMachine{ID: m.cfg.ID, Name: m.cfg.Name}
+		out[i] = githubMachine{ID: m.cfg.ID, Name: m.name()}
 		if out[i].Name == "" {
 			out[i].Name = m.cfg.ID
 		}

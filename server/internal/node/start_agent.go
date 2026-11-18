@@ -23,8 +23,12 @@ type agentLauncher struct {
 // ompOptionsRefusal: omp's model and thinking level come from its own config.yml, not from a start's arguments.
 const ompOptionsRefusal = "omp 的模型和思考强度由 omp 自己的配置决定，这次没有启动。"
 
-// launcherAgentType is the agent a launcher starts when nothing else says: codex, traex and omp by name, else claude.
+// launcherAgentType is the agent a launcher starts when nothing else says: pi, the Cursor CLI and the Antigravity CLI
+// by name (workagent.go), codex, traex and omp by name, else claude.
 func launcherAgentType(name string) string {
+	if _, _, ok := workAgent(name); ok {
+		return name
+	}
 	if name == "codex" || name == traexAgent || name == ompAgent {
 		return name
 	}
@@ -66,7 +70,7 @@ func otherAgentCommand(launcher, resume, prompt string, shells ...string) string
 // break as a space (csh ends the command at one, quote open or not).
 func typedArg(text string, shells ...string) string {
 	text = strings.ReplaceAll(inertControls(text), "\t", " ")
-	if !takesAssign(shells...) {
+	if !takesAssign(startCommandShells(shells)...) {
 		text = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(text)
 	}
 	return text
@@ -93,7 +97,7 @@ func (n *Node) startOtherAgent(ctx context.Context, launch host.Launcher, cwd, l
 	}
 	// A Codex wrapper is told to herdr as Codex (hostherdr.go); a compatible CLI is herdr's to detect. The node's
 	// directory in front, the assistant's environment left out (agentenv.go).
-	shells := paneShells(ctx, created)
+	shells := n.startPaneShells(ctx, launch, created)
 	// The first message keeps its line breaks only in a start file: typed out, the line may meet csh, which runs each
 	// line on its own (typedArg), and Orca does not say which shell it opened.
 	argShells := shells
@@ -103,7 +107,7 @@ func (n *Node) startOtherAgent(ctx context.Context, launch host.Launcher, cwd, l
 	cmd := withHerdrAgent(typedHerdrAgent(launch, kind, shells...), otherAgentCommand(launcher, resume, prompt, argShells...))
 	// Not in the agent sandbox (agentsandbox.go).
 	n.notePaneStart(launcher)
-	done, err := n.runAgentCommand(ctx, launch, created, ws, "", n.agentCommand(cmd, shellQuote, shells...), shells...) // typedstart.go
+	done, err := n.runAgentCommand(ctx, launch, created, ws, "", n.agentStartCommand(cmd, shellQuote, shells...), shells...) // typedstart.go
 	if err != nil {
 		return nil, err
 	}

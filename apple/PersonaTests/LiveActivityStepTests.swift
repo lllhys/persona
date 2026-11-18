@@ -46,6 +46,25 @@ struct LiveActivityStepTests {
         #expect(LiveActivityController.step(s, running: c.running, active: c.active) == c.expected, "\(c.label)")
     }
 
+    /// The last request answered elsewhere while the app is in front: off its activity at once, with the buttons, not
+    /// at the end a minute later (#8636). Anything else that empties the fleet waits for the end, as on the hub.
+    @Test func theLastRequestGoingClearsAtOnce() {
+        let ask = FleetState.Item(id: "m/s", title: "api", place: "", kind: .permission, detail: "Bash: go test", interaction: "ix1", since: 0)
+        var asking = state(phase: .needsYou)
+        (asking.needsYou, asking.items) = (1, [ask])
+        let work = FleetState.Item(id: "m/w", title: "api", place: "", kind: .working, since: 0)
+        var working = state(phase: .working)
+        (working.working, working.items) = (1, [work])
+        #expect(LiveActivityController.step(state(), running: true, active: true) == .endSoon)
+        #expect(LiveActivityController.clearsNow(asking, to: state()))
+        // The assistant answering on a tokens island: nothing to show there either.
+        #expect(LiveActivityController.clearsNow(asking, to: state(assistant: true, island: .tokens)))
+        // Shown on its island, the assistant is something to show: an ordinary update, not this.
+        #expect(!LiveActivityController.clearsNow(asking, to: state(assistant: true)))
+        #expect(!LiveActivityController.clearsNow(working, to: state()))
+        #expect(!LiveActivityController.clearsNow(state(phase: .done), to: state()))
+    }
+
     @Test func showsNothingFollowsTheIslandsSides() {
         #expect(state().showsNothing)
         #expect(!state(assistant: true).showsNothing)

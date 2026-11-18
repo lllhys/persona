@@ -9,6 +9,7 @@ GET /mock/review?mode=<mode> switches what it answers and returns the requests s
              does not track yet
   clean      nothing changed
   nogit      the folder is not a repository (409 not_git)
+  nofolder   the folder is not there any more (409 no_folder)
   outdated   the computer's node is from before git.review (409 node_outdated)
   nodefault  no default branch: branch is 409 no_default_branch, the rest as 1
   slow       as 1, two seconds late
@@ -51,7 +52,7 @@ STATIONS = "[\n" + ",\n".join('  {"id": "ST-%03d", "lat": %.3f, "lon": %.3f}' % 
 
 def hunks(old, new, context=3):
     """The hunks git.review sends for two texts: a side's start is where its lines are (1-based), the header the
-    nearest declaration above the hunk."""
+    nearest declaration above the hunk, left out when there is none as the node leaves it out (omitempty, #8733)."""
     a, b = old.splitlines(), new.splitlines()
     out = []
     for group in difflib.SequenceMatcher(None, a, b, autojunk=False).get_grouped_opcodes(context):
@@ -64,7 +65,10 @@ def hunks(old, new, context=3):
             lines += ["+" + x for x in b[b1:b2]]
         i1, j1 = group[0][1], group[0][3]
         header = next((x.strip() for x in reversed(a[:i1]) if x.lstrip().startswith(("func ", "struct ", "static func "))), "")
-        out.append({"header": header, "old_start": i1 + 1, "new_start": j1 + 1, "lines": lines})
+        hunk = {"old_start": i1 + 1, "new_start": j1 + 1, "lines": lines}
+        if header:
+            hunk["header"] = header
+        out.append(hunk)
     return out
 
 
@@ -117,6 +121,8 @@ def answer(q, root, tree, repo, commits, edit_old, edit_new):
         time.sleep(2)
     if mode == "nogit":
         return {"error": "not a Git repository", "code": "not_git"}, 409
+    if mode == "nofolder":
+        return {"error": "the folder is not there", "code": "no_folder"}, 409
     if mode == "outdated":
         return {"error": "personad on this computer is too old to review changes. Update it", "code": "node_outdated"}, 409
     if scope not in ("uncommitted", "branch", "commit") or (scope == "commit" and not base):

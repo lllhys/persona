@@ -13,6 +13,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -38,7 +39,27 @@ func (s *Service) todoDecisionRoutes() {
 			apierr.Write(w, http.StatusInternalServerError, err)
 			return
 		}
-		apierr.WriteJSON(w, map[string]any{"decisions": list})
+		type decisionView struct {
+			db.TodoDecisionRow
+			PhaseCompletedAt *time.Time `json:"phase_completed_at,omitempty"`
+		}
+		todo, hasTodo := s.todoNow(id)
+		views := make([]decisionView, 0, len(list))
+		var earlierLabel string
+		for _, row := range list {
+			view := decisionView{TodoDecisionRow: row}
+			if at, ok := completionOfDecision(row); ok {
+				view.PhaseCompletedAt = &at
+				if _, earlier := earlierOutcomeSummary(todo, row); hasTodo && earlier {
+					if earlierLabel == "" {
+						earlierLabel = i18n.T(s.requestLang(r), "assistant-tasks.earlier_phase_outcome")
+					}
+					view.Question = earlierLabel
+				}
+			}
+			views = append(views, view)
+		}
+		apierr.WriteJSON(w, map[string]any{"decisions": views})
 	})
 
 	// POST /api/v1/todos/{id}/decisions: write one {question, choice, reason?, supersedes_id?, source?, ref?}. A device
@@ -303,7 +324,7 @@ func (s *Service) agentDecisionTool(ctx context.Context, machine, session, name 
 		if len(list) == 0 {
 			return fmt.Sprintf("Todo %s (%q) has no decisions yet.", t.ID, t.Title), nil
 		}
-		b, _ := json.Marshal(map[string]any{"todo": map[string]string{"id": t.ID, "title": t.Title}, "decisions": agentDecisionViews(list)})
+		b, _ := json.Marshal(map[string]any{"todo": map[string]string{"id": t.ID, "title": t.Title}, "decisions": agentDecisionViews(t, list)})
 		return string(b), nil
 	}
 	var a struct {
@@ -352,24 +373,32 @@ func (s *Service) agentDecisionTool(ctx context.Context, machine, session, name 
 
 // agentDecisionView is a decision as todo_decisions gives it to an agent: who made the call, in words.
 type agentDecisionView struct {
-	ID         string `json:"id"`
-	Question   string `json:"question"`
-	Choice     string `json:"choice"`
-	Reason     string `json:"reason,omitempty"`
-	By         string `json:"by"` // user / agent
-	Supersedes string `json:"supersedes,omitempty"`
-	At         string `json:"at"`
+	ID               string     `json:"id"`
+	Question         string     `json:"question"`
+	Choice           string     `json:"choice"`
+	Reason           string     `json:"reason,omitempty"`
+	By               string     `json:"by"` // user / agent
+	Supersedes       string     `json:"supersedes,omitempty"`
+	At               string     `json:"at"`
+	PhaseCompletedAt *time.Time `json:"phase_completed_at,omitempty"`
+	SourceSession    string     `json:"source_session,omitempty"`
+	Historical       bool       `json:"historical,omitempty"`
 }
 
-func agentDecisionViews(list []db.TodoDecisionRow) []agentDecisionView {
+func agentDecisionViews(todo Todo, list []db.TodoDecisionRow) []agentDecisionView {
 	out := make([]agentDecisionView, 0, len(list))
 	for _, r := range list {
 		by := "user"
 		if r.Source == db.DecisionAgent || r.Source == db.DecisionOutcome {
 			by = "agent"
 		}
-		out = append(out, agentDecisionView{ID: r.ID, Question: r.Question, Choice: r.Choice, Reason: r.Reason, By: by,
-			Supersedes: r.SupersedesID, At: r.CreatedAt.UTC().Format(time.RFC3339)})
+		view := agentDecisionView{ID: r.ID, Question: r.Question, Choice: r.Choice, Reason: r.Reason, By: by,
+			Supersedes: r.SupersedesID, At: r.CreatedAt.UTC().Format(time.RFC3339)}
+		if at, ok := completionOfDecision(r); ok {
+			view.PhaseCompletedAt, view.SourceSession = &at, r.SourceSession
+			_, view.Historical = earlierPhase(todo, r)
+		}
+		out = append(out, view)
 	}
 	return out
 }
@@ -385,47 +414,83 @@ func (s *Service) decisionsChanged(ctx context.Context, todoID string, at time.T
 	s.todosChanged(ctx)
 }
 
-// todoDecisionsContext is the context block of a todo's decisions in effect that goes before what is handed to an
-// agent for it; empty when it has none or they cannot be read (the handoff goes on without them).
+// todoDecisionsContext is the context block of one todo's decisions in effect, for supervision and card delegation;
+// empty when it has none or they cannot be read.
 func (s *Service) todoDecisionsContext(ctx context.Context, todoID string) string {
+	return s.renderTodoDecisionsContext(ctx, todoID, []string{todoID})
+}
+
+// todoHandoffDecisionsContext also carries the decisions of the todo's actual continuation ancestors. Their records
+// stay historical context: no decision supersedes one on another todo, and none creates an authorization.
+func (s *Service) todoHandoffDecisionsContext(ctx context.Context, todoID string) string {
+	return s.renderTodoDecisionsContext(ctx, todoID, s.continuationTodos(todoID))
+}
+
+// renderTodoDecisionsContext renders the effective decisions of ids (oldest first), globally in time order. A read
+// failure omits only that todo's decisions and is logged; the handoff still goes on with the rest.
+func (s *Service) renderTodoDecisionsContext(ctx context.Context, todoID string, ids []string) string {
 	st := s.todoDB()
 	if st == nil || todoID == "" {
 		return ""
 	}
-	list, err := st.ListTodoDecisions(ctx, todoID, false)
-	if err != nil {
-		s.logf("decisions: todo %s: %v", todoID, err)
-		return ""
+	var list []db.TodoDecisionRow
+	for _, id := range ids {
+		rows, err := st.ListTodoDecisions(ctx, id, false)
+		if err != nil {
+			s.logf("decisions: todo %s: %v", id, err)
+			continue
+		}
+		list = append(list, rows...)
 	}
 	if len(list) == 0 {
 		return ""
 	}
-	var title string
+	slices.SortFunc(list, func(a, b db.TodoDecisionRow) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	todos := map[string]Todo{}
 	agents := map[[2]string]string{}
-	if t, ok := s.todoNow(todoID); ok {
-		title = t.Title
-		for _, a := range t.Agents {
-			agents[[2]string{a.MachineID, a.SessionID}] = a.Title
+	for _, id := range ids {
+		if t, ok := s.todoNow(id); ok {
+			todos[id] = t
+			for _, a := range t.Agents {
+				agents[[2]string{a.MachineID, a.SessionID}] = a.Title
+			}
 		}
 	}
 	loc := s.location(ctx)
-	d := prompts.TodoDecisions{Title: contextText(title)}
+	d := prompts.TodoDecisions{Title: contextText(todos[todoID].Title)}
 	for i, r := range list {
-		from := ""
-		if r.Source == db.DecisionOutcome {
-			from = "Agent 做完时记的，不是用户定的" // todo_outcome.go: pulled out of a reply, the user did not make it
-		} else if r.Source == db.DecisionAgent {
-			from = "Agent 干活时记的，不是用户定的" // i18n-ignore: a line of the prompt the model reads (prompts/todo/decisions.md); todo_decision_add, the agent's own call
-		} else if r.Source == db.DecisionThread {
-			from = "用户在飞书话题里回的" // i18n-ignore: a line of the prompt the model reads
-		} else if r.Source == db.DecisionCard {
-			from = "在 Agent 的提问里答的"
-			if t := strings.TrimSpace(agents[[2]string{r.SourceMachine, r.SourceSession}]); t != "" {
-				from = "在「" + contextText(oneLine(t)) + "」的提问里答的"
+		var source, asker, ancestor string
+		switch r.Source {
+		case db.DecisionOutcome: // todo_outcome.go: pulled out of a reply, the user did not make it
+			source = prompts.TodoDecisionOutcome
+			if todo, ok := todos[r.TodoID]; ok {
+				if _, earlier := earlierPhase(todo, r); earlier {
+					source = prompts.TodoDecisionEarlierOutcome
+				}
 			}
+		case db.DecisionAgent: // todo_decision_add, the agent's own call
+			source = prompts.TodoDecisionAgent
+		case db.DecisionThread:
+			source = prompts.TodoDecisionThread
+		case db.DecisionCard:
+			source = prompts.TodoDecisionCard
+			asker = contextText(oneLine(strings.TrimSpace(agents[[2]string{r.SourceMachine, r.SourceSession}])))
+		}
+		if r.TodoID != todoID {
+			ancestor = strings.TrimSpace(todos[r.TodoID].Title)
+			if ancestor == "" {
+				ancestor = r.TodoID
+			}
+			ancestor = contextText(oneLine(ancestor))
 		}
 		d.Decisions = append(d.Decisions, prompts.TodoDecision{N: i + 1, Question: contextText(r.Question),
-			Choice: contextText(r.Choice), Reason: contextText(r.Reason), When: r.CreatedAt.In(loc).Format("01-02 15:04"), From: from})
+			Choice: contextText(r.Choice), Reason: contextText(r.Reason), When: r.CreatedAt.In(loc).Format("01-02 15:04"),
+			Source: source, Asker: asker, Ancestor: ancestor})
 	}
 	return prompts.RenderTodoDecisions(d)
 }
@@ -436,12 +501,13 @@ func contextText(s string) string {
 	return strings.ReplaceAll(strings.TrimSpace(prompts.ContextBody(s)), "\n", "\n      ")
 }
 
-// withTodoDecisions puts the todo's decisions before text handed to an agent for it; text as it is without any.
+// withTodoDecisions puts the todo's and its continuation ancestors' decisions before text handed to an agent;
+// text as it is without any.
 func (s *Service) withTodoDecisions(ctx context.Context, todoID, text string) string {
 	if strings.TrimSpace(text) == "" {
 		return text
 	}
-	if c := s.todoDecisionsContext(ctx, todoID); c != "" {
+	if c := s.todoHandoffDecisionsContext(ctx, todoID); c != "" {
 		return c + "\n\n" + text
 	}
 	return text

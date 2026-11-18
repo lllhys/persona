@@ -28,6 +28,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Persona">
 
+        <!-- The welcome page's "No hub yet?" address; "unset" when the build has none (GettingStarted.kt). -->
+        <meta-data android:name="persona.getting_started_url" android:value="${gettingStartedUrl}" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -1,5 +1,6 @@
 package persona.core.contracts.api
 
+import persona.core.contracts.DirectionTree
 import persona.core.contracts.Session
 import persona.core.contracts.SessionKey
 import kotlinx.coroutines.flow.StateFlow
@@ -7,12 +8,13 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * A current leader's open tasks (#4352), from `GET /api/v1/assistant/directions/tree`'s `counts`: [working] in its
- * Working section, [needsYou] waiting on the user. Both zero when it has none.
+ * What a current leader's row shows of its direction (#4352, #6626), from `GET /api/v1/assistant/directions/tree`:
+ * [running], anything under it at work (its row's one activity mark), and [needsYou], its tasks waiting on the user (its
+ * 「等你 N」). No working count: the mark says it.
  */
 @Serializable
 data class LeaderCounts(
-    val working: Int = 0,
+    val running: Boolean = false,
     @SerialName("needs_you") val needsYou: Int = 0,
 )
 
@@ -33,17 +35,25 @@ data class AssistantSnapshot(
      */
     val directionNames: Map<String, String> = emptyMap(),
     /**
-     * Each current leader's open tasks (the direction tree's `counts`, #4352), by conversation id: its row says
-     * 「在做 N · 等你 N」. A leader without open tasks is left out or says zero; empty from an older hub.
+     * The hub's direction tree (`GET /api/v1/assistant/directions/tree`, #4352), read and parsed in one place
+     * (RealAssistantRepository): each direction's open to-dos, their states and agents. Null from an older hub (or before
+     * it is read): the drawer keeps its flat rows and no list groups by it.
      */
-    val leaderCounts: Map<String, LeaderCounts> = emptyMap(),
+    val directionTree: DirectionTree? = null,
     /**
      * The built-in background supervisor's conversation id (`background_supervisor` of `GET /api/v1/assistant`, #4927,
      * docs/assistant/unified-entry.md "Background supervisor"): listed, never a direction, never archived or ended from
      * the app. Null until the hub has made it and from an older hub.
      */
     val backgroundSupervisor: String? = null,
-)
+) {
+    /**
+     * What each current leader's row shows (the tree's `running` and `counts.needs_you`, #4352, #6626), by conversation
+     * id: its spinner while anything under it runs, 「等你 N」. The secretary group is not a leader; empty from an older hub.
+     */
+    val leaderCounts: Map<String, LeaderCounts>
+        get() = directionTree?.leaders.orEmpty().associate { it.id to LeaderCounts(it.running, it.counts.needsYou) }
+}
 
 /** The assistant's spaces besides its own (docs/assistant/health.md): their names on the wire (`space`). */
 object AssistantSpace {

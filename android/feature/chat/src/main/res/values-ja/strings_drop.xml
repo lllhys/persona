@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_composer_drop_target">ここにファイルをドロップして添付</string>
+    <string name="chat_composer_drop_importing">ドロップしたファイルをコピーしています…</string>
+    <string name="chat_composer_drop_failed">ドロップした項目を追加できません。読み取り可能なファイルのみ添付できます。</string>
+</resources>

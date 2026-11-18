@@ -5,6 +5,7 @@
 
 Pair a fresh simulator with this hub. ComposerKeyboardTests needs these short/long GPT fixtures;
 never run it against a production hub. This entry keeps mock_hub.py free of composer-specific changes.
+A message sent here lands in its chat's transcript a moment later (mock_hub.py MOCK_ECHO_SENT), as the agent taking it.
 """
 import os
 from pathlib import Path
@@ -32,6 +33,14 @@ def configure(mock):
 
 
 def main():
+    # Without its transcript copy the app keeps a message sent to the working Agent chat queued for up to 16 minutes
+    # (Outbox.sentWait), across launches: in the next test its queue strip took what the keyboard, the quotes and a long
+    # draft leave of the chat on an iPhone, and a drag there no longer reached the chat (#7683).
+    os.environ.setdefault("MOCK_ECHO_SENT", "1")
+    # One manager (#8640): mock_hub's default roster gives MacBook to another assistant (m-3fa21c). The app's Agents list
+    # and session index then keep only the current assistant's rows (sessions_manager); the composer Agent chat opens
+    # with no session row, so the field, + and mic stay disabled. QuietReceipts and other UI fixtures use the same.
+    os.environ.setdefault("MOCK_MANAGERS", "1")
     mock = runpy.run_path(str(Path(__file__).with_name("mock_hub.py")))
     configure(mock)
     loopback = "127.0.0.1"

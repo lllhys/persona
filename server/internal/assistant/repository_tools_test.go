@@ -73,7 +73,7 @@ func TestRepositoryRetrievalGuidanceContract(t *testing.T) {
 	}{
 		{"ambiguous repository", list.Description, []string{"resolve repository identity", "repository_get"}},
 		{"explicit URL or path", plan.Description, []string{"explicit repository URL or path", "takes precedence"}},
-		{"non-repository task", plan.Description, []string{"Non-repository tasks", "do not need"}},
+		{"non-repository task", plan.Description, []string{"Non-repository tasks need no lookup", "not a mandatory dispatch preflight"}},
 		{"reference not permission", get.Description, []string{"not authorization", "never infer", "machine", "checkout"}},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

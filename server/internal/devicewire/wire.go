@@ -70,6 +70,9 @@ const (
 	// MethodCall {machine_id, method, params, timeout_ms?} → the node's result: the apps' and the hub's calls to a
 	// machine's node. session.watch / session.unwatch also tell the manager what to watch again after a reconnect.
 	MethodCall = "devices.call"
+	// MethodFileCall has NodeCall's params too, but only for a long file.copy / file.zip whose caller may cancel it.
+	// Keeping it separate leaves ordinary devices.call completion semantics unchanged when an HTTP client disconnects.
+	MethodFileCall = "devices.file_call"
 	// EventNotify {machine_id, event, params}: a one-way event to a node (terminal input, a port's bytes).
 	EventNotify = "devices.notify"
 	// EventConfig Config: what the hub hands the manager changed (an entry added on the admin page, the mesh, the
@@ -342,6 +345,18 @@ type NodeCall struct {
 	// Fallback (a connection's calls only): sent instead when the node answers unknown method, a node from before
 	// Method (launchers.catalog falls back to launchers.managed).
 	Fallback *NodeCall `json:"fallback,omitempty"`
+	// Actor says who asked for a session.modes call the manager keeps a record of (#10297): display only, never
+	// trusted for access (the hub checked the request already). Nil from an older hub and on every other call.
+	Actor *Actor `json:"actor,omitempty"`
+}
+
+// Actor is who asked the hub for a call (NodeCall.Actor): the kind of token ("device", "hub" for the hub's own
+// token, "extension") and, for a device, its id and name as the hub knows them; an extension's id. Display only.
+type Actor struct {
+	Kind       string `json:"kind"`
+	DeviceID   string `json:"device_id,omitempty"`
+	DeviceName string `json:"device_name,omitempty"`
+	Extension  string `json:"extension,omitempty"`
 }
 
 // RequestEnd is devices.request_end's params.
@@ -383,6 +398,12 @@ type PairConnector struct {
 // Routes are the apps' routes on machines the manager answers itself (the hub relays them as http.request, as the
 // assistant's): its own settings of each machine and what only it can do.
 var Routes = []string{
+	"GET /api/v1/sessions/{mid}/{sid}/skills",
+	"GET /api/v1/sessions/{mid}/{sid}/mode-changes",
+	// The answer to a start's startup question, from a full device (#10365, internal/devices start_continue.go).
+	"POST /api/v1/sessions/{mid}/{sid}/start/continue",
+	"GET /api/v1/machines/{mid}/codex/{sid}/takeover",
+	"POST /api/v1/machines/{mid}/codex/{sid}/takeover",
 	"POST /api/v1/machines/{mid}/reconnect",
 	"PUT /api/v1/machines/{mid}/engine",
 	"GET /api/v1/machines/{mid}/herdr",
@@ -393,6 +414,9 @@ var Routes = []string{
 	"GET /api/v1/machines/{mid}/health/reports",
 	"DELETE /api/v1/machines/{mid}/health/reports/{name}",
 	"POST /api/v1/machines/{mid}/deploy",
+	// A computer's diagnosis and cache cleanup (#8037, internal/devices diagnosis.go).
+	"GET /api/v1/machines/{mid}/diagnosis",
+	"POST /api/v1/machines/{mid}/cleanup",
 	"GET /api/v1/machines/{mid}/claude-dirs",
 	"PUT /api/v1/machines/{mid}/claude-dirs/blocked",
 	"GET /api/v1/machines/{mid}/claude-live-replies",
@@ -405,6 +429,8 @@ var Routes = []string{
 	// The file transfer switch (#3065, internal/devices transfer_settings.go).
 	"GET /api/v1/machines/{mid}/file-transfer/settings",
 	"PUT /api/v1/machines/{mid}/file-transfer/settings",
+	// Pollable copy / zip progress (#6113, internal/devices fileoperation.go).
+	"GET /api/v1/machines/{mid}/files/operations/{oid}",
 }
 
 // TransferRoutes are computer to computer file transfers (internal/devices transfer.go, docs/protocol/file-transfer.md),
@@ -417,12 +443,15 @@ var TransferRoutes = []string{
 }
 
 // MetricsRoutes are the machines' monitoring's routes (internal/devices metrics.go), relayed the same way: every
-// machine's latest sample and its last hour, one machine's history, the token usage (all, and one machine's range).
+// machine's latest sample and its last hour, one machine's history, the token usage (all, one machine's range, and
+// the history: the days, the last days by the hour).
 var MetricsRoutes = []string{
 	"GET /api/v1/metrics",
 	"GET /api/v1/machines/{id}/metrics",
 	"GET /api/v1/machines/{id}/usage",
 	"GET /api/v1/usage",
+	"GET /api/v1/usage/days",
+	"GET /api/v1/usage/hours",
 }
 
 // UsageRoutes are the subscription usage windows' routes (internal/devices usagewindows.go, docs/server/usage-windows.md),

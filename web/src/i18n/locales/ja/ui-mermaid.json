@@ -4,5 +4,8 @@
   "zoom": "拡大",
   "copy_code": "コードをコピー",
   "copy": "コピー",
-  "diagram": "図"
+  "diagram": "図",
+  "zoom_out": "縮小",
+  "zoom_in": "拡大",
+  "fit": "画面に合わせる"
 }

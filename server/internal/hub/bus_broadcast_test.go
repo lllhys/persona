@@ -154,7 +154,7 @@ func managerSentTypes(t *testing.T) []string {
 		}
 		return "", false
 	}
-	for _, pkg := range []string{"assistant", "extmgr", "devices"} {
+	for _, pkg := range []string{"assistant", "assistant/saved", "extmgr", "devices"} {
 		for name, f := range goFiles(t, filepath.Join("..", pkg)) {
 			for _, d := range f.Decls {
 				fn, ok := d.(*ast.FuncDecl)
@@ -180,6 +180,8 @@ func managerSentTypes(t *testing.T) []string {
 							t.Errorf("%s %s: broadcastExtension of a kind the test cannot read", name, fn.Name.Name)
 						}
 					case pkg == "assistant" && sel.Sel.Name == "event" && recv != nil && recv.Name == "s" && len(call.Args) == 2,
+						// a package moved out of assistant sends through the Host's Event, with the same two arguments
+						pkg == "assistant/saved" && sel.Sel.Name == "Event" && len(call.Args) == 2,
 						(pkg == "extmgr" || pkg == "devices") && sel.Sel.Name == "broadcast" && len(call.Args) == 1:
 						if typ, ok := typeOf(call.Args[len(call.Args)-1], fn.Body); ok {
 							add(typ)

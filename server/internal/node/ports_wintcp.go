@@ -84,3 +84,30 @@ func parseWinTCP(b []byte, size int, row func([]byte) (uint32, listener)) []list
 	}
 	return ls
 }
+
+// paneListeners are the listeners scanListeners counts on Windows, of all of them: a process's that a root's tree owns
+// (owners), and a process's whose environment names a pane being scanned (panesOf, the panes its engine variables
+// name), which it adds to owners. Git Bash loses the tree: MSYS2 emulates fork, and for `cd x && cmd` the forked copy
+// that runs cmd as a new Windows process exits, so cmd's parent pid names a process that is gone and nothing under it
+// is under the agent any more (#9815). What the pane's terminal set in its environment (ORCA_PANE_KEY, HERDR_PANE_ID…)
+// is still there. A pane's agent itself stays out, as from the tree: its own sockets (IDE bridges, MCP) are not the
+// agent's servers. panesOf is asked once per process, only for one that has a listener and no owner; nil asks nothing.
+func paneListeners(all []listener, owners map[int]string, roots map[string][]int, panesOf func(pid int) []string) []listener {
+	var out []listener
+	asked := map[int]bool{}
+	for _, l := range all {
+		if _, ok := owners[l.pid]; !ok && !asked[l.pid] && panesOf != nil {
+			asked[l.pid] = true
+			for _, pane := range panesOf(l.pid) {
+				if pids, ok := roots[pane]; ok && (len(pids) == 0 || pids[0] != l.pid) {
+					owners[l.pid] = pane
+					break
+				}
+			}
+		}
+		if _, ok := owners[l.pid]; ok {
+			out = append(out, l)
+		}
+	}
+	return out
+}

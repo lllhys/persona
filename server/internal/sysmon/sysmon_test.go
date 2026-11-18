@@ -170,6 +170,21 @@ func TestHardwareNames(t *testing.T) {
 	if m := profilerModel(fixture(t, "system_profiler")); m != "Mac Studio" {
 		t.Fatalf("model = %q", m)
 	}
+	// The IORegistry's name, as system_profiler's Model Name has it (#6028).
+	if m := ioregModel(fixture(t, "ioreg_product")); m != "Mac Studio" {
+		t.Fatalf("ioreg model = %q", m)
+	}
+	for _, c := range [][2]string{
+		{`  "product-name" = <"MacBook Air (13-inch, M2, 2022)">`, "MacBook Air"},
+		{`  "product-name" = <"Mac mini">`, "Mac mini"},
+		{`  "product-name" = <4d6163>`, ""}, // data that is not a string
+		{`  "product-description" = <"Mac Studio (2022)">`, ""},
+		{"", ""},
+	} {
+		if got := ioregModel([]byte(c[0])); got != c[1] {
+			t.Errorf("ioreg %q = %q, want %q", c[0], got, c[1])
+		}
+	}
 }
 
 func TestVMStat(t *testing.T) {

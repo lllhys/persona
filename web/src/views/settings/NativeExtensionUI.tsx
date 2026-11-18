@@ -17,6 +17,7 @@ import { currentLanguage, t } from "../../i18n";
 import { Button, Dialog, Loading, toast } from "../../ui/atoms";
 import { ExtensionStreamSections } from "../extensions/ExtensionStreamSections";
 import type { Action, UIStreamValue } from "../../lib/extension-wire";
+import { NATIVE_UI_VERSION } from "../../lib/extension-view-cache";
 
 type Props = Parameters<typeof LegacyExtensionUI>[0];
 type Page = { key: string; ui: string; state?: string; title?: string; legacy?: boolean };
@@ -60,9 +61,10 @@ export function NativeExtensionUI(props: Props & { legacy: (props: Props) => Rea
     else { const next = stackRef.current.slice(0, -1); stackRef.current = next; setStack(next); }
   }, [historied]);
   if (unavailable) return props.legacy(props);
-  if (!manager) return <Loading />;
+  if (!manager) return props.placeholder ?? <Loading />;
+  // only the first page has a last view (ExtensionUI's `remember`)
   return <>{stack.map((page, index) => <div key={page.key} hidden={index !== stack.length - 1}>
-    <ConnectedPage {...props} page={page} manager={manager} active={index === stack.length - 1} push={(p, legacy) => push(page.key, p, legacy)} pop={() => pop(page.key)}
+    <ConnectedPage {...props} placeholder={index ? undefined : props.placeholder} onView={index ? undefined : props.onView} page={page} manager={manager} active={index === stack.length - 1} push={(p, legacy) => push(page.key, p, legacy)} pop={() => pop(page.key)}
       back={index > 0 ? stack[index - 1].title || t("settings-extensionview.back") : undefined} />
   </div>)}</>;
 }
@@ -77,7 +79,7 @@ function ConnectedPage(props: Props & { legacy: (props: Props) => ReactNode; pag
   useEffect(() => {
     if (props.page.legacy) return;
     setFallback(false);
-    const page = appUIStreamPage({ identity, state: props.page.state ?? "", context: { ...uiContext(props.context), locale: currentLanguage(), ui_version: 7, stream: { protocol: 1, components: [...NATIVE_STREAM_COMPONENTS] } } }, props.manager,
+    const page = appUIStreamPage({ identity, state: props.page.state ?? "", context: { ...uiContext(props.context), locale: currentLanguage(), ui_version: NATIVE_UI_VERSION, stream: { protocol: 1, components: [...NATIVE_STREAM_COMPONENTS] } } }, props.manager,
       (result) => {
         if (result.toast) toast(result.toast, "ok");
         if (result.open_url) openLink(result.open_url);
@@ -109,10 +111,11 @@ function ConnectedPage(props: Props & { legacy: (props: Props) => ReactNode; pag
   return <>
     {props.back && <Button tone="quiet" icon="chevronLeft" onClick={props.pop}>{props.back}</Button>}
     {fallback ? legacy : adapter ? <><WidePage adapter={adapter} active={props.active} onWide={props.onWide} />
-      <ExtensionStreamSections identity={identity} availableAdapter={adapter.session} fallback={null} loading={<Loading />} active={props.active} compact={props.compact}
+      {props.onView && <KeptPage adapter={adapter} manager={props.manager} onView={props.onView} />}
+      <ExtensionStreamSections identity={identity} availableAdapter={adapter.session} fallback={null} loading={props.placeholder ?? <Loading />} active={props.active} compact={props.compact}
         confirm={confirm} navigate={jump} readResult={adapter.readResult} onGap={fail} onError={error} />
       <HostConfirmation adapter={adapter} active={props.active} />
-    </> : <Loading />}
+    </> : props.placeholder ?? <Loading />}
     <Dialog open={!!confirmation} onClose={() => finish(false)} title={t("settings-extensionview.confirm_title")}>
       <p>{confirmation?.action.confirm}</p><div className="flex gap-2"><Button tone="quiet" onClick={() => finish(false)}>{t("common.cancel")}</Button><Button onClick={() => finish(true)}>{t("settings-extensionview.ok")}</Button></div>
     </Dialog>
@@ -142,6 +145,14 @@ function PagePermission({ adapter, ix }: { adapter: AppUIStreamPage; ix: NativeP
       <Button busy={busy} onClick={() => { void answer(true); }}>{t("settings-extensionview.ok")}</Button></>}>
     <p>{ix.summary}</p>
   </Dialog>;
+}
+/** The page as drawn, for its next opening (ExtensionUI's `remember`), unless a field holds what was typed and not sent. */
+function KeptPage({ adapter, manager, onView }: { adapter: AppUIStreamPage; manager: string; onView: NonNullable<Props["onView"]> }) {
+  const { display } = useSyncExternalStore(adapter.session.subscribe, adapter.session.getState, adapter.session.getState);
+  useEffect(() => {
+    if (display && !display.sections.some((s) => s.items.some((it) => it.key && adapter.session.getDraft(it.key) !== undefined))) onView(display, NATIVE_UI_VERSION, manager);
+  }, [display, adapter, manager, onView]);
+  return null;
 }
 function WidePage({ adapter, active, onWide }: { adapter: AppUIStreamPage; active: boolean; onWide?: (wide: boolean) => void }) {
   const state = useSyncExternalStore(adapter.session.subscribe, adapter.session.getState, adapter.session.getState);

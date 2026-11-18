@@ -169,10 +169,10 @@ internal fun windowsCommand(pairUrl: String): String = ".\\persona-link.exe inst
 private fun quoted(s: String) = "'${s.replace("'", "%27")}'"
 
 /** How to build and install Persona Link on a Mac until there is a download (docs/assistant/onboarding.md decision 1). */
-internal const val PersonaLinkInstallDoc = "https://github.com/nwverse/persona/blob/master/docs/operations/persona-link-install.md"
+internal const val PersonaLinkInstallDoc = "https://github.com/nwverse/persona/blob/main/docs/operations/persona-link-install.md"
 
 /** How to install persona-link on a headless Linux when the hub has no install script (docs/operations/link.md). */
-internal const val LinkLinuxDoc = "https://github.com/nwverse/persona/blob/master/docs/operations/link.md#linuxheadless"
+internal const val LinkLinuxDoc = "https://github.com/nwverse/persona/blob/main/docs/operations/link.md#linux-headless"
 
 /** A computer's code lasts ten minutes, like the app's (docs/protocol/protocol.md "Computer pairing codes"). */
 internal const val ComputerCodeLifeMs = 10 * 60_000L

@@ -8,5 +8,6 @@
   "remove": "取消转发",
   "open_original": "打开原消息",
   "show_all": "展开全文",
-  "collapse": "收起"
+  "collapse": "收起",
+  "group_heading": "转发的 {count} 条消息"
 }

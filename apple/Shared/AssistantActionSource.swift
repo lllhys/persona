@@ -1,5 +1,6 @@
 import CoreFoundation
 import Foundation
+import PersonaWire
 
 /// Only a canonical trailing card-source marker is presentation metadata; malformed tags remain visible user text.
 nonisolated enum AssistantActionSource {

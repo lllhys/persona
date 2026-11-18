@@ -12,16 +12,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
 // Both inputs are required: a delayed snapshot cannot delay the independent
 // permission ACK, and that ACK cannot let the user prompt escape the snapshot.
 func TestAssistantSendOverlapsContextAndAcknowledgedModes(t *testing.T) {
-	f := sdkTest(t)
+	f := cliTest(t)
 	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(os.Getenv("HOME"), ".claude"))
-	sdkControlFile(t, f, "control-hold", "")
+	controlFile(t, f, "control-hold", "")
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
@@ -36,7 +35,7 @@ func TestAssistantSendOverlapsContextAndAcknowledgedModes(t *testing.T) {
 	f.fh.mu.Unlock()
 	done := make(chan error, 1)
 	go func() {
-		_, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "unique user prompt", nil, "plan", "", sdkExec(proto.AssistantRuntimeAgentSDK))
+		_, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "unique user prompt", nil, "plan", "", cliExec())
 		done <- err
 	}()
 	select {
@@ -44,7 +43,7 @@ func TestAssistantSendOverlapsContextAndAcknowledgedModes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("snapshot was not requested")
 	}
-	// The real node and its subprocess protocol are used; only the SDK/model is
+	// The real node and its subprocess protocol are used; only claude and the model are
 	// replaced by the local shell fixture. No model, config or token is contacted.
 	controlSeen := time.NewTicker(10 * time.Millisecond)
 	defer controlSeen.Stop()
@@ -63,7 +62,7 @@ func TestAssistantSendOverlapsContextAndAcknowledgedModes(t *testing.T) {
 	if err := os.Remove(filepath.Join(f.dir, "control-hold")); err != nil {
 		t.Fatal(err)
 	}
-	sdkWait(t, "acknowledged mode", func() bool {
+	cliWait(t, "acknowledged mode", func() bool {
 		f.n.mu.Lock()
 		var p *assistantProc
 		for _, candidate := range f.n.procs {
@@ -89,7 +88,7 @@ func TestAssistantSendOverlapsContextAndAcknowledgedModes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("send did not finish after both dependencies completed")
 	}
-	sdkWait(t, "the fake CLI to consume the delivered input", func() bool { return strings.Contains(f.file("stdin.jsonl"), "unique user prompt") })
+	cliWait(t, "the fake CLI to consume the delivered input", func() bool { return strings.Contains(f.file("stdin.jsonl"), "unique user prompt") })
 	input := f.file("stdin.jsonl")
 	if !strings.Contains(input, "snapshot") || !strings.Contains(input, "unique user prompt") {
 		t.Fatalf("context or original prompt lost: %s", input)

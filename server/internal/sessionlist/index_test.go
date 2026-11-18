@@ -319,6 +319,7 @@ func TestSameItemMatchesDeepEqual(t *testing.T) {
 		func(i *Item) { i.State = "idle" },
 		func(i *Item) { i.PaneSource = "terminal" },
 		func(i *Item) { i.BackgroundWaiting = true },
+		func(i *Item) { i.JustFinished = true },
 		func(i *Item) { i.SearchText += " " },
 		func(i *Item) { i.UpdatedAt = i.UpdatedAt.In(time.FixedZone("demo", 0)) },
 		func(i *Item) { i.UpdatedAt = i.UpdatedAt.Add(time.Nanosecond) },

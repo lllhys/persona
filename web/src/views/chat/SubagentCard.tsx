@@ -1,5 +1,6 @@
 // A subagent the agent launched, as one card in the chat where it launched it (#5030, after cindy's AgentTaskCard): never a
-// conversation of its own. Two lines: "Subagent", its title and its status word; then what ran it (Claude Code), the model
+// conversation of its own. Two lines: "Subagent", its title and its status word; then what ran it (the chat's agent:
+// Claude Code, Codex, a Paseo provider such as Grok), the model
 // it actually ran on (the node reads it from the subagent's own transcript; never the one its call asked for), its tokens,
 // its tool calls and how long it took, or "Running for …" each second while it runs. The head opens the card in place,
 // remembered per card: what it was asked, what it reported (a long report folds), its last tool and its output file.
@@ -39,11 +40,11 @@ function resultItem(result: Item | undefined, reports: Item[]): Item | undefined
   return reports.at(-1) ?? (result && !isLaunchReceipt(result) ? result : undefined);
 }
 
-/** The card's second line: the harness, the model chip, tokens, tool uses, and the time it took (none while it runs:
- *  "Running for …" ticks there instead). */
-export function subagentMeta(meta: Subagent | undefined, took: string, harness: boolean): { harness?: string; model: string; tokens?: string; uses?: string; took?: string } {
+/** The card's second line: the harness (what runs the chat's subagents, its own agent; none in a Persona chat), the
+ *  model chip, tokens, tool uses, and the time it took (none while it runs: "Running for …" ticks there instead). */
+export function subagentMeta(meta: Subagent | undefined, took: string, harness: string | undefined): { harness?: string; model: string; tokens?: string; uses?: string; took?: string } {
   return {
-    ...(harness ? { harness: agentName("claude") } : {}),
+    ...(harness ? { harness } : {}),
     model: modelChipLabel(meta?.model),
     ...(meta?.tokens ? { tokens: t("chat-subagentcard.tokens", { value: compactTokens(meta.tokens) }) } : {}),
     ...(meta?.steps ? { uses: t("chat-subagentcard.tool_uses", { count: meta.steps }) } : {}),
@@ -52,7 +53,7 @@ export function subagentMeta(meta: Subagent | undefined, took: string, harness: 
 }
 
 export const SubagentCard = memo(function SubagentCard({ step, status, mid, sid, scope = "" }: { step: ToolStep; status: AgentStatus; mid: string; sid?: string; scope?: string }) {
-  const { subagents, tasks, lineStyle } = useChatContext();
+  const { subagents, tasks, lineStyle, harness } = useChatContext();
   const { use, result } = step;
   const call = use.tool_use_id ?? use.id;
   const inp = (use.tool_input ?? {}) as Record<string, unknown>;
@@ -68,7 +69,7 @@ export const SubagentCard = memo(function SubagentCard({ step, status, mid, sid,
   const end = running ? undefined : subagentEnded(result, meta);
   const took = start !== undefined && end !== undefined && end >= start ? workDuration(end - start) : "";
   // the Persona chat's own calls: what ran it is Persona itself, not a tool its reader works with
-  const m = subagentMeta(meta, took, lineStyle !== "assistant");
+  const m = subagentMeta(meta, took, lineStyle === "assistant" ? undefined : (harness ?? agentName("claude")));
   const parts = [
     m.harness && <span key="harness">{m.harness}</span>,
     m.model && <ModelChip key="model">{m.model}</ModelChip>,
@@ -113,7 +114,7 @@ export function SubagentResult({ item, fallback, mid, sid }: { item: Item | unde
   const said = item?.kind === "tool_result" ? agentSummary({ ...item, text: full.text }, undefined) : item?.kind === "text" ? full.text.trim() : (item ? item.task?.detail ?? "" : fallback).trim();
   const text = isHandbackText(said) ? said.split("\n").slice(1).join("\n").trim() : said;
   const [whole, setWhole] = useState(false);
-  const clamp = useClamped<HTMLParagraphElement>(whole);
+  const clamp = useClamped<HTMLParagraphElement>(whole, "y", text);
   if (!text) return null;
   return (
     <div className="mb-1" data-subagent-summary data-items={item?.id}>

@@ -2,6 +2,7 @@ package persona.feature.chat
 
 import org.junit.Assert.*
 import org.junit.Test
+import persona.core.domain.AttachedFile
 
 class AttachedFilesModelTest {
     @Test fun aSentVideoIsAFileNotText() {
@@ -19,6 +20,28 @@ class AttachedFilesModelTest {
         // Sent again, it is the same message.
         assertEquals(messageModel(raw, user = true).attached, messageModel(edit, user = true).attached)
         assertEquals("纯文字", messageModel("纯文字", user = true).editText())
+    }
+
+    @Test fun outgoingFilesFoldPastFourAndOpenInPlace() {
+        val files = List(10) { AttachedFile("file", "/up/$it.txt", "$it.txt", it.toLong()) }
+        assertFalse(attachedFilesFold(files.take(4), alignEnd = true))
+        assertEquals(4, visibleAttachedFiles(files.take(4), alignEnd = true, expanded = false).size)
+        assertTrue(attachedFilesFold(files.take(5), alignEnd = true))
+        assertEquals(listOf("0.txt", "1.txt", "2.txt"),
+            visibleAttachedFiles(files.take(5), alignEnd = true, expanded = false).map { it.name })
+        assertEquals(5, visibleAttachedFiles(files.take(5), alignEnd = true, expanded = true).size)
+        assertEquals(10, visibleAttachedFiles(files, alignEnd = true, expanded = true).size)
+        // Answer-derived cards keep their existing full list.
+        assertFalse(attachedFilesFold(files, alignEnd = false))
+        assertEquals(10, visibleAttachedFiles(files, alignEnd = false, expanded = false).size)
+    }
+
+    @Test fun ordinaryFileTagsStayOutOfCopyShareAndQuoteText() {
+        val raw = "Read\n\n<persona-file kind=\"file\" path=\"/up/a.txt\" name=\"a.txt\" size=\"10\"/>"
+        val model = messageModel(raw, user = true)
+        assertEquals("Read", model.plain)
+        assertFalse(model.plain.contains("persona-file"))
+        assertEquals(raw, model.editText())
     }
 
     @Test fun documentsKnowWhatTheyAre() {

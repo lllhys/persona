@@ -71,7 +71,7 @@ func TestLeaderSupervisesItsTasks(t *testing.T) {
 	agentTurn(s, f, proto.StatusDone, "做完了，PR https://github.com/o/r/pull/7 已合并", 0)
 	waitFor(t, "the leader's message", func() bool { return len(f.noticesTo("lead1")) == 1 })
 	n := f.noticesTo("lead1")[0]
-	for _, want := range []string{"📋 督办", "你是这些任务的 leader 对话", "hub 判断做完了，等你验收", "pull/7"} {
+	for _, want := range []string{"📋 督办", "你是这些任务的 leader 对话", "signal=review", "hub 判断做完了，等你验收", "pull/7"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the leader's message lacks %q:\n%s", want, n)
 		}
@@ -111,7 +111,7 @@ func TestLeaderSupervisesItsTasks(t *testing.T) {
 	}
 	waitFor(t, "the main conversation's message", func() bool { return len(f.noticesTo("conv1")) == 1 })
 	n = f.noticesTo("conv1")[0]
-	for _, want := range []string{"负责它的 leader 对话判断要用户决定", "要不要顺手改 iPhone 横屏", "leader 推荐：先只修 iPad", "leader 升级上来的"} {
+	for _, want := range []string{"signal=escalated", "负责它的 leader 对话判断要用户决定", "要不要顺手改 iPhone 横屏", "leader 推荐：先只修 iPad"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the main conversation's message lacks %q:\n%s", want, n)
 		}
@@ -121,7 +121,7 @@ func TestLeaderSupervisesItsTasks(t *testing.T) {
 	}
 
 	// The leader closes it; the main conversation could too, and the task stays the leader's.
-	res, err = review("lead1", "accepted", "用户选了只修 iPad，已合并", nil)
+	res, err = review("lead1", "accepted", "用户选了只修 iPad，已合并", map[string]any{"checks": completeReviewChecks(todoNow(s, todo.ID))})
 	if err != nil || !strings.Contains(res, "accepted and closed") {
 		t.Fatalf("the leader's accept: %s %v", res, err)
 	}
@@ -164,7 +164,7 @@ func TestDigestGoesToItsSupervisorWithoutLeader(t *testing.T) {
 	}
 	s.signal(superviseSignal{Todo: todo.ID, Kind: sigReview, Key: "1", Detail: "做完了"})
 	waitFor(t, "the message", func() bool { return len(f.noticesTo("lead1")) == 1 })
-	if n := f.noticesTo("lead1")[0]; !strings.Contains(n, "由你督办") {
+	if n := f.noticesTo("lead1")[0]; !strings.Contains(n, "由你督办") || !strings.Contains(n, "signal=review") {
 		t.Fatalf("the side conversation's message does not say it supervises:\n%s", n)
 	}
 	s.supervise.dedupMu.Lock()

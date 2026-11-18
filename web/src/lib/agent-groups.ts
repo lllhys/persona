@@ -5,18 +5,18 @@ import type { AgentState, Machine, Session } from "./types";
 import { byTime } from "./times";
 import { stateName } from "./state-labels";
 
-export type AgentGrouping = "repo" | "space" | "state" | "machine" | "todo" | "direction";
+export type AgentGrouping = "repo" | "space" | "state" | "machine" | "todo";
 // "By to-do" leads and is the default for a browser that never picked one (#2812); a grouping picked before stays. The
-// sidebar shows them in this order as segments, and the switch-grouping shortcut goes round them in it. "By machine" is
-// herdr's own layout (machine → workspace → tab, lib/herdr-tree.ts). `short` is the segment's label, `label` the full name.
+// sidebar shows them in this order as segments, the paged list and the complete list alike (#6662), and the
+// switch-grouping shortcut goes round them in it. "By machine" is herdr's own layout (machine → workspace → tab,
+// lib/herdr-tree.ts). `short` is the segment's label, `label` the full name. "By pinned" (#4352) is gone (#6662): the
+// sidebar's 常驻 rows unfold to the same tree, so a picked one reads as By to-do.
 export const AGENT_GROUPINGS: { key: AgentGrouping; label: string; short: string }[] = [
   { key: "todo", label: t("lib-agent-groups.by_todo"), short: t("lib-agent-groups.seg_todo") },
   { key: "machine", label: t("lib-agent-groups.by_machine"), short: t("lib-agent-groups.seg_machine") },
   { key: "repo", label: t("lib-agent-groups.by_repo"), short: t("lib-agent-groups.seg_repo") },
   { key: "space", label: t("lib-agent-groups.by_project"), short: t("lib-agent-groups.seg_project") },
   { key: "state", label: t("lib-agent-groups.by_state"), short: t("lib-agent-groups.seg_state") },
-  // pinned direction › task › agent from the hub's direction tree (#4352); offered only while there is a leader
-  { key: "direction", label: t("lib-agent-groups.by_direction"), short: t("lib-agent-groups.seg_direction") },
 ];
 
 // the grouping this browser chose last (persona.agentGrouping, #1836); by todo until it chooses (#2812, was by machine, #1990)
@@ -82,12 +82,13 @@ export interface AgentGroup {
   hint?: string;
 }
 
-export function splitAgentSessions(all: Session[], machines: Machine[]) {
+export function splitAgentSessions(all: Session[], machines: Machine[], keepOffline?: (s: Session) => boolean) {
   const online = new Set(machines.filter((m) => m.online).map((m) => m.id));
   const agents = all.filter((s) => !s.assistant);
-  const live = agents.filter((s) => stateOf(s) !== "offline" && online.has(s.machine_id));
+  const live = agents.filter((s) => (stateOf(s) !== "offline" && online.has(s.machine_id)) || keepOffline?.(s));
+  const listed = new Set(live);
   const recent = agents
-    .filter((s) => stateOf(s) === "offline" || !online.has(s.machine_id))
+    .filter((s) => !listed.has(s))
     .sort((a, b) => byTime(b.updated_at, a.updated_at) || a.machine_id.localeCompare(b.machine_id) || a.session_id.localeCompare(b.session_id))
     .slice(0, 40);
   return { live, recent };
@@ -135,6 +136,13 @@ export function awaitsReply(s: Session, mutes: AgentMutes = NO_MUTES): boolean {
   return stateOf(s) === "idle" && Boolean(s.awaits_reply) && !isMuted(s, mutes);
 }
 
+/** Just finished (#9751, docs/protocol/agent-states.md): seen as far as its state goes, but the hub's triage found its turn
+ *  done before anybody looked, less than three hours ago (`work.just_finished`), and not muted. Such an agent is not
+ *  quiet: it never folds into Idle Spaces. */
+export function justFinished(s: Session, mutes: AgentMutes = NO_MUTES): boolean {
+  return stateOf(s) === "idle" && Boolean(s.work?.just_finished) && !isMuted(s, mutes);
+}
+
 /** What an Awaiting Reply agent asks: what the triage says it waits for (blocked on the user), else the question its last reply
  *  put to the user; "" when neither says. */
 export function replyAsk(s: Session): string {
@@ -143,9 +151,10 @@ export function replyAsk(s: Session): string {
   return s.asks?.trim() ?? "";
 }
 
-/** Nothing to look at: seen (or unknown), not waiting on the hub or itself, and not waiting for the user's reply. */
+/** Nothing to look at: seen (or unknown), not waiting on the hub or itself, not waiting for the user's reply, and not
+ *  just finished. */
 export function isQuiet(s: Session, mutes: AgentMutes = NO_MUTES): boolean {
-  return ["idle", "unknown"].includes(stateOf(s)) && !isWaiting(s) && !awaitsReply(s, mutes);
+  return ["idle", "unknown"].includes(stateOf(s)) && !isWaiting(s) && !awaitsReply(s, mutes) && !justFinished(s, mutes);
 }
 
 function isMuted(s: Session, mutes: AgentMutes): boolean {
@@ -160,8 +169,8 @@ function byDate(a: Session, b: Session): number {
   return byTime(date(b), date(a)) || a.session_id.localeCompare(b.session_id) || a.machine_id.localeCompare(b.machine_id);
 }
 
-// iOS AgentListOrder (#5096): needs you → unread → awaiting reply → working → waiting in the background (#6045) → waiting →
-// muted → seen; needs you always wins,
+// iOS AgentListOrder (#5096): needs you → unread → awaiting reply → working → waiting in the background (#6045) → just
+// finished (#9751) → waiting → muted → seen; needs you always wins,
 // even when a session or its project is muted. "By status" is the only grouping built here ("By machine" is
 // lib/herdr-tree.ts); the argument stays for the callers that name it.
 export function buildAgentGroups(all: Session[], machines: Machine[], _grouping: "state", mutes: AgentMutes = { spaces: [], sessions: [] }): AgentGroup[] {
@@ -172,6 +181,7 @@ export function buildAgentGroups(all: Session[], machines: Machine[], _grouping:
     { key: "state:reply", name: stateName("awaits_reply"), sessions: [] },
     { key: "state:working", name: stateName("working"), state: "working", sessions: [] },
     { key: "state:bg_waiting", name: stateName("bg_waiting"), state: "working", waiting: true, sessions: [] },
+    { key: "state:just_finished", name: stateName("just_finished"), sessions: [] },
     { key: "state:waiting", name: stateName("waiting"), sessions: [] },
     { key: "state:muted", name: t("lib-agent-groups.state_muted"), sessions: [] },
     { key: "state:idle", name: stateName("idle"), state: "idle", sessions: [], folded: true },
@@ -179,8 +189,9 @@ export function buildAgentGroups(all: Session[], machines: Machine[], _grouping:
   for (const s of live) {
     const state = stateOf(s);
     const waiting = isWaiting(s);
-    const index = state === "needs_you" ? 0 : isMuted(s, mutes) && (state === "working" || state === "unread" || waiting) ? 6
-      : state === "unread" ? 1 : awaitsReply(s, mutes) ? 2 : backgroundWaiting(s) ? 4 : state === "working" ? 3 : waiting ? 5 : 7;
+    const index = state === "needs_you" ? 0 : isMuted(s, mutes) && (state === "working" || state === "unread" || waiting) ? 7
+      : state === "unread" ? 1 : awaitsReply(s, mutes) ? 2 : backgroundWaiting(s) ? 4 : state === "working" ? 3 : waiting ? 6
+      : justFinished(s, mutes) ? 5 : 8;
     groups[index].sessions.push(s);
   }
   return groups.filter((g) => g.sessions.length).map((g) => ({ ...g, sessions: g.sessions.sort(byDate) }));

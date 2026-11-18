@@ -4,12 +4,13 @@
 // a document is someone else's content, and nothing in it may run as this page or call out.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, enc, errorText, fileDownloadURL, isAbort, pastHub } from "../../../lib/api";
-import { base64Bytes, extOf, OFFICE_RENDERED, type FileContent } from "../../../lib/files";
+import { extOf, OFFICE_RENDERED, type FileContent } from "../../../lib/files";
 import { SANS, withFallback } from "../../../lib/fonts";
 import { bytes } from "../../../lib/format";
-import { IWORK_PREVIEWS, readZipEntry, type ReadRange } from "../../../lib/zip-range";
+import { IWORK_PREVIEWS, readZipEntry } from "../../../lib/zip-range";
 import { Button, Loading } from "../../../ui/atoms";
 import { fileBytes } from "./file-data";
+import { rangeReader } from "./file-range";
 import { Empty } from "./parts";
 import { t } from "../../../i18n";
 import { tRich } from "../../../i18n/rich";
@@ -19,20 +20,6 @@ const PAD = 24; // the frame's margin around the pages
 
 type Rendered = { html: string; css: string; width: number; count: number; unit: "pages" | "slides" };
 const IWORK = ["pages", "key", "numbers"];
-
-/** Byte ranges of a machine file: by HTTP Range from file/download, or out of the base64 an older hub sent. */
-function rangeReader(mid: string, f: FileContent, cwd: string | undefined, signal: AbortSignal): ReadRange {
-  if (!f.stream && typeof f.data === "string") {
-    const all = base64Bytes(f.data);
-    return async (s, e) => all.slice(s, e);
-  }
-  return async (s, e) => {
-    const res = await fetch(fileDownloadURL(mid, f.path, cwd), { headers: { Range: `bytes=${s}-${e - 1}` }, signal });
-    if (res.status !== 206 && res.status !== 200) throw new Error(`HTTP ${res.status}`);
-    const got = new Uint8Array(await res.arrayBuffer());
-    return res.status === 200 ? got.slice(s, e) : got;
-  };
-}
 
 type State =
   | { kind: "loading"; label: string }

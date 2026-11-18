@@ -353,6 +353,24 @@ class RepositoryTests(unittest.TestCase):
                 self.assertEqual(self.catalog.values[f"status.{mode}.waiting.text"], self.catalog.values[f"common.{mode}.loop"])
                 self.assertEqual(self.catalog.values[f"status.{mode}.muted.text"], self.catalog.values[f"status.{mode}.idle.text"])
 
+    def test_ios_metric_colors_match(self):
+        swift = (gen.ROOT / "apple/Persona/Views/Machines/MetricCharts.swift").read_text()
+        for name in ("cpu", "mem", "rx", "tx", "load"):
+            found = re.search(rf'static let {name} = Color\(light: 0x([A-F0-9]+), dark: 0x([A-F0-9]+)\)', swift)
+            self.assertIsNotNone(found, f"MetricColor.{name} not found")
+            light, dark = found.groups()
+            for mode, value in (("light", light), ("dark", dark)):
+                self.assertEqual(self.catalog.values[f"metric.{mode}.{name}"], color(value), f"{name} {mode}")
+
+    def test_diff_fills_and_emphasis_follow_theme_swift(self):
+        swift = (gen.ROOT / "apple/Shared/Design/Theme.swift").read_text()
+        for name in ("addFill", "delFill", "addEmphasis", "delEmphasis"):
+            found = re.search(rf'static let {name} = Color\(light: 0x([A-F0-9]+), dark: 0x([A-F0-9]+)\)\.opacity\(([0-9.]+)\)', swift)
+            self.assertIsNotNone(found, f"Theme.Diff.{name} not found in Theme.swift")
+            light, dark, alpha = found.groups()
+            for mode, h in (("light", light), ("dark", dark)):
+                self.assertEqual(self.catalog.values[f"common.{mode}.diff.{name}"], color(h, float(alpha)), f"{name} {mode}")
+
     KOTLIN = gen.ROOT / "android/core/designsystem/src/main/kotlin/persona/core/designsystem/Tokens.kt"
 
     def test_committed_kotlin_matches_the_generator(self):
@@ -399,6 +417,11 @@ class RepositoryTests(unittest.TestCase):
         self.assertTrue(tokens)
         self.assertEqual({name: ios.get(name) for name in tokens}, tokens, "a size in spec/tokens differs from Theme.Size")
 
+    def test_ios_split_page_min_matches(self):
+        match = re.search(r'static let splitPageMin: CGFloat = ([0-9.]+)$', self.swift_enum("Size"), re.M)
+        self.assertIsNotNone(match, "Theme.Size.splitPageMin not found")
+        self.assertEqual(float(match[1]), self.catalog.values["size.splitPageMin"]["value"])
+
     def test_ios_type_levels_match(self):
         # Theme.Font on the iPhone (the #else branch): each name is a Dynamic Type style, maybe with a weight or monospaced,
         # and Theme.Level gives its size and line height. sectionHeader is the caption level in semibold.
@@ -436,9 +459,21 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(len(expected), 9)
         self.assertEqual(expected, tokens)
 
+    def test_android_glass_reading_sizes_use_font_units(self):
+        # Android's intentional reading-size difference (#5780) does not enter the shared iOS levels above.
+        self.assertEqual(self.catalog.values["type.body.size"], {"value": 17, "unit": "px"})
+        self.assertEqual(self.catalog.values["typeGlass.body.size"], {"value": 16, "unit": "px"})
+        self.assertEqual(self.catalog.values["typeGlass.secondary.size"], {"value": 14, "unit": "px"})
+        block = gen.render_kotlin(self.catalog, "persona.core.designsystem").split("object TypeGlass {", 1)[1]
+        self.assertIn("val size: TextUnit = 16.sp", block)
+        self.assertIn("val size: TextUnit = 14.sp", block)
+        for path, expected in (("typeGlass.body.size", "1rem"), ("typeGlass.secondary.size", "0.875rem")):
+            self.assertEqual(gen.css_value(self.catalog.tokens[path]["$type"], self.catalog.values[path], path), expected)
+
     def test_ios_motion_matches(self):
         # The shared motions (phase 1 R3) as Theme.Motion writes them; the rest of Theme.Motion belongs to single components
-        # (the composer, attaching, blinks). SwiftUI's snappy has a bounce of 0.15, smooth none.
+        # (the composer's quote bar and growth, holding the mic, attaching, blinks). SwiftUI's snappy has a bounce of 0.15,
+        # smooth none.
         motion = self.swift_enum("Motion")
 
         def seconds(pattern):
@@ -463,6 +498,27 @@ class RepositoryTests(unittest.TestCase):
         expected["keyboard"] = {"stiffness": stiffness, "damping": damping}
         breath = {part: seconds(rf'static let needsYou{part}(?:: \w+)? = ([0-9.]+)\n')[0] for part in ("BreathDuration", "BreathScale", "RingOpacity")}
         expected["needsYouBreath"] = {"duration": round(breath["BreathDuration"] * 1000), "scale": breath["BreathScale"], "ringOpacity": breath["RingOpacity"]}
+        # The composer's send swap and press (#4210 T3). Theme.Motion writes each as a line of its own; the JSON groups them by
+        # what moves. composerRelease is on composerSwap's curve, which the JSON holds once.
+        bezier = r'Animation\.timingCurve\(([0-9.]+), ([0-9.]+), ([0-9.]+), ([0-9.]+), duration: ([0-9.]+)\)'
+        swap = seconds(rf'static let composerSwap = {bezier}')
+        release = seconds(rf'static let composerRelease = {bezier}')
+        self.assertEqual(release[:4], swap[:4], "composerRelease and composerSwap share one curve")
+        fade = re.search(r'static let composerSwapFade = Animation\.(\w+)\(duration: ([0-9.]+)\)', motion)
+        press = re.search(r'static let composerPress = Animation\.(\w+)\(duration: ([0-9.]+)\)', motion)
+        self.assertIsNotNone(fade)
+        self.assertIsNotNone(press)
+        expected["composerSwap"] = {
+            "duration": round(swap[4] * 1000), "curveX1": swap[0], "curveY1": swap[1], "curveX2": swap[2], "curveY2": swap[3],
+            "fadeDuration": round(float(fade[2]) * 1000), "fadeCurve": fade[1],
+            "blur": seconds(r'static let composerSwapBlur: CGFloat = ([0-9.]+)\n')[0],
+            "from": seconds(r'static let composerSwapFrom: CGFloat = ([0-9.]+)\n')[0],
+            "scale": seconds(r'static let composerSwapScale: CGFloat = ([0-9.]+)\n')[0],
+        }
+        expected["composerPress"] = {
+            "scale": seconds(r'static let composerPressScale: CGFloat = ([0-9.]+)\n')[0],
+            "duration": round(float(press[2]) * 1000), "curve": press[1], "releaseDuration": round(release[4] * 1000),
+        }
         tokens = {}
         for key, value in self.catalog.values.items():
             parts = key.split(".")

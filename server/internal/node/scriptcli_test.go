@@ -364,7 +364,12 @@ func TestDialSocketCancel(t *testing.T) {
 			if err != nil {
 				return
 			}
-			conns <- c // a node that never answers
+			// A node that reads the request and never answers. The listener accepts before the client's DialContext
+			// has returned, and a cancel in that gap fails the dial itself (net checks ctx once the connect is
+			// done); the request line is written only after DialContext returns, so having read it means the
+			// client is connected and the cancel lands where the test means it to: while waiting for the answer.
+			_, _ = bufio.NewReader(c).ReadBytes('\n')
+			conns <- c
 		}
 	}()
 

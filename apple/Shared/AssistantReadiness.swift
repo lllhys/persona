@@ -24,11 +24,14 @@ nonisolated struct AssistantReadiness: Codable, Hashable, Sendable {
         var version: String?
         var title: String?
         var detail: String?
+        /// A rate limit's main turn time, health-only reset window, or other newest evidence time.
+        var occurrence: String?
         var action: Action?
         var altActions: [Action]?
 
         enum CodingKeys: String, CodingKey {
             case id, state, code, machine, launcher, version, title, detail, action
+            case occurrence
             case altActions = "alt_actions"
         }
 
@@ -200,7 +203,10 @@ nonisolated struct TurnErrorFix: Hashable, Sendable {
     init?(code: String?) {
         switch code {
         case "not_logged_in":
-            self.init(title: String(localized: "Model not connected: Claude Code isn't signed in"), detail: String(localized: "Sign in once on that computer, or use an API key instead."), action: "connect_model")
+            // The CLI the conversation runs, not the Claude desktop app, whose sign-in it does not share (#9366).
+            self.init(title: String(localized: "Model not connected: Claude Code CLI isn't signed in"),
+                      detail: String(localized: "The Claude desktop app's sign-in doesn't count for it. Run claude auth login in a terminal on that computer, or use an API key instead."),
+                      action: "connect_model")
         case "auth_failed":
             self.init(title: String(localized: "Model not connected: the key is wrong"), detail: String(localized: "The key is wrong or has expired; use one that works."), action: "edit_provider")
         case "model_route":

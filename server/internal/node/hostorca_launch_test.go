@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -321,6 +322,50 @@ func TestOrcaStartWaitsForTheScreenAndTypesAShortLine(t *testing.T) {
 	}
 }
 
+// On Windows Orca's terminals run Windows PowerShell by default, which reads neither Run's `cd -- <dir> &&` nor a POSIX
+// start: the node opens the start's terminal in Git Bash when Orca can be told the shell, and types the start file's
+// line there as on macOS. An older Orca, which would ignore the shell, and other platforms get Orca's default (#9810).
+func TestOrcaStartOpensGitBashOnWindows(t *testing.T) {
+	selection := []string{"terminal.prompt-delivery.v1", orcart.CapShellSelection}
+	for _, tc := range []struct {
+		name      string
+		windows   bool
+		paneShell string // herdrPaneShell(): "" on Windows, the login shell elsewhere
+		caps      []string
+		shell     any // terminal.create's shell; nil when not sent
+		sourced   bool
+	}{
+		{"windows", true, "", selection, "git-bash", true},
+		{"windows, older Orca", true, "", []string{"terminal.prompt-delivery.v1"}, nil, false},
+		{"macOS", false, "/bin/zsh", selection, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withPaneShell(t, tc.paneShell)
+			old := orcaOnWindows
+			orcaOnWindows = func() bool { return tc.windows }
+			t.Cleanup(func() { orcaOnWindows = old })
+			n, _, o, _, home := orcaNode(t)
+			o.SetStatus(map[string]any{"capabilities": tc.caps})
+			repoDir := mkdir(t, filepath.Join(home, "proj"))
+			o.SetWorktrees(orcarttest.Worktree("wt-proj", repoDir, "refs/heads/main"))
+			o.Handle("terminal.read", func(p map[string]any) any {
+				return map[string]any{"terminal": map[string]any{"handle": p["terminal"], "tail": []string{"bash-5.2$ "}, "source": "screen"}}
+			})
+			if _, err := request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": repoDir, "async": true}); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the start line", func() bool { return len(o.Writes()) > 0 })
+			if got := o.Params("terminal.create")[0]["shell"]; got != tc.shell {
+				t.Errorf("terminal.create shell = %v, want %v", got, tc.shell)
+			}
+			typed := o.Writes()[0].Text
+			if sourced := strings.HasPrefix(typed, "cd -- "+shellQuote(repoDir)+" && . "); sourced != tc.sourced {
+				t.Errorf("typed %q: sources the start file = %v, want %v", typed, sourced, tc.sourced)
+			}
+		})
+	}
+}
+
 // orcaTypedStarts has o's terminal.send read the start file an Orca start's typed line (`cd -- <dir> && . <file>…`)
 // sources, while it is still there (typedstart.go), and returns the commands read so far.
 func orcaTypedStarts(o *orcarttest.Fake) func() []string {
@@ -504,5 +549,336 @@ func TestOrcaRunRefusesAnotherTerminalUnderItsKey(t *testing.T) {
 	}
 	if w := fake.Writes(); len(w) != 0 {
 		t.Errorf("typed %+v", w)
+	}
+}
+
+// keptOrcaStart is n with an Orca tab kept by a failed start in the worktree wt-proj at root; used: the start typed its
+// line there, so the tab's one launch is gone (agent_start_stalled). Its terminal is term_fake_1.
+func keptOrcaStart(t *testing.T, used bool) (*Node, *orcaHost, *orcarttest.Fake, *host.Created, string) {
+	t.Helper()
+	withPaneShell(t, "/bin/bash")
+	n, _, o, _, home := orcaNode(t)
+	root := mkdir(t, filepath.Join(home, "proj"))
+	o.SetWorktrees(orcarttest.Worktree("wt-proj", root, "refs/heads/main"))
+	h := n.hosts.Get(host.Orca).(*orcaHost)
+	c, err := h.CreateSpace(context.Background(), root, "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if used {
+		if err := h.Run(context.Background(), c.Pane, "claude"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n.keepStartTab(h, c, "", "")
+	withStartWaits(n, 100*time.Millisecond, 100*time.Millisecond)
+	return n, h, o, c, root
+}
+
+const keptOrcaHandle = "term_fake_1"
+
+// isKept: the tab on pane is kept and no start holds it; until is its expiry.
+func isKept(n *Node, pane string) (until time.Time, kept bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	k, ok := n.keptStarts[pane]
+	return k.until, ok && !k.taken
+}
+
+// startLineIn is the terminal a start's line for startID went to, "" when none did.
+func startLineIn(o *orcarttest.Fake) string {
+	for _, w := range o.Writes() {
+		if !w.Close && strings.Contains(w.Text, " && true "+shellQuote(startID)) {
+			return w.Handle
+		}
+	}
+	return ""
+}
+
+// closedBeforeCreate: the kept terminal was closed once, before the new one was made.
+func closedBeforeCreate(t *testing.T, o *orcarttest.Fake) {
+	t.Helper()
+	closeAt, createAt, closes := -1, -1, 0
+	for i, call := range o.Trace() {
+		if strings.HasPrefix(call, "terminal.close ") && strings.Contains(call, `"`+keptOrcaHandle+`"`) {
+			closeAt, closes = i, closes+1
+		}
+		if strings.HasPrefix(call, "terminal.create ") {
+			createAt = i
+		}
+	}
+	if closes != 1 || o.Count("terminal.create") != 2 || closeAt >= createAt {
+		t.Errorf("want the kept tab closed once, then one new tab: closes %d, creates %d, trace %v", closes, o.Count("terminal.create"), o.Trace())
+	}
+}
+
+// waitAsyncStart waits for the background start of startID (async) and returns how it ended.
+func waitAsyncStart(t *testing.T, n *Node) error {
+	t.Helper()
+	rec := n.starts.get(startID)
+	if rec == nil {
+		t.Fatal("no async start")
+	}
+	select {
+	case <-rec.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the async start did not end")
+	}
+	n.starts.mu.Lock()
+	defer n.starts.mu.Unlock()
+	return rec.err
+}
+
+// An Orca terminal takes one launch (orcaHost.Run). A retry named to the kept tab of a start whose claude stalled
+// (agent_start_stalled: its line was typed there) closes that tab and starts in a new one, instead of failing with
+// "shell launch is only allowed once" (#9534); the sync and the async start alike.
+func TestOrcaRetryAfterAStalledStartOpensANewTab(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%v", async), func(t *testing.T) {
+			n, _, o, c, root := keptOrcaStart(t, true)
+			_, err := request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root, "in_pane": c.Pane.String(), "async": async})
+			if async && err == nil {
+				err = waitAsyncStart(t, n)
+			}
+			if err != nil && strings.Contains(err.Error(), "only allowed once") { // no claude comes up here: what matters is where the line went
+				t.Fatalf("the retry failed in the stalled tab: %v", err)
+			}
+			closedBeforeCreate(t, o)
+			if got := startLineIn(o); got == "" || got == keptOrcaHandle {
+				t.Errorf("the start line went to %q, want a new tab", got)
+			}
+			if _, kept := isKept(n, c.Pane.String()); kept {
+				t.Error("the stalled tab is still kept")
+			}
+		})
+	}
+}
+
+// A kept Orca tab where nothing was typed (shell_waiting, the question answered since) still takes the retry: same
+// terminal, no new one.
+func TestOrcaRetryInAnAnsweredTab(t *testing.T) {
+	n, h, o, c, root := keptOrcaStart(t, false)
+	if err := h.SendKeys(context.Background(), c.Pane, "enter"); err != nil { // the question answered
+		t.Fatal(err)
+	}
+	o.SetScreen(keptOrcaHandle, "Would you like to update? [Y/n] n\nbash-5.2$ ")
+	_, _ = request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root, "in_pane": c.Pane.String()})
+	if got := o.Count("terminal.create"); got != 1 {
+		t.Errorf("terminals created: %d, want the kept one only", got)
+	}
+	if got := startLineIn(o); got != keptOrcaHandle {
+		t.Errorf("the start line went to %q, want the kept tab", got)
+	}
+}
+
+// The same from a real shell_waiting start: its kept tab, answered, takes the retry.
+func TestOrcaShellWaitingStartRetriesInItsTab(t *testing.T) {
+	withPaneShell(t, "/bin/bash")
+	n, _, o, _, home := orcaNode(t)
+	watchShell(n)
+	n.shellAsk = 100 * time.Millisecond
+	root := mkdir(t, filepath.Join(home, "proj"))
+	o.SetWorktrees(orcarttest.Worktree("wt-proj", root, "refs/heads/main"))
+	screen := func(lines ...string) {
+		o.Handle("terminal.read", func(p map[string]any) any {
+			return map[string]any{"terminal": map[string]any{"handle": p["terminal"], "tail": lines, "source": "screen"}}
+		})
+	}
+	screen("Would you like to update? [Y/n] ")
+	if _, err := request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root}); rpcCode(err) != proto.CodeShellWaiting {
+		t.Fatalf("first start: %v", err)
+	}
+	n.mu.Lock()
+	var pane string
+	for p := range n.keptStarts {
+		pane = p
+	}
+	n.mu.Unlock()
+	if pane == "" {
+		t.Fatal("the question kept no tab")
+	}
+	screen("Would you like to update? [Y/n] n", "bash-5.2$ ")
+	n.shellQuiet = 100 * time.Millisecond
+	withStartWaits(n, 100*time.Millisecond, 100*time.Millisecond)
+	_, err := request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root, "in_pane": pane})
+	if o.Count("terminal.create") != 1 || err != nil && strings.Contains(err.Error(), "only allowed once") {
+		t.Fatalf("the answered tab was not started in: creates %d, %v", o.Count("terminal.create"), err)
+	}
+}
+
+// Orca re-keys a terminal its UI did not adopt (#5547): the kept tab is still found by the launch it has or has used.
+func TestOrcaRekeyedKeptTab(t *testing.T) {
+	for _, used := range []bool{false, true} {
+		t.Run(fmt.Sprintf("used=%v", used), func(t *testing.T) {
+			n, h, o, c, root := keptOrcaStart(t, used)
+			if key := o.Orphan(keptOrcaHandle); key == "" || key == c.Pane.ID {
+				t.Fatal("not re-keyed")
+			}
+			claim, err := n.claimKeptTab(c.Pane.String())
+			if err != nil || claim == nil {
+				t.Fatalf("claim: %v", err)
+			}
+			got, err := n.newTab(context.WithValue(context.Background(), keptClaimKey{}, claim), h, root, "wt-proj", "retry", startID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := h.Run(context.Background(), got.Pane, "claude"); err != nil {
+				t.Fatal(err)
+			}
+			if reused := got == c; reused == used || o.Count("terminal.close") != map[bool]int{false: 0, true: 1}[used] {
+				t.Errorf("reused %v, closes %d", reused, o.Count("terminal.close"))
+			}
+		})
+	}
+}
+
+// A retry the node refuses before it gets a tab (a bad effort, a directory that is gone) leaves the stalled start's
+// kept tab as it was, sync or async.
+func TestOrcaRefusedRetryKeepsTheStalledTab(t *testing.T) {
+	for name, params := range map[string]map[string]any{
+		"bad effort":         {"effort": "not-an-effort"},
+		"missing dir":        {"cwd": "removed-workspace"},
+		"bad effort, async":  {"effort": "not-an-effort", "async": true},
+		"missing dir, async": {"cwd": "removed-workspace", "async": true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			n, _, o, c, root := keptOrcaStart(t, true)
+			req := map[string]any{"session_id": startID, "cwd": root, "in_pane": c.Pane.String()}
+			for k, v := range params {
+				req[k] = v
+			}
+			if dir, ok := params["cwd"].(string); ok {
+				req["cwd"] = filepath.Join(root, dir)
+			}
+			if _, err := request(t, n, "session.start", req); err == nil {
+				t.Fatal("the retry was accepted")
+			}
+			if got := o.Count("terminal.close"); got != 0 {
+				t.Errorf("a refused retry closed the kept tab (%d closes)", got)
+			}
+			if _, kept := isKept(n, c.Pane.String()); !kept {
+				t.Error("a refused retry took the kept tab")
+			}
+		})
+	}
+}
+
+// When Orca will not close the stalled start's tab, the retry fails with why and opens no second tab beside a claude
+// that may still run there, sync or async; the tab stays kept with its expiry, and a later retry closes it then.
+func TestOrcaRetryStopsWhenTheStalledTabWillNotClose(t *testing.T) {
+	for _, async := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%v", async), func(t *testing.T) {
+			n, _, o, c, root := keptOrcaStart(t, true)
+			until, _ := isKept(n, c.Pane.String())
+			o.Handle("terminal.close", func(map[string]any) any { return orcarttest.Fail{Code: "permission_denied"} })
+			_, err := request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root, "in_pane": c.Pane.String(), "async": async})
+			if async && err == nil {
+				err = waitAsyncStart(t, n)
+			}
+			if err == nil || !strings.Contains(err.Error(), "permission_denied") {
+				t.Errorf("retry error: %v", err)
+			}
+			if got := o.Count("terminal.create"); got != 1 {
+				t.Errorf("terminals created: %d, want only the kept one", got)
+			}
+			if after, kept := isKept(n, c.Pane.String()); !kept || !after.Equal(until) {
+				t.Fatalf("not kept as before: kept %v, expiry %v, was %v", kept, after, until)
+			}
+			o.Handle("terminal.close", nil)
+			_, _ = request(t, n, "session.start", map[string]any{"session_id": sidA, "cwd": root, "in_pane": c.Pane.String()})
+			if got := o.Count("terminal.create"); got != 2 {
+				t.Errorf("the next retry did not replace the tab: creates %d", got)
+			}
+		})
+	}
+}
+
+// Retries named to the same kept tab at once: one holds it and closes it once; the others are refused rather than
+// opening tabs beside it, also while that close is still going and then fails.
+func TestOrcaConcurrentRetriesOfTheStalledTab(t *testing.T) {
+	t.Run("all at once", func(t *testing.T) {
+		n, _, o, c, root := keptOrcaStart(t, true)
+		var wg sync.WaitGroup
+		for range 16 {
+			wg.Go(func() {
+				_, err := request(t, n, "session.start", map[string]any{"session_id": newUUID(), "cwd": root, "in_pane": c.Pane.String()})
+				if err != nil && strings.Contains(err.Error(), "only allowed once") {
+					t.Error(err)
+				}
+			})
+		}
+		wg.Wait()
+		closes := 0
+		for _, call := range o.Trace("terminal.close") {
+			if strings.Contains(call, `"`+keptOrcaHandle+`"`) {
+				closes++
+			}
+		}
+		if closes != 1 {
+			t.Errorf("the stalled tab was closed %d times", closes)
+		}
+	})
+	t.Run("while the close is pending", func(t *testing.T) {
+		n, _, o, c, root := keptOrcaStart(t, true)
+		entered, release := make(chan struct{}), make(chan struct{})
+		var once sync.Once
+		o.Handle("terminal.close", func(map[string]any) any {
+			once.Do(func() { close(entered) })
+			<-release
+			return orcarttest.Fail{Code: "permission_denied"}
+		})
+		first := make(chan error, 1)
+		go func() {
+			_, err := request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root, "in_pane": c.Pane.String()})
+			first <- err
+		}()
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the close did not begin")
+		}
+		_, second := request(t, n, "session.start", map[string]any{"session_id": sidA, "cwd": root, "in_pane": c.Pane.String()})
+		created := o.Count("terminal.create")
+		close(release)
+		if err := <-first; err == nil || !strings.Contains(err.Error(), "permission_denied") {
+			t.Errorf("first retry: %v", err)
+		}
+		if created != 1 || rpcCode(second) != "start_tab_taken" {
+			t.Errorf("a second retry opened a tab while the first held the kept one: creates %d, %v", created, second)
+		}
+		if _, kept := isKept(n, c.Pane.String()); !kept {
+			t.Error("the tab that did not close is no longer kept")
+		}
+	})
+}
+
+// The stalled agent comes up in its kept tab while the retry is still being checked (its SessionStart hook binds the
+// pane, here during the workspace lookup): the retry leaves that tab open and opens a new one rather than close the
+// agent it now holds.
+func TestOrcaRetryLeavesATabWhoseAgentCameUp(t *testing.T) {
+	n, _, o, c, root := keptOrcaStart(t, true)
+	var bound atomic.Bool
+	o.Handle("worktree.ps", func(map[string]any) any {
+		n.bindPane(c.Pane.String(), sidA)
+		bound.Store(true)
+		return map[string]any{"worktrees": []any{orcarttest.Worktree("wt-proj", root, "refs/heads/main")}, "totalCount": 1, "truncated": false}
+	})
+	_, _ = request(t, n, "session.start", map[string]any{"session_id": startID, "cwd": root, "in_pane": c.Pane.String()})
+	if !bound.Load() {
+		t.Fatal("the pane was not bound during the start's checks")
+	}
+	for _, w := range o.Writes() {
+		if w.Close && w.Handle == keptOrcaHandle {
+			t.Fatal("the retry closed the tab whose agent came up")
+		}
+	}
+	if got := startLineIn(o); got == "" || got == keptOrcaHandle {
+		t.Errorf("the start line went to %q, want a new tab", got)
+	}
+	n.mu.Lock()
+	k, ok := n.keptStarts[c.Pane.String()]
+	n.mu.Unlock()
+	if !ok || k.taken {
+		t.Errorf("the tab is not left kept (its expiry leaves a bound tab open): %v %+v", ok, k)
 	}
 }

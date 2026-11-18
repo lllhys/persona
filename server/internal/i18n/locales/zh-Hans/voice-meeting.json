@@ -1,0 +1,5 @@
+{
+  "meeting_room": "这是会议里的对话，只能在会议页面上跟它语音对话。",
+  "not_meeting_room": "这场会议的 Persona 对话还没准备好语音通话。",
+  "unreachable": "连不上 Persona，没能确认会议的对话。"
+}

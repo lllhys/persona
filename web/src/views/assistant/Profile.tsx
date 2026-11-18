@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../../lib/api";
 import { conversationPage } from "../../lib/conversation-page";
 import { shownManager } from "../../lib/manager-choice";
+import { managerOf, useRoster, type Manager } from "../../lib/managers";
 import { navigate } from "../../lib/router";
 import { dayLabel, hm, untilLabel, upcoming, type Task } from "../../lib/routines";
 import { useStore } from "../../lib/store";
@@ -12,10 +13,14 @@ import { EASE, IconButton, useNow } from "../../ui/atoms";
 import { Icon, type IconName } from "../../ui/icons";
 import { AssistantSettings } from "../settings/AssistantSettings";
 import { Group, Pill } from "../settings/SettingsParts";
+import { lazyDialog } from "../LazyOverlay";
 import { PersonaAvatar, PersonaPicker, usePersona } from "./Persona";
 import { t } from "../../i18n";
 import { stateName } from "../../lib/state-labels";
 import { useScopedMachines } from "../../lib/current-assistant";
+
+// Loaded only on its first open, so the rename dialog stays out of the first-screen bundle.
+const RenameAssistantDialog = lazyDialog(() => import("./RenameAssistantDialog").then((m) => m.RenameAssistantDialog));
 
 const REACH: { text: string; icon: IconName }[] = [
   { text: t("assistant-profile.reach_agents"), icon: "layers" },
@@ -27,6 +32,11 @@ const REACH: { text: string; icon: IconName }[] = [
 
 export function Profile({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const persona = usePersona();
+  const roster = useRoster();
+  // The default manager is the Persona of the main conversation; its name is the assistant's editable identity (#6401).
+  // A hub without a roster keeps the look's own name, read-only.
+  const defaultManager = roster ? managerOf(roster, roster.default) : null;
+  const displayName = defaultManager?.name || persona.name;
   const assistant = useStore((s) => s.assistant);
   const machines = useStore((s) => s.machines);
   // what it can work on: the current assistant's computers (docs/assistant/managers.md "The current assistant")
@@ -50,14 +60,14 @@ export function Profile({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     <div className="flex h-full flex-col">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-4">
         <IconButton icon="sidebar" label={t("assistant-profile.sidebar")} onClick={onToggleSidebar} className="lg:hidden" />
-        <h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-ink">{persona.name}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-ink">{displayName}</h1>
         {assistant?.main && <IconButton icon="chat" label={t("assistant-profile.main_chat")} onClick={() => navigate(conversationPage(assistant.main!, assistant.machine_id, shownManager()))} />}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[760px] px-5 py-8 sm:px-8" style={{ animation: `fade-up 320ms ${EASE} both` }}>
           <div className="mb-8 flex flex-col items-center gap-2 text-center">
             <PersonaAvatar size={88} className="shadow-raised" />
-            <h2 className="mt-2 text-[24px] font-semibold tracking-tight text-ink">{persona.name}</h2>
+            <EditableAssistantName name={displayName} manager={defaultManager} />
             <p className="max-w-full truncate text-[13px] text-ink-2">{machineName ? t("assistant-profile.subtitle", { machine: machineName }) : t("assistant-profile.subtitle_no_machine")}</p>
             <div className="mt-1 flex flex-wrap justify-center gap-1.5">
               {machine && <Pill tone={machine.online ? "green" : undefined}>{machine.online ? t("assistant-profile.online") : t("assistant-profile.offline")}</Pill>}
@@ -105,5 +115,29 @@ export function Profile({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+// The assistant's name with an edit affordance; the dialog itself is lazy-loaded. A hub without a roster (manager is
+// null) shows the look's own name, read-only.
+function EditableAssistantName({ name, manager }: { name: string; manager: Manager | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <h2 className="mt-2 flex items-center gap-1.5 text-[24px] font-semibold tracking-tight text-ink">
+        <span className="min-w-0 truncate">{name}</span>
+        {manager && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label={t("assistant-profile.edit_name")}
+            title={t("assistant-profile.edit_name")}
+            className="flex size-7 shrink-0 items-center justify-center rounded-control text-ink-3 transition-colors hover:bg-hover hover:text-ink"
+          >
+            <Icon name="pencil" size={15} />
+          </button>
+        )}
+      </h2>
+      <RenameAssistantDialog open={open} onClose={() => setOpen(false)} manager={manager} currentName={name} />
+    </>
   );
 }

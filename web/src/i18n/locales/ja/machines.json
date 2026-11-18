@@ -8,8 +8,6 @@
   "offline": "オフライン",
   "reconnect": "再接続",
   "memory": "メモリ",
-  "disk": "ディスク",
-  "disk_free": "空き{size}",
   "waiting_node": "このコンピューターの再接続を待っています",
   "unreachable": "このコンピューターに接続できません",
   "agents_other": "エージェント{count}件",
@@ -34,5 +32,12 @@
   "rejected": "「{name}」を削除しました",
   "answer_failed": "失敗しました：{error}",
   "never_connected": "未接続",
-  "not_connected_yet": "未接続"
+  "not_connected_yet": "未接続",
+  "network": "ネットワーク",
+  "load_value": "負荷 {value}",
+  "memory_last_hour": "直近1時間のメモリ",
+  "network_last_hour": "直近1時間のネットワーク：ダウンロード（オレンジ）、アップロード（紫）",
+  "view_label": "表示",
+  "view_cards": "カード",
+  "view_capabilities": "機能一覧"
 }

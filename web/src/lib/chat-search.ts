@@ -1,11 +1,11 @@
-// In-conversation search (docs/web/web.md "Search in chat", Android ChatSearch.kt, parity N26): literal, case-insensitive
-// matching over what is loaded of a chat (words, thoughts, tool names, tool input and output, system events), newest
-// first, at most SEARCH_LIMIT hits; and where a hit sits in the chat's lines, for going to it.
+// In-conversation search (docs/web/web.md "Search in chat", Android ChatSearch.kt, parity N26): where a hit sits in the
+// chat's lines, for going to it; paging back and fetching the folded work for the search. The matching itself is
+// chat-search-match.ts, which only the search panel loads (off the first screen).
 import type { Item } from "./types";
-import { parseUserText, sortItems, type ChatLine, type Step } from "./turns";
+import { sortItems, type ChatLine, type Step } from "./turns";
 import type { WorkNode } from "./work-groups";
 
-export type SearchCategory = "text" | "thinking" | "tool_name" | "tool_input" | "tool_output" | "event";
+export type SearchCategory = "text" | "quoted" | "thinking" | "tool_name" | "tool_input" | "tool_output" | "event";
 
 /** One match: the item, what of it matched, the text around the first match. */
 export interface ChatSearchHit {
@@ -20,110 +20,6 @@ export interface ChatSearchResults {
   hits: ChatSearchHit[];
   /** More matched than SEARCH_LIMIT. */
   truncated: boolean;
-}
-
-export const SEARCH_LIMIT = 100;
-/** How much of the text shows before and after the first match. */
-const BEFORE = 45;
-const AFTER = 110;
-
-/** Every string in a tool's input, in order (keys are not searched). */
-function strings(v: unknown): string[] {
-  if (typeof v === "string") return [v];
-  if (Array.isArray(v)) return v.flatMap(strings);
-  if (v && typeof v === "object") return Object.values(v).flatMap(strings);
-  return [];
-}
-
-/** What of an item is searched, and as what. */
-export function searchFields(item: Item): [SearchCategory, string][] {
-  const out: [SearchCategory, string][] = [];
-  const add = (c: SearchCategory, text?: string) => text?.trim() && out.push([c, text]);
-  switch (item.kind) {
-    case "text":
-      // your messages: their words, not the tags the contexts and files travel in
-      add("text", item.role === "user" ? parseUserText(item.text ?? "").text : item.text);
-      break;
-    case "thinking":
-      add("thinking", item.text);
-      break;
-    case "tool_use":
-      add("tool_input", item.text);
-      add("tool_name", item.tool_name);
-      add("tool_input", strings(item.tool_input).join("\n"));
-      break;
-    case "tool_result":
-      add("tool_output", item.text);
-      break;
-    case "notice":
-    case "recap":
-      add("event", item.text);
-      break;
-    default:
-      return out;
-  }
-  if (item.task) add("event", [item.task.title, item.task.detail, item.task.status].filter(Boolean).join("\n"));
-  return out;
-}
-
-/** Case-insensitive indexOf that keeps the text's own offsets (a lowercase form of another length matches exactly). */
-function finder(needle: string) {
-  const low = needle.toLowerCase();
-  return (text: string, from = 0): number => {
-    const t = text.toLowerCase();
-    return t.length === text.length && low.length === needle.length ? t.indexOf(low, from) : text.indexOf(needle, from);
-  };
-}
-
-const isLow = (s: string, i: number) => {
-  const c = s.charCodeAt(i);
-  return c >= 0xdc00 && c <= 0xdfff;
-};
-
-export function searchChat(items: Item[], query: string): ChatSearchResults {
-  const needle = query.trim();
-  if (!needle) return { hits: [], truncated: false };
-  const find = finder(needle);
-  const seen = new Set<string>();
-  const hits: ChatSearchHit[] = [];
-  for (const item of sortItems(items).reverse()) {
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    for (const [category, text] of searchFields(item)) {
-      const first = find(text);
-      if (first < 0) continue;
-      if (hits.length === SEARCH_LIMIT) return { hits, truncated: true };
-      let start = Math.max(0, first - BEFORE);
-      let end = Math.min(text.length, first + needle.length + AFTER);
-      if (start > 0 && isLow(text, start)) start--;
-      if (end < text.length && isLow(text, end)) end++;
-      const snippet = (start > 0 ? "…" : "") + text.slice(start, end).replace(/\s*\n\s*/g, " ") + (end < text.length ? "…" : "");
-      const ranges: [number, number][] = [];
-      for (let at = find(snippet); at >= 0; at = find(snippet, at + needle.length)) ranges.push([at, at + needle.length]);
-      hits.push({ itemId: item.id, category, snippet, ranges });
-    }
-  }
-  return { hits, truncated: false };
-}
-
-/** The hits by category, the categories in the order they first come. */
-export function groupHits(hits: ChatSearchHit[]): [SearchCategory, ChatSearchHit[]][] {
-  const groups = new Map<SearchCategory, ChatSearchHit[]>();
-  for (const h of hits) groups.set(h.category, [...(groups.get(h.category) ?? []), h]);
-  return [...groups];
-}
-
-/** The snippet cut at its matches: [text, matched] pieces. */
-export function snippetParts(hit: ChatSearchHit): [string, boolean][] {
-  const out: [string, boolean][] = [];
-  let at = 0;
-  for (const [a, b] of hit.ranges) {
-    if (a > at) out.push([hit.snippet.slice(at, a), false]);
-    out.push([hit.snippet.slice(a, b), true]);
-    at = b;
-  }
-  if (at < hit.snippet.length) out.push([hit.snippet.slice(at), false]);
-  return out;
 }
 
 /** The items a step draws (a tool call: its call, result and pictures). */
@@ -151,7 +47,7 @@ export function lineItemIds(line: ChatLine): string[] {
   }
 }
 
-/** The line a hit is on: the one that draws it (a wake's runs are part of their exchange's line, #3783), else the line
+/** The line a hit is on: the one that draws it (the work a wake started is its own exchange's line, #9140), else the line
  *  of the nearest item before it that a line draws (another block of your message, a notice folded into a compaction). */
 export function lineOfItem(lines: ChatLine[], items: Item[], itemId: string): string | undefined {
   const owner = new Map<string, string>();
@@ -244,4 +140,63 @@ export async function untilStill<T>(o: {
     }
     if (waited >= o.giveUpMs) return last ? { value: last.value } : "missing";
   }
+}
+
+/** At most this much of a chat's folded work is fetched for its search (text and tool input, in UTF-16 units). */
+export const FOLD_SEARCH_BUDGET = 4 << 20;
+
+/** The size a page of a fold's items counts against the budget. */
+export function foldItemsSize(items: readonly Item[]): number {
+  let n = 0;
+  for (const i of items) n += (i.text?.length ?? 0) + (i.tool_input === undefined ? 0 : JSON.stringify(i.tool_input).length);
+  return n;
+}
+
+/** How fetching a chat's folds for its search ended: every one in, some failed, the budget ran out, or it was stopped. */
+export interface FoldFetchOutcome {
+  failed: number;
+  capped: boolean;
+  stopped: boolean;
+}
+
+/** Fetches the steps of `folds` (the work the hub folded, #6281) for search in chat: the newest first, `concurrency` at
+ *  a time, each through `load` (the pages a fold's own opening reads), until `budget` is spent or `stopped()`. Each fold
+ *  that comes in goes to `onFold`; a fold that fails counts and the others go on. */
+export async function fetchFoldsForSearch(o: {
+  folds: readonly Item[];
+  load: (fold: Item) => Promise<Item[]>;
+  onFold: (fold: Item, items: Item[]) => void;
+  stopped: () => boolean;
+  budget?: number;
+  concurrency?: number;
+}): Promise<FoldFetchOutcome> {
+  const queue = [...o.folds].filter((f) => f.kind === "fold" && f.fold).sort((a, b) => b.seq - a.seq);
+  let left = o.budget ?? FOLD_SEARCH_BUDGET;
+  let failed = 0;
+  let capped = false;
+  const worker = async () => {
+    for (let f = queue.shift(); f; f = queue.shift()) {
+      if (o.stopped()) return;
+      if (left <= 0) {
+        capped = true;
+        return;
+      }
+      try {
+        const items = await o.load(f);
+        if (o.stopped()) return;
+        left -= foldItemsSize(items);
+        o.onFold(f, items);
+      } catch {
+        failed++;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, o.concurrency ?? 2) }, worker));
+  return { failed, capped: capped || (left <= 0 && queue.length > 0), stopped: o.stopped() };
+}
+
+/** The fold `itemId` came from, among the folds fetched for the search. */
+export function foldHolding(fetched: ReadonlyMap<string, { fold: Item; items: Item[] }>, itemId: string): Item | undefined {
+  for (const { fold, items } of fetched.values()) if (items.some((i) => i.id === itemId)) return fold;
+  return undefined;
 }

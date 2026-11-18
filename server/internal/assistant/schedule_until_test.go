@@ -272,7 +272,7 @@ func TestUntilOnScheduleTools(t *testing.T) {
 	want := time.Date(2099, 6, 1, 12, 0, 0, 0, loc).UTC()
 	suffix := " Stops at " + endText + "."
 
-	out, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"title":"周报","prompt":"起草周报","time":"17:00","until":"`+endText+`"}`))
+	out, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"title":"周报","prompt":"起草周报","time":"17:00","until":"`+endText+`"}`))
 	if err != nil || !strings.HasSuffix(out, suffix) || strings.Contains(strings.TrimSuffix(out, suffix), "Stops at") {
 		t.Fatalf("set: %q %v", out, err)
 	}
@@ -284,7 +284,7 @@ func TestUntilOnScheduleTools(t *testing.T) {
 		t.Fatalf("routine until: %+v", rt)
 	}
 
-	out, err = h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"id":"`+rt.ID+`","title":"周报二"}`))
+	out, err = h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"id":"`+rt.ID+`","title":"周报二"}`))
 	if err != nil || !strings.HasSuffix(out, suffix) {
 		t.Fatalf("omit keeps it, and the reply still says when it stops: %q %v", out, err)
 	}
@@ -292,7 +292,7 @@ func TestUntilOnScheduleTools(t *testing.T) {
 		t.Fatalf("omit: %+v", got)
 	}
 
-	out, err = h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"id":"`+rt.ID+`","until":null}`))
+	out, err = h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"id":"`+rt.ID+`","until":null}`))
 	if err != nil || strings.Contains(out, "Stops at") {
 		t.Fatalf("null: %q %v", out, err)
 	}
@@ -300,13 +300,13 @@ func TestUntilOnScheduleTools(t *testing.T) {
 		t.Fatalf("null did not clear: %+v", got)
 	}
 
-	plain, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"title":"无截止","prompt":"看看","time":"09:00"}`))
+	plain, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"title":"无截止","prompt":"看看","time":"09:00"}`))
 	if err != nil || strings.Contains(plain, "Stops at") {
 		t.Fatalf("unset reply changed: %q %v", plain, err)
 	}
 
 	n := len(h.tasksView(ctx, nil))
-	if _, err := h.toolScheduleRoutine(ctx, "", json.RawMessage(`{"title":"过期","prompt":"看看","time":"09:00","enabled":true,"until":"2000-01-01 00:00"}`)); err == nil || err.Error() != i18n.T(i18n.Default, "assistant-schedule.until_passed") {
+	if _, err := h.toolScheduleRoutine(ctx, "", "", json.RawMessage(`{"title":"过期","prompt":"看看","time":"09:00","enabled":true,"until":"2000-01-01 00:00"}`)); err == nil || err.Error() != i18n.T(i18n.Default, "assistant-schedule.until_passed") {
 		t.Fatalf("past until: %v", err)
 	}
 	if len(h.tasksView(ctx, nil)) != n {

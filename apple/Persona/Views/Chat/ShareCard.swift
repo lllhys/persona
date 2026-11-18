@@ -2,6 +2,7 @@ import MarkdownUI
 import PersonaKit
 import Photos
 import SwiftUI
+import PersonaWire
 
 /// A message to share as a picture (Share in the long-press bar).
 struct ShareMessage: Identifiable {
@@ -9,6 +10,8 @@ struct ShareMessage: Identifiable {
     var isUser: Bool
     var source: String
     var date: Date?
+    /// Who answers, as the chat names its agent (`Session.agentLabel`): its mark is the one that name has
+    /// (`AgentKind.brand(named:)`), else its first letter.
     var agent = "Claude"
     var id: String { text }
 }
@@ -19,14 +22,19 @@ struct MessageShareCard: View {
     var message: ShareMessage
     var dark: Bool
     var width = ShareCardWidth.base
+    /// Its words and the cards the chat draws in them, as the picture draws them (#7261): read once for every pass the
+    /// renderer makes.
+    let parts: [ShareCardPart]
 
-    /// Very long answers are cut: a picture of ten screens helps nobody.
-    static let maxChars = 3000
-
-    var text: String {
-        let t = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.count > Self.maxChars ? String(t.prefix(Self.maxChars)) + "\n\n…" : t
+    init(message: ShareMessage, dark: Bool, width: CGFloat = ShareCardWidth.base, parts: [ShareCardPart]? = nil) {
+        self.message = message
+        self.dark = dark
+        self.width = width
+        self.parts = parts ?? ShareCardParts.of(message.text)
     }
+
+    /// Very long answers are cut: a picture of ten screens helps nobody (`ShareCardParts`, never inside a card).
+    static let maxChars = ShareCardParts.maxChars
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.l) {
@@ -43,10 +51,10 @@ struct MessageShareCard: View {
                     Text(d.formatted(.dateTime.month().day().hour().minute())).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
-            Markdown(Links.markdown(text))
-                .markdownTheme(.card)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                ForEach(Array(parts.enumerated()), id: \.offset) { _, part in ShareCardPartView(part: part) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 6) {
                 ThemedIcon(Theme.Icon.ai).font(.system(size: 11, weight: .semibold))
                 Text("Persona").font(.system(size: 12, weight: .semibold))
@@ -66,10 +74,13 @@ struct MessageShareCard: View {
         .background(LinearGradient(colors: dark ? [Color(hex: 0x1C2440), Color(hex: 0x2B1D3F)] : [Color(hex: 0xDCE8FF), Color(hex: 0xF1E4FF)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing))
         .environment(\.colorScheme, dark ? .dark : .light)
+        // A card's components read the app (an empty state, a control's row); offscreen there is no environment above.
+        .environment(AppModel.shared)
     }
 
-    /// Who wrote it: the user, or the agent's own mark (Claude's, OpenAI's for Codex). TRAEX has no public mark and
-    /// keeps a terminal on green.
+    /// Who wrote it: the user, or the agent's own mark (Claude's, OpenAI's for Codex, TRAE's), else the first letter of
+    /// its name on the same disc, as its row's mark draws it (`AgentKind`): a Paseo provider such as Grok is never drawn
+    /// as Claude (#8144). TRAEX has no public mark and keeps a terminal on green.
     @ViewBuilder private var avatar: some View {
         if message.isUser {
             ThemedIcon(Theme.Icon.user).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
@@ -78,10 +89,15 @@ struct MessageShareCard: View {
             ThemedIcon(Theme.Icon.terminalFilled).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
                 .frame(width: 32, height: 32)
                 .background(LinearGradient(colors: [Color(hex: 0x2FD38F), Color(hex: 0x12935E)], startPoint: .top, endPoint: .bottom), in: .circle)
-        } else {
-            Image(message.agent == "Codex" ? Theme.Brand.openAI : Theme.Brand.claude)
+        } else if let mark = AgentKind.brand(named: message.agent) {
+            Image(mark)
                 .resizable().scaledToFit().foregroundStyle(.primary)
                 .padding(7)
+                .frame(width: 32, height: 32)
+                .background(Color(.secondarySystemBackground), in: .circle)
+        } else {
+            Text(AgentKind(brand: nil, name: message.agent, surface: nil).letter)
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(.secondary)
                 .frame(width: 32, height: 32)
                 .background(Color(.secondarySystemBackground), in: .circle)
         }
@@ -90,8 +106,8 @@ struct MessageShareCard: View {
     /// Drawn as wide as its tables and code need, or a little wider when it would be a thin strip (`ShareCardWidth`).
     @MainActor static func render(_ message: ShareMessage, dark: Bool) -> UIImage? {
         let card = MessageShareCard(message: message, dark: dark)
-        let width = ShareCardWidth.width(natural: ShareCardWidth.natural(card.text), height: size(card, width: ShareCardWidth.base).height)
-        let r = ImageRenderer(content: MessageShareCard(message: message, dark: dark, width: width))
+        let width = ShareCardWidth.width(natural: ShareCardWidth.natural(card.parts), height: size(card, width: ShareCardWidth.base).height)
+        let r = ImageRenderer(content: MessageShareCard(message: message, dark: dark, width: width, parts: card.parts))
         r.proposedSize = ProposedViewSize(width: width, height: nil) // measured at the width it is drawn at
         r.scale = 3
         return r.uiImage
@@ -118,13 +134,19 @@ extension MarkdownUI.Theme {
                 .markdownMargin(top: 0, bottom: 10)
         }
         .codeBlock { config in
-            config.label
-                .relativeLineSpacing(.em(0.2))
-                .markdownTextStyle { FontFamilyVariant(.monospaced); FontSize(.em(0.8)) }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.codeBackground, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
-                .markdownMargin(top: 4, bottom: 12)
+            if AssistantCardBlock.handles(config.language) {
+                // A card inside the words (a ```persona-card): drawn as the chat draws it, never as its JSON (#7261).
+                ShareCardPartView(part: ShareCardParts.picture(language: config.language, config.content))
+                    .markdownMargin(top: 4, bottom: 12)
+            } else {
+                config.label
+                    .relativeLineSpacing(.em(0.2))
+                    .markdownTextStyle { FontFamilyVariant(.monospaced); FontSize(.em(0.8)) }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.codeBackground, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
+                    .markdownMargin(top: 4, bottom: 12)
+            }
         }
         .table { config in
             config.label
@@ -132,6 +154,107 @@ extension MarkdownUI.Theme {
                 .markdownTableBackgroundStyle(.alternatingRows(Color.clear, Color.primary.opacity(0.03)))
                 .markdownMargin(top: 4, bottom: 12)
         }
+
+    /// Several messages exported as a picture (#9468, `ChatExportRenderer`): the card's theme, with ```math and
+    /// ```mermaid drawn from the pictures the export had drawn first (an offscreen picture never waits for them).
+    @MainActor static let export = MarkdownUI.Theme.card
+        .codeBlock { config in
+            if let kind = RenderedFence.kind(config.language) {
+                ExportRenderedFence(kind: kind, source: config.content)
+                    .markdownMargin(top: 4, bottom: 12)
+            } else if AssistantCardBlock.handles(config.language) {
+                ShareCardPartView(part: ShareCardParts.picture(language: config.language, config.content))
+                    .markdownMargin(top: 4, bottom: 12)
+            } else {
+                config.label
+                    .relativeLineSpacing(.em(0.2))
+                    .markdownTextStyle { FontFamilyVariant(.monospaced); FontSize(.em(0.8)) }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.codeBackground, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
+                    .markdownMargin(top: 4, bottom: 12)
+            }
+        }
+}
+
+/// A formula or a diagram in an exported picture (#9468): the picture `ChatExportRenderer` drew first, as large as it
+/// was drawn or the column, whichever is smaller; its source as code when it could not be drawn.
+struct ExportRenderedFence: View {
+    let kind: MarkdownRenderer.Kind
+    let source: String
+    @Environment(\.colorScheme) private var scheme
+
+    /// The picture's text size, the card theme's, which formulas are drawn at; diagrams a step smaller, as the chat's.
+    static let textPoints: CGFloat = 15
+    static func points(_ kind: MarkdownRenderer.Kind) -> CGFloat { kind == .mermaid ? 13 : textPoints }
+    /// Formulas are drawn black and tinted; diagrams in their own light or dark theme.
+    static func dark(_ kind: MarkdownRenderer.Kind, _ scheme: ColorScheme) -> Bool { kind == .mermaid && scheme == .dark }
+
+    var body: some View {
+        if let image = MarkdownRenderer.shared.cached(kind, source, dark: Self.dark(kind, scheme), points: Self.points(kind)) {
+            if kind == .mermaid {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: image.size.width)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Image(uiImage: image).renderingMode(.template).resizable().scaledToFit().frame(maxWidth: image.size.width)
+                    .foregroundStyle(Color.primary)
+                    .frame(maxWidth: .infinity)
+            }
+        } else {
+            Text(verbatim: source)
+                .font(.system(size: 12, design: .monospaced))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.codeBackground, in: .rect(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+    }
+}
+
+/// One piece of the picture (`ShareCardParts`): words in the picture's Markdown theme, a card as the chat draws it, a
+/// ```persona-card in words, or a card's fallback in the chat's fallback box (`AssistantRichMarkdown`).
+struct ShareCardPartView: View {
+    var part: ShareCardPart
+
+    var body: some View {
+        switch part {
+        case .markdown(let words):
+            Markdown(Links.markdown(words))
+                .markdownTheme(.card)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .card(let view):
+            ShareCardViewCard(view: view)
+        case .cardWords(let words):
+            AssistantCardWords(title: words.title, lines: words.lines)
+        case .words(let words):
+            Text(words)
+                .font(Theme.Font.body)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card(padding: Theme.Space.m)
+        }
+    }
+}
+
+/// A card in the picture as the assistant chat draws it (`InteractiveAssistantViewCard`): its title, then its first page
+/// with the extensions' renderer in picture mode (`extensionPicture`): buttons, fields and controls drawn as they look,
+/// nothing to use, tables wrapped instead of scrolling.
+struct ShareCardViewCard: View {
+    var view: ExtensionView
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            if let title = view.title, !title.isEmpty {
+                Text(title).font(Theme.Font.heading).fixedSize(horizontal: false, vertical: true)
+            }
+            ExtensionViewStack(view: view, model: nil, cards: false, titles: true, link: .constant(nil))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card(padding: Theme.Space.m)
+        .environment(\.extensionPicture, true)
+        .accessibilityElement(children: .combine)
+    }
 }
 
 /// How wide a message's card is drawn (#2216). Plain text keeps a phone's width; tables, code blocks and their long lines
@@ -158,6 +281,14 @@ nonisolated enum ShareCardWidth {
         return min(width.rounded(), cap)
     }
 
+    /// The widest table or code block in the picture's words (cards fit the width they get).
+    @MainActor static func natural(_ parts: [ShareCardPart]) -> CGFloat {
+        natural(parts.compactMap { part -> String? in
+            if case .markdown(let s) = part { return s }
+            return nil
+        }.joined(separator: "\n\n"))
+    }
+
     /// The widest of the text's tables and code blocks drawn at their own width, as the card draws them.
     @MainActor static func natural(_ text: String) -> CGFloat {
         ShareCardBlocks.wide(text).map { block in
@@ -170,7 +301,8 @@ nonisolated enum ShareCardWidth {
 }
 
 /// The parts of a message that want width: its fenced code blocks and its tables (a row of pipes over a delimiter row),
-/// each as the Markdown that draws it alone.
+/// each as the Markdown that draws it alone. A card's fence (```persona-view, ```persona-card) is drawn as a card, as
+/// wide as the picture, so its JSON never widens it (#7261).
 nonisolated enum ShareCardBlocks {
     static func wide(_ text: String) -> [String] {
         let lines = text.components(separatedBy: "\n")
@@ -180,7 +312,7 @@ nonisolated enum ShareCardBlocks {
             if let fence = MarkdownFence.opening(trimmed) {
                 var j = i + 1
                 while j < lines.count, !fence.isClosed(by: lines[j].trimmingCharacters(in: .whitespaces)) { j += 1 }
-                out.append(lines[i...min(j, lines.count - 1)].joined(separator: "\n"))
+                if !isCard(trimmed) { out.append(lines[i...min(j, lines.count - 1)].joined(separator: "\n")) }
                 i = j + 1
             } else if trimmed.contains("|"), i + 1 < lines.count, isDelimiter(lines[i + 1]) {
                 var j = i + 2
@@ -192,6 +324,13 @@ nonisolated enum ShareCardBlocks {
             }
         }
         return out
+    }
+
+    /// A fence line that opens a card: its language, the info string's first word, is persona-view or persona-card.
+    static func isCard(_ fenceLine: String) -> Bool {
+        let info = fenceLine.drop { $0 == "`" || $0 == "~" }.trimmingCharacters(in: .whitespaces)
+        let language = info.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map { $0.lowercased() } ?? ""
+        return language == AssistantCardText.view || language == AssistantCardText.card
     }
 
     /// `| --- | :-: |`, `---|---`: a table's second line (with a pipe: a lone `---` is a rule).
@@ -309,7 +448,7 @@ struct MessageShareSheet: View {
             return
         }
         do {
-            // `@Sendable`: Photos runs the block on its own queue, where main-actor code is a crash (BackgroundCallbackTests).
+            // `@Sendable`: Photos runs the block on its own queue, where main-actor code is a crash (test_apple_background_callbacks.py).
             try await PHPhotoLibrary.shared().performChanges { @Sendable in PHAssetChangeRequest.creationRequestForAsset(from: image) }
             Haptics.success()
             AppModel.shared.toast = Toast(String(localized: "Saved to Photos"), style: .success)

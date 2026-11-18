@@ -3,11 +3,15 @@
 // to the trash (asked first, then "Moved to trash · Undo"). Both views share it: the drill-in list (FilesPanel) and the
 // tree (FilesTree). Each action shows only when the hub says it can (`upload_dir`, `file_edit`).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { api, credentialOwner, enc, errorText, fileDownloadURL, getToken, isAbort, subscribeCredentialOwner } from "../../../lib/api";
+import { api, credentialOwner, enc, errorText, fileDownloadURL, getToken, isAbort, onCredentialChange, subscribeCredentialOwner } from "../../../lib/api";
 import { onManagerChoice, shownManager, useShownManager } from "../../../lib/manager-choice";
 import { t } from "../../../i18n";
 import {
+  copyEntries,
+  FILE_COPY_FEATURE,
   FILE_EDIT_FEATURE,
+  FILE_ZIP_FEATURE,
+  fileOperation,
   isNameTaken,
   moveEntries,
   nameProblem,
@@ -19,16 +23,17 @@ import {
   UPLOAD_DIR_FEATURE,
   uploadToDir,
   within,
+  zipEntries,
   type Conflict,
   type FileCredential,
   type UploadCredential,
 } from "../../../lib/file-ops";
 import { joinPath, type FsListing } from "../../../lib/files";
-import { baseName, bytes, shortPath } from "../../../lib/format";
+import { baseName, bytes, shortPath, uuid } from "../../../lib/format";
 import { hubHas, useStore } from "../../../lib/store";
 import { contextMenuProps } from "../../../ui/context-menu";
 import type { MenuAt, MenuItem } from "../../../ui/menu-model";
-import { Button, copyText, cx, Dialog, IconButton, Loading, type ToastAction } from "../../../ui/atoms";
+import { Button, copyText, cx, Dialog, IconButton, Loading, toast, type ToastAction } from "../../../ui/atoms";
 import { Icon } from "../../../ui/icons";
 import { FileGlyph } from "./parts";
 
@@ -51,6 +56,42 @@ interface Upload {
   error?: string;
   ac?: AbortController;
 }
+
+interface RemoteOperation {
+  id: number;
+  operationId: string;
+  kind: "copy" | "zip";
+  duplicate: boolean;
+  name: string;
+  targets: OpTarget[];
+  dir: string;
+  owner: MutationOwner;
+  state: "running" | "conflict" | "done";
+  conflictName?: string;
+  shown: boolean;
+  filesDone: number;
+  filesTotal: number;
+  bytesDone: number;
+  bytesTotal: number;
+}
+
+interface ActiveRemoteOperation {
+  ac: AbortController;
+  operationId: string;
+  owner: MutationOwner;
+  shown: boolean;
+}
+
+// The authoritative POST outlives a panel, but not its credential. Keep only the opaque owner and controller outside
+// React: navigation can hide every visible row without making a later sign-out unable to retire the request.
+const remotePostCredentials = new Map<AbortController, string>();
+onCredentialChange((nextOwner) => {
+  remotePostCredentials.forEach((owner, ac) => {
+    if (owner === nextOwner) return;
+    ac.abort();
+    remotePostCredentials.delete(ac);
+  });
+});
 
 /** A question waiting for the user: replace or keep both, for an upload or a move. */
 interface NameAsk {
@@ -77,6 +118,8 @@ interface MutationOwner extends WorkspaceOwner {
 interface MutationIntent {
   owner: MutationOwner;
   targets: OpTarget[];
+  /** Copy to… instead of Move to… (#5830): the same folder picker and name question. */
+  copy?: boolean;
 }
 
 export interface FileOps {
@@ -84,6 +127,8 @@ export interface FileOps {
   scope: object;
   canUpload: boolean;
   canEdit: boolean;
+  /** The hub zips (`file_zip`): several items or a folder download as one zip. */
+  canZip: boolean;
   /** Sends files into `dir` (dropped or chosen). */
   upload: (files: File[], dir: string) => void;
   /** Opens the file chooser for `dir`. */
@@ -91,6 +136,14 @@ export interface FileOps {
   /** The row's menu: open, download, rename, move, copy path, move to the trash. */
   rowItems: (target: OpTarget, open: () => void) => MenuItem[];
   move: (targets: OpTarget[]) => void;
+  /** Copy to… (#5830). */
+  copy: (targets: OpTarget[]) => void;
+  /** Copies beside themselves as "name 2.ext" (#5830). */
+  duplicate: (targets: OpTarget[]) => void;
+  /** Zips them beside the first one (#5830). */
+  compress: (targets: OpTarget[]) => void;
+  /** The hub copies (`file_copy`). */
+  canCopy: boolean;
   trash: (targets: OpTarget[]) => void;
   download: (targets: OpTarget[]) => void;
   /** The tray, the dialogs and the hidden chooser: rendered once by the panel. */
@@ -146,10 +199,14 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
     && candidate.credential.token === getToken() && candidate.manager === shownManager(), []);
   const currentOwner = useCallback((candidate: MutationOwner) => liveOwner.current === candidate && currentWorkspace(candidate.workspaceOwner), [currentWorkspace]);
   const [uploads, setUploads] = useState<Upload[]>([]);
+  const [remoteOperations, setRemoteOperations] = useState<RemoteOperation[]>([]);
+  const activeRemote = useRef(new Map<number, ActiveRemoteOperation>());
   const ownedUploads = uploads.filter((u) => u.credential.owner === owner);
+  const ownedRemoteOperations = remoteOperations.filter((op) => op.owner.workspaceOwner === workspaceOwner && op.owner.path === path);
   const active = useRef(new Map<number, AbortController>());
   const nextId = useRef(0);
   const patch = useCallback((id: number, p: Partial<Upload>) => setUploads((us) => us.map((u) => (u.id === id ? { ...u, ...p } : u))), []);
+  const patchRemote = useCallback((id: number, p: Partial<RemoteOperation>) => setRemoteOperations((ops) => ops.map((op) => op.id === id ? { ...op, ...p } : op)), []);
   const enqueue = useCallback((files: File[], dir: string, selectedOwner: string) => {
     const token = getToken();
     if (!files.length || !token || selectedOwner !== credentialOwner()) return;
@@ -161,6 +218,16 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
   useEffect(() => {
     setUploads((us) => us.filter((u) => u.credential.owner === owner));
   }, [owner]);
+  useEffect(() => {
+    activeRemote.current.forEach((operation, id) => {
+      if (operation.owner.workspaceOwner === workspaceOwner) return;
+      const credential = operation.owner.credential;
+      if (credential.owner !== credentialOwner() || credential.token !== getToken()) operation.ac.abort();
+      // A different workspace hides the row and drops its handle. The authoritative POST continues unless credentials died.
+      activeRemote.current.delete(id);
+    });
+    setRemoteOperations((ops) => ops.filter((op) => op.owner.workspaceOwner === workspaceOwner));
+  }, [workspaceOwner]);
   const sending = ownedUploads.find((u) => u.state === "sending");
   const next = ownedUploads.find((u) => u.state === "queued");
   useEffect(() => {
@@ -190,10 +257,11 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
     const id = setTimeout(() => setUploads((us) => us.filter((u) => u.state !== "done")), 1600);
     return () => clearTimeout(id);
   }, [uploads]);
-  // what everyone waits on goes when the panel does
+  // Uploads stop with the panel. Remote POSTs continue: dropping their handles only stops polling and hides the UI.
   useEffect(() => () => {
     active.current.forEach((ac) => ac.abort());
     active.current.clear();
+    activeRemote.current.clear();
   }, []);
 
   // ── the name question: the first upload waiting on it, else a move's ──
@@ -212,7 +280,6 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
         },
       }
     : null;
-  const ask = uploadAsk ?? (moveAsk?.intent.owner === mutationOwner && currentOwner(moveAsk.intent.owner) ? moveAsk.ask : null);
 
   // ── the chooser ──
   const input = useRef<HTMLInputElement>(null);
@@ -230,6 +297,120 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
     if (currentWorkspace(candidate)) setNotice({ owner: candidate, id: ++noticeId.current, text, tone, action });
   }, [currentWorkspace]);
 
+  // ── remote copies and zips: the long POST is authoritative; polling only paints its progress ──
+  // Requests live at workspace scope. The current path controls only row visibility and polling, so a return restores Cancel.
+  const executeRemote = useCallback(async (op: RemoteOperation, conflict?: Conflict) => {
+    const previous = activeRemote.current.get(op.id);
+    const ac = new AbortController();
+    const operationId = uuid();
+    activeRemote.current.set(op.id, { ac, operationId, owner: op.owner, shown: previous?.shown ?? op.shown });
+    patchRemote(op.id, { operationId, state: "running", bytesDone: 0, bytesTotal: 0, filesDone: 0, filesTotal: 0 });
+    const candidate = op.owner;
+    remotePostCredentials.set(ac, candidate.credential.owner);
+    const auth = { ...candidate.credential, isAuthContextCurrent: () => currentWorkspace(candidate.workspaceOwner) };
+    let settled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    const current = () => !settled && !ac.signal.aborted && activeRemote.current.get(op.id)?.operationId === operationId;
+    const visible = () => currentWorkspace(candidate.workspaceOwner) && liveOwner.current?.path === candidate.path;
+    const poll = async () => {
+      if (!current()) return;
+      if (visible()) {
+        try {
+          const status = await fileOperation(candidate.mid, operationId, auth, ac.signal);
+          if (current() && visible()) {
+            const active = activeRemote.current.get(op.id);
+            if (active) active.shown = true;
+            patchRemote(op.id, {
+              shown: true,
+              bytesDone: status.bytes_done,
+              bytesTotal: status.bytes_total,
+              filesDone: status.files_done,
+              filesTotal: status.files_total,
+            });
+          }
+        } catch {
+          // The POST remains authoritative; an old node or a transient read failure only leaves progress unknown.
+        }
+      }
+      if (current()) pollTimer = setTimeout(() => void poll(), 250);
+    };
+    const showTimer = setTimeout(() => {
+      if (current()) void poll();
+    }, 1000);
+    try {
+      let archiveName = op.name;
+      if (op.kind === "copy") {
+        await copyEntries(candidate.mid, op.targets.map((x) => x.path), candidate.cwd, op.dir, conflict, auth, { operationId, signal: ac.signal });
+      } else {
+        const zipped = await zipEntries(candidate.mid, op.targets.map((x) => x.path), candidate.cwd, op.name, op.dir, auth, { operationId, signal: ac.signal });
+        archiveName = zipped.name;
+      }
+      if (!current()) return;
+      const shown = activeRemote.current.get(op.id)?.shown ?? false;
+      activeRemote.current.delete(op.id);
+      if (!currentWorkspace(candidate.workspaceOwner)) return;
+      if (shown) {
+        patchRemote(op.id, { state: "done" });
+        setTimeout(() => setRemoteOperations((ops) => ops.filter((x) => x.id !== op.id)), 1600);
+      } else {
+        setRemoteOperations((ops) => ops.filter((x) => x.id !== op.id));
+      }
+      changed.current([op.dir]);
+      say(candidate.workspaceOwner, op.kind === "copy"
+        ? t(op.duplicate ? "files-ops.duplicated" : "files-ops.copied", { count: op.targets.length, dir: shortPath(op.dir) })
+        : t("files-ops.compressed", { name: archiveName }), "ok");
+    } catch (e) {
+      if (!current()) return;
+      if (op.kind === "copy" && isNameTaken(e) && !conflict) {
+        const name = typeof (e as { body?: { name?: unknown } }).body?.name === "string" ? String((e as { body: { name: string } }).body.name) : op.name;
+        patchRemote(op.id, { state: "conflict", conflictName: name });
+        return;
+      }
+      activeRemote.current.delete(op.id);
+      setRemoteOperations((ops) => ops.filter((x) => x.id !== op.id));
+      if (isAbort(e) || !currentWorkspace(candidate.workspaceOwner)) return;
+      say(candidate.workspaceOwner, op.kind === "copy" ? opErrorText(e) : t("files-ops.zip_failed", { error: opErrorText(e) }), "error");
+    } finally {
+      settled = true;
+      remotePostCredentials.delete(ac);
+      clearTimeout(showTimer);
+      if (pollTimer) clearTimeout(pollTimer);
+    }
+  }, [currentWorkspace, patchRemote, say]);
+
+  const startRemote = useCallback((kind: RemoteOperation["kind"], owner: MutationOwner, targets: OpTarget[], dir: string, name: string, conflict?: Conflict, duplicate = false) => {
+    const op: RemoteOperation = {
+      id: ++nextId.current,
+      operationId: "",
+      kind,
+      duplicate,
+      name,
+      targets: targets.map((target) => ({ ...target })),
+      dir,
+      owner,
+      state: "running",
+      shown: false,
+      filesDone: 0,
+      filesTotal: 0,
+      bytesDone: 0,
+      bytesTotal: 0,
+    };
+    setRemoteOperations((ops) => [...ops, op]);
+    void executeRemote(op, conflict);
+  }, [executeRemote]);
+
+  const cancelRemote = useCallback((id: number) => {
+    activeRemote.current.get(id)?.ac.abort();
+    activeRemote.current.delete(id);
+    setRemoteOperations((ops) => ops.filter((op) => op.id !== id));
+  }, []);
+
+  const retryRemote = useCallback((op: RemoteOperation, conflict: Conflict | null) => {
+    if (op.state !== "conflict" || activeRemote.current.get(op.id)?.owner !== op.owner) return;
+    if (!conflict) return cancelRemote(op.id);
+    void executeRemote(op, conflict);
+  }, [cancelRemote, executeRemote]);
+
   // ── move, trash, download ──
   const [moving, setMoving] = useState<MutationIntent | null>(null);
   const [trashing, setTrashing] = useState<MutationIntent | null>(null);
@@ -243,9 +424,9 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
   const [trashBusy, setTrashBusy] = useState<MutationIntent | null>(null);
   const activeMove = useCallback((intent: MutationIntent) => movingRef.current === intent && currentOwner(intent.owner), [currentOwner]);
   const activeTrash = useCallback((intent: MutationIntent) => trashingRef.current === intent && currentOwner(intent.owner), [currentOwner]);
-  const openMove = useCallback((targets: OpTarget[]) => {
+  const openMove = useCallback((targets: OpTarget[], copy = false) => {
     if (!targets.length || !currentOwner(mutationOwner)) return;
-    const intent = { owner: mutationOwner, targets: targets.map((target) => ({ ...target })) };
+    const intent: MutationIntent = { owner: mutationOwner, targets: targets.map((target) => ({ ...target })), ...(copy ? { copy: true } : {}) };
     movingRef.current = intent;
     moveLocation.current = null;
     moveQuestion.current = null;
@@ -280,7 +461,8 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
       const { targets, owner: candidate } = intent;
       const from = [...new Set(targets.map((x) => parentOf(x.path)))];
       try {
-        await moveEntries(candidate.mid, targets.map((x) => x.path), candidate.cwd, dir, conflict, { ...candidate.credential, isAuthContextCurrent: () => activeMove(intent) });
+        const auth = { ...candidate.credential, isAuthContextCurrent: () => activeMove(intent) };
+        await moveEntries(candidate.mid, targets.map((x) => x.path), candidate.cwd, dir, conflict, auth);
         if (!activeMove(intent)) return;
         movingRef.current = null;
         setMoving(null);
@@ -312,6 +494,17 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
     },
     [activeMove, say],
   );
+
+  const doCopy = useCallback((intent: MutationIntent, dir: string) => {
+    if (!intent.copy || !activeMove(intent)) return;
+    movingRef.current = null;
+    moveQuestion.current = null;
+    setMoving(null);
+    setMoveAsk(null);
+    setMoveBusy(null);
+    setMoveFailure(null);
+    startRemote("copy", intent.owner, intent.targets, dir, intent.targets.map((x) => x.name).join(", "));
+  }, [activeMove, startRemote]);
 
   const doTrash = useCallback(async (intent: MutationIntent) => {
     if (!activeTrash(intent) || trashRequest.current === intent) return;
@@ -356,27 +549,54 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
     }
   }, [activeTrash, currentOwner, currentWorkspace, say]);
 
+  const canZip = hubHas(features, FILE_ZIP_FEATURE);
   const download = useCallback(
     (targets: OpTarget[]) => {
-      // one link each: the browser saves them (a folder has no download)
-      for (const x of targets.filter((x) => !x.dir)) {
+      const save = (path: string, name: string) => {
         const a = document.createElement("a");
-        a.href = fileDownloadURL(mid, x.path, cwd);
-        a.download = x.name;
+        a.href = fileDownloadURL(mid, path, cwd);
+        a.download = name;
         a.rel = "noopener";
         document.body.append(a);
         a.click();
         a.remove();
+      };
+      if (targets.length === 1 && !targets[0].dir) return save(targets[0].path, targets[0].name);
+      if (!canZip) {
+        // an older hub: one link each, folders left out
+        for (const x of targets.filter((x) => !x.dir)) save(x.path, x.name);
+        return;
       }
+      // several items or a folder: one zip the computer makes in a temporary folder, then downloaded (#5828)
+      const name = targets.length === 1 ? `${targets[0].name}.zip` : t("files-ops.archive_name");
+      toast(t("files-ops.zipping", { count: targets.length }));
+      zipEntries(mid, targets.map((x) => x.path), cwd, name)
+        .then((z) => save(z.path, name))
+        .catch((e) => !isAbort(e) && toast(t("files-ops.zip_failed", { error: opErrorText(e) }), "error"));
     },
-    [mid, cwd],
+    [mid, cwd, canZip],
   );
+
+  const canCopy = hubHas(features, FILE_COPY_FEATURE);
+  // Duplicate and Compress (#5830): beside the first one, named by the computer ("name 2.ext", "Archive 2.zip")
+  const duplicate = useCallback((targets: OpTarget[]) => {
+    if (!targets.length || !currentOwner(mutationOwner)) return;
+    const dir = parentOf(targets[0].path);
+    startRemote("copy", mutationOwner, targets, dir, targets.map((x) => x.name).join(", "), "keep", true);
+  }, [currentOwner, mutationOwner, startRemote]);
+  const compress = useCallback((targets: OpTarget[]) => {
+    if (!targets.length || !currentOwner(mutationOwner)) return;
+    const dir = parentOf(targets[0].path);
+    const name = targets.length === 1 ? `${targets[0].name.replace(/\.[^./]+$/, "") || targets[0].name}.zip` : t("files-ops.archive_name");
+    startRemote("zip", mutationOwner, targets, dir, name);
+  }, [currentOwner, mutationOwner, startRemote]);
 
   const rowItems = useCallback(
     (x: OpTarget, open: () => void): MenuItem[] => {
       let renaming = false;
       const items: MenuItem[] = [{ key: "open", label: x.dir ? t("files-ops.open_folder") : t("files-ops.open"), icon: x.dir ? "folder" : "file", onSelect: open }];
       if (!x.dir) items.push({ key: "download", label: t("files-ops.download"), icon: "download", onSelect: () => download([x]) });
+      else if (canZip) items.push({ key: "download", label: t("files-ops.download_zip"), icon: "download", onSelect: () => download([x]) });
       if (x.dir && canUpload) items.push({ key: "upload", label: t("files-ops.upload_here"), icon: "upload", onSelect: () => choose(x.path) });
       if (canEdit) {
         items.push(
@@ -407,15 +627,30 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
             },
           },
           { key: "move", label: t("files-ops.move"), icon: "arrowRight", onSelect: () => openMove([x]) },
+          ...(canCopy
+            ? [
+                { key: "copy_to", label: t("files-ops.copy_to"), icon: "copy" as const, onSelect: () => openMove([x], true) },
+                { key: "duplicate", label: t("files-ops.duplicate"), icon: "copy" as const, onSelect: () => duplicate([x]) },
+              ]
+            : []),
+          ...(canZip ? [{ key: "compress", label: t("files-ops.compress"), icon: "archive" as const, onSelect: () => compress([x]) }] : []),
         );
       }
       items.push({ key: "copy", label: t("files-ops.copy_path"), icon: "copy", divider: !canEdit, onSelect: () => copyText(x.path) });
       if (canEdit) items.push({ key: "trash", label: t("files-ops.trash"), icon: "trash", danger: true, divider: true, onSelect: () => openTrash([x]) });
       return items;
     },
-    [canUpload, canEdit, download, choose, currentOwner, mutationOwner, openMove, openTrash],
+    [canUpload, canEdit, canZip, canCopy, download, choose, currentOwner, mutationOwner, openMove, openTrash, duplicate, compress],
   );
 
+  const remoteConflict = ownedRemoteOperations.find((op) => op.state === "conflict");
+  const remoteAsk: NameAsk | null = remoteConflict ? {
+    name: remoteConflict.conflictName ?? remoteConflict.name,
+    dir: remoteConflict.dir,
+    more: 0,
+    answer: (choice) => retryRemote(remoteConflict, choice),
+  } : null;
+  const ask = uploadAsk ?? remoteAsk ?? (moveAsk?.intent.owner === mutationOwner && currentOwner(moveAsk.intent.owner) ? moveAsk.ask : null);
   const visibleMove = moving?.owner === mutationOwner && currentOwner(moving.owner) ? moving : null;
   const visibleTrash = trashing?.owner === mutationOwner && currentOwner(trashing.owner) ? trashing : null;
   const visibleNotice = notice?.owner === workspaceOwner && currentWorkspace(notice.owner) ? notice : null;
@@ -438,8 +673,10 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
       />
       <UploadTray
         uploads={ownedUploads}
+        operations={ownedRemoteOperations}
         // a sending one is aborted (and goes when its request does), a waiting or failed one goes at once
         onCancel={(u) => (u.ac ? u.ac.abort() : setUploads((us) => us.filter((x) => x.id !== u.id)))}
+        onCancelRemote={cancelRemote}
         onRetry={(u) => { if (u.credential.owner === credentialOwner()) patch(u.id, { state: "queued", error: undefined }); }}
       />
       <PanelNotice notice={visibleNotice} onDone={(id) => setNotice((n) => (n?.id === id ? null : n))} />
@@ -457,7 +694,7 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
           setMoveAsk(null);
           setMoving(null);
         }}
-        onMove={(dir) => void doMove(visibleMove, dir)}
+        onMove={(dir) => visibleMove.copy ? doCopy(visibleMove, dir) : void doMove(visibleMove, dir)}
       />}
       {visibleTrash && <TrashDialog targets={visibleTrash.targets} busy={trashBusy === visibleTrash} onClose={() => {
         if (!activeTrash(visibleTrash) || trashRequest.current === visibleTrash) return;
@@ -467,17 +704,25 @@ export function useFileOps({ mid, cwd, path = cwd, workspace = cwd, onChanged }:
     </>
   );
 
-  return { scope: mutationOwner, canUpload, canEdit, upload, choose, rowItems, move: openMove, trash: openTrash, download, ui };
+  return { scope: mutationOwner, canUpload, canEdit, canZip, canCopy, upload, choose, rowItems, move: openMove, copy: (targets: OpTarget[]) => openMove(targets, true), duplicate, compress, trash: openTrash, download, ui };
 }
-/** The uploads at the panel's foot: each with its progress and a cancel; a failed one says why and can go again. */
-function UploadTray({ uploads, onCancel, onRetry }: { uploads: Upload[]; onCancel: (u: Upload) => void; onRetry: (u: Upload) => void }) {
+/** Uploads and remote operations at the panel's foot: progress and cancel, with upload failure retry. */
+function UploadTray({ uploads, operations, onCancel, onCancelRemote, onRetry }: {
+  uploads: Upload[];
+  operations: RemoteOperation[];
+  onCancel: (u: Upload) => void;
+  onCancelRemote: (id: number) => void;
+  onRetry: (u: Upload) => void;
+}) {
   const shown = uploads.filter((u) => u.state !== "conflict");
-  if (!shown.length) return null;
+  const remoteShown = operations.filter((op) => op.shown && op.state !== "conflict");
+  if (!shown.length && !remoteShown.length) return null;
   const left = shown.filter((u) => u.state === "queued" || u.state === "sending").length;
+  const remoteLeft = remoteShown.filter((op) => op.state === "running").length;
   return (
-    <section aria-label={t("files-ops.uploads")} className="shrink-0 border-t border-line bg-inset px-3 py-2">
+    <section aria-label={shown.length ? t("files-ops.uploads") : t("files-ops.file_operations")} className="shrink-0 border-t border-line bg-inset px-3 py-2">
       <p className="pb-1 text-[11.5px] font-medium text-ink-2" aria-live="polite">
-        {left ? t("files-ops.uploading", { count: left }) : t("files-ops.uploads_done")}
+        {left ? t("files-ops.uploading", { count: left }) : remoteLeft ? t("files-ops.operations_running", { count: remoteLeft }) : t("files-ops.uploads_done")}
       </p>
       <ul className="flex max-h-40 flex-col gap-1 overflow-y-auto">
         {shown.map((u) => {
@@ -517,8 +762,46 @@ function UploadTray({ uploads, onCancel, onRetry }: { uploads: Upload[]; onCance
             </li>
           );
         })}
+        {remoteShown.map((op) => <RemoteOperationRow key={op.id} operation={op} onCancel={() => onCancelRemote(op.id)} />)}
       </ul>
     </section>
+  );
+}
+
+function RemoteOperationRow({ operation: op, onCancel }: { operation: RemoteOperation; onCancel: () => void }) {
+  const pct = op.state === "done" ? 100 : op.bytesTotal > 0 ? Math.min(100, Math.round((op.bytesDone / op.bytesTotal) * 100)) : op.filesTotal > 0 ? Math.min(100, Math.round((op.filesDone / op.filesTotal) * 100)) : 0;
+  const name = op.kind === "zip" ? op.name : op.targets[0]?.name ?? op.name;
+  const files = op.filesTotal > 0 ? `${op.filesDone} / ${op.filesTotal}` : "";
+  const detail = op.state === "done" ? t("files-ops.operation_done") : op.bytesTotal > 0 ? `${files}${files ? " · " : ""}${bytes(op.bytesDone)} / ${bytes(op.bytesTotal)}` : files || t("files-ops.operation_preparing");
+  return (
+    <li className="flex items-center gap-2">
+      <FileGlyph name={name} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <span className="truncate text-xs text-ink" title={op.dir}>{op.name}</span>
+          <span className="ml-auto shrink-0 text-xs text-ink-3 tabular-nums">{op.state === "done" ? t("files-ops.operation_done") : `${pct}%`}</span>
+        </span>
+        <span
+          role="progressbar"
+          aria-label={op.targets[0]?.name ?? op.name}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pct}
+          aria-valuetext={`${pct}% · ${detail}`}
+          className="mt-1 block h-1 overflow-hidden rounded-full bg-field"
+        >
+          <span className={cx("block h-full rounded-full transition-[width] duration-200", op.state === "done" ? "bg-green" : "bg-accent")} style={{ width: `${pct}%` }} />
+        </span>
+        <span className="mt-1 block truncate text-xs text-ink-3" title={detail}>{detail}</span>
+      </span>
+      {op.state !== "done" && <IconButton
+        icon="x"
+        label={t(op.kind === "copy" ? "files-ops.copy_cancel" : "files-ops.compress_cancel", { name: op.name })}
+        onClick={onCancel}
+        size={26}
+        iconSize={13}
+      />}
+    </li>
   );
 }
 
@@ -640,8 +923,11 @@ function MoveDialog({
   }, [owner, at]);
   const sources = useMemo(() => new Set(targets.map((x) => parentOf(x.path))), [targets]);
   // not where they all are already, nor into one of the folders moved
-  const blocked = targets.some((x) => x.dir && within(x.path, at)) || (sources.size === 1 && sources.has(at));
-  const title = targets.length === 1 ? t("files-ops.move_one_title", { name: targets[0].name }) : t("files-ops.move_title", { count: targets.length });
+  // a copy may go beside them (it is then a duplicate); never into a folder copied
+  const blocked = targets.some((x) => x.dir && within(x.path, at)) || (!intent.copy && sources.size === 1 && sources.has(at));
+  const title = intent.copy
+    ? targets.length === 1 ? t("files-ops.copy_one_title", { name: targets[0].name }) : t("files-ops.copy_title", { count: targets.length })
+    : targets.length === 1 ? t("files-ops.move_one_title", { name: targets[0].name }) : t("files-ops.move_title", { count: targets.length });
   return (
     <Dialog
       open
@@ -654,7 +940,7 @@ function MoveDialog({
             {t("files-ops.cancel")}
           </Button>
           <Button tone="primary" onClick={() => onMove(at)} busy={busy} disabled={blocked || !listing?.dirs}>
-            {t("files-ops.move_here")}
+            {intent.copy ? t("files-ops.copy_here") : t("files-ops.move_here")}
           </Button>
         </>
       }
@@ -740,7 +1026,7 @@ function TrashDialog({ targets, busy, onClose, onTrash }: { targets: OpTarget[] 
 
 /** The bar a selection brings: how many, and what can be done to them all. */
 export function SelectionBar({ ops, selected, onClear }: { ops: FileOps; selected: OpTarget[]; onClear: () => void }) {
-  const files = selected.filter((x) => !x.dir);
+  const files = ops.canZip ? selected : selected.filter((x) => !x.dir);
   return (
     <div role="toolbar" aria-label={t("files-ops.selection")} className="flex h-10 shrink-0 items-center gap-1 border-b border-line bg-inset px-2">
       <IconButton icon="x" label={t("files-ops.clear_selection")} onClick={onClear} iconSize={14} />
@@ -748,7 +1034,9 @@ export function SelectionBar({ ops, selected, onClear }: { ops: FileOps; selecte
         {t("files-ops.selected", { count: selected.length })}
       </span>
       <IconButton icon="download" label={t("files-ops.download")} onClick={() => ops.download(files)} disabled={!files.length} iconSize={14} />
+      {ops.canCopy && <IconButton icon="copy" label={t("files-ops.copy_to")} onClick={() => ops.copy(selected)} disabled={!selected.length} iconSize={14} />}
       {ops.canEdit && <IconButton icon="arrowRight" label={t("files-ops.move")} onClick={() => ops.move(selected)} disabled={!selected.length} iconSize={14} />}
+      {ops.canZip && ops.canEdit && <IconButton icon="archive" label={t("files-ops.compress")} onClick={() => ops.compress(selected)} disabled={!selected.length} iconSize={14} />}
       {ops.canEdit && <IconButton icon="trash" label={t("files-ops.trash")} onClick={() => ops.trash(selected)} disabled={!selected.length} iconSize={14} />}
     </div>
   );

@@ -21,7 +21,7 @@ nonisolated enum StatusPalette {
     /// Working.
     static let working = StatusTone(dot: Color(light: 0xE8890C, dark: 0xFFB224), text: Color(light: 0xA35A00, dark: 0xFFB224))
     /// Unread.
-    static let unread = StatusTone(dot: Color(light: 0x30A46C, dark: 0x4CC38A), text: Color(light: 0x1D7A4C, dark: 0x4CC38A))
+    static let unread = StatusTone(dot: Palette.green, text: Color(light: 0x1D7A4C, dark: 0x4CC38A))
     static let awaitingReply = unread
     /// Waiting in the Background (#6045): working, but only waiting on background commands. Working's amber, lighter (its
     /// mark is a clock, `Theme.Icon.backgroundWaiting`); its words the page's secondary (a lighter amber is too faint for

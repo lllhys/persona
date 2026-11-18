@@ -31,6 +31,23 @@ struct SlashMenuTests {
         #expect(SlashMenuRow.matching("/上下文", in: rows).map(\.word) == ["/compact", "/context"])
     }
 
+    @Test func theMainChatKeepsItsCommandsAndAddsClear() {
+        let had = SlashMenuRow.rows(model: false, loop: false, clear: false).map(\.word)
+        let rows = SlashMenuRow.slashRows(draft: "/", picked: nil, showsList: true, model: false, loop: false, agentClear: false, mainClear: true)
+        #expect(rows.map(\.word) == had + ["/clear"])
+        #expect(rows.contains { $0.word == "/clear" })
+        #expect(had.allSatisfy { word in rows.contains { $0.word == word } })
+        let withLoop = SlashMenuRow.slashRows(draft: "/", picked: nil, showsList: true, model: false, loop: true, agentClear: false, mainClear: true)
+        #expect(withLoop.map(\.word) == SlashMenuRow.rows(model: false, loop: true, clear: false).map(\.word) + ["/clear"])
+        #expect(SlashMenuRow.slashRows(draft: "/cl", picked: nil, showsList: true, model: false, loop: false, agentClear: false, mainClear: true).map(\.word) == ["/clear"])
+        #expect(SlashMenuRow.slashRows(draft: "/clear now", picked: nil, showsList: true, model: false, loop: false, agentClear: false, mainClear: true).isEmpty)
+        #expect(SlashMenuRow.slashRows(draft: "/", picked: "/", showsList: true, model: false, loop: false, agentClear: false, mainClear: true).isEmpty)
+        // The prompt bar has its own menu, so this list stays down.
+        #expect(SlashMenuRow.slashRows(draft: "/", picked: nil, showsList: false, model: false, loop: false, agentClear: false, mainClear: true).isEmpty)
+        #expect(SlashMenuRow.slashRows(draft: "/", picked: nil, showsList: true, model: true, loop: true, agentClear: true, mainClear: false).map(\.word)
+            == ["/继续", "/提交", "/汇报", "/compact", "/context", "/model", "/loop", "/clear"])
+    }
+
     @Test func aQuickMessageShowsWhatItSends() {
         let rows = SlashMenuRow.rows(model: true, clear: true)
         #expect(rows.first { $0.word == "/提交" }?.preview == "把当前改动按规范提交并推送")

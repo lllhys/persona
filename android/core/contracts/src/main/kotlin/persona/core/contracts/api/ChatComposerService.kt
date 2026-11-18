@@ -21,6 +21,11 @@ data class ComposerDelivery(val state: DeliveryState, val refusal: ComposerRefus
 interface ChatComposerService {
     val deliveries: StateFlow<Map<String, ComposerDelivery>>
     suspend fun upload(session: SessionKey, name: String, file: File): String
+    /**
+     * Upload with an explicit destination. Ordinary chat files ask for `attachment`; a Health conversation keeps `health`.
+     * The default keeps older fakes and alternate transports on their existing temporary-upload behavior.
+     */
+    suspend fun upload(session: SessionKey, name: String, file: File, destination: String): String = upload(session, name, file)
     suspend fun interrupt(session: SessionKey)
     /** Retry only a recorded refusal, retaining the original operation id and payload. */
     suspend fun retryRefused(clientMessageId: String, clearDraft: Boolean): ComposerDelivery

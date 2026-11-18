@@ -1,14 +1,13 @@
 // A ```mermaid block drawn as its diagram (lib/mermaid.ts), with the source a click away. While a reply is still
 // streaming the code changes: it is drawn once it has been still for a moment, keeping the last drawing until then.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { cachedMermaid, mermaidProblem, renderMermaid } from "../lib/mermaid";
-import { useCloseOnBack } from "../lib/back-close";
-import { isNoHover, NARROW, useMedia } from "./media-query";
+import { isNoHover } from "./media-query";
 import { copyText, cx } from "./atoms";
 import { t } from "../i18n";
 import { Icon } from "./icons";
 import { useDark } from "./use-dark";
-import { useEscapeClose, useModalFocus } from "./overlay";
+import { MermaidViewer } from "./MermaidViewer";
 
 const SETTLE_MS = 350;
 
@@ -82,34 +81,7 @@ export function MermaidBlock({ code }: { code: string }) {
           <Icon name="copy" size={13} />
         </button>
       </div>
-      {big && svg && <Zoomed svg={svg} onClose={() => setBig(false)} />}
-    </div>
-  );
-}
-
-/** The diagram over the whole page at its own size (scroll for a big one); click outside it or Esc closes. A modal:
- *  the focus moves in, Tab stays in, and closing gives it back to "Enlarge". */
-function Zoomed({ svg, onClose }: { svg: string; onClose: () => void }) {
-  const dialog = useRef<HTMLDivElement>(null);
-  useModalFocus(dialog);
-  useCloseOnBack(true, onClose, useMedia(NARROW));
-  useEscapeClose(true, onClose);
-  return (
-    <div
-      ref={dialog}
-      role="dialog"
-      aria-modal="true"
-      aria-label={t("ui-mermaid.diagram")}
-      tabIndex={-1}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-8 outline-none"
-      onClick={onClose}
-      style={{ animation: "fade-in 150ms ease-out both" }}
-    >
-      <div
-        className="max-h-full max-w-full overflow-auto rounded-[12px] bg-surface p-6 shadow-lg [&_svg]:h-auto [&_svg]:max-w-none"
-        onClick={(e) => e.stopPropagation()}
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
+      {big && svg && <MermaidViewer svg={svg} onClose={() => setBig(false)} />}
     </div>
   );
 }

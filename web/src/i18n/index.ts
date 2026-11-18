@@ -90,8 +90,8 @@ export function byLanguage(glob: Record<string, () => Promise<CatalogModule>>): 
   return Object.fromEntries(Object.entries(glob).map(([p, load]) => [dirOf(p), load]));
 }
 
-// The web client's catalog, in two parts (web/i18n-catalogs.ts): the namespaces the first screen names
-// (startup-namespaces.json) and the rest. The admin UI's own namespaces (admin-*) are in neither: admin/main.tsx adds them.
+// The web client's catalog, in two parts (web/i18n-catalogs.ts): the keys the first screen reads
+// (startup-namespaces.json: namespaces, and keys of others) and the rest. The admin UI's own namespaces (admin-*) are in neither: admin/main.tsx adds them.
 const startupLoaders = byLanguage(import.meta.glob<CatalogModule>("./locales/*/_meta.json", { query: "?catalog=client-startup" }));
 const restLoaders = byLanguage(import.meta.glob<CatalogModule>("./locales/*/_meta.json", { query: "?catalog=client-rest" }));
 
@@ -228,10 +228,28 @@ function lookup(language: Lang, key: string, vars?: Vars): string | undefined {
   return catalog[key];
 }
 
-/** Fills `{name}` placeholders; a missing value leaves the placeholder visible so the gap is obvious. */
+/** Fills `{name}` placeholders; a missing value leaves the placeholder visible so the gap is obvious. A value that ends a
+ *  sentence, filled in right before the text's own punctuation ("（{reason}），", "{error}。"), loses its full stop, so
+ *  the text never reads "。），" or "。。" (#6822). The hub's fill does the same (server/internal/i18n/i18n.go). */
 export function interpolate(text: string, vars?: Vars): string {
   if (!vars) return text;
-  return text.replace(/\{(\w+)\}/g, (m, name: string) => (name in vars ? String(vars[name]) : m));
+  return text.replace(/\{(\w+)\}/g, (m, name: string, at: number) => {
+    if (!(name in vars)) return m;
+    const value = String(vars[name]);
+    return MARK_AFTER.has(text.charAt(at + m.length)) ? withoutFullStop(value) : value;
+  });
+}
+
+/** Punctuation that, right after a placeholder, makes the value's own full stop a second one. */
+const MARK_AFTER = new Set(["）", ")", "，", ",", "。", "．", ".", "：", ":", "；", ";", "、"]);
+const FULL_STOPS = "。．.";
+
+/** value without the full stop it ends with (and space after it); an ellipsis ("...", "。。") keeps its dots. */
+function withoutFullStop(value: string): string {
+  const v = value.trimEnd();
+  const last = v.charAt(v.length - 1);
+  if (!last || !FULL_STOPS.includes(last) || (v.length > 1 && FULL_STOPS.includes(v.charAt(v.length - 2)))) return value;
+  return v.slice(0, -1);
 }
 
 /**
@@ -245,12 +263,11 @@ export function t(key: string, vars?: Vars): string {
   return text === undefined ? missing(key) : interpolate(text, vars);
 }
 
-/** An unknown key's text: the key. Under test, a key of the rest asked for before the rest is in throws instead: in
- *  the build, its module would have run ahead of the wait for it (startI18n). */
+/** An unknown key's text: the key. Under test, a key asked for before the rest is in throws instead: in the build,
+ *  its module would have run ahead of the wait for it (startI18n), or the startup part would lack it. */
 function missing(key: string): string {
-  const namespace = key.split(".")[0];
-  if (import.meta.env.MODE === "test" && !restIn && !Object.keys(catalogs[lang]).some((k) => k.startsWith(`${namespace}.`))) {
-    throw new Error(`"${key}" was read before the rest of the catalog was in: add "${namespace}" to src/i18n/startup-namespaces.json`);
+  if (import.meta.env.MODE === "test" && !restIn) {
+    throw new Error(`"${key}" was read before the rest of the catalog was in: add it, or its namespace, to src/i18n/startup-namespaces.json`);
   }
   return key;
 }

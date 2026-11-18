@@ -13,6 +13,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
@@ -55,8 +58,9 @@ class AgentsHomeAffordancesTest {
 
     @Test fun groupingIsAMenuButtonAndQuickFiltersStayToggles() {
         showScreen()
-        // As iOS: the grouping's own name on the pill, which opens a Group By picker with the groupings only (#4338 A4).
-        val grouping = rule.onNodeWithText("By repository")
+        // Final E: the fixed icon speaks the current grouping and opens groupings only.
+        val grouping = rule.onNodeWithTag("agents-grouping")
+        grouping.assertContentDescriptionEquals("Group By: By repository")
         grouping.assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
             .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected))
             .assertHasClickAction()
@@ -65,8 +69,9 @@ class AgentsHomeAffordancesTest {
                 SemanticsMatcher.expectValue(SemanticsProperties.Selected, true),
         ).assertCountEquals(1)
         grouping.performClick()
-        rule.onNodeWithText("Group By").assertIsDisplayed()
+        rule.onNode(isPopup()).assertIsDisplayed()
         rule.onNodeWithText("By status").assertIsDisplayed()
+        rule.onNodeWithText("By Machine").assertIsDisplayed()
         rule.onAllNodesWithText("All machines").assertCountEquals(0) // the computers are behind ⋯, not in the picker
     }
 
@@ -118,6 +123,35 @@ class AgentsHomeAffordancesTest {
         rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(0)
     }
 
+    // #9199: iOS hides Sort under By App and Recently Used; Collapse / Expand All under Recently Used.
+    @Test fun sortIsNotOfferedUnderByApp() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.App) }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("List settings").performClick()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(0)
+    }
+
+    @Test fun sortIsNotOfferedUnderRecentlyUsed() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.Recent) }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("List settings").performClick()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodes(androidx.compose.ui.test.hasText("Sort:", substring = true)).assertCountEquals(0)
+    }
+
+    @Test fun collapseExpandAllAreNotOfferedUnderRecentlyUsed() {
+        val model = showScreen()
+        rule.runOnIdle { model.grouping(persona.core.domain.sort.AgentGrouping.Recent) }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("List settings").performClick()
+        rule.onNodeWithText("All machines").assertIsDisplayed()
+        rule.onAllNodesWithText("Collapse all").assertCountEquals(0)
+        rule.onAllNodesWithText("Expand all").assertCountEquals(0)
+    }
+
     // #4338 A11, as iOS's row menu: a working agent can be interrupted from its row; a finished one offers nothing to stop.
     @Test fun aWorkingRowOffersInterrupt() {
         showScreen(rows = listOf(Session("box", "busy", title = "Busy task", state = "working")))
@@ -132,19 +166,39 @@ class AgentsHomeAffordancesTest {
         rule.onAllNodesWithText("Interrupt").assertCountEquals(0)
     }
 
+    /** A runtime's session (#6294): no terminal, so Rename and Close agent only where its node says it can. */
+    private fun runtimeRow(capabilities: SessionCapabilities) = Session("box", "paseo", title = "Runtime task", status = "working",
+        state = "working", sourceKind = "runtime", agent = "claude", capabilities = capabilities)
+
+    @Test fun aRuntimeRowRenamesAndClosesWhereItsNodeSays() {
+        showScreen(rows = listOf(runtimeRow(SessionCapabilities(read = true, send = true, close = true, rename = true))))
+        rule.onNodeWithText("Runtime task").performTouchInput { longClick() }
+        rule.onNodeWithText("Rename").assertIsDisplayed()
+        rule.onNodeWithText("Close agent").assertIsDisplayed()
+        rule.onNodeWithText("Copy resume command").assertDoesNotExist()
+    }
+
+    @Test fun aRuntimeRowFromAnOlderNodeOffersNeither() {
+        showScreen(rows = listOf(runtimeRow(SessionCapabilities(read = true, send = true))))
+        rule.onNodeWithText("Runtime task").performTouchInput { longClick() }
+        rule.onNodeWithText("Mute").assertIsDisplayed()
+        rule.onNodeWithText("Rename").assertDoesNotExist()
+        rule.onNodeWithText("Close agent").assertDoesNotExist()
+    }
+
     @Test fun groupingLight() = shootGrouping(dark = false)
     @Test fun groupingDark() = shootGrouping(dark = true)
 
     private fun shootGrouping(dark: Boolean) {
         showScreen(dark)
         val out = File("build/grouping-shots").also { it.mkdirs() }
-        fun save(name: String) = rule.onRoot().captureToImage().asAndroidBitmap().let { bitmap ->
+        fun save(name: String, popup: Boolean = false) = (if (popup) rule.onNode(isPopup()) else rule.onRoot()).captureToImage().asAndroidBitmap().let { bitmap ->
             out.resolve("$name-${if (dark) "dark" else "light"}.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
         }
-        save("pill")
-        rule.onNodeWithText("By repository").performClick()
+        save("capsule")
+        rule.onNodeWithTag("agents-grouping").performClick()
         rule.waitForIdle()
-        save("picker")
+        save("picker", popup = true)
     }
 
     // #4338 A1: on Glass the requests and their history are a page at the end of ⋯, after Machines, where iOS keeps its

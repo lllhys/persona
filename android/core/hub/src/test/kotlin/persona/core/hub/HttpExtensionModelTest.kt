@@ -12,6 +12,23 @@ import persona.core.contracts.api.*
 import kotlinx.serialization.json.*
 
 class HttpExtensionModelTest {
+    @Test fun adminNetworkUrlKeepsTheHubPrefixAndEscapesTheExtensionId() {
+        val api = HttpExtensionManagement({ _, _, _ -> error("No request expected") },
+            iconBase = { "https://hub.example.test/prefix/?token=discard" })
+        val expected = "https://hub.example.test/prefix/admin/extensions?extension=rss%20hub#network"
+        assertEquals(expected, api.adminNetworkUrl("rss hub"))
+        assertEquals(expected, api.pinned(ManagerPins.of(emptyList(), "assistant")).adminNetworkUrl("rss hub"))
+        assertNull(HttpExtensionManagement({ _, _, _ -> error("No request expected") }, iconBase = { null }).adminNetworkUrl("example"))
+    }
+
+    @Test fun egressDeniedAtIsOptional() {
+        val old = JsonCodec.decodeFromString<ExtensionEgress>("""{"allowed":7,"denied":2,"last_denied":"example.com"}""")
+        assertNull(old.deniedAt)
+        val current = JsonCodec.decodeFromString<ExtensionEgress>(
+            """{"allowed":7,"denied":2,"last_denied":"example.com","denied_at":"2026-11-12T09:57:00Z"}""")
+        assertEquals("2026-11-12T09:57:00Z", current.deniedAt)
+    }
+
     @Test fun installedModelsKeepTheirPinnedManagerOverHttp() = runBlocking {
         AssistantManagerChoice.choose("hub", "other", "assistant")
         try {

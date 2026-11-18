@@ -186,7 +186,8 @@ def environment(config):
 def kill_group(pid, sig):
     try:
         os.killpg(pid, sig)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
+        # Nothing is left to signal; macOS answers EPERM, not ESRCH, when every member is a zombie.
         pass
 
 
@@ -544,6 +545,7 @@ class Worker:
                 log(name, head, "action-lock-busy")
                 continue
             except StaleCheckout:
+                deferred = True
                 log(name, head, "checkout-stale-deferred")
                 continue
             except WorkerError as error:

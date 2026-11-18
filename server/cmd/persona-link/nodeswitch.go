@@ -157,6 +157,18 @@ func (e *env) retarget(content, from, to string) (string, bool) {
 	return strings.Replace(content, old, repl, 1), true
 }
 
+// bootstrapLaunchd loads a service file after its old job was booted out. Bootstrap right after bootout often fails
+// for a moment while the old job is still going away, so try five times, one second apart.
+func (e *env) bootstrapLaunchd(domain, file string) (out string, err error) {
+	for try := 0; try < 5; try++ {
+		if out, err = e.command("launchctl", "bootstrap", domain, file); err == nil {
+			return out, nil
+		}
+		e.sleep(time.Second)
+	}
+	return out, err
+}
+
 // restartNodeService starts the node service again from its file as it is now.
 func (e *env) restartNodeService(file string) error {
 	switch e.goos {
@@ -169,16 +181,10 @@ func (e *env) restartNodeService(file string) error {
 	case "darwin":
 		domain := "gui/" + strconv.Itoa(e.uid)
 		_, _ = e.command("launchctl", "bootout", domain+"/"+e.residentLabel())
-		// bootstrap right after bootout often fails for a moment (the old job is still going away): try again.
-		var out string
-		var err error
-		for try := 0; try < 5; try++ {
-			if out, err = e.command("launchctl", "bootstrap", domain, file); err == nil {
-				return nil
-			}
-			e.sleep(time.Second)
+		out, err := e.bootstrapLaunchd(domain, file)
+		if err != nil {
+			return fmt.Errorf("launchctl bootstrap: %s", orErr(out, err))
 		}
-		return fmt.Errorf("launchctl bootstrap: %s", orErr(out, err))
 	}
 	return nil
 }

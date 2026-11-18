@@ -130,6 +130,9 @@ type LauncherView struct {
 	OwnService    string   `json:"own_service,omitempty"`
 	KeyMachines   []string `json:"key_machines,omitempty"`
 	LegacyScope   bool     `json:"legacy_scope,omitempty"`
+	// Pi (managed): pi can use it too on the computers in its scope (proto.ManagedLauncher.PiAPI,
+	// docs/integrations/pi.md "Persona's model providers").
+	Pi bool `json:"pi,omitempty"`
 	// ViaMachine (managed, kind api): the computer that sends its requests; "" this manager (models_via.go).
 	ViaMachine string `json:"via_machine,omitempty"`
 	// KeyReference (managed): the key is a reference to a provider extension's secret: the reference and what it
@@ -152,7 +155,7 @@ func launcherView(l storedLauncher) LauncherView {
 		SubagentForce: l.SubagentForce, HasHeaders: l.HeadersSealed != "", HasEnv: l.EnvSealed != "", Proxy: l.Proxy, NoProxy: l.NoProxy, TimeoutMS: l.TimeoutMS,
 		CompactWindow: l.CompactWindow, MaxContext: l.MaxContext, Effort: l.Effort, Origin: l.Source,
 		Share: l.share(), ScopeMachines: l.ScopeMachines, Delivery: l.delivery(), OwnService: l.ownService(), LegacyScope: l.Share == "",
-		ViaMachine: l.ViaMachine, keySealed: l.KeySealed}
+		Pi: l.PiAPI() != "" && l.share() != shareNone, ViaMachine: l.ViaMachine, keySealed: l.KeySealed}
 }
 
 var managedLauncherName = lazyre.New(`^[A-Za-z_][A-Za-z0-9_-]*$`)

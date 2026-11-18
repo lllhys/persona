@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import { clearConversationDeletions, conversationDeleted, rememberConversationDeleted } from "../../lib/conversation-deleted";
 // The subscribe a hello sends for a chat whose first page is still on its way: none. Without since_seq the hub would
 // read and send that whole page again over the socket, while the HTTP read brings it anyway (a page load opens the
 // socket and reads at once); the read subscribes from where it ends.
+import { ApiError } from "../../lib/api";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +65,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
+  clearConversationDeletions();
 });
 
 describe("useTranscript subscribe", () => {
@@ -87,4 +90,18 @@ describe("useTranscript subscribe", () => {
     expect(subscribes()).toHaveLength(1);
     expect(subscribes()[0].since_seq).toBeUndefined();
   });
+});
+
+it("never resubscribes or displays a page that arrives after deletion", async () => {
+  await act(async () => rememberConversationDeleted("m", "A"));
+  await settleFirstRead({ items: [item("late", 10)], to_seq: 10 });
+  hello();
+  expect(subscribes()).toEqual([]);
+  expect(sent.some((m) => m.type === "unsubscribe" && m.session_id === "A")).toBe(true);
+});
+
+it("recognizes a cold old link's 410 without a prior websocket deletion event", async () => {
+  await settleFirstRead(new ApiError(410, "Conversation deleted", { code: "conversation_deleted" }));
+  expect(conversationDeleted("m", "A")).toBe(true);
+  expect(subscribes()).toEqual([]);
 });

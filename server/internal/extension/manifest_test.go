@@ -498,6 +498,22 @@ func TestMCPServersPoint(t *testing.T) {
 	}
 }
 
+// A nav_page may name the sidebar group it goes in (#9071); the group and its title come through as written.
+func TestUINavPageGroup(t *testing.T) {
+	m, err := Parse(with(t, func(m map[string]any) {
+		m["contributes"] = map[string]any{"ui": []any{
+			map[string]any{"id": "today", "title": "Today", "placement": "nav_page", "group": map[string]any{"id": "workbench", "title": "工作台"}},
+			map[string]any{"id": "notes", "title": "Notes", "placement": "nav_page"}}}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uis := m.UIs()
+	if len(uis) != 2 || uis[0].Group == nil || *uis[0].Group != (UIGroup{ID: "workbench", Title: "工作台"}) || uis[1].Group != nil {
+		t.Fatalf("%+v", uis)
+	}
+}
+
 func TestUIAndEventsPoints(t *testing.T) {
 	m, err := Parse(with(t, func(m map[string]any) {
 		m["permissions"] = map[string]any{"launcher_keys": true}
@@ -547,6 +563,15 @@ func TestUIAndEventsPoints(t *testing.T) {
 		},
 		"unknown icon": func(m map[string]any) {
 			m["contributes"] = map[string]any{"ui": []any{map[string]any{"id": "x", "title": "x", "placement": "nav_page", "icon": "rocket"}}}
+		},
+		"a group off the navigation": func(m map[string]any) {
+			m["contributes"] = map[string]any{"ui": []any{map[string]any{"id": "x", "title": "x", "placement": "plugin_page", "group": map[string]any{"id": "work", "title": "工作台"}}}}
+		},
+		"a group id of another shape": func(m map[string]any) {
+			m["contributes"] = map[string]any{"ui": []any{map[string]any{"id": "x", "title": "x", "placement": "nav_page", "group": map[string]any{"id": "Work Bench", "title": "工作台"}}}}
+		},
+		"a group without a title": func(m map[string]any) {
+			m["contributes"] = map[string]any{"ui": []any{map[string]any{"id": "x", "title": "x", "placement": "nav_page", "group": map[string]any{"id": "work", "title": ""}}}}
 		},
 		"a page opens nothing": func(m map[string]any) {
 			m["contributes"] = map[string]any{"ui": []any{map[string]any{"id": "x", "title": "x", "placement": "nav_page"},

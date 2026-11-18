@@ -9,8 +9,15 @@ The source research behind it (2026-11-01: endpoints, thread and approval semant
 - **The writer lock is not a takeover protocol.** Codex keeps one writer per thread with a file lock under `<CODEX_HOME>/thread-writer-locks/`, and the lock points to no owner endpoint. The node never deletes it, never starts another app-server to resume a thread, and sends only to the one connected instance whose `thread/loaded/list` has the thread (`codexOwner`): none or several, and the thread is view only.
 - **An observer never answers on its own.** A server request goes to every subscriber and the first answer, or error, wins. Only the user's own answer on the card is sent: requests the node cannot show, and cards that are dismissed, expire or are withdrawn, get no reply at all, not an error or a decline, so the desktop keeps its chance to answer (`codex_remote_asks.go`). `serverRequest/resolved` only takes the card away; it never means approved.
 - **Listing is not joining.** `thread/loaded/list` and `thread/read` load nothing; `thread/resume` subscribes and can start queued work, so the node resumes a thread only when the user joins it or sends to it (or joined it before), never while it lists.
+- **Live work outranks completed history.** A connected, unambiguous owner's cached active or waiting state prevents the stale-rollout correction from marking a pane done. Paginated history may contain only older completed turns while a continuation runs; a late join need not have observed its turn ID. Completed history still corrects stale terminal activity once the owner finishes or disconnects (#8946).
 
 ## First implementation
+
+Parent thread IDs remain raw inside the app-server connection; session decoration converts them to public IDs exactly
+once. Otherwise a secondary home's child points at a twice-hashed ID instead of its listed parent (#9393). The
+assistant's `agents_list` and live context use the existing fold's root rows and folded states, just like the clients:
+known children stay inspectable through their parent, while missing-parent and unknown-ancestry sessions remain
+independent. Pending child interactions keep their original interaction IDs and are described under the parent.
 
 Entry points are `node/codex_registry.go`, `codex_discovery.go`, and `codex_remote.go`. Reuses RPC envelopes/pending from `assistant_codex.go`, connecting external WebSockets through pluggable message writers and dispatch without putting external instances into assistant-process stop/reap.
 

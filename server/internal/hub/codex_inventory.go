@@ -34,6 +34,17 @@ func (m *Machine) codexConfig(ctx context.Context) proto.CodexConfig {
 	return cfg
 }
 
+// codexInventoryHanded: the node's current connection, as its manager reports it, is the one the hub handed the kept
+// inventory to (devices.connected, machineConnected's codex). A node's registry starts empty on every connection and
+// gets the kept inventory only then; a report from before (a node before this check waited for it, node
+// codex_registry.go rememberCodex) would store that empty registry over what the hub kept: the threads the user joined,
+// the other homes and the app-servers. A machine the hub connects itself (no manager reports it) is taken as handed.
+func (m *Machine) codexInventoryHanded() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.managed || m.connected && !m.hookedAt.IsZero() && m.hookedAt.Equal(m.connectedAt)
+}
+
 func (m *Machine) rememberCodexInventory(raw json.RawMessage) {
 	if m.hub.store == nil {
 		return

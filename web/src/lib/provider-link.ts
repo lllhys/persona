@@ -16,7 +16,17 @@ export const IMPORT_LINK_FEATURE = "launcher_import_link";
 export type LinkSource = ProviderView & { source?: string };
 
 /** One model in a link: its ID alone, or with what Persona knows of it. */
-export type LinkModel = string | { id: string; name?: string; contextWindow?: number; reasoning?: true; reasoningEfforts?: string[]; reasoningDefaultEffort?: string };
+export type LinkModel = string | {
+  id: string;
+  name?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  supportsImageInput?: boolean;
+  supportsToolCalls?: boolean;
+  reasoning?: boolean;
+  reasoningEfforts?: string[];
+  reasoningDefaultEffort?: string;
+};
 
 /** cindy's v1 custom provider, in the key order the link is built in (the fixture compares the serialized text). */
 export interface LinkPayload {
@@ -75,17 +85,23 @@ function cut(s: string, max: number): string {
 }
 
 /** A model as the link carries it: the ID alone when that is all Persona knows of it. Thinking levels go only when
- *  they are cindy's, so one unknown level never makes the hub refuse the whole link. */
+ *  they are cindy's, so one unknown level never makes the hub refuse the whole link; a model the gateway said takes
+ *  none goes as reasoning false, and its output limit, image input and tool calls as cindy names them (#8778). */
 function linkModel(m: ProviderModel): LinkModel {
   const out: Exclude<LinkModel, string> = { id: m.id };
   const name = m.name?.trim();
   if (name && name !== m.id && name.length <= MAX_ID) out.name = name;
   if (Number.isInteger(m.context_window) && m.context_window! > 0) out.contextWindow = m.context_window;
+  if (Number.isInteger(m.max_output_tokens) && m.max_output_tokens! > 0) out.maxOutputTokens = m.max_output_tokens;
+  if (typeof m.image_input === "boolean") out.supportsImageInput = m.image_input;
+  if (typeof m.tool_calls === "boolean") out.supportsToolCalls = m.tool_calls;
   const efforts = [...new Set((m.efforts ?? []).filter((e) => EFFORTS.has(e)))];
   if (efforts.length) {
     out.reasoning = true;
     out.reasoningEfforts = efforts;
     if (m.default_effort && efforts.includes(m.default_effort)) out.reasoningDefaultEffort = m.default_effort;
+  } else if (m.no_effort) {
+    out.reasoning = false;
   }
   return Object.keys(out).length === 1 ? m.id : out;
 }

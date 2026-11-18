@@ -50,21 +50,28 @@ type reportedEntry struct {
 }
 
 // loadMachineEntries reads what the managers last reported (startDevices). Unreadable: nothing until they report, and
-// it is read again before the next write, which would otherwise drop the managers that did not report since.
-func (h *Hub) loadMachineEntries(ctx context.Context) {
+// it is read again before the next write, which would otherwise drop the managers that did not report since. A failed
+// read also leaves reportedRead false: an earlier partial/degraded snapshot is not safe to write back.
+func (h *Hub) loadMachineEntries(ctx context.Context) error {
+	d := &h.devices
+	d.reportedSave.Lock()
+	defer d.reportedSave.Unlock()
 	if h.store == nil {
-		return
+		return nil
 	}
 	kept, err := h.readMachineEntries(ctx)
 	if err != nil {
 		h.logf("machines: what the managers last reported: %v", err)
-		return
+		d.mu.Lock()
+		d.reportedRead = false
+		d.mu.Unlock()
+		return err
 	}
-	d := &h.devices
 	d.mu.Lock()
 	d.mergeReportedLocked(kept)
 	d.reportedRead = true
 	d.mu.Unlock()
+	return nil
 }
 
 // readMachineEntries is what the setting holds, without the machines the hub hands no manager now and the managers the
@@ -428,6 +435,10 @@ func (h *Hub) saveMachineEntries(ctx context.Context) {
 	d := &h.devices
 	d.reportedSave.Lock()
 	defer d.reportedSave.Unlock()
+	// A handover can time out while a background write holds the lock. Do not start another write when it is released.
+	if ctx.Err() != nil {
+		return
+	}
 	h.writeMachineEntries(ctx)
 }
 
@@ -435,6 +446,13 @@ func (h *Hub) saveMachineEntries(ctx context.Context) {
 func (h *Hub) writeMachineEntries(ctx context.Context) {
 	d := &h.devices
 	d.mu.Lock()
+	if !d.keptRead {
+		// An entries read with the kept list unknown filtered those machines out. Never write that partial map back;
+		// the trust loop or the next kept-list recovery schedules the write after both records are known.
+		d.reportedSaved = time.Now()
+		d.mu.Unlock()
+		return
+	}
 	read := d.reportedRead
 	d.mu.Unlock()
 	if !read {

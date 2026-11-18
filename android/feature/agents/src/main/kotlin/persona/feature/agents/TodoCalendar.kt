@@ -1,6 +1,8 @@
 package persona.feature.agents
 
 import android.content.Context
+import android.icu.text.DateIntervalFormat
+import android.icu.util.DateInterval
 import android.text.format.DateFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,10 +20,22 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
+import persona.core.designsystem.JTextField
+import persona.core.domain.tasks.CalendarMorning
 import kotlinx.coroutines.flow.drop
 import persona.core.contracts.TodoDue
 import persona.core.designsystem.Haptic
@@ -62,6 +76,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -112,14 +127,18 @@ import persona.core.designsystem.StatusColors
 import persona.core.designsystem.Tokens
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.tasks.CalendarEntry
+import persona.core.domain.tasks.CalendarMode
+import persona.core.domain.tasks.calendarDays
+import persona.core.domain.tasks.stepAnchor
+import persona.core.domain.tasks.weekOf
 import persona.core.domain.tasks.calendarEntries
 import persona.core.domain.tasks.fitDay
-import persona.core.domain.tasks.monthDays
 import persona.core.domain.tasks.undatedCount
 import persona.core.domain.tasks.weekStart
-import persona.core.domain.tasks.weekdays
 import java.time.Instant
+import java.text.FieldPosition
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -127,15 +146,16 @@ import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
 
-// The to-dos as a month (#2046, docs/assistant/todos.md "Calendar"): the to-dos with a due date on the days of a month,
-// drawn as the list draws them (state, overdue, done, priority, reminder). Tapping a day lists its to-dos; those without
-// a due date are counted under the month, a tap from the list. A to-do is moved to another day by dragging it, or by
-// TalkBack's "Change Due Date…" (#2045). iOS TodoCalendarView / TodoCalendarMonth / TodoCalendarDrag, web TodoCalendar.
+// The to-dos as a calendar (#2046, #4200, docs/assistant/todos.md "Calendar"): a day, a week or a month of the to-dos
+// with a due date, drawn as the list draws them (state, overdue, done, priority, reminder). The day and the week put them
+// on a time axis (TodoCalendarTimeline.kt); tapping a day of the month lists its to-dos; those without a due date are
+// counted under the calendar, a tap from the list. A to-do is moved to another day or moment by dragging it, or by
+// TalkBack's "Change Due Date…" (#2045). iOS TodoCalendarView / TodoCalendarGrids (no drag yet), web TodoCalendar.
 
-/** The to-dos page's two views: the list, or the month of those with a due date. */
+/** The to-dos page's two views: the list, or the calendar of those with a due date. */
 internal enum class TodosView { List, Calendar }
 
-/** The view and "Show done" this device keeps for the to-dos page (iOS `todos.calendar.*`). */
+/** The view, the calendar's span and "Show done" this device keeps for the to-dos page (iOS `todos.calendar.*`). */
 internal class TodoCalendarPrefs(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("todos_calendar", Context.MODE_PRIVATE)
 
@@ -143,12 +163,21 @@ internal class TodoCalendarPrefs(context: Context) {
         get() = if (prefs.getString("view", null) == "calendar") TodosView.Calendar else TodosView.List
         set(value) = prefs.edit().putString("view", if (value == TodosView.Calendar) "calendar" else "list").apply()
 
+    /** Day, Week or Month (#4200); the month, as the calendar first was, until another is picked. */
+    var mode: CalendarMode
+        get() = CalendarMode.entries.firstOrNull { it.name.lowercase(Locale.ROOT) == prefs.getString("mode", null) } ?: CalendarMode.Month
+        set(value) = prefs.edit().putString("mode", value.name.lowercase(Locale.ROOT)).apply()
+
     var showDone: Boolean
         get() = prefs.getBoolean("show_done", true)
         set(value) = prefs.edit().putBoolean("show_done", value).apply()
 }
 
-/** The top of the to-dos page: List | Calendar, then the list's [listControls] (#3740), or in the calendar its options ("Show done"). */
+/**
+ * The top of the to-dos page: List | Calendar, then the list's [listControls] (#3740), or in the calendar Day | Week |
+ * Month (#4200) and its options ("Show done"). A phone too narrow for both choices in a row puts Day | Week | Month on
+ * the next line.
+ */
 @Composable
 internal fun TodosViewBar(
     view: TodosView,
@@ -156,18 +185,41 @@ internal fun TodosViewBar(
     showDone: Boolean,
     onShowDone: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    mode: CalendarMode = CalendarMode.Month,
+    onMode: (CalendarMode) -> Unit = {},
     listControls: (@Composable () -> Unit)? = null,
 ) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    val views = @Composable {
         JSegmented(
             listOf(JSegment(stringResource(R.string.agents_todos_view_list)), JSegment(stringResource(R.string.agents_todos_view_calendar))),
             selected = view.ordinal,
             onSelect = { onView(TodosView.entries[it]) },
             modifier = Modifier.testTag("todos-view"),
         )
-        Spacer(Modifier.weight(1f))
-        if (view == TodosView.List) listControls?.invoke()
-        if (view == TodosView.Calendar) {
+    }
+    if (view == TodosView.List) {
+        Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            views()
+            Spacer(Modifier.weight(1f))
+            listControls?.invoke()
+        }
+        return
+    }
+    val gap = Tokens.Space.m
+    val lineGap = Tokens.Space.s
+    Layout(
+        content = {
+            views()
+            JSegmented(
+                listOf(
+                    JSegment(stringResource(R.string.agents_todo_calendar_mode_day)),
+                    JSegment(stringResource(R.string.agents_todo_calendar_mode_week)),
+                    JSegment(stringResource(R.string.agents_todo_calendar_mode_month)),
+                ),
+                selected = mode.ordinal,
+                onSelect = { onMode(CalendarMode.entries[it]) },
+                modifier = Modifier.testTag("todo-calendar-mode"),
+            )
             var open by remember { mutableStateOf(false) }
             Box {
                 JIconButton(PhIcons.DotsThree, stringResource(R.string.agents_todo_calendar_options), { open = true },
@@ -179,66 +231,209 @@ internal fun TodosViewBar(
                     },
                 ))
             }
+        },
+        modifier = modifier.fillMaxWidth(),
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val (a, b, o) = measurables.map { it.measure(loose) }
+        val width = constraints.maxWidth
+        val space = gap.roundToPx()
+        if (a.width + b.width + o.width + 2 * space <= width) {
+            val height = maxOf(a.height, b.height, o.height)
+            layout(width, height) {
+                a.placeRelative(0, (height - a.height) / 2)
+                b.placeRelative(width - o.width - space - b.width, (height - b.height) / 2)
+                o.placeRelative(width - o.width, (height - o.height) / 2)
+            }
+        } else {
+            val top = maxOf(a.height, o.height)
+            val below = top + lineGap.roundToPx()
+            layout(width, below + b.height) {
+                a.placeRelative(0, (top - a.height) / 2)
+                o.placeRelative(width - o.width, (top - o.height) / 2)
+                b.placeRelative(0, below)
+            }
         }
     }
 }
 
+/** Where a new to-do made on the calendar is due (#4200): at [time] on [day], or all day there when it is null (iOS `TodoCalendarSlot`). */
+internal data class CalendarSlot(val day: LocalDate, val time: LocalTime?) {
+    /** Kept across a configuration change: "2026-11-12", or "2026-11-12T14:30". */
+    fun saved(): String = time?.let { day.atTime(it).toString() } ?: day.toString()
+
+    companion object {
+        fun parse(saved: String): CalendarSlot =
+            if ('T' in saved) LocalDateTime.parse(saved).let { CalendarSlot(it.toLocalDate(), it.toLocalTime()) }
+            else CalendarSlot(LocalDate.parse(saved), null)
+    }
+}
+
 /**
- * The month: its title with Today, previous and next (a sideways swipe turns it too), the weekdays from the one weeks
- * start on, and a day's to-dos in up to [CalendarTokens.monthLines] lines. "N without a due date" is the page's bottom
- * bar ([TodoCalendarUndatedBar]), so the glass page's soft bottom edge never covers it.
+ * The calendar (#4200): the span's title with Today, previous and next (a sideways swipe turns it too), then [mode]'s
+ * page around [anchor]: the day (its week's strip over its time axis), the week (seven columns on one axis), or the
+ * month. "N without a due date" is the page's bottom bar ([TodoCalendarUndatedBar]), so the glass page's soft bottom
+ * edge never covers it.
  *
- * With [onMove], a to-do drawn in a day is picked up by a long press (the system's long-press time) and dropped on
- * another day, at the same time there (#2045): it fades where it was, follows the finger with where it would land, the
- * day under it is outlined, and near the top or bottom of a month taller than its space the month scrolls. TalkBack
- * and Switch Access move one through "Change Due Date…" instead, on its day and in the day's sheet.
+ * With [onMove], a to-do is picked up by a long press (the system's long-press time) and dropped on another day or
+ * moment (#2045): it fades where it was, follows the finger with where it would land, the place under it is outlined,
+ * and near the edges of a page taller than its space the page scrolls. TalkBack and Switch Access move one through
+ * "Change Due Date…" instead. With [onAdd], a tap on the empty axis of the day or the week offers a new to-do due there.
  */
 @Composable
-internal fun TodoCalendarMonth(
+internal fun TodoCalendar(
+    mode: CalendarMode,
+    onMode: (CalendarMode) -> Unit,
+    anchor: LocalDate,
+    onAnchor: (LocalDate) -> Unit,
     todos: List<Todo>,
     sessionLookup: (SessionKey) -> Session?,
     showDone: Boolean,
     now: Instant,
     onOpenTodo: (String) -> Unit,
-    /** The page's own bottom inset (its bottom bar: "N without a due date"), under the month's last line. */
+    /** The page's own bottom inset (its bottom bar: "N without a due date"), under the calendar's last line. */
     bottomPadding: Dp,
     modifier: Modifier = Modifier,
-    /** A to-do dropped on another day or given a due date through "Change Due Date…" (#2045); null: none moves. */
+    /** A to-do dropped on another day or moment, or given a due date through "Change Due Date…" (#2045); null: none moves. */
     onMove: ((String, TodoDue) -> Unit)? = null,
+    /** A tap on the empty axis: a new to-do due there (#4200); null: none is made here. */
+    onAdd: ((CalendarSlot) -> Unit)? = null,
 ) {
     val zone = ZoneId.systemDefault()
     val locale = LocalConfiguration.current.locales[0]
     val first = remember(locale) { weekStart(locale) }
     val today = now.atZone(zone).toLocalDate()
-    var shown by rememberSaveable { mutableStateOf(YearMonth.from(today).toString()) }
-    val month = YearMonth.parse(shown)
-    var picked by rememberSaveable { mutableStateOf<String?>(null) }
-    val days = remember(month, first) { monthDays(month, first) }
-    val entries = remember(todos, sessionLookup, showDone, days, now) {
-        calendarEntries(todos, sessionLookup, showDone, days.first(), days.last().plusDays(1), now, zone)
+    val days = remember(mode, anchor, first) { calendarDays(mode, anchor, first) }
+    // the day view's strip shows the whole week's dots
+    val span = remember(mode, days, anchor, first) { if (mode == CalendarMode.Day) weekOf(anchor, first) else days }
+    val entries = remember(todos, sessionLookup, showDone, span, now) {
+        calendarEntries(todos, sessionLookup, showDone, span.first(), span.last().plusDays(1), now, zone)
     }
-    val step = rememberUpdatedState { n: Int -> shown = month.plusMonths(n.toLong()).toString() }
+    val step = rememberUpdatedState { n: Int -> onAnchor(stepAnchor(anchor, mode, n)) }
+    var picked by rememberSaveable { mutableStateOf<String?>(null) }
     var rescheduling by rememberSaveable { mutableStateOf<String?>(null) }
-    var drag by remember { mutableStateOf<MonthDrag?>(null) }
+    val reschedule: ((String) -> Unit)? = if (onMove != null) { id -> rescheduling = id } else null
+
+    Column(modifier) {
+        CalendarHeader(mode, days, locale, onToday = { onAnchor(today) }, onStep = { step.value(it) })
+        val swipe = CalendarTokens.pageSwipe
+        Box(
+            Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) {
+                var dx = 0f
+                detectHorizontalDragGestures(onDragStart = { dx = 0f }, onDragEnd = {
+                    if (abs(dx) > swipe.toPx()) step.value(if (dx < 0) 1 else -1)
+                }) { _, delta -> dx += delta }
+            },
+        ) {
+            when (mode) {
+                CalendarMode.Month -> TodoCalendarMonth(
+                    month = YearMonth.from(anchor),
+                    days = days,
+                    entries = entries,
+                    today = today,
+                    now = now,
+                    onPick = { picked = it.toString() },
+                    onMove = onMove,
+                    onReschedule = reschedule,
+                )
+                CalendarMode.Day -> Column(Modifier.fillMaxSize()) {
+                    TodoCalendarWeekStrip(span, anchor, today, entries, onPick = onAnchor)
+                    // a page of its own for each day, so a new day starts at its own first hour
+                    key(anchor) {
+                        TodoCalendarTimeline(days, entries, narrow = false, showsDayHeader = false, today = today, now = now,
+                            onOpen = onOpenTodo, onPickDay = onAnchor, modifier = Modifier.weight(1f), onAdd = onAdd,
+                            onMove = onMove, onReschedule = reschedule)
+                    }
+                }
+                CalendarMode.Week -> BoxWithConstraints(Modifier.fillMaxSize()) {
+                    key(days.first()) {
+                        TodoCalendarTimeline(days, entries, narrow = maxWidth < CalendarTokens.wide, showsDayHeader = true,
+                            today = today, now = now, onOpen = onOpenTodo,
+                            onPickDay = { day -> onAnchor(day); onMode(CalendarMode.Day) },
+                            onAdd = onAdd, onMove = onMove, onReschedule = reschedule)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(bottomPadding))
+    }
+
+    picked?.let { LocalDate.parse(it) }?.let { day ->
+        TodoCalendarDaySheet(day, entries[day].orEmpty(), locale, onDismiss = { picked = null }, onOpen = { id ->
+            picked = null
+            onOpenTodo(id)
+        }, onReschedule = if (onMove != null) { id -> picked = null; rescheduling = id } else null, onShowDay = {
+            picked = null
+            onAnchor(day)
+            onMode(CalendarMode.Day)
+        })
+    }
+    rescheduling?.let { id -> todos.firstOrNull { it.id == id } }?.let { todo ->
+        TodoRescheduleSheet(todo, zone, locale, onDismiss = { rescheduling = null }, onSave = { due ->
+            rescheduling = null
+            onMove?.invoke(todo.id, due)
+        })
+    }
+}
+
+/** The span's title ("Thu, Nov 12", "Nov 9 – 15", "November 2026"), Today, previous and next, as iOS `TodoCalendarView.header`. */
+@Composable
+private fun CalendarHeader(mode: CalendarMode, days: List<LocalDate>, locale: Locale, onToday: () -> Unit, onStep: (Int) -> Unit) {
+    val title = remember(mode, days, locale) { calendarTitle(mode, days, locale) }
+    val (previous, next) = when (mode) {
+        CalendarMode.Day -> R.string.agents_todo_calendar_previous_day to R.string.agents_todo_calendar_next_day
+        CalendarMode.Week -> R.string.agents_todo_calendar_previous_week to R.string.agents_todo_calendar_next_week
+        CalendarMode.Month -> R.string.agents_todo_calendar_previous to R.string.agents_todo_calendar_next
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = Tokens.Space.l, end = Tokens.Space.s, top = Tokens.Space.s, bottom = Tokens.Space.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs),
+    ) {
+        Text(title, style = PersonaTheme.type.title, color = PersonaTheme.palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).semantics { heading() }.testTag("todo-calendar-title"))
+        JTextButton(stringResource(R.string.agents_todo_calendar_today), onToday)
+        JIconButton(PhIcons.CaretLeft, stringResource(previous), { onStep(-1) })
+        JIconButton(PhIcons.CaretRight, stringResource(next), { onStep(1) })
+    }
+}
+
+/** The title of [days] shown in [mode]: the day ("Thu, Nov 12"), the week's first and last ("Nov 9 – 15"), or the month ("November 2026"). */
+private fun calendarTitle(mode: CalendarMode, days: List<LocalDate>, locale: Locale): String = when (mode) {
+    CalendarMode.Day -> DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "MMMdEEE"), locale).format(days.first())
+    CalendarMode.Week -> {
+        val zone = ZoneId.systemDefault()
+        val millis = { day: LocalDate -> day.atTime(LocalTime.NOON).atZone(zone).toInstant().toEpochMilli() }
+        DateIntervalFormat.getInstance("MMMd", locale)
+            .format(DateInterval(millis(days.first()), millis(days.last())), StringBuffer(), FieldPosition(0)).toString()
+    }
+    CalendarMode.Month -> DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMM"), locale)
+        .format(YearMonth.from(days[days.size / 2]))
+}
+
+/**
+ * The month: the weekdays from the one weeks start on, and a day's to-dos in up to [CalendarTokens.monthLines] lines;
+ * a tap on a day lists them ([onPick]). With [onMove] its to-dos are dragged to another day, at the same time there.
+ */
+@Composable
+private fun TodoCalendarMonth(
+    month: YearMonth,
+    days: List<LocalDate>,
+    entries: Map<LocalDate, List<CalendarEntry>>,
+    today: LocalDate,
+    now: Instant,
+    onPick: (LocalDate) -> Unit,
+    onMove: ((String, TodoDue) -> Unit)?,
+    onReschedule: ((String) -> Unit)?,
+) {
+    val zone = ZoneId.systemDefault()
+    val locale = LocalConfiguration.current.locales[0]
+    var drag by remember { mutableStateOf<CalendarDrag?>(null) }
     val viewport = remember { Placed() }
     val haptics = rememberHaptics()
 
-    Column(modifier) {
-        val title = remember(month, locale) {
-            DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMM"), locale).format(month)
-        }
-        Row(
-            Modifier.fillMaxWidth().padding(start = Tokens.Space.l, end = Tokens.Space.s, top = Tokens.Space.s, bottom = Tokens.Space.xs),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Space.xs),
-        ) {
-            Text(title, style = PersonaTheme.type.title, color = PersonaTheme.palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).testTag("todo-calendar-title"))
-            JTextButton(stringResource(R.string.agents_todo_calendar_today), { shown = YearMonth.from(today).toString() })
-            JIconButton(PhIcons.CaretLeft, stringResource(R.string.agents_todo_calendar_previous), { step.value(-1) })
-            JIconButton(PhIcons.CaretRight, stringResource(R.string.agents_todo_calendar_next), { step.value(1) })
-        }
-        val names = remember(first, locale) { weekdays(first).map { it.getDisplayName(TextStyle.NARROW, locale) } }
+    Column(Modifier.fillMaxSize()) {
+        val names = remember(days, locale) { days.take(7).map { it.dayOfWeek.getDisplayName(TextStyle.NARROW, locale) } }
         Row(Modifier.fillMaxWidth().padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.xs)) {
             for (name in names) {
                 Text(name, style = PersonaTheme.type.micro, color = PersonaTheme.palette.ink3, maxLines = 1, textAlign = TextAlign.Center,
@@ -246,15 +441,7 @@ internal fun TodoCalendarMonth(
             }
         }
         val line = PersonaTheme.palette.line
-        val swipe = CalendarTokens.pageSwipe
-        BoxWithConstraints(
-            Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { viewport.coordinates = it }.pointerInput(Unit) {
-                var dx = 0f
-                detectHorizontalDragGestures(onDragStart = { dx = 0f }, onDragEnd = {
-                    if (abs(dx) > swipe.toPx()) step.value(if (dx < 0) 1 else -1)
-                }) { _, delta -> dx += delta }
-            },
-        ) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().onGloballyPositioned { viewport.coordinates = it }) {
             val rows = (days.size / 7).coerceAtLeast(1)
             val cell = maxOf(CalendarTokens.monthCell, maxHeight / rows)
             val scrolls = cell * rows > maxHeight
@@ -265,7 +452,7 @@ internal fun TodoCalendarMonth(
             val height = constraints.maxHeight.toFloat()
             val cellPx = with(density) { cell.toPx() }
             // The day under the finger, the month scrolled or not.
-            val dayUnder = { d: MonthDrag -> monthDropIndex(d.finger.x, d.finger.y + scroll.value, width, cellPx, rows, rtl)?.let(days::getOrNull) }
+            val dayUnder = { d: CalendarDrag -> monthDropIndex(d.finger.x, d.finger.y + scroll.value, width, cellPx, rows, rtl)?.let(days::getOrNull) }
             val target by remember(drag, days, width, cellPx, rows, rtl) { derivedStateOf { drag?.let(dayUnder) } }
             LaunchedEffect(drag) {
                 if (drag == null) return@LaunchedEffect
@@ -287,7 +474,7 @@ internal fun TodoCalendarMonth(
                 EntryMoves(
                     lift = { entry, chip, at ->
                         viewport.coordinates?.takeIf { it.isAttached && chip.isAttached }?.let { grid ->
-                            drag = MonthDrag(entry, at, chip.size, grid.localPositionOf(chip, at))
+                            drag = CalendarDrag(entry, at, chip.size, grid.localPositionOf(chip, at))
                             haptics(Haptic.Tap)
                         }
                     },
@@ -316,58 +503,44 @@ internal fun TodoCalendarMonth(
                                 today = day == today,
                                 entries = entries[day].orEmpty(),
                                 locale = locale,
-                                onPick = { picked = day.toString() },
+                                onPick = { onPick(day) },
                                 modifier = Modifier.weight(1f).fillMaxHeight().drawBehind {
                                     if (c > 0) drawLine(line, Offset.Zero, Offset(0f, size.height), Stroke.HairlineWidth)
                                 },
                                 lifted = drag?.entry?.todoId,
                                 dropTarget = drag != null && target == day,
                                 moves = moves,
-                                onReschedule = if (onMove != null) { id -> rescheduling = id } else null,
+                                onReschedule = onReschedule,
                             )
                         }
                     }
                 }
             }
-            drag?.let { d -> MonthDragGhost(d, target?.let { dueWords(d.entry.dropOnDay(it, zone), locale, zone, now) }) }
+            drag?.let { d -> CalendarDragGhost(d, target?.let { dueWords(d.entry.dropOnDay(it, zone), locale, zone, now) }) }
         }
-        Spacer(Modifier.height(bottomPadding))
-    }
-
-    picked?.let { LocalDate.parse(it) }?.let { day ->
-        TodoCalendarDaySheet(day, entries[day].orEmpty(), locale, onDismiss = { picked = null }, onOpen = { id ->
-            picked = null
-            onOpenTodo(id)
-        }, onReschedule = if (onMove != null) { id -> picked = null; rescheduling = id } else null)
-    }
-    rescheduling?.let { id -> todos.firstOrNull { it.id == id } }?.let { todo ->
-        TodoRescheduleSheet(todo, zone, locale, onDismiss = { rescheduling = null }, onSave = { due ->
-            rescheduling = null
-            onMove?.invoke(todo.id, due)
-        })
     }
 }
 
 /** Where a laid-out part is, for gestures to read (never drawn, so not state). */
-private class Placed { var coordinates: LayoutCoordinates? = null }
+internal class Placed { var coordinates: LayoutCoordinates? = null }
 
-/** A to-do being carried (#2045): which, where in its chip it was picked up, the chip's size, and the finger in the grid's part in sight. */
+/** A to-do being carried (#2045): which, where in its chip it was picked up, the chip's size, and the finger in the page's part in sight. */
 @Stable
-private class MonthDrag(val entry: CalendarEntry, val grab: Offset, val size: IntSize, finger: Offset) {
+internal class CalendarDrag(val entry: CalendarEntry, val grab: Offset, val size: IntSize, finger: Offset) {
     var finger by mutableStateOf(finger)
 }
 
 /** What a to-do drawn in a day does when it is picked up, carried and let go: from its chip's coordinates and a point in them. */
-private class EntryMoves(
+internal class EntryMoves(
     val lift: (CalendarEntry, LayoutCoordinates, Offset) -> Unit,
     val carry: (LayoutCoordinates, Offset) -> Unit,
     val drop: () -> Unit,
     val cancel: () -> Unit,
 )
 
-/** The carried to-do under the finger, its chip lifted off the month, and above it where it would land ("Thu, Nov 19, 18:00"). */
+/** The carried to-do under the finger, its chip or block lifted off the page, and above it where it would land ("Thu, Nov 19, 18:00"). */
 @Composable
-private fun MonthDragGhost(drag: MonthDrag, landingWords: String?) {
+internal fun CalendarDragGhost(drag: CalendarDrag, landingWords: String?) {
     val palette = PersonaTheme.palette
     val density = LocalDensity.current
     val gap = Tokens.Space.xs
@@ -477,7 +650,7 @@ private fun MonthDay(
                 maxLines = 1,
             )
         }
-        for (e in fit.shown) MonthEntry(e, lifted = e.todoId == lifted, moves = moves)
+        for (e in fit.shown) EntryChip(e, lifted = e.todoId == lifted, moves = moves)
         if (fit.more > 0) {
             Text(stringResource(R.string.agents_todo_calendar_more, fit.more), style = PersonaTheme.type.micro, color = palette.ink3,
                 maxLines = 1, modifier = Modifier.padding(start = Tokens.Space.xs))
@@ -486,18 +659,35 @@ private fun MonthDay(
 }
 
 /**
- * A to-do in a day of the month: its title on a thin edge in its state's color, red once overdue, faded and struck
- * through when done. With [moves], a long press picks it up and the finger carries it (#2045); moving first is the
- * month's (a swipe turns it, a drag scrolls it), and a tap is the day's.
+ * A to-do in a row of its own (a day of the month, a day's All Day row): its title on a thin edge in its state's color,
+ * red once overdue, faded and struck through when done. With [moves], a long press picks it up and the finger carries it
+ * (#2045); moving first is the page's (a swipe turns it, a drag scrolls it). In the month a tap is the day's; with
+ * [onOpen] (the All Day row) a tap opens it, and it is a button of its own for TalkBack, with "Change Due Date…".
  */
 @Composable
-private fun MonthEntry(entry: CalendarEntry, lifted: Boolean = false, moves: EntryMoves? = null) {
+internal fun EntryChip(
+    entry: CalendarEntry,
+    modifier: Modifier = Modifier,
+    lifted: Boolean = false,
+    moves: EntryMoves? = null,
+    onOpen: (() -> Unit)? = null,
+    onReschedule: (() -> Unit)? = null,
+) {
     val palette = PersonaTheme.palette
     val placed = remember { Placed() }
     val current by rememberUpdatedState(entry)
     val handler by rememberUpdatedState(moves)
+    val spoken = entrySpoken(entry)
+    val changeDue = stringResource(R.string.agents_todo_calendar_change_due_action)
     Row(
-        Modifier.fillMaxWidth().height(IntrinsicSize.Min)
+        modifier.fillMaxWidth().height(IntrinsicSize.Min)
+            .then(if (onOpen == null) Modifier else Modifier.clickable(onClick = onOpen).clearAndSetSemantics {
+                contentDescription = spoken
+                role = Role.Button
+                testTag = "todo-calendar-entry-${entry.todoId}"
+                onClick { onOpen(); true }
+                if (onReschedule != null) customActions = listOf(CustomAccessibilityAction(changeDue) { onReschedule(); true })
+            })
             .then(if (moves == null) Modifier else Modifier.onGloballyPositioned { placed.coordinates = it }.pointerInput(entry.todoId) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { at -> placed.coordinates?.let { handler?.lift?.invoke(current, it, at) } },
@@ -525,6 +715,22 @@ private fun MonthEntry(entry: CalendarEntry, lifted: Boolean = false, moves: Ent
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = Tokens.Space.xs, end = Tokens.Space.xxs, top = Tokens.Space.xxs, bottom = Tokens.Space.xxs),
         )
+    }
+}
+
+/** What TalkBack reads for a to-do on the calendar: its title, its state and when ("All day", "18:00", "Was due 11:30"), as iOS `CalendarEntryLook.spoken`. */
+@Composable
+internal fun entrySpoken(entry: CalendarEntry): String =
+    listOf(entry.title, entry.state.label, entryWhen(entry, LocalConfiguration.current.locales[0])).joinToString(", ")
+
+/** When a to-do on the calendar is due, as its day's list says: "All day", "18:00", or "Was due 11:30" once past. */
+@Composable
+internal fun entryWhen(entry: CalendarEntry, locale: Locale): String {
+    val time = entry.time?.let { DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "HHmm"), locale).format(it) }
+    return when {
+        time == null -> stringResource(R.string.agents_todo_calendar_all_day)
+        entry.overdue -> stringResource(R.string.agents_todo_was_due, time)
+        else -> time
     }
 }
 
@@ -564,10 +770,16 @@ private fun TodoCalendarDaySheet(
     onDismiss: () -> Unit,
     onOpen: (String) -> Unit,
     onReschedule: ((String) -> Unit)? = null,
+    /** The day on its own time axis (#4200), as a tap on a day of iOS's month shows it. */
+    onShowDay: (() -> Unit)? = null,
 ) {
     val title = remember(day, locale) { DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "MMMMdEEEE"), locale).format(day) }
     JSheet(onDismiss = onDismiss, title = title, scrollable = true) {
         Column(Modifier.fillMaxWidth().padding(bottom = Tokens.Space.l).testTag("todo-calendar-day-sheet")) {
+            if (onShowDay != null) {
+                JTextButton(stringResource(R.string.agents_todo_calendar_show_day), onShowDay,
+                    Modifier.align(Alignment.End).testTag("todo-calendar-show-day"))
+            }
             if (entries.isEmpty()) {
                 Text(stringResource(R.string.agents_todo_calendar_nothing_due), style = PersonaTheme.type.body, color = PersonaTheme.palette.ink3,
                     modifier = Modifier.padding(vertical = Tokens.Space.m))
@@ -581,12 +793,7 @@ private fun TodoCalendarDaySheet(
 private fun DayEntryRow(entry: CalendarEntry, locale: Locale, onReschedule: (() -> Unit)?, onOpen: () -> Unit) {
     val palette = PersonaTheme.palette
     val changeDue = stringResource(R.string.agents_todo_calendar_change_due_action)
-    val time = entry.time?.let { DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "HHmm"), locale).format(it) }
-    val whenText = when {
-        time == null -> stringResource(R.string.agents_todo_calendar_all_day)
-        entry.overdue -> stringResource(R.string.agents_todo_was_due, time)
-        else -> time
-    }
+    val whenText = entryWhen(entry, locale)
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onOpen)
             .then(if (onReschedule == null) Modifier else Modifier.semantics {
@@ -652,8 +859,86 @@ private fun TodoRescheduleSheet(todo: Todo, zone: ZoneId, locale: Locale, onSave
     if (pickingTime) JTimePickerDialog(at, { time = it.toString(); pickingTime = false }, { pickingTime = false }, title = timeLabel)
 }
 
+/**
+ * A new to-do due where the calendar was tapped (#4200), as iOS `TodoQuickAddSheet`: its title to type, the day and the
+ * time already set from [slot] (all day on the All Day row), changeable here; the rest is set on the to-do's page. While
+ * it saves the sheet stays; a failed save keeps what was typed and says why ([onFailed]).
+ */
+@Composable
+internal fun TodoQuickAddSheet(
+    slot: CalendarSlot,
+    onAdd: suspend (String, TodoDue) -> Unit,
+    onFailed: (Exception) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val zone = ZoneId.systemDefault()
+    val locale = LocalConfiguration.current.locales[0]
+    var title by rememberSaveable(slot) { mutableStateOf("") }
+    var allDay by rememberSaveable(slot) { mutableStateOf(slot.time == null) }
+    var day by rememberSaveable(slot) { mutableStateOf(slot.day.toString()) }
+    // an all-day slot given a time starts the hour after the morning's
+    var time by rememberSaveable(slot) { mutableStateOf((slot.time ?: LocalTime.of(CalendarMorning + 1, 0)).toString()) }
+    var saving by remember { mutableStateOf(false) }
+    var pickingDay by remember { mutableStateOf(false) }
+    var pickingTime by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val focus = remember { FocusRequester() }
+    val date = LocalDate.parse(day)
+    val at = LocalTime.parse(time)
+    val dayText = remember(date, locale) { DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "yMMMdEEE"), locale).format(date) }
+    val timeText = remember(at, locale) { DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "HHmm"), locale).format(at) }
+    val timeLabel = stringResource(R.string.agents_todo_calendar_time)
+    val canAdd = title.isNotBlank() && !saving
+    val add = {
+        if (canAdd) {
+            saving = true
+            val due = if (allDay) TodoDue.Day(date) else TodoDue.At(date.atTime(at).atZone(zone).toInstant())
+            scope.launch {
+                try {
+                    onAdd(title.trim(), due)
+                    onDismiss()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    saving = false
+                    onFailed(e)
+                }
+            }
+        }
+    }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    JSheet(onDismiss = onDismiss, title = stringResource(R.string.agents_todo_new), dismissible = !saving) {
+        Column(Modifier.fillMaxWidth().padding(bottom = Tokens.Space.l).testTag("todo-calendar-new")) {
+            JTextField(
+                title,
+                { title = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = rowPadding).focusRequester(focus).testTag("todo-calendar-new-title"),
+                label = stringResource(R.string.agents_todo_title_label),
+                placeholder = stringResource(R.string.agents_todo_title_placeholder),
+                singleLine = true,
+                enabled = !saving,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { add() }),
+            )
+            Spacer(Modifier.height(Tokens.Space.s))
+            JRow(stringResource(R.string.agents_todo_calendar_due), value = dayText, onClick = { pickingDay = true })
+            JSwitchRow(stringResource(R.string.agents_todo_calendar_all_day), allDay, { allDay = it })
+            if (!allDay) JRow(timeLabel, value = timeText, onClick = { pickingTime = true })
+            Text(stringResource(R.string.agents_todo_calendar_add_hint), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink3,
+                modifier = Modifier.padding(start = rowPadding, end = rowPadding, top = Tokens.Space.xs))
+            Row(Modifier.fillMaxWidth().padding(top = Tokens.Space.m), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                JButton(stringResource(R.string.agents_todo_cancel), onDismiss, Modifier.weight(1f), kind = JButtonKind.Secondary, enabled = !saving)
+                JButton(stringResource(R.string.agents_todo_calendar_add), { add() }, Modifier.weight(1f).testTag("todo-calendar-new-add"),
+                    enabled = canAdd, loading = saving)
+            }
+        }
+    }
+    if (pickingDay) JDatePickerDialog(date, { day = it.toString(); pickingDay = false }, { pickingDay = false })
+    if (pickingTime) JTimePickerDialog(at, { time = it.toString(); pickingTime = false }, { pickingTime = false }, title = timeLabel)
+}
+
 /** An entry's colors, as the list draws its to-do: its state's, red once overdue (what is late is what to see first). */
-private fun PersonaPalette.entryColors(entry: CalendarEntry): StatusColors = when {
+internal fun PersonaPalette.entryColors(entry: CalendarEntry): StatusColors = when {
     entry.overdue -> danger
     entry.state == TodoState.NeedsYou -> status(Status.NeedsYou)
     entry.state == TodoState.Unread -> status(Status.Unread)

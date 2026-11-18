@@ -246,7 +246,7 @@ func TestNodeSessionScopePinsMCPEnvironment(t *testing.T) {
 		if guest {
 			n.state.put(id, sessionState{Guest: []string{"ask_user"}})
 		}
-		raw, _ := n.claudeAssistantMCPAndTools(id, n.sessionScope.dir, true)
+		raw := mcpFlag(t, n.claudeAssistantMCPAndTools(id, n.sessionScope.dir, true), "--mcp-config")
 		var config map[string]any
 		if err := json.Unmarshal([]byte(raw), &config); err != nil {
 			t.Fatal(err)
@@ -257,14 +257,6 @@ func TestNodeSessionScopePinsMCPEnvironment(t *testing.T) {
 			if env["PERSONA_HOME"] != n.dir || env["PERSONA_SESSION_ID"] != id || env["PERSONA_ASSISTANT"] != "1" {
 				t.Fatalf("guest=%v %s env=%v", guest, name, env)
 			}
-		}
-		// Agent SDK consumes this same map, rather than inheriting an MCP process's environment.
-		options, err := (sdkStart{id: id, cwd: n.sessionScope.dir, mcp: config}).options("claude")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(options["mcpServers"], servers) {
-			t.Fatal("SDK dropped pinned MCP environment")
 		}
 	}
 	quotedHome, err := json.Marshal(n.dir)

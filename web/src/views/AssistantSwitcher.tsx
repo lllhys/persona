@@ -8,12 +8,13 @@ import { t } from "../i18n";
 import { BREATHING, connStatus, phaseTone, type ConnPhase } from "../lib/connection";
 import { chooseManager, pickedName, useChosenManager, useShownIdentity, useShownManager } from "../lib/manager-choice";
 import { useManagerBadges } from "../lib/manager-attention";
-import { loadRoster, managerError, managerOf, managerOrder, multiManager, renewCode, statusLine, switcherLine, useRoster, type InstallCode, type Manager } from "../lib/managers";
+import { loadRoster, managerError, managerOf, managerOrder, multiManager, renewCode, statusLine, switcherLine, switcherManagers, useRoster, type InstallCode, type Manager, type Tone } from "../lib/managers";
 import { refreshReadiness } from "../lib/readiness";
 import { navigate, type Route } from "../lib/router";
 import { routeAfterSwitch } from "../lib/persona-nav";
 import { AppMark } from "../ui/AppMark";
 import { AssistantAvatar } from "../ui/AssistantAvatar";
+import { PersonaAvatar } from "./assistant/Persona";
 import { cx, Menu, Spinner, toast, useMenu, useNow, type MenuItem } from "../ui/atoms";
 import { Icon, type IconName } from "../ui/icons";
 import { ASSISTANT_MENU_WIDTH } from "../ui/menu-model";
@@ -45,6 +46,34 @@ export function switchAssistant(m: Manager, route: Route) {
 
 type SwitcherProps = { phase: ConnPhase; online: number; total: number; route: Route };
 const NO_BADGES: Record<string, number> = {};
+
+// The status dot's colours, matching AssistantAvatar's (its disc is replaced by the look's face for the default
+// assistant, but the corner marks read the same).
+const FACE_STATUS: Record<Tone, string> = { green: "bg-green", grey: "bg-line-strong", accent: "bg-orange" };
+
+/** The default assistant's head: the chosen look's face with the same presence and waiting marks as a monogram. */
+const DefaultAssistantFace = memo(function DefaultAssistantFace({ tone, waiting }: { tone?: Tone; waiting: boolean }) {
+  const mark = 9;
+  return (
+    <span aria-hidden className="relative inline-flex shrink-0" style={{ width: 32, height: 32 }}>
+      <PersonaAvatar size={32} className="shadow-hairline" />
+      {tone && (
+        <span
+          data-avatar-status={tone}
+          className={cx("absolute -right-px -bottom-px rounded-full ring-2 ring-canvas", FACE_STATUS[tone])}
+          style={{ width: mark, height: mark }}
+        />
+      )}
+      {waiting && (
+        <span
+          data-avatar-waiting
+          className="absolute -top-px -right-px rounded-full bg-attention ring-2 ring-canvas"
+          style={{ width: mark, height: mark }}
+        />
+      )}
+    </span>
+  );
+});
 
 // Waiting counts keep their separate gate: only several installed assistants subscribe to sessions and cards. One
 // assistant still shows identity and the roster without subscribing to those counts.
@@ -86,7 +115,9 @@ function useAssistantList(route: Route, badges: Record<string, number>, open: bo
 
   const installed = roster ? managerOrder(roster) : [];
   const installing = roster ? roster.managers.filter((m) => m.installing) : [];
+  // the Default tag counts a hidden built-in too (it still runs); only its row is left out (#9055)
   const several = installed.length > 1;
+  const listed = roster ? switcherManagers(roster) : [];
   const row = (m: Manager): MenuItem => ({
     key: `assistant:${m.id}`,
     label: m.name,
@@ -103,7 +134,7 @@ function useAssistantList(route: Route, badges: Record<string, number>, open: bo
   });
   const items: MenuItem[] = roster
     ? [
-        ...[...installed, ...installing].map(row),
+        ...[...listed, ...installing].map(row),
         { key: "new-assistant", label: t("sidebar.new_assistant"), icon: "plus" as const, divider: true, onSelect: () => setCreating(true) },
         { key: "manage-assistants", label: t("sidebar.manage_assistants"), icon: "gear" as const, onSelect: () => navigate("/settings?tab=managers") },
       ]
@@ -177,6 +208,9 @@ const SwitcherRow = memo(function SwitcherRow({ phase, online, total, route, bad
 
   const name = me?.name ?? "Persona";
   const tone = known ? statusLine(known, now).tone : undefined;
+  // The default assistant is the Persona of the main conversation: show its chosen look's face (so changing the look
+  // changes this face too), not the first-letter disc every other assistant keeps (#6401).
+  const isDefaultAssistant = !!me && me.id === roster?.default;
   return (
     <>
       <button
@@ -189,7 +223,15 @@ const SwitcherRow = memo(function SwitcherRow({ phase, online, total, route, bad
         data-assistant-switcher={me?.id ?? ""}
         className={cx("flex w-full items-center gap-2.5 rounded-control p-1.5 text-left transition-[background-color,transform] duration-100 hover:bg-hover active:scale-[0.98]", menu.anchor && "bg-hover")}
       >
-        {me ? <AssistantAvatar id={me.id} name={me.name} isDefault={me.id === roster?.default} size={32} status={linked ? tone : undefined} waiting={othersWaiting} /> : <AppMark size={32} radius={8} className="shadow-hairline" />}
+        {me ? (
+          isDefaultAssistant ? (
+            <DefaultAssistantFace tone={linked ? tone : undefined} waiting={othersWaiting} />
+          ) : (
+            <AssistantAvatar id={me.id} name={me.name} isDefault={false} size={32} status={linked ? tone : undefined} waiting={othersWaiting} />
+          )
+        ) : (
+          <AppMark size={32} radius={8} className="shadow-hairline" />
+        )}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] leading-tight font-medium text-ink">{name}</span>
           <span id={statusId} className="flex items-center gap-1.5 truncate text-[11px] leading-tight text-ink-3">

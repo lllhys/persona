@@ -80,8 +80,8 @@ func (c *conversation) nextToSay(now time.Time) *sentWords {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.queue = slices.DeleteFunc(c.queue, func(s *sentWords) bool { return !s.expires.IsZero() && now.After(s.expires) })
-	if !c.ready || c.sus.state != "" {
-		return nil // no session to say it to (paused, waking, reconnecting): it waits for the next one
+	if !c.sayable() {
+		return nil
 	}
 	best := -1
 	for i, s := range c.queue {
@@ -101,17 +101,42 @@ func (c *conversation) nextToSay(now time.Time) *sentWords {
 	return s
 }
 
+// sayable: there is a session to say something to now (mu held). Not while there is none (paused, waking,
+// reconnecting), nor on hold (#9290): what is to be said waits for the next one.
+func (c *conversation) sayable() bool {
+	return c.ready && c.up != nil && c.sus.state == "" && !c.sus.onHold
+}
+
+// requeue puts s, which nextToSay took, back first in the queue (mu held): the session went (a hold, a drop) before it
+// went out. The next session says it; a paused one wakes for it (not on hold). Not what the queue would no longer
+// have: the words of a card no longer asked (endAsk), a heartbeat while paused (deliver).
+func (c *conversation) requeue(s *sentWords) {
+	if s.card != "" && s.card != c.askCur || s.prio == prioHeartbeat && c.sus.state != "" {
+		return
+	}
+	c.queue = append([]*sentWords{s}, c.queue...)
+	c.rouse("something to say")
+}
+
 // sendNow sends s: as the answer on its delegation while that is open in its session, else as something to say. On a
 // service that acks (liveWire) it goes with an event id and is kept until the ack, which closes the gate again when it
 // holds an agent's words (gate.go), or until the service refuses it (serviceRefused). An agent's words close the gate
 // as they are sent.
+//
+// What nextToSay took goes back to the queue when the session went between the two (a hold that came meanwhile pauses
+// it from readApp, a drop), or as it was written: it is said to the next one, never lost on the way.
 func (c *conversation) sendNow(s *sentWords) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
-	w, now := c.w, time.Now()
+	if !s.onCall && !c.sayable() {
+		c.requeue(s)
+		c.mu.Unlock()
+		return
+	}
+	w, now, cur := c.w, time.Now(), c.gen
 	if s.delegation != "" && s.gen != c.gen {
 		s.delegation = "" // that session is gone, and its delegations with it
 	}
@@ -132,7 +157,7 @@ func (c *conversation) sendNow(s *sentWords) {
 		c.unacked[id] = s
 	}
 	if s.agent {
-		c.gate.told(now)
+		c.gate.told(now, agentSent)
 	}
 	c.sus.said = now
 	c.told(s.card)
@@ -147,7 +172,14 @@ func (c *conversation) sendNow(s *sentWords) {
 		s.delegation = ""
 		c.mu.Unlock()
 	}
-	c.sendUp(-1, w.say(text, id)...)
+	if c.sendUp(cur, w.say(text, id)...) {
+		return
+	}
+	c.mu.Lock()
+	if !c.closed && c.gen != cur { // not a write that failed on this session (lost takes it off): the next one says it
+		c.requeue(s)
+	}
+	c.mu.Unlock()
 }
 
 // serviceRefused handles the service refusing what deliver sent (mu held; docs/assistant/voice.md 4.5 rule 4). It names it by

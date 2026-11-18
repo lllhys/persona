@@ -11,7 +11,8 @@ Several people work in this repository, each alongside their own Agents. Two peo
    If the work touches UI, settings or defaults, or how something is counted, the claim also has an `Acceptance:` line: criteria written against `docs/design/PRINCIPLES.md`, naming the principles involved and the evidence that will show each is met (screenshots, tests, commands).
 4. **24 hours with no update counts as abandoned**: someone else can post a comment taking it over (with the reason). If you're still working on it, post a progress comment to renew.
 5. **Every PR must link an issue**: write `Fixes #N` / `Closes #N` / `Refs #N` in the description. PRs with no linked issue get a comment from the explicitly dispatched metadata Action and are closed by it.
-6. **Old issue numbers**: `#N` in lines written up to 2026-11-07 (check `git blame`) refers to the previous tracker. Here the same numbers belong to unrelated issues, and issues carried over from it have new numbers. Leave those references as they are; new text cites current numbers.
+6. **A PR with no substantive progress for more than seven days is marked and closed**: the watcher adds `stale`, leaves an English comment explaining the inactivity, then closes it without merging. A new commit, review, contributor comment, newly published failure or automatic repair counts as progress; polling and retrying the same failure do not. Drafts and PRs with a published continuation are not closed. The label and notice must succeed before closing. Work may continue by reopening the PR with an update; this never reuses an old semantic or verification approval. The separate 24-hour issue-claim rule below still applies to ownership, not to closing PRs.
+7. **Old issue numbers**: `#N` in lines written up to 2026-11-07 (check `git blame`) refers to the previous tracker. Here the same numbers belong to unrelated issues, and issues carried over from it have new numbers. Leave those references as they are; new text cites current numbers.
 
 Don't use GitHub's assign (many people don't have triage permission, and it isn't needed), don't use commands like `/claim`, and expiry isn't handled automatically: the comments in the issue are the only source of truth.
 
@@ -173,9 +174,24 @@ EOF
   conflicts are resolved once instead of once per commit, and the push is a plain push with no force while other Agents work in the repository (#5988).
   In a merge "ours" is your branch and "theirs" is `main`, the reverse of a rebase: mind it with `git checkout --ours/--theirs` and `scripts/i18n/apple_l10n.py merge`.
   A rebase is still allowed, for example for a single-commit branch.
-- Merging: once the PR's relevant local verification passes, `scripts/hooks/merge-pr.sh <number>`, not `gh pr merge` directly. It first scans the PR's changed files, commit messages, title and body with this machine's private values, and only squash-merges and deletes the branch if that passes (`docs/operations/testing.md`, "Privacy scan"). PRs do not automatically start hosted CI.
+- Merging: once the PR's relevant local verification passes, `scripts/hooks/merge-pr.sh <number>`, not `gh pr merge` directly. It first scans the PR's changed files, commit messages, title and body with this machine's private values (`docs/operations/testing.md`, "Privacy scan"), checks that the merge adds no fixed-sleep or web font ratchet failure in the files the PR changes (`docs/operations/testing.md`, "Hosted CI"), and only squash-merges and deletes the branch if both pass. PRs do not automatically start hosted CI.
 - `Fixes #N` / `Closes #N`: GitHub closes the issue automatically after merging. `Refs #N`: links without closing (an issue split into several PRs, or only partly fixed).
 - PR titles and bodies are in English (after a squash merge they are the commit on `main`); issues and comments are also in English.
+
+## Screenshots in PRs
+
+Screenshots taken to review a change (light and dark, before and after, UI test captures) belong to the PR, not to the repository:
+once the PR merges nobody opens them again, yet every checkout would carry them. Docs don't link to new screenshots either; describe
+the behavior in words and point to the PR when a picture helps.
+
+- **In the browser**: drag the images into the PR description or a comment; GitHub hosts them.
+- **From the command line** (`gh` cannot upload images): commit them on the PR branch under `pr-assets/<issue>/`, delete them in the
+  very next commit, and link `https://github.com/<owner>/<repo>/raw/<sha of the adding commit>/pr-assets/<issue>/<file>.png` from the
+  PR body. The squash merge leaves nothing on `main`, and the PR keeps the commit reachable.
+
+Only generated README and store images (`docs/assets/`, from `scripts/assets/`) and app resources are committed.
+`scripts/test/test_no_committed_screenshots.py` fails on any other image under `docs/` or under a `screenshots` / `shots` directory.
+The screenshots older docs still link to are listed in `scripts/test/committed_screenshots_baseline.txt`; that list only shrinks.
 
 ## Checking PRs with no linked issue
 

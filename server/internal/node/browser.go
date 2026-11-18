@@ -91,6 +91,9 @@ func browserStatus(ctx context.Context) proto.Browser {
 	}
 	b.ScreenSharing = screenSharing(ctx)
 	b.Displays = screenDisplays(ctx, b.ScreenSharing)
+	b.ScreenVideo = screenVideoStatus(ctx) // #3954: nil until advertiseScreenVideo
+	b.ScreenInput = screenInputStatus(ctx) // #7775: nil without Persona Input
+	b.PhoneScreen = phoneScreenStatus(ctx) // #9314: nil without a Persona Input that has it
 	b.Job = egoJob.current()
 	b.Checked = time.Now().UTC() // last: the hub keeps the answer with the latest (keepBrowser)
 	return b

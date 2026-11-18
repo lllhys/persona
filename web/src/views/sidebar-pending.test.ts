@@ -5,6 +5,7 @@ import { sidebarPending } from "./sidebar-pending";
 
 const session = (machine_id: string, session_id = "session"): Session => ({ machine_id, session_id, title: "Example", cwd: "/work/example", status: "blocked" });
 const card = (id: string, machine_id: string, session_id = "session"): Interaction => ({ id, machine_id, session_id, kind: "permission" });
+const hour = (h: number) => `2026-01-02T${String(h).padStart(2, "0")}:00:00Z`;
 
 describe("sidebarPending", () => {
   it("counts a card and its blocked session once, keeping multiple cards and the machine boundary", () => {
@@ -37,5 +38,45 @@ describe("sidebarPending", () => {
   it("does not treat unread, working, offline or idle sessions as pending", () => {
     const sessions = (["unread", "working", "offline", "idle"] as const).map((state) => ({ ...session("one", state), state }));
     expect(sidebarPending(sessions, [], {})).toEqual([]);
+  });
+
+  it("ranks urgency class first and the longest wait within a class (#8167)", () => {
+    const sessions: Session[] = [
+      { ...session("m-bare", "bare"), state: "needs_you", state_since: hour(2) },
+      { ...session("m-error", "error"), state: "needs_you", state_since: hour(1), failure_reason: "stopped on an error" },
+    ];
+    const interactions: Interaction[] = [
+      { ...card("card-new", "m-new", "new"), created_at: hour(9) },
+      { ...card("card-old", "m-old", "old"), created_at: hour(4) },
+    ];
+    const rows = sidebarPending(sessions, interactions, {});
+    // blocked-on-answer rows first, longest wait leading; the error-flagged stop without a card follows them
+    expect(rows.map((r) => r.key)).toEqual([
+      'session:["m-bare","bare"]',
+      'session:["m-old","old"]',
+      'session:["m-new","new"]',
+      'session:["m-error","error"]',
+    ]);
+    // membership and the per-row card counts are what the old newest-first build produced
+    expect(rows).toHaveLength(4);
+    expect(rows.map((r) => r.cards.length)).toEqual([0, 1, 1, 0]);
+  });
+
+  it("puts an undated row after the dated ones of its class and breaks the rest by key", () => {
+    const rows = sidebarPending([], [
+      card("z", "m-z", ""),
+      card("a", "m-a", ""),
+      { ...card("dated", "m-d", ""), created_at: hour(5) },
+    ], {});
+    expect(rows.map((r) => r.key)).toEqual(["request:dated", "request:a", "request:z"]);
+  });
+
+  it("keeps a row's own cards newest first even though the rows now wait-order", () => {
+    const rows = sidebarPending([session("one")], [
+      { ...card("older", "one"), created_at: hour(2) },
+      { ...card("newer", "one"), created_at: hour(8) },
+    ], {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0].cards.map((ix) => ix.id)).toEqual(["newer", "older"]);
   });
 });

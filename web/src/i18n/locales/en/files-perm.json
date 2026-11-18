@@ -1,0 +1,14 @@
+{
+  "title": "Permissions · {name}",
+  "group": "Group",
+  "others": "Everyone else",
+  "read": "Read",
+  "write": "Write",
+  "run": "Run",
+  "change": "Change…",
+  "changed": "Permissions changed",
+  "before": "before: {code}",
+  "run_hint": "Run lets a script run; for a folder, it lets people open it.",
+  "confirm_title": "Change the permissions of “{name}”?",
+  "menu": "Permissions…"
+}

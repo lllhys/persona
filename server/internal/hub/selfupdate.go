@@ -58,23 +58,30 @@ var (
 
 // updateRecord is one update in the history (Settings › hub › Update history).
 type updateRecord struct {
-	FromVersion string    `json:"from_version"`
-	ToVersion   string    `json:"to_version"`
-	ToBuild     int64     `json:"to_build"`
-	Started     time.Time `json:"started"`
-	Ended       time.Time `json:"ended"`
-	Result      string    `json:"result"` // updated | rolled_back | failed | held (newer, not installed by itself: Reason)
-	Reason      string    `json:"reason,omitempty"`
-	Auto        bool      `json:"auto"`
+	FromVersion string                    `json:"from_version"`
+	ToVersion   string                    `json:"to_version"`
+	ToBuild     int64                     `json:"to_build"`
+	Started     time.Time                 `json:"started"`
+	Ended       time.Time                 `json:"ended"`
+	Result      string                    `json:"result"` // updated | rolled_back | failed | held (newer, not installed by itself: Reason)
+	Reason      string                    `json:"reason,omitempty"`
+	Auto        bool                      `json:"auto"`
+	Source      string                    `json:"source,omitempty"`
+	Commit      string                    `json:"commit,omitempty"`
+	Backup      *update.DevelopmentBackup `json:"backup,omitempty"`
 }
 
 // updateSettings are kept in Postgres (settings hub_update).
 type updateSettings struct {
-	AutoUpdateNodes *bool          `json:"auto_update_nodes,omitempty"` // nil: use the startup configuration
-	Auto            *bool          `json:"auto,omitempty"`              // nil: on (the default)
-	AutoNoticeSeen  bool           `json:"auto_notice_seen"`
-	Bad             []int64        `json:"bad,omitempty"` // builds that went back: not installed automatically again
-	History         []updateRecord `json:"history,omitempty"`
+	Source            string                    `json:"source,omitempty"`           // empty/release or web-dev
+	DevelopmentAuto   bool                      `json:"development_auto,omitempty"` // opt-in; never inherited from release
+	DevelopmentBad    []string                  `json:"development_bad,omitempty"`
+	DevelopmentBackup *update.DevelopmentBackup `json:"development_backup,omitempty"`
+	AutoUpdateNodes   *bool                     `json:"auto_update_nodes,omitempty"` // nil: use the startup configuration
+	Auto              *bool                     `json:"auto,omitempty"`              // nil: on (the default)
+	AutoNoticeSeen    bool                      `json:"auto_notice_seen"`
+	Bad               []int64                   `json:"bad,omitempty"` // builds that went back: not installed automatically again
+	History           []updateRecord            `json:"history,omitempty"`
 }
 
 func (s updateSettings) auto() bool { return s.Auto == nil || *s.Auto }
@@ -124,6 +131,7 @@ type updater struct {
 	lastCheck   time.Time
 	busy        []busyItem
 	running     bool
+	checking    bool
 	now         bool // the user confirmed "Update now": stop waiting for idle
 	confirmed   bool // no update to confirm, or this process confirmed it
 
@@ -136,6 +144,9 @@ type updater struct {
 
 	// androidNote is what syncAndroid last logged: the same failure is not logged again every hour.
 	androidNote string
+	devRun      func(context.Context, *update.DevelopmentConfig, string, string, map[string]any, any) error
+	// behindNote is the update source and release noteBehind last logged as behind: once per pair, not every hour.
+	behindNote string
 }
 
 func newUpdater(h *Hub) *updater {
@@ -144,6 +155,7 @@ func newUpdater(h *Hub) *updater {
 	// A file source uses the same manifest, checksum and ancestry checks as HTTPS.
 	transport.RegisterProtocol("file", http.NewFileTransport(http.Dir("/")))
 	u := &updater{h: h, dir: update.Dir(), client: &http.Client{Timeout: 10 * time.Minute, Transport: transport},
+		devRun: update.DevelopmentRequest,
 		exec: func(path string) error {
 			// The sockets systemd passed go on to the new binary (listen.go): it could not listen otherwise.
 			// The hub's arguments; `hub …` when it runs as persona-hub and path is personad (update.TargetArgs).
@@ -262,23 +274,55 @@ func startWatchdog(prev, pendingPath string) error {
 // dying (in a service manager's restart loop) goes back after updateMaxStarts starts; an old version that finds a
 // marker for an update it is not (the watchdog or a person put it back) clears it for recording. A marker a watchdog
 // claimed and then died with (update.Unclaim) counts as the marker. It says whether this process has an update of its
-// own to confirm.
-func (u *updater) boot() (pending bool) {
+// own to confirm. Recovery failures stop startup before config/database work.
+func (u *updater) boot() (bool, error) {
 	if err := update.Unclaim(update.PendingPath(u.dir)); err != nil {
 		u.h.logf("update: put back the watchdog's claim on the pending marker: %v", err)
 	}
 	var p update.Pending
 	ok, err := update.Load(update.PendingPath(u.dir), &p)
-	if err != nil || !ok {
-		return false
+	if err != nil {
+		return false, nil
+	}
+	if !ok {
+		// The adoption journal is durable before the first replacement. A
+		// crash before pending.json must restore the whole transaction too.
+		ok, err = update.Load(update.DevelopmentAdoptionPath(u.dir), &p)
+		if err == nil && ok && p.RecoveryReady && p.Development != nil &&
+			(u.h.build.Number == p.FromBuild || u.h.build.Number == p.ToBuild) {
+			if u.h.build.Number == p.ToBuild {
+				if err := u.rollback(p, su(u.h.userLang(), "reason_went_back")); err != nil {
+					return false, err
+				}
+				return true, nil // exec normally does not return
+			}
+			if err := update.RestoreAll(p); err != nil {
+				u.h.logf("update: interrupted adoption recovery retained: %v", err)
+				return false, err
+			} else {
+				u.markRolledBack(p, su(u.h.userLang(), "reason_went_back"))
+				update.ClearDevelopmentAdoption(u.dir, p)
+				if !u.adoptionUnresolved() {
+					u.removeDownloads(u.stagedDir(p.ToBuild))
+				}
+			}
+		}
+		return false, nil
 	}
 	if p.ToBuild != u.h.build.Number {
 		if u.h.build.Number == p.FromBuild {
+			if p.Development != nil {
+				if err := update.RestoreAll(p); err != nil {
+					u.h.logf("update: restore failed, recovery retained: %v", err)
+					return false, err
+				}
+				update.ClearDevelopmentAdoption(u.dir, p)
+			}
 			u.markRolledBack(p, su(u.h.userLang(), "reason_went_back"))
 		} else {
 			_ = os.Remove(update.PendingPath(u.dir)) // replaced by a build deployed straight from master: not a failure
 		}
-		return false
+		return false, nil
 	}
 	u.confirmed = false
 	p.Starts++
@@ -286,13 +330,17 @@ func (u *updater) boot() (pending bool) {
 		// Without the count on disk every restart reads the same Starts, so a build that keeps crashing would never
 		// reach updateMaxStarts: go back to the version that ran before while this process still can.
 		u.h.logf("update: save start count: %v", err)
-		u.rollback(p, su(u.h.userLang(), "reason_marker_unsaved"))
-		return true
+		if err := u.rollback(p, su(u.h.userLang(), "reason_marker_unsaved")); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	if p.Starts > updateMaxStarts {
-		u.rollback(p, su(u.h.userLang(), "reason_no_start", i18n.Args{"count": p.Starts - 1}))
+		if err := u.rollback(p, su(u.h.userLang(), "reason_no_start", i18n.Args{"count": p.Starts - 1})); err != nil {
+			return false, err
+		}
 	}
-	return true
+	return true, nil
 }
 
 // start loads the settings, records an update that went back, confirms one under way, removes the downloads nothing
@@ -365,6 +413,9 @@ func (u *updater) record(ctx context.Context, r updateRecord) error {
 	if r.Result == "rolled_back" && !slices.Contains(u.settings.Bad, r.ToBuild) {
 		u.settings.Bad = append(u.settings.Bad, r.ToBuild)
 	}
+	if r.Result == "rolled_back" && r.Source == "web-dev" && !slices.Contains(u.settings.DevelopmentBad, r.Commit) {
+		u.settings.DevelopmentBad = append(u.settings.DevelopmentBad, r.Commit)
+	}
 	return u.saveLocked(ctx)
 }
 
@@ -372,7 +423,7 @@ func (u *updater) markRolledBack(p update.Pending, reason string) {
 	path := update.RolledBackPath(u.dir)
 	if _, err := os.Stat(path); err != nil {
 		if err := update.Save(path, update.RolledBack{FromVersion: p.FromVersion, ToVersion: p.ToVersion, ToBuild: p.ToBuild,
-			Started: p.Started, At: time.Now(), Reason: reason, Auto: p.Auto}); err != nil {
+			Started: p.Started, At: time.Now(), Reason: reason, Auto: p.Auto, Development: p.Development, Backup: p.Backup}); err != nil {
 			u.h.logf("update: save rollback marker (history and bad builds miss it): %v", err)
 		}
 	}
@@ -388,7 +439,7 @@ func (u *updater) recordRolledBack(ctx context.Context) {
 		return
 	}
 	if err := u.record(ctx, updateRecord{FromVersion: rb.FromVersion, ToVersion: rb.ToVersion, ToBuild: rb.ToBuild, Started: rb.Started,
-		Ended: rb.At, Result: "rolled_back", Reason: rb.Reason, Auto: rb.Auto}); err != nil {
+		Ended: rb.At, Result: "rolled_back", Reason: rb.Reason, Auto: rb.Auto, Source: pendingSource(update.Pending{Development: rb.Development}), Commit: pendingCommit(update.Pending{Development: rb.Development}), Backup: rb.Backup}); err != nil {
 		return // Keep the marker until the history and bad-build list have been saved.
 	}
 	l := u.h.userLang()
@@ -440,19 +491,30 @@ func (u *updater) confirm(ctx context.Context, p update.Pending) {
 	u.mu.Lock()
 	u.confirmed = true
 	u.mu.Unlock()
+	if u.edgeConfirmed != nil {
+		u.edgeConfirmed()
+	}
+	nodeErr := u.updateNodes(ctx, p.Nodes, p.FromVersion, p.Development)
+	why := ""
+	if nodeErr != nil {
+		why = su(u.h.userLang(), "err_computer_packages")
+		u.h.logf("update: Hub confirmed, computer packages retained for recovery: %v", nodeErr)
+	}
 	u.record(ctx, updateRecord{FromVersion: p.FromVersion, ToVersion: p.ToVersion, ToBuild: p.ToBuild, Started: p.Started,
-		Ended: time.Now(), Result: "updated", Auto: p.Auto})
-	u.set("updated", "", "")
+		Ended: time.Now(), Result: "updated", Reason: why, Auto: p.Auto, Source: pendingSource(p), Commit: pendingCommit(p), Backup: p.Backup})
+	u.set("updated", "", why)
 	u.h.logf("update: %s -> %s confirmed", p.FromVersion, p.ToVersion)
 	if p.Auto { // one the user started is watched in the app
 		l := u.h.userLang()
 		u.notify(su(l, "push_updated_title", i18n.Args{"version": p.ToVersion}), su(l, "push_updated_body"))
 	}
-	if u.edgeConfirmed != nil {
-		u.edgeConfirmed() // the edge's own check of this update ends (it would go back after 3 minutes)
+	update.ClearDevelopmentAdoption(u.dir, p)
+	if p.WebPrev != "" && filepath.Dir(p.WebPrev) == filepath.Join(u.dir, "development") && strings.HasPrefix(filepath.Base(p.WebPrev), "web-previous-") {
+		_ = os.RemoveAll(p.WebPrev)
 	}
-	u.updateNodes(ctx, p.Nodes, p.FromVersion)
-	u.removeDownloads(u.stagedDir(p.ToBuild)) // the node binaries are in NodeBinaryDir now
+	if nodeErr == nil {
+		u.removeDownloads(u.stagedDir(p.ToBuild))
+	} // retain failed package preparation for recovery
 }
 
 // offline lists which of ids are not connected.
@@ -473,43 +535,73 @@ func (u *updater) offline(ids []string) []string {
 	return out
 }
 
-// rollback writes why, puts the old binary back and runs it. It returns only when that fails. The update's downloads
-// go first: the old binary comes from Prev, and nothing reads them after this.
-func (u *updater) rollback(p update.Pending, reason string) {
+// rollback restores the complete transaction before recording success or
+// deleting recovery material. It returns only when restoring or exec fails.
+func (u *updater) rollback(p update.Pending, reason string) error {
 	u.h.logf("update: going back to %s: %s", p.FromVersion, reason)
-	u.markRolledBack(p, reason)
-	u.removeDownloads(u.stagedDir(p.ToBuild))
 	if err := update.RestoreAll(p); err != nil {
 		u.h.logf("update: restore %s: %v", p.Prev, err)
-		return
+		return err
+	}
+	u.markRolledBack(p, reason)
+	// Keep development recovery evidence until the restored executable runs.
+	// A successful exec never returns; the old build clears the journal at boot.
+	if p.Development == nil && !u.adoptionUnresolved() {
+		u.removeDownloads(u.stagedDir(p.ToBuild))
+	}
+	// The old build reads only the hub.push_sent setting, and an exec skips the stop that writes it (lnmode.go).
+	if err := u.h.push.mirrorSent(context.Background()); err != nil {
+		u.h.logf("update: delivered pushes for %s: %v", p.FromVersion, err)
 	}
 	if err := u.exec(p.RunPath()); err != nil {
 		u.h.logf("update: run %s: %v", p.RunPath(), err)
+		return err
 	}
+	update.ClearDevelopmentAdoption(u.dir, p)
+	if !u.adoptionUnresolved() {
+		u.removeDownloads(u.stagedDir(p.ToBuild))
+	}
+	return nil
 }
 
 // updateNodes puts the release's node binaries where "Redeploy" takes them (the manager's, internal/devices deploy.go)
 // and has the manager redeploy each connected machine whose node is not this build, one at a time. With node updates
 // off, the hub moved on from version from alone: the builds of that version it leaves in bin/nodes go aside.
-func (u *updater) updateNodes(ctx context.Context, staged, from string) {
+func (u *updater) updateNodes(ctx context.Context, staged, from string, development ...*update.DevelopmentCandidate) error {
 	dir := identity.NodeBinaryDir()
 	info, err := os.Lstat(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		u.h.logf("update: inspect node binary directory: %v", err)
-		return
+		return err
 	}
 	// A release publisher owns this pointer and both immutable release trees.
 	// Only it may activate packages after the hub is confirmed healthy.
 	managed := info != nil && info.Mode()&os.ModeSymlink != 0
-	if !u.nodesEnabled() {
+	dev := len(development) > 0 && development[0] != nil
+	if dev && managed {
+		return errors.New("development package directory changed to a managed pointer")
+	}
+	if !u.nodesEnabled() && !dev {
 		if !managed && from != "" && from != u.h.version {
-			if moved := setAsideOldNodes(identity.NodeBinaryDir()); len(moved) > 0 {
+			if moved, _ := setAsideOldNodes(identity.NodeBinaryDir()); len(moved) > 0 {
 				u.h.logf("update: node builds of %s set aside (node updates are off, Redeploy fetches %s): %s",
 					from, u.h.version, strings.Join(moved, ", "))
 			}
 		}
-		return
+		return nil
 	}
+	if dev && from != "" && from != u.h.version {
+		if development[0].BackupID != "" {
+			// A saved version may cover fewer platforms. Keep other usable
+			// packages, explicitly labelled with their pre-rollback version.
+			if err := labelUnstagedNodes(dir, staged, from); err != nil {
+				return err
+			}
+		} else if _, err := setAsideOldNodes(dir); err != nil {
+			return err
+		}
+	}
+	var first error
 	if staged != "" && !managed {
 		files, _ := filepath.Glob(filepath.Join(staged, "personad-*"))
 		legacy, _ := filepath.Glob(filepath.Join(staged, compat.DaemonBinary+"-*"))
@@ -524,15 +616,26 @@ func (u *updater) updateNodes(ctx context.Context, staged, from string) {
 					err = copyInto(f, filepath.Join(identity.NodeBinaryDir(), filepath.Base(f)))
 				}
 				if err != nil {
+					if first == nil {
+						first = err
+					}
 					u.h.logf("update: node binary %s: %v", filepath.Base(f), err)
 				} else {
 					// It is this build now: a version file put beside an older one (docs/operations/docker.md "Node builds") goes.
 					_ = os.Remove(filepath.Join(identity.NodeBinaryDir(), filepath.Base(f)+".version"))
 				}
+			} else if first == nil {
+				first = err
 			}
 		}
 	}
-	u.h.updateNodes(ctx) // the manager redeploys them, one at a time (internal/devices deploy.go)
+	if first != nil {
+		return first
+	}
+	if u.nodesEnabled() {
+		u.h.updateNodes(ctx)
+	} // each computer retains the existing policy/guardian
+	return nil
 }
 
 func copyInto(from, to string) error {
@@ -593,37 +696,48 @@ func (u *updater) set(state, progress, errText string) {
 
 // updateView is GET /api/v1/hub/update.
 type updateView struct {
-	Version         string      `json:"version"`
-	Build           int64       `json:"build"`
-	Channel         string      `json:"channel"`
-	CanUpdate       bool        `json:"can_update"`
-	Why             string      `json:"why_not,omitempty"`
-	Latest          *latestView `json:"latest,omitempty"`
-	State           string      `json:"state"`
-	Progress        string      `json:"progress,omitempty"`
-	Busy            []busyItem  `json:"busy"`
-	Error           string      `json:"error,omitempty"`
-	Auto            bool        `json:"auto"`
-	AutoUpdateNodes bool        `json:"auto_update_nodes"`
-	AutoNotice      bool        `json:"auto_notice"`
-	LastCheck       *time.Time  `json:"last_check,omitempty"`
-	Confirmed       bool        `json:"confirmed"`
-	Image           *imageView  `json:"image,omitempty"` // a Docker hub's image
+	Source          string                    `json:"source"`
+	Development     *developmentView          `json:"development,omitempty"`
+	Backup          *update.DevelopmentBackup `json:"backup,omitempty"`
+	Version         string                    `json:"version"`
+	Build           int64                     `json:"build"`
+	Channel         string                    `json:"channel"`
+	CanUpdate       bool                      `json:"can_update"`
+	Why             string                    `json:"why_not,omitempty"`
+	Latest          *latestView               `json:"latest,omitempty"`
+	State           string                    `json:"state"`
+	Progress        string                    `json:"progress,omitempty"`
+	Busy            []busyItem                `json:"busy"`
+	Error           string                    `json:"error,omitempty"`
+	Auto            bool                      `json:"auto"`
+	AutoUpdateNodes bool                      `json:"auto_update_nodes"`
+	AutoNotice      bool                      `json:"auto_notice"`
+	LastCheck       *time.Time                `json:"last_check,omitempty"`
+	Confirmed       bool                      `json:"confirmed"`
+	Image           *imageView                `json:"image,omitempty"` // a Docker hub's image
 	// UpdateURL is where the hub looks for releases now (selfupdate_source.go), UpdateFrom whether hub.json's
 	// update.url or the build said so; UpdateProxy the proxy its checks and downloads go through (update.proxy), with
 	// no user or password. All three are left out when there is none.
 	UpdateURL   string `json:"update_url,omitempty"`
 	UpdateFrom  string `json:"update_url_from,omitempty"`
 	UpdateProxy string `json:"update_proxy,omitempty"`
+	// SourceBehind: the newest release the update source has (Latest) is older than this hub and than the release its
+	// code contains (Build.Behind, #8108): the source looks stopped, and nothing newer will come from it until update.url
+	// names another. Left out otherwise.
+	SourceBehind bool `json:"source_behind,omitempty"`
 }
 
 type latestView struct {
-	Version  string     `json:"version"`
-	Build    int64      `json:"build"` // 0 for an image (tags have no build numbers)
-	Released *time.Time `json:"released,omitempty"`
-	Notes    string     `json:"notes,omitempty"`
-	Newer    bool       `json:"newer"`
-	Bad      bool       `json:"bad"` // went back before: not installed automatically
+	Commit    string     `json:"commit,omitempty"`
+	UpdatedAt string     `json:"updated_at,omitempty"`
+	Branch    string     `json:"branch,omitempty"`
+	BackupID  string     `json:"backup_id,omitempty"`
+	Version   string     `json:"version"`
+	Build     int64      `json:"build"` // 0 for an image (tags have no build numbers)
+	Released  *time.Time `json:"released,omitempty"`
+	Notes     string     `json:"notes,omitempty"`
+	Newer     bool       `json:"newer"`
+	Bad       bool       `json:"bad"` // went back before: not installed automatically
 	// Held: why a newer release is not installed automatically even with auto-update on (Build.Hold, unreplaced), for
 	// people.
 	Held string `json:"held,omitempty"`
@@ -640,10 +754,28 @@ func (u *updater) viewIn(l i18n.Lang) updateView {
 		State: u.state, Progress: u.progress, Busy: u.busy, Error: u.errText, Auto: u.settings.auto() && selfUpdates,
 		AutoNotice: selfUpdates && !u.settings.AutoNoticeSeen, Confirmed: u.confirmed,
 		AutoUpdateNodes: u.nodesEnabledLocked(), UpdateURL: source.url, UpdateFrom: source.from, UpdateProxy: proxyShown(source.proxy)}
+	v.Source = "release"
+	v.Backup = u.settings.DevelopmentBackup
+	v.Development = &developmentView{Configured: u.developmentConfig() != nil, Branch: "main", CurrentCommit: u.h.build.Commit, CurrentUpdatedAt: u.currentUpdatedAtLocked()}
+	if u.developmentLocked() {
+		v.Source, v.CanUpdate, v.Auto, v.AutoNotice = "web-dev", u.developmentAvailable(), u.settings.DevelopmentAuto, false
+	} else {
+		v.Source = u.settings.Source
+		if u.betaLocked() {
+			selected, err := u.releaseSource()
+			if err == nil {
+				v.UpdateURL = selected.url
+			} else {
+				v.UpdateURL, v.UpdateFrom, v.CanUpdate, v.Auto = "", "", false, false
+			}
+		}
+	}
 	if v.Busy == nil {
 		v.Busy = []busyItem{}
 	}
-	if !v.CanUpdate {
+	if !v.CanUpdate && u.developmentLocked() {
+		v.Why = su(l, "err_development_config")
+	} else if !v.CanUpdate {
 		v.Why = u.whyNotReason(l)
 	}
 	if !u.lastCheck.IsZero() {
@@ -654,7 +786,21 @@ func (u *updater) viewIn(l i18n.Lang) updateView {
 		released := r.Manifest.Released
 		v.Latest = &latestView{Version: r.Manifest.Version, Build: r.Manifest.Build, Released: &released, Notes: r.Manifest.Notes,
 			Newer: u.h.build.Newer(r.Manifest.Build), Bad: slices.Contains(u.settings.Bad, r.Manifest.Build)}
-		if v.Latest.Newer && selfUpdates {
+		if r.Development != nil {
+			v.Latest.Released = nil // checked Git candidates have no publication date
+			v.Latest.Commit, v.Latest.Branch = r.Development.Commit, r.Development.Branch
+			v.Latest.UpdatedAt = r.Development.UpdatedAt
+			v.Latest.BackupID = r.Development.BackupID
+			v.Latest.Newer = u.candidateNewer(r)
+			v.Latest.Bad = v.Latest.Bad || slices.Contains(u.settings.DevelopmentBad, r.Development.Commit)
+			if r.Manifest.Ancestors != "" {
+				v.Latest.Held = u.developmentHold(r.Manifest)
+			}
+		}
+		// A deliberately selected saved program version is not evidence that
+		// the development Git source stopped publishing releases.
+		v.SourceBehind = r.Development == nil && u.h.build.Behind(r.Manifest)
+		if r.Development == nil && v.Latest.Newer && selfUpdates {
 			v.Latest.Held = u.h.build.Hold(r.Manifest)
 			if v.Latest.Held == "" && u.blocked != nil {
 				v.Latest.Held = i18n.Localize(u.blocked, l)

@@ -245,6 +245,14 @@ func TestRecordingTrimKeepsNoLiveLog(t *testing.T) {
 	if _, _, err := e.LiveAppend(recID, 0, []LiveSegment{{Start: 1, End: 2, Text: "secret live line"}}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := e.TopicsSet(recID, []LiveTopic{{Title: "Pricing", State: TopicCurrent}}, start); err != nil { // they go with it too
+		t.Fatal(err)
+	}
+	if r, _ := e.Store.Recording(recID); r == nil {
+		t.Fatal("no recording")
+	} else if _, err := e.HighlightsSet(recID, []HighlightSaid{{Text: "The cap stays.", SaidAt: LiveClock(*r, 1, goldenZone)}}, goldenZone, start); err != nil {
+		t.Fatal(err) // and the highlights
+	}
 	putMeetingMinutes(t, e, recID, Minutes{Version: 1, Revision: 1, Title: "Design review", Markdown: "# Design review"})
 	ask := func(l *Live) {
 		l.Asks = append(l.Asks, LiveAsk{ID: "q1", Question: "What was decided?", State: "pending"})
@@ -255,7 +263,8 @@ func TestRecordingTrimKeepsNoLiveLog(t *testing.T) {
 			t.Fatalf("%s: a trimmed recording keeps %v", when, names)
 		}
 		l, r, err := e.LiveRead(recID)
-		if err != nil || !r.Trimmed() || r.Attendance != "" || len(l.Segments) != 0 || len(l.Asks) != 0 {
+		if err != nil || !r.Trimmed() || r.Attendance != "" || len(l.Segments) != 0 || len(l.Asks) != 0 || len(l.Topics) != 0 ||
+			len(l.Highlights) != 0 || l.HighlightsRev != 0 {
 			t.Fatalf("%s: live %+v, recording %+v, %v", when, l, r, err)
 		}
 	}

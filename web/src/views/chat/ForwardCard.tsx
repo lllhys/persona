@@ -3,7 +3,9 @@
 // at the top of a sent bubble, "Forwarded from Claude · chat", the computer and time and the first lines, a click opening
 // the original chat at that message (or the whole text, when this page does not have that chat). Drawn as the quote's
 // bar and card (Quote.tsx) with the forward arrow before the heading, so a forward reads as a quote of another chat.
-import { useLayoutEffect, useRef, useState } from "react";
+// Several forwarded at once (#3838), those of one chat next to each other one bar and one card with a line for each
+// message, are drawn by a chunk of their own (ForwardGroup.tsx).
+import { Suspense, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { forwardHeading, forwardMeta, forwardOrigin, forwardSummary, jumpWhenOpen } from "../../lib/forward";
 import { removeContext, useContexts } from "../../lib/links";
@@ -12,7 +14,13 @@ import { getSession, getState } from "../../lib/store";
 import type { Context } from "../../lib/turns";
 import { Icon } from "../../ui/icons";
 import { Markdown } from "../../ui/Markdown";
+import { lazyPage } from "../../lib/lazy-page";
 import { ForwardBar } from "./ForwardBar";
+
+// several (#3838): over the box Forward to, which puts them there, has loaded it by then
+const group = () => import("./ForwardGroup");
+const ForwardGroupBars = lazyPage(() => group().then((m) => m.ForwardGroupBars));
+const ForwardGroupCards = lazyPage(() => group().then((m) => m.ForwardGroupCards));
 
 /** The forwards waiting above a composer's input (lib/links.ts addContext); other contexts are ContextChips'. */
 export function ForwardBars({ draftKey, onRemove }: { draftKey: string; onRemove?: () => void }) {
@@ -20,17 +28,19 @@ export function ForwardBars({ draftKey, onRemove }: { draftKey: string; onRemove
   if (!forwards.length) return null;
   return (
     <div className="flex flex-col gap-1.5 px-0.5 pt-0.5" data-forwards>
-      {forwards.map((r) => (
+      {forwards.length > 1 ? (
+        <Suspense fallback={null}>
+          <ForwardGroupBars forwards={forwards} draftKey={draftKey} onRemove={onRemove} />
+        </Suspense>
+      ) : (
         <ForwardBar
-          key={r.id}
-          forward={r}
-          lines={forwards.length === 1 ? 2 : 1}
+          forward={forwards[0]}
           onRemove={() => {
-            removeContext(draftKey, r.id);
+            removeContext(draftKey, forwards[0].id);
             onRemove?.();
           }}
         />
-      ))}
+      )}
     </div>
   );
 }
@@ -106,5 +116,15 @@ export function ForwardBlock({ c }: { c: Context }) {
         )}
       </div>
     </div>
+  );
+}
+
+/** Several forwards at the top of a bubble (#3838; `count` of the message's `blocks`): their cards (ForwardGroup.tsx),
+ *  and until that chunk is in, a line saying how many ("2 forwarded messages"). */
+export function ForwardCards({ blocks, count }: { blocks: Context[]; count: number }) {
+  return (
+    <Suspense fallback={<span className="text-xs font-medium text-ink-3" data-forward-group-pending>{t("chat-forward.group_heading", { count })}</span>}>
+      <ForwardGroupCards blocks={blocks} />
+    </Suspense>
   );
 }

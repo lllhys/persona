@@ -64,6 +64,74 @@ afterEach(() => {
 });
 
 describe("By repo catalog integration", () => {
+  it("keeps saved offline Agents in their exact pinned workspace beyond Recent's limit", async () => {
+    inventory = [workspace("pinned", { source: "paseo", pinned_at: "2026-11-16T10:00:00Z" }),
+      workspace("sibling", { source: "paseo", cwd: "/code/pinned" })];
+    const saved = agent("Saved conversation", "project-a", { space_kind: "paseo", host: "paseo", workspace_id: "pinned", state: "offline", status: "offline", updated_at: "2020-01-01T00:00:00Z" });
+    sessions = [...Array.from({ length: 45 }, (_, i) => agent(`Recent ${i}`, "sibling", { state: "offline", status: "offline", updated_at: "2026-11-16T10:00:00Z" })),
+      saved, { ...saved, session_id: "archived", title: "Archived conversation", archived: true },
+      { ...saved, session_id: "history", title: "Archived history", workspace_id: undefined, space_id: "pinned" }];
+    await render();
+    const holder = title("pinned").closest("[data-workspace-key]")!;
+    expect([...holder.querySelectorAll("a")].map((el) => el.textContent)).toHaveLength(1);
+    expect(holder.querySelector("a")!.textContent).toContain("Saved conversation");
+    expect([...host.querySelectorAll("a")].filter((el) => el.textContent?.includes("Saved conversation"))).toHaveLength(1);
+    expect(title("sibling").closest("[data-workspace-key]")!.querySelectorAll("a")).toHaveLength(0);
+    inventory = inventory.map((w) => ({ ...w, pinned_at: undefined }));
+    await act(() => refreshWorkspaceCatalog()); await flush();
+    expect(holder.querySelectorAll("a")).toHaveLength(0);
+  });
+
+  it("does not use a workspace pin to override an explicit state filter", async () => {
+    inventory = [workspace("pinned", { source: "paseo", pinned_at: "2026-11-16T10:00:00Z" })];
+    sessions = [agent("Saved conversation", "project-a", { space_kind: "paseo", workspace_id: "pinned", state: "offline", status: "offline" })];
+    localStorage.setItem("persona.agentFilter", "working");
+    await render();
+    expect(title("pinned")).toBeUndefined();
+    expect([...host.querySelectorAll("a")].some((el) => el.textContent?.includes("Saved conversation"))).toBe(false);
+  });
+
+  it("refreshes host pins and unpins without changing selection, folds or Persona session pins", async () => {
+    inventory = [workspace("main", { source: "paseo", is_main: true, cwd: "/code/shared" }),
+      workspace("pinned-empty", { source: "paseo", cwd: "/code/shared", pinned_at: "2026-11-16T10:00:00Z" }),
+      workspace("local")];
+    sessions = [agent("Local pin", "local")]; pinned = [`${machine.id}/Local pin`];
+    const workspaceOrder = () => [...host.querySelectorAll("[data-workspace-key]")]
+      .map((el) => JSON.parse(el.getAttribute("data-workspace-key")!)[4]);
+    await render();
+    expect(workspaceOrder().filter((id) => id !== "local")).toEqual(["pinned-empty", "main"]);
+    const before = title("pinned-empty");
+    const holder = before.closest("[data-workspace-key]")!;
+    expect(holder.querySelector(`[title="${t("sidebar.pinned")}"]`)).toBeTruthy();
+    expect(title("main").closest("[data-workspace-key]")!.querySelector(`[title="${t("sidebar.pinned")}"]`)).toBeNull();
+    click(before);
+    expect(before.getAttribute("aria-pressed")).toBe("true");
+    expect(disclosure("pinned-empty").getAttribute("aria-expanded")).toBe("false");
+    inventory = inventory.map((w) => ({ ...w, pinned_at: undefined }));
+    await act(() => refreshWorkspaceCatalog()); await flush();
+    expect(workspaceOrder().filter((id) => id !== "local")).toEqual(["main", "pinned-empty"]);
+    expect(title("pinned-empty")).toBe(before);
+    expect(holder.querySelector(`[title="${t("sidebar.pinned")}"]`)).toBeNull();
+    expect(before.getAttribute("aria-pressed")).toBe("true");
+    expect(disclosure("pinned-empty").getAttribute("aria-expanded")).toBe("false");
+    expect([...host.querySelectorAll("a")].filter((el) => el.textContent?.includes("Local pin"))).toHaveLength(1);
+    expect(getState().pins.sessions).toEqual(pinned);
+    expect(request.mock.calls.some(([, init]) => init && (init as RequestInit).method === "PUT")).toBe(false);
+  });
+
+  it("renders native and logical runtime sessions under one checkout with one row per Agent", async () => {
+    inventory = [workspace("native", { source: "herdr", title: "app", cwd: "/code/app", project_id: undefined, project_name: undefined })];
+    sessions = [agent("codex", "native", { space_kind: "herdr", workspace_id: "native", cwd: "/code/app", repo_root: "/code/app", worktree: "/code/app" }),
+      ...["agy-one", "agy-two", "omp"].map((id) => agent(id, "/code/app", { space_kind: "agy", source_kind: "runtime", cwd: "/code/app", repo_root: "/code/app", worktree: "/code/app" }))];
+    await render();
+    expect(host.querySelectorAll("[data-workspace-key]")).toHaveLength(1);
+    const row = title("app").closest("[data-workspace-key]")!;
+    for (const session of sessions) {
+      expect(row.querySelectorAll(`a[href="/s/${machine.id}/${session.session_id}"]`)).toHaveLength(1);
+      expect(host.querySelectorAll(`a[href="/s/${machine.id}/${session.session_id}"]`)).toHaveLength(1);
+    }
+  });
+
   it("does not rebuild Agent rows on an unchanged catalog refresh", async () => {
     await render();
     const before = title("root"); previews.clear();

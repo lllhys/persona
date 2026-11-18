@@ -1,8 +1,10 @@
 // "Search in chat" (the chat's ⋯ menu, Android ChatSearchScreen, parity N26): searches what is loaded of the chat (words,
-// thoughts, tool names, tool input and output, system events), the hits by category with the match marked; picking one
-// closes the panel and goes to it (ChatView). "Load earlier and keep searching" pages back through the history, up to 20 pages a go.
+// quoted contexts, thoughts, tool names, tool input and output, system events; the work the hub folded too, fetched while
+// the panel is open), the hits by category with the match marked; picking one closes the panel and goes to it (ChatView).
+// "Load earlier and keep searching" pages back through the history, up to 20 pages a go.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { groupHits, searchChat, snippetParts, type ChatSearchHit, type ChatSearchResults, type SearchCategory } from "../../lib/chat-search";
+import type { ChatSearchHit, ChatSearchResults, SearchCategory } from "../../lib/chat-search";
+import { groupHits, searchChat, snippetParts } from "../../lib/chat-search-match";
 import type { Item } from "../../lib/types";
 import { t } from "../../i18n";
 import { Button, Dialog, Spinner } from "../../ui/atoms";
@@ -15,6 +17,7 @@ const SETTLE_MS = 200;
 
 const CATEGORY: Record<SearchCategory, string> = {
   text: "chat-chatsearch.category_text",
+  quoted: "chat-chatsearch.category_quoted",
   thinking: "chat-chatsearch.category_thinking",
   tool_name: "chat-chatsearch.category_tool_name",
   tool_input: "chat-chatsearch.category_tool_input",
@@ -32,6 +35,8 @@ export function ChatSearch({
   query,
   onQuery,
   items,
+  foldsLoading = false,
+  foldsPartial = false,
   rounds,
   hasMore,
   onLoadEarlier,
@@ -42,6 +47,10 @@ export function ChatSearch({
   query: string;
   onQuery: (q: string) => void;
   items: Item[];
+  /** The folded work is being fetched for the search (useFoldSearch). */
+  foldsLoading?: boolean;
+  /** Some folded work is not searched (its fetch failed, or past the budget). */
+  foldsPartial?: boolean;
   /** Exchanges loaded so far. */
   rounds: number;
   hasMore: boolean;
@@ -86,7 +95,7 @@ export function ChatSearch({
   const footer = (
     <div className="flex w-full min-w-0 items-center gap-3">
       <span role="status" className="min-w-0 flex-1 truncate text-[12px] text-ink-3">
-        {loading ? t("chat-chatsearch.loading_pages", { count: pages }) : notice ?? (hasMore ? "" : t("chat-chatsearch.at_start"))}
+        {loading ? t("chat-chatsearch.loading_pages", { count: pages }) : notice ?? (foldsLoading ? t("chat-chatsearch.searching_folds") : foldsPartial ? t("chat-chatsearch.folds_partial") : hasMore ? "" : t("chat-chatsearch.at_start"))}
       </span>
       {loading ? (
         <Button tone="quiet" onClick={() => (stop.current = true)}>

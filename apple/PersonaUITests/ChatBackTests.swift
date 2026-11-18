@@ -18,6 +18,8 @@ final class ChatBackTests: XCTestCase {
             app.launchPinned()
             let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["允许"]
             if allow.waitForExistence(timeout: 2) { allow.tap() }
+            // At regular width (an iPad, iPhone Duo open) the chat opens beside the list, with no Back to take.
+            guard app.windows.firstMatch.frame.width <= 600 else { throw XCTSkip("the chat is pushed over the list at compact width only") }
             let back = app.buttons.matching(NSPredicate(format: "label == '返回'")).firstMatch // the chat's own, by the title
             XCTAssertTrue(back.waitForExistence(timeout: 20), "\(opened[0]): the chat:\n\(app.debugDescription)")
             back.tap()

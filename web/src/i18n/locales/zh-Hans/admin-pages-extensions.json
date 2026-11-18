@@ -85,5 +85,18 @@
   "sandbox_off_body": "关掉后它能读写 hub 用户能读写的所有文件，也能连任何地址。",
   "sandbox_off_confirm": "关掉沙箱",
   "sandbox_turned_on": "{name} 的沙箱已打开",
-  "sandbox_turned_off": "{name} 的沙箱已关掉"
+  "sandbox_turned_off": "{name} 的沙箱已关掉",
+  "sandbox_off_one_host": "只是要连一个地址的话，在下面放行那个地址就够了。",
+  "hosts_blocked": "被拦下的地址",
+  "hosts_allowed": "你放行的地址",
+  "host_blocked_times_other": "{count} 次 · 最近 {when}",
+  "host_allow": "放行",
+  "host_revoke": "撤销",
+  "host_undo": "撤销",
+  "host_any_port": "任何端口",
+  "host_this_port": "只这个端口",
+  "host_placeholder": "地址，如 rss.example.org 或 rss.example.org:8443",
+  "host_field_label": "给 {name} 放行的地址",
+  "host_allowed": "已放行 {host}",
+  "host_revoked": "已撤销 {host}"
 }

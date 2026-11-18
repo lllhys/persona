@@ -16,11 +16,12 @@ import {
   type SearchPlan,
   type SearchScope,
 } from "../../lib/agent-chatlist-filter";
-import { awaitsReply, sessionSource, sourceName, type AgentMutes } from "../../lib/agent-groups";
-import { ago, backgroundWaiting, sessionPreview, sessionTitle, stateOf } from "../../lib/format";
+import { awaitsReply, justFinished, sessionSource, sourceName, type AgentMutes } from "../../lib/agent-groups";
+import { ago, backgroundWaiting, sessionPreview, sessionTitle, stateOf, tabLabel } from "../../lib/format";
 import { sessionCard } from "../../lib/folded-rows";
 import { machineWithHub } from "../../lib/mesh";
 import { plainMarkdown } from "../../lib/plain-markdown";
+import { openPaletteWith } from "../../lib/palette";
 import { href, type Route } from "../../lib/router";
 import { draftLine, rowLine } from "../../lib/row-line";
 import { useLeftDraft } from "../../lib/drafts";
@@ -31,7 +32,6 @@ import { SessionMark } from "../../ui/AgentMark";
 import { cx, Menu, useMenu, useNow, type MenuItem } from "../../ui/atoms";
 import { contextMenuProps } from "../../ui/context-menu";
 import { Icon } from "../../ui/icons";
-import { SearchField } from "../../ui/SearchField";
 import { StatusMark } from "../../ui/StatusMark";
 import { UltraMark } from "../chat/Ultracode";
 import { CURRENT_ROW, type GoFn, type RegFn, type RowMenuFn } from "../SidebarParts";
@@ -46,41 +46,37 @@ const FACET_PAGES: { key: FacetKey; labelKey: string }[] = [
   { key: "machines", labelKey: "lib-agent-filter.filter_machine" },
 ];
 
-/** How many filters are on (the Filter button's count): the query and Search as Code are not filters of their own. */
+/** How many filters are on (the Filter button's count): the query ⌘K put on the list is one, Search as Code is a mode. */
 export function activeFilterCount(f: AgentDimensionFilters): number {
   return (
-    f.harnesses.length + f.projects.length + f.models.length + f.machines.length + (f.pinnedOnly ? 1 : 0) + (f.scope !== "all" ? 1 : 0) + (f.since ? 1 : 0)
+    (f.query.trim() ? 1 : 0) + f.harnesses.length + f.projects.length + f.models.length + f.machines.length + (f.pinnedOnly ? 1 : 0) + (f.scope !== "all" ? 1 : 0) + (f.since ? 1 : 0)
   );
 }
 
-// The Agents list's search (#4397): one row, the field and a Filter button whose menu holds the scope, Pinned, the four facets,
-// the chat-list view and Search as Code. Chips for what is on appear only while something is, and the plan bar only with
-// Search as Code on.
-export function AgentDimensionFilterBar({
+/** Reset: every filter off, the query too; Search as Code is a mode, its plan bar has its own ×. */
+const resetOf = (f: AgentDimensionFilters): AgentDimensionFilters => ({ ...DEFAULT_DIMENSION_FILTERS, searchAsCode: f.searchAsCode, customPlanCode: f.customPlanCode });
+
+// The Agents list's Filter (#4397, #6589): an icon button on the Agents title row, beside fold all and ⋯, whose menu holds
+// the scope, Pinned, the four facets, the chat-list view and Search as Code. The list has no search field of its own: ⌘K
+// (Search chats) finds sessions with the same words and operators, and its "Filter Agents list" puts them on the list.
+export function AgentFilterButton({
   filters,
   onChange,
   facets,
-  plan,
   chatList,
   onToggleChatList,
 }: {
   filters: AgentDimensionFilters;
   onChange: (next: AgentDimensionFilters) => void;
   facets: AgentFacetCounts;
-  plan: SearchPlan;
   chatList: boolean;
   onToggleChatList: () => void;
 }) {
   const filterMenu = useMenu();
   const [page, setPage] = useState<FilterPage>("root");
-  const [editingPlan, setEditingPlan] = useState(false);
 
   const activeScope = SEARCH_SCOPES.find((s) => s.key === filters.scope) ?? SEARCH_SCOPES[0];
   const count = activeFilterCount(filters);
-
-  const resetFilters = () => {
-    onChange({ ...DEFAULT_DIMENSION_FILTERS, query: filters.query, searchAsCode: filters.searchAsCode, customPlanCode: filters.customPlanCode });
-  };
 
   const menuItems = (): MenuItem[] => {
     const back: MenuItem = { key: "back", label: t("sidebar.back"), keepOpen: true, onSelect: () => setPage("root") };
@@ -144,11 +140,69 @@ export function AgentDimensionFilterBar({
         checked: filters.searchAsCode,
         onSelect: () => onChange({ ...filters, searchAsCode: !filters.searchAsCode, customPlanCode: undefined }),
       },
-      ...(count > 0 ? [{ key: "reset", label: t("lib-agent-filter.reset_filters"), divider: true, onSelect: resetFilters }] : []),
+      ...(count > 0 ? [{ key: "reset", label: t("lib-agent-filter.reset_filters"), divider: true, onSelect: () => onChange(resetOf(filters)) }] : []),
     ];
   };
 
-  const chips: { key: string; label: string; onRemove: () => void }[] = [];
+  const filterLabel = count > 0 ? `${t("lib-agent-filter.filter")} (${count})` : t("lib-agent-filter.filter");
+  // the title row's other icon buttons' size and colors (⋯, fold all); lit like ⋯ under a sort while something is on
+  const lit = count > 0 || filters.searchAsCode || chatList;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          setPage("root");
+          filterMenu.open(e);
+        }}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(filterMenu.anchor)}
+        aria-label={filterLabel}
+        title={filterLabel}
+        data-testid="agent-filter-button"
+        className={cx(
+          "touch-hit relative z-10 flex h-5 min-w-5 shrink-0 items-center justify-center gap-0.5 rounded-[5px] px-0.5 text-[11px] hover:bg-hover hover:text-ink-2",
+          lit ? "font-semibold text-accent" : "text-ink-3",
+          filterMenu.anchor && "bg-hover",
+        )}
+      >
+        <Icon name="filter" size={12} stroke={2} />
+        {count > 0 && <span className="tabular-nums leading-none">{count}</span>}
+      </button>
+      {filterMenu.anchor && (
+        <Menu anchor={filterMenu.anchor} onClose={filterMenu.close} align="right" width={220} header={t("lib-agent-filter.filter")} items={menuItems()} />
+      )}
+    </>
+  );
+}
+
+// What filters the list, above it and only while something does (#4397): each filter a chip with ×, the query ⌘K put on
+// the list among them (its text opens ⌘K with it, to change it), then Reset; and with Search as Code on, its plan bar.
+export function AgentFilterChips({
+  filters,
+  onChange,
+  facets,
+  plan,
+}: {
+  filters: AgentDimensionFilters;
+  onChange: (next: AgentDimensionFilters) => void;
+  facets: AgentFacetCounts;
+  /** Search as Code's plan, for its bar: a list without it (the hub's paged list) shows none. */
+  plan?: SearchPlan;
+}) {
+  const [editingPlan, setEditingPlan] = useState(false);
+  const activeScope = SEARCH_SCOPES.find((s) => s.key === filters.scope) ?? SEARCH_SCOPES[0];
+
+  const chips: { key: string; label: string; onRemove: () => void; onEdit?: () => void }[] = [];
+  const query = filters.query.trim();
+  if (query) {
+    chips.push({
+      key: "query",
+      label: `${t("lib-agent-filter.query_chip")}: ${query}`,
+      onRemove: () => onChange({ ...filters, query: "" }),
+      onEdit: () => openPaletteWith(query),
+    });
+  }
   if (filters.scope !== "all") {
     chips.push({ key: "scope", label: `${t("lib-agent-filter.search_in")}: ${t(activeScope.labelKey)}`, onRemove: () => onChange({ ...filters, scope: "all" }) });
   }
@@ -168,52 +222,25 @@ export function AgentDimensionFilterBar({
   if (filters.since) {
     chips.push({ key: "since", label: `since:${filters.since}`, onRemove: () => onChange({ ...filters, since: undefined }) });
   }
+  if (chips.length === 0 && !filters.searchAsCode) return null;
 
-  const filterLabel = count > 0 ? `${t("lib-agent-filter.filter")} (${count})` : t("lib-agent-filter.filter");
   return (
-    <div className="mt-1.5 flex flex-col gap-1.5 px-1" data-testid="agent-dimension-filter-bar">
-      <div className="flex items-center gap-1">
-        <SearchField
-          tone="inset"
-          size="sm"
-          className="min-w-0 flex-1"
-          value={filters.query}
-          onChange={(q) => onChange({ ...filters, query: q })}
-          placeholder={t("lib-agent-filter.search_placeholder")}
-        />
-        <button
-          type="button"
-          onClick={(e) => {
-            setPage("root");
-            filterMenu.open(e);
-          }}
-          aria-haspopup="menu"
-          aria-expanded={Boolean(filterMenu.anchor)}
-          aria-label={filterLabel}
-          title={filterLabel}
-          data-testid="agent-filter-button"
-          className={cx(
-            "touch-hit relative z-10 flex h-8 min-w-8 shrink-0 items-center justify-center gap-1 rounded-control px-2 text-[11.5px] shadow-hairline transition-colors",
-            count > 0 || filters.searchAsCode || chatList ? "bg-accent-tint font-medium text-accent-ink" : "bg-inset text-ink-2 hover:bg-hover hover:text-ink",
-          )}
-        >
-          <Icon name="filter" size={13} stroke={2} />
-          {count > 0 && <span className="tabular-nums">{count}</span>}
-        </button>
-      </div>
-
-      {filterMenu.anchor && (
-        <Menu anchor={filterMenu.anchor} onClose={filterMenu.close} align="right" width={220} header={t("lib-agent-filter.filter")} items={menuItems()} />
-      )}
-
+    <div className="mt-1.5 flex flex-col gap-1.5 px-1" data-testid="agent-filter-chips">
       {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1 text-[11px]" data-testid="scoped-filter-strip">
           {chips.map((chip) => (
             <span
               key={chip.key}
-              className="inline-flex max-w-full items-center gap-1 rounded-full bg-inset py-0.5 pr-1 pl-2 text-[11px] font-medium text-ink shadow-hairline"
+              data-chip={chip.key}
+              className="inline-flex max-w-full items-center gap-1 rounded-full bg-inset py-0.5 pr-1 pl-2 font-medium text-ink shadow-hairline"
             >
-              <span className="min-w-0 truncate">{chip.label}</span>
+              {chip.onEdit ? (
+                <button type="button" onClick={chip.onEdit} title={t("sidebar.search_sessions")} className="min-w-0 truncate text-left hover:text-accent-ink">
+                  {chip.label}
+                </button>
+              ) : (
+                <span className="min-w-0 truncate">{chip.label}</span>
+              )}
               <button
                 type="button"
                 aria-label={t("lib-agent-filter.remove_filter", { name: chip.label })}
@@ -227,15 +254,15 @@ export function AgentDimensionFilterBar({
           <button
             type="button"
             data-testid="scoped-filter-reset"
-            onClick={resetFilters}
-            className="ml-auto shrink-0 whitespace-nowrap rounded-control px-1.5 py-0.5 text-[11px] font-medium text-accent-ink hover:bg-hover"
+            onClick={() => onChange(resetOf(filters))}
+            className="ml-auto shrink-0 whitespace-nowrap rounded-control px-1.5 py-0.5 font-medium text-accent-ink hover:bg-hover"
           >
             {t("lib-agent-filter.reset_filters")}
           </button>
         </div>
       )}
 
-      {filters.searchAsCode && (
+      {filters.searchAsCode && plan && (
         <div
           data-testid="search-as-code-plan"
           className="flex items-center gap-1.5 rounded-control bg-inset px-2 py-1 text-[11px] shadow-hairline ring-1 ring-accent/25"
@@ -252,14 +279,14 @@ export function AgentDimensionFilterBar({
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === "Escape") setEditingPlan(false);
               }}
-              className="min-w-0 flex-1 bg-transparent font-mono text-[11px] text-ink outline-none"
+              className="min-w-0 flex-1 bg-transparent font-mono text-ink outline-none"
             />
           ) : (
             <button
               type="button"
               onClick={() => setEditingPlan(true)}
               title={`${t("lib-agent-filter.search_plan")}: ${plan.code}`}
-              className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-ink hover:text-accent-ink"
+              className="min-w-0 flex-1 truncate text-left font-mono text-ink hover:text-accent-ink"
             >
               {plan.code}
             </button>
@@ -319,9 +346,10 @@ export const AgentChatListRow = memo(function AgentChatListRow({
 }) {
   const st = stateOf(s);
   const awaiting = awaitsReply(s, mutes);
+  const finished = justFinished(s, mutes);
   const ix = useStore((state) => sessionCard(state.interactions, s.machine_id, s.session_id));
   const draft = draftLine(useLeftDraft(`${s.machine_id}/${s.session_id}`));
-  const line: { lead?: string; text: string; tone?: "needs" | "reply" } | undefined = draft ?? rowLine(s, ix, awaiting);
+  const line: { lead?: string; text: string; tone?: "needs" | "reply" } | undefined = draft ?? rowLine(s, ix, awaiting, finished);
   const previewText = line?.text || plainMarkdown(sessionPreview(s)) || s.activity || "";
   const now = useNow(60_000, Boolean(s.updated_at));
   const timeLabel = s.updated_at ? ago(s.updated_at, now) : "";
@@ -335,6 +363,9 @@ export const AgentChatListRow = memo(function AgentChatListRow({
 
   const machineLabel = machineWithHub(s.machine_id, ctx.machines) || s.machine_id;
   const projectLabel = sessionProjectName(s);
+  const hasTabAssociation = !!(s.slot_id?.trim() || s.tab_id?.trim());
+  const associatedTab = hasTabAssociation ? tabLabel(s) : "";
+  const tabIdentity = associatedTab ? t("sidebar.tab_named", { label: associatedTab }) : "";
   const harnessLabel = sessionHarnessLabel(s);
   const modelLabel = sessionModelId(s);
   const source = sessionSource(s);
@@ -371,7 +402,7 @@ export const AgentChatListRow = memo(function AgentChatListRow({
         <span className="relative mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-inset shadow-hairline">
           <SessionMark s={s} size={17} />
           <span className="absolute -right-0.5 -bottom-0.5 flex size-3.5 items-center justify-center rounded-full bg-canvas ring-1 ring-canvas">
-            <StatusMark state={st} size="sm" awaiting={awaiting} waiting={backgroundWaiting(s)} />
+            <StatusMark state={st} size="sm" awaiting={awaiting} finished={finished} waiting={backgroundWaiting(s)} />
           </span>
         </span>
 
@@ -432,7 +463,7 @@ export const AgentChatListRow = memo(function AgentChatListRow({
             )
           )}
 
-          {/* Line 3: Compact metadata capsules (Machine · Project · Harness · Model) */}
+          {/* Line 3: Compact metadata capsules (Machine · Project · Tab · Harness · Model) */}
           <span className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px] leading-4 text-ink-3" data-testid="agent-chatlist-chips">
             {machineLabel && (
               <span className="inline-flex max-w-[96px] items-center gap-0.5 truncate rounded bg-inset px-1.5 py-px">
@@ -444,6 +475,11 @@ export const AgentChatListRow = memo(function AgentChatListRow({
               <span className="inline-flex max-w-[110px] items-center gap-0.5 truncate rounded bg-inset px-1.5 py-px">
                 <Icon name="folder" size={9} stroke={2} />
                 <span className="truncate">{projectLabel}</span>
+              </span>
+            )}
+            {tabIdentity && (
+              <span className="inline-flex max-w-[96px] items-center gap-0.5 truncate rounded bg-inset px-1.5 py-px" title={tabIdentity}>
+                <span className="truncate">{tabIdentity}</span>
               </span>
             )}
             {harnessLabel && (

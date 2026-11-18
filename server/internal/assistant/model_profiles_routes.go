@@ -45,8 +45,8 @@ func modelProfileChanges(p ModelProfile, records map[string]modelRecord, stored 
 		if !ok {
 			continue
 		}
-		r := records[id] // a copy: the runtime is cleared on it only
-		r.Binding.Runtime = ""
+		r := records[id] // a copy: the new conversations' profile is cleared on it only
+		r.Binding.ConfigDir = ""
 		if r.Binding != b {
 			changes = append(changes, id)
 		}
@@ -178,13 +178,33 @@ func modelProfileStatus(err error) int {
 // modelProfileInput is PUT /api/v1/model-profiles/{id}: the whole profile, or (capture) the configuration as it is now
 // with the tiers kept.
 type modelProfileInput struct {
-	Revision    *int64                    `json:"revision"`
-	Name        string                    `json:"name"`
-	Description string                    `json:"description"`
-	Purposes    map[string]ModelBinding   `json:"purposes"`
-	Launchers   map[string]LauncherModels `json:"launchers"`
-	Tiers       map[string]ModelTier      `json:"tiers"`
-	Capture     bool                      `json:"capture"`
+	Revision    *int64                         `json:"revision"`
+	Name        string                         `json:"name"`
+	Description string                         `json:"description"`
+	Purposes    map[string]profilePurposeInput `json:"purposes"`
+	Launchers   map[string]LauncherModels      `json:"launchers"`
+	Tiers       map[string]ModelTier           `json:"tiers"`
+	Capture     bool                           `json:"capture"`
+}
+
+// profilePurposeInput is a category's choice as PUT takes it. The body is decoded strictly, so a "runtime" in it (the
+// shape of an older hub's binding) is accepted here and ignored, whatever its value: every assistant conversation runs
+// on Claude Code's CLI.
+type profilePurposeInput struct {
+	ModelBinding
+	Runtime json.RawMessage `json:"runtime"`
+}
+
+// profilePurposes is in's bindings (nil for none given).
+func profilePurposes(in map[string]profilePurposeInput) map[string]ModelBinding {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]ModelBinding, len(in))
+	for id, p := range in {
+		out[id] = p.ModelBinding
+	}
+	return out
 }
 
 func (s *Service) modelProfileRoutes() {
@@ -222,7 +242,7 @@ func (s *Service) modelProfileRoutes() {
 		_, err := s.saveModelProfile(ctx, in.Revision, r.PathValue("id"), profileActor(r), func(p *ModelProfile, exists bool) error {
 			p.Name, p.Description = in.Name, in.Description
 			if !in.Capture {
-				p.Purposes, p.Launchers, p.Tiers = in.Purposes, in.Launchers, in.Tiers
+				p.Purposes, p.Launchers, p.Tiers = profilePurposes(in.Purposes), in.Launchers, in.Tiers
 				return nil
 			}
 			purposes, launchers, tiers, err := s.captureModels(ctx)

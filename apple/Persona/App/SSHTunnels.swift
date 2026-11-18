@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import PersonaSSH
+import PersonaWire
 #if canImport(UIKit)
 import UIKit
 #endif

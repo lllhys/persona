@@ -38,6 +38,31 @@
   ],
   "source": "calendar"
  },
+ "phone_calendar_delete_event": {
+  "description": "Delete (cancel) a calendar event: pass its id from phone_calendar_events. For a repeating event also pass occurrence_start; span \"this\" (default) deletes only that occurrence, \"future\" it and every later one. The user must approve on the phone.",
+  "properties": {
+   "id": {
+    "description": "Event id from phone_calendar_events.",
+    "type": "string"
+   },
+   "occurrence_start": {
+    "description": "For a repeating event: the start of the occurrence to delete, ISO 8601, as phone_calendar_events returned it.",
+    "type": "string"
+   },
+   "span": {
+    "description": "this (default): only this occurrence; future: this and all later occurrences.",
+    "enum": [
+     "this",
+     "future"
+    ],
+    "type": "string"
+   }
+  },
+  "required": [
+   "id"
+  ],
+  "source": "calendar"
+ },
  "phone_calendar_events": {
   "description": "List calendar events in a time window. Defaults to the next 7 days starting at 00:00 today. Times are ISO 8601 with a timezone offset (e.g. 2026-10-24T14:00:00+08:00). Returns each event's id, title, start, end, all-day flag, calendar name, location, the first 300 characters of notes and the attendees. Use it to check whether the user is free.",
   "properties": {
@@ -63,6 +88,55 @@
   "required": [],
   "source": "calendar"
  },
+ "phone_calendar_update_event": {
+  "description": "Change or reschedule a calendar event: pass its id from phone_calendar_events and only the fields to change. For a repeating event (recurring=true) also pass occurrence_start, the occurrence's start as phone_calendar_events returned it, and span: \"this\" (default) changes only that occurrence, \"future\" it and every later one. A new start without an end keeps the duration. The user sees before and after on the phone and must approve.",
+  "properties": {
+   "all_day": {
+    "description": "Make the event all-day or not.",
+    "type": "boolean"
+   },
+   "end": {
+    "description": "New end, ISO 8601 with a timezone.",
+    "type": "string"
+   },
+   "id": {
+    "description": "Event id from phone_calendar_events.",
+    "type": "string"
+   },
+   "location": {
+    "description": "New location; an empty string removes it.",
+    "type": "string"
+   },
+   "notes": {
+    "description": "New notes; they replace the old notes, an empty string removes them.",
+    "type": "string"
+   },
+   "occurrence_start": {
+    "description": "For a repeating event: the start of the occurrence to change, ISO 8601, as phone_calendar_events returned it.",
+    "type": "string"
+   },
+   "span": {
+    "description": "this (default): only this occurrence; future: this and all later occurrences.",
+    "enum": [
+     "this",
+     "future"
+    ],
+    "type": "string"
+   },
+   "start": {
+    "description": "New start, ISO 8601 with a timezone.",
+    "type": "string"
+   },
+   "title": {
+    "description": "New title.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "id"
+  ],
+  "source": "calendar"
+ },
  "phone_clipboard_get": {
   "description": "Read the phone's clipboard as text. iOS may show an \"Allow Paste?\" prompt the first time, which the user has to confirm. Returns \"text\" and its character count, or text: null when the clipboard is empty or holds something that is not text.",
   "properties": {},
@@ -81,6 +155,87 @@
    "text"
   ],
   "source": "clipboard"
+ },
+ "phone_contacts_create": {
+  "description": "Create a contact in the phone's address book. Pass at least a name or a company. phones and emails are lists of {value, label?} (label: mobile, iphone, home, work, main or other). The user sees the new card on the phone and must approve. Returns the new contact as phone_contacts_search does.",
+  "properties": {
+   "company": {
+    "description": "Company or organization.",
+    "type": "string"
+   },
+   "emails": {
+    "description": "Email addresses to add.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "label": {
+       "description": "mobile, iphone, home, work, main or other.",
+       "enum": [
+        "mobile",
+        "iphone",
+        "home",
+        "work",
+        "main",
+        "other"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "description": "The phone number or email address.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "value"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "family_name": {
+    "description": "Last (family) name.",
+    "type": "string"
+   },
+   "given_name": {
+    "description": "First (given) name.",
+    "type": "string"
+   },
+   "job_title": {
+    "description": "Job title.",
+    "type": "string"
+   },
+   "phones": {
+    "description": "Phone numbers to add.",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "label": {
+       "description": "mobile, iphone, home, work, main or other.",
+       "enum": [
+        "mobile",
+        "iphone",
+        "home",
+        "work",
+        "main",
+        "other"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "description": "The phone number or email address.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "value"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   }
+  },
+  "required": [],
+  "source": "contacts"
  },
  "phone_contacts_search": {
   "description": "Search the phone's contacts by name, company, job title, email or phone number. Returns up to `limit` people with their name, company, job title, phone numbers (with labels such as mobile/work), email addresses and birthday (yyyy-MM-dd). Use this to look up a colleague's number before calling or drafting a message.",
@@ -101,6 +256,97 @@
   ],
   "source": "contacts"
  },
+ "phone_contacts_update": {
+  "description": "Add to or change an existing contact: pass its id from phone_contacts_search and only what changes. phones and emails are added next to the existing ones (an existing number or address is skipped). A field that already has a different value (name, company, job title) is only overwritten, and phones / emails only replaced, with replace=true: pass it only when the user asked to change it. The user sees each change on the phone and must approve.",
+  "properties": {
+   "company": {
+    "description": "Company or organization.",
+    "type": "string"
+   },
+   "emails": {
+    "description": "Email addresses to add (or, with replace, the new list).",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "label": {
+       "description": "mobile, iphone, home, work, main or other.",
+       "enum": [
+        "mobile",
+        "iphone",
+        "home",
+        "work",
+        "main",
+        "other"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "description": "The phone number or email address.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "value"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "family_name": {
+    "description": "Last (family) name.",
+    "type": "string"
+   },
+   "given_name": {
+    "description": "First (given) name.",
+    "type": "string"
+   },
+   "id": {
+    "description": "Contact id from phone_contacts_search.",
+    "type": "string"
+   },
+   "job_title": {
+    "description": "Job title.",
+    "type": "string"
+   },
+   "phones": {
+    "description": "Phone numbers to add (or, with replace, the new list).",
+    "items": {
+     "additionalProperties": false,
+     "properties": {
+      "label": {
+       "description": "mobile, iphone, home, work, main or other.",
+       "enum": [
+        "mobile",
+        "iphone",
+        "home",
+        "work",
+        "main",
+        "other"
+       ],
+       "type": "string"
+      },
+      "value": {
+       "description": "The phone number or email address.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "value"
+     ],
+     "type": "object"
+    },
+    "type": "array"
+   },
+   "replace": {
+    "description": "Overwrite fields that already have a value and replace phones / emails. Default false.",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "id"
+  ],
+  "source": "contacts"
+ },
  "phone_device_info": {
   "description": "Describe the phone: model identifier and name, iOS version, battery percentage and charging state, low power mode, free and total storage in bytes, current network type (wifi/cellular/wired/offline), timezone and locale, and the Persona app's version, build number and build channel (debug/release). Cheap and safe to call when you need context about the device.",
   "properties": {},
@@ -108,7 +354,7 @@
   "source": "device"
  },
  "phone_health_summary": {
-  "description": "Summarize the user's health data per day. Metrics: steps, distance (meters), active_energy (kcal), heart_rate (bpm, average/min/max over the day), resting_heart_rate (bpm), sleep (hours asleep), weight (kg). Defaults to steps over the last 7 days. Only the requested metrics are read. Days run from local midnight to midnight; today's numbers are partial. Returns one row per day with only the days that have data. Read access is never reported to apps, so an empty result can also mean the user denied read access.",
+  "description": "Summarize the user's health data per day. Metrics: steps, distance (meters), active_energy, resting_energy, dietary_energy (kcal, daily totals), protein, carbs, fat (grams, daily totals), heart_rate (bpm, average/min/max over the day), resting_heart_rate (bpm), sleep (hours asleep), weight (kg). Defaults to steps over the last 7 days. Only the requested metrics are read. Days run from local midnight to midnight; today's numbers are partial. Returns one row per day with only the days that have data. Read access is never reported to apps, so an empty result can also mean the user denied read access. When the iPhone is locked the app cannot read HealthKit: it returns the last snapshot saved while the device was unlocked (\"source\": \"snapshot\" with \"as_of\"), or a device_locked error when no snapshot exists yet.",
   "properties": {
    "days": {
     "description": "How many days back from today, default 7, max 90.",
@@ -127,7 +373,12 @@
       "heart_rate",
       "resting_heart_rate",
       "sleep",
-      "weight"
+      "weight",
+      "dietary_energy",
+      "protein",
+      "carbs",
+      "fat",
+      "resting_energy"
      ],
      "type": "string"
     },
@@ -208,5 +459,51 @@
   },
   "required": [],
   "source": "photos"
+ },
+ "phone_workout_detail": {
+  "description": "One workout from Apple Health by its id (from phone_workouts_recent or a workout report): the fields phone_workouts_recent gives, plus splits (whole kilometres in order, the seconds each took with pauses left out) for runs, walks, hikes and rides, and heart_rate (the average bpm of each minute from the start). No route or location is read.",
+  "properties": {
+   "id": {
+    "description": "The workout's id.",
+    "type": "string"
+   }
+  },
+  "required": [
+   "id"
+  ],
+  "source": "health"
+ },
+ "phone_workouts_recent": {
+  "description": "List the user's recent workouts from Apple Health (the Workout app and any app that saves workouts), newest first. Each row: id, activity, source app, start and end, duration (seconds), distance (meters), active energy (kcal), elevation_gain (meters), heart_rate_avg and heart_rate_max (bpm), and pace (seconds per kilometre) for runs, walks, hikes and rides. Fields without data are left out. Use it to compare a workout with recent ones of the same activity. No route or location is read. Read access is never reported to apps, so an empty result can also mean the user did not allow Persona to read workouts.",
+  "properties": {
+   "activity": {
+    "description": "Only this activity; all activities when absent.",
+    "enum": [
+     "cycling",
+     "hiking",
+     "interval_training",
+     "running",
+     "strength_training",
+     "swimming",
+     "walking",
+     "yoga"
+    ],
+    "type": "string"
+   },
+   "days": {
+    "description": "How many days back from now, default 30, max 365.",
+    "maximum": 365,
+    "minimum": 1,
+    "type": "integer"
+   },
+   "limit": {
+    "description": "At most this many workouts, default 20, max 50.",
+    "maximum": 50,
+    "minimum": 1,
+    "type": "integer"
+   }
+  },
+  "required": [],
+  "source": "health"
  }
 }

@@ -142,6 +142,73 @@
         "model": "example-model"
       },
       "payload": null
+    },
+    {
+      "name": "direct Responses API with what its gateway reported: output limit, images, tools, no thinking level (#8778)",
+      "provider": {
+        "name": "example-reported",
+        "display_name": "Example Reported",
+        "source": "persona",
+        "kind": "api",
+        "api": "responses",
+        "base_url": "https://api.example.invalid/v1",
+        "model": "example-thinker",
+        "models": [
+          {
+            "id": "example-thinker",
+            "context_window": 400000,
+            "max_output_tokens": 128000,
+            "efforts": [
+              "low",
+              "high"
+            ],
+            "all_efforts": [
+              "none",
+              "low",
+              "high"
+            ],
+            "default_effort": "high",
+            "image_input": true,
+            "tool_calls": true
+          },
+          {
+            "id": "example-plain",
+            "no_effort": true,
+            "tool_calls": false
+          }
+        ]
+      },
+      "payload": {
+        "kind": "custom",
+        "name": "Example Reported",
+        "endpoints": [
+          {
+            "protocol": "openai-responses",
+            "baseUrl": "https://api.example.invalid/v1",
+            "models": [
+              {
+                "id": "example-thinker",
+                "contextWindow": 400000,
+                "maxOutputTokens": 128000,
+                "supportsImageInput": true,
+                "supportsToolCalls": true,
+                "reasoning": true,
+                "reasoningEfforts": [
+                  "low",
+                  "high"
+                ],
+                "reasoningDefaultEffort": "high"
+              },
+              {
+                "id": "example-plain",
+                "supportsToolCalls": false,
+                "reasoning": false
+              }
+            ]
+          }
+        ]
+      },
+      "fragment": "import=eyJraW5kIjoiY3VzdG9tIiwibmFtZSI6IkV4YW1wbGUgUmVwb3J0ZWQiLCJlbmRwb2ludHMiOlt7InByb3RvY29sIjoib3BlbmFpLXJlc3BvbnNlcyIsImJhc2VVcmwiOiJodHRwczovL2FwaS5leGFtcGxlLmludmFsaWQvdjEiLCJtb2RlbHMiOlt7ImlkIjoiZXhhbXBsZS10aGlua2VyIiwiY29udGV4dFdpbmRvdyI6NDAwMDAwLCJtYXhPdXRwdXRUb2tlbnMiOjEyODAwMCwic3VwcG9ydHNJbWFnZUlucHV0Ijp0cnVlLCJzdXBwb3J0c1Rvb2xDYWxscyI6dHJ1ZSwicmVhc29uaW5nIjp0cnVlLCJyZWFzb25pbmdFZmZvcnRzIjpbImxvdyIsImhpZ2giXSwicmVhc29uaW5nRGVmYXVsdEVmZm9ydCI6ImhpZ2gifSx7ImlkIjoiZXhhbXBsZS1wbGFpbiIsInN1cHBvcnRzVG9vbENhbGxzIjpmYWxzZSwicmVhc29uaW5nIjpmYWxzZX1dfV19"
     }
   ],
   "links": [
@@ -180,6 +247,27 @@
           "model": "example-chat",
           "models": [
             "example-chat"
+          ]
+        }
+      ],
+      "notes": [],
+      "format": "link"
+    },
+    {
+      "name": "web link of a direct Responses API with what its gateway reported (#8778)",
+      "text": "https://persona.example.invalid/settings?tab=models#import=eyJraW5kIjoiY3VzdG9tIiwibmFtZSI6IkV4YW1wbGUgUmVwb3J0ZWQiLCJlbmRwb2ludHMiOlt7InByb3RvY29sIjoib3BlbmFpLXJlc3BvbnNlcyIsImJhc2VVcmwiOiJodHRwczovL2FwaS5leGFtcGxlLmludmFsaWQvdjEiLCJtb2RlbHMiOlt7ImlkIjoiZXhhbXBsZS10aGlua2VyIiwiY29udGV4dFdpbmRvdyI6NDAwMDAwLCJtYXhPdXRwdXRUb2tlbnMiOjEyODAwMCwic3VwcG9ydHNJbWFnZUlucHV0Ijp0cnVlLCJzdXBwb3J0c1Rvb2xDYWxscyI6dHJ1ZSwicmVhc29uaW5nIjp0cnVlLCJyZWFzb25pbmdFZmZvcnRzIjpbImxvdyIsImhpZ2giXSwicmVhc29uaW5nRGVmYXVsdEVmZm9ydCI6ImhpZ2gifSx7ImlkIjoiZXhhbXBsZS1wbGFpbiIsInN1cHBvcnRzVG9vbENhbGxzIjpmYWxzZSwicmVhc29uaW5nIjpmYWxzZX1dfV19",
+      "drafts": [
+        {
+          "kind": "api",
+          "api": "responses",
+          "base_url": "https://api.example.invalid/v1",
+          "display_name": "Example Reported",
+          "auth": "bearer",
+          "api_key": "",
+          "model": "example-thinker",
+          "models": [
+            "example-thinker",
+            "example-plain"
           ]
         }
       ],

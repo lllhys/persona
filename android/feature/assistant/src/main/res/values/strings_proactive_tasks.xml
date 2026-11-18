@@ -59,4 +59,14 @@
     <string name="assistant_proactive_push_every_note">Pushes the answer to your phone after every run.</string>
     <string name="assistant_proactive_push_asked_note">Pushes only when a run decides you need to know and alerts you; otherwise it stays quiet. Errors and interruptions are pushed as usual. These tasks always run in their own chat, and messages you send in that chat aren\'t pushed when done either.</string>
     <string name="assistant_proactive_push_asked_mark">Pushes only when it alerts you</string>
+    <string name="assistant_proactive_inbox">When done, put it in the Inbox</string>
+    <string name="assistant_proactive_inbox_compact">Inbox when done</string>
+    <string name="assistant_proactive_inbox_off">Don\'t</string>
+    <string name="assistant_proactive_inbox_worthy">Only if worth a look</string>
+    <string name="assistant_proactive_inbox_every">Every time</string>
+    <string name="assistant_proactive_inbox_off_note">Nothing is added to your Inbox.</string>
+    <string name="assistant_proactive_inbox_worthy_note">A row is added to your Inbox only when a run finds something worth a look. Tapping it opens that chat.</string>
+    <string name="assistant_proactive_inbox_every_note">Every run adds a row to your Inbox, so you can follow up. Tapping it opens that chat.</string>
+    <string name="assistant_proactive_inbox_worthy_mark">Inbox: if worth a look</string>
+    <string name="assistant_proactive_inbox_every_mark">Inbox: every time</string>
 </resources>

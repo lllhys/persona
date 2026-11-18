@@ -79,7 +79,8 @@ final class MessageMenuTests: XCTestCase {
     @MainActor func testForkFromAReply() throws {
         let app = try launch()
         answerPoint(app).press(forDuration: 0.5)
-        let more = app.buttons["更多"]
+        // The bar's ⋯, not the chat header's (`chat.more`, #7998), which has the same name.
+        let more = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "更多", "chat.more")).firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 3), "the reply's bar has no ⋯")
         shot("fork-ios-bar")
         more.tap()

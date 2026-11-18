@@ -45,6 +45,8 @@ type LarkLetThrough struct {
 	// is empty when the user did, AnsweredByAssistant when the assistant did for them.
 	InteractionID string `json:"interaction_id,omitempty"`
 	AnsweredBy    string `json:"answered_by,omitempty"`
+	// EditedFrom is the card's original outgoing text when Allow carried edited_text; Text keeps the sent version.
+	EditedFrom string `json:"edited_from,omitempty"`
 }
 
 // writtenFields are the fields of a write's arguments or body that connectors usually put their text in, in the

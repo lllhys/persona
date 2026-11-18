@@ -1,8 +1,5 @@
 package persona.core.designsystem
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -10,10 +7,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -69,8 +62,8 @@ import java.time.Instant
 //   WorkflowTimeline.PHASE_ROWS of them with the quiet rest folded into "n more", the earliest ones the hub no longer
 //   lists said above them. A row opens the agent's conversation.
 // The rules are core:domain's WorkflowTimeline. Things move only when a value changes, never on the first draw and not at
-// all with reduced motion: counts count, colors go over, a block opens and folds, a new agent fades in. Nothing moves
-// while nothing changes: the status chip keeps its look, with no breathing.
+// all with reduced motion: counts count, colors go over, a block fades in over its full space and closes at once (#9574),
+// a new agent fades in. Nothing moves while nothing changes: the status chip keeps its look, with no breathing.
 
 /** The mark of a background workflow, wherever one is named. */
 val WorkflowIcon: PhIcon get() = PhIcons.TreeStructure
@@ -449,8 +442,8 @@ private fun AgentRow(agent: WorkflowAgent, clock: State<Instant>, fresh: Boolean
     val label = agentLabel(agent)
     val reduce = PersonaTheme.reduceMotion
     val alpha = remember { Animatable(if (fresh && !reduce) 0f else 1f) }
-    val duration = PersonaTheme.motion.standard
-    LaunchedEffect(Unit) { if (alpha.value < 1f) alpha.animateTo(1f, tween(duration, easing = FastOutSlowInEasing)) }
+    // iOS WorkflowViews.swift:590: .animation(Theme.Motion.reveal, value: r.rows.map(\.id))
+    LaunchedEffect(Unit) { if (alpha.value < 1f) alpha.animateTo(1f, SharedMotion.reveal()) }
     val word = CoreText.of(when (state) {
         AgentState.Running -> CoreText.Key.WorkflowRunning
         AgentState.Done -> CoreText.Key.WorkflowCompleted
@@ -519,16 +512,17 @@ private fun TextAction(text: String, inset: Dp, onClick: () -> Unit) {
     }
 }
 
-/** Opens and folds [content] over the style's size motion; at once with reduced motion, and not on the first draw. */
+/**
+ * Opens [content] as the chat's unfolding: full height on the first frame, a Reveal fade, gone at once when it closes.
+ * iOS `WorkflowCallCard` body (`WorkflowCallCard.swift:102`) and a phase's rows (`WorkflowViews.swift:498`), both through
+ * `toggleInPlace` (`ChatPin.swift:707-726`). Not on the first draw. Without a chat pin iOS animates with
+ * `Theme.Motion.reveal` instead (`WorkflowViews.swift:509-511`); these cards are in the chat, or always open.
+ */
 @Composable
 private fun Unfold(open: Boolean, content: @Composable () -> Unit) {
-    val reduce = PersonaTheme.reduceMotion
-    val motion = PersonaTheme.motion
-    AnimatedVisibility(
-        visible = open,
-        enter = if (reduce) EnterTransition.None else expandVertically(motion.size()) + fadeIn(tween(motion.quick)),
-        exit = if (reduce) ExitTransition.None else shrinkVertically(motion.size()) + fadeOut(tween(motion.quick)),
-    ) { content() }
+    val edge = rememberOpenEdge()
+    val revealing = edge.revealing(open)
+    if (open) Box(Modifier.unfolding(revealing)) { content() }
 }
 
 /** [content] for [value]: drawn at once the first time; when [value] changes, the new one fades in (at once with reduced motion). */

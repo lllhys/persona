@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistant"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/managerconf"
 	"github.com/nwverse/persona/server/internal/pgdocker"
 )
@@ -29,6 +30,7 @@ import (
 // env is what the service commands touch, so tests can stand in for systemctl / launchctl.
 type env struct {
 	stdout io.Writer
+	lang   i18n.Lang
 	goos   string
 	home   string
 	uid    int
@@ -49,7 +51,7 @@ type env struct {
 
 func newEnv(stdout io.Writer) *env {
 	home, _ := os.UserHomeDir()
-	e := &env{stdout: stdout, goos: runtime.GOOS, home: home, uid: os.Getuid(), exe: os.Executable,
+	e := &env{stdout: stdout, lang: i18n.Terminal(), goos: runtime.GOOS, home: home, uid: os.Getuid(), exe: os.Executable,
 		look: exec.LookPath, getenv: os.Getenv,
 		run: func(ctx context.Context, name string, args ...string) (string, error) {
 			out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
@@ -64,6 +66,13 @@ func newEnv(stdout io.Writer) *env {
 
 // self is how the user runs this program, for the lines it prints.
 func (e *env) self() string { return "personad" }
+
+func (e *env) l() i18n.Lang {
+	if e.lang != "" {
+		return e.lang.Or(i18n.En)
+	}
+	return i18n.Terminal()
+}
 
 func unitName(id string) string     { return "persona-manager-" + id + ".service" }
 func launchdLabel(id string) string { return "com.persona.manager." + id }
@@ -161,7 +170,7 @@ func servicePlist(id, bin, dir, home string) string {
 func dirFlag(e *env, name string, args []string) (string, *assistant.ManagerConfig, error) {
 	fs := flag.NewFlagSet("manager "+name, flag.ContinueOnError)
 	fs.SetOutput(e.stdout)
-	dir := fs.String("dir", "", "管理者的目录（这台只有一个管理者时可以不写）")
+	dir := fs.String("dir", "", i18n.T(e.l(), "manager-cli.flag_dir"))
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return "", nil, err
@@ -171,7 +180,7 @@ func dirFlag(e *env, name string, args []string) (string, *assistant.ManagerConf
 	}
 	d := *dir
 	if d == "" {
-		if d, err = onlyManager(); err != nil {
+		if d, err = onlyManager(e.l()); err != nil {
 			return "", nil, err
 		}
 	}
@@ -180,7 +189,7 @@ func dirFlag(e *env, name string, args []string) (string, *assistant.ManagerConf
 	}
 	c, err := assistant.ReadManagerConfig(d)
 	if err != nil {
-		return "", nil, fmt.Errorf("%s 不是管理者的目录：%w", d, err)
+		return "", nil, withTerminalCause(i18n.T(e.l(), "manager-cli.dir_invalid", i18n.Args{"directory": d, "error": err}), err)
 	}
 	return d, c, nil
 }
@@ -192,13 +201,13 @@ func (e *env) systemctl(ctx context.Context, args ...string) (string, error) {
 // noSystemd says why there is no systemd user instance; "" when there is one.
 func (e *env) noSystemd(ctx context.Context) string {
 	if _, err := e.look("systemctl"); err != nil {
-		return "没有 systemctl"
+		return i18n.T(e.l(), "manager-cli.systemd_missing")
 	}
 	if out, err := e.systemctl(ctx, "show-environment"); err != nil {
 		if line := firstLine(out); line != "" {
-			return "连不上你的 systemd 用户实例：" + line
+			return i18n.T(e.l(), "manager-cli.systemd_user_unreachable_detail", i18n.Args{"error": line})
 		}
-		return "连不上你的 systemd 用户实例"
+		return i18n.T(e.l(), "manager-cli.systemd_user_unreachable")
 	}
 	return ""
 }
@@ -215,16 +224,16 @@ func cmdInstall(ctx context.Context, e *env, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(e.stdout, "数据库：%s\n", databaseLine(c, made))
+	fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.database_label", i18n.Args{"database": databaseLine(e.l(), c, made)}))
 	bin, err := e.binary()
 	if err != nil {
 		return err
 	}
-	manual := fmt.Sprintf("自己让它一直运行：%s manager run --dir %s（tmux、nohup，或者容器）", shellQuote(bin), shellQuote(dir))
+	manual := i18n.T(e.l(), "manager-cli.service_manual", i18n.Args{"binary": shellQuote(bin), "directory": shellQuote(dir)})
 	switch e.goos {
 	case "linux":
 		if why := e.noSystemd(ctx); why != "" {
-			return fmt.Errorf("装不了常驻服务（%s）；%s", why, manual)
+			return errors.New(i18n.T(e.l(), "manager-cli.service_install_unavailable", i18n.Args{"reason": why, "manual": manual}))
 		}
 		path := e.unitPath(c.ID)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -235,13 +244,12 @@ func cmdInstall(ctx context.Context, e *env, args []string) error {
 		}
 		for _, step := range [][]string{{"daemon-reload"}, {"enable", e.compatUnit(c.ID)}, {"restart", e.compatUnit(c.ID)}} {
 			if out, err := e.systemctl(ctx, step...); err != nil {
-				return fmt.Errorf("systemctl --user %s 失败：%s", strings.Join(step, " "), firstLine(out+" "+err.Error()))
+				return errors.New(i18n.T(e.l(), "manager-cli.systemctl_failed", i18n.Args{"arguments": strings.Join(step, " "), "error": firstLine(out + " " + err.Error())}))
 			}
 		}
-		fmt.Fprintf(e.stdout, "装好了：管理者「%s」（%s）是 systemd 用户服务 %s，已经启动。\n  日志：journalctl --user -u %s -f\n",
-			c.Name, c.ID, e.compatUnit(c.ID), e.compatUnit(c.ID))
+		fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.installed_systemd", i18n.Args{"name": c.Name, "id": c.ID, "unit": e.compatUnit(c.ID)}))
 		if e.user != "" && !fileExists("/var/lib/systemd/linger/"+e.user) {
-			fmt.Fprintf(e.stdout, "  没打开 linger：你退出登录后它会停。运行 sudo loginctl enable-linger %s 让它一直运行\n", e.user)
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.linger_disabled", i18n.Args{"user": e.user}))
 		}
 		return nil
 	case "darwin":
@@ -255,13 +263,12 @@ func cmdInstall(ctx context.Context, e *env, args []string) error {
 		domain := "gui/" + strconv.Itoa(e.uid)
 		_, _ = e.run(ctx, "launchctl", "bootout", domain+"/"+e.compatLabel(c.ID))
 		if out, err := bootstrapAgent(ctx, e, domain, path); err != nil {
-			return fmt.Errorf("launchctl bootstrap 失败：%s", firstLine(out+" "+err.Error()))
+			return errors.New(i18n.T(e.l(), "manager-cli.launchctl_bootstrap_failed", i18n.Args{"error": firstLine(out + " " + err.Error())}))
 		}
-		fmt.Fprintf(e.stdout, "装好了：管理者「%s」（%s）是 launchd 服务 %s，登录后自动运行。\n  日志：%s\n",
-			c.Name, c.ID, e.compatLabel(c.ID), filepath.Join(dir, "manager.log"))
+		fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.installed_launchd", i18n.Args{"name": c.Name, "id": c.ID, "label": e.compatLabel(c.ID), "log": filepath.Join(dir, "manager.log")}))
 		return nil
 	}
-	return fmt.Errorf("%s 上还装不了常驻服务；%s", e.goos, manual)
+	return errors.New(i18n.T(e.l(), "manager-cli.service_unsupported", i18n.Args{"os": e.goos, "manual": manual}))
 }
 
 func cmdUninstall(ctx context.Context, e *env, args []string) error {
@@ -282,7 +289,7 @@ func cmdUninstall(ctx context.Context, e *env, args []string) error {
 		return err
 	}
 	fmt.Fprintf(e.stdout, "%s\n", e.uninstallDatabase(ctx, dir, c, purge))
-	fmt.Fprintf(e.stdout, "目录 %s 留着；在 App 里删掉这个助手，hub 才不再认它的 token。\n", dir)
+	fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.uninstall_directory_kept", i18n.Args{"directory": dir}))
 	return nil
 }
 
@@ -291,25 +298,25 @@ func cmdUninstall(ctx context.Context, e *env, args []string) error {
 func (e *env) uninstallDatabase(ctx context.Context, dir string, c *assistant.ManagerConfig, purge bool) string {
 	if c.DatabaseContainer == "" {
 		if c.DatabaseURL != "" {
-			return "数据库是 --database-url 给的，没动它。"
+			return i18n.T(e.l(), "manager-cli.uninstall_database_given")
 		}
-		return "它还没有数据库。"
+		return i18n.T(e.l(), "manager-cli.uninstall_database_none")
 	}
 	pg := e.pg(c.ID)
 	if !purge {
 		if err := pg.Stop(ctx); err != nil {
-			return fmt.Sprintf("数据库容器 %s 没停下（%v）；它和数据卷 %s 都留着。", pg.Name, err, pg.Volume)
+			return i18n.T(e.l(), "manager-cli.uninstall_database_stop_failed", i18n.Args{"container": pg.Name, "error": err, "volume": pg.Volume})
 		}
-		return fmt.Sprintf("数据库容器 %s 停了，数据卷 %s 和里面的数据都留着：再 install 接着用；要连数据一起删掉，加 --purge。", pg.Name, pg.Volume)
+		return i18n.T(e.l(), "manager-cli.uninstall_database_stopped", i18n.Args{"container": pg.Name, "volume": pg.Volume})
 	}
 	if err := pg.Remove(ctx); err != nil {
-		return fmt.Sprintf("删数据库容器 %s 和数据卷 %s 没成功：%v", pg.Name, pg.Volume, err)
+		return i18n.T(e.l(), "manager-cli.uninstall_database_remove_failed", i18n.Args{"container": pg.Name, "volume": pg.Volume, "error": err})
 	}
 	c.DatabaseURL, c.DatabaseContainer = "", ""
 	if err := assistant.WriteManagerConfig(dir, *c); err != nil {
-		return fmt.Sprintf("删掉了数据库容器 %s 和数据卷 %s（它的数据没了），但 manager.json 没改成：%v", pg.Name, pg.Volume, err)
+		return i18n.T(e.l(), "manager-cli.uninstall_database_config_failed", i18n.Args{"container": pg.Name, "volume": pg.Volume, "error": err})
 	}
-	return fmt.Sprintf("删掉了数据库容器 %s 和数据卷 %s，它的数据没了；再 install 会建一个新的空库。", pg.Name, pg.Volume)
+	return i18n.T(e.l(), "manager-cli.uninstall_database_removed", i18n.Args{"container": pg.Name, "volume": pg.Volume})
 }
 
 // removeService stops and removes the manager's service; one that was never installed is fine.
@@ -321,7 +328,7 @@ func (e *env) removeService(ctx context.Context, c *assistant.ManagerConfig) err
 	case "linux":
 		path := e.unitPath(c.ID)
 		if !fileExists(path) {
-			fmt.Fprintf(e.stdout, "管理者 %s 没有装成服务（没有 %s）\n", c.ID, path)
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.service_not_installed", i18n.Args{"id": c.ID, "path": path}))
 			return nil
 		}
 		_, _ = e.systemctl(ctx, "disable", "--now", e.compatUnit(c.ID))
@@ -332,7 +339,7 @@ func (e *env) removeService(ctx context.Context, c *assistant.ManagerConfig) err
 	case "darwin":
 		path := e.plistPath(c.ID)
 		if !fileExists(path) {
-			fmt.Fprintf(e.stdout, "管理者 %s 没有装成服务（没有 %s）\n", c.ID, path)
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.service_not_installed", i18n.Args{"id": c.ID, "path": path}))
 			return nil
 		}
 		_, _ = e.run(ctx, "launchctl", "bootout", "gui/"+strconv.Itoa(e.uid)+"/"+e.compatLabel(c.ID))
@@ -340,10 +347,10 @@ func (e *env) removeService(ctx context.Context, c *assistant.ManagerConfig) err
 			return err
 		}
 	default:
-		fmt.Fprintf(e.stdout, "%s 上没有装常驻服务\n", e.goos)
+		fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.service_none_on_os", i18n.Args{"os": e.goos}))
 		return nil
 	}
-	fmt.Fprintf(e.stdout, "停掉并去掉了管理者 %s 的服务。\n", c.ID)
+	fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.service_removed", i18n.Args{"id": c.ID}))
 	return nil
 }
 
@@ -369,20 +376,20 @@ func cmdStatus(ctx context.Context, e *env, args []string) error {
 		defer e.builtinStatus(ctx, false) // the built-in manager's own service too, when it has one or a binding
 	}
 	if len(dirs) == 0 {
-		fmt.Fprintf(e.stdout, "%s 下没有管理者\n", managersRoot())
+		fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.status_none_under", i18n.Args{"directory": managersRoot()}))
 		return nil
 	}
 	for _, d := range dirs {
 		c, err := assistant.ReadManagerConfig(d)
 		if err != nil {
-			fmt.Fprintf(e.stdout, "%s：%v\n", d, err)
+			fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.status_config_error", i18n.Args{"directory": d, "error": err}))
 			continue
 		}
-		database := databaseLine(c, false)
+		database := databaseLine(e.l(), c, false)
 		if c.DatabaseContainer != "" {
-			database += "，" + e.containerState(ctx, c.DatabaseContainer)
+			database = i18n.T(e.l(), "manager-cli.status_database_container", i18n.Args{"database": database, "state": e.containerState(ctx, c.DatabaseContainer)})
 		}
-		fmt.Fprintf(e.stdout, "管理者「%s」（%s）\n  目录：%s\n  hub：%s\n  数据库：%s\n  服务：%s\n", c.Name, c.ID, d, c.Hub, database, e.serviceState(ctx, c.ID))
+		fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.status_manager", i18n.Args{"name": c.Name, "id": c.ID, "directory": d, "hub": c.Hub, "database": database, "service": e.serviceState(ctx, c.ID)}))
 	}
 	return nil
 }
@@ -392,20 +399,20 @@ func cmdStatus(ctx context.Context, e *env, args []string) error {
 func (e *env) containerState(ctx context.Context, name string) string {
 	switch err := pgdocker.CheckDocker(ctx, e.docker, e.look); {
 	case errors.Is(err, pgdocker.ErrNoDocker):
-		return "这台没有 Docker，看不了"
+		return i18n.T(e.l(), "manager-cli.container_docker_missing")
 	case errors.Is(err, pgdocker.ErrDockerDenied):
-		return "当前用户没有权限用 Docker，看不了"
+		return i18n.T(e.l(), "manager-cli.container_docker_denied")
 	case err != nil:
-		return "Docker 没在运行，看不了"
+		return i18n.T(e.l(), "manager-cli.container_docker_down")
 	}
 	out, err := e.docker(ctx, nil, "docker", "inspect", "-f", "{{.State.Status}}", name)
 	switch {
 	case err != nil:
-		return "容器不在了"
+		return i18n.T(e.l(), "manager-cli.container_missing")
 	case strings.TrimSpace(string(out)) == "running":
-		return "在运行"
+		return i18n.T(e.l(), "manager-cli.container_running")
 	}
-	return "没在运行（" + strings.TrimSpace(string(out)) + "）"
+	return i18n.T(e.l(), "manager-cli.container_not_running", i18n.Args{"state": strings.TrimSpace(string(out))})
 }
 
 // serviceState is a line on the manager's service.
@@ -413,18 +420,18 @@ func (e *env) serviceState(ctx context.Context, id string) string {
 	switch e.goos {
 	case "linux":
 		if !fileExists(e.unitPath(id)) {
-			return "没装（personad manager install）"
+			return i18n.T(e.l(), "manager-cli.service_not_installed_hint", i18n.Args{"command": "personad manager install"})
 		}
 		out, _ := e.systemctl(ctx, "is-active", e.compatUnit(id))
 		return e.compatUnit(id) + " " + strings.TrimSpace(out)
 	case "darwin":
 		if !fileExists(e.plistPath(id)) {
-			return "没装（personad manager install）"
+			return i18n.T(e.l(), "manager-cli.service_not_installed_hint", i18n.Args{"command": "personad manager install"})
 		}
 		if _, err := e.run(ctx, "launchctl", "print", "gui/"+strconv.Itoa(e.uid)+"/"+e.compatLabel(id)); err != nil {
-			return e.compatLabel(id) + " 没在运行"
+			return i18n.T(e.l(), "manager-cli.service_launchd_not_running", i18n.Args{"label": e.compatLabel(id)})
 		}
-		return e.compatLabel(id) + " 在运行"
+		return i18n.T(e.l(), "manager-cli.service_launchd_running", i18n.Args{"label": e.compatLabel(id)})
 	}
-	return "这台系统上不装服务"
+	return i18n.T(e.l(), "manager-cli.service_unsupported_os")
 }

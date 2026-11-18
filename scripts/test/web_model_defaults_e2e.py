@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""End-to-end check of the launcher defaults and the main chat's "Runtime" in the web (#2455): model config's main chat offers
-Claude Code CLI / Agent SDK, a switch is saved and still there after a reload; "New agent"'s model pill and panel (#5104)
-start at "Follow Model settings" with "<provider> · <model>" from the hub's `default`, and a launcher picked over it
-unchecks it (the pill names that launcher) until the follow row is picked again; the conversation's launcher menu opens
-with "Default: <provider> · <model>", and a launcher picked over it says "This time only"; the main conversation that fell
-back to the CLI says so above the composer.
+"""End-to-end check of the launcher defaults and the main chat's "Runtime" in the web (#2455): against an older hub that
+offers one (the fake hub's MOCK_MODEL_DEFAULTS; a current hub runs the main chat on the CLI only and the web shows no
+picker, #9799), model config's main chat offers Claude Code CLI / Agent SDK, a switch is saved and still there after a
+reload; "New agent"'s model pill and panel (#5104) start at "Follow Model settings" with "<provider> · <model>" from the
+hub's `default`, and a launcher picked over it unchecks it (the pill names that launcher) until the follow row is picked
+again; the conversation's launcher menu opens with "Default: <provider> · <model>", and a launcher picked over it says
+"This time only"; the main conversation that fell back to the CLI says so above the composer.
 
 Needs a running web page against the fake hub with MOCK_MODEL_DEFAULTS=1 and Playwright for Python (it drives the
 installed Chrome):

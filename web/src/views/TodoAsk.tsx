@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { t } from "../i18n";
 import { errorText } from "../lib/api";
-import { acceptBrief } from "../lib/feed";
+import { acceptBrief, setRoute } from "../lib/feed";
 import { conversationPage } from "../lib/conversation-page";
 import { navigate } from "../lib/router";
 import { stateName } from "../lib/state-labels";
@@ -16,7 +16,7 @@ import { Button, cx, toast } from "../ui/atoms";
 import { Icon, type IconName } from "../ui/icons";
 
 /** Where answering one round stands: not yet, sent, the hub took it, or that round was already answered (409). */
-export type AskTaking = "idle" | "busy" | "taken" | "handled";
+export type AskTaking = "idle" | "busy" | "taken" | "recorded" | "handled";
 
 const TONE: Record<ReturnType<typeof askTone>, string> = { attention: "text-attention", red: "text-red", green: "text-green" };
 const ICON: Record<ReturnType<typeof askTone>, IconName> = { attention: "hand", red: "info", green: "check" };
@@ -41,6 +41,7 @@ function takeTitle(what: AskTake, title: string): string {
 /** What stands in for the button once the round is answered. */
 function takenText(what: AskTake, taking: AskTaking): string {
   if (taking === "handled") return t("assistant-brief.handled");
+  if (taking === "recorded") return t("assistant-brief.recorded_not_delivered");
   return what === "take" ? t("assistant-brief.taken") : what === "ack" ? t("assistant-brief.noted") : t("assistant-brief.accepted");
 }
 
@@ -59,8 +60,8 @@ export function useTakeAsk(todo: Pick<Todo, "id">, ask: TodoAsk): { taking: AskT
     setState({ round, taking: "busy" });
     acceptBrief(todo.id, round).then(
       (res) => {
-        setState({ round, taking: res === "accepted" ? "taken" : "handled" });
-        toast(takenText(what, res === "accepted" ? "taken" : "handled"), "ok");
+        setState({ round, taking: res === "accepted" ? "taken" : res });
+        toast(takenText(what, res === "accepted" ? "taken" : res), "ok");
         if (res === "handled") void refreshTodos(); // acceptBrief reads them again only when it took it
       },
       (e) => {
@@ -72,8 +73,9 @@ export function useTakeAsk(todo: Pick<Todo, "id">, ask: TodoAsk): { taking: AskT
   return { taking, take };
 }
 
-/** The ask on a to-do's row or a task's card: its verdict, the recommendation, and the button as a link. Its clicks never
- *  open the row. Nothing when the to-do waits on nothing. */
+/** The ask on a to-do's row, a task's card or the task panel's banner: its verdict, the recommendation, the mark of a
+ *  decision held for the briefing (#5803), and the button as a link. Its clicks never open the row. Nothing when the
+ *  to-do waits on nothing. */
 export function TodoAskLine({ todo, className }: { todo: Todo; className?: string }) {
   const ask = openAsk(todo);
   return ask ? <AskLine todo={todo} ask={ask} className={className} /> : null;
@@ -96,9 +98,16 @@ function AskLine({ todo, ask, className }: { todo: Todo; ask: TodoAsk; className
             {recommend}
           </span>
         )}
+        {/* held for the briefing (#5803): why it did not ring; what that means on hover, written out on the to-do's page */}
+        {ask.for_briefing === true && (
+          <span data-for-briefing="mark" title={t("todos.ask_held_hint")} className="flex min-w-0 items-center gap-1 text-ink-2">
+            <Icon name="clock" size={11} className="shrink-0" />
+            <span className="truncate">{t("todos.ask_held")}</span>
+          </span>
+        )}
       </span>
       {what &&
-        (taking === "taken" || taking === "handled" ? (
+        (taking === "taken" || taking === "recorded" || taking === "handled" ? (
           <span data-ask-done={taking} className="shrink-0 whitespace-nowrap text-ink-2">
             {takenText(what, taking)}
           </span>
@@ -152,7 +161,7 @@ function AskPanel({ todo, ask }: { todo: Todo; ask: TodoAsk }) {
       {(what || (decide && todo.origin)) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           {what &&
-            (taking === "taken" || taking === "handled" ? (
+            (taking === "taken" || taking === "recorded" || taking === "handled" ? (
               <span data-ask-done={taking} className="text-[12.5px] text-ink-2">
                 {takenText(what, taking)}
               </span>
@@ -163,7 +172,10 @@ function AskPanel({ todo, ask }: { todo: Todo; ask: TodoAsk }) {
             ))}
           {decide && todo.origin && (
             // the conversation the task came from: the to-do's manager's, whichever assistant is current
-            <Button icon="chat" onClick={() => navigate(conversationPage(todo.origin!, undefined, todo.manager))}>
+            <Button icon="chat" onClick={() => {
+              setRoute(todo.origin!, todo.id, ask.asked_at);
+              navigate(conversationPage(todo.origin!, undefined, todo.manager));
+            }}>
               {t("todos.ask_answer")}
             </Button>
           )}

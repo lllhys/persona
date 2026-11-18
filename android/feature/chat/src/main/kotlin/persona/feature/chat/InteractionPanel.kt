@@ -25,13 +25,18 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import persona.core.contracts.CoreText
+import persona.core.contracts.DialogOption
 import persona.core.contracts.Interaction
 import persona.core.contracts.Machine
+import persona.core.contracts.Question
 import persona.core.contracts.Resolution
+import persona.core.contracts.ScreenDialog
+import persona.core.contracts.parseTime
 import persona.core.designsystem.*
 import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcons
 import persona.core.domain.answer.*
+import java.time.Duration
 import java.time.Instant
 import kotlinx.coroutines.delay
 
@@ -39,7 +44,8 @@ import kotlinx.coroutines.delay
  * A conversation's pending cards above its composer, which stays usable (iOS `PendingCards`, `DESIGN_SYSTEM.md` section 4.8):
  * each card whole in [DecisionStack] while they fit in [maxHeight], scrolling under "N pending" past it (or with the
  * [keyboard] up), permissions first; each folds on its own from its header ([folds]; [onFold] hears it), and opens to a
- * full page. [labels] go over a card that is not the conversation's own (its task); [first] leads in every order.
+ * full page. [labels] go over a card that is not the conversation's own (its task); [first] leads in every order. A place
+ * that holds one task's question and names its count in the label ("N more") passes `counted = false`.
  */
 @Composable
 internal fun InteractionPanel(
@@ -57,6 +63,9 @@ internal fun InteractionPanel(
     keyboard: Boolean = false,
     labels: Map<String, StackLabel> = emptyMap(),
     first: String? = null,
+    counted: Boolean = true,
+    /** Drawn under a card that is not folded: the rule a question a supervisor passed up suggests (#4929); null: nothing. */
+    suggestion: (@Composable (Interaction) -> Unit)? = null,
 ) {
     // The card open on its full page, by its id: cards come and go around it (answered on another device, expired).
     var full by rememberSaveable { mutableStateOf<String?>(null) }
@@ -81,23 +90,27 @@ internal fun InteractionPanel(
         }
     }
     val closeCard: @Composable (Interaction) -> Unit = { request ->
-        val localOnly = blockedReason != null || (request.kind == "question" && request.canCancel != true)
-        if ((localOnly && onDiscardLocal != null) || (request.kind == "question" && request.canCancel == true)) {
+        val requestBlock = resolveRequestApprovalBlockedReason(request, blockedReason)
+        val stoppedWork = requestBlock != null && request.isManagerWorkCard
+        val localOnly = !stoppedWork && (requestBlock != null || (request.kind == "question" && request.canCancel != true))
+        if ((localOnly && onDiscardLocal != null) || stoppedWork || (request.kind == "question" && request.canCancel == true)) {
             val canClose = busyId == null && !linkVisible && if (localOnly) onDiscardLocal != null else
                 request.id !in uncertainIds && !RequestExpiry.expired(request.expiresAt, now)
             JIconButton(PhIcons.X, stringResource(if (localOnly) R.string.chat_card_discard_local else R.string.chat_question_close), {
                 if (canClose) {
                     if (localOnly) onDiscardLocal?.invoke(request)
-                    else if (!RequestExpiry.expired(request.expiresAt, Instant.now()))
-                        AnswerBuilder.build(request, AnswerAction.CancelQuestion).resolution?.let { onResolve(request, it) }
+                    else if (!RequestExpiry.expired(request.expiresAt, Instant.now())) {
+                        val action = if (stoppedWork) AnswerAction.Dismiss else AnswerAction.CancelQuestion
+                        AnswerBuilder.build(request, action).resolution?.let { onResolve(request, it) }
+                    }
                 }
             }, enabled = canClose)
         }
     }
-    DecisionStack(requests.size, maxHeight, modifier, keyboard = keyboard, keys = ids) { scrolling ->
+    DecisionStack(requests.size, maxHeight, modifier, keyboard = keyboard, keys = ids, counted = counted) { scrolling ->
         for (request in PendingStack.order(requests, scrolling, first)) key(request.id) {
             val folded = folds.isFolded(request.id)
-            val headline = request.headline.text()
+            val headline = request.cardTitle()
             // A card with its line is at most the stack's height; its form scrolls inside it.
             Column(Modifier.heightIn(max = maxHeight).testTag("pending-card-${request.id}"), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
                 labels[request.id]?.let { StackLabelLine(it) }
@@ -120,11 +133,12 @@ internal fun InteractionPanel(
                 ) {
                     if (full != request.id) body(request, false)
                 }
+                if (!folded) suggestion?.invoke(request)
             }
         }
     }
     requests.firstOrNull { it.id == full }?.let { request ->
-        JSheet(onDismiss = { full = null }, title = request.headline.text()) {
+        JSheet(onDismiss = { full = null }, title = request.cardTitle()) {
             Column(Modifier.fillMaxHeight().imePadding()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     JTextButton(stringResource(R.string.chat_request_collapse_full), { full = null })
@@ -136,8 +150,14 @@ internal fun InteractionPanel(
     }
 }
 
+@Composable
+private fun Interaction.cardTitle(): String = dialog?.commandAsk?.let {
+    stringResource(R.string.chat_command_ask_title, agentDisplayName ?: "Claude")
+} ?: headline.text()
+
 /** What a folded card says after its title: what it asks in its own words, else a plan's first line (iOS `previewText`). */
-internal fun Interaction.foldPreview(): CoreText? = askWords() ?: plan?.lineSequence()
+internal fun Interaction.foldPreview(): CoreText? = dialog?.commandAsk?.let { CoreText.plain(it.description ?: it.command) }
+    ?: askWords() ?: plan?.lineSequence()
     ?.map { it.trim().trimStart('#', '-', '*', ' ').trim() }?.firstOrNull { it.isNotEmpty() }?.let(CoreText::plain)
 
 /** The task a card comes from, over it (iOS `TaskQuestions`): its name, and how many more its tasks ask. */
@@ -184,19 +204,37 @@ internal fun InteractionForm(
     val expired = RequestExpiry.expired(interaction.expiresAt, now)
     var password by rememberTransientSecret(interaction.id, clearWhen = expired || uncertain)
     var fieldValues by rememberTransient(interaction.id, clearWhen = expired || uncertain, empty = emptyMap<String, String>())
-    // A session whose source cannot approve (blockedReason) shows the request but answers nothing, not even "Handle on computer".
+    // A stopped Agent cannot receive a message, but its manager can still settle explicit defer choices and dismiss
+    // its own work card. Other blocked cards, including permissions, keep the original read-only behavior (#6839).
     val blocked = blockedReason != null
-    val context = AnswerContext(state = if (expired || uncertain || readOnly || linkVisible || blocked) "unknown" else "pending", sending = busy,
+    val stoppedWork = blocked && interaction.isManagerWorkCard
+    val unavailable = expired || uncertain || readOnly || linkVisible
+    val context = AnswerContext(state = if (unavailable || (blocked && !stoppedWork)) "unknown" else "pending", sending = busy,
         fullPlanRead = planRead)
-    val editable = !busy && !expired && !uncertain && !readOnly && !linkVisible && !blocked
+    val editable = !busy && !expired && !uncertain && !readOnly && !linkVisible && (!blocked || stoppedWork)
     fun act(action: AnswerAction, value: AnswerDraft = draft) {
         if (RequestExpiry.expired(interaction.expiresAt, Instant.now())) return
+        // A stopped card's page turn is navigation only, as on Web. AnswerBuilder may resolve Advance when every
+        // question is answered, so only the last page's Submit may produce that Resolution (#6839).
+        if (stoppedWork && action == AnswerAction.Advance) {
+            if (!editable || value.page >= interaction.questions.orEmpty().lastIndex) return
+            update(value.copy(page = value.page + 1))
+            return
+        }
+        if (stoppedWork && !interaction.stoppedWorkAnswerAllowed(action, value)) return
         val result = AnswerBuilder.build(interaction, action, value, context)
-        if (!result.allowed) return
+        if (!result.allowed || (stoppedWork && !interaction.stoppedWorkResultAllowed(result))) return
         if (result.resolution == null) update(result.draft)
         else { password = ""; fieldValues = emptyMap(); onAnswer(action, result.draft, planRead) }
     }
-    fun enabled(action: AnswerAction) = AnswerBuilder.build(interaction, action, draft, context).allowed
+    fun enabled(action: AnswerAction): Boolean {
+        if (stoppedWork && action == AnswerAction.Advance) {
+            return editable && draft.page < interaction.questions.orEmpty().lastIndex
+        }
+        if (stoppedWork && !interaction.stoppedWorkAnswerAllowed(action, draft)) return false
+        val result = AnswerBuilder.build(interaction, action, draft, context)
+        return result.allowed && (!stoppedWork || interaction.stoppedWorkResultAllowed(result))
+    }
     val questions = interaction.questions.orEmpty()
     val question = questions.getOrNull(draft.page)
     val fallback = remember(interaction.screen, secret) {
@@ -210,6 +248,7 @@ internal fun InteractionForm(
             else -> ScreenOptionKind.Unknown
         })
     } ?: fallback?.options.orEmpty()
+    val commandPair = interaction.dialog?.commandAllowDeny()
     val actions: @Composable () -> Unit = {
         when (interaction.kind) {
             // A password card (#1137, #1581): its password, Decline and Run, nothing else.
@@ -270,7 +309,20 @@ internal fun InteractionForm(
                 val multi = interaction.dialog?.multi == true
                 val plain = options.filter { it.kind != ScreenOptionKind.Chat }
                 fun positionOf(option: ParsedScreenOption) = plain.indexOfFirst { it === option } + 1 to plain.size
-                options.forEach { option ->
+                if (commandPair != null) {
+                    val allow = draft.copy(option = commandPair.first.key)
+                    val deny = draft.copy(option = commandPair.second.key)
+                    DecisionButtons(
+                        primary = JAction(stringResource(R.string.chat_request_allow),
+                            enabled = AnswerBuilder.build(interaction, AnswerAction.ScreenOption, allow, context).allowed) {
+                            act(AnswerAction.ScreenOption, allow)
+                        },
+                        secondary = JAction(stringResource(R.string.chat_request_deny),
+                            enabled = AnswerBuilder.build(interaction, AnswerAction.ScreenOption, deny, context).allowed) {
+                            act(AnswerAction.ScreenOption, deny)
+                        },
+                    )
+                } else options.forEach { option ->
                     val value = draft.copy(option = option.key)
                     val allowed = option.kind != ScreenOptionKind.Unknown &&
                         AnswerBuilder.build(interaction, AnswerAction.ScreenOption, value, context).allowed
@@ -312,7 +364,7 @@ internal fun InteractionForm(
         when (interaction.kind) {
             "permission" -> if (interaction.isSecretRun) SecretRunSummary(interaction) else {
                 // Another agent's card says why it asks, in its own words.
-                interaction.reason?.takeIf { interaction.agentDisplayName != null && it.isNotBlank() }?.let {
+                interaction.reason?.takeIf { interaction.fromOtherAgent && it.isNotBlank() }?.let {
                     ChatLinkText(it, style = PersonaTheme.type.callout.copy(color = PersonaTheme.palette.ink2))
                 }
                 PermissionRequestSummary(interaction)
@@ -355,15 +407,16 @@ internal fun InteractionForm(
                     val display = AnswerBuilder.display(option.label)
                     DecisionOption(numberedOption("${index + 1}", display.text), { act(AnswerAction.PickOption, draft.copy(optionIndex = index)) },
                         detail = option.description, recommended = display.recommended,
-                        selected = option.label in draft.picks[question.question].orEmpty(), enabled = editable,
+                        selected = option.label in draft.picks[question.question].orEmpty(),
+                        enabled = editable && (!stoppedWork || question.isDeferChoice(option.label)),
                         multiSelect = question.multiSelect, position = index + 1 to question.options.size, fullText = full)
                 }
                 var otherOpen by rememberSaveable(interaction.id, question.question) { mutableStateOf(false) }
                 if (otherOpen || question.question in draft.other) {
                     JTextField(draft.other[question.question].orEmpty(), {
                         update(draft.copy(other = draft.other + (question.question to it), picks = draft.picks - question.question))
-                    }, label = stringResource(R.string.chat_question_other), modifier = Modifier.fillMaxWidth(), enabled = editable)
-                } else JTextButton(stringResource(R.string.chat_question_other_open), { otherOpen = true }, enabled = editable)
+                    }, label = stringResource(R.string.chat_question_other), modifier = Modifier.fillMaxWidth(), enabled = editable && !stoppedWork)
+                } else JTextButton(stringResource(R.string.chat_question_other_open), { otherOpen = true }, enabled = editable && !stoppedWork)
             }
             "elicitation" -> ElicitationFields(interaction, draft, update, editable)
             "screen" -> if (secret) {
@@ -374,14 +427,18 @@ internal fun InteractionForm(
                     singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = editable)
                 Text(stringResource(R.string.chat_screen_password_note), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
             } else {
-                interaction.dialog?.header?.takeIf(String::isNotBlank)?.let { JTag(it) }
-                ChatLinkText(interaction.dialog?.question ?: fallback?.question ?: interaction.headline.text())
-                val command = interaction.requestCommand(items)
-                if (command != null) {
-                    Text(stringResource(R.string.chat_screen_full_command), style = PersonaTheme.type.headline)
-                    JCodeBlock(command.command)
-                    Text(stringResource(R.string.chat_screen_command_ids, command.requestId, command.toolUseId), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
-                } else (interaction.dialog?.detail ?: fallback?.detail)?.let { ChatLinkText(it) }
+                val ask = interaction.dialog?.commandAsk
+                if (ask != null) CommandAskContent(ask, now)
+                else {
+                    interaction.dialog?.header?.takeIf(String::isNotBlank)?.let { JTag(it) }
+                    ChatLinkText(interaction.dialog?.question ?: fallback?.question ?: interaction.headline.text())
+                    val command = interaction.requestCommand(items)
+                    if (command != null) {
+                        Text(stringResource(R.string.chat_screen_full_command), style = PersonaTheme.type.headline)
+                        JCodeBlock(command.command)
+                        Text(stringResource(R.string.chat_screen_command_ids, command.requestId, command.toolUseId), style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+                    } else (interaction.dialog?.detail ?: fallback?.detail)?.let { ChatLinkText(it) }
+                }
                 options.mapNotNull { it.detail }.forEach { ChatLinkText(it, style = PersonaTheme.type.caption.copy(color = PersonaTheme.palette.ink2)) }
                 if (options.any { it.kind == ScreenOptionKind.TypeSomething }) JTextField(draft.text,
                     { update(draft.copy(text = it)) }, label = stringResource(R.string.chat_screen_type_answer), modifier = Modifier.fillMaxWidth(), enabled = editable)
@@ -414,6 +471,119 @@ internal fun InteractionForm(
         }
     }
     if (terminalHelp) TerminalHelpDialog { terminalHelp = false }
+}
+
+/** Claude Code's command prompt read off its terminal (#5265), with the same field and answer rules as iOS and web. */
+internal data class CommandAsk(
+    val command: String,
+    val description: String?,
+    val warning: String?,
+    val risk: String?,
+    val deadline: String?,
+    val deadlineAt: Instant?,
+    val deadlineAllows: Boolean,
+) {
+    val original: String? get() = listOfNotNull(warning, deadline).joinToString("\n").ifEmpty { null }
+    /** The same approximate three-row threshold as iOS, without a second layout pass after a theme change. */
+    val folds: Boolean get() = command.split('\n').sumOf { maxOf(1, (it.length + 37) / 38) } > 3
+
+    /** Whole seconds rounded up; zero once the hub's deadline has passed. */
+    fun countdownSeconds(now: Instant): Long? {
+        val end = deadlineAt ?: return null
+        val millis = runCatching { Duration.between(now, end).toMillis() }.getOrElse { return null }
+        if (millis <= 0) return 0
+        return millis / 1_000 + if (millis % 1_000 == 0L) 0 else 1
+    }
+}
+
+internal val ScreenDialog.commandAsk: CommandAsk?
+    get() {
+        fun text(value: String?) = value?.trim()?.takeIf(String::isNotEmpty)
+        val command = text(command) ?: return null
+        return CommandAsk(command, text(description), text(warning), text(risk), text(deadline),
+            deadlineAt = parseTime(deadlineAt), deadlineAllows = deadlineAction == "allow")
+    }
+
+/** Allow / Deny only replace a command prompt's exactly two plain Yes / No choices. */
+internal fun ScreenDialog.commandAllowDeny(): Pair<DialogOption, DialogOption>? {
+    if (commandAsk == null || multi) return null
+    val choices = options.filter { it.kind.orEmpty().let { kind -> kind.isEmpty() || kind == "plain" } }
+    if (choices.size != 2 || choices.size != options.size) return null
+    if (choices.map { it.label.trim().lowercase() } != listOf("yes", "no")) return null
+    return choices[0] to choices[1]
+}
+
+@Composable
+private fun CommandAskContent(ask: CommandAsk, now: Instant) {
+    var showAll by rememberSaveable(ask.command) { mutableStateOf(false) }
+    var showOriginal by rememberSaveable(ask.command) { mutableStateOf(false) }
+    ask.description?.let { Text(it, style = PersonaTheme.type.body, color = PersonaTheme.palette.ink) }
+    JCodeBlock(ask.command, modifier = Modifier.testTag("screen-command"), maxLines = if (showAll) Int.MAX_VALUE else 3)
+    if (ask.folds) JTextButton(stringResource(
+        if (showAll) R.string.chat_command_ask_collapse else R.string.chat_command_ask_show_all),
+        { showAll = !showAll }, modifier = Modifier.testTag("screen-command-all"))
+    if (ask.warning != null) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), modifier = Modifier.testTag("screen-command-risk")) {
+            JIcon(PersonaIcons.errorFilled, null, size = Tokens.Size.markS, tint = PersonaTheme.palette.cautionText)
+            Text(stringResource(if (ask.risk == "delete") R.string.chat_command_ask_risk_delete else R.string.chat_command_ask_risk_other),
+                style = PersonaTheme.type.callout, color = PersonaTheme.palette.cautionText)
+        }
+        val original = ask.original
+        if (original != null) {
+            JTextButton(stringResource(if (showOriginal) R.string.chat_command_ask_hide_original else R.string.chat_command_ask_show_original),
+                { showOriginal = !showOriginal }, modifier = Modifier.testTag("screen-command-original"))
+            if (showOriginal) JSelectableText(original, style = PersonaTheme.type.caption, color = PersonaTheme.palette.ink2)
+        }
+    }
+    ask.countdownSeconds(now)?.let { left ->
+        val line = if (left <= 0) stringResource(if (ask.deadlineAllows) R.string.chat_command_ask_countdown_over_allow
+            else R.string.chat_command_ask_countdown_over_deny)
+        else {
+            val time = "${left / 60}:${(left % 60).toString().padStart(2, '0')}"
+            stringResource(if (ask.deadlineAllows) R.string.chat_command_ask_countdown_allow
+                else R.string.chat_command_ask_countdown_deny, time)
+        }
+        Text(line, Modifier.testTag("screen-command-countdown"), style = PersonaTheme.type.callout, color = PersonaTheme.palette.ink2)
+    }
+}
+
+internal val Interaction.isManagerWorkCard: Boolean
+    get() = kind == "question" && toolName == "persona_triage"
+
+private fun Question.isDeferChoice(label: String): Boolean =
+    !multiSelect && options.any { it.label == label && it.action == "defer" }
+
+/** The stopped-Agent subset of Web's workCardLocalResolution: bare dismiss, or answers made only from explicit,
+ * single-choice defer options. Missing actions from an older hub never turn into local answers. */
+private fun Interaction.stoppedWorkAnswerAllowed(action: AnswerAction, draft: AnswerDraft): Boolean {
+    val questions = questions.orEmpty()
+    fun deferredPick(question: Question): Boolean {
+        if (!draft.other[question.question].isNullOrBlank()) return false
+        val picks = draft.picks[question.question].orEmpty()
+        return picks.isNotEmpty() && picks.all(question::isDeferChoice)
+    }
+    return when (action) {
+        AnswerAction.Dismiss -> true
+        AnswerAction.PickOption -> questions.getOrNull(draft.page)?.let { question ->
+            question.options.getOrNull(draft.optionIndex)?.let { question.isDeferChoice(it.label) } == true
+        } == true
+        AnswerAction.Advance -> questions.getOrNull(draft.page)?.let(::deferredPick) == true
+        AnswerAction.Submit -> questions.isNotEmpty() && questions.all(::deferredPick)
+        else -> false
+    }
+}
+
+/** Validate the actual post-action wire result, as Web's workCardLocalResolution does. In particular, Advance can
+ * resolve immediately when a retained draft completes every question; a defer on the current page is not enough. */
+private fun Interaction.stoppedWorkResultAllowed(result: AnswerResult): Boolean {
+    val resolution = result.resolution ?: return true
+    if (resolution == Resolution(dismiss = true)) return true
+    val answers = resolution.answers ?: return false
+    if (answers.isEmpty() || resolution != Resolution(answers = answers)) return false
+    val questions = questions.orEmpty()
+    return answers.all { (questionText, answer) ->
+        questions.firstOrNull { it.question == questionText }?.isDeferChoice(answer) == true
+    }
 }
 
 /** "1. Option": the number or key the terminal shows beside an option, when it is a short one. */

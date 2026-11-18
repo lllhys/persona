@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The hub's version and its updating itself (docs/operations/hub-update.md, GET /api/v1/hub/update and the `hub_update` event).
 nonisolated struct HubUpdateStatus: Codable, Equatable, Sendable {
@@ -17,6 +18,8 @@ nonisolated struct HubUpdateStatus: Codable, Equatable, Sendable {
     var lastCheck: Date?
     var confirmed: Bool
     var image: Image? // a Docker hub's image
+    var source: String?
+    var betaUpdates: Bool { source == "beta" }
 
     /// The image a Docker hub runs: a pinned tag (a version) has to be changed in .env to get a newer one.
     nonisolated struct Image: Codable, Equatable, Sendable {
@@ -52,7 +55,7 @@ nonisolated struct HubUpdateStatus: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case version, build, channel, canUpdate = "can_update", whyNot = "why_not", latest, state, progress, busy, error, auto
-        case autoNotice = "auto_notice", lastCheck = "last_check", confirmed, image
+        case autoNotice = "auto_notice", lastCheck = "last_check", confirmed, image, source
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +75,7 @@ nonisolated struct HubUpdateStatus: Codable, Equatable, Sendable {
         lastCheck = try c.decodeIfPresent(Date.self, forKey: .lastCheck)
         confirmed = try c.decodeIfPresent(Bool.self, forKey: .confirmed) ?? true
         image = try c.decodeIfPresent(Image.self, forKey: .image)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
     }
 
     /// Between swapping the binary and the new version confirming: the socket going away is expected.
@@ -223,14 +227,15 @@ extension APIClient {
         try await post("/api/v1/hub/update", body: ["now": now])
     }
 
-    func setHubUpdate(auto: Bool? = nil, noticeSeen: Bool? = nil) async throws -> HubUpdateStatus {
+    func setHubUpdate(auto: Bool? = nil, noticeSeen: Bool? = nil, beta: Bool? = nil) async throws -> HubUpdateStatus {
         struct Body: Encodable {
             var auto: Bool?
             var autoNoticeSeen: Bool?
-            enum CodingKeys: String, CodingKey { case auto, autoNoticeSeen = "auto_notice_seen" }
+            var source: String?
+            enum CodingKeys: String, CodingKey { case auto, autoNoticeSeen = "auto_notice_seen", source }
         }
         return try JSON.decoder.decode(HubUpdateStatus.self, from: try await request("PUT", "/api/v1/hub/update/settings",
-                                                                                     body: Body(auto: auto, autoNoticeSeen: noticeSeen)))
+                                                                                     body: Body(auto: auto, autoNoticeSeen: noticeSeen, source: beta.map { $0 ? "beta" : "release" })))
     }
 
     func hubUpdateHistory() async throws -> [HubUpdateRecord] {

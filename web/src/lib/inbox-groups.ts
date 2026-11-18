@@ -40,7 +40,7 @@ export function timeKey(at: string | undefined, now: number, recent = false): st
 /** A time group's title: "Just now", "Today", "Yesterday", "Fri, Nov 6", "7+ days ago", "1+ month ago". */
 export function timeTitle(key: string): string {
   if (key.startsWith("d:")) return formatDate(new Date(keyDay(key)), { weekday: "short", month: "long", day: "numeric" });
-  return t(`lib-inbox.group_${key}`);
+  return t(`lib-inbox-groups.group_${key}`);
 }
 
 /** A day key's date at local midnight ("d:2026-11-06"; Date.parse of a bare date would be UTC midnight). */
@@ -86,8 +86,8 @@ export function groupBySource(items: InboxItem[], order: string[], mailName: (ac
   const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length);
   return [...groups].sort((a, b) => rank(a[0]) - rank(b[0])).map(([key, list]) => ({
     key,
-    title: key === "lark" ? t("lib-inbox.group_lark")
-      : key.startsWith("mail:") ? t("lib-inbox.group_mail", { account: mailName(key.slice(5)) })
+    title: key === "lark" ? t("lib-inbox-groups.group_lark")
+      : key.startsWith("mail:") ? t("lib-inbox-groups.group_mail", { account: mailName(key.slice(5)) })
       : key.startsWith("c:") ? list[0].account_name || list[0].source
       : list[0].account_name || key,
     items: list,

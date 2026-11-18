@@ -12,12 +12,18 @@ export type KBKind = (typeof KB_KINDS)[number];
 
 export const KIND_TITLE: Record<KBKind, string> = { projects: t("lib-kb.kind_projects"), topics: t("lib-kb.kind_topics"), chats: t("lib-kb.kind_chats"), people: t("lib-kb.kind_people"), docs: t("lib-kb.kind_docs"), meetings: t("lib-kb.kind_meetings"), events: t("lib-kb.kind_events"), recordings: t("lib-kb.kind_recordings") };
 
+/** The kinds the list offers as chips: recordings are listed under meetings (#8871), with the meetings imported from
+ *  connected apps, so the knowledge base has one place for meetings and notes. */
+export const LIST_KINDS: readonly KBKind[] = KB_KINDS.filter((k) => k !== "recordings");
+
 export function isKind(k: unknown): k is KBKind {
   return typeof k === "string" && (KB_KINDS as readonly string[]).includes(k);
 }
 
-/** The kind a route names; anything else is the default list, projects. */
+/** The list a route names; anything else is the default list, projects. Recordings are listed under meetings (#8871),
+ *  so an older link to the recordings list, or a recording's own page, shows that list. */
 export function kindOf(k?: string): KBKind {
+  if (k === "recordings") return "meetings";
   return isKind(k) ? k : "projects";
 }
 
@@ -38,6 +44,23 @@ export interface KBEntry {
   updated?: string;
   /** projects: "short · active" (kind · status); chats: dm / group…; topics: how many knowledge points, in decimal */
   extra?: string;
+  /** recordings: meeting, note or day (#8870); absent from an older hub */
+  recording_kind?: string;
+  /** chats: the source they came from; docs, meetings and events: the connector that supplied them (#8872) */
+  source?: string;
+  /** recordings: the id of the imported meeting it overlaps, as the meetings list has it (#8872) */
+  meeting_id?: string;
+  /** recordings in the meetings list (this client's, `mergeMeetingLists` in views/knowledge/meetings.ts): the imported meeting it stands for (#8872) */
+  imported?: KBEntry;
+}
+
+/** The tag a recording's row carries in the meetings list (#8871): notes and all-day recordings are the exceptions among
+ *  meetings, so only they are marked; a meeting, an imported one, or a recording from a hub that does not say, none. */
+export function recordingKindTag(e: KBEntry): string | null {
+  if (e.kind !== "recordings") return null;
+  if (e.recording_kind === "note") return t("lib-kb.recording_note");
+  if (e.recording_kind === "day") return t("lib-kb.recording_day");
+  return null;
 }
 
 export interface KBList {
@@ -125,7 +148,11 @@ export interface RecordingMinutes {
   decisions?: MinutesPoint[];
   actions?: MinutesAction[];
   open?: MinutesPoint[];
+  /** The summary card (#6563): the headline, the core conclusions and the points and decisions grouped by topic. Read
+   *  defensively on its own (lib/minutes-overview.ts `minutesOverview`), so a broken one never costs the fields above. */
+  overview?: unknown;
   partial?: boolean;
+  /** The same minutes as Markdown, what Copy sends; it follows the summary card when there is one. */
   markdown: string;
 }
 
@@ -184,6 +211,9 @@ export interface KBSegment {
   start: number;
   end: number;
   text: string;
+  /** Persona's own answer heard by the meeting's microphone (#5905, docs/assistant/meeting-minutes.md "Persona's echo"):
+   *  kept on the hub, not shown as the meeting's. */
+  echo?: boolean;
 }
 
 /** One question asked in an attended meeting (docs/assistant/meeting-minutes.md "Attending a meeting", `Ask`). `state`,
@@ -240,6 +270,32 @@ export interface RecordingLive {
   room?: MeetingRoom;
   followup?: MeetingConversation;
   revs?: Record<string, number>;
+  /** Phase 2 (`meeting_live_view`, "Phase 2: live view"): the live log from `?from=` (no `lines` without it), at most
+   *  500, `more` when there are more; the room's topics (always present) and when they last changed. Read through
+   *  `liveLines` / `meetingTopics` (lib/meeting-thread.ts, off the first screen). */
+  lines?: unknown;
+  more?: boolean;
+  topics?: unknown;
+  topics_at?: string;
+}
+
+/** One line of a meeting's live log (`GET …/live?from=`): `n` its position (from 0, append-only), `start` / `end` seconds
+ *  from the start; `source` (phase 5) is an open set. */
+export interface LiveLine {
+  n: number;
+  start: number;
+  end: number;
+  text: string;
+  source?: string;
+}
+
+/** One of a meeting's topics as the room set them: `state` `done`, `current` (at most one) or `open`; `at` the seconds
+ *  the topic began. */
+export interface MeetingTopic {
+  title: string;
+  state: "done" | "current" | "open";
+  at?: number;
+  note?: string;
 }
 
 /** One of a meeting's photos as `GET /api/v1/recordings/{id}/photos` lists them (docs/assistant/meeting-minutes.md
@@ -456,6 +512,12 @@ export interface EntrySection {
  * the ranked ones, then the rest (only a name in a group, no tagging yet) folded under "Not sorted yet"; with a tag, one
  * section of everything carrying it.
  */
+/** Entries newest first (no time last), the order otherwise kept. */
+function newestFirst(list: KBEntry[]): KBEntry[] {
+  const at = (e: KBEntry) => (e.updated ? Date.parse(e.updated) : NaN);
+  return [...list].sort((a, b) => (Number.isNaN(at(b)) ? -Infinity : at(b)) - (Number.isNaN(at(a)) ? -Infinity : at(a)) || 0);
+}
+
 export function groupEntries(kind: KBKind, items: KBEntry[], tag?: string): EntrySection[] {
   const list = rankEntries(items);
   let out: EntrySection[];
@@ -482,7 +544,23 @@ export function groupEntries(kind: KBKind, items: KBEntry[], tag?: string): Entr
     const sorted = [...items].sort((a, b) => importanceRank(a.importance) - importanceRank(b.importance) || n(b) - n(a) || a.name.localeCompare(b.name));
     out = [{ key: "all", title: tag ? `#${tag}` : t("lib-kb.section_all"), items: sorted }];
   } else if (tag) {
-    out = [{ key: "tag", title: `#${tag}`, items: list }];
+    out = [{ key: "tag", title: `#${tag}`, items: kind === "meetings" ? newestFirst(list) : list }];
+  } else if (kind === "meetings") {
+    // A meeting is looked for by when it was (#8871): the sorted ones newest first with the owner's own recordings, never
+    // folded (one just ended has no importance until its summary is written), the rest folded as elsewhere.
+    const open = (e: KBEntry) => !!e.importance || e.kind === "recordings";
+    const ranked = newestFirst(list.filter(open));
+    const rest = newestFirst(list.filter((e) => !open(e)));
+    out = [
+      { key: "ranked", title: t("lib-kb.section_all"), items: ranked },
+      {
+        key: "rest",
+        title: ranked.length ? t("lib-kb.section_unsorted") : t("lib-kb.section_all"),
+        items: rest,
+        fold: ranked.length > 0,
+        footer: ranked.length ? t("lib-kb.unsorted_footer_meetings") : undefined,
+      },
+    ];
   } else {
     const ranked = list.filter((e) => e.importance);
     const rest = list.filter((e) => !e.importance);
@@ -498,11 +576,6 @@ export function groupEntries(kind: KBKind, items: KBEntry[], tag?: string): Entr
     ];
   }
   return out.filter((s) => s.items.length);
-}
-
-/** 1985 → "1985" (no grouping comma, the chip is narrow), past 9999 → "10K+" (in Chinese units). */
-export function countLabel(n: number): string {
-  return n > 9999 ? t("lib-kb.count_over") : String(n);
 }
 
 /**
@@ -779,6 +852,8 @@ export interface RecordingView {
   lines: { seconds: number; clock: string; text: string; bookmark?: boolean }[];
   /** Persona attends the meeting in this role (#2981); absent when off. */
   attendance?: "listener" | "participant";
+  /** A room meeting whose room only takes notes (#8851): Persona is not in it and answers nothing. */
+  notesOnly?: boolean;
   /** The session that attends; absent: the main chat. */
   attendingSession?: { machineId: string; sessionId: string };
   /** When its transcript expired with `recording_days` and only the minutes were kept (`meta.trimmed_at`, #3780); absent
@@ -865,6 +940,7 @@ export function recordingView(kind: string, meta?: Record<string, unknown> | nul
   const clock = (sec: number) => recordingClock(started, sec, tz);
   const at: { sec: number; line: RecordingView["lines"][number] }[] = [];
   for (const s of segments ?? []) {
+    if (s?.echo === true) continue; // Persona's echo is not the meeting's: hidden, as the phone hides it
     const sec = Number(s?.start) || 0;
     if (typeof s?.text === "string" && s.text.trim()) at.push({ sec, line: { seconds: sec, clock: clock(sec), text: s.text.trim() } });
   }
@@ -890,6 +966,7 @@ export function recordingView(kind: string, meta?: Record<string, unknown> | nul
     partial: meta?.complete !== true,
     lines,
     ...(role === "listener" || role === "participant" ? { attendance: role } : {}),
+    ...(role === "notes" ? { notesOnly: true } : {}),
     // Both ids or none: anything else names no session, and the main chat attends.
     ...(machineId && sessionId ? { attendingSession: { machineId, sessionId } } : {}),
     ...(trimmed && Number.isFinite(Date.parse(trimmed)) ? { trimmedAt: trimmed } : {}),

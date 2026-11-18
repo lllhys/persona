@@ -1,0 +1,4 @@
+<persona-wake>{"title":"checks"}</persona-wake>
+⏰ (Persona is waking you, attempt 1.) At the end of your last turn, you said you were waiting for “checks” and would then “publish sample”.
+Check whether what you were waiting for is ready. If it is, continue the work. Otherwise, briefly explain what remains and roughly how long it will take (Persona will wake you again). Do not keep waiting in a loop.
+Your task already authorized this step, and Persona allowed it under that authorization: when the wait is over, “publish sample”. Do not ask again for that step. For anything else that pushes code, deploys or publishes, sends messages or comments to others, or merges or changes someone else's MR or PR, stop and ask the user first; do not act on your own.

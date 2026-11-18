@@ -16,6 +16,7 @@ import org.junit.rules.TemporaryFolder
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatRepositoriesTest {
+    @get:Rule val shadowParity = ShadowParityRule()
     @get:Rule val temporary = TemporaryFolder()
 
     @Test fun unobservedSessionRevisionsNeverReadBodiesAndReopeningStillVerifiesTheLatestPage() = runTest {
@@ -290,7 +291,7 @@ class ChatRepositoriesTest {
         capped = true
         connection.events.emit(ItemsEvent(key.machineId, key.sessionId, listOf(item(20)), "h", 19, 20))
         runCurrent()
-        assertFalse(snapshot.verified)
+        // Filled at once since #7102 (no settling delay): the capped pages have already ended in the latest page.
         advanceTimeBy(1500)
         runCurrent()
         assertEquals(8, queries.count { it.afterSeq != null })
@@ -519,6 +520,9 @@ class ChatRepositoriesTest {
         assertTrue(connection.sent.none { it.type() == "seen" })
         event(DeltaEvent(key.machineId, key.sessionId, "示例回复"))
         assertEquals(draftId, snapshot.items.last().id)
+        // Within the stream's publish window the chunk waits for the window's end (ChatDeltaPublishTest).
+        assertEquals("示例", snapshot.items.last().text)
+        advanceTimeBy(50); runCurrent()
         assertEquals("示例回复", snapshot.items.last().text)
         event(DeltaEvent(key.machineId, key.sessionId))
         assertEquals(draftId, snapshot.items.last().id)

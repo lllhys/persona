@@ -22,6 +22,7 @@
   "gone": "这个市场里没有这个扩展了",
   "preview_failed": "看不了：{error}",
   "reload": "重新读取",
+  "updating": "正在更新结果…",
   "reading": "正在读取…",
   "uninstall": "卸载",
   "upgrade_to": "升级到 {version}",

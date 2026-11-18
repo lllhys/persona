@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>IntentPhrases</key>
+	<array>
+		<dict>
+			<key>IntentExamples</key>
+			<array>
+				<string>用 Persona 打给 Persona</string>
+				<string>用 Persona 给 Persona 打电话</string>
+				<string>用 Persona 打电话给 Persona</string>
+			</array>
+			<key>IntentName</key>
+			<string>INStartCallIntent</string>
+		</dict>
+	</array>
+</dict>
+</plist>

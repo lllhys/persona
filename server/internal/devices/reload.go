@@ -54,26 +54,41 @@ func (m *Machine) expectedReload() bool {
 	return time.Now().Before(m.reloadUntil) || m.warmLocked(time.Now())
 }
 
+// reloadRetryBudget bounds how long call retries not-started refusals, reloadRetryEvery how often it tries. Vars so
+// tests change them.
+var reloadRetryBudget, reloadRetryEvery = 20 * time.Second, 100 * time.Millisecond
+
 // call retries only an explicit not-started refusal or a close before writing. An ambiguous dropped write is never
 // replayed. The retry budget bounds waiting, not the operation's original execution deadline after the node is ready.
+// When the budget or the caller's wait runs out between tries, the last try had not started: that is said
+// (rpc.NotSent), so a caller can tell it from a request that may have reached the node. Each call leaves a line in the
+// log when it fails (calllog.go).
 func (m *Machine) call(ctx context.Context, method string, params any, out any) error {
+	return m.callWithSnapshot(ctx, method, params, out, nil)
+}
+
+// callWithSnapshot leaves a successful call's actual RPC attempt in snapshot, including after a wait or retry.
+func (m *Machine) callWithSnapshot(ctx context.Context, method string, params any, out any, snapshot *sessionSnapshot) (err error) {
+	start, tries := time.Now(), 0
+	defer func() { m.logCall(method, err, time.Since(start), tries) }()
 	var deadline time.Time
 	for {
-		err := m.callOnce(ctx, method, params, out)
+		tries++
+		err := m.callOnce(ctx, method, params, out, snapshot)
 		notSent := errors.Is(err, errOffline) || errors.Is(err, rpc.ErrSuspended) || errors.Is(err, rpc.ErrClosed) && !errors.Is(err, rpc.ErrDropped)
 		if !restartingError(err) && !(notSent && m.expectedReload()) {
 			return err
 		}
 		if deadline.IsZero() {
-			deadline = time.Now().Add(20 * time.Second)
+			deadline = time.Now().Add(reloadRetryBudget)
 		}
 		if time.Until(deadline) <= 0 {
-			return context.DeadlineExceeded
+			return rpc.NotSent(context.DeadlineExceeded)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(min(100*time.Millisecond, time.Until(deadline))):
+			return rpc.NotSent(ctx.Err())
+		case <-time.After(min(reloadRetryEvery, time.Until(deadline))):
 		}
 	}
 }

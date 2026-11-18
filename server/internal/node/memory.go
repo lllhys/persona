@@ -16,16 +16,20 @@ import (
 // Codex launcher the assistant reads and writes the same directory (codexMemoryPrompt), so it is one memory either way.
 
 type memoryOp struct {
-	Op      string `json:"op"` // list | write | delete
-	Cwd     string `json:"cwd"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
+	Op            string  `json:"op"` // list | write | delete
+	Cwd           string  `json:"cwd"`
+	Name          string  `json:"name"`
+	Content       string  `json:"content"`
+	Previous      *string `json:"previous"`
+	PreviousIndex string  `json:"previous_index"`
 }
 
 type MemoryFile struct {
 	Name      string    `json:"name"` // file name, e.g. "lark-access.md"
 	Content   string    `json:"content"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// CreatedAt is when the file was made, where the file system keeps it (fileBirth); absent otherwise.
+	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
 var (
@@ -55,6 +59,8 @@ func (n *Node) assistantMemory(a memoryOp) (any, error) {
 	if a.Cwd == "" || !identity.IsAssistantDir(filepath.Clean(a.Cwd)) {
 		return nil, errors.New("memory is only available for the assistant directory")
 	}
+	n.memoryMu.Lock()
+	defer n.memoryMu.Unlock()
 	dir := n.memoryDir(a.Cwd)
 	switch a.Op {
 	case "list":
@@ -67,7 +73,8 @@ func (n *Node) assistantMemory(a memoryOp) (any, error) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 				continue
 			}
-			b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			path := filepath.Join(dir, e.Name())
+			b, err := os.ReadFile(path)
 			if err != nil {
 				continue
 			}
@@ -75,11 +82,19 @@ func (n *Node) assistantMemory(a memoryOp) (any, error) {
 			f := MemoryFile{Name: e.Name(), Content: string(b)}
 			if info != nil {
 				f.UpdatedAt = info.ModTime().UTC()
+				if born, ok := fileBirth(path, info); ok {
+					f.CreatedAt = &born
+				}
 			}
 			files = append(files, f)
 		}
 		sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 		return map[string]any{"files": files, "dir": dir}, nil
+	case "dream-read", "dream-write":
+		if err := checkDreamMemoryDir(a.Cwd); err != nil {
+			return nil, err
+		}
+		return dreamMemory(dir, a)
 	case "write":
 		if !memoryNameRe.MatchString(a.Name) {
 			return nil, errors.New("bad memory file name")

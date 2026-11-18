@@ -40,5 +40,11 @@
   "presets": "プリセット",
   "how_to_fix": "直し方",
   "engine_via": "{provider} で実行",
-  "effort_unset": "モデルのデフォルト"
+  "effort_unset": "モデルのデフォルト",
+  "show_all": "{count} 件をすべて表示",
+  "older": "以前のバージョン · {count}",
+  "older_of": "{family}：以前のバージョン {count} 件を表示",
+  "hide_older": "以前のバージョンを隠す",
+  "hide_older_of": "{family}：以前のバージョンを隠す",
+  "latest": "最新"
 }

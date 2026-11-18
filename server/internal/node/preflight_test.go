@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // preflightHome is a home with Claude Code's directory (settings, a skill linked from elsewhere, a link to nothing) and
@@ -344,7 +346,7 @@ func TestDoctorAsksTheNodeForThePreflight(t *testing.T) {
 	if strings.Contains(c.Detail, "没有回答") {
 		t.Errorf("detail %q", c.Detail)
 	}
-	none := preflightFromNode(filepath.Join(e.n.home, "none.sock"), e.n.home, e.opts.ClaudeConfigDir)(context.Background())
+	none := preflightFromNode(filepath.Join(e.n.home, "none.sock"), e.n.home, e.opts.ClaudeConfigDir)(context.Background(), i18n.Default)
 	if none.Name != pathAccessCheck || !strings.Contains(none.Detail, "没有 node 回答这项检查（没在运行") {
 		t.Errorf("%+v", none)
 	}
@@ -407,7 +409,7 @@ func TestDoctorRunsThePreflightOnce(t *testing.T) {
 	e.healthy(t)
 	os.Remove(filepath.Join(e.opts.Dir, "mcp.json"))
 	runs := 0
-	e.opts.Preflight = func(context.Context) DoctorCheck {
+	e.opts.Preflight = func(context.Context, i18n.Lang) DoctorCheck {
 		runs++
 		return DoctorCheck{Name: pathAccessCheck, Status: DoctorFail, Detail: "blocked"}
 	}
@@ -454,6 +456,30 @@ func TestPreflightChildMode(t *testing.T) {
 		"link\t3.2\t" + filepath.Join(claude, "skills", "review") + "\t" + filepath.Join(home, "dotfiles", "skills", "review"), "start\t3.2", "ok\t3.2"}
 	if !slices.Equal(lines, want) {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestPreflightChildProtocolStaysByteIdentical(t *testing.T) {
+	home, claude, _ := preflightHome(t)
+	want := strings.Join([]string{preflightHello, "start\t1", "ok\t1", "start\t2", "none\t2", "start\t3", "ok\t3",
+		"link\t3.1\t" + filepath.Join(claude, "skills", "old") + "\t" + filepath.Join(home, "gone"), "start\t3.1", "none\t3.1",
+		"link\t3.2\t" + filepath.Join(claude, "skills", "review") + "\t" + filepath.Join(home, "dotfiles", "skills", "review"), "start\t3.2", "ok\t3.2"}, "\n") + "\n"
+	for _, locale := range []string{"en", "zh-Hans", "ja", "fr", "LANG=en_US.UTF-8"} {
+		t.Run(locale, func(t *testing.T) {
+			for _, key := range []string{"PERSONA_LANG", "LC_ALL", "LC_MESSAGES", "LANG"} {
+				t.Setenv(key, "")
+			}
+			if locale == "LANG=en_US.UTF-8" {
+				t.Setenv("LANG", "en_US.UTF-8")
+			} else {
+				t.Setenv("PERSONA_LANG", locale)
+			}
+			var out strings.Builder
+			preflightChild([]string{"d:" + claude, "f:" + filepath.Join(claude, "nope.json"), "l:" + filepath.Join(claude, "skills")}, &out)
+			if out.String() != want {
+				t.Fatalf("child protocol changed:\n%q\nwant:\n%q", out.String(), want)
+			}
+		})
 	}
 }
 

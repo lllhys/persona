@@ -17,6 +17,7 @@ Settings › How Agents open), light and dark, and checks that no overflow-hidde
 header is in the window. Prints one line per row and a verdict; exits 1 on the first failure.
 """
 import argparse
+import re
 import sys
 
 from playwright.sync_api import sync_playwright
@@ -47,13 +48,13 @@ def main() -> int:
         browser = p.chromium.launch(executable_path=a.executable) if a.executable else p.chromium.launch()
         for theme in ("light", "dark"):
             ctx = browser.new_context(viewport={"width": w, "height": h}, color_scheme=theme)
-            ctx.add_init_script(f"localStorage.setItem('persona.theme', '{theme}')")
+            ctx.add_init_script(f"localStorage.setItem('persona.theme', '{theme}'); localStorage.setItem('persona.language', 'en')")
             page = ctx.new_page()
             page.goto(a.base + "/?token=" + a.token)
             page.wait_for_selector("[data-assistant-actionbar] [data-tray-entry]", timeout=20000)
             page.wait_for_timeout(800)
             opened = 0
-            for tray, rows in (("needs", "[data-needs-row] > button, button[data-needs-row]"), ("running", "[data-task-slot], [data-running-agent]")):
+            for tray, rows in (("needs", "button[data-needs-row]"), ("running", "[data-task-slot], [data-running-agent]")):
                 entry = page.locator(f'[data-assistant-actionbar] [data-tray-entry="{tray}"]')
                 for i in range(30):
                     if entry.get_attribute("aria-expanded") != "true":
@@ -63,8 +64,26 @@ def main() -> int:
                     if row.count() <= i:
                         break
                     label = row.nth(i).inner_text().replace("\n", " ")[:30]
+                    # a folded Needs you row opens its card in place (#5569): the panel opens from the card's Open button
+                    # (or its title), and a card with neither is only checked for pushing the page
+                    folded = row.nth(i).get_attribute("aria-expanded") is not None
                     row.nth(i).click()
                     aside = page.locator("aside[aria-label]")
+                    if folded:
+                        page.wait_for_timeout(300)
+                        card = page.locator("[data-assistant-actionbar] [data-needs-open]").first
+                        go = card.get_by_role("button", name=re.compile(r"^Open( |$)")).first
+                        if go.count() == 0:
+                            r = page.evaluate(PUSHED)
+                            ok = r["worst"] == 0 and r["doc"] == 0
+                            print(f"{'ok  ' if ok else 'FAIL'} {theme} {w}x{h} {tray} [{label}]: opened in place, pushed {r['worst']} px {r['who']}")
+                            if not ok:
+                                print("FAIL: opening a card in place pushed the page up")
+                                return 1
+                            card.locator("button[aria-expanded=true]").first.click()
+                            page.wait_for_timeout(200)
+                            continue
+                        go.click()
                     aside.wait_for(timeout=10000)
                     page.wait_for_timeout(900)
                     r = page.evaluate(PUSHED)

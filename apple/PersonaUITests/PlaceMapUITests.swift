@@ -66,20 +66,32 @@ final class PlaceMapUITests: XCTestCase {
         XCTAssertTrue(route.exists, "no card for the walk worked out as a route")
         sleep(2)
         try shot(app, "route")
+        // The route's main action is a labeled button under its row (#6177).
+        XCTAssertTrue(app.buttons["place-map.start"].firstMatch.exists, "the route card has no Start in Maps")
         route.tap()
         let routeSheet = any["place-map-sheet.map"].firstMatch
         XCTAssertTrue(routeSheet.waitForExistence(timeout: 5), "tapping the route did not open the full map")
+        // The full map marks where the line starts (#6177).
+        XCTAssertTrue(any.matching(NSPredicate(format: "label IN %@", ["起点", "Start"])).firstMatch.waitForExistence(timeout: 5),
+                      "the route's full map does not mark where the line starts")
         sleep(2)
         try shot(app, "route-sheet")
-        let close = app.buttons.matching(NSPredicate(format: "label IN %@", ["完成", "Done"])).firstMatch
-        XCTAssertTrue(close.exists, "the route's full map has no Done")
+        let close = app.buttons["sheet-close"].firstMatch
+        XCTAssertTrue(close.exists, "the route's full map has no ✕")
         close.tap()
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: routeSheet)
         XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "Done did not close the route's full map")
+        // The route card's Start in Maps itself: at large text sizes it is below the map's screen (#6177).
+        let start = app.buttons["place-map.start"].firstMatch
+        for _ in 0..<20 where !clear(start, in: app) { nudge(app, older: false) }
+        sleep(1)
+        try shot(app, "route-start")
 
+        // Scroll first, then look: the chat list builds a card only near the screen, so at large text sizes the
+        // nearby card doesn't exist yet when the route's sheet closes (#6177).
         let nearby = maps.matching(NSPredicate(format: "label CONTAINS %@", "街角咖啡")).firstMatch
-        XCTAssertTrue(nearby.waitForExistence(timeout: 20), "no map for the nearby search:\n\(app.debugDescription)")
-        for _ in 0..<40 where !nearby.isHittable { nudge(app, older: true) } // at large text sizes it is above the answer
+        for _ in 0..<60 where !clear(nearby, in: app) { nudge(app, older: true) }
+        XCTAssertTrue(nearby.exists, "no map for the nearby search:\n\(app.debugDescription)")
         sleep(2) // the snapshot comes in
         try shot(app, "nearby")
 
@@ -94,8 +106,8 @@ final class PlaceMapUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), "tapping the map did not open the full map")
         sleep(2)
         try shot(app, "here-sheet")
-        let done = app.buttons.matching(NSPredicate(format: "label IN %@", ["完成", "Done"])).firstMatch
-        XCTAssertTrue(done.exists, "the full map has no Done")
+        let done = app.buttons["sheet-close"].firstMatch
+        XCTAssertTrue(done.exists, "the full map has no ✕")
         done.tap()
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: sheet)
         XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 5), .completed, "Done did not close the full map")

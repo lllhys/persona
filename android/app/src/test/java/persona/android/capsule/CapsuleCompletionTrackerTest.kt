@@ -1,5 +1,6 @@
 package persona.android.capsule
 
+import java.time.Instant
 import org.junit.Assert.*
 import org.junit.Test
 import persona.core.contracts.Session
@@ -96,6 +97,16 @@ class CapsuleCompletionTrackerTest {
             tracker.accept(task("working", 3))
             assertEquals(1, tracker.accept(task("unread", 4)).size)
         }
+    }
+
+    @Test fun aUsageLimitedUnreadTurnIsNotAnnounced() {
+        val tracker = CapsuleCompletionTracker()
+        tracker.accept(task("working"))
+        val limited = task("unread", 2).copy(turnError = "Weekly limit reached", turnErrorKind = "usage_limit",
+            turnErrorResetsAt = Instant.now().plusSeconds(3600).toString())
+        assertTrue(limited.interrupted)
+        assertTrue(limited.isUsageLimited())
+        assertTrue(tracker.accept(limited).isEmpty())
     }
 
     @Test fun qualifiedGroupsAndAssistantCompletionsStayIndependent() {

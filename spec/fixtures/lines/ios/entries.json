@@ -1,0 +1,333 @@
+{
+  "schema_version": 1,
+  "domain": "lines",
+  "description": "Current iOS (apple/) only: the blocks of one transcript entry (text, picture, text) are one message. Not part of the shared corpus that Android's LinesFixtureTest replays; the iOS replay in ../README.md checks these cases exactly.",
+  "cases": [
+    {
+      "name": "same_entry_text_image_text_is_one_message",
+      "description": "Text, picture and text in one transcript entry are one message: all three are the turn's users, the picture goes after the entry's next text block and is drawn above it, and no block opens a turn of its own.",
+      "source": [
+        "apple/Shared/ChatStore.swift: picturesAfterTheirText / ChatBlock.build (sameMessage by Item.entry) / rebuild (the cut keeps one entry's blocks together)",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/ChatLinesTests.swift: aPictureAfterItsTextStaysWithItsMessage / aPictureSentBeforeItsTextStaysWithItsMessage",
+        "apple/PersonaTests/RebuildTests.swift: supervisionAndMultiBlockInputsRebuildIncrementallyLikeAFullTranscript"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "早"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "text",
+            "text": "早上好"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "先看这张截图"
+          },
+          {
+            "id": "3#1",
+            "seq": 3,
+            "role": "user",
+            "kind": "image",
+            "image": {
+              "mime": "image/png",
+              "data": "iVBORw0KGgo="
+            }
+          },
+          {
+            "id": "3#2",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "再按截图改一下标题"
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "text",
+            "text": "标题已改好"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "早",
+            "type": "user"
+          },
+          {
+            "id": "2#0",
+            "is_input": false,
+            "text": "早上好",
+            "type": "reply"
+          },
+          {
+            "id": "3#0",
+            "is_input": true,
+            "text": "先看这张截图",
+            "type": "user"
+          },
+          {
+            "id": "img-3#1",
+            "is_input": false,
+            "item_ids": [
+              "3#1"
+            ],
+            "type": "user_images"
+          },
+          {
+            "id": "3#2",
+            "is_input": true,
+            "text": "再按截图改一下标题",
+            "type": "user"
+          },
+          {
+            "id": "4#0",
+            "is_input": false,
+            "text": "标题已改好",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": "2#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "2#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0"
+            ],
+            "wake_ids": []
+          },
+          {
+            "answer_id": "4#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "3#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "3#0",
+              "3#2",
+              "3#1",
+              "4#0"
+            ],
+            "process_ids": [],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 0,
+            "trailing_ids": [],
+            "user_ids": [
+              "3#0",
+              "3#2",
+              "3#1"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    },
+    {
+      "name": "queued_entry_text_and_images_join_the_running_turn",
+      "description": "A message with pictures sent while the agent works: the hub marks every block of the entry queued, so its text and pictures are one message that joins the running turn, the pictures drawn above its text.",
+      "source": [
+        "server/internal/transcript/transcript.go: queued_command (every block of the entry is queued)",
+        "apple/Shared/ChatStore.swift: picturesAfterTheirText / ChatBlock.build (queued input joins the turn; sameMessage by Item.entry) / rebuild",
+        "apple/Persona/Views/Chat/ChatLines.swift: build / flatLines / segments / photos / workItems / unfold",
+        "apple/PersonaTests/ChatStoreTests.swift: picturesSentAfterAWakeStayWithTheirMessage",
+        "apple/PersonaTests/ChatLinesTests.swift: aPictureAfterItsTextStaysWithItsMessage"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "text",
+            "text": "整理示例项目的文档"
+          },
+          {
+            "id": "2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_a",
+            "tool_name": "Read"
+          },
+          {
+            "id": "3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "text",
+            "text": "顺便看这两张图",
+            "queued": true
+          },
+          {
+            "id": "3#1",
+            "seq": 3,
+            "role": "user",
+            "kind": "image",
+            "image": {
+              "mime": "image/png",
+              "data": "iVBORw0KGgo="
+            },
+            "queued": true
+          },
+          {
+            "id": "3#2",
+            "seq": 3,
+            "role": "user",
+            "kind": "image",
+            "image": {
+              "mime": "image/png",
+              "data": "iVBORw0KGgo="
+            },
+            "queued": true
+          },
+          {
+            "id": "4#0",
+            "seq": 4,
+            "role": "user",
+            "kind": "tool_result",
+            "text": "ok",
+            "tool_use_id": "call_a"
+          },
+          {
+            "id": "5#0",
+            "seq": 5,
+            "role": "assistant",
+            "kind": "text",
+            "text": "文档整理好了，两张图里的目录也处理了"
+          }
+        ],
+        "check_prefixes": true
+      },
+      "expected": {
+        "lines": [
+          {
+            "id": "1#0",
+            "is_input": true,
+            "text": "整理示例项目的文档",
+            "type": "user"
+          },
+          {
+            "contains_fold": false,
+            "duration_text": "",
+            "elapsed_seconds": null,
+            "end": null,
+            "id": "w-1#0",
+            "is_input": false,
+            "known_failed_tools": 0,
+            "live": false,
+            "open": false,
+            "start": null,
+            "steps": [
+              {
+                "call_id": "call_a",
+                "failed": false,
+                "id": "2#0",
+                "image_count": 0,
+                "name": "Read",
+                "result_id": "4#0",
+                "result_text": "ok",
+                "running": false,
+                "type": "tool"
+              }
+            ],
+            "summary_full": [
+              "工具 1"
+            ],
+            "summary_short": [
+              "工具 1"
+            ],
+            "thoughts": 0,
+            "tools": 1,
+            "type": "work",
+            "unresolved_tools": 0
+          },
+          {
+            "id": "img-3#1",
+            "is_input": false,
+            "item_ids": [
+              "3#1",
+              "3#2"
+            ],
+            "type": "user_images"
+          },
+          {
+            "id": "3#0",
+            "is_input": true,
+            "text": "顺便看这两张图",
+            "type": "user"
+          },
+          {
+            "id": "5#0",
+            "is_input": false,
+            "text": "文档整理好了，两张图里的目录也处理了",
+            "type": "reply"
+          }
+        ],
+        "turns": [
+          {
+            "answer_id": "5#0",
+            "end": null,
+            "has_pending_wake": false,
+            "id": "1#0",
+            "interim_count": 0,
+            "ordered_ids": [
+              "1#0",
+              "tools-2#0",
+              "3#0",
+              "3#1",
+              "3#2",
+              "5#0"
+            ],
+            "process_ids": [
+              "tools-2#0"
+            ],
+            "start": null,
+            "tail_ids": [],
+            "thought_count": 0,
+            "tool_count": 1,
+            "trailing_ids": [],
+            "user_ids": [
+              "1#0",
+              "3#0",
+              "3#1",
+              "3#2"
+            ],
+            "wake_ids": []
+          }
+        ]
+      },
+      "derived": true
+    }
+  ]
+}

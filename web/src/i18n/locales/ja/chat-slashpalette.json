@@ -1,5 +1,7 @@
 {
   "label": "コマンド",
+  "label_with_skills": "コマンドとスキル",
   "no_match": "一致するコマンドはありません",
+  "no_match_skills": "一致するコマンドやスキルはありません",
   "types": "入力：「{text}」"
 }

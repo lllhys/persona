@@ -19,6 +19,7 @@ dependencies {
     implementation(project(":feature:chat"))
     implementation(libs.compose.preview)
     implementation(libs.androidx.activity)
+    implementation(libs.androidx.core)
     implementation(libs.androidx.lifecycle.compose)
     implementation(libs.coroutines.android)
     testImplementation(project(":core:hub"))

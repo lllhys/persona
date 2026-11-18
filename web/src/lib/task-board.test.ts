@@ -46,7 +46,7 @@ describe("the task board (iOS TaskBoardSheet)", () => {
   });
 
   it("puts what the user must act on first: 等你, 待验收, 没开起来, then 在做, 做完了, 停着, 已完成 (#4896)", () => {
-    expect(BOARD_ORDER).toEqual(["waiting", "review", "failed", "working", "unread", "stopped", "done"]);
+    expect(BOARD_ORDER).toEqual(["waiting", "review", "failed", "working", "parked", "unread", "stopped", "done"]);
     const rows = [
       { todo: todo("done", "2026-11-06T07:00:00Z"), status: "done" as const },
       { todo: todo("stopped", "2026-11-06T06:00:00Z"), status: "follow_up" as const },

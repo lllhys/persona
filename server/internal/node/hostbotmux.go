@@ -45,8 +45,14 @@ type botmuxHost struct {
 	base   string // the dashboard on loopback, "" until asked
 	token  string // its token: an admin credential, kept in memory only and never logged
 	logged bool   // a failed observe was logged since the last good one
-	logf   func(format string, args ...any)
-	dryRun bool // botmux renders the turn and dispatches nothing (the live test)
+	// byApp are the sessions each daemon (by its larkAppId) listed when its probe was last ok, and down why each daemon
+	// whose probe failed in the last observe did not answer ("unreachable: timeout"): a partial observe lists the
+	// others and keeps those sessions (#8949). downLogged is the failed daemons last logged, "" for none.
+	byApp      map[string][]botmuxRow
+	down       map[string]string
+	downLogged string
+	logf       func(format string, args ...any)
+	dryRun     bool // botmux renders the turn and dispatches nothing (the live test)
 	// dataDir is botmux's data directory (botmuxDataDir), "" for none (tests without one).
 	dataDir string
 	// bin is the botmux CLI run ("" in tests on a fake), and tooOld its botmuxStamp when it last printed its usage
@@ -252,7 +258,9 @@ type botmuxRow struct {
 
 // observe is every daemon's sessions, reused for botmuxReuse. botmux not installed or no daemon running is
 // host.ErrNotRunning: no sessions. Any other failure (a timeout, a CLI error) is not: the node keeps the sessions it
-// listed last, so a reply in the gap does not take them for not running (and resume one outside botmux).
+// listed last, so a reply in the gap does not take them for not running (and resume one outside botmux). botmux exits 1
+// when a daemon's probe failed (unauthorized, unreachable, daemon_offline) and still prints every daemon's answer: that
+// is a partial answer (botmuxDaemons), a failure only when no daemon answered.
 func (h *botmuxHost) observe(parent context.Context) ([]botmuxRow, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -266,41 +274,25 @@ func (h *botmuxHost) observe(parent context.Context) ([]botmuxRow, error) {
 	h.tooOld = ""
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second) // 0.3 s as a rule; seconds on a machine under load
 	defer cancel()
-	h.rows, h.err = nil, nil
+	h.rows, h.err, h.down = nil, nil, nil
 	out, err := h.run(ctx, "observe", "--include-raw")
-	var doc struct {
-		SchemaVersion int `json:"schemaVersion"`
-		Daemons       []struct {
-			Probe struct {
-				Status string `json:"status"`
-			} `json:"probe"`
-			Sessions []botmuxRow `json:"sessions"`
-		} `json:"daemons"`
-	}
+	var doc botmuxSnapshot
+	parsed := json.Valid(out) && json.Unmarshal(out, &doc) == nil && doc.SchemaVersion == 1
 	switch {
 	case errors.Is(err, exec.ErrNotFound):
 		h.err = host.Mark(fmt.Errorf("botmux observe: %w", err), host.ErrNotRunning)
-	case err != nil:
-		h.err = fmt.Errorf("botmux observe: %w", err)
+	case err != nil && (!parsed || len(doc.Daemons) == 0):
+		h.err = fmt.Errorf("botmux observe: %w%s", err, botmuxStderr(err))
 	case !json.Valid(out):
 		// A botmux from before `observe` prints its usage instead (and exits 0): it cannot list sessions here, which is
 		// botmux not running for the node, with what to do about it.
 		h.err = host.Mark(errors.New("botmux is too old to list its sessions (no `botmux observe`): run `botmux upgrade`"),
 			host.ErrNotRunning)
 		h.tooOld = stamp
-	case json.Unmarshal(out, &doc) != nil || doc.SchemaVersion != 1:
+	case !parsed:
 		h.err = fmt.Errorf("botmux observe: unexpected output (schema %d)", doc.SchemaVersion)
 	default:
-		online := false
-		for _, d := range doc.Daemons {
-			if d.Probe.Status == "ok" {
-				online = true
-				h.rows = append(h.rows, d.Sessions...)
-			}
-		}
-		if !online {
-			h.err = host.Mark(errors.New("botmux: no daemon is running"), host.ErrNotRunning)
-		}
+		h.daemons(doc.Daemons, err)
 	}
 	h.at = time.Now()
 	if parent.Err() != nil {
@@ -311,6 +303,114 @@ func (h *botmuxHost) observe(parent context.Context) ([]botmuxRow, error) {
 	}
 	h.logged = h.err != nil
 	return h.rows, h.err
+}
+
+// botmuxSnapshot is `botmux observe` (schema 1): each daemon's probe and, when it answered, its sessions.
+type botmuxSnapshot struct {
+	SchemaVersion int            `json:"schemaVersion"`
+	Daemons       []botmuxDaemon `json:"daemons"`
+}
+
+type botmuxDaemon struct {
+	LarkAppID string `json:"larkAppId"`
+	Probe     struct {
+		Status    string `json:"status"` // ok, unauthorized, unreachable, not_found, daemon_offline
+		LarkAppID string `json:"larkAppId"`
+		Error     string `json:"error"`
+	} `json:"probe"`
+	Sessions []botmuxRow `json:"sessions"`
+}
+
+// daemons lists an observe's daemons (h.mu held). exit: botmux exited non-zero, as it does when a probe failed. The
+// sessions of each daemon that answered are listed; one that did not keeps the sessions it last listed, and a message
+// to them is refused with why (down, Prompt). When no daemon answered, or one that did not cannot be named, the observe
+// failed as a whole (the node keeps its list); a clean exit with none answering is botmux not running, as before.
+func (h *botmuxHost) daemons(daemons []botmuxDaemon, exit error) {
+	var rows []botmuxRow
+	down := map[string]string{}
+	var whys []string
+	online, unnamed := false, false
+	for _, d := range daemons {
+		app := cmp.Or(d.LarkAppID, d.Probe.LarkAppID)
+		if d.Probe.Status == "ok" {
+			online = true
+			rows = append(rows, d.Sessions...)
+			if app != "" {
+				if h.byApp == nil {
+					h.byApp = map[string][]botmuxRow{}
+				}
+				h.byApp[app] = d.Sessions
+			}
+			continue
+		}
+		why := d.Probe.Status
+		if e := botmuxLine(d.Probe.Error); e != "" {
+			why += ": " + e
+		}
+		whys = append(whys, cmp.Or(app, "a daemon")+" "+why)
+		if app == "" {
+			unnamed = true
+			continue
+		}
+		down[app] = why
+		rows = append(rows, h.byApp[app]...)
+	}
+	slices.Sort(whys)
+	switch {
+	case !online && exit == nil:
+		h.err = host.Mark(errors.New("botmux: no daemon is running"), host.ErrNotRunning)
+		return
+	case !online || unnamed && exit != nil:
+		h.err = fmt.Errorf("botmux observe: %w: %s", exit, strings.Join(whys, "; "))
+		return
+	}
+	h.rows, h.down = rows, down
+	if logged := strings.Join(whys, "; "); logged != h.downLogged {
+		if h.logf != nil {
+			if logged == "" {
+				h.logf("botmux: every daemon answers again")
+			} else {
+				h.logf("botmux: listing the daemons that answered; not answering: %s", logged)
+			}
+		}
+		h.downLogged = logged
+	}
+}
+
+// botmuxDownError: a message to a session whose bot's daemon did not answer the last observe was not posted
+// (deliveryRefusal says why to the user).
+type botmuxDownError struct{ App, Why string }
+
+func (e *botmuxDownError) Error() string {
+	return fmt.Sprintf("botmux: the daemon of bot %s did not answer (%s): nothing sent", e.App, e.Why)
+}
+
+// daemonDown is why the daemon of bot app did not answer the last observe, "" when it did.
+func (h *botmuxHost) daemonDown(app string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.down[app]
+}
+
+// botmuxStderr is what the botmux CLI wrote to stderr before it failed, as ": <text>" on one line ("" for none).
+func botmuxStderr(err error) string {
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		return ""
+	}
+	if s := botmuxLine(string(ee.Stderr)); s != "" {
+		return ": " + s
+	}
+	return ""
+}
+
+// botmuxLine is text on one line, at most 300 characters.
+func botmuxLine(s string) string {
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > 300 {
+		return string(r[:300]) + "…"
+	}
+	return string(r)
 }
 
 // botmuxTurns are botmux's turn states as the node's; the others (limited, stalled, interrupted: the turn ended
@@ -582,6 +682,9 @@ func (h *botmuxHost) Prompt(ctx context.Context, pane host.PaneRef, text string)
 	r, _, err := h.row(ctx, pane.ID)
 	if err != nil {
 		return host.Mark(err, host.ErrNotDelivered)
+	}
+	if why := h.daemonDown(r.Identity.LarkAppID); why != "" { // its bot's daemon did not answer the last observe (#8949)
+		return host.Mark(&botmuxDownError{App: r.Identity.LarkAppID, Why: why}, host.ErrNotDelivered)
 	}
 	req := map[string]any{
 		"source":      map[string]any{"type": "webhook", "connectorId": "persona"},

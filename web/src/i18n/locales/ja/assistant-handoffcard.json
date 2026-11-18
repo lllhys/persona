@@ -1,0 +1,17 @@
+{
+  "open_in_inbox": "受信箱で開く",
+  "summary": "まとめ",
+  "sent": "あなたとして返信しました",
+  "self_replied": "元の会話であなたが返信しました",
+  "filed_not_sent": "対応済み。この返信は送信されていません",
+  "conclusion_filed": "結論 · 対応済み",
+  "replaced": "現在の提案ではありません。何も送信されていません",
+  "reply_as_you": "あなたとして「{title}」に返信",
+  "conclusion": "結論",
+  "later_line": "受信箱で待っています：{title}",
+  "wrap_up": "まとめる：{title}",
+  "wrap_up_ask": "ここでまとめましょう。最終的なまとめと返信を、この受信箱の項目に書き戻してください。",
+  "wrap_up_failed": "まとめの依頼を送れませんでした：{error}",
+  "wrap_up_to_send": "送信待ち",
+  "wrap_up_to_confirm": "確認待ち"
+}

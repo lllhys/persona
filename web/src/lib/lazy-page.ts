@@ -24,8 +24,16 @@ export interface LazyPageOptions {
   routes?: Route["name"][];
 }
 
-/** A page from a chunk loaded on its first render, or by preloadPages as `opts` says. */
-export function lazyPage<P extends object>(load: () => Promise<ComponentType<P>>, opts: LazyPageOptions = {}): ComponentType<P> {
+/** A lazy page, with its chunk's load on hand for a caller that knows sooner than a render or a link that it is next. */
+export type LazyPageComponent<P extends object> = ComponentType<P> & {
+  /** Loads the chunk now (once; again after a failure), so a later render draws the page at once. */
+  preload: () => Promise<unknown>;
+  /** Whether the chunk is in: a render now draws the page, not the Suspense fallback. */
+  ready: () => boolean;
+};
+
+/** A page from a chunk loaded on its first render, or by preloadPages as `opts` says, or by its own `preload`. */
+export function lazyPage<P extends object>(load: () => Promise<ComponentType<P>>, opts: LazyPageOptions = {}): LazyPageComponent<P> {
   let page: ComponentType<P> | null = null;
   let loading: Promise<ComponentType<P>> | null = null;
   const once = () =>
@@ -69,7 +77,7 @@ export function lazyPage<P extends object>(load: () => Promise<ComponentType<P>>
     if (!held && !server) return null;
     return createElement(use(once()), props);
   }
-  return LazyPage;
+  return Object.assign(LazyPage, { preload: once, ready: () => page !== null });
 }
 
 /** Loads every lazy page's chunk now, for a test that draws without waiting (renderToStaticMarkup). */

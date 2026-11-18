@@ -12,6 +12,7 @@
     <string name="chat_rewind_confirm_code">コードの巻き戻しを確定</string>
     <string name="chat_rewind_confirm_code_note">このメッセージ以降に変更したファイルも元に戻ります。</string>
     <string name="chat_rewind_block_claude_only">Claudeのみ</string>
+    <string name="chat_rewind_block_unsupported">未対応</string>
     <string name="chat_rewind_block_working">作業中</string>
     <string name="chat_rewind_block_needs_you">回答待ち</string>
     <string name="chat_rewind_block_offline">停止中</string>

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
@@ -18,7 +19,8 @@ import (
 
 // errTaskAgentsStopped: every agent of the task has stopped; nothing was sent.
 var errTaskAgentsStopped = errors.New("every agent of this task has stopped and is read-only: nothing was sent. " +
-	"A message on the task's card starts a new agent for it; the user can also resume one from its terminal page")
+	"A message on the task's card starts a new agent for it; to go on with a stopped agent's own context, resume it on " +
+	"purpose with agent_send (resume true, resume_why), or the user can with Resume on its terminal page")
 
 // liveTaskAgents are the task's agents that have not stopped; last is the latest of all when none is left.
 func liveTaskAgents(agents []proto.Session) (live []proto.Session, last proto.Session) {
@@ -43,6 +45,7 @@ func (s *Service) startTaskSuccessor(ctx context.Context, t Todo, last proto.Ses
 	defer cancel()
 	prompt := prompts.RenderTaskSuccessor(prompts.TaskSuccessor{Previous: agentLabel(last), PreviousID: last.SessionID,
 		LastReply: clip(last.LastText, 2000), Files: prompts.RenderTaskFiles(), Text: text})
+	prompt = s.withTodoDecisions(sctx, t.ID, prompt)
 	params := map[string]any{"cwd": last.Cwd, "launcher": last.Launcher, "model": "", "effort": "", "tab_name": t.Title,
 		"prompt": prompt}
 	if last.PermissionMode != "" {
@@ -72,3 +75,55 @@ func (s *Service) startTaskSuccessor(ctx context.Context, t Todo, last proto.Ses
 	s.logf("task %s: its agents had stopped; started %s/%s for the user's message", t.ID, m.ID, short(c.SessionID))
 	return c, nil
 }
+
+// taskStart is a start of a task's agent on its way (tasksState.retrying).
+type taskStart struct {
+	done chan struct{} // closed when it ended
+	// agent is the new agent a start after stopped ones brought up (startTaskSuccessor), set before done closes; empty
+	// for other starts and for one that failed.
+	agent proto.Session
+}
+
+// claimTaskStart marks task id's agent as starting. ok is false when a start is on its way already: cur is that one.
+func (s *Service) claimTaskStart(id string) (cur *taskStart, ok bool) {
+	s.tasks.mu.Lock()
+	defer s.tasks.mu.Unlock()
+	return s.claimTaskStartLocked(id)
+}
+
+// claimTaskStartLocked is claimTaskStart under tasks.mu.
+func (s *Service) claimTaskStartLocked(id string) (cur *taskStart, ok bool) {
+	if cur := s.tasks.retrying[id]; cur != nil {
+		return cur, false
+	}
+	st := &taskStart{done: make(chan struct{})}
+	s.tasks.retrying[id] = st
+	return st, true
+}
+
+// endTaskStart ends task id's start st; agent is the new agent it started, if any. Ending it again does nothing.
+func (s *Service) endTaskStart(id string, st *taskStart, agent proto.Session) {
+	s.tasks.mu.Lock()
+	defer s.tasks.mu.Unlock()
+	select {
+	case <-st.done:
+		return
+	default:
+	}
+	if s.tasks.retrying[id] == st {
+		delete(s.tasks.retrying, id)
+	}
+	st.agent = agent
+	close(st.done)
+}
+
+// taskStartOnWay reports whether a start of task id's agent is on its way.
+func (s *Service) taskStartOnWay(id string) bool {
+	s.tasks.mu.Lock()
+	defer s.tasks.mu.Unlock()
+	return s.tasks.retrying[id] != nil
+}
+
+// taskStartWait bounds how long a message for a task waits for the start of its agent already on its way: that start's
+// own bound and a margin (tests shorten it).
+var taskStartWait = func() time.Duration { return agentStartTimeout + time.Minute }

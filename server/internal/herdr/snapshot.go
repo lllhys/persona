@@ -2,6 +2,7 @@ package herdr
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -10,12 +11,23 @@ import (
 // the same fields. A failed read returns an error so callers can keep their old layout and fall back to agents.
 func (c *Client) Snapshot(ctx context.Context) (*Snapshot, error) {
 	var res struct {
-		Snapshot Snapshot `json:"snapshot"`
+		Snapshot json.RawMessage `json:"snapshot"`
 	}
 	err := c.call(ctx, "session.snapshot", nil, &res, "api", "snapshot")
 	if err == nil {
+		var snap Snapshot
+		if len(res.Snapshot) > 0 {
+			if err := json.Unmarshal(res.Snapshot, &snap); err != nil {
+				return nil, err
+			}
+		}
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(res.Snapshot, &fields)
+		_, panes := fields["panes"]
+		_, agents := fields["agents"]
+		snap.InventoryIncomplete = !panes || !agents
 		c.snapshotCut.Store(false)
-		return &res.Snapshot, nil
+		return &snap, nil
 	}
 	if !errors.Is(err, ErrTruncated) || ctx.Err() != nil {
 		return nil, err
@@ -33,12 +45,19 @@ func (c *Client) Snapshot(ctx context.Context) (*Snapshot, error) {
 // snapshotParts reads each workspace separately and each tab's layout once, using any pane in that tab.
 // These calls are not atomic; changes between successful reads settle on the next scan.
 func (c *Client) snapshotParts(ctx context.Context) (*Snapshot, error) {
-	workspaces, err := c.Workspaces(ctx)
-	if err != nil {
+	var spaces struct {
+		Workspaces json.RawMessage `json:"workspaces"`
+	}
+	if err := c.call(ctx, "workspace.list", nil, &spaces, "workspace", "list"); err != nil {
 		return nil, err
 	}
-	snap := &Snapshot{Workspaces: workspaces}
-	for _, w := range workspaces {
+	snap := &Snapshot{InventoryIncomplete: len(spaces.Workspaces) == 0}
+	if len(spaces.Workspaces) > 0 {
+		if err := json.Unmarshal(spaces.Workspaces, &snap.Workspaces); err != nil {
+			return nil, err
+		}
+	}
+	for _, w := range snap.Workspaces {
 		var tabs struct {
 			Tabs []Tab `json:"tabs"`
 		}
@@ -46,15 +65,21 @@ func (c *Client) snapshotParts(ctx context.Context) (*Snapshot, error) {
 			return nil, err
 		}
 		var panes struct {
-			Panes []Agent `json:"panes"`
+			Panes json.RawMessage `json:"panes"`
 		}
 		if err := c.call(ctx, "pane.list", map[string]any{"workspace_id": w.ID}, &panes, "pane", "list", "--workspace", w.ID); err != nil {
 			return nil, err
 		}
+		var entries []Agent
+		if len(panes.Panes) == 0 {
+			snap.InventoryIncomplete = true
+		} else if err := json.Unmarshal(panes.Panes, &entries); err != nil {
+			return nil, err
+		}
 		snap.Tabs = append(snap.Tabs, tabs.Tabs...)
-		snap.Panes = append(snap.Panes, panes.Panes...)
+		snap.Panes = append(snap.Panes, entries...)
 		firstPane := map[string]string{}
-		for _, p := range panes.Panes {
+		for _, p := range entries {
 			if firstPane[p.TabID] == "" {
 				firstPane[p.TabID] = p.PaneID
 			}

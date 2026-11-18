@@ -1,0 +1,9 @@
+{
+  "request": "Please move this work from {source} (computer ID: {source_id}) to {target} (computer ID: {target_id}) and carry on there:",
+  "line_todo": "- To-do \"{todo}\" (to-do ID: {todo_id}), Agent \"{title}\" (session ID: {sid})",
+  "line_agent": "- Agent \"{title}\" (session ID: {sid}, no to-do)",
+  "how": "How: for each one, start a new task on {target} whose plan continues the earlier to-do, with a short note on where it stands. Stop the original Agent on {source} only after the new one has started on {target}. Tell me here when it's done.",
+  "open_chat": "Open chat",
+  "sent": "Sent to Persona",
+  "not_sent": "Didn't send. Open the chat to see why"
+}

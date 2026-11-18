@@ -35,7 +35,8 @@ type Options struct {
 	// RestoreUpdate puts back what ran before the update to build (the pending marker's binaries, selfupdate.go): its
 	// new slot could not take over (cause), or did not confirm it in time (cause nil). It says which binary to run
 	// now; ok false when no such update is under way (confirmed, or rolled back meanwhile).
-	RestoreUpdate func(build int64, cause error) (binary string, ok bool)
+	// A restoration error is fatal: never fall back to a path whose files may be mixed.
+	RestoreUpdate func(build int64, cause error) (binary string, ok bool, err error)
 
 	// Budgets (zero: the defaults), for the tests.
 	HoldMax, StandbyWait, ReleaseWait, ActivateWait, ConfirmWait time.Duration
@@ -56,10 +57,10 @@ type edge struct {
 	active *proc
 	gate   chan struct{} // closed while connections may go to active
 	held   bool
+	served string // the name of the slot that served last: a new slot takes the other one
 
 	waiting atomic.Int32
 	reqs    chan switchReq
-	slots   int // started so far: names alternate a, b
 
 	// The update the active slot is the result of, until it confirms it.
 	confirmBuild int64

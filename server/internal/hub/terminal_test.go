@@ -135,13 +135,14 @@ func TestTerminalFramesFanOutFromAWholeFrame(t *testing.T) {
 // termNode is a node as the hub sees it for terminals: terminal.watch (attach_busy while busy and not a takeover;
 // control true unless old), terminal.unwatch, and the events the hub sends, all recorded in order.
 type termNode struct {
-	mu    sync.Mutex
-	log   []string
-	args  map[string]string // the params of each other request, by method
-	busy  bool
-	old   bool
-	hub   *Hub
-	where *Machine
+	mu      sync.Mutex
+	log     []string
+	args    map[string]string // the params of each other request, by method
+	answers map[string]any    // optional raw responses for compatibility fixtures
+	busy    bool
+	old     bool
+	hub     *Hub
+	where   *Machine
 }
 
 func newTermNode(t *testing.T) *termNode {
@@ -181,6 +182,9 @@ func newTermNode(t *testing.T) *termNode {
 			tn.args = map[string]string{}
 		}
 		tn.args[method] = string(params)
+		if answer, ok := tn.answers[method]; ok {
+			return answer, nil
+		}
 		return map[string]any{}, nil
 	}
 	nodeSide.OnEvent = func(event string, params json.RawMessage) {

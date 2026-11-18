@@ -2,8 +2,9 @@
 // An Agent's Background tasks side panel (#5421, after cindy's Background tasks tab): Running (the /loop, the running
 // workflow runs oldest first, the background tasks) and Completed (ended runs newest first); a row's kind mark, status
 // mark, title and "status · progress · duration · tokens · tool uses"; a run's detail with Back; a command's output in
-// the file panel; Stop for the loop that asks first; "No background tasks in this session yet" when there is nothing.
+// its own detail with live output; Stop for the loop that asks first; "No background tasks in this session yet" when there is nothing.
 import { act } from "react";
+import { Blob as NodeBlob } from "node:buffer";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => {
@@ -15,7 +16,8 @@ vi.hoisted(() => {
 });
 
 import { provideBackgroundChat, type BackgroundPanel as Asked } from "../../lib/background-panel";
-import { closePanel, getPanel } from "../../lib/panel";
+import { setToken } from "../../lib/api";
+import { closePanel, getPanel, openPanel } from "../../lib/panel";
 import { reset, upsertSession } from "../../lib/store";
 import type { BackgroundTask, LoopInfo, Session, Workflow } from "../../lib/types";
 import { BackgroundPanel, backgroundSections } from "./BackgroundPanel";
@@ -57,27 +59,37 @@ const sub: BackgroundTask = { id: "b2", kind: "agent", description: "Review the 
 let host: HTMLDivElement;
 let root: Root;
 const closed = vi.fn();
+const outerKey = vi.fn();
 
 beforeEach(() => {
+  setToken("synthetic-background-owner");
+  vi.stubGlobal("Blob", NodeBlob);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("Sample output\n", {
+    status: 206, headers: { "Content-Type": "text/plain", "Content-Range": "bytes 0-13/14" },
+  })));
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.setSystemTime(T0);
   closed.mockClear();
+  outerKey.mockClear();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
 });
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount());
+  await flush();
   host.remove();
   closePanel();
   reset();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 const put = (over: Partial<Session>) => act(() => upsertSession({ machine_id: "m", session_id: "s", cwd: "/work", status: "working", state: "working", ...over } as Session));
-const draw = (opened: Asked = { kind: "background", mid: "m", sid: "s" }) => act(() => root.render(<BackgroundPanel mid="m" sid="s" opened={opened} onClose={closed} />));
+const draw = (opened: Asked = { kind: "background", mid: "m", sid: "s" }) => act(() => root.render(<div onKeyDown={outerKey}><BackgroundPanel mid="m" sid="s" opened={opened} onClose={closed} /></div>));
 const q = (sel: string) => host.querySelector<HTMLElement>(sel);
 const all = (sel: string) => [...host.querySelectorAll<HTMLElement>(sel)];
+const flush = async () => { await act(async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); }); };
 /** The rows in order, by what they are. */
 const rows = () => all("[data-bg-loop], [data-bg-run], [data-bg-task]").map((el) => el.dataset.bgRun ?? el.dataset.bgTask ?? "loop");
 const meta = (sel: string) => q(`${sel} [data-bg-meta]`)!.textContent;
@@ -139,21 +151,38 @@ describe("the list", () => {
 });
 
 describe("a background task", () => {
-  it("opens its output in the file panel, and keeps its command as a line that copies it", () => {
+  it("opens output inside Background tasks, retaining Open as file and a separate copy action", () => {
     const writeText = vi.fn(async () => {});
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     put({ background: [shell, sub] });
-    draw();
+    const opened: Asked = { kind: "background", mid: "m", sid: "s" };
+    act(() => openPanel(opened));
+    draw(opened);
     const row = q('[data-bg-task="b1"]')!;
     expect(row.querySelector("[data-bg-kind]")!.getAttribute("data-bg-kind")).toBe("terminal");
     expect(meta('[data-bg-task="b1"]')).toBe("运行中 · 1m 5s");
-    act(() => row.querySelector<HTMLElement>("[data-bg-row-button]")!.click());
-    expect(getPanel()).toEqual({ kind: "file", mid: "m", path: "/tmp/out/b1.log", cwd: "/work" });
     const cmd = row.querySelector<HTMLElement>("[data-bg-command]")!;
     expect(cmd.title).toBe("npm test -- --watch=false");
-    expect(cmd.getAttribute("aria-label")).toBe("拷贝命令");
-    act(() => cmd.click());
+    const copy = row.querySelector<HTMLElement>('button[aria-label="复制命令"]')!;
+    expect(copy).not.toBeNull();
+    act(() => copy.click());
     expect(writeText).toHaveBeenCalledWith("npm test -- --watch=false");
+    expect(getPanel()).toEqual(opened);
+    act(() => row.querySelector<HTMLElement>("[data-bg-row-button]")!.click());
+    expect(getPanel()).toEqual({ ...opened, task: "b1" });
+    expect(q('[data-bg-command-detail="b1"]')).not.toBeNull();
+    act(() => q('[data-bg-open-file]')!.click());
+    expect(getPanel()).toEqual({ kind: "file", mid: "m", path: "/tmp/out/b1.log", cwd: "/work" });
+  });
+
+  it("includes the command in the output-opening row without nesting the copy button", () => {
+    put({ background: [shell] });
+    draw();
+    const row = q('[data-bg-task="b1"]')!;
+    const button = row.querySelector<HTMLElement>("[data-bg-row-button]")!;
+    expect(button.querySelector("[data-bg-command]")?.textContent).toBe(shell.command);
+    expect(button.querySelector("button")).toBeNull();
+    expect(row.querySelector('button[aria-label="复制命令"]')).not.toBeNull();
   });
 
   it("is a plain row when it has no output to open", () => {
@@ -163,6 +192,102 @@ describe("a background task", () => {
     expect(row.querySelector("[data-bg-kind]")!.getAttribute("data-bg-kind")).toBe("agent");
     expect(row.querySelector("button")).toBeNull();
     expect(row.textContent).toContain("Review the change");
+  });
+
+  it("returns to the same scroll position and row focus with Back", async () => {
+    put({ background: [shell, sub] }); draw();
+    q("[data-background-list]")!.scrollTop = 280;
+    act(() => q('[data-bg-task="b1"] [data-bg-row-button]')!.click());
+    await flush();
+    expect(document.activeElement).toBe(q('button[aria-label="返回"]'));
+    act(() => q('button[aria-label="返回"]')!.click());
+    expect(q("[data-background-list]")!.scrollTop).toBe(280);
+    expect(document.activeElement).toBe(q('[data-bg-task="b1"] [data-bg-row-button]'));
+  });
+
+  it("keeps the last output on read failure and offers a translated Retry action", async () => {
+    put({ background: [shell] }); draw({ kind: "background", mid: "m", sid: "s", task: "b1" }); await flush();
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: "Synthetic unavailable" }), { status: 502 }));
+    act(() => vi.advanceTimersByTime(2000)); await flush();
+    expect(q("[data-command-output] pre")!.textContent).toBe("Sample output\n");
+    const retry = all('[role="alert"] button').find(button => button.textContent === "重试");
+    expect(retry).toBeDefined();
+    act(() => retry!.click()); await flush();
+    expect(q('[role="alert"]')).toBeNull();
+    expect(q("[data-command-output] pre")!.textContent).toBe("Sample output\n");
+  });
+
+  it("honors an explicit command ask and ignores a missing one that arrives later", async () => {
+    put({ background: [shell] }); draw({ kind: "background", mid: "m", sid: "s", task: "b1" });
+    await flush();
+    expect(q('[data-bg-command-detail="b1"]')).not.toBeNull();
+    draw({ kind: "background", mid: "m", sid: "s", task: "b9" });
+    put({ background: [shell, { ...shell, id: "b9" }] });
+    expect(q("[data-bg-command-detail]")).toBeNull();
+    expect(q('[data-bg-task="b9"]')).not.toBeNull();
+  });
+
+  it("keeps the latest command and output path after it leaves the running list, with one last read", async () => {
+    put({ background: [shell] }); draw({ kind: "background", mid: "m", sid: "s", task: "b1" }); await flush();
+    const updated = { ...shell, description: "Latest command title", command: "printf updated", output_file: "/tmp/updated.log" };
+    put({ background: [updated] }); await flush();
+    const beforeEnd = vi.mocked(fetch).mock.calls.length;
+    put({ background: [] }); await flush();
+    expect(q("[data-bg-command-detail]")!.textContent).toContain("Latest command title");
+    expect(q('[role="status"]')!.textContent).toBe("已不在运行列表中");
+    expect(vi.mocked(fetch).mock.calls.length).toBe(beforeEnd + 1);
+    act(() => vi.advanceTimersByTime(6000)); await flush();
+    expect(vi.mocked(fetch).mock.calls.length).toBe(beforeEnd + 1);
+    act(() => q("[data-bg-open-file]")!.click());
+    expect(getPanel()).toEqual({ kind: "file", mid: "m", cwd: "/work", path: "/tmp/updated.log" });
+  });
+
+  it("handles Escape from the outer header as Back, then lets the list's Escape reach the outer panel", async () => {
+    put({ background: [shell] }); draw();
+    act(() => q('[data-bg-task="b1"] [data-bg-row-button]')!.click()); await flush();
+    const key = () => new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => q("header button")!.dispatchEvent(key()));
+    expect(q("[data-background-list]")).not.toBeNull(); expect(outerKey).not.toHaveBeenCalled();
+    act(() => q("header button")!.dispatchEvent(key()));
+    expect(outerKey).toHaveBeenCalledOnce();
+  });
+
+  it("keeps detail open on IME Escape and while a menu or dialog owns Escape", async () => {
+    put({ background: [shell] }); draw({ kind: "background", mid: "m", sid: "s", task: "b1" }); await flush();
+    const ime = new KeyboardEvent("keydown", { key: "Escape", keyCode: 229, bubbles: true, cancelable: true });
+    act(() => q("header button")!.dispatchEvent(ime));
+    expect(ime.defaultPrevented).toBe(false); expect(outerKey).not.toHaveBeenCalled();
+    for (const role of ["menu", "dialog"]) {
+      const modal = document.createElement("div"); modal.setAttribute("role", role); document.body.append(modal);
+      try { act(() => q("header button")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); }
+      finally { modal.remove(); }
+      expect(q('[data-bg-command-detail="b1"]')).not.toBeNull();
+    }
+  });
+
+  it.each(["owner", "manager", "session"])("retires the selected detail on %s change", async (scope) => {
+    put({ background: [shell], manager: "manager-a" }); draw({ kind: "background", mid: "m", sid: "s", task: "b1" }); await flush();
+    if (scope === "owner") act(() => setToken("synthetic-other-owner"));
+    else if (scope === "manager") put({ background: [shell], manager: "manager-b" });
+    else act(() => reset());
+    expect(q("[data-bg-command-detail]")).toBeNull();
+    expect(q("[data-bg-open-file]")).toBeNull();
+    if (scope === "owner") expect(closed).toHaveBeenCalledOnce();
+  });
+
+  it.each(["owner", "manager", "session"])("fences a list row's stale copy and open handlers on %s change", (scope) => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    put({ background: [shell] }); draw();
+    const copy = q('[data-bg-task="b1"] button[aria-label="复制命令"]')!;
+    const row = q('[data-bg-task="b1"] [data-bg-row-button]')!;
+    act(() => {
+      if (scope === "owner") setToken("synthetic-other-owner");
+      else if (scope === "manager") upsertSession({ machine_id: "m", session_id: "s", background: [shell], manager: "other-manager" } as Session);
+      else reset();
+      expect(copy.isConnected).toBe(true); copy.click(); row.click();
+    });
+    expect(writeText).not.toHaveBeenCalled(); expect(getPanel()).toBeNull();
   });
 });
 
@@ -187,7 +312,7 @@ describe("the loop", () => {
     act(() => [...q("[data-bg-loop-confirm]")!.querySelectorAll("button")].find((b) => b.textContent === "停止循环")!.click());
     expect(stopLoop).toHaveBeenCalledTimes(1);
     expect(q("[data-bg-loop-confirm]")).toBeNull();
-    take();
+    act(() => take());
   });
 
   it("offers no Stop while no chat page shows the session, and offers it once one does (#5421 review)", () => {

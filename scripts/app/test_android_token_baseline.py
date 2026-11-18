@@ -29,12 +29,13 @@ class TokenBaselineTest(unittest.TestCase):
             import persona.core.designsystem.Tokens.Space as Spacing
             val color = Theme.palette.ink
             val font = PersonaTypography.body
+            val reading = Tokens.TypeGlass.Body.size
             val size = PersonaTheme.shapes.card
             val gap = Spacing.m
         '''
         counts = count(canonical)
         self.assertEqual(1, counts['color']['token'])
-        self.assertEqual(1, counts['font']['token'])
+        self.assertEqual(2, counts['font']['token'])
         self.assertEqual(2, counts['dp']['token'])
         former = ('jar' + 'vis').capitalize()
         retired_symbols = f'{former}Theme.palette.ink {former}Typography.body {former}Theme.shapes.card'

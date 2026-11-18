@@ -3,7 +3,7 @@
   "cases": [
     {
       "name": "task_waiting_for_review_only_in_needs_you",
-      "description": "A task its supervisor judged finished (pending_review) waits for the user's review: it is in Needs you and not in In progress.",
+      "description": "A task its supervisor judged finished (pending_review), from a hub that does not say since when (no pending_since): it is in Needs you and not in In progress, as before the supervisor's review had its own place. The web lists the review rows under its Persona reviewing entry instead (web_review, #8678).",
       "source": [
         "web/src/lib/assistant-entries.ts assistantEntries",
         "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
@@ -55,7 +55,10 @@
           "task:t-review"
         ],
         "running": [],
-        "shelved": []
+        "shelved": [],
+        "web_review": [
+          "task:t-review"
+        ]
       }
     },
     {
@@ -144,6 +147,622 @@
         ],
         "running": [],
         "shelved": []
+      }
+    },
+    {
+      "name": "supervisor_review_in_progress",
+      "description": "A task judged finished waits for its supervisor's review, not the owner's: while the review is younger than an hour (pending_since) it is in In progress and not in Needs you. One second short of the hour still is; so is one the owner already looked at (seen_at), which the To-dos page files as Done. The web lists the review rows under its Persona reviewing entry instead (web_review, #8678).",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/assistant/unified-entry.md Needs you and In progress"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-fresh",
+            "title": "Fix the login redirect",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-fresh",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:50:00Z"
+            }
+          },
+          {
+            "id": "t-almost",
+            "title": "Update the changelog",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T07:30:00Z",
+            "updated_at": "2026-11-10T07:30:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-almost",
+                "linked_at": "2026-11-10T07:30:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:00:01Z"
+            }
+          },
+          {
+            "id": "t-seen",
+            "title": "Rename the config key",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T07:00:00Z",
+            "updated_at": "2026-11-10T07:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-seen",
+                "linked_at": "2026-11-10T07:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:30:00Z"
+            },
+            "seen_at": "2026-11-10T08:40:00Z"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-fresh",
+            "title": "w-fresh",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-almost",
+            "title": "w-almost",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-seen",
+            "title": "w-seen",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [],
+        "running": [
+          "task:t-fresh",
+          "task:t-almost",
+          "task:t-seen"
+        ],
+        "shelved": [],
+        "supervisor_review": [
+          "task:t-fresh",
+          "task:t-almost",
+          "task:t-seen"
+        ],
+        "web_review": [
+          "task:t-fresh",
+          "task:t-almost",
+          "task:t-seen"
+        ]
+      }
+    },
+    {
+      "name": "supervisor_review_with_open_pr",
+      "description": "A task whose fresh, open PR waits for a maintainer (the web's Waiting for merge, #7614) and whose supervisor's review is under way: the review is Persona's own work, so it is in In progress saying its supervisor is reviewing it, not Waiting for merge, even after the owner looked at it (seen_at, which the To-dos page files as Waiting for merge). Once the review is overdue it is the owner's: Needs you wins over the PR. Clients without the Waiting for merge group read the same split. The web lists the review rows under its Persona reviewing entry instead (web_review, #8678).",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/assistant/unified-entry.md Needs you and In progress"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-review-pr",
+            "title": "Fix the login redirect",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T06:00:00Z",
+            "updated_at": "2026-11-10T06:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-review-pr",
+                "linked_at": "2026-11-10T06:00:00Z"
+              }
+            ],
+            "pr_url": "https://example.com/acme/app/pull/101",
+            "pr_status": {
+              "url": "https://example.com/acme/app/pull/101",
+              "state": "open",
+              "draft": false,
+              "review": "required",
+              "checks": "success",
+              "conflicts": false,
+              "checked_at": "2026-11-10T08:55:00Z"
+            },
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:30:00Z"
+            },
+            "seen_at": "2026-11-10T08:40:00Z"
+          },
+          {
+            "id": "t-overdue-pr",
+            "title": "Update the changelog",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T06:00:00Z",
+            "updated_at": "2026-11-10T06:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-overdue-pr",
+                "linked_at": "2026-11-10T06:00:00Z"
+              }
+            ],
+            "pr_url": "https://example.com/acme/app/pull/102",
+            "pr_status": {
+              "url": "https://example.com/acme/app/pull/102",
+              "state": "open",
+              "draft": false,
+              "review": "required",
+              "checks": "success",
+              "conflicts": false,
+              "checked_at": "2026-11-10T08:55:00Z"
+            },
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T07:00:00Z"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-review-pr",
+            "title": "w-review-pr",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-overdue-pr",
+            "title": "w-overdue-pr",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-overdue-pr"
+        ],
+        "running": [
+          "task:t-review-pr"
+        ],
+        "shelved": [],
+        "supervisor_review": [
+          "task:t-review-pr"
+        ],
+        "web_review": [
+          "task:t-overdue-pr",
+          "task:t-review-pr"
+        ]
+      }
+    },
+    {
+      "name": "overdue_supervisor_review_needs_you",
+      "description": "A review still waiting an hour after the task entered pending_review comes to the owner: at the hour exactly and after it the task is in Needs you, as before, so a stalled or missing supervisor never hides a finished task. The web lists the review rows under its Persona reviewing entry instead (web_review, #8678).",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/assistant/unified-entry.md Needs you and In progress"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-hour",
+            "title": "Fix the login redirect",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T07:30:00Z",
+            "updated_at": "2026-11-10T07:30:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-hour",
+                "linked_at": "2026-11-10T07:30:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:00:00Z"
+            }
+          },
+          {
+            "id": "t-late",
+            "title": "Update the changelog",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T06:00:00Z",
+            "updated_at": "2026-11-10T06:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-late",
+                "linked_at": "2026-11-10T06:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T06:30:00Z"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-hour",
+            "title": "w-hour",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-late",
+            "title": "w-late",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T06:30:00Z",
+            "state_since": "2026-11-10T06:30:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-hour",
+          "task:t-late"
+        ],
+        "running": [],
+        "shelved": [],
+        "web_review": [
+          "task:t-hour",
+          "task:t-late"
+        ]
+      }
+    },
+    {
+      "name": "review_without_pending_since_needs_you",
+      "description": "A hub that does not send pending_since (or sends one that is no time) keeps the old rule: the task waiting for review is in Needs you. The ledger's updated_at is not read in its place. The web lists the review rows under its Persona reviewing entry instead (web_review, #8678).",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/assistant/unified-entry.md Needs you and In progress"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-old-hub",
+            "title": "Fix the login redirect",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:30:00Z",
+            "updated_at": "2026-11-10T08:30:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-old-hub",
+                "linked_at": "2026-11-10T08:30:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "updated_at": "2026-11-10T08:55:00Z"
+            }
+          },
+          {
+            "id": "t-no-time",
+            "title": "Update the changelog",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-no-time",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "updated_at": "2026-11-10T08:55:00Z",
+              "pending_since": "not a time"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-old-hub",
+            "title": "w-old-hub",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:55:00Z",
+            "state_since": "2026-11-10T08:55:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-no-time",
+            "title": "w-no-time",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:55:00Z",
+            "state_since": "2026-11-10T08:55:00Z"
+          }
+        ],
+        "interactions": [],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-old-hub",
+          "task:t-no-time"
+        ],
+        "running": [],
+        "shelved": [],
+        "web_review": [
+          "task:t-old-hub",
+          "task:t-no-time"
+        ]
+      }
+    },
+    {
+      "name": "owner_decisions_stay_in_needs_you_during_a_fresh_review",
+      "description": "What is the owner's stays the owner's however young the review: a pending_review task whose agent asks something, one with an open ask (please verify), and a needs_user task are in Needs you; the fresh review next to them is in In progress. The web lists the review rows under its Persona reviewing entry instead (web_review, #8678).",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/assistant/unified-entry.md Needs you and In progress"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "todos": [
+          {
+            "id": "t-asks",
+            "title": "Set up the demo server",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-asks",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:50:00Z"
+            }
+          },
+          {
+            "id": "t-verify",
+            "title": "Ship the export button",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T07:50:00Z",
+            "updated_at": "2026-11-10T07:50:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-verify",
+                "linked_at": "2026-11-10T07:50:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:50:00Z"
+            },
+            "ask": {
+              "verdict": "The export button is live; please check it on your phone",
+              "asked_at": "2026-11-10T08:50:00Z"
+            }
+          },
+          {
+            "id": "t-user",
+            "title": "Pick a database",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T07:40:00Z",
+            "updated_at": "2026-11-10T07:40:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-user",
+                "linked_at": "2026-11-10T07:40:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "needs_user"
+            }
+          },
+          {
+            "id": "t-fresh",
+            "title": "Fix the login redirect",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T07:30:00Z",
+            "updated_at": "2026-11-10T07:30:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-fresh",
+                "linked_at": "2026-11-10T07:30:00Z"
+              }
+            ],
+            "supervision": {
+              "supervisor": "main-chat",
+              "state": "pending_review",
+              "pending_since": "2026-11-10T08:50:00Z"
+            }
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-asks",
+            "title": "w-asks",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z",
+            "pending_interactions": 1
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-verify",
+            "title": "w-verify",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-user",
+            "title": "w-user",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          },
+          {
+            "machine_id": "mac",
+            "session_id": "w-fresh",
+            "title": "w-fresh",
+            "cwd": "/home/user/project",
+            "state": "idle",
+            "status": "idle",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "state_since": "2026-11-10T08:00:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "ix-asks",
+            "machine_id": "mac",
+            "session_id": "w-asks",
+            "kind": "question",
+            "created_at": "2026-11-10T08:55:00Z",
+            "questions": [
+              {
+                "question": "Which port should the demo use?",
+                "options": [
+                  {
+                    "label": "8080"
+                  },
+                  {
+                    "label": "9090"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "plans": {},
+        "feed": []
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-asks",
+          "task:t-verify",
+          "task:t-user"
+        ],
+        "running": [
+          "task:t-fresh"
+        ],
+        "shelved": [],
+        "supervisor_review": [
+          "task:t-fresh"
+        ],
+        "web_review": [
+          "task:t-fresh"
+        ]
       }
     },
     {
@@ -1885,6 +2504,290 @@
             "workflows": 0
           }
         }
+      }
+    },
+    {
+      "name": "shared_agent_asks_under_its_tied_task",
+      "description": "An Agent three tasks list asks for one approval; the hub ties its session to the middle task. That task is its one home: one Needs you row, counted once. The other two do not wait on the user for it and are In progress (newest first).",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/design/DESIGN_SYSTEM.md 4.8",
+        "issues #7490, #7531, #7532"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "plans": {},
+        "feed": [],
+        "todos": [
+          {
+            "id": "t-cache",
+            "title": "Warm the cache",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-shared",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-release",
+            "title": "Cut the release",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:10:00Z",
+            "updated_at": "2026-11-10T08:10:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-shared",
+                "linked_at": "2026-11-10T08:10:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-tests",
+            "title": "Fix the flaky tests",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:20:00Z",
+            "updated_at": "2026-11-10T08:20:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-shared",
+                "linked_at": "2026-11-10T08:20:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-shared",
+            "title": "w-shared",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:50:00Z",
+            "state_since": "2026-11-10T08:50:00Z",
+            "todo": {
+              "id": "t-release",
+              "title": "t-release"
+            }
+          }
+        ],
+        "interactions": [
+          {
+            "id": "perm-shared",
+            "machine_id": "mac",
+            "session_id": "w-shared",
+            "kind": "permission",
+            "tool_name": "Bash",
+            "created_at": "2026-11-10T08:55:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-release"
+        ],
+        "running": [
+          "task:t-tests",
+          "task:t-cache"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "shared_agent_untied_asks_under_its_first_task",
+      "description": "An Agent two tasks list asks for one approval and the hub ties its session to neither: the first task that lists it (the oldest card) is its home; the other is In progress.",
+      "source": [
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "android/core/domain/src/main/kotlin/persona/core/domain/tasks/AssistantEntries.kt assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/design/DESIGN_SYSTEM.md 4.8",
+        "issues #7490, #7531, #7532"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "plans": {},
+        "feed": [],
+        "todos": [
+          {
+            "id": "t-cache",
+            "title": "Warm the cache",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:00:00Z",
+            "updated_at": "2026-11-10T08:00:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-shared",
+                "linked_at": "2026-11-10T08:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-tests",
+            "title": "Fix the flaky tests",
+            "origin": "main-chat",
+            "created_at": "2026-11-10T08:20:00Z",
+            "updated_at": "2026-11-10T08:20:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-shared",
+                "linked_at": "2026-11-10T08:20:00Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-shared",
+            "title": "w-shared",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:50:00Z",
+            "state_since": "2026-11-10T08:50:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "perm-shared",
+            "machine_id": "mac",
+            "session_id": "w-shared",
+            "kind": "permission",
+            "tool_name": "Bash",
+            "created_at": "2026-11-10T08:55:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-cache"
+        ],
+        "running": [
+          "task:t-tests"
+        ],
+        "shelved": []
+      }
+    },
+    {
+      "name": "shared_agent_untied_asks_under_its_first_plan_task",
+      "description": "An Agent two tasks of one plan list asks for one approval and the hub ties its session to neither: both cards came with the plan, so its home is the first in the plan's order (the slot id plan:<plan>:<index>), not the to-do with the smaller id or the older to-do.",
+      "source": [
+        "web/src/lib/task-cards.ts taskCardSlots",
+        "web/src/lib/assistant-entries.ts assistantEntries",
+        "apple/Persona/Views/Assistant/Tasks/AssistantActionBar.swift AssistantEntries.split",
+        "docs/design/DESIGN_SYSTEM.md 4.8",
+        "issue #7532"
+      ],
+      "derived": true,
+      "input": {
+        "conversation": "main-chat",
+        "main": "main-chat",
+        "now": "2026-11-10T09:00:00Z",
+        "plans": {
+          "p-split": {
+            "id": "p-split",
+            "conversation": "main-chat",
+            "state": "started",
+            "created_at": "2026-11-10T08:00:00Z",
+            "tasks": [
+              {
+                "title": "Update the docs",
+                "prompt": "Update them",
+                "cwd": "/home/user/project",
+                "machine": "mac",
+                "todo_id": "t-zeta"
+              },
+              {
+                "title": "Add the migration",
+                "prompt": "Add it",
+                "cwd": "/home/user/project",
+                "machine": "mac",
+                "todo_id": "t-alpha"
+              }
+            ]
+          }
+        },
+        "feed": [],
+        "todos": [
+          {
+            "id": "t-zeta",
+            "title": "Update the docs",
+            "origin": "main-chat",
+            "plan_id": "p-split",
+            "created_at": "2026-11-10T08:01:00Z",
+            "updated_at": "2026-11-10T08:01:00Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-plan",
+                "linked_at": "2026-11-10T08:01:00Z"
+              }
+            ]
+          },
+          {
+            "id": "t-alpha",
+            "title": "Add the migration",
+            "origin": "main-chat",
+            "plan_id": "p-split",
+            "created_at": "2026-11-10T08:00:30Z",
+            "updated_at": "2026-11-10T08:00:30Z",
+            "agents": [
+              {
+                "machine_id": "mac",
+                "session_id": "w-plan",
+                "linked_at": "2026-11-10T08:00:30Z"
+              }
+            ]
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "mac",
+            "session_id": "w-plan",
+            "title": "w-plan",
+            "cwd": "/home/user/project",
+            "state": "needs_you",
+            "status": "blocked",
+            "updated_at": "2026-11-10T08:50:00Z",
+            "state_since": "2026-11-10T08:50:00Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "perm-plan",
+            "machine_id": "mac",
+            "session_id": "w-plan",
+            "kind": "permission",
+            "tool_name": "Bash",
+            "created_at": "2026-11-10T08:55:00Z"
+          }
+        ]
+      },
+      "expected": {
+        "needs_you": [
+          "task:t-zeta"
+        ],
+        "running": [
+          "task:t-alpha"
+        ],
+        "shelved": []
       }
     }
   ]

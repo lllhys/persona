@@ -19,10 +19,12 @@ import (
 	"github.com/nwverse/persona/server/internal/extension/sourcevalidate"
 	"github.com/nwverse/persona/server/internal/extmgr"
 	"github.com/nwverse/persona/server/internal/managercli"
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/nodecmd"
 	"github.com/nwverse/persona/server/internal/nodeproto"
 	"github.com/nwverse/persona/server/internal/update"
 	"github.com/nwverse/persona/server/internal/voice"
+	"github.com/nwverse/persona/server/internal/volc"
 )
 
 // What the build wrote in (-X), as personad's (the hub's update checks a program by `version -v`).
@@ -48,23 +50,28 @@ const usage = `usage:
                            drop the built-in manager's old tables from the hub's database, once its data moved
   persona-manager assistant north-star [--date YYYY-MM-DD] [--split RFC3339] [--tz Area/City] [--brief en]
                            read the interruption and availability north star from the databases, read-only
+  persona-manager assistant search-reindex
+                           empty the built-in manager's chat search index: it reads its chats again from the start
   persona-manager join --builtin <hub address> [<code>] [--install]
                            bind the built-in manager's own service to the hub (persona-hub manager-code prints a code;
                            left out, it is read from PERSONA_MANAGER_CODE, which other users of the machine cannot
                            read); --install: then install that service (persona-hub setup does both on a new hub)
   persona-manager install|uninstall|status --builtin
                            the built-in manager's own service: install (and start) it, remove it, show it
-  persona-manager join|run|install|uninstall|status …
-                           a manager made in the app: trade its install code, run it, install it as a service
+  persona-manager join|run|install|uninstall|status|search-reindex …
+                           a manager made in the app: trade its install code, run it, install it as a service,
+                           empty its chat search index
                            (docs/assistant/managers.md; persona-manager manager -h for the details)
   persona-manager extension …  the extensions on this machine (docs/extensions/extensions.md "Command line")
   persona-manager voice     the built-in voice extension (the manager runs it)
+  persona-manager volc      the built-in Volcengine speech extension (the manager runs it)
   persona-manager tailcat-key  print the built-in manager's tailcat key (created the first time)
   persona-manager node …    this computer's node, when the manager runs it as itself: with no persona-node or
                            personad of its build beside it, or PERSONA_SPLIT_PROGRAMS=0 (personad node …)
   persona-manager version [-v]  the version; -v adds the channel and build number`
 
 func main() {
+	modelhttp.SetVersion(version)
 	args := os.Args[1:]
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -114,7 +121,9 @@ func main() {
 		err = extmgr.ExtensionCommand(ctx, args[1:], os.Stdin, os.Stdout, os.Stderr)
 	case "voice":
 		err = voice.Run(ctx)
-	default: // join, run, install, uninstall, status (manager.Main says what it does not know)
+	case "volc": // the built-in Volcengine speech extension's program (docs/extensions/volcengine-speech.md)
+		err = volc.Run(ctx, version)
+	default: // join, run, install, uninstall, status, search-reindex (manager.Main says what it does not know)
 		err = managercli.Manager(ctx, buildInfo(), args)
 	}
 	finish(err)

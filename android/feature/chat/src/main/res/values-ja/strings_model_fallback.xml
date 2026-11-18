@@ -24,4 +24,17 @@
     <string name="chat_model_fallback_refusal_category">カテゴリ：%1$s</string>
     <string name="chat_model_fallback_refusal_explanation">説明：%1$s</string>
     <string name="chat_model_fallback_refusal_text">拒否の原文</string>
+
+    <!-- A recovery the node drove on its own (#7824): why it left the configured model, in plain words. -->
+    <string name="chat_model_fallback_cause_safeguards_refusal">モデルが拒否しました</string>
+    <string name="chat_model_fallback_cause_quota_exhausted">利用枠を使い切りました</string>
+    <string name="chat_model_fallback_cause_rate_limited">レート制限中</string>
+    <string name="chat_model_fallback_cause_server_error">サービスのエラー</string>
+    <string name="chat_model_fallback_cause_model_unavailable">モデルを利用できません</string>
+    <string name="chat_model_fallback_switched_cause">%1$s に切り替えました（%2$s）</string>
+    <string name="chat_model_fallback_recovery_returning">%1$s が再び利用可能になりました。次のメッセージで元に戻ります</string>
+    <!-- Every model of the recovery chain failed: the failure card's cause, its recovery time and the models tried. -->
+    <string name="chat_model_fallback_recovery_cause">原因：%1$s</string>
+    <string name="chat_model_fallback_recovery_reset">%1$s に再び利用可能になります</string>
+    <string name="chat_model_fallback_recovery_tried">試したモデル：%1$s</string>
 </resources>

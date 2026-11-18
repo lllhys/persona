@@ -2,7 +2,8 @@ import XCTest
 
 /// Review an Agent's changes on the iPhone (#151, `ReviewPage`): ⋯ › Review Changes opens the session's changes; two
 /// taps on line numbers pick a range, a comment on it starts a review, and Send Review sends one message of
-/// `Code comment N` blocks; the clean and not-a-repository states. The mock reviews the weather checkout.
+/// `Code comment N` blocks; the clean, not-a-repository and folder-gone states. The mock reviews the weather checkout, its
+/// hunks shaped as the node sends them (an empty `header` left out, #8733).
 ///   PORT=18798 MOCK_REVIEW=1 MOCK_ECHO_SENT=1 python3 scripts/mock/mock_hub.py &
 ///   TEST_RUNNER_PERSONA_MOCK_HUB=http://127.0.0.1:18798 [TEST_RUNNER_PERSONA_SHOTS=<dir>] xcodebuild test … -only-testing:PersonaUITests/ReviewPageTests
 final class ReviewPageTests: XCTestCase {
@@ -64,12 +65,21 @@ final class ReviewPageTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "未提交")).firstMatch.waitForExistence(timeout: 15))
         shot(app, "clean")
         app.terminate()
-        mock("/mock/review?mode=nogit")
-        app = launch()
-        openReview(app)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Git")).firstMatch.waitForExistence(timeout: 15))
-        shot(app, "nogit")
-        app.terminate()
+        // A folder outside any repository and one that is gone each say so and name the folder; trying again can't
+        // help, so neither offers Retry (#8733).
+        for (mode, words) in [("nogit", "不是 Git 仓库"), ("nofolder", "已经不在了")] {
+            mock("/mock/review?mode=\(mode)")
+            for scheme in ["light", "dark"] {
+                app = launch(scheme: scheme)
+                openReview(app)
+                XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", words)).firstMatch.waitForExistence(timeout: 15),
+                              "\(mode): no \(words):\n\(app.debugDescription)")
+                XCTAssertTrue(app.staticTexts["~/code/weather"].exists, "\(mode): the folder is not named")
+                XCTAssertFalse(app.buttons["重试"].exists, "\(mode): Retry offered")
+                shot(app, "\(mode)-\(scheme)")
+                app.terminate()
+            }
+        }
         mock("/mock/review?mode=1")
     }
 
@@ -101,7 +111,7 @@ final class ReviewPageTests: XCTestCase {
     // MARK: Helpers
 
     @MainActor private func openReview(_ app: XCUIApplication) {
-        // The shell's chat header starts compact: a tap on its title brings the bar with ⋯.
+        // The shell's chat header starts compact, with the same ⋯ (#7962); not there yet, a tap on its title opens the header.
         let compact = app.buttons["chat.compactTitle"].firstMatch
         let more = app.buttons.matching(NSPredicate(format: "label == %@", "更多")).firstMatch
         XCTAssertTrue(waitUntil(20) { compact.exists || more.exists }, "the chat did not open:\n\(app.debugDescription)")

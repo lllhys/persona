@@ -69,6 +69,20 @@ func ParseNumber(s string) (int64, error) {
 // (TestNoDowngrade).
 func (b Build) Newer(latest int64) bool { return b.Number > 0 && latest > b.Number }
 
+// Behind says whether release m, the newest at this build's update source, shows a source that stopped taking
+// releases (#8108): it is older than this build, and older than the release this build's code already contains (the
+// vX.Y.Z its version starts with, releaseIn). A build deployed from master after the newest release is newer than that
+// release too, but its version starts with it: that source is current. False when m is as new or newer, or when either
+// version names no release (a dev build, master-<commit>-…): nothing tells a stopped source from a quiet one then.
+func (b Build) Behind(m *Manifest) bool {
+	if m == nil || b.Number <= 0 || m.Build <= 0 || m.Build >= b.Number {
+		return false
+	}
+	own, ok := releaseIn(b.Version)
+	newest, ok2 := releaseIn(m.Version)
+	return ok && ok2 && newest.less(own)
+}
+
 // Hold says why this build must not install release m by itself, or "" when it may: m's code has to include the
 // commit this build was made from. A release published from older code (a checkout behind the master a hub was
 // deployed from) has the larger build number all the same, and would take that hub back (docs/operations/hub-update.md

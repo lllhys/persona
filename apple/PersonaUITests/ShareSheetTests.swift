@@ -67,6 +67,18 @@ final class ShareSheetTests: XCTestCase {
         again.navigationBars.buttons.matching(NSPredicate(format: "label IN {'取消', 'Cancel', 'キャンセル'}")).firstMatch.tap()
     }
 
+    /// Large files (#2282): their total and the per-file limit under them, and the slow-upload hint from 50 MB.
+    @MainActor func testLargeFilesShowTheirTotalAndTheSlowUploadHint() throws {
+        let app = launch()
+        let sheet = openShare(app, ["text": "Two large files", "files": 2, "fileMB": 40])
+        let total = sheet.descendants(matching: .any)["share-size-total"]
+        XCTAssertTrue(total.waitForExistence(timeout: 20), "no total under the files")
+        XCTAssertTrue(sheet.descendants(matching: .any)["share-size-slow"].exists, "no hint for 80 MB of files")
+        sheet.swipeUp()
+        shot(app, "share-large-files")
+        sheet.navigationBars.buttons.matching(NSPredicate(format: "label IN {'取消', 'Cancel', 'キャンセル'}")).firstMatch.tap()
+    }
+
     @MainActor private func launch() -> XCUIApplication {
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
@@ -79,11 +91,12 @@ final class ShareSheetTests: XCTestCase {
     }
 
     /// The system's share sheet, then Persona in it: the extension's sheet (it draws in the app's window).
-    @MainActor private func openShare(_ app: XCUIApplication) -> XCUIElement {
+    @MainActor private func openShare(_ app: XCUIApplication,
+                                      _ items: [String: Any] = ["text": "A page worth reading", "url": "https://example.com/share-test", "images": 2, "files": 1]) -> XCUIElement {
         var persona = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Persona' AND elementType IN {%d, %d}",
                                                                            XCUIElement.ElementType.cell.rawValue, XCUIElement.ElementType.button.rawValue)).firstMatch
         for _ in 0..<5 where !persona.exists {
-            let r = command("share", ["text": "A page worth reading", "url": "https://example.com/share-test", "images": 2, "files": 1])
+            let r = command("share", items)
             XCTAssertEqual(r["presented"] as? Bool, true, "\(r)")
             persona = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Persona' AND elementType IN {%d, %d}",
                                                                            XCUIElement.ElementType.cell.rawValue, XCUIElement.ElementType.button.rawValue)).firstMatch

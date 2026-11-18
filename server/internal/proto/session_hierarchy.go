@@ -29,10 +29,19 @@ func (s Session) IsSubtask() bool {
 }
 
 // SessionHierarchy is a Session's place among the sessions that started one another (docs/protocol/protocol.md
-// "Session hierarchy") and when it began. Each member is a key of the row itself on the wire. A Session holds it by
-// pointer (Session.Hierarchy, nil when every member is empty): the four fields inline would take every row past its
-// size class (TestSessionFitsItsSizeClass), and only a few rows have any of them.
+// "Session hierarchy"), when it began, its completed task ownership, and rare lifecycle metadata. Each member is
+// a top-level wire key. A Session holds it by pointer (Session.Hierarchy, nil when every member is empty): these
+// sparse fields inline would take every row past its size class (TestSessionFitsItsSizeClass). The Deleted flag
+// describes no ancestry; it shares this storage to preserve the allocation budget for ordinary session rows.
 type SessionHierarchy struct {
+	// CompletedTodo is display-only task ownership. Keep this sparse reference out of every Session's hot row.
+	CompletedTodo *TodoRef `json:"completed_todo,omitempty"`
+	// ParentAgentID is the session on the same machine a side session was started from (docs/protocol/protocol.md
+	// "Session hierarchy"). Unlike parent_session_id it makes no child: the session keeps its own state, sends and
+	// unread, and is no subagent. The manager folds it under that session's topmost listed row as a side session
+	// (FoldedAsSide, #7944). Set by the node: a Claude desktop app's side session names the session it was started from,
+	// while that one is listed too (claudedesktop.go, #5935).
+	ParentAgentID string `json:"parent_agent_id,omitempty"`
 	// StartedAt is when the session began: its transcript's first line, a runtime's created time. Set by the node where
 	// it knows it (Codex rollouts, runtime rows); zero when it does not.
 	StartedAt time.Time `json:"started_at,omitzero"`
@@ -46,8 +55,13 @@ type SessionHierarchy struct {
 	// member of a cycle.
 	FoldedUnder string `json:"folded_under,omitempty"`
 	// FoldedAs says why a row that is no child folds under FoldedUnder: FoldedAsWorker for a worker of a tab's lead
-	// (#5180). Set by the manager beside FoldedUnder; empty for a child, whose own fields say why.
+	// (#5180), FoldedAsSide for a side session (#7944). Set by the manager beside FoldedUnder; empty for a child, whose
+	// own fields say why.
 	FoldedAs string `json:"folded_as,omitempty"`
+	// FoldedSide is the nearest side session a folded row belongs to when it folds through one and is not itself that
+	// side (a side's own Codex children): its card and child card belong to that side's chat, not FoldedUnder's (#7944).
+	// Set by the manager beside FoldedUnder.
+	FoldedSide string `json:"folded_side,omitempty"`
 	// Children counts the sessions folded under this one, all depths, by their own states. Set by the manager on the
 	// topmost listed ancestor only.
 	Children *SessionChildren `json:"children,omitempty"`
@@ -58,6 +72,13 @@ type SessionHierarchy struct {
 	// A session may be named more than once (switched back to and away again), each time for another stretch. Set by
 	// the node.
 	EngineHistory []EngineLeg `json:"engine_history,omitempty"`
+	// Aliases are the other session ids its machine knows this row's conversation by, none of which it lists beside it
+	// (one conversation, one row): the Claude session holding the conversation of a runtime's session listed under an
+	// id of its own, and the sessions that one was forked from, newest first (docs/integrations/paseo.md "Session
+	// IDs", #8131). The manager shows no archive record under one of them: the conversation was listed under it once,
+	// and its archived row repeated the row listed now. Set by the node.
+	Aliases []string `json:"aliases,omitempty"`
+	Deleted bool     `json:"deleted,omitempty"` // Permanent manager tombstone; use Session.IsDeleted/SetDeleted.
 }
 
 // EngineLeg is one earlier stretch of a conversation (SessionHierarchy.EngineHistory): the session that ran it, its
@@ -80,6 +101,11 @@ func SameEngineHistory(a, b []EngineLeg) bool {
 // pane runs the lead it folds under (docs/protocol/protocol.md "Session hierarchy", #5180).
 const FoldedAsWorker = "worker"
 
+// FoldedAsSide is SessionHierarchy.FoldedAs for a side session (a Claude desktop app's side chat, /btw question or
+// spawned session, parent_agent_id): its own step up is a side link, and it lives in the chat of the row it folds under
+// (docs/protocol/protocol.md "Session hierarchy", #7944).
+const FoldedAsSide = "side"
+
 // SessionChildren is the rollup a parent row carries of the children folded under it (SessionHierarchy.Children).
 type SessionChildren struct {
 	Total    int `json:"total"`
@@ -87,11 +113,36 @@ type SessionChildren struct {
 	NeedsYou int `json:"needs_you,omitempty"`
 	// Workers is how many of them are the row's tab workers (folded_as "worker"), counted in Total too.
 	Workers int `json:"workers,omitempty"`
+	// Sides is how many of them are side sessions (folded_as "side"), counted in Total too; SidesWorking,
+	// SidesNeedsYou and SidesUnread count those sides by their own states (#7944).
+	Sides         int `json:"sides,omitempty"`
+	SidesWorking  int `json:"sides_working,omitempty"`
+	SidesNeedsYou int `json:"sides_needs_you,omitempty"`
+	SidesUnread   int `json:"sides_unread,omitempty"`
 }
 
 func (h *SessionHierarchy) empty() bool {
-	return h.StartedAt.IsZero() && h.AskingParentSessionID == "" && h.FoldedUnder == "" && h.FoldedAs == "" &&
-		h.Children == nil && len(h.EngineHistory) == 0
+	return h.ParentAgentID == "" && h.StartedAt.IsZero() && h.AskingParentSessionID == "" && h.FoldedUnder == "" && h.FoldedAs == "" &&
+		h.FoldedSide == "" &&
+		h.Children == nil && len(h.EngineHistory) == 0 && h.CompletedTodo == nil && len(h.Aliases) == 0 && !h.Deleted
+}
+
+// CompletedTodo is the last completed association for navigation, never active work.
+func (s *Session) CompletedTodo() *TodoRef {
+	if s.Hierarchy == nil {
+		return nil
+	}
+	return s.Hierarchy.CompletedTodo
+}
+
+// SetCompletedTodo preserves the copy-on-write sparse metadata shared by session copies.
+func (s *Session) SetCompletedTodo(todo *TodoRef) {
+	if s.CompletedTodo() == todo {
+		return
+	}
+	h := s.hierarchy()
+	h.CompletedTodo = todo
+	s.setHierarchy(h)
 }
 
 // hierarchy is a copy of s's hierarchy to change, its children copied too: the one s holds is shared.
@@ -105,6 +156,7 @@ func (s *Session) hierarchy() SessionHierarchy {
 		h.Children = &c
 	}
 	h.EngineHistory = slices.Clone(h.EngineHistory)
+	h.Aliases = slices.Clone(h.Aliases)
 	return h
 }
 
@@ -115,6 +167,39 @@ func (s *Session) setHierarchy(h SessionHierarchy) {
 		return
 	}
 	s.Hierarchy = &h
+}
+
+// IsDeleted reports the permanent manager tombstone. Ordinary rows allocate no lifecycle metadata.
+func (s *Session) IsDeleted() bool { return s.Hierarchy != nil && s.Hierarchy.Deleted }
+
+// SetDeleted uses copy-on-write, like the other rare fields: copies of a
+// Session share Hierarchy, so changing one must never change another.
+func (s *Session) SetDeleted(deleted bool) {
+	if s.IsDeleted() == deleted {
+		return
+	}
+	h := s.hierarchy()
+	h.Deleted = deleted
+	s.setHierarchy(h)
+}
+
+// ParentAgentID is the session this one is drawn under while staying its own (SessionHierarchy.ParentAgentID); "" when
+// none.
+func (s *Session) ParentAgentID() string {
+	if s.Hierarchy == nil {
+		return ""
+	}
+	return s.Hierarchy.ParentAgentID
+}
+
+// SetParentAgentID sets the session this one is drawn under ("" for none), with no new hierarchy when it already is.
+func (s *Session) SetParentAgentID(id string) {
+	if s.ParentAgentID() == id {
+		return
+	}
+	h := s.hierarchy()
+	h.ParentAgentID = id
+	s.setHierarchy(h)
 }
 
 // StartedAt is when the session began (SessionHierarchy.StartedAt); zero when not known.
@@ -149,6 +234,15 @@ func (s *Session) FoldedAs() string {
 	return s.Hierarchy.FoldedAs
 }
 
+// FoldedSide is the side session this folded row belongs to when it is not that side (SessionHierarchy.FoldedSide);
+// "" when none.
+func (s *Session) FoldedSide() string {
+	if s.Hierarchy == nil {
+		return ""
+	}
+	return s.Hierarchy.FoldedSide
+}
+
 // Children is the rollup of the sessions folded under this one; the zero value when none are.
 func (s *Session) Children() SessionChildren {
 	if s.Hierarchy == nil || s.Hierarchy.Children == nil {
@@ -177,6 +271,26 @@ func (s *Session) SetEngineHistory(legs []EngineLeg) {
 	s.setHierarchy(h)
 }
 
+// Aliases are the other session ids the row's conversation is known by on its machine (SessionHierarchy.Aliases);
+// nil when none. Shared with the row's other copies: not to be changed.
+func (s *Session) Aliases() []string {
+	if s.Hierarchy == nil {
+		return nil
+	}
+	return s.Hierarchy.Aliases
+}
+
+// SetAliases sets the other ids the row's conversation is known by (nil: none), with no new hierarchy when it already
+// has them.
+func (s *Session) SetAliases(ids []string) {
+	if slices.Equal(s.Aliases(), ids) {
+		return
+	}
+	h := s.hierarchy()
+	h.Aliases = slices.Clone(ids)
+	s.setHierarchy(h)
+}
+
 // SetStartedAt sets when the session began (zero: not known), with no new hierarchy when it is already so.
 func (s *Session) SetStartedAt(t time.Time) {
 	if s.StartedAt().Equal(t) && s.StartedAt().Location() == t.Location() {
@@ -198,19 +312,20 @@ func (s *Session) SetAskingParentSessionID(id string) {
 }
 
 // SetFold sets what folding says of the session: the session it folds under ("" for none), why when it is no child
-// (as: FoldedAsWorker, "" for none) and the rollup of those folded under it (nil for none). Nothing new is made when
-// the session already says so.
-func (s *Session) SetFold(under, as string, children *SessionChildren) {
+// (as: FoldedAsWorker or FoldedAsSide, "" for none), the side session it belongs to when it is not that side (side, ""
+// for none) and the rollup of those folded under it (nil for none). Nothing new is made when the session already says
+// so.
+func (s *Session) SetFold(under, as, side string, children *SessionChildren) {
 	cur := s.Hierarchy
-	if cur == nil && under == "" && as == "" && children == nil {
+	if cur == nil && under == "" && as == "" && side == "" && children == nil {
 		return
 	}
-	if cur != nil && cur.FoldedUnder == under && cur.FoldedAs == as && (cur.Children == nil) == (children == nil) &&
-		(children == nil || *cur.Children == *children) {
+	if cur != nil && cur.FoldedUnder == under && cur.FoldedAs == as && cur.FoldedSide == side &&
+		(cur.Children == nil) == (children == nil) && (children == nil || *cur.Children == *children) {
 		return
 	}
 	h := s.hierarchy()
-	h.FoldedUnder, h.FoldedAs = under, as
+	h.FoldedUnder, h.FoldedAs, h.FoldedSide = under, as, side
 	h.Children = nil
 	if children != nil {
 		c := *children
@@ -228,7 +343,8 @@ func (s *Session) IsChild() bool {
 
 // FoldedState is the state a row shows with its folded children (docs/protocol/protocol.md "Session hierarchy"): it
 // needs the user when it or one of them does; it works when one of them works, unless it has a result not looked at
-// yet or awaits the user's reply; otherwise its own.
+// yet or awaits the user's reply; it is unread when one of its side sessions is and it does not work itself (sides
+// only: a Codex child's or a worker's result is its parent's to report, #7944); otherwise its own.
 func (s *Session) FoldedState() string {
 	c := s.Children()
 	switch {
@@ -236,6 +352,8 @@ func (s *Session) FoldedState() string {
 		return StateNeedsYou
 	case c.Working > 0 && s.State != StateUnread && !(s.State == StateIdle && s.AwaitsReply):
 		return StateWorking
+	case c.SidesUnread > 0 && s.State != StateWorking:
+		return StateUnread
 	}
 	return s.State
 }

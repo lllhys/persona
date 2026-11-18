@@ -22,6 +22,9 @@ import (
 // "Security"): the sha256s guard against a broken download over HTTPS, not against the site itself being replaced.
 type Published struct {
 	Manifest *Manifest
+	// Development pins a Git candidate; Source is its locally compiled feed.
+	Development *DevelopmentCandidate
+	Source      string
 }
 
 // Check reads latest.json from base (the publisher's dl/).
@@ -114,6 +117,9 @@ var errMismatch = errors.New("the download does not match the release's manifest
 
 // IsMismatch: err is Download finding that what was served is not what the manifest says (sizes or sha256s; a file
 // that stayed shorter than the manifest's size over every attempt too), not a download that could not be made.
+// IsNotFound: the source has no such file (HTTP 404), as opposed to a download that failed or did not check out.
+func IsNotFound(err error) bool { return errors.Is(err, errNotFound) }
+
 func IsMismatch(err error) bool {
 	var short shortError
 	return errors.Is(err, errMismatch) || errors.As(err, &short)

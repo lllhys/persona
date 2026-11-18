@@ -13,6 +13,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/volc"
 )
 
 // An extension's settings in persona_settings (#2385): extension.<id> for every extension the user can configure that has
@@ -72,6 +73,9 @@ func (h *Manager) extensionSettingsText(id string) (string, error) {
 	fmt.Fprintf(&b, "Settings of %s (%s); set changes only the fields given, null puts one back to its default:\n", extensionDisplayName(p), p.Record.ID)
 	saved := h.savedSettings(p)
 	for _, f := range p.Schema.Fields {
+		if isVolc(p) && f.Name == volcMeetingsField {
+			continue // the owner's choice of meeting transcription, never set here
+		}
 		if f.Type == "object" {
 			fmt.Fprintf(&b, "- %s%s: a group of these fields (set takes {\"%s\": {<field>: <value>}})\n", f.Name, quotedTitle(f), f.Name)
 			if f.Description != "" {
@@ -240,6 +244,9 @@ func (h *Manager) setExtensionSettings(id, title string, v json.RawMessage) (*se
 	p := h.extensions.reg.Get(id)
 	if p == nil {
 		return nil, fmt.Errorf("no extension %s", id)
+	}
+	if _, ok := patch[volcMeetingsField]; ok && id == volc.ExtensionID {
+		return nil, errors.New(volcMeetingsField + " is the owner's choice of meeting transcription: only Settings › Extensions or Recording settings on a device change it")
 	}
 	for _, f := range iphoneOwnFields {
 		if _, ok := patch[f]; ok && id == iphoneExtensionID {

@@ -1,0 +1,12 @@
+{
+  "new": "新建",
+  "new_folder": "新建文件夹",
+  "new_text": "新建文本文件",
+  "untitled_folder": "未命名文件夹",
+  "untitled_text": "未命名.txt",
+  "in_folder": "建在「{name}」里。",
+  "in_folder_opens": "建在「{name}」里，建好直接打开。",
+  "name": "名称",
+  "create": "创建",
+  "cancel": "取消"
+}

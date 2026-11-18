@@ -9,6 +9,10 @@ set -eu
 here=$(cd "$(dirname "$0")/../.." && pwd)
 dest=${1:?usage: scripts/gen/sync-sdk.sh <extension repository> [go|ts|all]}
 what=${2:-all}
+case "$what" in
+go | ts | all) ;;
+*) echo "usage: scripts/gen/sync-sdk.sh <extension repository> [go|ts|all]" >&2; exit 2 ;;
+esac
 [ -d "$dest" ] || { echo "no such directory: $dest" >&2; exit 1; }
 commit=$(git -C "$here" rev-parse --short HEAD 2>/dev/null || echo unknown)
 dirty=$(git -C "$here" status --porcelain -- sdk 2>/dev/null | head -1)

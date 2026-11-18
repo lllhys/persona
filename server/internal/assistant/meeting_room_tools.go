@@ -3,10 +3,12 @@ package assistant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/kb"
@@ -18,11 +20,20 @@ import (
 // each bound to the room's own recording: they take no recording id. The room is listed and may call these only;
 // every other tool call is refused (guestRefuses).
 
-// meetingRoomToolNames are the meeting tools a room starts with: phase 1's and meeting_photo_note (phase 3). A room
-// started before a tool was added keeps the list it started with (the guest book's, the node's allowed tools).
+// meetingRoomToolNames are the meeting tools a room starts with: phase 1's, meeting_photo_note (phase 3),
+// meeting_topics_set (phase 2) and meeting_highlights_set (phase 2b). A room started before a tool was added keeps the
+// list it started with (the guest book's, the node's allowed tools).
 func meetingRoomToolNames() []string {
-	return []string{"meeting_lines", "meeting_earlier", "meeting_photo_note"}
+	return []string{"meeting_lines", "meeting_earlier", "meeting_photo_note", toolTopicsSet, toolHighlightsSet}
 }
+
+// toolTopicsSet is the room's tool that replaces its meeting's topics (docs/assistant/meeting-minutes.md "Phase 2:
+// live view"); a room's batches show the topics only to a room that has it (roomFeed).
+const toolTopicsSet = "meeting_topics_set"
+
+// toolHighlightsSet is the room's tool that replaces its meeting's highlights (docs/assistant/meeting-minutes.md
+// "Phase 2b: highlights"); a room's batches show the highlights only to a room that has it (roomFeed).
+const toolHighlightsSet = "meeting_highlights_set"
 
 // meetingRoomTools are a room's tools as its MCP server lists them.
 func meetingRoomTools() []proto.Tool {
@@ -52,11 +63,11 @@ func (s *Service) roomToolCall(ctx context.Context, recording, name string, args
 		if len(args) > 0 && json.Unmarshal(args, &a) != nil {
 			return proto.TextResult("from and to are seconds from the meeting's start", true)
 		}
-		l, _, err := e.LiveRead(recording)
+		l, rec, err := e.LiveRead(recording)
 		if err != nil {
 			return proto.TextResult("this meeting's lines are not available", true)
 		}
-		return proto.TextResult(meetingLinesText(l.Segments, a.From, a.To), false)
+		return proto.TextResult(meetingLinesText(rec, l.Segments, a.From, a.To, s.location(ctx)), false)
 	case "meeting_earlier":
 		var a struct {
 			Query string `json:"query"`
@@ -84,13 +95,18 @@ func (s *Service) roomToolCall(ctx context.Context, recording, name string, args
 		return proto.TextResult(string(out), false)
 	case "meeting_photo_note":
 		return photoNoteTool(e, recording, args) // meeting_photos.go
+	case toolTopicsSet:
+		return topicsSetTool(e, recording, args, s.attendNow())
+	case toolHighlightsSet:
+		return highlightsSetTool(e, recording, args, s.location(ctx), s.attendNow())
 	}
 	return proto.TextResult("unknown tool "+name, true)
 }
 
-// meetingLinesText is the live lines said between from and to (seconds; nil: open) as "[mm:ss] text", at most
-// meetingLinesRunes, the newest kept.
-func meetingLinesText(segs []kb.LiveSegment, from, to *float64) string {
+// meetingLinesText is recording r's live lines said between from and to (seconds; nil: open) as "[m:ss · HH:MM]
+// text", the offset from the start and then the clock time a batch gives the line in loc (kb.LiveClock, what a
+// highlight's said_at copies), at most meetingLinesRunes, the newest kept.
+func meetingLinesText(r kb.Recording, segs []kb.LiveSegment, from, to *float64, loc *time.Location) string {
 	var lines []string
 	runes := 0
 	for i := len(segs) - 1; i >= 0; i-- {
@@ -98,7 +114,7 @@ func meetingLinesText(segs []kb.LiveSegment, from, to *float64) string {
 		if sg.Text == "" || from != nil && sg.End < *from || to != nil && sg.Start > *to {
 			continue
 		}
-		line := fmt.Sprintf("[%s] %s", meetingClock(sg.Start), oneLine(sg.Text))
+		line := fmt.Sprintf("[%s · %s] %s", meetingClock(sg.Start), kb.LiveClock(r, sg.Start, loc), oneLine(sg.Text))
 		n := utf8.RuneCountInString(line) + 1
 		if runes+n > meetingLinesRunes {
 			break
@@ -200,4 +216,65 @@ func (r *roomState) takeSources(recording string) []kb.AskSource {
 	}
 	delete(r.sources, recording)
 	return out
+}
+
+// topicsSetTool is the room's meeting_topics_set {topics} for recording, its own meeting: the whole list replaces the
+// topics at now. A list that breaks a limit is refused saying which (kb.CleanTopics), and nothing changes.
+func topicsSetTool(e *kb.Engine, recording string, args json.RawMessage, now time.Time) proto.ToolResult {
+	var a struct {
+		Topics *[]kb.LiveTopic `json:"topics"`
+	}
+	if json.Unmarshal(args, &a) != nil || a.Topics == nil {
+		return proto.TextResult("topics is required, and is the whole list of the meeting's topics: each {title, state, at?, note?}, "+
+			"title and note text, state done, current or open, at a number of seconds from the meeting's start", true)
+	}
+	changed, err := e.TopicsSet(recording, *a.Topics, now)
+	switch {
+	case err == nil && changed:
+		return proto.TextResult("Topics saved.", false)
+	case err == nil:
+		return proto.TextResult("The topics are as they were: nothing changed.", false)
+	case errors.Is(err, kb.ErrBadTopics):
+		return proto.TextResult(err.Error()+". Nothing was saved: send the whole list again within the limits.", true)
+	case errors.Is(err, kb.ErrReadOnly):
+		return proto.TextResult("the meeting's topics can't be changed now", true)
+	}
+	return proto.TextResult("this meeting's topics are not available now", true)
+}
+
+// highlightsSetTool is the room's meeting_highlights_set {highlights} for recording, its own meeting: the whole list of
+// {text, said_at} replaces the highlights at now, each said_at resolved in loc, the zone the batches are written in
+// (kb.HighlightsSet). A list that is not one, or breaks a limit, is refused saying which, and nothing changes.
+func highlightsSetTool(e *kb.Engine, recording string, args json.RawMessage, loc *time.Location, now time.Time) proto.ToolResult {
+	var a struct {
+		Highlights *[]json.RawMessage `json:"highlights"` // nil when absent or null
+	}
+	if json.Unmarshal(args, &a) != nil || a.Highlights == nil {
+		return proto.TextResult("highlights is required, and is the whole list of the meeting's highlights: each {text, said_at}, "+
+			"text one short sentence, said_at the HH:MM of the batch line it was made in", true)
+	}
+	said := make([]kb.HighlightSaid, len(*a.Highlights))
+	for i, raw := range *a.Highlights {
+		var h struct {
+			Text   *string `json:"text"`
+			SaidAt *string `json:"said_at"`
+		}
+		if json.Unmarshal(raw, &h) != nil || h.Text == nil || h.SaidAt == nil { // null, not an object, not strings
+			said[i].Malformed = true // refused in its place, after the count (kb.CleanHighlights)
+			continue
+		}
+		said[i] = kb.HighlightSaid{Text: *h.Text, SaidAt: *h.SaidAt}
+	}
+	changed, err := e.HighlightsSet(recording, said, loc, now)
+	switch {
+	case err == nil && changed:
+		return proto.TextResult("Highlights saved.", false)
+	case err == nil:
+		return proto.TextResult("The highlights are as they were: nothing changed.", false)
+	case errors.Is(err, kb.ErrBadHighlights):
+		return proto.TextResult(err.Error()+". Nothing was saved: send the whole list again within the limits.", true)
+	case errors.Is(err, kb.ErrReadOnly):
+		return proto.TextResult("the meeting's highlights can't be changed now", true)
+	}
+	return proto.TextResult("this meeting's highlights are not available now", true)
 }

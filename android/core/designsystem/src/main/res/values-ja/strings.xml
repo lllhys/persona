@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="designsystem_more">その他</string>
     <string name="designsystem_status_needs_you">要対応</string>
     <string name="designsystem_status_working">作業中</string>
     <string name="designsystem_status_unread">未確認</string>
@@ -36,6 +37,7 @@
     <string name="designsystem_collapsed">折りたたみ済み</string>
     <string name="designsystem_retry">再試行</string>
     <string name="designsystem_back">戻る</string>
+    <string name="designsystem_sidebar">サイドバー</string>
     <string name="designsystem_cancel">キャンセル</string>
     <string name="designsystem_close">閉じる</string>
     <string name="designsystem_done">完了</string>
@@ -137,7 +139,7 @@
     <string name="designsystem_row_style_two_lines">2 行</string>
     <string name="designsystem_row_style_cards">状態カード</string>
     <string name="designsystem_row_style_list">コンパクトリスト</string>
-    <string name="designsystem_row_style_avatar_summary">アバター、タイトルと時刻、最新の発言 1 行、実行場所。</string>
+    <string name="designsystem_row_style_avatar_summary">アバター、タイトルと時刻、最新の発言 2 行、実行場所。</string>
     <string name="designsystem_row_style_two_lines_summary">エージェントごとに 2 行：タイトルと時刻、最新の発言 1 行。</string>
     <string name="designsystem_row_style_cards_summary">エージェントごとに 1 枚のカード。左端に状態の色があり、あなたを待つカードは色付きです。</string>
     <string name="designsystem_row_style_list_summary">エージェントごとに 1 行：状態、タイトル、時刻。</string>
@@ -154,6 +156,9 @@
     <string name="designsystem_show_fewer">折りたたむ</string>
     <string name="designsystem_count_waiting_background">%1$d 件バックグラウンドで待機中</string>
     <string name="designsystem_machine_monitor">マシンモニター</string>
+    <!-- コンピュータのプロジェクト画面（iOS MachineSpacesView、#4338 A11）：開くカプセルと、プロジェクトのピン留め -->
+    <string name="designsystem_machine_projects">%1$sのすべてのプロジェクト</string>
+    <string name="designsystem_project_pinned">ピン留め済み</string>
     <string name="designsystem_details">詳細</string>
     <string name="designsystem_space">スペース</string>
     <string name="designsystem_repository">リポジトリ</string>
@@ -191,6 +196,7 @@
     <string name="designsystem_channel_source">%1$sから</string>
     <string name="designsystem_series_separator">／</string>
     <string name="designsystem_plan_spoken">プラン、%2$dステップ中%1$dステップ目、%3$s</string>
+    <string name="designsystem_count_spoken">%1$s、%2$d</string>
     <string name="designsystem_plan_all_done">すべて完了</string>
     <string name="designsystem_plan_step">ステップ%1$d/%2$d</string>
     <string name="designsystem_plan_item_done">完了</string>
@@ -285,6 +291,9 @@
     <string name="designsystem_queue_actions">待機中メッセージの操作</string>
     <string name="designsystem_queue_item">%1$d件目：%2$s</string>
     <string name="designsystem_queue_item_note">%1$d件目：%2$s。%3$s</string>
+    <plurals name="designsystem_queue_photos">
+        <item quantity="other">画像%1$d枚</item>
+    </plurals>
     <string name="designsystem_draft_ready">Personaが返信を下書きしました</string>
     <!-- Connection details (the title's sheet while the hub is out of reach) -->
     <string name="designsystem_connection_online">ハブに接続済み</string>
@@ -374,4 +383,15 @@
     <string name="designsystem_stepper_plus">増やす</string>
     <string name="designsystem_copy_too_large">テキストが大きすぎるためコピーできません。共有を使用してください</string>
     <string name="designsystem_copied">コピーしました</string>
+    <string name="designsystem_shortcuts_title">キーボードショートカット</string>
+    <string name="designsystem_shortcuts_send">メッセージを送信</string>
+    <string name="designsystem_shortcuts_send_keys">Ctrl または ⌘ + Return</string>
+    <string name="designsystem_shortcuts_newline">改行</string>
+    <string name="designsystem_shortcuts_newline_keys">Return または Shift + Return</string>
+    <string name="designsystem_shortcuts_close">最上位レイヤーを閉じる</string>
+    <string name="designsystem_shortcuts_close_keys">Esc</string>
+    <string name="designsystem_shortcuts_help">ショートカットヘルプを表示</string>
+    <string name="designsystem_shortcuts_help_keys">Ctrl + /</string>
+    <string name="designsystem_shortcuts_terminal">ターミナルが優先するキー</string>
+    <string name="designsystem_shortcuts_terminal_keys">Esc、Tab、Shift + Tab、Ctrl + C、矢印キー</string>
 </resources>

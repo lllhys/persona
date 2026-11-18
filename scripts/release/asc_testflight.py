@@ -430,6 +430,8 @@ def main():
         for t in TESTERS:
             add_tester(gid, t["email"], t.get("first_name") or t["email"].split("@")[0])
         status()
+    else:
+        sys.exit(__doc__)
 
 
 if __name__ == "__main__":

@@ -90,7 +90,7 @@ func answerFixtures(t *testing.T, domain string) []answerFixture {
 func TestResolutionFixtures(t *testing.T) {
 	names := map[string]bool{}
 	policies := map[string]int{}
-	for _, domain := range []string{"answer", "approval"} {
+	for _, domain := range []string{"answer", "question-review", "approval"} {
 		for _, c := range answerFixtures(t, domain) {
 			t.Run(c.Name, func(t *testing.T) {
 				if !regexp.MustCompile(`^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$`).MatchString(c.Name) {
@@ -241,6 +241,11 @@ func TestResolutionFixtures(t *testing.T) {
 			})
 		}
 	}
+	for _, name := range reviewConfirmedCases {
+		if !names[name] {
+			t.Errorf("review-confirmed case missing: %s", name)
+		}
+	}
 	for _, profile := range []string{"ios_current", "unified"} {
 		for _, entry := range []string{"conversation", "notification", "lock_screen", "watch", "siri_shortcut"} {
 			for _, kind := range []string{IxPlan, IxPermission, IxQuestion, IxScreen} {
@@ -278,7 +283,28 @@ func swiftBlock(t *testing.T, source, marker string) string {
 	return ""
 }
 
-// The generated Swift executable only lives in t.TempDir. Enable this on macOS for source-backed checks.
+// swiftCallEnd returns the index just past the parenthesis closing the first call in s, or -1.
+func swiftCallEnd(s string) int {
+	depth := 0
+	for i, c := range s {
+		switch c {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
+}
+
+// The generated Swift executables only live in t.TempDir. Enable this on macOS for source-backed checks.
+//
+// Two programs compile from the same copied declarations, so one contract drifting from its source does not hide the
+// others: "answers" replays every answer fixture except `resolve`, and "transport" adds AppModel.resolve for the
+// `resolve` cases.
 func TestResolutionFixturesIOS(t *testing.T) {
 	if os.Getenv("PERSONA_VERIFY_IOS_FIXTURES") != "1" {
 		t.Skip("set PERSONA_VERIFY_IOS_FIXTURES=1 on macOS to run the read-only Swift oracle")
@@ -295,23 +321,70 @@ func TestResolutionFixturesIOS(t *testing.T) {
 	views := read("apple/Persona/Views/Interactions/InteractionViews.swift")
 	chat := read("apple/Shared/ChatStore.swift")
 	notification := read("apple/Persona/App/NotificationActions.swift")
-	source := "import Foundation\n" + read("apple/Shared/JSONValue.swift") + "\n"
-	for _, marker := range []string{"nonisolated struct SessionKey", "nonisolated enum InteractionKind", "nonisolated struct QuestionOption", "nonisolated struct Question:", "nonisolated struct Interaction:", "nonisolated struct Resolution:", "nonisolated struct ScreenDialog:"} {
+	source := "import Foundation\n" + read("apple/Packages/PersonaWire/Sources/PersonaWire/JSONValue.swift") + "\n"
+	for _, marker := range []string{"nonisolated struct SessionKey", "nonisolated struct MachineRef", "nonisolated enum InteractionKind", "nonisolated struct QuestionOption", "nonisolated struct Question:", "nonisolated struct Interaction:", "nonisolated struct Delegate:", "nonisolated struct InteractionField:", "nonisolated struct LenientText:", "nonisolated struct Resolution:", "nonisolated struct ScreenDialog:"} {
 		source += swiftBlock(t, models, marker) + "\n"
 	}
+	rules := read("apple/Shared/RuleSuggestion.swift")
+	source += swiftBlock(t, rules, "nonisolated struct RuleScope:") + "\n" + swiftBlock(t, rules, "nonisolated struct RuleSuggestion:") + "\n"
+	text := read("apple/Shared/InteractionText.swift")
+	for _, marker := range []string{"nonisolated enum SecretRun {", "nonisolated enum SecretHandoff {", "nonisolated extension Interaction {"} {
+		source += swiftBlock(t, text, marker) + "\n"
+	}
+	source += swiftBlock(t, read("apple/Shared/Elicitation.swift"), "nonisolated struct ElicitationRequest:") + "\n"
+	source += swiftBlock(t, read("apple/Shared/CommandAsk.swift"), "nonisolated struct CommandAsk:") + "\n"
 	// Whether a card offers Always (#3590), as the view decides it.
 	source += "extension Interaction {\n" + swiftBlock(t, views, "var offersAlways: Bool {") + "\n" + swiftBlock(t, views, "var agentName: String? {") + "\n}\n"
 	source += swiftBlock(t, chat, "nonisolated enum ScreenParser") + "\n" + swiftBlock(t, chat, "nonisolated private extension Character") + "\n"
 	source += "enum NotificationActions {\n" + notification[strings.Index(notification, "    static let allow"):strings.Index(notification, "    static func category")] + swiftBlock(t, notification, "static func resolution(action:") + "\n}\n"
 	source += "enum ApproveFirstIntent {\n" + swiftBlock(t, read("apple/Persona/Intents/ApproveFirstIntent.swift"), "static func resolution(for ix:") + "\n}\n"
+	// Several questions get steps and a review before they go (#2970). The review is drawn on iPhone and iPad only
+	// (`#if os(iOS)`); this macOS program replays that branch, kept in step with the source below.
+	stepsEnabled := swiftBlock(t, read("apple/Persona/Views/Interactions/ScreenStepsLogic.swift"), "static var enabled: Bool {")
+	if strings.Join(strings.Fields(stepsEnabled), " ") != "static var enabled: Bool { #if os(iOS) true #else false #endif }" {
+		t.Fatalf("ScreenStepsLogic.enabled changed: revisit the review replay\n%s", stepsEnabled)
+	}
+	source += "enum ScreenStepsLogic { static let enabled = true }\n"
+	steps := read("apple/Persona/Views/Interactions/QuestionSteps.swift")
+	source += "enum QuestionSteps {\n"
+	// A single-select pick on a card of several questions steps a pause later (#6549), through these as written.
+	for _, marker := range []string{"static func enabled(", "static var pause: Duration {", "@MainActor static func step(replacing", "static func next(after from:"} {
+		source += swiftBlock(t, steps, marker) + "\n"
+	}
+	source += "}\n"
 	source += swiftQuestionSupport + "\n"
-	source += swiftResolveSupport + "\n@MainActor final class ResolveProbe {\n" + swiftResolveFields + swiftBlock(t, read("apple/Persona/App/AppModel.swift"), "func resolve(_ ix:") + "\n}\n"
+	source += "#if TRANSPORT\n" + transportSource(t, read, text) + "#endif\n"
 	question := swiftBlock(t, views, "struct QuestionForm:")
-	source += "@MainActor final class QuestionProbe {\n" + swiftQuestionFields
-	for _, marker := range []string{"private var questions:", "private var needsFooter:", "private func pick(", "private var isLast:", "private func advance(", "private func answer(", "private var allAnswered:", "private var canAdvance:", "private func submit("} {
+	// A struct with SwiftUI's State semantics, as QuestionForm is: its closures read the form's state without self.
+	source += "@MainActor struct QuestionProbe {\n" + swiftQuestionFields
+	for _, marker := range []string{"private var questions:", "private var stepped:", "private var isSending:", "private var needsFooter:", "private func pick(", "private var isLast:", "private func advance(", "private func answer(", "private var allAnswered:", "private var canAdvance:", "private func submit(", "private func send("} {
 		source += swiftBlock(t, question, marker) + "\n"
 	}
+	// The review footer's own Previous and Submit closures, compiled as written in the form.
+	footer := strings.Index(question, "ScreenReviewFooter(")
+	if footer < 0 {
+		t.Fatal("QuestionForm review footer missing")
+	}
+	// Only the footer call itself, so a missing label cannot pick up the inline ScreenReview's closure.
+	review := question[footer:]
+	if end := swiftCallEnd(review); end < 0 {
+		t.Fatal("QuestionForm review footer call unterminated")
+	} else {
+		review = review[:end]
+	}
+	for _, pair := range [][2]string{{"back: ", "reviewBack"}, {"submit: ", "reviewSubmit"}} {
+		at := strings.Index(review, pair[0])
+		if at < 0 || !strings.HasPrefix(review[at+len(pair[0]):], "{") {
+			t.Fatalf("review footer closure changed: %s", pair[0])
+		}
+		source += "func " + pair[1] + "() " + swiftBlock(t, review[at:], pair[0]+"{")[len(pair[0]):] + "\n"
+	}
 	source += swiftQuestionRun + "\n}\n"
+	confirmed := make([]string, len(reviewConfirmedCases))
+	for i, name := range reviewConfirmedCases {
+		confirmed[i] = `"` + name + `"`
+	}
+	source += "let confirmedThroughReview: Set<String> = [" + strings.Join(confirmed, ", ") + "]\n"
 	source += "struct ScreenProbe { var interaction: Interaction\n" + swiftBlock(t, views, "private func answer(_ opt: ScreenParser.Dialog.Option") + "\nfunc run(_ key: String, _ text: String?) -> Resolution { answer(interaction.screenDialog!.options.first { $0.key == key }!, text: text) }\n}\n"
 	// Compile the literal button constructors from the actual view, rather than duplicate their modes.
 	source += "func button(_ action: String, _ feedback: String) -> Resolution {\nswitch action {\n"
@@ -334,58 +407,149 @@ func TestResolutionFixturesIOS(t *testing.T) {
 		t.Fatal("watch plan constructor changed")
 	}
 	source += "func watchPlan() -> Resolution { " + watch[at:at+len(watchExpr)] + " }\n" + swiftFixtureMain
-	dir := t.TempDir()
-	file := filepath.Join(dir, "main.swift")
-	binary := filepath.Join(dir, "verify")
-	if err := os.WriteFile(file, []byte(source), 0600); err != nil {
-		t.Fatal(err)
+	run := func(t *testing.T, flags ...string) {
+		dir := t.TempDir()
+		file := filepath.Join(dir, "main.swift")
+		binary := filepath.Join(dir, "verify")
+		if err := os.WriteFile(file, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		compile := exec.CommandContext(ctx, "swiftc", append([]string{"-parse-as-library", file, "-o", binary}, flags...)...)
+		if out, err := compile.CombinedOutput(); err != nil {
+			t.Fatalf("swiftc: %v\n%s", err, out)
+		}
+		verify := exec.CommandContext(ctx, binary, filepath.Join(root, "spec/fixtures/approval/ios_current.json"), filepath.Join(root, "spec/fixtures/answer"), filepath.Join(root, "spec/fixtures/question-review"))
+		if out, err := verify.CombinedOutput(); err != nil {
+			t.Fatalf("Swift fixtures: %v\n%s", err, out)
+		} else {
+			t.Log(string(out))
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	compile := exec.CommandContext(ctx, "swiftc", "-parse-as-library", file, "-o", binary)
-	if out, err := compile.CombinedOutput(); err != nil {
-		t.Fatalf("swiftc: %v\n%s", err, out)
-	}
-	run := exec.CommandContext(ctx, binary, filepath.Join(root, "spec/fixtures/answer"), filepath.Join(root, "spec/fixtures/approval/ios_current.json"))
-	if out, err := run.CombinedOutput(); err != nil {
-		t.Fatalf("Swift fixtures: %v\n%s", err, out)
-	} else {
-		t.Log(string(out))
-	}
+	t.Run("answers", func(t *testing.T) { run(t) })
+	t.Run("transport", func(t *testing.T) { run(t, "-D", "TRANSPORT") })
 }
 
+// transportSource is what AppModel.resolve needs, copied from its sources: the answer bookkeeping, the retry through a
+// hub restart, the API error and its gap rules, the hub's reply, the receipts, and the app model's own helpers around
+// resolve, including what it does when the hub says a card ended. Only the app host is a stand-in (swiftResolveSupport).
+func transportSource(t *testing.T, read func(string) string, interactionText string) string {
+	t.Helper()
+	var b strings.Builder
+	add := func(source string, markers ...string) {
+		for _, marker := range markers {
+			b.WriteString(swiftBlock(t, source, marker) + "\n")
+		}
+	}
+	add(read("apple/Persona/App/AnsweringInteractions.swift"), "nonisolated struct AnsweringInteractions {", "nonisolated struct AnswerAttempts {")
+	add(read("apple/Shared/Reconnect.swift"), "nonisolated enum OpRetry {", "nonisolated extension Error {", "nonisolated enum OpReceipt {")
+	client := read("apple/Shared/APIClient.swift")
+	add(client, "nonisolated struct APIError: LocalizedError")
+	b.WriteString("extension Error {\n")
+	add(client, "nonisolated var isCancellation: Bool {", "nonisolated var isTimeout: Bool {", "nonisolated var isOffline: Bool {", "nonisolated private static var offlineCodes: Set<Int> {", "nonisolated var isQuiet: Bool {")
+	b.WriteString("}\n")
+	add(read("apple/Shared/Answered.swift"), "nonisolated struct ResolveResult:", "nonisolated struct AnswerLine:", "nonisolated enum Answered {")
+	delegated := read("apple/Shared/Delegated.swift")
+	add(delegated, "nonisolated struct AssistantAnswer:", "nonisolated struct DelegatedAnswer:")
+	kept := regexp.MustCompile(`static let kept = \d+`).FindString(delegated)
+	if kept == "" {
+		t.Fatal("Delegated.kept missing")
+	}
+	b.WriteString("enum Delegated { " + kept + " }\n")
+	b.WriteString("extension Interaction {\n")
+	add(interactionText, "var isSessionless: Bool {", "func canAnswer(session: Session?) -> Bool {")
+	b.WriteString("}\n")
+	b.WriteString(swiftResolveSupport + "\n@MainActor final class ResolveProbe {\n" + swiftResolveFields)
+	app := read("apple/Persona/App/AppModel.swift")
+	add(app, "func canAnswer(_ ix: Interaction) -> Bool {", "func resolve(_ ix:", "private func putBack(_ ix: Interaction) {", "private func keepDelegated(_ ix: Interaction, _ answer: AssistantAnswer) {")
+	// The app's handling of the hub's interaction_resolved event, a case of its event switch, as written there.
+	const resolvedCase = "case .interactionResolved(let id, let assistant):"
+	start := strings.Index(app, resolvedCase)
+	if start < 0 {
+		t.Fatal("AppModel interaction_resolved handling missing")
+	}
+	body := app[start+len(resolvedCase):]
+	end := strings.Index(body, "\n        case .")
+	if end < 0 {
+		t.Fatal("AppModel interaction_resolved handling unterminated")
+	}
+	b.WriteString("func interactionResolved(_ id: String, assistant: AssistantAnswer?, group: String) {" + body[:end] + "\n}\n}\n")
+	return b.String()
+}
+
+// reviewConfirmedCases are the questions.json cases whose expected Resolution is what the review's Submit sends: on a
+// card of several questions their click opens the review (#2970), and the replay then confirms it (#8483).
+// spec/fixtures/question-review/review.json asserts the click itself. Every other question case must leave the review
+// closed.
+var reviewConfirmedCases = []string{"multiple_questions_send_original_keys", "all_answered_can_submit_from_earlier_page"}
+
 const swiftQuestionSupport = `
-enum Haptics { static func tap() {}; static func success() {}; static func attention() {} }
+// SwiftUI's State: storage outside the view, so a copy of the view and its closures see the same values.
+@propertyWrapper struct State<Value> {
+ final class Box { var value: Value; init(_ value: Value) { self.value = value } }
+ let box: Box
+ init(wrappedValue: Value) { box = Box(wrappedValue) }
+ var wrappedValue: Value { get { box.value } nonmutating set { box.value = newValue } }
+}
+enum Haptics { static func tap() {}; static func success() {}; static func attention() {}; static func error() {} }
 struct Animation { static var snappy: Self { .init() }; static func snappy(duration: Double) -> Self { .init() } }
+enum Theme { enum Motion { static var standard: Animation { .init() } } }
 func withAnimation(_ animation: Animation, _ body: () -> Void) { body() }
-@MainActor final class Spy { var result: Resolution?; func resolve(_ ix: Interaction, _ r: Resolution) async { result = r } }
+enum AnswerProgress: Equatable { case sending; case failed(String) }
+@MainActor final class Spy {
+ var result: Resolution?
+ func resolve(_ ix: Interaction, _ r: Resolution) async { result = r }
+ // The fixtures' "sending" is this form's own flag; the model reports no answer of its own on the way.
+ func answerProgress(_ uid: String) -> AnswerProgress? { nil }
+}
 `
 const swiftQuestionFields = `
 var interaction: Interaction
-var picks: [String: Set<String>] = [:]
-var other: [String: String] = [:]
-var page = 0
-var sending = false
-var writing = false
-var otherFocused = false
+@State var picks: [String: Set<String>] = [:]
+@State var other: [String: String] = [:]
+@State var page = 0
+@State var sending = false
+@State var writing = false
+@State var reviewing = false
+@State var pendingStep: Task<Void, Never>?
+@State var otherFocused = false
 let model = Spy()
 init(_ ix: Interaction) { interaction = ix }
 `
 const swiftQuestionRun = `
-func run(_ op: [String: Any]) async -> [String: Any] {
+// One click on the snapshot in op, then (confirm) the review's Submit when that click opened the review.
+func run(_ op: [String: Any], confirm: Bool) async -> [String: Any] {
  page = op["page"] as? Int ?? 0
  sending = op["sending"] as? Bool ?? false
+ reviewing = op["reviewing"] as? Bool ?? false
  picks = (op["picks"] as? [String: [String]] ?? [:]).mapValues { Set($0) }
  other = op["other"] as? [String: String] ?? [:]
  let action = op["action"] as! String
- let allowed = action == "pick_option" ? !sending : canAdvance && !sending
+ let inReview = stepped && reviewing
+ let allowed: Bool
+ switch action {
+ // The review replaces the options and the footer; its own footer is disabled while the answer is on its way.
+ case "confirm_review", "review_back": allowed = inReview && !isSending
+ case "pick_option": allowed = !inReview && !isSending
+ default: allowed = !inReview && canAdvance && !isSending
+ }
  if allowed {
-  if action == "pick_option" { pick(questions[page], questions[page].options[op["option_index"] as! Int]) }
-  else if action == "advance" { advance() }
-  else { submit() }
+  switch action {
+  case "pick_option": pick(questions[page], questions[page].options[op["option_index"] as! Int])
+  case "advance": advance()
+  case "confirm_review": reviewSubmit()
+  case "review_back": reviewBack()
+  default: submit()
+  }
+ }
+ let opened = !inReview && stepped && reviewing
+ if confirm {
+  precondition(opened, "the click must open the review before its Submit is confirmed")
+  reviewSubmit()
  }
  for _ in 0..<100 where model.result == nil && sending { try! await Task.sleep(for: .milliseconds(10)) }
- var out: [String: Any] = ["allowed": allowed, "resolution": wire(model.result), "next_page": page, "picks": picks.mapValues { $0.sorted() }]
+ var out: [String: Any] = ["allowed": allowed, "resolution": wire(model.result), "next_page": page, "picks": picks.mapValues { $0.sorted() }, "other": other, "reviewing": reviewing]
  if let q = questions.first, let option = q.options.first {
   let d = QuestionOption.display(option.label)
   out["display"] = ["text": d.0, "recommended": d.1]
@@ -402,11 +566,76 @@ func check(_ expected: [String: Any], _ actual: [String: Any], _ name: String) {
   if lhs != rhs { fatalError("\(name).\(key): expected \(String(decoding: lhs,as: UTF8.self)), got \(String(decoding: rhs,as: UTF8.self))") }
  }
 }
+
+// What one click leaves in the draft the next click starts from (#9238). Advance, Submit and a click made while an answer
+// is on its way change neither map. An accepted single choice replaces its question's picks and empties its Other entry:
+// the key stays (other[q.question] = "" in QuestionForm.pick). An accepted multiple choice only toggles its pick.
+// persona-core's answer tests assert the same rules for the same cases.
+func checkDraft(_ op: [String: Any], _ ix: Interaction, _ actual: [String: Any], _ name: String) {
+ var picks = (op["picks"] as? [String: [String]] ?? [:]).mapValues { Set($0) }
+ var other = op["other"] as? [String: String] ?? [:]
+ if op["action"] as? String == "pick_option", actual["allowed"] as? Bool == true {
+  let q = ix.questions![op["page"] as? Int ?? 0]
+  let label = q.options[op["option_index"] as! Int].label
+  if q.multiSelect {
+   var set = picks[q.question, default: []]
+   if set.contains(label) { set.remove(label) } else { set.insert(label) }
+   picks[q.question] = set
+  } else {
+   picks[q.question] = [label]
+   other[q.question] = ""
+  }
+ }
+ let gotPicks = (actual["picks"] as! [String: [String]]).mapValues { Set($0) }
+ precondition(gotPicks == picks, "\(name): the picks a click leaves are \(gotPicks), not \(picks)")
+ let gotOther = actual["other"] as! [String: String]
+ precondition(gotOther == other, "\(name): the Other entries a click leaves are \(gotOther), not \(other)")
+}
+
+// The issue's own case (#9238), clicked through iOS's own code: two single choices, a custom answer typed for the first,
+// then its option picked. Every click starts from what the one before left, as a person's taps do.
+@MainActor func draftChain() async throws {
+ func single(_ question: String, _ labels: [String]) -> [String: Any] {
+  ["question": question, "multi_select": false, "options": labels.map { ["label": $0] }]
+ }
+ let card: [String: Any] = ["id": "example_request", "machine_id": "example_machine", "session_id": "example_session", "kind": "question", "questions": [single("One", ["A", "B"]), single("Two", ["C", "D"])]]
+ let form = QuestionProbe(try JSONDecoder().decode(Interaction.self, from: JSONSerialization.data(withJSONObject: card)))
+ form.other = ["One": "custom"]
+ func click(_ action: String, _ option: Int? = nil, confirm: Bool = false) async -> [String: Any] {
+  var op: [String: Any] = ["action": action, "page": form.page, "picks": form.picks.mapValues { $0.sorted() }, "other": form.other, "sending": false, "reviewing": form.reviewing]
+  if let option { op["option_index"] = option }
+  let out = await form.run(op, confirm: confirm)
+  await form.pendingStep?.value // the page turn a pick on a card of several questions schedules, a pause later (#6549)
+  return out
+ }
+ func expect(_ step: String, _ out: [String: Any], allowed: Bool, page: Int, picks: [String: Set<String>], other: [String: String], answers: [String: String]? = nil) {
+  precondition(out["allowed"] as? Bool == allowed, "draft chain, \(step): allowed")
+  precondition(form.page == page, "draft chain, \(step): page \(form.page)")
+  precondition(form.picks == picks, "draft chain, \(step): picks \(form.picks)")
+  precondition(form.other == other, "draft chain, \(step): other \(form.other)")
+  let sent = (out["resolution"] as? [String: Any])?["answers"] as? [String: String]
+  precondition(sent == answers, "draft chain, \(step): answers \(String(describing: sent))")
+ }
+ var out = await click("pick_option", 1)
+ expect("pick One=B", out, allowed: true, page: 1, picks: ["One": ["B"]], other: ["One": ""])
+ out = await click("advance")
+ expect("Advance with Two open", out, allowed: false, page: 1, picks: ["One": ["B"]], other: ["One": ""])
+ out = await click("submit")
+ expect("Submit with Two open", out, allowed: false, page: 1, picks: ["One": ["B"]], other: ["One": ""])
+ out = await click("pick_option", 1)
+ expect("pick Two=D", out, allowed: true, page: 1, picks: ["One": ["B"], "Two": ["D"]], other: ["One": "", "Two": ""])
+ out = await click("submit", confirm: true) // the review opens, then its Submit sends
+ expect("Submit", out, allowed: true, page: 1, picks: ["One": ["B"], "Two": ["D"]], other: ["One": "", "Two": ""], answers: ["One": "B", "Two": "D"])
+}
+
 @main struct Main {
  @MainActor static func main() async throws {
-  let folder = URL(fileURLWithPath: CommandLine.arguments[1])
-  let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }
-  var count = 0
+  var files: [URL] = []
+  for folder in CommandLine.arguments.dropFirst(2) {
+   files += try FileManager.default.contentsOfDirectory(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: nil).filter { $0.pathExtension == "json" }.sorted { $0.path < $1.path }
+  }
+  var count = 0, transport = 0
+  var confirmed = Set<String>()
   for file in files {
    let doc = try JSONSerialization.jsonObject(with: Data(contentsOf:file)) as! [String:Any]
    for c in doc["cases"] as! [[String:Any]] {
@@ -417,18 +646,30 @@ func check(_ expected: [String: Any], _ actual: [String: Any], _ name: String) {
     let action = op["action"] as! String
     var actual: [String:Any]
     if action == "resolve" {
+     #if TRANSPORT
      let p = ResolveProbe()
-     p.api = (op["api_available"] as! Bool) ? ProbeAPI(op["outcome"] as! String) : nil
+     p.client = (op["api_available"] as! Bool) ? ProbeAPI(op["outcome"] as! String) : nil
+     p.client?.hubEnds = { [unowned p] in p.interactionResolved(ix.id, assistant: nil, group: ix.group) }
      p.connection.networkUp = op["network_up"] as! Bool
-     p.interactions[ix.id] = ix
+     p.interactions[ix.uid] = ix
      let r = try JSONDecoder().decode(Resolution.self, from: JSONSerialization.data(withJSONObject: op["resolution"]!))
      await p.resolve(ix,r)
-     actual = ["allowed": p.api != nil && p.connection.networkUp, "resolution": wire(p.api?.sent), "card_present": p.interactions[ix.id] != nil]
+     actual = ["allowed": p.client != nil && p.connection.networkUp, "resolution": wire(p.client?.sent), "card_present": p.interactions[ix.uid] != nil]
+     #else
+     transport += 1; continue
+     #endif
     } else if action == "inspect_dialog" {
      var dialog: Any = NSNull()
      if let d = ix.screenDialog { dialog = ["question": d.question, "detail": d.detail as Any? ?? NSNull(), "steps": d.steps.map { ["label": $0.label, "done": $0.done] as [String: Any] }] }
      actual = ["allowed": true, "resolution": NSNull(), "dialog": dialog]
-    } else if ix.kind == .question && action != "dismiss" { actual = await QuestionProbe(ix).run(op) }
+    } else if ix.kind == .question && action != "dismiss" {
+     let confirm = confirmedThroughReview.contains(name)
+     actual = await QuestionProbe(ix).run(op, confirm: confirm)
+     checkDraft(op, ix, actual, name)
+     // A click that opens the review sends nothing; a case that does not assert the review must not open it.
+     if expected["reviewing"] == nil && actual["reviewing"] as! Bool != confirm { fatalError("\(name): the review is \(actual["reviewing"]!) here; say so in the fixture") }
+     if confirm { confirmed.insert(name) }
+    }
     else {
      var allowed = true; var r: Resolution?
      if op["entry"] as? String == "notification" { r = NotificationActions.resolution(action:action,text:op["text"] as? String) }
@@ -450,8 +691,11 @@ func check(_ expected: [String: Any], _ actual: [String: Any], _ name: String) {
     check(expected,actual,name); count += 1
    }
   }
-  print("Verified \(count) iOS answer fixtures against source declarations and button constructors")
-  let policies = try JSONSerialization.jsonObject(with: Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[2]))) as! [String:Any]
+  precondition(confirmed == confirmedThroughReview, "review-confirmed cases missing: \(confirmedThroughReview.subtracting(confirmed).sorted())")
+  print("Verified \(count) iOS answer fixtures against source declarations and button constructors (\(confirmed.count) through the review; \(transport) transport cases left to the transport replay)")
+  try await draftChain()
+  print("Verified the draft each question click leaves, for every case above and for the two-question chain (#9238)")
+  let policies = try JSONSerialization.jsonObject(with: Data(contentsOf:URL(fileURLWithPath:CommandLine.arguments[1]))) as! [String:Any]
   var modes = 0
   for c in policies["cases"] as! [[String:Any]] {
    let input = c["input"] as! [String:Any], expected = c["expected"] as! [String:Any]
@@ -473,28 +717,46 @@ func check(_ expected: [String: Any], _ actual: [String: Any], _ name: String) {
 `
 
 const swiftResolveSupport = `
-struct APIError: Error { var status: Int; var code: String }
+// The app host around resolve: a session its source lets the app answer, toasts, and an API that never connects.
+struct Session { var canApprove = true }
+// Answered's lines for an MCP form read its fields through Elicitation; no transport case is a form.
+enum Elicitation {
+ enum Action: String { case accept, decline, cancel }
+ struct Field { var key: String; var title: String }
+ static func fields(_ schema: JSONValue?, order: [String]? = nil) -> [Field] { [] }
+ static func shown(_ f: Field, _ value: JSONValue) -> String { "" }
+}
 struct ProbeConnection { var networkUp = true }
-struct Toast { enum Style { case error }; init(_ text: String, style: Style) {} }
+struct Toast { enum Style { case info, success, error }; let message: String; let style: Style; init(_ message: String, style: Style = .info) { self.message = message; self.style = style } }
 @MainActor final class ProbeAPI {
  var outcome: String; var sent: Resolution?
+ // The hub ends a card whose dialog changed before its 409 comes back (fleet_ix_screen.go, fleet_ix_codex.go):
+ // interaction_resolved reaches the app first (AnsweringInteractions).
+ var hubEnds: () -> Void = {}
  init(_ outcome: String) { self.outcome = outcome }
- func resolve(_ id: String, _ r: Resolution) async throws {
+ func resolve(_ id: String, _ r: Resolution, opID: UUID, handoffCard: Bool) async throws -> ResolveResult {
   sent = r
   switch outcome {
-  case "gone": throw APIError(status:410,code:"")
-  case "prompt_changed": throw APIError(status:409,code:"prompt_changed")
-  case "error": throw APIError(status:500,code:"")
-  default: break
+  case "gone": throw APIError(status: 410, message: "gone", fields: ["status": "expired"])
+  case "prompt_changed": hubEnds(); throw APIError(status: 409, message: "prompt changed", fields: ["code": "prompt_changed"])
+  case "error": throw APIError(status: 500, message: "failed")
+  default: return ResolveResult(ok: true)
   }
  }
 }
 `
 const swiftResolveFields = `
-var api: ProbeAPI?
+var client: ProbeAPI?
 var connection = ProbeConnection()
-var interactions: [String:Interaction] = [:]
+var interactions: [String: Interaction] = [:]
+var endedInteractionIDs: Set<String> = []
+var answering = AnsweringInteractions()
+var answerAttempts = AnswerAttempts()
+var delegatedAnswers: [DelegatedAnswer] = []
 var toast: Toast?
+func api(_ group: String) -> ProbeAPI? { client }
+func session(_ key: SessionKey) -> Session? { Session() }
+func summariesChanged() {}
 func notDone() {}
 func show(_ error: Error) {}
 `
@@ -505,11 +767,14 @@ func TestResolutionFixtureSourceEvidence(t *testing.T) {
 	root := answerFixtureRoot(t)
 	evidence := map[string][]string{
 		"apple/Persona/Views/Interactions/InteractionViews.swift": {
-			".disabled(!canAdvance || sending)", ".disabled(sending)", "if interaction.offersAlways {",
+			".disabled(!canAdvance || isSending)", ".disabled(isSending)", "if interaction.offersAlways {",
 			"if rejecting {", "rejecting = false", ".disabled(text.isEmpty)",
 			"if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {",
 			"let t = text.trimmingCharacters(in: .whitespacesAndNewlines)",
 			"Resolution(keys: [\"enter\"], text: t)", "Resolution(keys: keys)",
+		},
+		"apple/Persona/Views/Interactions/ScreenReview.swift": {
+			".disabled(sending != nil)",
 		},
 		"apple/PersonaWatch/PersonaWatchApp.swift": {
 			"Resolution(approve: true, mode: \"acceptEdits\")", "Resolution(approve: false, feedback: \"请重新考虑这个计划\")",
@@ -544,6 +809,23 @@ func TestResolutionFixtureSourceEvidence(t *testing.T) {
 			if !strings.Contains(string(data), snippet) {
 				t.Errorf("source evidence changed in %s: %s", path, snippet)
 			}
+		}
+	}
+
+	// The review of several questions (#2970) replaces the options and the form's footer, and its own footer shows the
+	// answer on its way and is then disabled. Checked inside QuestionForm: the BeautifulUI form has lookalikes.
+	views, err := os.ReadFile(filepath.Join(root, "apple/Persona/Views/Interactions/InteractionViews.swift"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	question := swiftBlock(t, string(views), "struct QuestionForm:")
+	for _, snippet := range []string{
+		"private var showsFooter: Bool { (needsFooter || canSkip) && !(stepped && reviewing) }",
+		"private var showsReviewFooter: Bool { stepped && reviewing }",
+		"if stepped, reviewing {", "ScreenReviewFooter(rows: QuestionSteps.rows(questions, answers: shownAnswers), sending: isSending ? \"submit\" : nil,",
+	} {
+		if !strings.Contains(question, snippet) {
+			t.Errorf("source evidence changed in QuestionForm: %s", snippet)
 		}
 	}
 

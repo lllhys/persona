@@ -35,7 +35,7 @@ func duplicateHints(t PlanTask, todos []Todo, sessions []proto.Session) []string
 				sameDir = true
 			}
 		}
-		if shared := sharedRef(refs, issueRefs(o.Title+" "+o.Notes)); shared != "" {
+		if shared := sharedRef(refs, issueRefs(o.Title+" "+o.Notes+" "+o.PRURL)); shared != "" {
 			add("todo:"+o.ID, fmt.Sprintf("任务「%s」（%s）也提到 %s", o.Title, o.ID, shared))
 		} else if sim := titleSimilarity(t.Title, o.Title); sim >= 0.7 || sameDir && sim >= 0.4 {
 			add("todo:"+o.ID, fmt.Sprintf("任务「%s」（%s）标题相近%s", o.Title, o.ID, map[bool]string{true: "，在同一个目录", false: ""}[sameDir]))
@@ -178,10 +178,13 @@ func (s *Service) planDuplicates(ctx context.Context, tasks []PlanTask) string {
 	}
 	var b strings.Builder
 	for _, t := range tasks {
+		todos := open
 		if t.Continues != "" {
-			continue // it says which work it carries on (task_brief_plan.go): not a copy of it
+			// The to-do it says it carries on (task_brief_plan.go) is not a copy of it; any other open to-do like it is
+			// (#6427: two continuations of one stopped task).
+			todos = slices.DeleteFunc(slices.Clone(open), func(o Todo) bool { return o.ID == t.Continues })
 		}
-		hints := duplicateHints(t, open, sessions)
+		hints := duplicateHints(t, todos, sessions)
 		if len(hints) == 0 {
 			continue
 		}

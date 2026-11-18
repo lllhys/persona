@@ -9,7 +9,8 @@ import (
 	"testing"
 )
 
-// regexpFill is the regexp replace fill took over from; fill must give the same text for every input.
+// regexpFill is the regexp replace fill took over from; fill must give the same text for every input whose values
+// do not end in a full stop (TestFillDropsAFilledSentencesFullStop).
 var oldPlaceholder = regexp.MustCompile(`\{(\w+)\}`)
 
 func regexpFill(s string, a Args) string {
@@ -100,5 +101,26 @@ func BenchmarkT(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		T(En, "hub-transcript_text.loop_fired_prompt", args)
+	}
+}
+
+// A whole sentence filled into a longer one (a node refusal as the reason) keeps one full stop, not "。），" (#6822).
+func TestFillDropsAFilledSentencesFullStop(t *testing.T) {
+	for _, c := range []struct{ in, v, want string }{
+		{"这条没发出去（{v}），字还在输入框里", "开着。这次没有发送。", "这条没发出去（开着。这次没有发送），字还在输入框里"},
+		{"不能开始：{v}。重试", "电脑没连上。 ", "不能开始：电脑没连上。重试"},
+		{"Not sent ({v}).", "Nothing was sent.", "Not sent (Nothing was sent)."},
+		{"{v}；{v}、{v}：{v}，", "好。", "好；好、好：好，"},
+		// kept: before plain text, at the end, an ellipsis, another mark, no full stop
+		{"{v} 再试", "没连上。", "没连上。 再试"},
+		{"没发出去：{v}", "这次没有发送。", "没发出去：这次没有发送。"},
+		{"（{v}）", "等一下...", "（等一下...）"},
+		{"（{v}）", "真的吗？", "（真的吗？）"},
+		{"（{v}）", "1.5", "（1.5）"},
+		{"（{v}）", "", "（）"},
+	} {
+		if got := fill(c.in, Args{"v": c.v}); got != c.want {
+			t.Errorf("fill(%q, %q) = %q, want %q", c.in, c.v, got, c.want)
+		}
 	}
 }

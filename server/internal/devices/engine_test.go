@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -187,6 +188,36 @@ func TestEngineOnline(t *testing.T) {
 		if strings.HasPrefix(c, "engine.use") {
 			t.Errorf("configureNode sent %s", c)
 		}
+	}
+}
+
+// The machine a PUT answers, which the app takes as it is, has the notes on its engines in the reader's language, as
+// the hub's machine list does (#8134); the node's report keeps the canonical text.
+func TestEnginePutAnswersNotesInTheReadersLanguage(t *testing.T) {
+	_, _, m, mux := engineHub(t)
+	connectEngineNode(t, m)
+	args := i18n.Args{"version": "0.14.0", "minimum": "0.15.0"}
+	note := i18n.T(i18n.Default, "node-engine.paseo_outdated", args)
+	m.mu.Lock()
+	m.info.Engines = append(m.info.Engines, proto.Engine{ID: proto.EnginePaseo, Name: "Paseo", Available: true, Version: "0.14.0", Note: note})
+	m.mu.Unlock()
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "/api/v1/machines/m1/engine", strings.NewReader(`{"hosts":["paseo"]}`))
+	r.Header.Set("Accept-Language", "en")
+	mux.ServeHTTP(rec, r)
+	var out proto.Machine
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || rec.Code != 200 {
+		t.Fatalf("PUT = %d %s", rec.Code, rec.Body)
+	}
+	i := slices.IndexFunc(out.Engines, func(e proto.Engine) bool { return e.ID == proto.EnginePaseo })
+	if i < 0 || out.Engines[i].Note != i18n.T(i18n.En, "node-engine.paseo_outdated", args) {
+		t.Fatalf("engines %+v", out.Engines)
+	}
+	m.mu.Lock()
+	kept := m.info.Engines[len(m.info.Engines)-1].Note
+	m.mu.Unlock()
+	if kept != note {
+		t.Fatalf("the node's report changed: %q", kept)
 	}
 }
 

@@ -341,14 +341,21 @@ struct PlaceMapCard: View {
 }
 
 /// A place's number (or the phone's dot), name and distance, and Directions, which hands it to Maps. A route's row is
-/// the destination with its mode, time and distance, and Start in Maps (#5544); a hand-off's is Maps' icon, the
-/// destination, the mode, and a button that opens the same directions again (#5545).
+/// the destination with its mode, time and distance (#5544), with a labeled Start in Maps under it (#6177); a
+/// hand-off's is Maps' icon, the destination, the mode, and a button that opens the same directions again (#5545).
 private struct PlaceMapRow: View {
     var result: PlaceMapResult
     var place: PlaceMapResult.Place
     var number: Int
 
     var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            row
+            if result.kind == .route { start }
+        }
+    }
+
+    private var row: some View {
         HStack(spacing: Theme.Space.m) {
             Group {
                 switch result.kind {
@@ -373,14 +380,11 @@ private struct PlaceMapRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             switch result.kind {
-            case .here:
+            case .here, .route:
                 EmptyView()
             case .places:
                 directions(String(localized: "Directions [Place Map]"),
                            spoken: String(localized: "Directions to \(title) [Place Map]"), mode: nil)
-            case .route:
-                directions(String(localized: "Start in Maps [Place Map]"),
-                           spoken: String(localized: "Start directions to \(title) in Maps [Place Map]"), mode: result.mode)
             case .handoff:
                 directions(String(localized: "Open in Maps [Place Map]"),
                            spoken: String(localized: "Open directions to \(title) in Maps [Place Map]"), mode: result.mode)
@@ -414,6 +418,25 @@ private struct PlaceMapRow: View {
         .themedButton()
         .tapTargetFrame()
         .accessibilityLabel(spoken)
+    }
+
+    /// A route's main action, labeled across the card: it is what the card is for (#6177). One line: the icon goes
+    /// first when the words don't fit (the largest text sizes), then the words scale down, never truncated.
+    private var start: some View {
+        Button { PlaceMapText.directions(to: place, named: title, mode: result.mode) } label: {
+            let words = String(localized: "Start in Maps [Place Map]")
+            ViewThatFits(in: .horizontal) {
+                // titleAndIcon: inside the sheet's List a Label otherwise drops its icon.
+                Label(words, systemImage: Theme.Icon.directions).labelStyle(.titleAndIcon)
+                Text(words)
+            }
+            .lineLimit(1).minimumScaleFactor(0.5)
+            .frame(maxWidth: .infinity)
+        }
+        .font(Theme.Font.labelStrong)
+        .themedButton(prominent: true)
+        .accessibilityLabel(String(localized: "Start directions to \(title) in Maps [Place Map]"))
+        .accessibilityIdentifier("place-map.start")
     }
 }
 
@@ -457,9 +480,13 @@ struct PlaceMapSheet: View {
             VStack(spacing: 0) {
                 Map(position: $camera) {
                     UserAnnotation()
-                    if result.line.count > 1 {
+                    if result.line.count > 1, let start = result.line.first {
                         MapPolyline(coordinates: result.line.map(\.coordinate))
                             .stroke(Theme.accent, style: StrokeStyle(lineWidth: Theme.Size.barWide, lineCap: .round, lineJoin: .round))
+                        // Where the line starts, the dot the chat's card draws: the phone may have moved since (#6177).
+                        Annotation(String(localized: "Start [Place Map]"), coordinate: start.coordinate) {
+                            PlaceMapPin(kind: .here, number: 0)
+                        }
                     }
                     ForEach(result.places.indices, id: \.self) { i in
                         let place = result.places[i]
@@ -488,9 +515,7 @@ struct PlaceMapSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(String(localized: "Done [Place Map]")) { dismiss() }.lineLimit(1)
-                }
+                SheetClose { dismiss() }
             }
         }
     }

@@ -121,6 +121,10 @@ func (d *boardDevs) MachineResources(string) (*proto.Machine, *proto.MetricSampl
 	return nil, nil, nil
 }
 
+func (d *boardDevs) AppendSessions(dst []proto.Session, id string) ([]proto.Session, bool) {
+	list, ok := d.Sessions(id)
+	return append(dst, list...), ok
+}
 func (d *boardDevs) Sessions(id string) ([]proto.Session, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -636,4 +640,50 @@ func TestWorkspaceBoardSettingsBodyLimit(t *testing.T) {
 	if w.Code != 413 || !strings.Contains(w.Body.String(), proto.CodeTooLarge) {
 		t.Fatalf("oversized settings body: %d %s", w.Code, w.Body)
 	}
+}
+
+func TestPaseoWorkspacePinsSurviveSnapshotsAndClearOnRefresh(t *testing.T) {
+	store := newMemoryBoardStore()
+	d := newBoardDevs()
+	pin := "2026-11-16T13:00:00Z"
+	d.add("laptop", func(_ context.Context, method string, _ json.RawMessage) (any, error) {
+		if method != "workspaces.list" {
+			return nil, errors.New("unexpected workspace mutation")
+		}
+		return proto.WorkspacesResponse{Workspaces: []proto.Workspace{
+			{ID: "pinned", Source: "paseo", SourceID: "pinned", ProjectID: "project", Cwd: "/w/app", PinnedAt: pin, Available: true},
+			{ID: "sibling", Source: "paseo", SourceID: "sibling", ProjectID: "project", Cwd: "/w/app", Available: true},
+		}}, nil
+	})
+	s, _ := newBoardService(t, store, d)
+	read := func(service *Service) []proto.Workspace {
+		t.Helper()
+		w := boardCall(service, "GET", "/api/v1/workspaces", "", roleFull)
+		var result proto.WorkspacesResponse
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil || len(result.Workspaces) != 2 {
+			t.Fatalf("workspace catalog: %d %s", w.Code, w.Body)
+		}
+		return result.Workspaces
+	}
+	assertPin := func(rows []proto.Workspace, expected string) {
+		t.Helper()
+		for _, w := range rows {
+			want := ""
+			if w.SourceID == "pinned" {
+				want = expected
+			}
+			if w.PinnedAt != want || w.MachineID != "laptop" || w.Source != "paseo" {
+				t.Fatalf("native pin lost or assigned to its sibling: %+v", w)
+			}
+		}
+	}
+	assertPin(read(s), pin)
+	d.setOnline("laptop", false)
+	restarted, _ := newBoardService(t, store, d)
+	assertPin(read(restarted), pin)
+	pin = ""
+	d.setOnline("laptop", true)
+	assertPin(read(restarted), "")
+	d.setOnline("laptop", false)
+	assertPin(read(restarted), "")
 }

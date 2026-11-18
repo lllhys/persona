@@ -1,0 +1,3 @@
+{
+  "device_unreachable": "The hub couldn't reach github.com to sign in to GitHub. Check the hub's network connection. If it needs a proxy, configure github.proxy in manager.json, then retry."
+}

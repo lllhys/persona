@@ -87,7 +87,7 @@ class TurnErrorFixTest {
                 }
             }
         }
-        rule.onNodeWithText("Model not connected: Claude Code isn't signed in").assertExists()
+        rule.onNodeWithText("Model not connected: Claude Code CLI isn't signed in").assertExists()
         rule.onNodeWithText("Model not connected: the key is wrong").assertExists()
         rule.onNodeWithText("Not logged in · Please run /login").assertDoesNotExist()
         rule.onNodeWithText("Model not connected: the key is wrong").performClick()

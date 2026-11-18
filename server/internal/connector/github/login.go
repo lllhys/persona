@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/connector"
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // Signing in from the app with GitHub's device flow (docs/extensions/connectors.md "Login supports"): the hub asks GitHub for a code
@@ -31,6 +32,11 @@ const deviceScopes = "repo"
 // App's client_id: it is no longer read and is dropped at the next save; a token granted to it still works.
 type deviceLogin struct {
 	Token string `json:"token,omitempty"`
+	// Account is the account the inbox was last read as (account.go), kept with the sign-in so that a restart does
+	// not forget it. It is not a secret; this is the one store the connector has.
+	Account *accountRecord `json:"account,omitempty"`
+	// InboxMessages preserves message identities across a restart, in the same store as the account.
+	InboxMessages map[string]inboxMessageRecord `json:"inbox_messages,omitempty"`
 }
 
 // devicePending is a device code waiting for the user.
@@ -52,6 +58,9 @@ func (c *Connector) UseSecrets(s connector.Secrets) {
 func (c *Connector) Reload() {
 	c.mu.Lock()
 	c.dev, c.devLoaded = deviceLogin{}, false
+	// The account kept there too (restore): whoever held the id may have saved over it, and the check below
+	// writes it back when it is gone.
+	c.acct.restored, c.acct.kept = false, accountRecord{}
 	c.mu.Unlock()
 	c.kickCheck()
 }
@@ -66,24 +75,44 @@ func (c *Connector) deviceState(ctx context.Context) deviceLogin {
 	}
 	raw, err := s.Load(ctx)
 	if err != nil {
+		c.mu.Lock()
+		c.devUnreadable = true
+		c.mu.Unlock()
 		return d
 	}
 	_ = json.Unmarshal(raw, &d)
 	c.mu.Lock()
-	c.dev, c.devLoaded = d, true
+	c.dev, c.devLoaded, c.devUnreadable = d, true, false
 	c.mu.Unlock()
 	return d
 }
 
-func (c *Connector) saveDevice(ctx context.Context, d deviceLogin) error {
-	c.mu.Lock()
-	s := c.secrets
-	c.dev, c.devLoaded = d, true
+// saveDevice changes what the secrets keep (change runs under c.mu) and saves it, one save at a time so that the
+// last change is the one kept.
+func (c *Connector) saveDevice(ctx context.Context, change func(*deviceLogin)) error {
+	c.saving.Lock()
+	defer c.saving.Unlock()
+	var s connector.Secrets
+	for try := 0; ; try++ {
+		c.deviceState(ctx) // what is kept already, so that the save does not drop it
+		c.mu.Lock()
+		// A store that cannot be read has nothing this save could drop: a new sign-in writes over it, the way out
+		// of a secret that no longer opens.
+		if s = c.secrets; s == nil || c.devLoaded || c.devUnreadable {
+			break
+		}
+		c.mu.Unlock() // Reload forgot it meanwhile: read again, or the save would drop what is kept there
+		if try == 8 {
+			return errors.New("the GitHub sign-in store keeps changing")
+		}
+	}
+	change(&c.dev)
+	c.devLoaded = true
+	raw, _ := json.Marshal(c.dev)
 	c.mu.Unlock()
 	if s == nil {
 		return errors.New("no secrets store")
 	}
-	raw, _ := json.Marshal(d)
 	return s.Save(ctx, raw)
 }
 
@@ -171,12 +200,12 @@ func (c *Connector) pollDevice(ctx context.Context) (connector.Prompt, error) {
 	default:
 		return c.restartDevice(ctx, "GitHub 没有授权（"+r.Error+"）")
 	}
-	d := deviceLogin{Token: r.AccessToken}
-	if err := c.saveDevice(ctx, d); err != nil {
+	if err := c.saveDevice(ctx, func(d *deviceLogin) { d.Token = r.AccessToken }); err != nil {
 		return connector.Prompt{}, err
 	}
 	c.mu.Lock()
-	c.token, c.pending = d.Token, nil
+	c.newCredential(r.AccessToken)
+	c.pending = nil
 	c.mu.Unlock()
 	c.check(ctx)
 	st := c.Status(ctx)
@@ -205,18 +234,20 @@ func (c *Connector) Logout(ctx context.Context) error {
 }
 
 func (c *Connector) forgetDevice(ctx context.Context) error {
+	had := c.deviceState(ctx).Token != ""
 	c.mu.Lock()
 	if c.source == SourceDevice {
-		c.token = ""
+		c.newCredential("")
 	}
 	c.pending = nil
+	// With the token in memory, in one step: a read between the two would take the kept one for a new sign-in and
+	// put it back (tokenNow).
+	c.dev.Token = ""
 	c.mu.Unlock()
-	d := c.deviceState(ctx)
-	if d.Token == "" {
+	if !had {
 		return nil
 	}
-	d.Token = ""
-	return c.saveDevice(ctx, d)
+	return c.saveDevice(ctx, func(d *deviceLogin) { d.Token = "" })
 }
 
 // postForm posts to GitHub's web host (the device flow is not the API's), answers as JSON.
@@ -229,7 +260,9 @@ func (c *Connector) postForm(ctx context.Context, path string, form url.Values, 
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return errors.New(Scrub(err.Error()))
+		// Transport errors may contain a proxy address or credentials, which Scrub only masks for GitHub tokens.
+		// Keep the remediation, not the underlying network diagnostic. Response read errors remain scrubbed below.
+		return i18n.Err("connector-github.device_unreachable")
 	}
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

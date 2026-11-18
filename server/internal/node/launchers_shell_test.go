@@ -68,6 +68,7 @@ func TestBashrcAliasLaunchers(t *testing.T) {
 // No alias that starts claude in ~/.bashrc: plain claude, as with zsh.
 func TestBashrcWithoutLaunchers(t *testing.T) {
 	list, _, _, _ := mergeLaunchers(asBash(t, `alias ll="ls -l"`, launcherScript))
+	list = withoutInstalledWorkAgents(list)
 	if len(list) != 1 || list[0].Name != "claude" {
 		t.Fatalf("got %v", list)
 	}
@@ -95,6 +96,7 @@ trap 'echo bye' EXIT
 			home := t.TempDir()
 			writeScript(t, filepath.Join(home, "bin", "claude-demo"), demoScript, 0o755)
 			list, _, _, _ := mergeLaunchers(sh.run(t, home, defs, launcherScript))
+			list = withoutInstalledWorkAgents(list)
 			var names []string
 			for _, l := range list {
 				names = append(names, l.Name)

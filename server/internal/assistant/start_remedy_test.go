@@ -92,7 +92,7 @@ func TestAStartWhoseTabIsKeptIsRemediedFirst(t *testing.T) {
 	waitFor(t, "the supervision message", func() bool { return len(f.notices()) == 1 })
 	n := f.notices()[0]
 	for _, want := range []string{"Agent 没开起来，它的启动标签在电脑上保留到", "停在一个提问上「[oh-my-zsh] Would you like to update? [Y/n]」",
-		"| Last login:", "还能重试 3 次", "task_start_screen"} {
+		"| Last login:", "还能重试 3 次", "signal=failed"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("message lacks %q:\n%s", want, n)
 		}
@@ -210,9 +210,7 @@ func TestRemedyTurnEndLeavesARetryRunning(t *testing.T) {
 	s, f := newQuietService(t)
 	todo, _ := remedyingTask(t, s, f, keptRefusal(proto.CodeShellWaiting))
 	waitFor(t, "the supervision message", func() bool { return len(f.notices()) == 1 })
-	s.tasks.mu.Lock()
-	s.tasks.retrying[todo.ID] = true
-	s.tasks.mu.Unlock()
+	s.claimTaskStart(todo.ID)
 	s.remedyTurnEnded(context.Background(), "conv1")
 	if got := todoNow(s, todo.ID); got.DoneAt != nil {
 		t.Fatalf("given up under a retry: %+v", got)
@@ -228,7 +226,7 @@ func TestRemedyExpiresWithItsTab(t *testing.T) {
 	if err := s.patchPlanTask(ctx, p.ID, 0, func(pt *PlanTask) { pt.Start.Until = time.Now().Add(-time.Second) }); err != nil {
 		t.Fatal(err)
 	}
-	s.remedyWatch(ctx, todoNow(s, todo.ID), time.Now())
+	s.remedyWatch(ctx, todoNow(s, todo.ID), time.Now(), s.planHistoryOnce())
 	if got := todoNow(s, todo.ID); got.DoneAt == nil {
 		t.Fatalf("not failed: %+v", got)
 	}
@@ -279,6 +277,35 @@ func TestARetryThatFailsWithoutATabFailsForGood(t *testing.T) {
 		return slices.Contains(kinds, feedStartRemedy+"/gave_up/hub") && slices.Contains(kinds, feedReceipt)
 	})
 	waitFor(t, "the supervisor told", func() bool { return len(f.notices()) == 2 })
+}
+
+// A retry that ends the way the first start did is still news: task_retry promised the supervisor how it ends (#6027).
+// In the kept tab it stops on the same question again; in a new tab, after a start that failed for good, it fails
+// with the same error.
+func TestARetryThatFailsTheSameWayIsTold(t *testing.T) {
+	for name, c := range map[string]struct {
+		failure error
+		state   string
+	}{
+		"the same question in the kept tab": {keptRefusal(proto.CodeShellWaiting), remedying},
+		"the same error in a new tab":       {&rpc.Error{Code: proto.CodeStartLineRejected, Message: "the new tab's shell did not take the start line, twice"}, remedyFailed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := newQuietService(t)
+			todo, p := remedyingTask(t, s, f, c.failure)
+			waitFor(t, "the first failure told", func() bool { return len(f.notices()) == 1 })
+			raw, _ := json.Marshal(map[string]any{"todo_id": todo.ID, "reason": "再试一次"})
+			if _, err := s.runTool(context.Background(), "server", "conv1", "task_retry", raw); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the retry to end", func() bool {
+				busy := s.taskStartOnWay(todo.ID)
+				r := remedyState(t, s, p.ID)
+				return !busy && len(f.started()) >= 2 && r != nil && r.State == c.state && r.Attempt == 1
+			})
+			waitFor(t, "the retry's failure told", func() bool { return len(f.notices()) == 2 })
+		})
+	}
 }
 
 // Another held conversation's turn ends (a leader's, or the background supervisor's, which is held on every

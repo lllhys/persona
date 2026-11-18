@@ -43,6 +43,7 @@ import {
   AUTH_AUTO_FEATURE,
   asksAuth,
   authLabel,
+  AUTO_CHECK,
   autoCheckable,
   chosenAuth,
   EFFORT_LEVELS,
@@ -50,6 +51,8 @@ import {
   fillFromCatalog,
   formFromView,
   formModel,
+  connectProblems,
+  firstConnectProblem,
   formProblems,
   hostOf,
   mergeDiscovered,
@@ -61,6 +64,7 @@ import {
   testModel,
   testText,
   withoutAutoAuth,
+  type ConnectField,
   type FormModel,
   type ProviderForm,
   type ProviderModel,
@@ -76,6 +80,7 @@ import { effortLabel } from "../../lib/routines";
 import { composing } from "../../lib/send-history";
 import { hubHas, useStore } from "../../lib/store";
 import { Button, cx, Dialog, Loading, Spinner, toast } from "../../ui/atoms";
+import { SearchField } from "../../ui/SearchField";
 import { Icon, type IconName } from "../../ui/icons";
 import { Segmented } from "../assistant/parts";
 import { InstallClaudeHelp } from "../assistant/Readiness";
@@ -194,6 +199,13 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
   const moreRef = useRef<HTMLDivElement>(null);
   const authRef = useRef<HTMLDivElement>(null);
   const revealAuth = useRef(false);
+  // Next pressed on Connect with something wrong (audit item 19): each field says its own problem under it, and the
+  // first one's field takes the focus and comes into view (`flagged`, a new object per press)
+  const [tried, setTried] = useState(false);
+  const [flagged, setFlagged] = useState<{ field: ConnectField } | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  // the focus going to a flagged field: the address it leaves is not "entered" by that (a half-typed one stays waiting)
+  const flagging = useRef(false);
   // null: not touched, so it follows the readiness (off while Claude Code already answers)
   const [assignSet, setAssign] = useState<boolean | null>(null);
   const [keyTest, setKeyTest] = useState<KeyTest | null>(null);
@@ -313,6 +325,9 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
 
   const set = <K extends keyof ProviderForm>(k: K) => (v: ProviderForm[K]) => setF((x) => ({ ...x, [k]: v }));
   const problems = formProblems(f, isNew, !!old?.has_key, autoName);
+  const fieldProblems = connectProblems(f, isNew, !!old?.has_key, autoName);
+  // what a field says under it once Next was pressed (the display name's and a typed startup ID's say it as typed)
+  const shownProblem = (k: ConnectField) => (tried ? fieldProblems[k] || undefined : undefined);
   // models were found for this connection: choosing them is what comes next
   const foundModels = !!found && !found.error && found.n > 0;
   const openAI = f.kind === "api" && (f.api === "responses" || f.api === "chat");
@@ -454,7 +469,24 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
   // Leaving the step is leaving the URL field (a field removed while focused never blurs).
   useEffect(() => {
     if (step !== "connect") setUrlTyping(false);
+    setTried(false);
   }, [step]);
+  // The field Next flagged takes the focus and is followed into view while a fold it is in opens, its problem with it.
+  useEffect(() => {
+    if (!flagged) return;
+    const box = formRef.current?.querySelector<HTMLElement>(`[data-provider-field="${flagged.field}"]`);
+    flagging.current = true;
+    box?.querySelector<HTMLElement>("input, textarea")?.focus({ preventScroll: true });
+    flagging.current = false;
+    const until = performance.now() + REVEAL_MS;
+    let frame = 0;
+    const follow = () => {
+      box?.scrollIntoView?.({ block: "nearest" });
+      if (performance.now() < until) frame = requestAnimationFrame(follow);
+    };
+    follow();
+    return () => cancelAnimationFrame(frame);
+  }, [flagged]);
 
   const save = async () => {
     if (busy || !canSave) return;
@@ -502,11 +534,15 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
   const at = steps.indexOf(step);
   const stepProblem = step === "connect" ? problems.connect : step === "models" ? problems.models || problems.advanced : step === "devices" ? devicesProblem : "";
   const next = () => {
-    if (stepProblem) {
-      // a startup ID that keeps the step from going on is shown where it was typed
-      if (step === "connect" && launcherNameProblem(f.name)) setMore(true);
-      return setError(stepProblem);
+    const field = step === "connect" ? firstConnectProblem(fieldProblems) : null;
+    if (field) {
+      // said by the field it is about, which takes the focus; a startup ID under "More options" opens it
+      if (field === "name") setMore(true);
+      setError("");
+      setTried(true);
+      return setFlagged({ field });
     }
+    if (stepProblem) return setError(stepProblem);
     setError("");
     setStep(steps[at + 1]);
   };
@@ -534,9 +570,9 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
     </Labelled>
   );
   const idField = (
-    <TextField label={t("settings-providerwizard.startup_id")} value={f.name} onChange={set("name")} disabled={!isNew} mono
+    <TextField field="name" label={t("settings-providerwizard.startup_id")} value={f.name} onChange={set("name")} disabled={!isNew} mono
       placeholder={!isNew ? undefined : autoName ? t("settings-providerwizard.startup_id_auto") : t("settings-providerwizard.name_placeholder", { example: "my_gateway" })}
-      error={isNew ? launcherNameProblem(f.name) : undefined} hint={isNew ? t("settings-providerwizard.startup_id_hint") : t("settings-providerwizard.startup_id_fixed")} />
+      error={shownProblem("name") ?? (isNew ? launcherNameProblem(f.name) : undefined)} hint={isNew ? t("settings-providerwizard.startup_id_hint") : t("settings-providerwizard.startup_id_fixed")} />
   );
 
   return (
@@ -595,6 +631,7 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
       }
     >
       <form
+        ref={formRef}
         className="flex flex-col gap-4"
         onSubmit={(e) => {
           e.preventDefault();
@@ -647,7 +684,7 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
         {step === "connect" && (
           <div className="flex flex-col gap-3">
             {/* left empty, the provider shows what the placeholder says (the hub names a new one after its host) */}
-            <TextField label={t("settings-providerwizard.display_name")} value={f.display_name} onChange={set("display_name")}
+            <TextField field="display_name" label={t("settings-providerwizard.display_name")} value={f.display_name} onChange={set("display_name")}
               placeholder={fallbackTitle(f, autoName) || t("settings-providerwizard.display_name_placeholder")} error={displayNameProblem(f.display_name)} hint={t("settings-providerwizard.display_name_hint")} />
             {!idInMore && idField}
             {isNew && (
@@ -671,7 +708,7 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
                 <Segmented<ProviderForm["api"]> wrap label={t("settings-providerwizard.api_protocol")} value={f.api} onChange={set("api")} options={[{ v: "messages", label: "Anthropic Messages" }, { v: "responses", label: "OpenAI Responses" }, { v: "chat", label: t("settings-providerwizard.protocol_chat") }]} />
               </Labelled>
             )}
-            <TextField label={t("settings-providerwizard.base_url")} value={f.base_url} mono inputMode="url" placeholder="https://…"
+            <TextField field="base_url" label={t("settings-providerwizard.base_url")} value={f.base_url} mono inputMode="url" placeholder="https://…" error={shownProblem("base_url")}
               onChange={(v) => {
                 // typed, or a paste into part of it; a paste over all of it is the address as the user has it
                 setUrlTyping(urlPaste.current === null || oneLine(urlPaste.current) !== v.trim());
@@ -687,10 +724,10 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
                 if (whole && oneLine(text) === el.value.trim()) setUrlTyping(false);
               }}
               // left for another field or the page; the window losing focus keeps the field focused, and the URL unfinished
-              onBlur={(e) => document.activeElement !== e.currentTarget && setUrlTyping(false)}
+              onBlur={(e) => !flagging.current && document.activeElement !== e.currentTarget && setUrlTyping(false)}
               hint={urlHint(f)} />
             {!openAI && !autoAuth && authField}
-            <KeyField label={isNew || !old?.has_key ? "API Key" : t("settings-providerwizard.key_keep")} value={f.api_key} onChange={set("api_key")} placeholder={old?.has_key ? t("settings-providerwizard.key_set") : "sk-…"} hint={f.key_by_reference ? undefined : t("settings-providerwizard.key_hint")}
+            <KeyField field="api_key" error={shownProblem("api_key")} label={isNew || !old?.has_key ? "API Key" : t("settings-providerwizard.key_keep")} value={f.api_key} onChange={set("api_key")} placeholder={old?.has_key ? t("settings-providerwizard.key_set") : "sk-…"} hint={f.key_by_reference ? undefined : t("settings-providerwizard.key_hint")}
               byReference={f.key_by_reference} stored={old?.key_reference}
               onByReference={keyRefs ? (on) => setF((x) => ({ ...x, key_by_reference: on, api_key: "" })) : undefined} />
             {f.kind === "api" && (
@@ -725,6 +762,7 @@ export function ProviderWizard({ existing, onClose, onSaved, draft = null, link 
                     waiting={autoCheck ? "wait" : autoReady ? "leave" : isNew && !checked ? "hint" : null}
                     onRetryFetch={() => void runDiscover(!!found?.check)}
                     onRetryTest={testByHand}
+                    onChooseModels={next}
                     auth={authInMore && <AuthLine f={f} onChange={more ? undefined : () => ((revealAuth.current = true), setMore(true))} />}
                   />
                 )}
@@ -974,9 +1012,9 @@ function KeyTestStatus({ keyTest, hasKey, onRetest, onOther }: { keyTest: KeyTes
 }
 
 /** The Connect step's check: the connection test, the sign-in method, then what fetching the models found (it runs
- *  first; its line ends pointing at the next step). A failure says the hub's own words and offers Retry, like a preset's
- *  key test (KeyTestStatus). */
-function ConnectStatus({ discovering, found, testing, test, waiting, onRetryFetch, onRetryTest, auth }: {
+ *  first; its line offers "Choose models", the next step, where they are checked). A failure says the hub's own words
+ *  and offers Retry, like a preset's key test (KeyTestStatus). */
+function ConnectStatus({ discovering, found, testing, test, waiting, onRetryFetch, onRetryTest, onChooseModels, auth }: {
   discovering: boolean;
   found: Found | null;
   testing: boolean;
@@ -987,6 +1025,8 @@ function ConnectStatus({ discovering, found, testing, test, waiting, onRetryFetc
   /** Fetches again, and tests too when the failed fetch was the step's check. */
   onRetryFetch: () => void;
   onRetryTest: () => void;
+  /** Goes on to "Choose models", like Next: offered on the line of the models found. */
+  onChooseModels?: () => void;
   /** The line naming how the gateway signs in (AuthLine), shown whether or not anything ran. */
   auth?: React.ReactNode;
 }) {
@@ -1019,6 +1059,9 @@ function ConnectStatus({ discovering, found, testing, test, waiting, onRetryFetc
                 {found.error ? t("settings-providerwizard.discover_failed", { error: found.error }) : t("settings-providerwizard.discover_found", { count: found.n })}
               </span>
               {found.error && <LineAction onClick={onRetryFetch}>{t("settings-providerwizard.retry")}</LineAction>}
+              {!found.error && found.n > 0 && onChooseModels && (
+                <LineAction onClick={onChooseModels}>{t("settings-providerwizard.step_models")}</LineAction>
+              )}
             </div>
           )}
     </>
@@ -1134,18 +1177,28 @@ function ModelList({ f, setF, opening }: { f: ProviderForm; setF: React.Dispatch
   };
   const checked = f.models.filter((m) => m.checked).length;
   const chat = f.kind === "api" && f.api === "chat";
+  // A gateway that lists more than the wizard checks by itself gets a filter over ID and name: its rows are hard to scan.
+  const [query, setQuery] = useState("");
+  const long = f.models.length > AUTO_CHECK;
+  const q = long ? query.trim().toLowerCase() : "";
+  const shown = f.models.map((m, i) => ({ m, i })).filter(({ m }) => !q || m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
+  // "Set as default" on any row: an unchecked one is checked too, as the default must be one of the provider's models.
+  const makeDefault = (i: number) => setF((x) => ({ ...x, model: x.models[i].id, models: x.models.map((m, j) => (j === i ? { ...m, checked: true } : m)) }));
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[12px] font-medium text-ink-2">{t("settings-providerwizard.models")}</span>
         <span className="text-[11px] text-ink-3 tabular-nums">{t("settings-providerwizard.checked_count", { checked, total: f.models.length })}</span>
       </div>
+      {long && <SearchField value={query} onChange={setQuery} placeholder={t("settings-providerwizard.filter_models")} tone="inset" />}
       {f.models.length === 0 ? (
         <p className="rounded-card bg-inset px-3 py-4 text-center text-[12px] text-ink-3 shadow-hairline">{t("settings-providerwizard.no_models")}</p>
+      ) : shown.length === 0 ? (
+        <p className="rounded-card bg-inset px-3 py-4 text-center text-[12px] text-ink-3 shadow-hairline">{t("settings-providerwizard.filter_none")}</p>
       ) : (
         <ul aria-label={t("settings-providerwizard.models")} className="overflow-hidden rounded-card bg-surface shadow-btn">
-          {f.models.map((m, i) => (
-            <ModelRow key={m.id + i} m={m} showEffort={!chat} isDefault={m.checked && f.model === m.id} onChange={(p) => update(i, p)} onDefault={() => setF((x) => ({ ...x, model: m.id }))} />
+          {shown.map(({ m, i }) => (
+            <ModelRow key={m.id + i} m={m} showEffort={!chat} isDefault={m.checked && f.model === m.id} onChange={(p) => update(i, p)} onDefault={() => makeDefault(i)} />
           ))}
         </ul>
       )}
@@ -1160,6 +1213,8 @@ function ModelList({ f, setF, opening }: { f: ProviderForm; setF: React.Dispatch
   );
 }
 
+const MODEL_DEFAULT = "touch-hit shrink-0 whitespace-nowrap rounded-chip px-2 py-0.5 text-[11px]";
+
 function ModelRow({ m, showEffort, isDefault, onChange, onDefault }: { m: FormModel; showEffort: boolean; isDefault: boolean; onChange: (p: Partial<FormModel>) => void; onDefault: () => void }) {
   const toggleEffort = (e: string) => {
     const efforts = m.efforts.includes(e) ? m.efforts.filter((x) => x !== e) : EFFORT_LEVELS.filter((x) => x === e || m.efforts.includes(x));
@@ -1167,7 +1222,7 @@ function ModelRow({ m, showEffort, isDefault, onChange, onDefault }: { m: FormMo
   };
   const levels = m.efforts.length ? m.efforts : [...EFFORT_LEVELS];
   return (
-    <li data-model={m.id} className="border-b border-line px-3 py-2.5 last:border-b-0">
+    <li data-model={m.id} className="group border-b border-line px-3 py-2.5 last:border-b-0">
       <div className="flex items-center gap-2.5">
         <button type="button" role="checkbox" aria-checked={m.checked} aria-label={t("settings-providerwizard.use_model", { id: m.id })} onClick={() => onChange({ checked: !m.checked })}
           className="touch-hit shrink-0">
@@ -1177,14 +1232,17 @@ function ModelRow({ m, showEffort, isDefault, onChange, onDefault }: { m: FormMo
           <span className="block truncate font-mono text-[12.5px] text-ink">{m.id}</span>
           {m.name && <span className="block truncate text-[11px] text-ink-3">{m.name}</span>}
         </span>
-        {m.checked &&
-          (isDefault ? (
-            <span className="shrink-0 whitespace-nowrap rounded-chip bg-accent-tint px-2 py-0.5 text-[11px] font-medium text-accent">{t("settings-providerwizard.default")}</span>
-          ) : (
-            <button type="button" onClick={onDefault} className="touch-hit shrink-0 whitespace-nowrap rounded-chip px-2 py-0.5 text-[11px] text-ink-3 hover:bg-hover hover:text-ink">
-              {t("settings-providerwizard.set_default")}
-            </button>
-          ))}
+        {isDefault ? (
+          <span className={cx(MODEL_DEFAULT, "bg-accent-tint font-medium text-accent")}>{t("settings-providerwizard.default")}</span>
+        ) : (
+          // on an unchecked row it also checks it; there it shows on hover and focus (always on touch), so a long list
+          // stays quiet, like the row actions of the other lists
+          <button type="button" onClick={onDefault}
+            className={cx(MODEL_DEFAULT, "text-ink-3 hover:bg-hover hover:text-ink",
+              !m.checked && "opacity-0 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100")}>
+            {t("settings-providerwizard.set_default")}
+          </button>
+        )}
       </div>
       {m.checked && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 pl-6.5">

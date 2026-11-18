@@ -150,6 +150,9 @@ type TriageConfig struct {
 	MaxWakes int `json:"max_wakes,omitempty"`
 	// SettleSeconds: how long a stopped session stays stopped before its turn is triaged. Default 15.
 	SettleSeconds int `json:"settle_seconds,omitempty"`
+	// JustFinishedHours: how long after its turn ended a done turn nobody has seen stays Just finished on the lists
+	// (proto.WorkState.JustFinished, #9751). Default 3.
+	JustFinishedHours int `json:"just_finished_hours,omitempty"`
 }
 
 // WorkReport is the snapshot's work (Snapshot.Work): where each agent stands after its latest turn, as the manager
@@ -184,6 +187,13 @@ const WorkCardTool = "persona_triage"
 // (integrations/paseo/lib/map.js OWN_TOOLS). Not the phone's tools, the connectors' or dispatch_start / dispatch_read:
 // they act outside Persona, or start and read an Agent on another computer, and still ask.
 var AgentOwnTools = []string{"report_to_supervisor", "todo_decisions", "todo_decision_add", "todo_bind_thread", "task_plan", "task_review"}
+
+// AgentToolNames are the manager's tools of the agents (not the assistant's conversations), its agentToolNames:
+// reporting to the supervisor and the to-do it works on (decisions, thread, repositories and their links). Each acts
+// for the agent calling it, so the node names the session of the caller's pane for every one of them (node
+// callerTools). One list for both sides: a tool added here cannot reach the hub without its caller (#9089).
+var AgentToolNames = []string{"report_to_supervisor", "todo_decisions", "todo_decision_add", "todo_bind_thread",
+	"todo_repositories_get", "todo_repositories_set", "todo_repository_links_set", "todo_repository_links_add"}
 
 const (
 	// MethodAgentStartParams: AgentStartParams → {params}: an Agent the app starts (POST /api/v1/sessions), with what

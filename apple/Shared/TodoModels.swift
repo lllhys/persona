@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import PersonaWire
 
 /// How far a todo's work got, as the hub sends it in `TodoItem.stage` (#2776): the six steps, in order. A hub that
 /// sends nothing, or a name this build does not know (an older or a newer hub), has none, and no stage bar is drawn.
@@ -62,8 +63,9 @@ nonisolated extension TodoItem {
 
     /// An open task its supervisor accepted, reopened by the hub when its agent got more work, with nothing of it
     /// running or asking now: it reads Accepted, not Follow Up (#3156, docs/assistant/todo-status-sop.md "Accepted tasks").
+    /// An open concern still waits for its report, so acceptance gives it neither that word nor Done styling (#3582).
     func acceptedAtRest(_ state: TaskState) -> Bool {
-        doneAt == nil && acceptanceStands && (state == .followup || state == .unread || state == .notStarted)
+        !isConcern && doneAt == nil && acceptanceStands && (state == .followup || state == .unread || state == .notStarted)
     }
 
     /// The state a row draws its tone and mark from: Done for an accepted task at rest, else its own.
@@ -129,10 +131,20 @@ nonisolated struct TodoAgentGroup: Identifiable, Sendable {
     var sessions: [Session]
     var todoID: String?
     var todoStatus: TaskState?
-    /// Starts folded (Unassigned below todos with nothing in it waiting for you, #1836).
+    /// Starts folded (a group of agents on no to-do below the to-dos with nothing in it waiting for you, #1836, #6458).
     var folded = false
+    /// A group of agents on no to-do: what its agents are and how to file one, behind its header's ⓘ and said in its
+    /// place when the group is open and empty (#6458).
+    var hint: String? = nil
 
     var id: String { key }
+
+    /// A group's state for its count's color, as a to-do's takes its agents' (`TaskState(todo:agents:)`): needs you, then
+    /// finished unseen, then working; nil when none is (#6458).
+    var mostUrgent: AgentState? {
+        let has = Set(sessions.map(\.state))
+        return [AgentState.needsYou, .unread, .working].first(where: has.contains)
+    }
 }
 
 nonisolated enum TodosLogic {
@@ -305,6 +317,12 @@ nonisolated enum TodosLogic {
         return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
     }
 
+    /// The day `date` is in, written as a `due_date` ("yyyy-MM-dd"): what `dueDay` reads back.
+    public static func dayKey(_ date: Date, calendar: Calendar = .current) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0) // i18n-ignore: wire format
+    }
+
     /// The moment a todo is due by: its `due_at`, or the end of its due day; nil without either.
     public static func dueBy(_ todo: TodoItem, calendar: Calendar = .current) -> Date? {
         if let at = todo.dueAt { return at }
@@ -379,15 +397,18 @@ nonisolated enum TodosLogic {
     /**
      * Pure grouping for the Agents sidebar, by todo:
      * - one section per open todo with attached agents; the header shows the todo title and status, and tapping it opens the todo
-     * - agents with no todo opened by hand in herdr get their own section, "Started Manually", open, before Unassigned (#2608, #2917)
-     * - the other agents with no todo go into the last section, "Unassigned": folded below todos unless one of them needs you
-     *   (unread alone stays folded, many lists always have some); with no todo above it is the whole list, open (#1836)
+     * - agents with no todo opened by hand in the terminal get their own section, "Started Manually", before Unassigned (#2608, #2917)
+     * - the other agents with no todo go into the last section, "Unassigned"
+     * - both start folded below todos unless one of their agents needs you (unread alone stays folded, many lists always
+     *   have some); with no todo above they are the whole list, open (#1836, #6458). Each says what it holds (`hint`);
+     *   `keepEmpty`: both are listed while empty, to say it (the list with nothing narrowing it)
      * - pinning, muting and the "Recent (Not Running)" rules match the "By Status" grouping
      */
     public static func buildTodoAgentGroups(
         sessions: [Session],
         todos: [TodoItem],
-        isMuted: (Session) -> Bool
+        isMuted: (Session) -> Bool,
+        keepEmpty: Bool = false
     ) -> [TodoAgentGroup] {
         let live = sessions.filter { $0.state.isLive }
         let lookup = makeSessionLookup(live)
@@ -449,24 +470,17 @@ nonisolated enum TodosLogic {
         }
         let rest = live.filter { !assignedSessionKeys.contains("\($0.machineID)/\($0.sessionID)") }
 
-        // Opened by hand in herdr and on no todo: no auto-link rule knows them (not spawned, their space is on no
-        // todo), so they get a section of their own, open, before Unassigned (#2608, #2917).
+        // Opened by hand in the terminal and on no todo: no auto-link rule knows them (not spawned, their space is on no
+        // todo), so they get a section of their own before Unassigned (#2608, #2917).
+        let below = !groups.isEmpty
         let manual = rest.filter(isManualHerdr).sorted(by: byRank)
-        if !manual.isEmpty {
-            groups.append(TodoAgentGroup(key: "todo:manual", name: String(localized: "Started Manually"), sessions: manual, todoID: nil, todoStatus: nil))
-        }
-
-        let unassigned = rest.filter { !isManualHerdr($0) }
-        if !unassigned.isEmpty {
-            let sortedUnassigned = unassigned.sorted(by: byRank)
-            groups.append(TodoAgentGroup(
-                key: "todo:none",
-                name: String(localized: "Unassigned"),
-                sessions: sortedUnassigned,
-                todoID: nil,
-                todoStatus: nil,
-                folded: !groups.isEmpty && !sortedUnassigned.contains { $0.state == .needsYou }
-            ))
+        let unassigned = rest.filter { !isManualHerdr($0) }.sorted(by: byRank)
+        for (key, name, hint, list) in [
+            ("todo:manual", String(localized: "Started Manually"), String(localized: "Agents you opened yourself in the terminal, on no to-do. Touch and hold one › Link to To-do… to file it."), manual),
+            ("todo:none", String(localized: "Unassigned"), String(localized: "On no to-do; often started from Lark, the phone or elsewhere. Touch and hold one › Link to To-do… to file it."), unassigned),
+        ] where !list.isEmpty || keepEmpty {
+            groups.append(TodoAgentGroup(key: key, name: name, sessions: list, todoID: nil, todoStatus: nil,
+                                         folded: below && !list.contains { $0.state == .needsYou }, hint: hint))
         }
 
         return groups
@@ -553,15 +567,18 @@ extension APIClient {
         public var remindAt: Date??
         /// "" normal, "high", "low".
         public var priority: String?
+        /// A knowledge-base project's slug, "" for none (#2581); nil leaves it as it is.
+        public var project: String?
 
-        public init(due: Due? = nil, remindAt: Date?? = nil, priority: String? = nil) {
+        public init(due: Due? = nil, remindAt: Date?? = nil, priority: String? = nil, project: String? = nil) {
             self.due = due
             self.remindAt = remindAt
             self.priority = priority
+            self.project = project
         }
 
         enum CodingKeys: String, CodingKey {
-            case priority
+            case priority, project
             case dueAt = "due_at", dueDate = "due_date", remindAt = "remind_at"
         }
 
@@ -577,12 +594,22 @@ extension APIClient {
                 if let d = remindAt { try c.encode(d, forKey: .remindAt) } else { try c.encodeNil(forKey: .remindAt) }
             }
             if let priority { try c.encode(priority, forKey: .priority) }
+            if let project { try c.encode(project, forKey: .project) }
         }
     }
 
     public func updateTodoPlan(id: String, _ change: TodoPlanChange) async throws -> TodoItem {
         let encId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         let data = try await request("PATCH", "/api/v1/todos/\(encId)", body: change)
+        return try JSON.decoder.decode(TodoResponse.self, from: data).todo
+    }
+
+    /// Got It on a Just finished to-do, or opening it (#5707, docs/assistant/todo-status-sop.md "Seen"): the hub marks it
+    /// seen (`PUT …/seen`) or, with `seen` false, takes the mark off (`DELETE`, Undo), and answers the to-do. Only for a
+    /// hub that lists `todo_seen` (`TodoSeen.feature`).
+    public func setTodoSeen(id: String, seen: Bool) async throws -> TodoItem {
+        let encId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let data = try await request(seen ? "PUT" : "DELETE", "/api/v1/todos/\(encId)/seen")
         return try JSON.decoder.decode(TodoResponse.self, from: data).todo
     }
 

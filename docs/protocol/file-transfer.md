@@ -6,7 +6,8 @@ Sending files to your computers to keep, and between them, over the connections 
 
 | Direction | How | Where it lands |
 | --- | --- | --- |
-| Phone → computer, chat attachment | `POST /api/v1/machines/{mid}/files` (no `dest`) | the temp directory, renamed `name-<time>.ext`; temporary |
+| Phone → computer, chat attachment (older apps) | `POST /api/v1/machines/{mid}/files` (no `dest`) | the temp directory, renamed `name-<time>.ext`; temporary |
+| Phone → computer, chat attachment kept (#8361) | `…/files?dest=attachment` | the node's `uploads/<date>/` beside the chat's pictures, under its own name; kept |
 | Phone → computer, to keep | `POST /api/v1/machines/{mid}/files?dest=inbox` | the computer's receive folder, under its own name |
 | Phone → folder the file browser shows | `…/files?dest=dir&dir=…` | that folder ([protocol.md](protocol.md) "Changing files") |
 | Computer → phone | `GET /api/v1/machines/{mid}/file/download` (Range) | the phone |
@@ -25,7 +26,7 @@ Every feature that writes files to a computer is off by default. Each computer h
 - Kept by the manager in the settings table under `machine_file_transfer` (`{"<machine id>": true}`), like the clipboard switch. A machine that is not listed is off, and so is every machine while the settings cannot be read (it fails closed; the manager reads them again at most every 10 s, so a switch turned off elsewhere takes effect within that).
 - `GET /api/v1/machines/{mid}/file-transfer/settings` → `{enabled, inbox?}`; `PUT` the same path with `{"enabled": bool}` → the same. Only a full device changes it (answer-only devices and extension tokens never reach it). The machine object carries it as `file_transfer: {enabled, inbox?}`, where `inbox` is the receive folder (hub.json `inbox_dir`, else `~/Downloads/Persona`) while it is on; a manager from before the switch sends no `file_transfer`, which clients and the hub read as off.
 - While it is off: a `dest=inbox` upload to the machine is 403 `file_transfer_disabled` before the node hears of it (the hub checks the switch as the machine's manager last reported it), and a transfer from or to the machine is 403 `file_transfer_disabled` with `machine` naming it. A transfer running when either end is turned off stops at its next chunk (`failed`, `code: file_transfer_disabled`) and the target's partial file is removed.
-- Not affected: chat attachments (`files` without `dest`), the terminal's paste, health reports, the file browser's `dest=dir` uploads and edits, and previews / downloads (`file`, `file/download`, thumbnails). These have their own rules and keep working with the switch off.
+- Not affected: chat attachments (`files` without `dest`, or with `dest=attachment`), the terminal's paste, health reports, the file browser's `dest=dir` uploads and edits, and previews / downloads (`file`, `file/download`, thumbnails). These have their own rules and keep working with the switch off.
 
 ## Receive folder
 

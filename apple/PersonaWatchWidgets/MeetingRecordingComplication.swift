@@ -1,18 +1,20 @@
 import SwiftUI
 import WidgetKit
 
-/// Meeting Recording on the watch face and in the Smart Stack (docs/apple/recording.md「Apple Watch」): a tap opens the
-/// watch app straight into a meeting recording (persona://record?meeting=1). Static: it shows the same at all times.
+/// Record on the watch face and in the Smart Stack (docs/apple/recording.md「Apple Watch」): an explicit start, like the
+/// iPhone's Control, so a tap opens the watch app straight into a meeting recording (persona://record?meeting=1). It says
+/// Record, the word of every start (#5493). Static: it shows the same at all times.
 struct MeetingRecordingComplication: Widget {
+    /// The complication's identity on faces already set up: never change it (it was Meeting Recording until #5493).
     static let kind = "persona.watch.meeting-recording"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: Self.kind, provider: MeetingRecordingProvider()) { _ in
-            MeetingRecordingComplicationView()
+            MeetingRecordingComplicationFamilyView()
                 .containerBackground(WatchFaceTokens.background, for: .widget)
                 .widgetURL(URL(string: "persona://record?meeting=1"))
         }
-        .configurationDisplayName("Meeting Recording")
+        .configurationDisplayName("Record [Recordings Section ef2821]")
         .description("Starts recording a meeting on Apple Watch.")
         .supportedFamilies([.accessoryCircular, .accessoryCorner, .accessoryRectangular, .accessoryInline])
     }
@@ -28,34 +30,9 @@ struct MeetingRecordingProvider: TimelineProvider {
     }
 }
 
-struct MeetingRecordingComplicationView: View {
+/// The face as WidgetKit sizes it, in the family it asks for.
+struct MeetingRecordingComplicationFamilyView: View {
     @Environment(\.widgetFamily) private var family
 
-    var body: some View {
-        switch family {
-        case .accessoryCircular:
-            ZStack {
-                AccessoryWidgetBackground()
-                Image(systemName: WatchFaceTokens.recordingSymbol).font(WatchFaceTokens.recordingGlyph)
-                    .foregroundStyle(WatchFaceTokens.recording)
-            }
-            .accessibilityLabel(Text("Meeting Recording"))
-        case .accessoryCorner:
-            Image(systemName: WatchFaceTokens.recordingSymbol).font(WatchFaceTokens.recordingGlyph)
-                .foregroundStyle(WatchFaceTokens.recording)
-                .widgetLabel { Text("Meeting Recording") }
-        case .accessoryInline:
-            Label("Meeting Recording", systemImage: WatchFaceTokens.recordingSymbol)
-        default:
-            HStack(spacing: WatchFaceTokens.previewSpacing) {
-                Image(systemName: WatchFaceTokens.recordingSymbol).font(WatchFaceTokens.recordingGlyph)
-                    .foregroundStyle(WatchFaceTokens.recording)
-                VStack(alignment: .leading) {
-                    Text("Meeting Recording").font(WatchFaceTokens.title).lineLimit(1).minimumScaleFactor(WatchFaceTokens.titleMinScale)
-                    Text("Tap to record").font(WatchFaceTokens.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-        }
-    }
+    var body: some View { MeetingRecordingComplicationView(family: family) }
 }

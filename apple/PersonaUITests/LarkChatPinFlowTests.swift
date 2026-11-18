@@ -24,15 +24,19 @@ final class LarkChatPinFlowTests: XCTestCase {
         app.buttons["shell-feishu"].firstMatch.tapCenter()
         XCTAssertTrue(app.buttons["feishu-chat-f2"].waitForExistence(timeout: 20))
         app.buttons["feishu-chat-f2"].tapCenter()
-        XCTAssertTrue(app.buttons["lark.pins.open"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["lark.chat.more"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["评审记录 4：这个方案需要保留。"].waitForExistence(timeout: 15))
         let initialReads = try await fixture()["reads"] as? Int
         XCTAssertEqual(initialReads, 0, "opening chat must not mark Pins read")
         return app
     }
     @MainActor private func pins(_ app: XCUIApplication) {
-        app.buttons["lark.pins.open"].tapCenter()
-        XCTAssertTrue(app.buttons["lark.pins.close"].waitForExistence(timeout: 10))
+        // The iPhone shell's one trailing menu keeps Pins and Persona summary together.
+        app.buttons["lark.chat.more"].tapCenter()
+        let open = app.buttons["lark.pins.open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10), "Pins is not in the one trailing menu:\n\(app.debugDescription)")
+        open.tapCenter()
+        XCTAssertTrue(app.buttons["lark.pins.close"].waitForExistence(timeout: 10), "Pins did not open from the one menu")
     }
     @MainActor private func reveal(_ app: XCUIApplication, _ element: XCUIElement) {
         for _ in 0..<8 where !element.isHittable { app.swipeUp(velocity: .slow) }
@@ -65,8 +69,7 @@ final class LarkChatPinFlowTests: XCTestCase {
         XCTAssertTrue(app.textFields["lark.thread.box"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["话题中的被 Pin 回复"].exists)
         shot(app, "chat-pins-thread-target")
-        app.buttons["完成"].firstMatch.tapCenter()
-        XCTAssertTrue(app.buttons["lark.pins.open"].waitForExistence(timeout: 10))
+        app.buttons["sheet-close"].firstMatch.tapCenter()
         pins(app)
         XCTAssertTrue(app.buttons["lark.pin.1000"].waitForExistence(timeout: 10))
         app.buttons["lark.pin.1000"].tapCenter()

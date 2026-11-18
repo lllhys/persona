@@ -2,6 +2,7 @@ import SwiftUI
 #if canImport(UIKit)
 import UIKit
 #endif
+import PersonaWire
 
 // Native rendering of `documents/read?format=json` (ProseMirror-style nodes, see the Lark gateway's
 // src/server/lark/domains/documents-content.ts for what each docx block becomes). Used when the owner forbids
@@ -438,7 +439,7 @@ struct FeishuDocsListItem: View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
             Group {
                 if todo {
-                    Image(systemName: done ? "checkmark.square.fill" : Theme.Icon.uncheckedBox)
+                    Image(systemName: done ? Theme.Icon.checkedBox : Theme.Icon.uncheckedBox)
                         .foregroundStyle(done ? LarkColor.blue : .secondary)
                 } else if let marker {
                     Text(marker).monospacedDigit().foregroundStyle(.secondary)

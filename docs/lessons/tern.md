@@ -21,5 +21,9 @@ Design: docs/integrations/engines.md ("Tern").
   called `<id>`", an unknown window "no window has key …" (`terncli.classify`).
 - **Tern's `working` is about output, not the agent**: Claude thinking quietly reads as not working, so agent state keeps coming from transcripts and
   hooks.
+- **Tern reports no agent state at all, so a Claude's own status is the state** (#6312, Claude Code 2.1.321, 2026-11-13): judged by its transcript alone, a
+  Claude asking a question was Working while the transcript was fresh, then Unknown, which the overview does not show; a finished turn stayed Unknown.
+  Claude Code writes `busy` / `waiting` / `idle` into its `sessions/<pid>.json` (`waiting` the moment its question shows), which `ternClaudeStatus` reads.
+  Do not count on the title instead: in the session measured, the block's title stayed a plain "Claude Code", with no spinner and no waiting mark.
 - **Each call is a process and a round trip** (25–35 ms on an M3 Pro): a look runs `tern process` for at most four blocks at a time, and Agents right
   after a Snapshot reuses that look.

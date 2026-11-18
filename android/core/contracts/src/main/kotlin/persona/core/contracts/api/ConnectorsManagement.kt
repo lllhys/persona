@@ -4,6 +4,8 @@ import persona.core.contracts.CoreText.Key
 import persona.core.contracts.CoreText
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
 @Serializable
 data class MailAccount(
@@ -120,7 +122,80 @@ data class HubConnector(
     val inbox: Boolean? = null,
     /** Whose it is (several managers: the hub's merged list stamps each one, docs/assistant/managers.md); null: the default's. */
     val manager: String? = null,
+    /**
+     * This connector's own settings object, as `GET /api/v1/connectors` sent it. GitHub's inbox options live here
+     * (`ci`, `muted_repos`, `ignore_branches`); other connectors leave it unset. Kept as JSON so a missing or older
+     * shape still decodes.
+     */
+    val options: JsonElement? = null,
 )
+
+/** A scope GitHub's token does not have, and what that stops (`GET /api/v1/connectors/github/auth`). */
+@Serializable
+data class GitHubMissing(
+    val scope: String = "",
+    val affects: List<String> = emptyList(),
+)
+
+/**
+ * One computer's gh, as the hub reports it. [state] is `signed_in`, `not_signed_in`, `no_gh`, `too_old`, `offline`
+ * or `error`.
+ */
+@Serializable
+data class GitHubMachine(
+    val id: String = "",
+    val name: String = "",
+    val state: String = "",
+    val account: String? = null,
+    val scopes: List<String>? = null,
+    val missing: List<GitHubMissing>? = null,
+    val error: String? = null,
+)
+
+/** `GET` / `PUT /api/v1/connectors/github/auth`. [source] is `machine` or `device`; [machine] is set only for a computer. */
+@Serializable
+data class GitHubAuth(
+    val source: String = "",
+    val machine: String? = null,
+    val machines: List<GitHubMachine> = emptyList(),
+    val scopes: List<String>? = null,
+    @SerialName("scopes_known") val scopesKnown: Boolean? = null,
+    val missing: List<GitHubMissing>? = null,
+)
+
+/**
+ * GitHub's inbox options (`options` on the connector). A missing `ci` means the hub's usual `mine`; a missing
+ * `muted_repos` means none. [ignoreBranches] null means the hub's default (`train/&#42;`) when the page explains them,
+ * and is left out of the save so the hub keeps its own default.
+ */
+@Serializable
+data class GitHubInboxOptions(
+    val ci: String = CI_MINE,
+    @SerialName("muted_repos") val mutedRepos: List<String> = emptyList(),
+    @SerialName("ignore_branches") val ignoreBranches: List<String>? = null,
+) {
+    /** Branches named in the explanation. Null from the hub shows [DEFAULT_IGNORE_BRANCHES]; an empty list stays empty. */
+    val ignoreBranchesShown: List<String> get() = ignoreBranches ?: DEFAULT_IGNORE_BRANCHES
+
+    companion object {
+        const val CI_OFF = "off"
+        const val CI_DEFAULT_BRANCH = "default_branch"
+        const val CI_MINE = "mine"
+        const val CI_ALL = "all"
+        val CI_MODES = listOf(CI_OFF, CI_DEFAULT_BRANCH, CI_MINE, CI_ALL)
+        val DEFAULT_IGNORE_BRANCHES = listOf("train/*")
+
+        /** GitHub's `options` object, or null when this connector has none (or it is not an object). */
+        fun parse(element: JsonElement?): GitHubInboxOptions? {
+            if (element !is JsonObject) return null
+            return try {
+                persona.core.contracts.JsonCodec.decodeFromJsonElement(serializer(), element)
+            } catch (_: RuntimeException) {
+                null
+            }
+        }
+    }
+}
 
 /** What deleting a connector's data removed (`DELETE /api/v1/connectors/{id}/data`, `…/archive`). */
 @Serializable
@@ -149,6 +224,22 @@ interface ConnectorsManagement {
 
     /** `DELETE /api/v1/connectors/{id}/archive`. */
     suspend fun deleteConnectorArchive(id: String): ConnectorDataDeleted
+
+    /**
+     * `GET /api/v1/connectors/github/auth`: where GitHub's token comes from (a computer's gh, or a device code) and
+     * what each computer's gh can do. Missing fields decode as empty.
+     */
+    suspend fun gitHubAuth(): GitHubAuth = throw UnsupportedOperationException("GitHub sign-in unavailable")
+
+    /**
+     * `PUT /api/v1/connectors/github/auth`. [machine] null is device-code sign-in and the body is `{"source":"device"}`
+     * with no machine field; a computer is `{"source":"machine","machine":"<id>"}`.
+     */
+    suspend fun setGitHubAuth(machine: String?): GitHubAuth = throw UnsupportedOperationException("GitHub sign-in unavailable")
+
+    /** `PUT /api/v1/connectors/github/settings` `{"options":…}`. The hub answers with the connector as it lists it. */
+    suspend fun setGitHubInboxOptions(options: GitHubInboxOptions): HubConnector =
+        throw UnsupportedOperationException("GitHub inbox unavailable")
 
     // Mail API
     suspend fun mailAccounts(): List<MailAccount>

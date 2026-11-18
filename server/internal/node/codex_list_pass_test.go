@@ -85,8 +85,13 @@ func TestCodexListPassMatchesPerThreadLookups(t *testing.T) {
 	if rolloutPath(home, archive) == "" {
 		t.Fatal("the archived rollout must stay readable by id")
 	}
-	// Six rollouts in two directories: each directory resolved once, each rollout stat'ed once.
+	// Six rollouts in two directories: each directory resolved once, each rollout stat'ed once, and nothing else
+	// stat'ed: no App-history transcript for a chat whose rollout is its transcript (#5970). The App's paginated
+	// threads are looked up once for the home, not once a row.
 	if len(pass.real) != 2 || len(pass.stats) != 6 {
-		t.Fatalf("the pass resolved %d directories and stat'ed %d rollouts, want 2 and 6", len(pass.real), len(pass.stats))
+		t.Fatalf("the pass resolved %d directories and stat'ed %d files, want 2 and 6 (the rollouts)", len(pass.real), len(pass.stats))
+	}
+	if len(pass.paginated) != 1 {
+		t.Fatalf("the pass looked up paginated threads for %d homes, want 1", len(pass.paginated))
 	}
 }

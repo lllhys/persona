@@ -80,6 +80,49 @@ func (s *Service) decisionDismissed(ctx context.Context, t Todo) (bool, error) {
 	return d.ReviewAt.Equal(r.ReviewAt) && d.DismissalID != "" && !d.Undone, nil
 }
 
+// prepareDismissalForAnswer checks storage without consuming Don't handle. The caller holds this task's action lock
+// and calls the returned completion only after accepting/delivering a valid answer. Capture the original review:
+// delivery can move supervision on. A completion write failure keeps the dismissal, not a retryable, already-sent answer.
+func (s *Service) prepareDismissalForAnswer(ctx context.Context, t Todo) (func(), error) {
+	nothing := func() {}
+	r := currentDecisionReview(t)
+	if r == nil {
+		return nothing, nil
+	}
+	b := &s.reviewDismissals
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := s.loadTaskReviewDismissalsLocked(ctx); err != nil {
+		return nil, err
+	}
+	d, ok := b.byTodo[t.ID]
+	if !ok || !d.ReviewAt.Equal(r.ReviewAt) || d.DismissalID == "" || d.Undone {
+		return nothing, nil
+	}
+	st := s.store()
+	if st == nil {
+		return nil, errAcceptStore
+	}
+	// Fail before sending if storage is unavailable, leaving the durable dismissal intact throughout the send.
+	if err := st.PutSetting(ctx, taskReviewDismissalsKey, b.byTodo); err != nil {
+		return nil, errAcceptStore
+	}
+	return func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if cur := b.byTodo[t.ID]; cur != d {
+			return
+		}
+		next := d
+		next.Undone = true
+		b.byTodo[t.ID] = next
+		if err := st.PutSetting(context.WithoutCancel(ctx), taskReviewDismissalsKey, b.byTodo); err != nil {
+			b.byTodo[t.ID] = d
+			s.logf("task %s: answer delivered, dismissal retained: %v", t.ID, err)
+		}
+	}, nil
+}
+
 func (s *Service) listDecisionReviews(ctx context.Context, list []listedTodo) error {
 	b := &s.reviewDismissals
 	b.mu.Lock()

@@ -23,6 +23,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/acceptloop"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // RunCommand is personad's hidden subcommand that is the sandbox's first process on Linux: it carries the proxy's
@@ -73,13 +74,55 @@ type Mount struct {
 	DataFD int
 }
 
+// StatusReason identifies Persona-owned status text without deriving meaning from its rendered wording. Why remains
+// the default-language string for logs and old readers; Reason lets a later reader render the same fact in its language.
+type StatusReason struct {
+	Key  string    `json:"key"`
+	Args i18n.Args `json:"args,omitempty"`
+}
+
+// NewStatusReason makes a structured, localizable status reason. Its Error text is the legacy default wording.
+func NewStatusReason(key string, args i18n.Args) *StatusReason {
+	return &StatusReason{Key: key, Args: args}
+}
+
+// Error keeps the canonical default-language text used by logs and persisted why fields.
+func (r *StatusReason) Error() string { return r.Text(i18n.Default) }
+
+// Text renders the reason in lang. An unsupported requested language follows the product's English fallback.
+func (r *StatusReason) Text(lang i18n.Lang) string {
+	if r == nil {
+		return ""
+	}
+	if lang != "" {
+		lang = i18n.Resolve(string(lang))
+	}
+	return i18n.T(lang, r.Key, r.Args)
+}
+
+func statusWhy(lang i18n.Lang, why string, reason *StatusReason) string {
+	if reason != nil && reason.Key != "" {
+		return reason.Text(lang)
+	}
+	return why
+}
+
 // Support is what this machine can do.
 type Support struct {
 	OS          string
 	Bwrap       string // its path ("" none)
 	Scope       bool   // systemd-run --user --scope works
 	SandboxExec bool
-	Why         string // why there is no sandbox, when there is none
+	Why         string        // why there is no sandbox, when there is none
+	Reason      *StatusReason `json:"reason,omitempty"` // structured form of Persona-owned Why, when available
+}
+
+// WhyIn renders Persona-owned probe reasons in lang. A probe without metadata keeps its original diagnostic verbatim.
+func (s Support) WhyIn(lang i18n.Lang) string { return statusWhy(lang, s.Why, s.Reason) }
+
+func (s *Support) setReason(key string, args i18n.Args) {
+	s.Reason = NewStatusReason(key, args)
+	s.Why = s.Reason.Error()
 }
 
 // Available says whether programs can run in a sandbox here.
@@ -112,19 +155,19 @@ func probe() Support {
 	case "linux":
 		path, err := exec.LookPath("bwrap")
 		if err != nil {
-			s.Why = i18n.T(i18n.Default, "extension-status.sandbox_no_bwrap")
+			s.setReason("extension-status.sandbox_no_bwrap", nil)
 			return s
 		}
 		dir, err := os.MkdirTemp("", "persona-sandbox-probe-*")
 		if err != nil {
-			s.Why = i18n.T(i18n.Default, "extension-sandbox.probe_tmp", i18n.Args{"err": err.Error()})
+			s.setReason("extension-sandbox.probe_tmp", i18n.Args{"err": err.Error()})
 			return s
 		}
 		defer os.RemoveAll(dir)
 		pkg, data, run := filepath.Join(dir, "pkg"), filepath.Join(dir, "data"), filepath.Join(dir, "run")
 		for _, d := range []string{pkg, data, run} {
 			if err := os.MkdirAll(d, 0o700); err != nil {
-				s.Why = i18n.T(i18n.Default, "extension-sandbox.probe_tmp", i18n.Args{"err": err.Error()})
+				s.setReason("extension-sandbox.probe_tmp", i18n.Args{"err": err.Error()})
 				return s
 			}
 		}
@@ -134,13 +177,13 @@ func probe() Support {
 		}
 		out, err := exec.CommandContext(ctx, path, bwrapProbeArgs(pkg, data, run, trueBin)...).CombinedOutput()
 		if err != nil {
-			s.Why = i18n.T(i18n.Default, "extension-status.sandbox_bwrap_start", i18n.Args{"err": firstLine(out, err)})
+			s.setReason("extension-status.sandbox_bwrap_start", i18n.Args{"err": firstLine(out, err)})
 			return s
 		}
 		// The namespaces alone are not enough: a container or a restricted user namespace may let bwrap make them and
 		// still refuse /proc, the tmpfs mounts or the read-only remount. Try the very mounts a start makes.
-		if why := probeMounts(ctx, path); why != "" {
-			s.Why = why
+		if reason := probeMounts(ctx, path); reason != nil {
+			s.Why, s.Reason = reason.Error(), reason
 			return s
 		}
 		s.Bwrap = path
@@ -151,41 +194,41 @@ func probe() Support {
 		}
 	case "darwin":
 		if _, err := os.Stat("/usr/bin/sandbox-exec"); err != nil {
-			s.Why = i18n.T(i18n.Default, "extension-status.sandbox_no_exec")
+			s.setReason("extension-status.sandbox_no_exec", nil)
 			return s
 		}
 		if out, err := exec.CommandContext(ctx, "/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)", "/usr/bin/true").CombinedOutput(); err != nil {
-			s.Why = i18n.T(i18n.Default, "extension-status.sandbox_exec_start", i18n.Args{"err": firstLine(out, err)})
+			s.setReason("extension-status.sandbox_exec_start", i18n.Args{"err": firstLine(out, err)})
 			return s
 		}
 		s.SandboxExec = true
 	default:
-		s.Why = i18n.T(i18n.Default, "extension-status.sandbox_os", i18n.Args{"os": runtime.GOOS})
+		s.setReason("extension-status.sandbox_os", i18n.Args{"os": runtime.GOOS})
 	}
 	return s
 }
 
 // probeMounts runs true in a sandbox set up exactly as Linux sets one up, with throwaway directories for the
-// package, data, run directory and personad; "" when it starts, else why not.
-func probeMounts(ctx context.Context, bwrap string) string {
+// package, data, run directory and personad; nil when it starts, else a structured reason why not.
+func probeMounts(ctx context.Context, bwrap string) *StatusReason {
 	dir, err := os.MkdirTemp("", "persona-sandbox-probe-")
 	if err != nil {
-		return i18n.T(i18n.Default, "extension-status.sandbox_probe_dir", i18n.Args{"err": err.Error()})
+		return NewStatusReason("extension-status.sandbox_probe_dir", i18n.Args{"err": err.Error()})
 	}
 	defer os.RemoveAll(dir)
 	plan := Plan{Pkg: filepath.Join(dir, "pkg"), Data: filepath.Join(dir, "data"), Run: filepath.Join(dir, "run"), Self: filepath.Join(dir, "self")}
 	for _, d := range []string{plan.Pkg, plan.Data, plan.Run} {
 		if err := os.Mkdir(d, 0o700); err != nil {
-			return i18n.T(i18n.Default, "extension-status.sandbox_probe_dir", i18n.Args{"err": err.Error()})
+			return NewStatusReason("extension-status.sandbox_probe_dir", i18n.Args{"err": err.Error()})
 		}
 	}
 	if err := os.WriteFile(plan.Self, nil, 0o600); err != nil {
-		return i18n.T(i18n.Default, "extension-status.sandbox_probe_dir", i18n.Args{"err": err.Error()})
+		return NewStatusReason("extension-status.sandbox_probe_dir", i18n.Args{"err": err.Error()})
 	}
 	if out, err := exec.CommandContext(ctx, bwrap, append(linuxSetup(plan), "--", "true")...).CombinedOutput(); err != nil {
-		return i18n.T(i18n.Default, "extension-status.sandbox_mount", i18n.Args{"err": firstLine(out, err)})
+		return NewStatusReason("extension-status.sandbox_mount", i18n.Args{"err": firstLine(out, err)})
 	}
-	return ""
+	return nil
 }
 
 func firstLine(out []byte, err error) string {
@@ -477,7 +520,7 @@ func Run(args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "sandbox: --proxy-socket <path> --listen <addr> -- <command> …")
 		return 2
 	}
-	ln, err := net.Listen("tcp", listen)
+	ln, err := osproc.Listen("tcp", listen)
 	if err != nil {
 		fmt.Fprintf(stderr, "sandbox: %v\n", err)
 		return 1

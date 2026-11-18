@@ -16,6 +16,9 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
@@ -56,9 +59,9 @@ import java.time.Instant
 /**
  * Pending requests in the real chat page (#4210 T6, #4339 C10), every style, light and dark: an Agent's chat with one
  * request ("one"), with three ("three"), with two and the first folded ("folded"), and Persona's conversation with its own
- * card and its tasks' oldest question ("assistant"; "assistant-folded" with its own card folded); "three" again at the
- * largest text size (Glass, light). It uses only
- * what `main` has too, so the same file draws the pictures before the change. PNGs in `build/pending-stack-shots/` (or
+ * card and its tasks' oldest question ("assistant"; "assistant-folded" with its own card folded; "assistant-many" with two
+ * cards of its own, which outgrow their place and scroll under "N pending"); "three" and "assistant-many" again at the
+ * largest text size (Glass, light). It uses only what `main` has too, so the same file draws the pictures before the change. PNGs in `build/pending-stack-shots/` (or
  * `-Dpersona.shots=<dir>`). Native JVM rendering: no system bars, no glass refraction, no device.
  */
 @RunWith(AndroidJUnit4::class)
@@ -156,7 +159,7 @@ class PendingStackShotsTest {
         save("$name-${style.name.lowercase()}-${if (dark) "dark" else "light"}${if (large) "-large" else ""}")
     }
 
-    private fun assistantScene(style: AppStyle, dark: Boolean, fold: Boolean = false) {
+    private fun assistantScene(style: AppStyle, dark: Boolean, fold: Boolean = false, many: Boolean = false, large: Boolean = false) {
         val main = SessionKey("computer-a", "main")
         val docs = Session("computer-a", "docs", title = "Update the docs", state = "needs_you", status = "blocked", pendingInteractions = 1)
         val release = Session("computer-b", "release", title = "Prepare the release", state = "needs_you", status = "blocked", pendingInteractions = 1)
@@ -173,7 +176,10 @@ class PendingStackShotsTest {
             questions = listOf(Question("Should the guide cover Windows too?", options = listOf(QuestionOption("Yes"), QuestionOption("Not yet")))))
         val releaseAsk = Interaction("release-ask", machineId = release.machineId, sessionId = release.sessionId, kind = "permission",
             toolName = "Bash", summary = "Tag the release", createdAt = at(5))
-        val requests = MutableStateFlow(listOf(own, docsAsk, releaseAsk))
+        // "many": the conversation itself asks two things, so its own cards outgrow their place and scroll
+        val ownAsk = Interaction("own-ask", machineId = main.machineId, sessionId = main.sessionId, kind = "question", createdAt = at(7),
+            questions = listOf(Question("Which folder should I tidy first?", options = listOf(QuestionOption("Downloads"), QuestionOption("Desktop")))))
+        val requests = MutableStateFlow(if (many) listOf(own, ownAsk, docsAsk, releaseAsk) else listOf(own, docsAsk, releaseAsk))
         val sessionRows = MutableStateFlow(listOf(Session(main.machineId, main.sessionId, title = "Persona", assistant = true, status = "blocked",
             state = "needs_you", pendingInteractions = 1), docs, release))
         val sessions = object : SessionsRepository {
@@ -221,25 +227,28 @@ class PendingStackShotsTest {
         }
         rule.mainClock.autoAdvance = false
         rule.setContent {
-            PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
-                Column(Modifier.fillMaxSize().background(PersonaTheme.palette.background).testTag("shot")) {
-                    HomeNavigation(listOf(NavItem("assistant", "Assistant", PhIcons.Sparkle), NavItem("agents", "Agents", PhIcons.Robot)), "assistant", {},
-                        leading = { JAppMark(Tokens.Space.xl) })
-                    Box(Modifier.weight(1f)) {
-                        ChatScreen(main, chats, sender, interactions, sessions, {},
-                            chrome = ChatChromeBindings(tasks = tasks, renamer = renamer),
-                            renderStyle = ChatRenderStyle.Assistant, embedded = true, showTopBar = false)
+            val density = Density(LocalDensity.current.density, if (large) 2f else 1f)
+            CompositionLocalProvider(LocalDensity provides density) {
+                PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                    Column(Modifier.fillMaxSize().background(PersonaTheme.palette.background).testTag("shot")) {
+                        HomeNavigation(listOf(NavItem("assistant", "Assistant", PhIcons.Sparkle), NavItem("agents", "Agents", PhIcons.Robot)), "assistant", {},
+                            leading = { JAppMark(Tokens.Space.xl) })
+                        Box(Modifier.weight(1f)) {
+                            ChatScreen(main, chats, sender, interactions, sessions, {},
+                                chrome = ChatChromeBindings(tasks = tasks, renamer = renamer),
+                                renderStyle = ChatRenderStyle.Assistant, embedded = true, showTopBar = false)
+                        }
                     }
                 }
             }
         }
         frames({ shown -> shown.any { it.startsWith("I'll look at the downloads") } && shown.any { it == "Needs you" } }, "assistant")
-        // Its own card folded: the task's question under it, with the task's name
+        // Its own Bash card folded to its line, the task's question and its name above the entries as they were
         if (fold) {
-            rule.onAllNodesWithContentDescription("Collapse").onFirst().performClick()
+            rule.onNode(hasContentDescription("Collapse") and hasAnyAncestor(hasTestTag("pending-card-own"))).performClick()
             frames({ shown -> shown.any { it == "Expand" } }, "assistant folded")
         }
-        save("assistant${if (fold) "-folded" else ""}-${style.name.lowercase()}-${if (dark) "dark" else "light"}")
+        save("assistant${if (many) "-many" else ""}${if (fold) "-folded" else ""}-${style.name.lowercase()}-${if (dark) "dark" else "light"}${if (large) "-large" else ""}")
     }
 
     @Test fun oneGlass() = agentScene("one", listOf(permission), AppStyle.Glass, false)
@@ -273,4 +282,11 @@ class PendingStackShotsTest {
     @Test fun assistantFoldedBriefDark() = assistantScene(AppStyle.Brief, true, fold = true)
     @Test fun assistantFoldedBoard() = assistantScene(AppStyle.Board, false, fold = true)
     @Test fun assistantFoldedBoardDark() = assistantScene(AppStyle.Board, true, fold = true)
+    @Test fun assistantManyGlass() = assistantScene(AppStyle.Glass, false, many = true)
+    @Test fun assistantManyGlassDark() = assistantScene(AppStyle.Glass, true, many = true)
+    @Test fun assistantManyBrief() = assistantScene(AppStyle.Brief, false, many = true)
+    @Test fun assistantManyBriefDark() = assistantScene(AppStyle.Brief, true, many = true)
+    @Test fun assistantManyBoard() = assistantScene(AppStyle.Board, false, many = true)
+    @Test fun assistantManyBoardDark() = assistantScene(AppStyle.Board, true, many = true)
+    @Test fun assistantManyGlassLarge() = assistantScene(AppStyle.Glass, false, many = true, large = true)
 }

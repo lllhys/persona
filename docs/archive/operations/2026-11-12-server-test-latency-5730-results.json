@@ -1,0 +1,1603 @@
+{
+  "baseline": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+  "full_main_measurement_source": "be189594939b3294f07c5e634c8c74cc89b1524c",
+  "followup_test_only_source": "be8e80bbdb6d3452621be9227fe8a11e26167a07",
+  "outer_budget_s": 600,
+  "notes": [
+    "Commands are argv arrays; cwd placeholders replace private checkout locations.",
+    "Each supervised command retains its own outer 600-second limit. Nonzero completed execution is FAIL; exit 124 is TIMEOUT.",
+    "Full main commands were not repeated after the follow-up. That source is covered by the complete fixture-consumer selection and isolated feature integrations.",
+    "Go 1.27.1, Linux/amd64, 32 allowed CPUs; host is shared, load samples retained. Database URL unset, fresh owned HOME/temp/runtime per sample."
+  ],
+  "external_verifier_reports": [
+    {
+      "source": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "reported_package_elapsed_s": 540.403,
+      "reported_result": "FAIL (no timeout reported)",
+      "specific_failed_assertion": "unknown",
+      "url": "https://github.com/nwverse/persona/pull/5845#issuecomment-6826718109"
+    },
+    {
+      "source": "98e5d33bdf26156c1c18110c88c120c62e559bf5",
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "reported_package_elapsed_s": 539.305,
+      "reported_result": "FAIL (no timeout reported)",
+      "specific_failed_assertion": "unknown",
+      "url": "https://github.com/nwverse/persona/pull/5845#issuecomment-6826959409"
+    },
+    {
+      "source": "be8e80bbdb6d3452621be9227fe8a11e26167a07",
+      "package": "github.com/nwverse/persona/server/internal/node",
+      "reported_package_elapsed_s": 504.553,
+      "reported_result": "FAIL (no timeout reported)",
+      "specific_failed_assertion": "unknown",
+      "url": "https://github.com/nwverse/persona/pull/5845#issuecomment-6828106659"
+    }
+  ],
+  "receipts": [
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T13:00:47.550257+00:00",
+      "command_wall_s": 46.111,
+      "cleanup_wall_s": 0.041,
+      "cpus": 32,
+      "load_before": [
+        3.56396484375,
+        3.5126953125,
+        2.7353515625
+      ],
+      "load_after": [
+        12.94189453125,
+        6.3818359375,
+        3.7685546875
+      ],
+      "label": "cold-base",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<evidence directory>/cold-base-bin",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<baseline checkout>",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 46.153,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "<evidence directory>/cold-base-cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:30:25.548309+00:00",
+      "command_wall_s": 45.521,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        9.00390625,
+        3.33447265625,
+        2.1865234375
+      ],
+      "load_after": [
+        11.10693359375,
+        4.744140625,
+        2.72314453125
+      ],
+      "label": "optimized-cold-head",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<evidence directory>/optimized-cold-bin",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main runner checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 45.541,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "<evidence directory>/optimized-cold-cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:31:11.128301+00:00",
+      "command_wall_s": 3.272,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        11.10693359375,
+        4.744140625,
+        2.72314453125
+      ],
+      "load_after": [
+        10.69775390625,
+        4.76513671875,
+        2.7412109375
+      ],
+      "label": "optimized-warm-base",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<evidence directory>/optimized-warm-base-bin",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<baseline checkout>",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 3.292,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:31:14.458601+00:00",
+      "command_wall_s": 25.314,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        10.69775390625,
+        4.76513671875,
+        2.7412109375
+      ],
+      "load_after": [
+        9.27197265625,
+        4.91162109375,
+        2.84423828125
+      ],
+      "label": "optimized-warm-head",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<evidence directory>/optimized-warm-head-bin",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main runner checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 25.334,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T13:02:52.912223+00:00",
+      "command_wall_s": 600.016,
+      "cleanup_wall_s": 0.09,
+      "cpus": 32,
+      "load_before": [
+        20.22998046875,
+        10.7021484375,
+        5.53076171875
+      ],
+      "load_after": [
+        1.3466796875,
+        2.671875,
+        3.6064453125
+      ],
+      "label": "matched-base-five",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<baseline checkout>",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 600.108,
+      "exit": 124,
+      "outer_timeout": true,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T13:49:19.300811+00:00",
+      "command_wall_s": 600.016,
+      "cleanup_wall_s": 0.089,
+      "cpus": 32,
+      "load_before": [
+        0.5830078125,
+        1.4150390625,
+        2.06787109375
+      ],
+      "load_after": [
+        1.9794921875,
+        1.67333984375,
+        1.88818359375
+      ],
+      "label": "final-base-eight",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<baseline checkout>",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 600.107,
+      "exit": 124,
+      "outer_timeout": true,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:31:40.423906+00:00",
+      "command_wall_s": 600.016,
+      "cleanup_wall_s": 0.068,
+      "cpus": 32,
+      "load_before": [
+        9.27197265625,
+        4.91162109375,
+        2.84423828125
+      ],
+      "load_after": [
+        1.10693359375,
+        1.60791015625,
+        2.00341796875
+      ],
+      "label": "optimized-direct-five",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<fixed-main runner checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 600.084,
+      "exit": 124,
+      "outer_timeout": true,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:41:40.549407+00:00",
+      "command_wall_s": 600.016,
+      "cleanup_wall_s": 0.067,
+      "cpus": 32,
+      "load_before": [
+        1.10693359375,
+        1.60791015625,
+        2.00341796875
+      ],
+      "load_after": [
+        0.59765625,
+        0.87158203125,
+        1.44921875
+      ],
+      "label": "optimized-direct-eight",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main runner checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 600.083,
+      "exit": 124,
+      "outer_timeout": true,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:09:19.594184+00:00",
+      "command_wall_s": 439.573,
+      "cleanup_wall_s": 0.026,
+      "cpus": 32,
+      "load_before": [
+        1.59619140625,
+        1.720703125,
+        1.83984375
+      ],
+      "load_after": [
+        1.11767578125,
+        1.62548828125,
+        1.81201171875
+      ],
+      "label": "final-partitioned-base",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<baseline checkout>/server",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 439.601,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:51:40.672514+00:00",
+      "command_wall_s": 356.359,
+      "cleanup_wall_s": 0.026,
+      "cpus": 32,
+      "load_before": [
+        0.59765625,
+        0.87158203125,
+        1.44921875
+      ],
+      "load_after": [
+        0.9306640625,
+        1.20068359375,
+        1.46484375
+      ],
+      "label": "optimized-partitioned-head",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<fixed-main runner checkout>/server",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 356.385,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:28:19.482347+00:00",
+      "command_wall_s": 70.786,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.8525390625,
+        1.10546875,
+        1.46728515625
+      ],
+      "load_after": [
+        0.6982421875,
+        1.005859375,
+        1.4052734375
+      ],
+      "label": "optimized-focused-risk-race",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=3",
+        "-run",
+        "^(TestCodexReadyPoll.*|TestCodexStartAnswersWithTheThread|TestCodexStartPermissionModes|TestCodexStartBypassLauncherArguments|TestCodexStartTrustsTheFolder|TestCodexStalled.*|TestCodexCancelledWaitStillCloses|TestCodexRetryAfterAbandonedPaneWasRemoved|TestCodexCleanupNeedsFreshProofPaneIsGone|TestCodexStartsInSameDirectoryRunConcurrently|TestReadyPoll.*|TestHerdrFixtureCancelsUnfinishedPromptChecks|TestFirstPromptStillOutlivesItsRequest|TestFixtureShellIsAlreadySettled)$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 70.808,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:29:30.329887+00:00",
+      "command_wall_s": 55.159,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.6982421875,
+        1.005859375,
+        1.4052734375
+      ],
+      "load_after": [
+        9.00390625,
+        3.33447265625,
+        2.1865234375
+      ],
+      "label": "optimized-build-vet-guards",
+      "command": [
+        "sh",
+        "-c",
+        "go -C server build ./... && go -C server vet ./... && GOOS=windows GOARCH=amd64 go -C server build ./... && go -C server test -c -tags herdrlive -o <evidence directory>/optimized-node-live.test ./internal/node && go -C server test -count=1 ./internal/lazyre ./internal/archguard ./internal/tzguard ./plugins"
+      ],
+      "cwd": "<fixed-main runner checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 55.179,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:27:07.527222+00:00",
+      "command_wall_s": 46.055,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.79150390625,
+        1.12646484375,
+        1.5009765625
+      ],
+      "load_after": [
+        1.095703125,
+        1.16845703125,
+        1.498046875
+      ],
+      "label": "baseline-codex-wait-race",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=20",
+        "-run",
+        "^TestCodexStartWithoutAMessage$",
+        "./internal/node"
+      ],
+      "cwd": "<baseline checkout>",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 46.078,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:28:14.348423+00:00",
+      "command_wall_s": 5.073,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        0.9267578125,
+        1.12451171875,
+        1.4755859375
+      ],
+      "load_after": [
+        0.8525390625,
+        1.10546875,
+        1.46728515625
+      ],
+      "label": "head-codex-wait-race",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=20",
+        "-run",
+        "^TestCodexStartWithoutAMessage$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 5.095,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T14:58:05.566497+00:00",
+      "command_wall_s": 600.016,
+      "cleanup_wall_s": 0.106,
+      "cpus": 32,
+      "load_before": [
+        9.75537109375,
+        3.4423828125,
+        2.2109375
+      ],
+      "load_after": [
+        0.83740234375,
+        1.44140625,
+        1.79541015625
+      ],
+      "label": "optimized-integration-5473-direct",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<feature 5473 checkout>",
+      "sha": "cb2ba1521e01ec956dd367d3f84e87a01a5ee677 plus optimization be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 600.122,
+      "exit": 124,
+      "outer_timeout": true,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:08:34.200246+00:00",
+      "command_wall_s": 600.016,
+      "cleanup_wall_s": 0.105,
+      "cpus": 32,
+      "load_before": [
+        7.86083984375,
+        3.1650390625,
+        2.36328125
+      ],
+      "load_after": [
+        1.08447265625,
+        1.607421875,
+        1.88330078125
+      ],
+      "label": "optimized-integration-5581-direct",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<feature 5581 checkout>",
+      "sha": "cc575818ac55207696518a2674c3fc5b0505d7ab plus optimization be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 600.121,
+      "exit": 124,
+      "outer_timeout": true,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:08:05.729529+00:00",
+      "command_wall_s": 0.016,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.83740234375,
+        1.44140625,
+        1.79541015625
+      ],
+      "load_after": [
+        0.83740234375,
+        1.44140625,
+        1.79541015625
+      ],
+      "label": "optimized-integration-5473-partitioned",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<feature 5473 checkout>/server",
+      "sha": "cb2ba1521e01ec956dd367d3f84e87a01a5ee677 plus optimization be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 0.037,
+      "exit": 2,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:18:34.361019+00:00",
+      "command_wall_s": 0.016,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        1.08447265625,
+        1.607421875,
+        1.88330078125
+      ],
+      "load_after": [
+        1.08447265625,
+        1.607421875,
+        1.88330078125
+      ],
+      "label": "optimized-integration-5581-partitioned",
+      "command": [
+        "python3",
+        "../scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<feature 5581 checkout>/server",
+      "sha": "cc575818ac55207696518a2674c3fc5b0505d7ab plus optimization be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 0.036,
+      "exit": 2,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:18:34.437238+00:00",
+      "command_wall_s": 11.557,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        1.08447265625,
+        1.607421875,
+        1.88330078125
+      ],
+      "load_after": [
+        1.22607421875,
+        1.62109375,
+        1.88525390625
+      ],
+      "label": "fixture-event-red",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "-run",
+        "^TestFakeCodexRequestWakesOnItsReply$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c plus reply-event regression",
+      "wall_s": 11.578,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:22:50.844229+00:00",
+      "command_wall_s": 11.643,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.7607421875,
+        1.0693359375,
+        1.58642578125
+      ],
+      "load_after": [
+        3.28076171875,
+        1.58154296875,
+        1.74658203125
+      ],
+      "label": "fixture-event-green",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=1",
+        "-run",
+        "^TestFakeCodexRequestWakesOnItsReply$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus event-driven fixture working tree",
+      "wall_s": 11.664,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:24:18.211488+00:00",
+      "command_wall_s": 11.643,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        1.27783203125,
+        1.3525390625,
+        1.65185546875
+      ],
+      "load_after": [
+        1.3955078125,
+        1.37451171875,
+        1.6552734375
+      ],
+      "label": "fixture-event-boundaries",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=1",
+        "-run",
+        "^TestFakeCodex",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus event-driven fixture and four regression roots",
+      "wall_s": 11.665,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:19:17.713280+00:00",
+      "command_wall_s": 26.662,
+      "cleanup_wall_s": 0.022,
+      "cpus": 32,
+      "load_before": [
+        0.85693359375,
+        1.49609375,
+        1.8349609375
+      ],
+      "load_after": [
+        0.78173828125,
+        1.41650390625,
+        1.796875
+      ],
+      "label": "fixture-matrix-before",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=1",
+        "-run",
+        "^TestAssistantBypassShellNames$",
+        "./internal/node"
+      ],
+      "cwd": "<fixed-main runner checkout>",
+      "sha": "be189594939b3294f07c5e634c8c74cc89b1524c",
+      "wall_s": 26.684,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:24:51.752943+00:00",
+      "command_wall_s": 3.42,
+      "cleanup_wall_s": 0.022,
+      "cpus": 32,
+      "load_before": [
+        1.79052734375,
+        1.46435546875,
+        1.6787109375
+      ],
+      "load_after": [
+        1.8076171875,
+        1.4736328125,
+        1.6806640625
+      ],
+      "label": "fixture-matrix-after",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=1",
+        "-run",
+        "^TestAssistantBypassShellNames$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus event-driven fixture working tree",
+      "wall_s": 3.442,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:24:55.234604+00:00",
+      "command_wall_s": 1.767,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        1.8076171875,
+        1.4736328125,
+        1.6806640625
+      ],
+      "load_after": [
+        1.8076171875,
+        1.4736328125,
+        1.6806640625
+      ],
+      "label": "fixture-event-repeat",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-count=20",
+        "-run",
+        "^(TestFakeCodexRequestWakesOnItsReply|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures)$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus event-driven fixture working tree",
+      "wall_s": 1.788,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:24:57.060965+00:00",
+      "command_wall_s": 17.697,
+      "cleanup_wall_s": 0.026,
+      "cpus": 32,
+      "load_before": [
+        1.8076171875,
+        1.4736328125,
+        1.6806640625
+      ],
+      "load_after": [
+        2.08447265625,
+        1.55712890625,
+        1.70458984375
+      ],
+      "label": "fixture-consumers-repeat",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-json",
+        "-count=3",
+        "-run",
+        "^(TestAssistantAlwaysRechecksHub|TestAssistantBypassCLIControls|TestAssistantBypassCodexUnknownCommand|TestAssistantBypassCommandGate|TestAssistantBypassGateReportsPermissionMode|TestAssistantBypassNewCodexThreadPolicy|TestAssistantBypassOrdinaryCommands|TestAssistantBypassPreservesRuntimeSelection|TestAssistantBypassReadOnlyCompoundCommands|TestAssistantBypassResumePersistsDefault|TestAssistantBypassReviewCommands|TestAssistantBypassShellNames|TestAssistantBypassWrappedCommands|TestAssistantCodexAlwaysStaysAtHub|TestAssistantCodexTurnError|TestAssistantLarkAlwaysRechecksHub|TestAssistantUnselectedModeStartsBypass|TestClaudeQuestionCancelDeniesOnlyQuestionWithoutAnswer|TestCodexApprovalCardIsPlacedInTheConversationsDirectory|TestCodexApprovals|TestCodexArgsAndShell|TestCodexGetsRealWritableRoots|TestCodexSharesTheAssistantMemory|TestCodexStartAndTurns|TestCodexTurnWithoutEffortOnAuto|TestHealthChecksCountItsSubfolders|TestHookCardsArePlacedInTheConversationsDirectory|TestMetaWithoutAHeadGoesByTheAssistantProject|TestModeFromCodex|TestOfflineAssistantConversationIsListedWhereItStarted|TestOwnedCodexQuestionCancelReturnsNoAnswers|TestQuickMetaFindsAFirstPromptPastLongInstructions|TestQuickMetaKeepsAnAssistantConversationWhereItStarted|TestReadsOnlyMemory|TestResetAssistantPermissionsKillsUncooperativeChild|TestResetAssistantPermissionsRejectsTerminal|TestResetAssistantPermissionsRuntimeNeedsRestart|TestResetAssistantPermissionsWaitsForExit|TestResolveAssistantKey|TestSharedCodexQuestionCancelIsOneEmptyReplyWithoutInterrupt|TestStartRecordPlacesARowAtRest|TestStoppedAssistantConversationStaysPut|TestTerminalQuestionCancelNeverSendsEscape|TestUnwrapShell|TestFakeCodexRequestWakesOnItsReply|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures)$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus event-driven fixture working tree",
+      "wall_s": 17.723,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:25:14.823239+00:00",
+      "command_wall_s": 65.842,
+      "cleanup_wall_s": 0.025,
+      "cpus": 32,
+      "load_before": [
+        2.08447265625,
+        1.55712890625,
+        1.70458984375
+      ],
+      "load_after": [
+        1.8681640625,
+        1.6103515625,
+        1.716796875
+      ],
+      "label": "fixture-consumers-race",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=3",
+        "-run",
+        "^(TestAssistantAlwaysRechecksHub|TestAssistantBypassCLIControls|TestAssistantBypassCodexUnknownCommand|TestAssistantBypassCommandGate|TestAssistantBypassGateReportsPermissionMode|TestAssistantBypassNewCodexThreadPolicy|TestAssistantBypassOrdinaryCommands|TestAssistantBypassPreservesRuntimeSelection|TestAssistantBypassReadOnlyCompoundCommands|TestAssistantBypassResumePersistsDefault|TestAssistantBypassReviewCommands|TestAssistantBypassShellNames|TestAssistantBypassWrappedCommands|TestAssistantCodexAlwaysStaysAtHub|TestAssistantCodexTurnError|TestAssistantLarkAlwaysRechecksHub|TestAssistantUnselectedModeStartsBypass|TestClaudeQuestionCancelDeniesOnlyQuestionWithoutAnswer|TestCodexApprovalCardIsPlacedInTheConversationsDirectory|TestCodexApprovals|TestCodexArgsAndShell|TestCodexGetsRealWritableRoots|TestCodexSharesTheAssistantMemory|TestCodexStartAndTurns|TestCodexTurnWithoutEffortOnAuto|TestHealthChecksCountItsSubfolders|TestHookCardsArePlacedInTheConversationsDirectory|TestMetaWithoutAHeadGoesByTheAssistantProject|TestModeFromCodex|TestOfflineAssistantConversationIsListedWhereItStarted|TestOwnedCodexQuestionCancelReturnsNoAnswers|TestQuickMetaFindsAFirstPromptPastLongInstructions|TestQuickMetaKeepsAnAssistantConversationWhereItStarted|TestReadsOnlyMemory|TestResetAssistantPermissionsKillsUncooperativeChild|TestResetAssistantPermissionsRejectsTerminal|TestResetAssistantPermissionsRuntimeNeedsRestart|TestResetAssistantPermissionsWaitsForExit|TestResolveAssistantKey|TestSharedCodexQuestionCancelIsOneEmptyReplyWithoutInterrupt|TestStartRecordPlacesARowAtRest|TestStoppedAssistantConversationStaysPut|TestTerminalQuestionCancelNeverSendsEscape|TestUnwrapShell|TestFakeCodexRequestWakesOnItsReply|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures)$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus event-driven fixture working tree",
+      "wall_s": 65.867,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:26:39.559011+00:00",
+      "command_wall_s": 3.27,
+      "cleanup_wall_s": 0.02,
+      "cpus": 32,
+      "load_before": [
+        1.4169921875,
+        1.52197265625,
+        1.68505859375
+      ],
+      "load_after": [
+        1.4169921875,
+        1.52197265625,
+        1.68505859375
+      ],
+      "label": "fixture-turn-race-base",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=20",
+        "-run",
+        "^TestCodexStartAndTurns$",
+        "./internal/node"
+      ],
+      "cwd": "<baseline checkout>",
+      "sha": "f1468ef3d2ae9566430d2357e7d5bb9d3a973b81",
+      "wall_s": 3.29,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:27:14.240149+00:00",
+      "command_wall_s": 32.335,
+      "cleanup_wall_s": 0.023,
+      "cpus": 32,
+      "load_before": [
+        0.8564453125,
+        1.36767578125,
+        1.6259765625
+      ],
+      "load_after": [
+        1.39208984375,
+        1.4453125,
+        1.64404296875
+      ],
+      "label": "fixture-turn-race-fixed",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=20",
+        "-run",
+        "^TestCodexStartAndTurns$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus reply events and directory initialization fix",
+      "wall_s": 32.358,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:27:46.638445+00:00",
+      "command_wall_s": 38.482,
+      "cleanup_wall_s": 0.025,
+      "cpus": 32,
+      "load_before": [
+        1.39208984375,
+        1.4453125,
+        1.64404296875
+      ],
+      "load_after": [
+        1.70947265625,
+        1.52880859375,
+        1.66357421875
+      ],
+      "label": "fixture-consumers-race-fixed",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-race",
+        "-count=3",
+        "-run",
+        "^(TestAssistantAlwaysRechecksHub|TestAssistantBypassCLIControls|TestAssistantBypassCodexUnknownCommand|TestAssistantBypassCommandGate|TestAssistantBypassGateReportsPermissionMode|TestAssistantBypassNewCodexThreadPolicy|TestAssistantBypassOrdinaryCommands|TestAssistantBypassPreservesRuntimeSelection|TestAssistantBypassReadOnlyCompoundCommands|TestAssistantBypassResumePersistsDefault|TestAssistantBypassReviewCommands|TestAssistantBypassShellNames|TestAssistantBypassWrappedCommands|TestAssistantCodexAlwaysStaysAtHub|TestAssistantCodexTurnError|TestAssistantLarkAlwaysRechecksHub|TestAssistantUnselectedModeStartsBypass|TestClaudeQuestionCancelDeniesOnlyQuestionWithoutAnswer|TestCodexApprovalCardIsPlacedInTheConversationsDirectory|TestCodexApprovals|TestCodexArgsAndShell|TestCodexGetsRealWritableRoots|TestCodexSharesTheAssistantMemory|TestCodexStartAndTurns|TestCodexTurnWithoutEffortOnAuto|TestHealthChecksCountItsSubfolders|TestHookCardsArePlacedInTheConversationsDirectory|TestMetaWithoutAHeadGoesByTheAssistantProject|TestModeFromCodex|TestOfflineAssistantConversationIsListedWhereItStarted|TestOwnedCodexQuestionCancelReturnsNoAnswers|TestQuickMetaFindsAFirstPromptPastLongInstructions|TestQuickMetaKeepsAnAssistantConversationWhereItStarted|TestReadsOnlyMemory|TestResetAssistantPermissionsKillsUncooperativeChild|TestResetAssistantPermissionsRejectsTerminal|TestResetAssistantPermissionsRuntimeNeedsRestart|TestResetAssistantPermissionsWaitsForExit|TestResolveAssistantKey|TestSharedCodexQuestionCancelIsOneEmptyReplyWithoutInterrupt|TestStartRecordPlacesARowAtRest|TestStoppedAssistantConversationStaysPut|TestTerminalQuestionCancelNeverSendsEscape|TestUnwrapShell|TestFakeCodexRequestWakesOnItsReply|TestFakeCodexReplyMatchesItsRequest|TestFakeCodexRequestCancellationAndDeadline|TestFakeCodexRequestTransportFailures)$",
+        "./internal/node"
+      ],
+      "cwd": "<optimization checkout>",
+      "sha": "98e5d33bd plus reply events and directory initialization fix",
+      "wall_s": 38.508,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64",
+      "source_note": "Helper implementation later committed as be8e80bbdb6d3452621be9227fe8a11e26167a07. The directory setup move is present only in the two *fixed race runs; other follow-up runs predate that independent test-setup fix."
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:29:01.172455+00:00",
+      "command_wall_s": 12.296,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        1.158203125,
+        1.40625,
+        1.6162109375
+      ],
+      "load_after": [
+        2.4541015625,
+        1.69384765625,
+        1.70849609375
+      ],
+      "label": "corrected-integration-5473-compile",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<evidence directory>/corrected-integration-5473-bin",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<feature 5473 checkout>",
+      "sha": "cb2ba1521e01ec956dd367d3f84e87a01a5ee677 plus be189594939b3294f07c5e634c8c74cc89b1524c and be8e80bbdb6d3452621be9227fe8a11e26167a07",
+      "wall_s": 12.316,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:29:14.125443+00:00",
+      "command_wall_s": 300.603,
+      "cleanup_wall_s": 0.063,
+      "cpus": 32,
+      "load_before": [
+        2.4541015625,
+        1.69384765625,
+        1.70849609375
+      ],
+      "load_after": [
+        0.90283203125,
+        1.77099609375,
+        1.79541015625
+      ],
+      "label": "corrected-integration-5473-partitioned",
+      "command": [
+        "python3",
+        "<fixed-main runner checkout>/scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/apierr",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/i18n",
+        "./internal/node",
+        "./internal/prompts"
+      ],
+      "cwd": "<feature 5473 checkout>/server",
+      "sha": "cb2ba1521e01ec956dd367d3f84e87a01a5ee677 plus be189594939b3294f07c5e634c8c74cc89b1524c and be8e80bbdb6d3452621be9227fe8a11e26167a07",
+      "wall_s": 300.666,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:34:14.836292+00:00",
+      "command_wall_s": 12.203,
+      "cleanup_wall_s": 0.021,
+      "cpus": 32,
+      "load_before": [
+        0.90283203125,
+        1.77099609375,
+        1.79541015625
+      ],
+      "load_after": [
+        3.5478515625,
+        2.29345703125,
+        1.96484375
+      ],
+      "label": "corrected-integration-5581-compile",
+      "command": [
+        "go",
+        "-C",
+        "server",
+        "test",
+        "-c",
+        "-o",
+        "<evidence directory>/corrected-integration-5581-bin",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<feature 5581 checkout>",
+      "sha": "cc575818ac55207696518a2674c3fc5b0505d7ab plus be189594939b3294f07c5e634c8c74cc89b1524c and be8e80bbdb6d3452621be9227fe8a11e26167a07",
+      "wall_s": 12.224,
+      "exit": 0,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    },
+    {
+      "detached_cleanup": 0,
+      "remaining_owned_processes": 0,
+      "started_utc": "2026-11-12T15:34:27.506604+00:00",
+      "command_wall_s": 312.613,
+      "cleanup_wall_s": 0.062,
+      "cpus": 32,
+      "load_before": [
+        3.5478515625,
+        2.29345703125,
+        1.96484375
+      ],
+      "load_after": [
+        1.80224609375,
+        1.94140625,
+        1.9150390625
+      ],
+      "label": "corrected-integration-5581-partitioned",
+      "command": [
+        "python3",
+        "<fixed-main runner checkout>/scripts/test/go_test_partitioned.py",
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./internal/assistant",
+        "./internal/assistantskills",
+        "./internal/assistantwire",
+        "./internal/hub",
+        "./internal/node"
+      ],
+      "cwd": "<feature 5581 checkout>/server",
+      "sha": "cc575818ac55207696518a2674c3fc5b0505d7ab plus be189594939b3294f07c5e634c8c74cc89b1524c and be8e80bbdb6d3452621be9227fe8a11e26167a07",
+      "wall_s": 312.675,
+      "exit": 1,
+      "outer_timeout": false,
+      "cache": "prewarmed shared build cache",
+      "database": "unset",
+      "go": "go1.27.1 linux/amd64"
+    }
+  ],
+  "reconciliations": {
+    "fixture-matrix-reconciliation": {
+      "common": 3517,
+      "missing": [],
+      "added": [],
+      "changed": []
+    },
+    "fixture-consumers-repeat-audit": {
+      "roots": 48,
+      "identities": 4577,
+      "terminal_events": 13731,
+      "root_counts": {
+        "pass": 144
+      },
+      "bad_repeat_counts": {},
+      "nonpass": {}
+    },
+    "fixture-consumers-before-after": {
+      "before": "be189 full JSON filtered to all roots in the five consumer files",
+      "after": "reply-event fixture, three repetitions before independent directory setup fix",
+      "common_identities": 4568,
+      "missing": [],
+      "added_existing_root_identities": [],
+      "changed": []
+    }
+  },
+  "complete_suite_audit_manifest_schema": "audit_events.py .audit-terminals.json (package, test, run count, terminal list); separate from the .terminals.json hashes cited in the report",
+  "complete_suite_audits": {
+    "final-partitioned-base": {
+      "counts": {
+        "pass": 16352,
+        "skip": 595,
+        "fail": 1
+      },
+      "roots": {
+        "pass": 6889,
+        "skip": 392,
+        "fail": 1
+      },
+      "duplicate_terminals": [],
+      "duplicate_runs": [],
+      "unfinished": [],
+      "manifest_sha256": "ea8a2760f6b304ef59595a663e79f83a269a01450349ab7f2c425696f69c04c5",
+      "summed_root_s": 1125.06,
+      "inventory_missing": [],
+      "inventory_unexpected": []
+    },
+    "optimized-partitioned-head": {
+      "counts": {
+        "pass": 16368,
+        "skip": 595,
+        "fail": 1
+      },
+      "roots": {
+        "pass": 6898,
+        "skip": 392,
+        "fail": 1
+      },
+      "duplicate_terminals": [],
+      "duplicate_runs": [],
+      "unfinished": [],
+      "manifest_sha256": "dadc8e637ca494d389ace6660d9e73f2ff0dd9a787a793a273c2a194e99943ee",
+      "summed_root_s": 954.06,
+      "inventory_missing": [],
+      "inventory_unexpected": []
+    },
+    "corrected-integration-5473-partitioned": {
+      "counts": {
+        "pass": 16305,
+        "skip": 591,
+        "fail": 1
+      },
+      "roots": {
+        "pass": 6866,
+        "skip": 392,
+        "fail": 1
+      },
+      "duplicate_terminals": [],
+      "duplicate_runs": [],
+      "unfinished": [],
+      "manifest_sha256": "abd9d7833258118d70c89b5e04c4145c738a41e9a72ae38e5b0be6a826c9886e",
+      "summed_root_s": 932.76,
+      "inventory_missing": [],
+      "inventory_unexpected": []
+    },
+    "corrected-integration-5581-partitioned": {
+      "counts": {
+        "pass": 16253,
+        "skip": 591,
+        "fail": 1
+      },
+      "roots": {
+        "pass": 6797,
+        "skip": 392,
+        "fail": 1
+      },
+      "duplicate_terminals": [],
+      "duplicate_runs": [],
+      "unfinished": [],
+      "manifest_sha256": "11fbd74c06b4370b8f81c37116c0325cb82123323e156f8e9ef0e6902f251475",
+      "summed_root_s": 916.44,
+      "inventory_missing": [],
+      "inventory_unexpected": []
+    }
+  },
+  "previous_repository_checks": [
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_paths.py"
+      ],
+      "wall_s": 0.615,
+      "exit": 0,
+      "label": "test_doc_paths"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_go_paths.py"
+      ],
+      "wall_s": 0.264,
+      "exit": 0,
+      "label": "test_doc_go_paths"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_sections.py"
+      ],
+      "wall_s": 1.216,
+      "exit": 0,
+      "label": "test_doc_sections"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_wire.py"
+      ],
+      "wall_s": 0.364,
+      "exit": 0,
+      "label": "test_doc_wire"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/ci/sleep_ratchet.py"
+      ],
+      "wall_s": 4.671,
+      "exit": 0,
+      "label": "sleep_ratchet"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_go_partitions.py"
+      ],
+      "wall_s": 0.064,
+      "exit": 0,
+      "label": "test_go_partitions"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_go_test_partitioned.py"
+      ],
+      "wall_s": 0.264,
+      "exit": 0,
+      "label": "test_go_test_partitioned"
+    },
+    {
+      "command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts/test",
+        "-p",
+        "test_server_test_env.py"
+      ],
+      "wall_s": 6.024,
+      "exit": 0,
+      "label": "test_server_test_env"
+    }
+  ],
+  "final_document_checks": [
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_paths.py"
+      ],
+      "wall_s": 0.615,
+      "exit": 0,
+      "label": "test_doc_paths"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_go_paths.py"
+      ],
+      "wall_s": 0.264,
+      "exit": 0,
+      "label": "test_doc_go_paths"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_sections.py"
+      ],
+      "wall_s": 1.216,
+      "exit": 0,
+      "label": "test_doc_sections"
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/test/test_doc_wire.py"
+      ],
+      "wall_s": 0.365,
+      "exit": 0,
+      "label": "test_doc_wire"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 // The socket's side of #1574: a drop is invisible inside the grace, a restart retries at once, and a resumed hello
 // refetches nothing while an ordinary one refreshes everything as before.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { appSocketReady, applyMachine, checkSocket, connect, disconnect, getState, onAppSocket, onPrivateUIStream, onHubEvent, reconnectNow, refresh, reset } from "./store";
+import { appSocketReady, applyMachine, checkSocket, connect, disconnect, getState, onAppSocket, onHello, onPrivateUIStream, onHubEvent, reconnectNow, refresh, reset } from "./store";
 import { offlineNow } from "./feedback";
 import { liveEntry, resetLive } from "./live";
 import { messageFeedback } from "./message-send";
@@ -119,6 +119,17 @@ describe("reconnecting", () => {
       expect(appSocketReady()).toBe(false);
     } finally { offConnection(); offFrames(); }
   });
+  it("runs the hello hooks with that hello's features already in the state", () => {
+    // The desktop's registration (lib/attention-signals.ts) reads them in its hook: an empty list there took a current
+    // hub for one without desktop_unregister and closed this very socket.
+    const seen: string[][] = [];
+    const off = onHello(() => seen.push([...getState().features]));
+    const s = online(["desktop_unregister"]);
+    off();
+    expect(seen).toEqual([["desktop_unregister"]]);
+    expect(s.readyState).toBe(1);
+  });
+
   it("refuses an existing connection after its credential changes", () => {
     online(["extension_ui_stream_v1"]);
     vi.stubGlobal("localStorage", { getItem: () => "changed-token" });
@@ -126,12 +137,12 @@ describe("reconnecting", () => {
   });
   it("first connect sends no resume point; reconnects resume from the last broadcast seen", () => {
     const s = online();
-    expect(s.url).toBe("ws://hub/api/v1/ws?token=tok&features=sessions_list,sessions_delta,session_live,extension_ui_stream_v1,persona_contracts_v1"); // the session list comes as deltas; status lines are pushed
+    expect(s.url).toBe("ws://hub/api/v1/ws?token=tok&features=sessions_list,sessions_list_changes,sessions_delta,session_live,extension_ui_stream_v1,persona_contracts_v1"); // the session list comes as deltas; status lines are pushed
     s.push({ type: "todos", event_seq: 6 });
     s.push({ type: "items", machine_id: "m", session_id: "x", items: [] });
     s.drop();
     vi.advanceTimersByTime(600);
-    expect(last().url).toBe("ws://hub/api/v1/ws?token=tok&event_stream=s1&event_seq=6&features=sessions_list,sessions_delta,session_live,extension_ui_stream_v1,persona_contracts_v1");
+    expect(last().url).toBe("ws://hub/api/v1/ws?token=tok&event_stream=s1&event_seq=6&features=sessions_list,sessions_list_changes,sessions_delta,session_live,extension_ui_stream_v1,persona_contracts_v1");
   });
 
   it("an ordinary drop stays invisible for 8 s, then shows as before", () => {
@@ -428,6 +439,14 @@ describe("client_hello heartbeat", () => {
       const hello = s.sent.map((m) => JSON.parse(m)).find((m) => m.type === "client_hello");
       expect(hello.heartbeat).toEqual({ pong_timeout: 45 });
     }
+  });
+
+  it("names this browser's notification device, so the hub pushes nothing to it while a page is open (#7459)", () => {
+    connect();
+    last().open();
+    const hello = last().sent.map((m) => JSON.parse(m)).find((m) => m.type === "client_hello");
+    expect(hello.device_id).toBeTruthy();
+    expect(hello.device_id).toBe(localStorage.getItem("persona.notifyDevice"));
   });
 });
 

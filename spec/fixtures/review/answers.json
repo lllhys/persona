@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "source": "server/internal/node/gitreview_fixture_test.go: TestGitReviewWireFixture",
+  "cases": [
+    {
+      "name": "branch_hunks_without_header",
+      "note": "A hunk with no line above it to name, a new file and an untracked one have no header key.",
+      "answer": {
+        "root": "/home/dev/code/app",
+        "scope": "branch",
+        "base": {
+          "hash": "1111111111111111111111111111111111111111",
+          "short": "1111111",
+          "subject": "Start",
+          "ref": "origin/main"
+        },
+        "head": {
+          "hash": "2222222222222222222222222222222222222222",
+          "short": "2222222",
+          "branch": "feat/notes"
+        },
+        "files": [
+          {
+            "path": "draft.txt",
+            "status": "added",
+            "untracked": true,
+            "added": 1,
+            "deleted": 0,
+            "hunks": [
+              {
+                "old_start": 1,
+                "new_start": 1,
+                "lines": [
+                  "+not added yet"
+                ]
+              }
+            ]
+          },
+          {
+            "path": "notes.txt",
+            "status": "modified",
+            "added": 2,
+            "deleted": 2,
+            "revision": "0000002",
+            "hunks": [
+              {
+                "old_start": 1,
+                "new_start": 1,
+                "lines": [
+                  "-item 1",
+                  "+item one",
+                  " item 2",
+                  " item 3",
+                  " item 4"
+                ]
+              },
+              {
+                "header": "item 18",
+                "old_start": 19,
+                "new_start": 19,
+                "lines": [
+                  " item 19",
+                  " item 20",
+                  " item 21",
+                  "-item 22",
+                  "+item twenty-two",
+                  " item 23",
+                  " item 24",
+                  " item 25"
+                ]
+              }
+            ]
+          },
+          {
+            "path": "plan.md",
+            "status": "added",
+            "added": 3,
+            "deleted": 0,
+            "revision": "0000003",
+            "hunks": [
+              {
+                "old_start": 1,
+                "new_start": 1,
+                "lines": [
+                  "+# Plan",
+                  "+",
+                  "+- one"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "no_commit_yet",
+      "note": "Before the first commit the base is {\"empty\":true}, with no hash, and there is no head.",
+      "answer": {
+        "root": "/home/dev/code/app",
+        "scope": "uncommitted",
+        "base": {
+          "empty": true
+        },
+        "files": [
+          {
+            "path": "hello.txt",
+            "status": "added",
+            "untracked": true,
+            "added": 1,
+            "deleted": 0,
+            "hunks": [
+              {
+                "old_start": 1,
+                "new_start": 1,
+                "lines": [
+                  "+hello"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -51,6 +51,8 @@ type Field struct {
 	MaxItems    *int     `json:"max_items,omitempty"`
 	UniqueItems bool     `json:"unique_items,omitempty"`
 	Fields      []Field  `json:"fields,omitempty"` // object: its properties
+	// Step (x-step) is an integer stepper's increment, not a constraint on configuration values.
+	Step *int64 `json:"step,omitempty"`
 
 	pattern *regexp.Regexp
 }
@@ -65,7 +67,7 @@ var (
 	describing = []string{"title", "description", "default", "x-confirm"}
 	keysFor    = map[string][]string{
 		"string":  {"enum", "oneOf", "format", "x-os", "pattern", "minLength", "maxLength"},
-		"integer": {"enum", "oneOf", "minimum", "maximum"},
+		"integer": {"enum", "oneOf", "minimum", "maximum", "x-step"},
 		"number":  {"enum", "oneOf", "minimum", "maximum"},
 		"boolean": {},
 		"array":   {"items", "minItems", "maxItems", "uniqueItems"},
@@ -240,6 +242,15 @@ func parseField(name string, raw json.RawMessage, at string, depth int) (Field, 
 	}
 	if f.Maximum, err = num("maximum"); err != nil {
 		errs = append(errs, err)
+	}
+	if raw, ok := m["x-step"]; ok {
+		// Keep the hint exact for clients that decode JSON numbers as doubles.
+		var step int64
+		if err := json.Unmarshal(raw, &step); err != nil || step < 1 || step > 9007199254740991 {
+			errs = append(errs, errors.New("x-step: a whole number from 1 to 9007199254740991"))
+		} else {
+			f.Step = &step
+		}
 	}
 	if raw, ok := m["uniqueItems"]; ok && json.Unmarshal(raw, &f.UniqueItems) != nil {
 		errs = append(errs, errors.New("uniqueItems: true or false"))

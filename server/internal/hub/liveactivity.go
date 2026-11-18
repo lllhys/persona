@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"slices"
@@ -189,22 +190,38 @@ type liveActivities struct {
 	sent       map[string][]byte    // device -> the content-state it last got
 	sentAt     map[string]time.Time // device -> when
 	stats      []byte               // last numbers broadcast to the open apps
+	// deferred: device -> the due time of the deferred start it last logged (claimStart), so a start held for hours is
+	// one line, not one a round. Only that: when a start may be claimed is the store's to say, every round, since the
+	// other slot of a blue-green switch moves it too (TestFleetHoldLiftedOnTheOtherSlot).
+	deferred map[string]time.Time
 	// The last fleet broadcast to the open apps, and when: what an app that closed its connection cleanly (gone to
 	// the background) left its activity showing (phoneLeft).
 	shownState FleetState
 	shownStats FleetStats
 	shownAt    time.Time
-	repair     bool // a device's activity shows something unknown: flush without waiting for a change
+	repair     bool        // a device's activity shows something unknown: flush without waiting for a change
+	widgets    widgetWaker // which phones' Home Screen widgets to wake, and when (widget_wake.go)
 	// wake: when the run loop's timer goes off next (zero: not set), for a merge or a device's turn after fleetMinGap.
 	wake         time.Time
 	now          func() time.Time
 	minGap       time.Duration // fleetMinGap (0 in the replay of how it was before, pushreplay_test.go)
 	storeTimeout time.Duration // bounds each token write; tests shorten it
+	// answers: the phones whose apps registered (register_phone), waiting for their holds to be lifted off the app's
+	// read loop (phoneConnectedLater); answering while a goroutine drains them.
+	answerMu  sync.Mutex
+	answers   []phoneAnswer
+	answering bool
+}
+
+// phoneAnswer is one register_phone: the push id it named, its connection's credential, and when it arrived.
+type phoneAnswer struct {
+	pushID, credential string
+	at                 time.Time
 }
 
 func newLiveActivities(h *Hub) *liveActivities {
 	return &liveActivities{h: h, signal: make(chan struct{}, 1), rows: map[string]db.LiveActivity{}, started: map[string]int{},
-		sent: map[string][]byte{}, sentAt: map[string]time.Time{}, now: time.Now, minGap: fleetMinGap, storeTimeout: deviceStoreTimeout}
+		deferred: map[string]time.Time{}, sent: map[string][]byte{}, sentAt: map[string]time.Time{}, now: time.Now, minGap: fleetMinGap, storeTimeout: deviceStoreTimeout}
 }
 
 func (la *liveActivities) load(ctx context.Context) {
@@ -304,6 +321,7 @@ func (la *liveActivities) run(ctx context.Context) {
 				la.shown = b
 				la.broadcast(st)
 			}
+			la.wakeWidgets(st)
 			now, schedule := la.coal.offer(st)
 			switch {
 			case now:
@@ -353,6 +371,7 @@ func (la *liveActivities) tick() {
 	if la.h.isMember() { // the center's Live Activity is the group's (mesh_group.go)
 		return
 	}
+	la.wakeWidgets(la.snapshot()) // a change held back for widgetGap, the heartbeat
 	now := la.now()
 	la.mu.Lock()
 	over := !la.emptyAt.IsZero() && now.Sub(la.emptyAt) >= fleetEndAfter
@@ -471,6 +490,11 @@ func (la *liveActivities) phoneLeft(device string, clean bool) {
 	}
 	d, ok := la.h.push.device(device)
 	now := la.now()
+	// The app wrote its widgets as it went: they show what it showed (widget_wake.go).
+	la.mu.Lock()
+	shown := la.shownState
+	la.mu.Unlock()
+	la.widgets.wrote(device, widgetCountsOf(shown), now)
 	la.mu.Lock()
 	r := la.rows[device]
 	needsStart := r.PushToStartToken != "" && (r.PushToken == "" || now.Sub(r.StartedAt) >= fleetMaxAge)
@@ -500,6 +524,12 @@ func (la *liveActivities) markSent(device string, dst FleetState, now time.Time,
 
 // flush pushes st to every device that wants the activity: update a running one, or start one (once per episode,
 // and at most once per fleetRefresh rolling window, atomically persisted across hub restarts and overlapping slots).
+// A start the phone has not answered holds the next one for fleetMaxAge (holdStart): the hub has no token to update
+// or end that activity with, so another start would only put a second card beside it (#7641). A start APNs or the
+// relay refused holds nothing (startRefused); one with no answer holds like an accepted one. A hold and what lifts
+// it are about one start, named by the time it was claimed at: they leave a start claimed later alone (holdStart).
+// Whether a start is held is asked of the store each round: this hub keeps no deadline of its own, since the phone
+// may answer the other slot of a blue-green switch, or a start that slot sent may be refused.
 // A device whose own version did not change (the change was something it does not show) is skipped unless forced; one
 // whose app is open is not pushed (it draws the activity itself); one pushed less than fleetMinGap ago gets an ordinary
 // change later: next is when the first of those is due (zero: none). A settings refresh
@@ -539,8 +569,12 @@ func (la *liveActivities) flush(st FleetState, urgent, force bool, settingsDevic
 		rows = append(rows, r)
 	}
 	la.mu.Unlock()
-	if fleetEmpty(st) && !st.Assistant {
-		return time.Time{} // ended by tick after fleetEndAfter, unless something comes back first
+	// Nothing left to show ends by tick after fleetEndAfter, unless something comes back first. When what went was the
+	// last thing needing the user (answered, here or on a computer, or gone: urgent), the running activities are cleared
+	// at once all the same, or their request and its buttons stay up for that minute. Not ended early: a push-start is
+	// rationed (fleetRefresh), and the next request arriving soon after would find no activity to open.
+	if fleetEmpty(st) && !st.Assistant && !urgent {
+		return time.Time{}
 	}
 	// whose agents the activity counts (one manager's: fleetLiveOf): a device that muted it gets no start alert
 	_, stats, from := la.h.fleetLiveOf()
@@ -557,8 +591,12 @@ func (la *liveActivities) flush(st FleetState, urgent, force bool, settingsDevic
 			continue
 		}
 		dst := forDevice(st, prefs, stats)
-		if showsNothing(dst) {
-			continue // only the assistant answering, not on this island: ended by tick like an empty fleet
+		// Nothing for this device to show (an empty fleet, or only the assistant answering where its island does not
+		// show it): ended by tick like an empty fleet, and only an activity already running is cleared, when the last
+		// request went.
+		cleared := showsNothing(dst)
+		if cleared && !urgent {
+			continue
 		}
 		if la.h.phoneOpen(r.DeviceID) {
 			if r.PushToken != "" && now.Sub(r.StartedAt) < fleetMaxAge {
@@ -598,17 +636,35 @@ func (la *liveActivities) flush(st FleetState, urgent, force bool, settingsDevic
 			// Token registration or foreground entry during the database call wins.
 			// The spent budget is deliberately not refunded: a crash or ambiguous
 			// delivery must not let the other blue-green process start again.
-			la.mu.Lock()
-			current := la.rows[r.DeviceID]
-			la.mu.Unlock()
-			latest, _ := json.Marshal(la.snapshot())
-			currentDevice, present := la.h.push.device(r.DeviceID)
-			valid := current == r && bytes.Equal(observed, latest) && present && bytes.Equal(currentDevice.Prefs, d.Prefs)
-			if !valid || la.h.phoneOpen(r.DeviceID) {
+			unchanged := func() bool {
+				la.mu.Lock()
+				current := la.rows[r.DeviceID]
+				la.mu.Unlock()
+				latest, _ := json.Marshal(la.snapshot())
+				currentDevice, present := la.h.push.device(r.DeviceID)
+				return current == r && bytes.Equal(observed, latest) && present && bytes.Equal(currentDevice.Prefs, d.Prefs) &&
+					!la.h.phoneOpen(r.DeviceID)
+			}
+			suppressed := func() {
 				la.h.logf("live activity start suppressed: reason=state_changed device=%s due=%s", trafficIdentity(r.DeviceID), due.UTC().Format(time.RFC3339))
 				if next.IsZero() || due.Before(next) {
 					next = due
 				}
+			}
+			if !unchanged() {
+				suppressed()
+				continue
+			}
+			// Held before it is sent, so the phone's answer, which may follow at once, is what lifts it. So does a
+			// start APNs or the relay refused, or that never left the hub (startRefused); one nobody answered at all
+			// may be on the phone, and stays held.
+			la.holdStart(context.Background(), r.DeviceID, now, fleetMaxAge)
+			// The hold write can take up to storeTimeout: the app may have come to the foreground or reported an
+			// update token meanwhile, and its answer's lift may have reached the store before this hold and been
+			// overwritten by it. Nothing is sent then, and the hold goes back to the claim's cooldown (#7641 review).
+			if !unchanged() {
+				la.liftHold(context.Background(), r.DeviceID, now)
+				suppressed()
 				continue
 			}
 			la.mu.Lock()
@@ -620,7 +676,7 @@ func (la *liveActivities) flush(st FleetState, urgent, force bool, settingsDevic
 			// without its alert (desktops.go).
 			quiet := prefs.MuteWhileDesktop && la.h.push.desktopOnline != nil && la.h.push.desktopOnline() ||
 				la.h.push.inQuiet(prefs) || prefs.mutes(from)
-			la.sendStart(d, r, startPayloadIn(la.h.userLang(), dst, now, quiet))
+			la.sendStart(d, r, now, startPayloadIn(la.h.userLang(), dst, now, quiet))
 		}
 	}
 	return next
@@ -642,14 +698,147 @@ func (la *liveActivities) claimStart(r db.LiveActivity, now time.Time) (time.Tim
 		la.h.logf("live activity start deferred: reason=claim_failed device=%s due=%s error=%v", trafficIdentity(r.DeviceID), retry.UTC().Format(time.RFC3339), err)
 		return retry, false
 	}
-	if !claimed {
+	la.mu.Lock()
+	logged, repeat := la.deferred[r.DeviceID]
+	repeat = repeat && !claimed && logged.Equal(due)
+	if claimed {
+		delete(la.deferred, r.DeviceID)
+	} else {
+		la.deferred[r.DeviceID] = due
+	}
+	la.mu.Unlock()
+	if !claimed && !repeat { // the same answer as last round is not said again: a hold lasts hours of rounds
 		reason := "token_changed"
-		if !due.IsZero() {
+		switch {
+		case due.Sub(now) > fleetRefresh:
+			reason = "unanswered_start"
+		case !due.IsZero():
 			reason = "rolling_cooldown"
 		}
 		la.h.logf("live activity start deferred: reason=%s device=%s due=%s", reason, trafficIdentity(r.DeviceID), due.UTC().Format(time.RFC3339))
 	}
 	return due, claimed
+}
+
+// holdStart keeps the device's next push-start back until hold after its last one (HoldLiveActivityStart, in the
+// start budget so a restart or the other slot holds it too): fleetMaxAge once a start goes out, since until the phone
+// answers its activity may be up where the hub can neither update nor end it; fleetRefresh again when the phone
+// answers or the start is refused (liftHold). Best effort: when the write fails the rolling cooldown alone paces the
+// starts, as before #7641.
+//
+// asOf is the start the write is about: the time it was claimed at (the now its flush claimed with), or the time the
+// phone answered. The store leaves a start claimed after asOf alone, so a write that comes late (a refusal after the
+// send's retries, a slow store, the slot that is leaving) cannot hold or lift a newer start.
+//
+// The deadline lives in the store alone. A hub that remembered it would hold on after the other slot of a blue-green
+// switch lifted it (the phone's app connected there, a start sent from there was refused), for up to fleetMaxAge:
+// flush asks the store each round instead (claimStart).
+func (la *liveActivities) holdStart(ctx context.Context, device string, asOf time.Time, hold time.Duration) {
+	if la.h.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, la.storeTimeout)
+	defer cancel()
+	if _, err := la.h.store.HoldLiveActivityStart(ctx, device, asOf, hold); err != nil {
+		la.h.logf("live activity start hold: device=%s hold=%s error=%v", trafficIdentity(device), hold, err)
+	}
+}
+
+// phoneAnswered: the phone reached the hub (it reported an activity's update token; its app connecting is
+// phoneConnected), so the hub hears of what it starts there again: the next start waits only for the rolling cooldown.
+// The answer is stamped now: it lifts the hold of a start claimed up to now, never of one claimed while its write was
+// on its way.
+// device is the phone's push id, which the start was claimed under (the activity's row, the start budget).
+func (la *liveActivities) phoneAnswered(ctx context.Context, device string) {
+	if la == nil || device == "" {
+		return
+	}
+	la.liftHold(ctx, device, la.now())
+}
+
+// phoneConnectedLater is phoneConnected off the app's read loop, which never waits for the store (#6889): one
+// goroutine at a time lifts the queued answers in order, each as of when it arrived, and ends when none is left. A
+// repeated registration replaces its queued one; past helloPendingLimit a new one is dropped (logged): the hold then
+// lasts until the phone reports a token, registers again or fleetMaxAge passes.
+func (la *liveActivities) phoneConnectedLater(pushID, credential string) {
+	if la == nil {
+		return
+	}
+	a := phoneAnswer{pushID: pushID, credential: credential, at: la.now()}
+	la.answerMu.Lock()
+	defer la.answerMu.Unlock()
+	if i := slices.IndexFunc(la.answers, func(q phoneAnswer) bool { return q.pushID == pushID && q.credential == credential }); i >= 0 {
+		la.answers[i].at = a.at
+	} else if len(la.answers) >= helloPendingLimit {
+		la.h.logf("live activity start hold: answer dropped, %d waiting", len(la.answers))
+		return
+	} else {
+		la.answers = append(la.answers, a)
+	}
+	if !la.answering {
+		la.answering = true
+		go la.liftAnswers()
+	}
+}
+
+func (la *liveActivities) liftAnswers() {
+	for {
+		la.answerMu.Lock()
+		if len(la.answers) == 0 {
+			la.answering = false
+			la.answerMu.Unlock()
+			return
+		}
+		a := la.answers[0]
+		la.answers = la.answers[1:]
+		la.answerMu.Unlock()
+		la.phoneConnected(context.Background(), a.pushID, a.credential, a.at)
+	}
+}
+
+// phoneConnected: a phone's app registered over its connection (register_phone), which answers the starts claimed
+// for that phone. They are claimed under its push id, so that is what names it: pushID when the app gave one. An
+// older app gives none, and what its registration is kept under instead (the connection's credential, or "legacy")
+// is no push id: lifting that would lift nothing. Such a phone is the devices its credential registered (or took
+// since, Device.Credential) or, on a connection without a credential, the devices that have none, as wakeDevices
+// finds the phone of such a registration. Never a Mac or a watch: they register as devices too and run no activity
+// of the phone's. at is when the app registered: its answer lifts the holds of starts claimed up to then.
+func (la *liveActivities) phoneConnected(ctx context.Context, pushID, credential string, at time.Time) {
+	if la == nil {
+		return
+	}
+	if pushID != "" {
+		la.liftHold(ctx, pushID, at)
+		return
+	}
+	if la.h.push == nil {
+		return
+	}
+	for _, d := range la.h.push.list() {
+		its := d.CredentialID == credential || d.Credential == credential
+		if credential == "" {
+			its = d.CredentialID == "" && d.Credential == ""
+		}
+		if its && d.Kind != kindMac && d.Kind != "watch" {
+			la.liftHold(ctx, d.DeviceID, at)
+		}
+	}
+}
+
+// startRefused: the start claimed at claimed did not reach the phone for certain (pushRefused: never sent, or APNs or
+// the relay answered with a status other than 200), so there is no card to hold for: the next start waits only for the
+// rolling cooldown, as before #7641. A start with no answer at all (pushUnknown) is not lifted: APNs may have taken it,
+// and another start would put a second card beside it, so it waits for the phone or fleetMaxAge like an accepted one.
+// The refusal lifts its own start's hold only: if another start was claimed before it came, that one's hold stays.
+func (la *liveActivities) startRefused(device string, claimed time.Time) {
+	la.h.logf("live activity start refused: device=%s, next start after the rolling cooldown", trafficIdentity(device))
+	la.liftHold(context.Background(), device, claimed)
+}
+
+// liftHold puts the device's next start back on the rolling cooldown, unless its last start was claimed after asOf
+// (holdStart). In the store only, where every hub's next round reads it.
+func (la *liveActivities) liftHold(ctx context.Context, device string, asOf time.Time) {
+	la.holdStart(ctx, device, asOf, fleetRefresh)
 }
 
 func (la *liveActivities) endAll() { la.end(nil) }
@@ -671,6 +860,7 @@ func (la *liveActivities) endCredential(credential string) {
 		delete(la.sent, d.DeviceID)
 		delete(la.sentAt, d.DeviceID)
 		delete(la.started, d.DeviceID)
+		delete(la.deferred, d.DeviceID)
 		delete(la.resend, d.DeviceID)
 		la.mu.Unlock()
 		if r.PushToken != "" {
@@ -781,14 +971,19 @@ func (la *liveActivities) send(d Device, r db.LiveActivity, payload map[string]a
 	})
 }
 
-func (la *liveActivities) sendStart(d Device, r db.LiveActivity, payload map[string]any) {
+// sendStart sends the start claimed at claimed; a refusal lifts that start's hold (startRefused).
+func (la *liveActivities) sendStart(d Device, r db.LiveActivity, claimed time.Time, payload map[string]any) {
 	la.h.logf("live activity: push-start on %s", d.Name)
-	la.h.push.sendLiveActivity(d, r.PushToStartToken, compatibleStartPayload(d, payload), "10", func() {
+	la.h.push.sendLiveActivityThen(d, r.PushToStartToken, compatibleStartPayload(d, payload), "10", func() {
 		la.update(r.DeviceID, func(v *db.LiveActivity) {
 			if v.PushToStartToken == r.PushToStartToken {
 				v.PushToStartToken = ""
 			}
 		})
+	}, func(o pushResult) {
+		if o == pushRefused {
+			la.startRefused(r.DeviceID, claimed)
+		}
 	})
 }
 
@@ -801,11 +996,15 @@ func (la *liveActivities) update(device string, fn func(*db.LiveActivity)) {
 func (la *liveActivities) updateContext(ctx context.Context, device string, fn func(*db.LiveActivity)) error {
 	la.mu.Lock()
 	v := la.rows[device]
+	was := v.PushToken
 	v.DeviceID = device
 	fn(&v)
 	la.rows[device] = v
 	la.mu.Unlock()
 	defer la.changed() // a new token gets the current state even if persistence needs a retry
+	if v.PushToken != "" && v.PushToken != was {
+		la.phoneAnswered(ctx, device) // only the phone reports an update token
+	}
 	if la.h.store != nil {
 		ctx, cancel := context.WithTimeout(ctx, la.storeTimeout)
 		defer cancel()
@@ -846,6 +1045,10 @@ func (la *liveActivities) routes(api *http.ServeMux) {
 				v.ActivityID, v.PushToken = body.ActivityID, body.PushToken
 			}
 		})
+		if errors.Is(err, db.ErrPushRegistrationConflict) {
+			writeErrCode(w, http.StatusConflict, pushRegistrationRequired, i18n.Err("push.registration_required"))
+			return
+		}
 		if err != nil {
 			writeErr(w, http.StatusServiceUnavailable, i18n.Err("http-status.unavailable"))
 			return

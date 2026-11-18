@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../../lib/types";
-import { arrange, conversationTitle, filterConversations, groupByDay, mergeConversations, splitTitle, type Conversation } from "./conversations";
+import { arrange, conversationTitle, filterConversations, groupByDay, inUseTags, mergeConversations, normalizeTags, splitTitle, withTag, TAG_MAX_LENGTH, TAGS_MAX, type Conversation } from "./conversations";
 
 const now = new Date(2026, 10, 2, 10, 0);
 const at = (d: number, h = 9) => new Date(2026, 10, d, h).toISOString();
@@ -21,9 +21,45 @@ describe("titles", () => {
     expect(conversationTitle({ title: " 早报 " })).toBe("早报");
   });
 
+  it("reads a chat titled by its <persona-context> tag: what was typed after it, else the tag's title, else 新对话", () => {
+    expect(conversationTitle({ title: '<persona-context kind="context" title="飞书 · 发布群 &quot;周五&quot;" url="">' })).toBe('飞书 · 发布群 "周五"');
+    expect(conversationTitle({ title: '<persona-context kind="context" title="A &amp; B &lt;x&gt;" url="">\n正文' })).toBe("A & B <x>");
+    expect(conversationTitle({ title: '<persona-context kind="context" title="群" url="">\n正文\n</persona-context>\n\n帮我总结一下\n第二行' })).toBe("帮我总结一下");
+    expect(conversationTitle({ title: '<persona-context kind="context" title="" url="">' })).toBe("新对话");
+    expect(conversationTitle({ title: "<persona-context kind=" })).toBe("新对话");
+    // a title that only mentions the tag further on is the user's own words
+    expect(conversationTitle({ title: "什么是 <persona-context> 标签" })).toBe("什么是 <persona-context> 标签");
+  });
+
   it("calls the main conversation Persona, whatever its first message was (#1313)", () => {
     expect(conversationTitle({ title: "我的邮箱里最近有哪些需要我处理或回复的邮件？挑重要的说。" }, true)).toBe("Persona");
     expect(conversationTitle({ title: "" }, true)).toBe("Persona");
+  });
+});
+
+describe("conversation tags", () => {
+  it("trims, drops empties and de-duplicates to the first occurrence", () => {
+    expect(normalizeTags(["  planning ", "", "planning", "trip"])).toEqual(["planning", "trip"]);
+    expect(normalizeTags([])).toEqual([]);
+    expect(normalizeTags(["  ", ""])).toEqual([]);
+  });
+
+  it("keeps the hub's length and count limits as constants the dialog enforces", () => {
+    expect(TAG_MAX_LENGTH).toBe(32);
+    expect(TAGS_MAX).toBe(10);
+  });
+
+  it("lists every tag in use once, sorted", () => {
+    const list = [conv("a", { tags: ["trip", "planning"] }), conv("b", { tags: ["trip"] }), conv("c")];
+    expect(inUseTags(list)).toEqual(["planning", "trip"]);
+    expect(inUseTags([conv("c")])).toEqual([]);
+  });
+
+  it("filters by one exact tag; an empty filter is the whole list", () => {
+    const list = [conv("a", { tags: ["trip"] }), conv("b", { tags: ["planning"] }), conv("c", { tags: ["trip", "planning"] })];
+    expect(withTag(list, "trip").map((s) => s.session_id)).toEqual(["a", "c"]);
+    expect(withTag(list, "missing")).toEqual([]);
+    expect(withTag(list, "")).toBe(list);
   });
 });
 
@@ -62,6 +98,23 @@ describe("arrange", () => {
       ["b", "新的 b", undefined, undefined],
       ["n", "刚开的", undefined, undefined],
     ]);
+  });
+
+  it("includes live-only chats from the selected manager once, with their archive state", () => {
+    const listed = [conv("listed", { manager: "work" })];
+    const live = [
+      conv("listed", { manager: "work", archived: true }),
+      conv("new", { manager: "work" }),
+      conv("new-archived", { manager: "work", archived: true }),
+      conv("other-manager"),
+      conv("health-chat", { manager: "work", space: "health" }),
+      conv("agent", { manager: "work", assistant: false }),
+    ];
+    const history = mergeConversations([conv("fetched-archive", { archived: true })], listed, live, "work");
+    const sidebar = mergeConversations([], listed, live, "work");
+    expect(history.filter((s) => !s.archived).map((s) => s.session_id)).toEqual(["new"]);
+    expect(sidebar.filter((s) => !s.archived).map((s) => s.session_id)).toEqual(["new"]);
+    expect(sidebar.filter((s) => s.archived).map((s) => s.session_id)).toEqual(["listed", "new-archived"]);
   });
 
   it("takes the archive mark from the live sessions both ways: one brought back elsewhere leaves 已归档", () => {

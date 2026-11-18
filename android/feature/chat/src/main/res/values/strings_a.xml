@@ -172,11 +172,12 @@
     <string name="chat_screen_empty_hint">Send a message to start this chat.</string>
     <string name="chat_screen_added_context">Added as context; it goes with your next message</string>
     <string name="chat_search_category_event">System events</string>
-    <string name="chat_search_category_text">Text</string>
+    <string name="chat_search_category_text">Messages</string>
+    <string name="chat_search_category_quoted">Quoted</string>
     <string name="chat_search_category_thinking">Thinking</string>
     <string name="chat_search_category_tool_input">Tool input</string>
     <string name="chat_search_category_tool_output">Tool output</string>
-    <string name="chat_search_category_tool_name">Tool name</string>
+    <string name="chat_search_category_tool_name">Tool names</string>
     <string name="chat_search_updating">The history is updating. Continue in a moment.</string>
     <string name="chat_search_older_failed">Couldn\'t load earlier history. Try again.</string>
     <string name="chat_search_older_none">No earlier history loaded this time. Try again later.</string>
@@ -253,6 +254,12 @@
         <item quantity="one">Show all (%1$d line)</item>
         <item quantity="other">Show all (%1$d lines)</item>
     </plurals>
+    <plurals name="chat_diff_unchanged_lines">
+        <item quantity="one">… %1$d unchanged line</item>
+        <item quantity="other">… %1$d unchanged lines</item>
+    </plurals>
+    <string name="chat_diff_line_added">Added</string>
+    <string name="chat_diff_line_removed">Removed</string>
     <plurals name="chat_todos_progress">
         <item quantity="one">%1$d/%2$d to-do done</item>
         <item quantity="other">%1$d/%2$d to-dos done</item>
@@ -283,7 +290,7 @@
     <string name="chat_tasks_permission_accept_edits">Can edit files</string>
     <string name="chat_tasks_permission_plan">Plan first</string>
     <string name="chat_tasks_permission_auto">Auto</string>
-    <string name="chat_tasks_permission_bypass">Allow all</string>
+    <string name="chat_tasks_permission_bypass">Allow everything</string>
     <string name="chat_tasks_permission_default">Ask every step</string>
     <plurals name="chat_tasks_plan_started">
         <item quantity="one">✓ Started %1$d task</item>
@@ -296,13 +303,13 @@
     <string name="chat_tasks_plan_task_failed">“%1$s” didn\'t start: %2$s</string>
     <string name="chat_tasks_plan_reason_unknown">unknown reason</string>
     <plurals name="chat_tasks_plan_split">
-        <item quantity="one">%1$d task, started like this</item>
+        <item quantity="one">Split into %1$d task, started like this</item>
         <item quantity="other">Split into %1$d tasks, started like this</item>
     </plurals>
-    <string name="chat_tasks_plan_single">Start it like this</string>
+    <string name="chat_tasks_plan_single">Start like this</string>
     <string name="chat_tasks_default_model">Default model</string>
     <string name="chat_tasks_read_only">Read-only requested</string>
-    <string name="chat_tasks_plan_remember">Start ones like these directly next time</string>
+    <string name="chat_tasks_plan_remember">Start directly here and in subfolders</string>
     <plurals name="chat_tasks_plan_start_count">
         <item quantity="one">Start %1$d task</item>
         <item quantity="other">Start %1$d tasks</item>
@@ -352,7 +359,9 @@
     <string name="chat_tasks_interrupt_all_handled">→ all handled</string>
     <string name="chat_tasks_quick_reminder">Reminder added</string>
     <string name="chat_tasks_quick_calendar">Added to calendar</string>
-    <string name="chat_tasks_quick_on_iphone">On iPhone</string>
+    <string name="chat_tasks_quick_undo">Undo</string>
+    <string name="chat_tasks_quick_undone">Undone</string>
+    <string name="chat_tasks_quick_undo_failed">Couldn\'t undo</string>
     <string name="chat_today_done_one">Done: %1$s</string>
     <plurals name="chat_today_done_many">
         <item quantity="one">%1$d task done</item>
@@ -443,15 +452,11 @@
     <string name="chat_work_thinking">Thinking</string>
     <string name="chat_work_step">%1$s, step %2$d</string>
     <string name="chat_work_elapsed">%1$s, %2$s</string>
-    <string name="chat_work_seconds">%1$d s</string>
-    <string name="chat_work_minutes">%1$d min</string>
-    <string name="chat_work_hours_minutes">%1$d hr %2$d min</string>
     <string name="chat_work_working_for">Working %1$s</string>
     <string name="chat_work_done">Done</string>
     <string name="chat_work_tools">Tools %1$d</string>
     <string name="chat_work_thoughts">Thinking %1$d</string>
     <string name="chat_work_replies">Replies %1$d</string>
-    <string name="chat_work_minutes_seconds">%1$dm %2$ds</string>
     <string name="chat_work_reading_files">Reading %1$d files</string>
     <plurals name="chat_work_done_steps">
         <item quantity="one">%1$d step</item>

@@ -10,7 +10,7 @@ import { Button } from "../../ui/atoms";
 import { Group, Row, Switch, SettingsHint, SettingsSection } from "./SettingsParts";
 
 /** Host-owned lifecycle UI for every extension. Only the configuration slot contains extension-supplied fields/pages. */
-export function ExtensionSettingsPage({ detail: d, manager, busy, offline = false, configuration, information, saveBar, memberNames, onEnabled, onAutoUpgrade, onUpgrade, onUninstall, onChecked }: {
+export function ExtensionSettingsPage({ detail: d, manager, busy, offline = false, configuration, configurationTitle = true, information, saveBar, memberNames, onEnabled, onAutoUpgrade, onUpgrade, onUninstall, onChecked }: {
   detail: HubExtensionDetail;
   /** A pack's members by their installed names (#4122). */
   memberNames?: Record<string, string>;
@@ -18,6 +18,8 @@ export function ExtensionSettingsPage({ detail: d, manager, busy, offline = fals
   busy: boolean;
   offline?: boolean;
   configuration: ReactNode;
+  /** The configuration's heading shows: false when every group in it has a heading of its own (#8853). */
+  configurationTitle?: boolean;
   information?: ReactNode;
   saveBar?: ReactNode;
   onEnabled: (on: boolean) => void;
@@ -45,7 +47,7 @@ export function ExtensionSettingsPage({ detail: d, manager, busy, offline = fals
           </Row>
         </Group>
       </section>
-      <SettingsSection name="configuration" title={t("settings-extensions.configuration_title")}>
+      <SettingsSection name="configuration" title={t("settings-extensions.configuration_title")} showTitle={configurationTitle}>
         {configuration}
         {saveBar}
       </SettingsSection>

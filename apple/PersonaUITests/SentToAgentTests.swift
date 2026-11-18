@@ -1,8 +1,8 @@
 import XCTest
 
 /// What Persona sent to its tasks' agents in the main conversation (#1542): never the user's bubble. The hand-off sent with
-/// a task's card is only on that card (「已发 1 条指令」, a tap lists it, a tap on it opens the text with Copy); a later
-/// message uses a three-line exchange with Expand; the user's own word to a task stays the user's bubble. Against
+/// a task's card is an exchange like any later message (the old per-task list that held it was removed with the task card,
+/// docs/design/task-cards.md P7); a message uses a three-line exchange with Expand; the user's own word to a task stays the user's bubble. Against
 /// scripts/mock/mock_hub.py with MOCK_TASKS=1 MOCK_TASKS_SENT=1 MOCK_TASKS_NO_ASKS=1 (PERSONA_MOCK_HUB). With PERSONA_SHOTS
 /// set it writes the folded and open states there (PERSONA_SHOTS_APPEARANCE names the simulator's appearance in the file).
 final class SentToAgentTests: XCTestCase {
@@ -28,7 +28,7 @@ final class SentToAgentTests: XCTestCase {
         try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/sent-\(appearance)-\(name).png"))
     }
 
-    @MainActor func testPersonasMessagesFoldAndTheHandOffIsOnTheCard() throws {
+    @MainActor func testPersonasMessagesAreExchangesAndTheHandOffIsOneToo() throws {
         let app = XCUIApplication()
         let pair = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
         app.launchArguments = ["-pairURL", pair, "-app.tab", "assistant", "-tab", "assistant", "-openAssistant", main,
@@ -37,12 +37,12 @@ final class SentToAgentTests: XCTestCase {
 
         let any = app.descendants(matching: .any)
         func has(_ text: String) -> XCUIElement { any.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch }
-        // The card's own button takes up the row's identifier too (SwiftUI): the row is the one not named by the card's title.
-        let list = app.buttons.matching(NSPredicate(format: "identifier == %@ AND NOT (label CONTAINS %@)", "task-sent", "降低后台同步的内存占用")).firstMatch
-        XCTAssertTrue(list.waitForExistence(timeout: 20), "no list of what was sent on the task's card:\n\(app.debugDescription)")
+        let first = any.matching(identifier: "exchange.routed").firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 20), "no exchange of what was sent to a task:\n\(app.debugDescription)")
         sleep(1) // the list settles at the newest
-        // The hand-off is not drawn on its own: its words are nowhere until the card's list is opened.
-        XCTAssertFalse(has("常驻内存降下来").exists, "the hand-off is drawn outside its card")
+        // No card lists a task's hand-off any more (the old task card did, docs/design/task-cards.md P7), and nothing in the
+        // app applies `SentToAgents.takenIn`: the hand-off is drawn like any later message, as an exchange.
+        XCTAssertTrue(has("常驻内存降下来").exists, "the hand-off is not in the chat:\n\(app.debugDescription)")
         // The rework to the widget fix stays an exchange, not the removed iOS baseline's one-line disclosure.
         XCTAssertTrue(has("Persona → @修小组件横屏崩溃").exists, app.debugDescription)
         let line = any.matching(identifier: "exchange.routed").allElementsBoundByIndex.last { $0.isHittable }
@@ -61,15 +61,6 @@ final class SentToAgentTests: XCTestCase {
         collapse?.tap()
         XCTAssertTrue(expand?.waitForExistence(timeout: 5) == true, "the exchange did not fold")
 
-        list.tap()
-        let entry = any["task-sent-entry"].firstMatch
-        XCTAssertTrue(entry.waitForExistence(timeout: 5), "the card's list did not open")
-        XCTAssertTrue(entry.label.contains("常驻内存降下来"), "the list does not show the hand-off's first line: \(entry.label)")
-        entry.tap()
-        XCTAssertTrue(any["sent-copy"].firstMatch.waitForExistence(timeout: 5), "the hand-off did not open with Copy")
-        XCTAssertTrue(has("PR 里有改前改后的 Allocations 截图").exists, "the open hand-off is not whole")
-        sleep(1)
-        try shot(app, "card-open")
         app.terminate()
     }
 }

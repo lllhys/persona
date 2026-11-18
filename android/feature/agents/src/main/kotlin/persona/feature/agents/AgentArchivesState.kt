@@ -64,9 +64,13 @@ internal class AgentArchivesState(
     fun clearError() { mutable.value = mutable.value.copy(error = null) }
 }
 
-/** Source control capabilities do not govern archive visibility; active work must remain visible. */
+/**
+ * Source control capabilities do not govern archive visibility; active work must remain visible. Any agent archives,
+ * whatever runs it (a Paseo provider's too, #8143), as the manager takes them all (agent_archives.go) and the web offers
+ * it; only an assistant conversation archives in its own place.
+ */
 internal val Session.canArchiveAgent: Boolean
-    get() = !assistant && !archived && (isClaude || isCodex) && !starting &&
+    get() = !assistant && !archived && !starting &&
         status !in setOf("working", "blocked") && state !in setOf("working", "needs_you") &&
         !awaitsReply && pendingInteractions == 0 && backgroundWorking != true &&
         backgroundCount == 0 && (runningWorkflowsCount ?: 0) == 0 &&

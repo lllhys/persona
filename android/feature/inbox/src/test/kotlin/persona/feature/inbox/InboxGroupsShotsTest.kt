@@ -23,6 +23,8 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -171,6 +173,12 @@ class InboxGroupsShotsTest {
         Snapshot.sendApplyNotifications(); rule.waitForIdle()
     }
 
+    /** Done in the section bar (#9053): the Inbox opens on Needs you. */
+    private fun openDone() {
+        rule.onNode(hasText("已处理") and androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsProperties.Selected)).performClick()
+        rule.waitForIdle()
+    }
+
     /** A group header with [title] is drawn (Needs you and FYI may each have one: Lark in both). */
     private fun assertHeader(title: String) = assertTrue("header $title",
         rule.onAllNodes(hasText(title) and androidx.compose.ui.test.isHeading()).fetchSemanticsNodes().isNotEmpty())
@@ -184,6 +192,9 @@ class InboxGroupsShotsTest {
     @Test fun byTimeIsKeptOnThisDevice() {
         val inbox = inbox()
         show(inbox)
+        // Under Group by in the ⋯ (#9053), not a row of its own over the list.
+        rule.onAllNodesWithContentDescription("更多").onFirst().performClick()
+        rule.waitForIdle()
         rule.onNodeWithText("按时间").performClick()
         rule.waitForIdle()
         assertEquals("time", inbox.prefs.value.grouping)
@@ -192,8 +203,9 @@ class InboxGroupsShotsTest {
     }
 
     @Test fun doneByTimeWithOlderPagesAndJumpTo() {
-        val inbox = inbox(InboxPreferences(section = "done", expanded = listOf("action", "fyi", "done")))
+        val inbox = inbox(InboxPreferences(expanded = listOf("action", "fyi", "done")))
         show(inbox)
+        openDone()
         // The first page of history when Done opens, deduplicated against the list's own done items.
         assertEquals(listOf<InboxDoneCursor?>(null), inbox.historyAsked)
         // Boundaries that hold at any hour: 10 minutes ago is just now, a day ago yesterday, 9 days 7+ days.
@@ -230,15 +242,16 @@ class InboxGroupsShotsTest {
         val monthEnd = persona.core.domain.inbox.InboxGroups.span("month", now, zone).second
         val next = InboxDoneCursor(ago(days(40)), "mail:h3")
         val inbox = Inbox(InboxSnapshot(records = open + done, interactions = listOf(card)),
-            InboxPreferences(section = "done", expanded = listOf("action", "fyi", "done")), emptyList(), counted) { cursor ->
+            InboxPreferences(expanded = listOf("action", "fyi", "done")), emptyList(), counted) { cursor ->
             if (cursor?.beforeId == null) InboxDonePage(pageTwo, next) else InboxDonePage()
         }
         show(inbox)
+        openDone()
         assertEquals(emptyList<InboxDoneCursor?>(), inbox.historyAsked)
         for (title in listOf("刚刚处理", "昨天", "7 天前", "1 个月前")) assertHeader(title)
         rule.onAllNodesWithText("加载更早的").assertCountEquals(0)
-        // Done's own count is all of it, as its groups add up (3 in the list, 5 and 30 older): its title and the Done chip.
-        assertTrue("Done's title and chip count 38", rule.onAllNodes(hasText("38"), useUnmergedTree = true).fetchSemanticsNodes().size >= 2)
+        // Done's own count is all of it, as its groups add up (3 in the list, 5 and 30 older): its title (the bar's Done has none, #9053).
+        assertTrue("Done's title counts 38", rule.onAllNodes(hasText("38"), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
         rule.onNode(androidx.compose.ui.test.hasScrollToIndexAction()).performScrollToNode(hasText("1 个月前"))
         shots("inbox-done-counted")
         rule.onNode(androidx.compose.ui.test.hasScrollToIndexAction()).performScrollToNode(hasText("跳到"))

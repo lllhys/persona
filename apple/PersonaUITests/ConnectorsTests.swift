@@ -64,7 +64,7 @@ final class ConnectorsTests: XCTestCase {
 
         row("邮箱").tap()
         XCTAssertTrue(app.buttons["添加邮箱"].waitForExistence(timeout: 10), "mail page has no 添加邮箱:\n\(app.debugDescription)")
-        XCTAssertFalse(app.buttons["完成"].exists, "pushed, the mail page should not have the sheet's 完成")
+        XCTAssertFalse(app.buttons["sheet-close"].exists, "pushed, the mail page should not have the sheet's ✕")
         shot("mail")
         back()
 

@@ -4,6 +4,8 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import persona.core.contracts.SessionKey
+import persona.core.contracts.StandingAuthorization
+import persona.core.contracts.StandingAuthorizationList
 import persona.core.contracts.api.*
 
 class AssistantManagementGroupScopeTest {
@@ -28,6 +30,12 @@ class AssistantManagementGroupScopeTest {
         override suspend fun memory() = emptyList<MemoryFile>()
         override suspend fun saveMemory(name: String, content: String) = error("unused")
         override suspend fun deleteMemory(name: String) = error("unused")
+        override suspend fun clearMainConversation(expect: String?) = "archived-$expect".also { calls += "$manager clear $expect" }
+        override suspend fun standingAuthorizations(): StandingAuthorizationList {
+            calls += "$manager list"
+            return StandingAuthorizationList(1, listOf(StandingAuthorization(id = "sa", machineId = "pro"), StandingAuthorization(id = "blank")))
+        }
+        override suspend fun revokeStandingAuthorization(id: String) { calls += "$manager revoke $id" }
     }
 
     @Test fun bindingManagerPreservesGroupInputAndOutputTranslationAndLeavesOriginalUnbound() = runBlocking {
@@ -53,5 +61,35 @@ class AssistantManagementGroupScopeTest {
         work.warm()
         default.warm()
         assertEquals(listOf("default config", "work warm", "default warm"), calls)
+    }
+
+    // Clear context (#5100): the group's wrapper hands it to its hub for the bound assistant, `expect` as it is (a session id).
+    @Test fun clearingTheMainConversationGoesThroughTheGroupForTheBoundManager() = runBlocking {
+        val calls = mutableListOf<String>()
+        val work = Management(calls).inGroup(GroupNames("g0a1b2c3d")).forManager("work")
+        assertEquals("archived-main-1", work.clearMainConversation("main-1"))
+        assertEquals(listOf("work clear main-1"), calls)
+    }
+
+    // The routed wrapper the app pairs with (ChatWiringModule) forwards it too: without its own override the app would get
+    // the interface's "unavailable" default.
+    @Test fun theRoutedManagementForwardsClearingTheMainConversation() {
+        val routed = Class.forName("persona.android.di.RoutedAssistantManagement")
+        assertTrue(routed.declaredMethods.any { it.name == "clearMainConversation" })
+    }
+
+    @Test fun standingAuthorizationsTranslateTheMachineAndRevokeTheIdAsGiven() = runBlocking {
+        val calls = mutableListOf<String>()
+        val work = Management(calls).inGroup(GroupNames("g0a1b2c3d")).forManager("work")
+        val list = work.standingAuthorizations()
+        assertEquals(listOf("pro~g0a1b2c3d", ""), list.authorizations.map { it.machineId })
+        work.revokeStandingAuthorization("a/b")
+        assertEquals(listOf("work list", "work revoke a/b"), calls)
+    }
+
+    @Test fun theRoutedManagementForwardsStandingAuthorizations() {
+        val routed = Class.forName("persona.android.di.RoutedAssistantManagement")
+        assertTrue(routed.declaredMethods.any { it.name == "standingAuthorizations" })
+        assertTrue(routed.declaredMethods.any { it.name == "revokeStandingAuthorization" })
     }
 }

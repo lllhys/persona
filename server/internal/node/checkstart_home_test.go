@@ -21,7 +21,7 @@ func TestCheckStartExpandsHome(t *testing.T) {
 		abs:     abs,
 		"":      home,
 	} {
-		got, launcher, err := n.checkStart(in, "", "", "", "")
+		got, launcher, err := n.checkStart(in, "", "", "", "", "")
 		if err != nil {
 			t.Fatalf("checkStart(%q): %v", in, err)
 		}
@@ -29,7 +29,7 @@ func TestCheckStartExpandsHome(t *testing.T) {
 			t.Errorf("checkStart(%q) = %q %q, want %q claude", in, got, launcher, want)
 		}
 	}
-	if _, _, err := n.checkStart("~/missing", "", "", "", ""); err == nil {
+	if _, _, err := n.checkStart("~/missing", "", "", "", "", ""); err == nil {
 		t.Error("checkStart accepted a directory that does not exist")
 	}
 }

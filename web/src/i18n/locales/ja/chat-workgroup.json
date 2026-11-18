@@ -1,5 +1,7 @@
 {
   "load_failed": "この手順を読み込めませんでした",
   "retry": "再試行",
-  "loading_steps_other": "{count}件を取得中"
+  "loading_steps_other": "{count}件を取得中",
+  "run_clock": "直前のメッセージまたは作業開始から、次のメッセージ、作業終了、または現在までの時間です。",
+  "exchange_clock": "やり取りの開始から最後の動作までの時間です。進行中は現在までを計測します。"
 }

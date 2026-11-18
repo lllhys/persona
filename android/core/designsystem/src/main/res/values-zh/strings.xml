@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="designsystem_more">更多</string>
     <string name="designsystem_status_needs_you">需要你</string>
     <string name="designsystem_status_working">工作中</string>
     <string name="designsystem_status_unread">完成未看</string>
@@ -36,6 +37,7 @@
     <string name="designsystem_collapsed">已收起</string>
     <string name="designsystem_retry">重试</string>
     <string name="designsystem_back">返回</string>
+    <string name="designsystem_sidebar">侧边栏</string>
     <string name="designsystem_cancel">取消</string>
     <string name="designsystem_close">关闭</string>
     <string name="designsystem_done">完成</string>
@@ -137,7 +139,7 @@
     <string name="designsystem_row_style_two_lines">紧凑两行</string>
     <string name="designsystem_row_style_cards">色条卡片</string>
     <string name="designsystem_row_style_list">细列表</string>
-    <string name="designsystem_row_style_avatar_summary">头像、标题和时间，一行最新的话，再一行写它在哪儿跑。</string>
+    <string name="designsystem_row_style_avatar_summary">头像、标题和时间，两行最新的话，再一行写它在哪儿跑。</string>
     <string name="designsystem_row_style_two_lines_summary">每个 Agent 两行：标题和时间，再一行最新的话。</string>
     <string name="designsystem_row_style_cards_summary">每个 Agent 一张卡片，左边一条状态色；等你处理的那张整张淡蓝底。</string>
     <string name="designsystem_row_style_list_summary">每个 Agent 一行：状态、标题和时间。</string>
@@ -154,6 +156,9 @@
     <string name="designsystem_show_fewer">收起</string>
     <string name="designsystem_count_waiting_background">%1$d 个后台等待中</string>
     <string name="designsystem_machine_monitor">机器监控</string>
+    <!-- 一台电脑的项目页（iOS MachineSpacesView，#4338 A11）：打开它的胶囊，以及项目的置顶标记 -->
+    <string name="designsystem_machine_projects">%1$s 上的所有项目</string>
+    <string name="designsystem_project_pinned">已置顶</string>
     <string name="designsystem_details">详情</string>
     <string name="designsystem_space">空间</string>
     <string name="designsystem_repository">仓库</string>
@@ -191,6 +196,7 @@
     <string name="designsystem_channel_source">来自 %1$s</string>
     <string name="designsystem_series_separator">；</string>
     <string name="designsystem_plan_spoken">计划，第 %1$d 步，共 %2$d 步，%3$s</string>
+    <string name="designsystem_count_spoken">%1$s，%2$d</string>
     <string name="designsystem_plan_all_done">全部完成</string>
     <string name="designsystem_plan_step">Step %1$d/%2$d</string>
     <string name="designsystem_plan_item_done">已完成</string>
@@ -285,6 +291,9 @@
     <string name="designsystem_queue_actions">排队消息的操作</string>
     <string name="designsystem_queue_item">第 %1$d 条：%2$s</string>
     <string name="designsystem_queue_item_note">第 %1$d 条：%2$s。%3$s</string>
+    <plurals name="designsystem_queue_photos">
+        <item quantity="other">%1$d 张图片</item>
+    </plurals>
     <string name="designsystem_draft_ready">Persona 拟好了回复</string>
     <!-- Connection details (the title's sheet while the hub is out of reach) -->
     <string name="designsystem_connection_online">已连上 hub</string>
@@ -374,4 +383,15 @@
     <string name="designsystem_stepper_plus">增加</string>
     <string name="designsystem_copy_too_large">文本过大无法复制，请使用分享</string>
     <string name="designsystem_copied">已拷贝</string>
+    <string name="designsystem_shortcuts_title">键盘快捷键</string>
+    <string name="designsystem_shortcuts_send">发送消息</string>
+    <string name="designsystem_shortcuts_send_keys">Ctrl 或 ⌘ + Return</string>
+    <string name="designsystem_shortcuts_newline">换行</string>
+    <string name="designsystem_shortcuts_newline_keys">Return 或 Shift + Return</string>
+    <string name="designsystem_shortcuts_close">关闭最上层</string>
+    <string name="designsystem_shortcuts_close_keys">Esc</string>
+    <string name="designsystem_shortcuts_help">显示快捷键帮助</string>
+    <string name="designsystem_shortcuts_help_keys">Ctrl + /</string>
+    <string name="designsystem_shortcuts_terminal">终端优先接收</string>
+    <string name="designsystem_shortcuts_terminal_keys">Esc、Tab、Shift + Tab、Ctrl + C、方向键</string>
 </resources>

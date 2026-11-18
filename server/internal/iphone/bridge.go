@@ -119,6 +119,14 @@ func (b Bridge) Pair(ctx context.Context, udid, out string) (PairInfo, error) {
 	return info, nil
 }
 
+// RevealDeveloperMode is `bridge reveal-developer-mode --udid udid`: Developer Mode shown in the phone's Settings ›
+// Privacy & Security, where iOS keeps it hidden until a developer tool asks (#8199). The phone must be on the cable
+// and trust this computer; it turns nothing on.
+func (b Bridge) RevealDeveloperMode(ctx context.Context, udid string) error {
+	_, err := b.oneShot(ctx, "reveal-developer-mode", "--udid", udid)
+	return err
+}
+
 // Match is `bridge match --record path --identifier id --auth-tag tag`: whether the advertisement with that TXT
 // identifier and authTag is the phone the record was made with (the tag is keyed with a secret in the record).
 func (b Bridge) Match(ctx context.Context, recordPath string, svc Service) (bool, error) {

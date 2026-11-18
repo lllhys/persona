@@ -108,7 +108,8 @@ describe("a stored provider opened from a paste", () => {
     act(() => button(t("common.save")).click());
     await flush();
     expect(put()!.path).toMatch(/\/launchers\/gw_full$/);
-    expect(put()!.body!.models).toEqual([{ id: "example-5" }, { id: "example-5-air", context_window: 64000 }]);
+    // no_effort is named for every model: the hub clears a report the web leaves out (#8796)
+    expect(put()!.body!.models).toEqual([{ id: "example-5", no_effort: false }, { id: "example-5-air", context_window: 64000, no_effort: false }]);
     expect(put()!.body!.api_key).toBeUndefined();
   });
 

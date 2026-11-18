@@ -104,7 +104,22 @@ func (p *pages) source() wire.View {
 	case subscriptions.StateFailing, subscriptions.StateNeedsRecipe, subscriptions.StateRateLimited, subscriptions.StateNotConnected:
 		v.Sections = append(v.Sections, p.trouble(s))
 	}
-	v.Sections = append(v.Sections, p.switches(s.ID, s.Label, s.Recipe.Kind, p.schedule(s), s.ToInbox, s.ToKB, true, false))
+	dest := p.switches(s.ID, s.Label, s.Recipe.Kind, p.schedule(s), s.ToInbox, s.ToKB, true, false)
+	if s.Recipe.Mode == wire.ConnectorSubscriptionModeThings {
+		dest.Items = dest.Items[:1] // its rows are the Inbox's only: the knowledge base reads the source itself (#6296)
+	}
+	if subscriptions.IsMigration(s.ID) {
+		// A built-in's default subscription: switched on its built-in's page, its own switches kept off (#6345).
+		r := row("d.to_inbox", p.t("dest.to_inbox"))
+		r.Value = p.t("source.via_off")
+		if s.Migrated != nil {
+			r.Value = p.t("source.via_on")
+		}
+		r.Subtitle = p.t("source.via_detail", i18n.Args{"source": s.Label})
+		r.Action = open(state{P: pageBuiltin, C: s.Connector}, s.Label)
+		dest = wire.Section{Key: "dest", Title: p.t("source.dest"), Items: []wire.Component{r}}
+	}
+	v.Sections = append(v.Sections, dest)
 	freq := row("f.interval", p.t("source.interval"))
 	freq.Value = p.schedule(s)
 	freq.Action = open(state{P: pageInterval, ID: s.ID}, p.t("source.interval"))
@@ -122,6 +137,9 @@ func (p *pages) source() wire.View {
 	}
 	recipe := row("h.recipe", p.t("source.recipe"))
 	recipe.Subtitle = p.t("source.recipe_line", i18n.Args{"tool": toolTitle(src, s.Recipe.Tool), "origin": p.originShort(s.RecipeOrigin)})
+	if s.Recipe.Mode == wire.ConnectorSubscriptionModeThings { // no tool name for people: what the rows are (#6296)
+		recipe.Subtitle = p.t("source.recipe_line_things", i18n.Args{"origin": p.originShort(s.RecipeOrigin)})
+	}
 	recipe.Action = open(state{P: pageRecipe, ID: s.ID}, p.t("source.recipe"))
 	rules := row("h.rules", p.t("source.rules"))
 	rules.Subtitle = s.TriageRules
@@ -136,7 +154,7 @@ func (p *pages) source() wire.View {
 	if p.env.Builtin != nil { // who is muted of it, by sender (#5306), as a built-in source's
 		how.Items = append(how.Items, p.mutesRow(s.ID))
 	}
-	how.Items = append(how.Items, p.askRow("ask.line_subscription"))
+	how.Items = append(how.Items, p.askRows("ask.line_subscription")...)
 	v.Sections = append(v.Sections, how)
 	v.Sections = append(v.Sections, wire.Section{Key: "try", Items: []wire.Component{p.previewPress()}})
 	v.Sections = append(v.Sections, p.previewOf(s.Recipe.Kind, s.FallbackTier)...)
@@ -226,9 +244,9 @@ func (p *pages) newSource() wire.View {
 		own.Icon, own.IconColor = "check", "green"
 		other := row("h.pick", p.t("new.other"))
 		other.Action = open(state{P: pageTools, C: p.st.C, S: p.st.S}, p.t("title.tools"))
-		how.Items = []wire.Component{own, p.askRow("ask.line_source"), other}
+		how.Items = append(append([]wire.Component{own}, p.askRows("ask.line_source")...), other)
 	} else {
-		how.Items = []wire.Component{p.askRow("ask.line_source")}
+		how.Items = p.askRows("ask.line_source")
 		pick := row("h.pick", p.t("new.pick"))
 		pick.Subtitle = p.t("list.tools", i18n.Args{"count": subscribable(*src)})
 		pick.Icon, pick.IconColor = "search", "blue"
@@ -307,8 +325,15 @@ func (p *pages) recipe(dry *subscriptions.DryRun, dryErr error) wire.View {
 	other.Action = open(state{P: pageTools, ID: s.ID, C: s.Connector, S: s.Source}, p.t("title.tools"))
 	raw := row("x.raw", p.t("recipe.raw"))
 	raw.Action = open(state{P: pageRaw, ID: s.ID}, p.t("recipe.raw"))
+	edits := append(p.askRows("ask.line_recipe"), edit, other, raw)
+	switch {
+	case subscriptions.IsMigration(s.ID): // a built-in's default: its rows must stay the built-in's, so only tried (#6345)
+		edits = nil
+	case s.Recipe.Mode == wire.ConnectorSubscriptionModeThings:
+		edits = append(p.askRows("ask.line_recipe"), other, raw) // the setup form maps fields, which a things recipe has none of (#6296)
+	}
 	v.Sections = append(v.Sections, wire.Section{Key: "edit", Footer: p.origin(s) + " " + p.t("recipe.no_model"),
-		Items: []wire.Component{try, p.askRow("ask.line_recipe"), edit, other, raw}})
+		Items: append([]wire.Component{try}, edits...)})
 	return v
 }
 

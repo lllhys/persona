@@ -45,6 +45,15 @@
     <string name="notify_resume">Resume</string>
     <string name="notify_public_title">New message from Persona</string>
     <string name="notify_question_more_options">and %1$d more</string>
+    <string name="notify_extension_action_done_title">Extension action done</string>
+    <string name="notify_extension_action_failed_title">Extension action didn\'t finish</string>
+    <string name="notify_extension_action_expired_title">Notification expired</string>
+    <string name="notify_extension_action_unavailable">Couldn\'t reach the hub. Reconnect, then retry from the extension page.</string>
+    <string name="notify_extension_action_page_expired">This extension page is no longer available. Open the extension and try again.</string>
+    <string name="notify_extension_action_wrong_scope">Can\'t find the original hub or assistant. Reconnect, then retry from the extension page.</string>
+    <string name="notify_extension_action_failed_detail">The extension didn\'t finish the action. Open its page to check and retry.</string>
+    <string name="notify_extension_action_unconfirmed">Open the extension page to check the result. Don\'t run the action again.</string>
+    <string name="notify_extension_action_expired_detail">This notification has expired. Retry from the extension page.</string>
     <plurals name="notify_question_more">
         <item quantity="one">%1$d more question</item>
         <item quantity="other">%1$d more questions</item>

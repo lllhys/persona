@@ -138,6 +138,10 @@ func (s *server) handle(ctx context.Context, method string, params json.RawMessa
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, err
 		}
+		if it, ok := t.(connector.ImageTools); ok {
+			a, err := it.CallImages(ctx, p.Name, p.Args)
+			return CallResult{Text: a.Text, Images: a.Images}, err
+		}
 		text, err := t.Call(ctx, p.Name, p.Args)
 		return CallResult{Text: text}, err
 	case MActions:

@@ -1,0 +1,8 @@
+{
+  "unknown_subcommand": "不认识的 node 子命令 {command}：可用的有 --stdio、--attach、tailcat、doctor、reset-uid（{program} node -h 看用法）",
+  "extra_args": "node {subcommand} 不带参数，多了 {arguments}（{program} node -h 看用法）",
+  "tailcat_subcommand_required": "node tailcat 要跟 init 或 addr（{program} node -h 看用法）",
+  "tailcat_init_extra_args": "node tailcat init 只认 --hub 和 --derp-map-url，多了 {arguments}（{program} node -h 看用法）",
+  "unknown_tailcat_subcommand": "不认识的 node tailcat 子命令 {command}：可用的有 init、addr（{program} node -h 看用法）",
+  "reset_uid": "已换成新的机器 uid。重启这台电脑上的常驻 node（scripts/deploy/node-launchd.sh install 会重启它），hub 下次连上时就用新的。"
+}

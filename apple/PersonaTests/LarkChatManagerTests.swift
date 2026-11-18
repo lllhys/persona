@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 import UIKit
 @testable import Persona
+import PersonaWire
 
 /// An inbox item's chat reads, sends and summarizes through the item's manager (docs/assistant/managers.md "Grouping"):
 /// every request names it, a person or direct chat opened from it stays on it, the user it reads as, the messages it

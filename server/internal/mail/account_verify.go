@@ -28,6 +28,9 @@ func (s *Service) testAccount(ctx context.Context, a *MailAccount) error {
 		if _, ok := errors.AsType[userError](err); ok {
 			return err // already says what to fix; no protocol prefix in front of it
 		}
+		if ue := connectFailure(a.IMAPHost, a.IMAPPort, s.proxyFor(a) != nil, err); ue != nil {
+			return ue
+		}
 		return fmt.Errorf("imap: %w", err)
 	}
 	c.Close()
@@ -39,6 +42,9 @@ func (s *Service) testAccount(ctx context.Context, a *MailAccount) error {
 	if err := s.checkSMTP(ctx, a); err != nil {
 		if _, ok := errors.AsType[userError](err); ok {
 			return err
+		}
+		if ue := connectFailure(a.SMTPHost, a.SMTPPort, s.proxyFor(a) != nil, err); ue != nil {
+			return ue
 		}
 		return fmt.Errorf("smtp: %w", err)
 	}

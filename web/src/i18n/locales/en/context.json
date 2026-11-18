@@ -1,12 +1,8 @@
 {
-  "left": "{percent}% of the context left",
-  "used": "{percent}% used",
   "details": "Show agent details",
-  "details_hint": "Agent rows get a second line: model, context, idle time, folder. The session header always shows the model and a context bar. Off by default.",
-  "as_used": "Show context as used",
-  "as_used_hint": "Context shows how much is used (39% used) instead of how much is left (61% left); turns to a warning colour from 80%. Off by default.",
-  "header_left": "{percent}% context left",
-  "header_used": "{percent}% context used",
+  "details_hint": "Agent rows get a second line: model, context, idle time, folder. Off by default.",
+  "label": "Context {percent}%",
+  "summary": "Context {used}% used, {left}% left",
   "hint_ok": "Context is how much of this conversation the agent can keep in mind. When it runs out, it compacts on its own: earlier parts are kept only as a summary.",
   "hint_warn": "Almost full. When it fills up it compacts on its own and earlier parts are kept only as a summary. To wrap up first, send /compact to compact now, or start a new agent to carry on.",
   "tokens": "{used} / {window} tokens"

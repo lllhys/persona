@@ -14,7 +14,7 @@ export function RequestPage({ id, onToggleSidebar }: { id: string; onToggleSideb
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-4">
         <IconButton icon="sidebar" label={t("request-page.sidebar")} onClick={onToggleSidebar} className="lg:hidden" />
         <IconButton icon="chevronLeft" label={t("request-page.back")} onClick={() => navigate({ name: "home" })} />
-        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{t("request-page.title")}</h1>
+        <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-ink">{t("app.title_request")}</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl p-3 sm:p-4">

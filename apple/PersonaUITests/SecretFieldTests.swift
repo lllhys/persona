@@ -72,7 +72,7 @@ final class SecretFieldTests: XCTestCase {
         type(secret(app, "launcher.editor.key", "API Key"), "sk-example-\(Int.random(in: 1000...9999))", in: app, submit: false)
         type(field(app, "默认模型"), "claude-opus-5-5", in: app)
         shot(app, "launcher")
-        app.navigationBars["新增供应商"].buttons["保存"].tap()
+        app.navigationBars["新增供应商"].buttons["launcher-save"].tap()
         XCTAssertTrue(app.navigationBars["新增供应商"].waitForNonExistence(timeout: 10), "the sheet stays:\n\(app.debugDescription)")
         PasswordPrompt.assertNone(app, "a launcher's API key")
         let launchers = (get("/api/v1/launchers") as? [String: Any])?["launchers"] as? [[String: Any]] ?? []
@@ -90,7 +90,7 @@ final class SecretFieldTests: XCTestCase {
         type(nameField, name, in: app)
         type(secret(app, "launcher.preset.key", "API Key"), "sk-example-\(Int.random(in: 1000...9999))", in: app, submit: false)
         shot(app, "preset")
-        app.navigationBars["新增供应商"].buttons["保存"].tap()
+        app.navigationBars["新增供应商"].buttons["launcher-save"].tap()
         XCTAssertTrue(app.navigationBars["新增供应商"].waitForNonExistence(timeout: 10), "the sheet stays:\n\(app.debugDescription)")
         PasswordPrompt.assertNone(app, "a plugin provider's API key")
         let launchers = (get("/api/v1/launchers") as? [String: Any])?["launchers"] as? [[String: Any]] ?? []

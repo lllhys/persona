@@ -10,16 +10,19 @@ import (
 
 func (p *Proxy) handler(fixed string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ext := fixed
-		if ext == "" {
-			ext = p.who(r)
+		ext, chk := fixed, (*check)(nil)
+		switch {
+		case ext == "":
+			ext, chk = p.who(r)
 			if ext == "" {
 				w.Header().Set("Proxy-Authenticate", `Basic realm="persona"`)
 				http.Error(w, "persona: this proxy is for the hub's extensions", http.StatusProxyAuthRequired)
 				return
 			}
+		case r.URL.Path != RuntimeFetchPath:
+			chk = p.checkOf(r, fixed) // a sandbox's socket says who it is; a check's credential says which check
 		}
-		ctx, finish, live := p.requestLifetime(r.Context(), ext)
+		ctx, finish, live := p.requestLifetime(r.Context(), ext, chk)
 		if !live {
 			http.Error(w, "extension registration unavailable", http.StatusForbidden)
 			return
@@ -37,6 +40,9 @@ func (p *Proxy) handler(fixed string) http.Handler {
 		if !ok {
 			http.Error(w, "persona: this extension is not running", http.StatusForbidden)
 			return
+		}
+		if chk != nil {
+			rule.Targets = chk.targets // what the proposed settings name, in place of the saved ones
 		}
 		broker, _ := r.Context().Value(runtimeFetchKey{}).(bool)
 		hostport := r.Host
@@ -81,6 +87,11 @@ func (p *Proxy) handler(fixed string) http.Handler {
 				} else {
 					allowed, configured = true, true
 				}
+			}
+			// A host the owner allowed is reached the way a settings address is (dialConfigured): never this machine
+			// by name, and each answer of its name checked (#5697).
+			if !allowed && rule.owned(host, port) && !IsLoopbackHost(host) {
+				allowed, configured = true, true
 			}
 		}
 		p.count(ext, host, allowed)

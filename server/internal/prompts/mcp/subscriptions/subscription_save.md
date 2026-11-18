@@ -15,7 +15,7 @@ Create, change or delete a subscription for the user. Each save puts a card on t
     "interval_seconds": {"type": "integer", "description": "how often to pull, at least 300 and the source's minimum (a snapshot at least 3600)"},
     "daily_at": {"type": "string", "description": "a snapshot's daily time, HH:MM in the user's zone; \"\" to use interval_seconds"},
     "triage_rules": {"type": "string", "description": "rules for triaging its items in the Inbox; \"\" for the extension's or the Inbox's own"},
-    "fallback_tier": {"type": "string", "enum": ["", "fyi", "action", "wait"], "description": "without a triage model: \"\" FYI (Needs you with a due date), fyi, action, or wait for the model"},
+    "fallback_tier": {"type": "string", "enum": ["fyi", "action", "wait"], "description": "without a triage model: fyi, action, wait for the model, or \"\" to clear (FYI; Needs you if due)"},
     "to_inbox": {"type": "boolean", "description": "add its items to the Inbox"},
     "to_kb": {"type": "boolean", "description": "save its items to the knowledge base"},
     "pause": {"type": "boolean", "description": "turn both destinations off"},

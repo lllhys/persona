@@ -17,7 +17,9 @@
 // (Stop <agent> on the line) → the orb interrupts the voice (the mock answers clear, queued audio is stopped) → link
 // paused / live → the question card marked "Asking by voice" → the late caption put before the answer → the second
 // instruction refused for the computer's unsent line, Clear and send (the mock gets clear_draft) → the result read
-// out → the browser suspends the audio (Voice ended · Continue) → Continue (history and resume in the new start) → End.
+// out → mute and unmute → an instruction nobody was heard asking for, held back by the user-speech gate, Send anyway
+// (the mock's /mock/voice2?unprompted=1, #5904) → the browser suspends the audio (Voice ended · Continue) → Continue
+// (history and resume in the new start) → End.
 // It checks that 20 ms PCM16 frames of 640 bytes reached the mock, that they keep coming as silence while muted and
 // carry sound again after Unmute, that they come at 50 a second all along (at pace 1 the call is held until that spans
 // 40 s, the muted window included: Chrome moved a capture context whose output was exact silence for 30 s to a sink
@@ -415,6 +417,24 @@ try {
         return now.audio - now.audio_silent > muteTo.audio - muteTo.audio_silent;
       }, 10_000, "the microphone again after Unmute");
       run.checks.push(`muted: ${muted} frames, all silence; unmuted: sound again`);
+
+      // the voice hands over something nobody was heard asking for (#5904): held back, worded as not heard, never as
+      // someone else's, and Send anyway sends it under its id
+      await fetch(new URL("/mock/voice2?unprompted=1", hub));
+      await lineKind("notSent");
+      const anyway = page.locator('[data-voice-action="sendAnyway"]');
+      await anyway.waitFor();
+      assert.equal((await anyway.textContent()).trim(), L.action_send_anyway);
+      // quoted (the mock's task), so Send anyway confirms words the user can see
+      assert.ok((await line.textContent()).includes(L.not_sent_unprompted_quoted.replace("{task}", "顺便发布新版本")), `${name}: the held-back line says why, and what`);
+      await shot("unprompted");
+      await singleLineButtons("unprompted");
+      const heldFrom = (await mockLog()).resends.length;
+      await anyway.click();
+      await until(async () => (await mockLog()).resends.length > heldFrom, 10_000, "Send anyway's resend");
+      assert.deepEqual((await mockLog()).resends.at(-1), { id: "voice-9a4c2e7b1d3f5086", clear_draft: null }, `${name}: Send anyway resends it`);
+      await page.waitForFunction(() => document.querySelector('[data-testid="voice-line"]')?.getAttribute("data-kind") !== "notSent", null, { timeout: 10_000 });
+      run.checks.push("held back (unprompted), Send anyway");
 
       // 50 frames a second from ready to here, the muted window included; at pace 1 over 40 s at least
       const hold = uplink.from + (UPLINK_SECONDS + 1) * 1000 - performance.now();

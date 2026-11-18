@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +139,8 @@ func TestProvisionManagerDBIsIdempotent(t *testing.T) {
 }
 
 // A container is made running postgres with ServerArgs after the image (lz4 for the WAL's full page images, fewer
-// checkpoints), and scripts/deploy/db.sh makes the hub's with the same.
+// checkpoints), and every docker run of that image in scripts/deploy/db.sh passes the same arguments. A continuation,
+// a redirect or the if/then around the run is shell, not a server argument.
 func TestCreateRunsPostgresWithServerArgs(t *testing.T) {
 	f := &fake{}
 	c := &Container{Name: "persona-postgres", Volume: "persona-pgdata", Port: 18661, Run: f.run}
@@ -153,8 +155,229 @@ func TestCreateRunsPostgresWithServerArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(dbSh), "\n    "+Image+" "+strings.Join(ServerArgs, " ")+" >/dev/null\n") {
-		t.Errorf("scripts/deploy/db.sh does not start %s with %v", Image, ServerArgs)
+	if err := dbShServerArgsMismatch(string(dbSh)); err != nil {
+		t.Error(err)
+	}
+}
+
+// The guard matches ServerArgs exactly. Another line ending or conditional still passes; a missing, different, extra
+// or reordered argument does not, and a comment that only mentions the image is not a docker run.
+func TestDBShServerArgsGuardIsExact(t *testing.T) {
+	args := Image + " " + strings.Join(ServerArgs, " ")
+	for _, tc := range []struct {
+		name    string
+		script  string
+		wantErr bool
+	}{
+		{"conditional", "if ! docker run -d \\\n    " + args + " >/dev/null; then\n  exit 1\nfi\n", false},
+		{"redirect only", "docker run " + args + " >/dev/null\n", false},
+		{"crlf", "docker run " + args + " >/dev/null\r\n", false},
+		{"two runs", "docker run " + args + "\ndocker run " + args + " >/dev/null; then\n", false},
+		{"missing", "docker run " + Image + " postgres -c wal_compression=lz4 >/dev/null\n", true},
+		{"different", "docker run " + Image + " postgres -c wal_compression=off -c checkpoint_timeout=15min\n", true},
+		{"extra", "docker run " + args + " -c max_connections=10 >/dev/null\n", true},
+		{"reordered", "docker run " + Image + " postgres -c checkpoint_timeout=15min -c wal_compression=lz4\n", true},
+		{"second run differs", "docker run " + args + "\ndocker run " + Image + " postgres\n", true},
+		{"comment only", "# docker run " + args + "\n", true},
+		{"other image", "docker run postgres:16\n", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := dbShServerArgsMismatch(tc.script)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected a mismatch")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// dbShServerArgsMismatch reports when script does not pass exactly ServerArgs after Image on every docker run of that
+// image. No such run is a mismatch. Backslash continuations are joined first; redirects and other shell terminators
+// (;, &&, ||, |, &) are not arguments.
+func dbShServerArgsMismatch(script string) error {
+	var runs [][]string
+	for _, line := range logicalShellLines(script) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		rest := line
+		for strings.TrimSpace(rest) != "" {
+			args, next := splitSimpleCommand(rest)
+			if next == rest {
+				break
+			}
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] != "docker" || args[i+1] != "run" {
+					continue
+				}
+				for j := i + 2; j < len(args); j++ {
+					if args[j] == Image {
+						runs = append(runs, slices.Clone(args[j+1:]))
+						break
+					}
+				}
+				break
+			}
+			rest = next
+		}
+	}
+	if len(runs) == 0 {
+		return fmt.Errorf("scripts/deploy/db.sh does not start %s with %v", Image, ServerArgs)
+	}
+	for _, args := range runs {
+		if !slices.Equal(args, ServerArgs) {
+			return fmt.Errorf("scripts/deploy/db.sh runs %s with %q, want %q", Image, args, ServerArgs)
+		}
+	}
+	return nil
+}
+
+// logicalShellLines joins a trailing backslash with the next line and turns CR LF into LF.
+func logicalShellLines(script string) []string {
+	script = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(script)
+	raw := strings.Split(script, "\n")
+	lines := make([]string, 0, len(raw))
+	var b strings.Builder
+	for _, line := range raw {
+		if strings.HasSuffix(line, "\\") {
+			b.WriteString(line[:len(line)-1])
+			b.WriteByte(' ')
+			continue
+		}
+		b.WriteString(line)
+		lines = append(lines, b.String())
+		b.Reset()
+	}
+	if b.Len() > 0 {
+		lines = append(lines, b.String())
+	}
+	return lines
+}
+
+// splitSimpleCommand returns the words of the first simple command in s, without its redirects, and the text after
+// the terminator that ended it. Quotes are shell syntax: the word is what the program receives.
+func splitSimpleCommand(s string) (args []string, rest string) {
+	var b strings.Builder
+	inWord := false
+	var quote byte
+	flush := func() {
+		if inWord {
+			args = append(args, b.String())
+			b.Reset()
+			inWord = false
+		}
+	}
+	skipTarget := func(i int) int {
+		if i >= len(s) {
+			return i
+		}
+		if s[i] == '\'' || s[i] == '"' {
+			q := s[i]
+			i++
+			for i < len(s) && s[i] != q {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+			return i
+		}
+		for i < len(s) && s[i] != ' ' && s[i] != '\t' && !isShellMeta(s[i]) {
+			i++
+		}
+		return i
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == quote {
+				quote = 0
+			} else if c == '\\' && quote == '"' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			} else {
+				b.WriteByte(c)
+			}
+			inWord = true
+			continue
+		}
+		if c == '\\' && i+1 < len(s) {
+			i++
+			b.WriteByte(s[i])
+			inWord = true
+			continue
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			inWord = true
+			continue
+		}
+		if c == ' ' || c == '\t' {
+			flush()
+			continue
+		}
+		if c == '#' {
+			flush()
+			return args, ""
+		}
+		if c == ';' {
+			flush()
+			return args, s[i+1:]
+		}
+		if c == '&' && i+1 < len(s) && s[i+1] == '>' {
+			flush()
+			i += 2
+			for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+				i++
+			}
+			i = skipTarget(i) - 1
+			continue
+		}
+		if c == '&' || c == '|' {
+			flush()
+			if i+1 < len(s) && s[i+1] == c {
+				return args, s[i+2:]
+			}
+			return args, s[i+1:]
+		}
+		if c == '>' || c == '<' {
+			flush()
+			i++
+			if i < len(s) && (s[i] == '>' || s[i] == '&' || s[i] == '|') {
+				i++
+			}
+			for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
+				i++
+			}
+			i = skipTarget(i) - 1
+			continue
+		}
+		if c >= '0' && c <= '9' && !inWord {
+			j := i
+			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+				j++
+			}
+			if j < len(s) && (s[j] == '>' || s[j] == '<') {
+				i = j - 1
+				continue
+			}
+		}
+		b.WriteByte(c)
+		inWord = true
+	}
+	flush()
+	return args, ""
+}
+
+func isShellMeta(c byte) bool {
+	switch c {
+	case ';', '|', '&', '>', '<', '#':
+		return true
+	default:
+		return false
 	}
 }
 

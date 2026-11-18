@@ -30,13 +30,15 @@ class HttpChatComposerService internal constructor(
     private val hubScope: HubScope,
     private val transport: MessageTransport,
     private val request: suspend (String, RequestBody, Map<String, String>) -> Response,
-    /** A refusal retry's delivery, with the operation id the retry goes under. */
-    private val onRetryDelivery: suspend (String, ComposerDelivery, String) -> Unit = { _, _, _ -> },
+    /** This hub's current features; empty before the first hello, when attachment retention is still worth trying. */
+    private val features: () -> Set<String> = { emptySet() },
+    /** A refusal retry's delivery, operation id, and actual transport result (null until a final response). */
+    private val onRetryDelivery: suspend (String, ComposerDelivery, String, MessageTransportResult?) -> Unit = { _, _, _, _ -> },
     private val onPairingExpired: () -> Unit = {},
 ) : ChatComposerService, MessageTransport by transport {
     constructor(
         hubScope: HubScope, transport: MessageTransport, connection: OkHttpHubConnection, token: String,
-        onRetryDelivery: suspend (String, ComposerDelivery, String) -> Unit,
+        onRetryDelivery: suspend (String, ComposerDelivery, String, MessageTransportResult?) -> Unit,
         onPairingExpired: () -> Unit,
         isCurrent: () -> Boolean = { true },
     ) :
@@ -59,7 +61,7 @@ class HttpChatComposerService internal constructor(
                         throw HubFailure(HubError.Transport, "Route changed before receipt")
                     }
                 }
-        }, onRetryDelivery, onPairingExpired)
+        }, { connection.serverFeatures.value }, onRetryDelivery, onPairingExpired)
 
     override val deliveries = MutableStateFlow<Map<String, ComposerDelivery>>(emptyMap())
     private val refused = mutableMapOf<String, MessageRequest>()
@@ -88,6 +90,9 @@ class HttpChatComposerService internal constructor(
                         record(message, ComposerDelivery(DeliveryState.Unknown))
                         return@use MessageTransportResult.NoReceipt
                     }
+                    try { transport.onAccepted(message.session, fields) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { /* Confirmed delivery survives a metadata presentation failure. */ }
                     refused.remove(message.clientMessageId)
                     record(message, ComposerDelivery(DeliveryState.Sent))
                     MessageTransportResult.Accepted
@@ -132,28 +137,52 @@ class HttpChatComposerService internal constructor(
         // The refused id is spent: the hub answers it again from its first try (the 409, or op_id_reused once
         // clear_draft is added), so the retry goes under a new one, as on iOS.
         val retry = original.copy(clearDraft = clearable, opId = UUID.randomUUID().toString())
-        onRetryDelivery(clientMessageId, ComposerDelivery(DeliveryState.Sending), retry.opId)
+        onRetryDelivery(clientMessageId, ComposerDelivery(DeliveryState.Sending), retry.opId, null)
         record(original, ComposerDelivery(DeliveryState.Sending))
         val result = try { sendLocked(retry) }
         catch (cancelled: CancellationException) {
             val unknown = ComposerDelivery(DeliveryState.Unknown)
             record(original, unknown)
-            withContext(NonCancellable) { onRetryDelivery(clientMessageId, unknown, retry.opId) }
+            withContext(NonCancellable) { onRetryDelivery(clientMessageId, unknown, retry.opId, null) }
             throw cancelled
         }
         if (result == MessageTransportResult.NotSent) record(original, ComposerDelivery(DeliveryState.Refused, refusal))
-        deliveries.value.getValue(clientMessageId).also { onRetryDelivery(clientMessageId, it, retry.opId) }
+        deliveries.value.getValue(clientMessageId).also { onRetryDelivery(clientMessageId, it, retry.opId, result) }
     }
 
-    override suspend fun upload(session: SessionKey, name: String, file: File): String {
+    override suspend fun upload(session: SessionKey, name: String, file: File): String =
+        uploadToComputer(session, name, file, null)
+
+    override suspend fun upload(session: SessionKey, name: String, file: File, destination: String): String =
+        uploadToComputer(session, name, file, destination)
+
+    private suspend fun uploadToComputer(session: SessionKey, name: String, file: File, requestedDestination: String?): String {
         if (!readyToSend.value) throw ComposerOperationException(CoreText.of(Key.ComposerUploadOffline))
         if (file.length() > 200L * 1024 * 1024) throw ComposerOperationException(CoreText.of(Key.ComposerFileTooLarge, 200))
-        val url = path("machines", session.machineId, "files").addQueryParameter("name", name).build()
+        // An explicit destination such as Health wins. Ordinary chat files use persistent storage where the hub supports
+        // it, or before its features arrive; a known older hub keeps the previous temporary destination.
+        val destination = if (requestedDestination == "attachment" && features().isNotEmpty() && "upload_attachment" !in features()) null
+            else requestedDestination
+        return try {
+            uploadOnce(session, name, file, destination)
+        } catch (_: UnknownUploadDestination) {
+            // The reference clients retry only this file, once. A later upload makes its own feature-based choice.
+            uploadOnce(session, name, file, null)
+        }
+    }
+
+    private suspend fun uploadOnce(session: SessionKey, name: String, file: File, destination: String?): String {
+        val url = path("machines", session.machineId, "files").addQueryParameter("name", name)
+            .apply { destination?.let { addQueryParameter("dest", it) } }.build()
         return request(url.encodedPath + "?" + url.encodedQuery,
             file.asRequestBody("application/octet-stream".toMediaType()), emptyMap()).use { response ->
             if (!response.isSuccessful) {
                 val failure = HubFailure.from(response)
                 if (failure.kind == HubError.PairingExpired) onPairingExpired()
+                if (destination == "attachment" && response.code == 400 &&
+                    listOfNotNull(failure.message, failure.detail, failure.body).any { it.contains("unknown dest", ignoreCase = true) }) {
+                    throw UnknownUploadDestination
+                }
                 throw ComposerOperationException(CoreText.of(when {
                     response.code == 404 -> Key.UploadHubUnsupported
                     failure.code == "node_outdated" -> Key.UploadNodeOutdated
@@ -166,6 +195,8 @@ class HttpChatComposerService internal constructor(
             }
         }
     }
+
+    private object UnknownUploadDestination : Exception()
 
     override suspend fun interrupt(session: SessionKey) {
         if (!readyToSend.value) throw ComposerOperationException(CoreText.of(Key.ComposerInterruptOffline))

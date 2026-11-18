@@ -1,0 +1,21 @@
+{
+  "offline": "离线",
+  "deploy_failed": "更新失败",
+  "memory": "内存紧张",
+  "disk": "磁盘快满",
+  "cpu": "CPU 繁忙",
+  "load": "负载偏高",
+  "launcher": "启动器异常",
+  "mismatch": "版本不一致",
+  "updating": "正在更新",
+  "with_value": "{name} · {value}",
+  "per_core": "每核 {value}",
+  "severity_critical": "严重",
+  "severity_warning": "注意",
+  "severity_info": "提示",
+  "spoken": "{severity}：{label}",
+  "gap_days_other": "{count} 天",
+  "gap_hours_other": "{count} 小时",
+  "gap_minutes_other": "{count} 分钟",
+  "offline_check": "离线 · 排查"
+}

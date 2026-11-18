@@ -30,6 +30,9 @@ import kotlinx.coroutines.launch
  */
 data class MailAiContext(val itemId: String, val message: MailMessage, val text: String)
 
+/** The page's saved selection when the item still lists it, else its newest message. */
+internal fun mailUidToLoad(selected: Long?, uids: List<Long>): Long = selected?.takeIf { it in uids } ?: uids.last()
+
 @Composable
 fun MailScreen(
     repository: InboxRepository,
@@ -59,7 +62,7 @@ private fun MailDetail(
     var loadedTarget by remember { mutableStateOf<MailReplyTarget?>(null) }
     var replyTarget by remember { mutableStateOf<MailReplyTarget?>(null) }
     var message by remember { mutableStateOf<MailMessage?>(null) }
-    var selected by rememberSaveable(transport?.scope, route.itemId) { mutableStateOf<Long?>(null) }
+    var selected by rememberSaveable(transport?.scope, route.itemId) { mutableStateOf<Long?>(route.uid) }
     var reload by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -150,14 +153,17 @@ private fun MailDetail(
     LaunchedEffect(transport, route.itemId, selected, reload) {
         if (transport == null) return@LaunchedEffect
         loading = true
-        if (selected != null && message?.uid != selected) message = null
+        reference?.let { ref ->
+            // An unlisted route UID already shows its newest-message fallback; a reload must not clear that body.
+            if (selected != null && message?.uid != mailUidToLoad(selected, ref.uids)) message = null
+        }
         error = null
         try {
             val item = transport.item(InboxItemKey.hubId(route.itemId))
             val ref = requireNotNull(item.mail)
             reference = ref
             loadedTarget = item.replyTarget
-            val uid = selected?.takeIf { it in ref.uids } ?: ref.uids.last()
+            val uid = mailUidToLoad(selected, ref.uids)
             val loaded = transport.message(ref, uid)
             message = loaded
             // Opening it marks it read

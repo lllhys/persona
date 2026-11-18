@@ -10,5 +10,11 @@
   "engine_dialog_body": "The new Agent engine continues through a handoff summary, so reasoning and other content cannot be guaranteed to carry over perfectly; switching back still lets you continue the original engine's session. Switching also interrupts the prompt cache once and may increase token usage.",
   "engine_dialog_skip": "Don't remind me again",
   "engine_dialog_switch": "Switch Agent",
-  "engine_dialog_keep": "Keep Current Agent"
+  "engine_dialog_keep": "Keep Current Agent",
+  "effort_next_turn": "Thinking effort changes apply to the next turn, without interrupting the current turn.",
+  "effort_offline": "This session is offline. Reopen it to change thinking effort.",
+  "effort_parent": "The parent Agent controls this session's thinking effort.",
+  "effort_read_only": "This session is read-only. Change thinking effort in the app that owns it.",
+  "effort_model_fixed": "This model does not offer adjustable thinking effort.",
+  "effort_terminal": "This Codex session has no shared control connection. Change thinking effort in its terminal."
 }

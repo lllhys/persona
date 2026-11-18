@@ -334,7 +334,7 @@ func TestAutoReviewTickEndsAndTimesOut(t *testing.T) {
 		t.Fatalf("past the deadline: %q %+v", v.State, v.AutoReview)
 	}
 	waitFor(t, "the supervisor's message", func() bool { return len(f2.notices()) == 1 })
-	if msg := f2.notices()[0]; !strings.Contains(msg, "没评审成（评审超时），照常自己核对") {
+	if msg := f2.notices()[0]; !strings.Contains(msg, "signal=review") || !strings.Contains(msg, "没评审成（评审超时）") {
 		t.Fatalf("message:\n%s", msg)
 	}
 }

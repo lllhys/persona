@@ -23,6 +23,23 @@ class HttpTasksApiTest {
         }, kotlinx.coroutines.flow.MutableStateFlow(if (lookup) setOf("sessions_lookup") else emptySet()))
     }
 
+    @Test fun lnModeAndInterceptsUseThePushRoutesAndSkipMalformedRows() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"enabled":true}"""))
+            server.enqueue(MockResponse().setBody("""{"intercepts":[
+                {"at":"2026-11-14T01:00:00.123456789Z","level":"P1","reason":"ln_p1_held","title":"One","future":true},
+                {"at":17,"level":"P2","reason":"ln_p2_silent"},
+                {"at":"2026-11-14T02:00:00Z","level":"P2","reason":"ln_p2_silent","body":"Two"}
+            ]}"""))
+            val api = api(server)
+            assertEquals(true, api.lnMode().enabled)
+            val rows = api.pushIntercepts().intercepts
+            assertEquals(listOf("One", "Two"), rows.map { it.title ?: it.body })
+            assertEquals("/api/v1/push/ln-mode", server.takeRequest().path)
+            assertEquals("/api/v1/push/intercepts", server.takeRequest().path)
+            assertEquals("2026-11-14T01:00:00.123456789Z", rows.first().at)
+        }
+    }
     @Test fun boundAgentLookupEscapesExactIdentityAndRejectsAnUnrelatedRow() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"sessions":[{"machine_id":"box","session_id":"original/1","state":"working"}]}"""))
@@ -86,6 +103,51 @@ class HttpTasksApiTest {
             assertEquals("POST", request.method)
             assertEquals("/api/v1/later/question%2Fone/handled", request.path)
             assertEquals("{}", request.body.readUtf8())
+        }
+    }
+
+    /** #4929: Always and Not now name the suggestion as one escaped segment; what Always made comes back, a stale one is 404. */
+    @Test fun aSuggestedRuleIsAnsweredOnItsTwoRoutes() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody(
+                """{"ok":true,"kind":"standing_authorization","creates":"standing_authorization","authorization":{"id":"a1"},"revision":2}"""))
+            val made = api(server).ruleAlways("rs_merge/one")
+            val always = server.takeRequest()
+            assertEquals("POST", always.method)
+            assertEquals("/api/v1/assistant/rule-suggestions/rs_merge%2Fone/always", always.path)
+            assertEquals("{}", always.body.readUtf8())
+            assertEquals("standing_authorization", made.creates)
+            assertEquals("standing_authorization", made.kind)
+            server.enqueue(MockResponse().setBody("""{"ok":true,"kind":"delegate","creates":"","setting":"agents.delegate"}"""))
+            val delegate = api(server).ruleAlways("rs_delegate")
+            assertEquals("", delegate.creates)
+            assertEquals("agents.delegate", delegate.setting)
+            server.takeRequest()
+            server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+            api(server).ruleNotNow("rs_merge/one")
+            val notNow = server.takeRequest()
+            assertEquals("POST", notNow.method)
+            assertEquals("/api/v1/assistant/rule-suggestions/rs_merge%2Fone/not-now", notNow.path)
+            server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"This suggestion is no longer available."}"""))
+            try { api(server).ruleAlways("rs_merge/one"); fail("a stale suggestion was not refused") }
+            catch (error: HubFailure) { assertEquals(404, error.status) }
+        }
+    }
+
+    @Test fun seenAndUndoUseTheExactTodoRouteAndAnswer() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"todo":{"id":"todo/one","title":"Release notes","seen_at":"2026-11-05T09:31:00Z"}}"""))
+            val seen = api(server).setTodoSeen("todo/one", true)
+            val put = server.takeRequest()
+            assertEquals("PUT", put.method)
+            assertEquals("/api/v1/todos/todo%2Fone/seen", put.path)
+            assertEquals("2026-11-05T09:31:00Z", seen.seenAt)
+            server.enqueue(MockResponse().setBody("""{"todo":{"id":"todo/one","title":"Release notes"}}"""))
+            val unseen = api(server).setTodoSeen("todo/one", false)
+            val delete = server.takeRequest()
+            assertEquals("DELETE", delete.method)
+            assertEquals("/api/v1/todos/todo%2Fone/seen", delete.path)
+            assertNull(unseen.seenAt)
         }
     }
 
@@ -305,6 +367,22 @@ class HttpTasksApiTest {
             assertEquals("""{"due_date":"2026-11-19"}""", server.takeRequest().body.readUtf8())
             assertEquals("2026-11-19", day.dueDate)
             assertNull(day.dueAt)
+        }
+    }
+
+    // #4200: a to-do made on the calendar is due where it was tapped, by the moment or the day; without one, neither is sent.
+    @Test fun aNewTodoCarriesTheDueDateItWasMadeWith() = runBlocking {
+        MockWebServer().use { server ->
+            repeat(3) { server.enqueue(MockResponse().setBody("""{"todo":{"id":"t$it","title":"Call the bank"}}""")) }
+            api(server).createTodo("Call the bank", due = persona.core.contracts.TodoDue.At(java.time.Instant.parse("2026-11-19T06:30:00Z")))
+            val atReq = server.takeRequest()
+            assertEquals("POST", atReq.method)
+            assertEquals("/api/v1/todos", atReq.path)
+            assertEquals("""{"title":"Call the bank","notes":"","due_at":"2026-11-19T06:30:00Z"}""", atReq.body.readUtf8())
+            api(server).createTodo("Call the bank", due = persona.core.contracts.TodoDue.Day(java.time.LocalDate.parse("2026-11-19")))
+            assertEquals("""{"title":"Call the bank","notes":"","due_date":"2026-11-19"}""", server.takeRequest().body.readUtf8())
+            api(server).createTodo("Call the bank")
+            assertEquals("""{"title":"Call the bank","notes":""}""", server.takeRequest().body.readUtf8())
         }
     }
 

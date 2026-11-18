@@ -7,6 +7,8 @@
     <string name="assistant_profile">助手资料</string>
     <string name="assistant_got_it">知道了</string>
     <string name="assistant_composer_placeholder">问 %1$s…</string>
+    <string name="assistant_model_setup_title">助手还没接上模型</string>
+    <string name="assistant_model_setup_detail">助手在「%1$s」上运行，当前的 Claude Code 配置还没接上模型。你可以选择已有供应商，或添加你正在用的网关。</string>
     <string name="assistant_info_settings">助手设置</string>
     <string name="assistant_info_knowledge">知识库</string>
     <string name="assistant_info_schedule">定时任务</string>
@@ -32,6 +34,8 @@
     <string name="assistant_voice_chat">语音对话</string>
     <string name="assistant_compact">压缩上下文</string>
     <string name="assistant_new_main">新建主对话</string>
+    <string name="assistant_clear_context">清理上下文</string>
+    <string name="assistant_clear_context_failed">没能清理上下文：%1$s</string>
     <string name="assistant_archive">归档</string>
     <string name="assistant_archived">已归档</string>
     <string name="assistant_copy_session_id">拷贝会话 ID</string>
@@ -70,13 +74,24 @@
     <string name="assistant_greeting_noon">中午好</string>
     <string name="assistant_greeting_afternoon">下午好</string>
     <string name="assistant_greeting_evening">晚上好</string>
-    <string name="assistant_home_lead">消息、日程和手头的事，都可以交给我。</string>
-    <string name="assistant_home_note">发出的内容会进入主对话，离线时先保存在本机。</string>
+    <string name="assistant_home_lead_main">这是你的主对话：我会记住这里聊过的事。我能看你的电脑、手机、邮箱、飞书和整理好的项目，也能替你盯着事、到点提醒。</string>
+    <string name="assistant_home_lead_side">开一段新的旁支对话。我能看你的电脑、手机、邮箱、飞书和整理好的项目，也能替你盯着事、到点提醒。</string>
+    <string name="assistant_time_just_now">刚刚</string>
+    <plurals name="assistant_time_minutes_ago">
+        <item quantity="other">%1$d 分钟前</item>
+    </plurals>
+    <string name="assistant_time_yesterday">昨天</string>
     <string name="assistant_online_devices">在线设备</string>
     <string name="assistant_this_phone">这台手机</string>
     <string name="assistant_phone_tools_unavailable">手机工具暂不可用</string>
     <string name="assistant_phone_permissions_pending">手机权限待确认</string>
     <string name="assistant_search_chats">搜索对话</string>
+    <string name="assistant_hide_sidebar">隐藏侧边栏</string>
+    <string name="assistant_search_partial">较早的对话还在整理，可能有些暂时搜不到。</string>
+    <plurals name="assistant_full_search_chats">
+        <item quantity="other">%1$d 个对话</item>
+    </plurals>
+    <string name="assistant_full_search_no_results">没有找到“%1$s”</string>
     <string name="assistant_start_main">开始主对话</string>
     <string name="assistant_main_chat">主对话</string>
     <!-- The drawer's newest eligible chats, between 常驻 and All chats (#4922, #5196) -->
@@ -101,8 +116,13 @@
     <string name="assistant_open_settings">设置</string>
     <string name="assistant_make_leader">设为常驻</string>
     <string name="assistant_end_leader">取消常驻</string>
-    <string name="assistant_leader_working">在做 %1$d</string>
+    <string name="assistant_make_leader_title">设为常驻？</string>
+    <string name="assistant_make_leader_text">这个对话会移到常驻区，不再出现在「最近」。</string>
+    <string name="assistant_end_leader_title">取消常驻？</string>
+    <string name="assistant_end_leader_text">「%1$s」会回到「最近」；还在办的任务交还主对话督办，不会关闭或删除。</string>
     <string name="assistant_leader_needs_you">等你 %1$d</string>
+    <string name="assistant_direction_todos_of">%1$s 的待办</string>
+    <string name="assistant_direction_agents_of">%1$s 的 Agent</string>
     <string name="assistant_conversation_actions">对话操作</string>
     <string name="assistant_demo_title">体验模式</string>
     <string name="assistant_demo_notice">内容仅保存在本次体验中。</string>
@@ -163,6 +183,16 @@
     <string name="assistant_rename_field">会话名</string>
     <string name="assistant_save">保存</string>
     <string name="assistant_renamed">已重命名</string>
+    <string name="assistant_edit_tags_menu">编辑标签…</string>
+    <string name="assistant_tags_title">编辑标签</string>
+    <string name="assistant_tags_filter">按标签筛选</string>
+    <string name="assistant_tags_add">添加</string>
+    <string name="assistant_tags_placeholder">添加标签</string>
+    <string name="assistant_tags_remove">移除 %1$s</string>
+    <string name="assistant_tags_hint">按回车添加。最多 %1$d 个标签，每个不超过 %2$d 个字符。</string>
+    <string name="assistant_tag_too_long">每个标签最多 %1$d 个字符。</string>
+    <string name="assistant_tag_count_limit">一段对话最多 %1$d 个标签。</string>
+    <string name="assistant_tags_saved">已保存「%1$s」的标签</string>
     <string name="assistant_copy_diagnostics">拷贝诊断</string>
     <string name="assistant_diagnostics_copied">已拷贝诊断</string>
     <string name="assistant_end_menu">结束…</string>

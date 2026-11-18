@@ -3,29 +3,38 @@
 // engine come with it; views/NewAgentModel.tsx), where the profile's presets (#2225), the thinking effort and Claude Code's
 // ultracode switch (#3428: off each time, never remembered) also are. On top, the recent setups (#2134): a tap fills every
 // field with one that started an agent before, and never starts.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { hubLabel } from "../lib/mesh";
 import { api, ApiError, credentialOwner, enc, errorText, getToken, isAbort, subscribeCredentialOwner } from "../lib/api";
 import { defaultManager, useKnownDefault } from "../lib/manager-choice";
 import { pickAttachment, releaseAttachments, type LocalAttachment } from "../lib/attachments";
-import type { DraftImage } from "../lib/drafts";
+import { safeDraftRemove, safeDraftWrite, type DraftImage } from "../lib/drafts";
 import { withContexts } from "../lib/context-xml";
 import type { ContextRef } from "../lib/links";
 import { ForwardBar } from "./chat/ForwardBar";
+import { lazyPage } from "../lib/lazy-page";
 import { browserStartKeys, launchAgent, presetPrompt, type NewAgentPreset } from "../lib/new-agent";
+import { whenStarted } from "../lib/new-agent-started";
+import { startCompare } from "../lib/compare-runner";
+import { MAX_RUNS } from "../lib/compare-runs";
 import type { WorkspaceTarget } from "../lib/workspace-target";
+import { useWorkspaceCatalog, workspaceTarget, type HostWorkspace } from "../lib/workspace-catalog";
+import { startChoices, startGroups } from "../lib/workspace-start";
+import { WorkspaceChoices } from "./NewAgentWorkspaces";
 import { AttachmentTray } from "../ui/AttachmentTray";
 import { modelPurpose, modelSummary, type ModelBinding } from "../lib/model-config";
 import {
-  effortChoices, fitEffort, followedBinding, launcherAgent, machineLaunchers, pickerLauncher, startPicks, takesEffort, tierLeftOut, type LauncherDefault, type PickerTier,
+  effortChoices, effortRule, fitEffort, followedBinding, inlineTextStart, launcherAgent, listedModes, machineLaunchers, pickerLauncher, startPicks, takesEffort, tierLeftOut, type LauncherDefault, type PickerTier,
+  type UnavailableLauncher,
 } from "../lib/launcher-models";
 import { choiceCarries, modelTitle, type ModelChoice } from "../lib/new-agent-panel";
 import { readModels } from "../lib/session-models";
-import { BYPASS_MODE, BYPASS_WARNING, effortTitle, modeTitle, PERMISSION_MODES } from "../lib/session-actions";
+import { BYPASS_MODE, BYPASS_WARNING, effortTitle, listedModeOption, modeTitle, PERMISSION_MODES } from "../lib/session-actions";
 import {
   clearRecentSetups, forgetSetup, formHolds, loadRecentSetups, machineModel, recentCards, rememberSetup, setupKey, setupTime, type RecentCard, type RecentSetup,
 } from "../lib/recent-setups";
 import { baseName, shortPath } from "../lib/format";
+import { startingWith, typedFolder } from "../lib/typed-folder";
 import { addAgentWorktree, agentBranch, agentNameHint, suggestedPath, worktreeStatus, type WorktreeStatus } from "../lib/worktree";
 import { getState, useStore } from "../lib/store";
 import type { Launcher, Machine } from "../lib/types";
@@ -39,13 +48,23 @@ import { t } from "../i18n";
 import { useAddComputer } from "./machines/AddComputerEntry";
 import { useScopedMachines } from "../lib/current-assistant";
 import { currentHosts, engineName, startHosts } from "../lib/engines";
+import { CODEX_APP_SOURCE, projectsFolder, startsInDesktopApp } from "../lib/desktop-start";
 import { initialLauncher, launcherBlock } from "../lib/launcher-health";
 import { navigate } from "../lib/router";
+import { providersPath } from "../lib/readiness";
 import { settingsHref } from "./settings/nav";
 import { LauncherBlockedHelp } from "./LauncherBlockedHelp";
 import { launcherTitle, namedLauncher, namesFromProviders, providerIdNote, providerLabel, providerTitle, type Named } from "../lib/provider-names";
 import { WorkSessionForm } from "./WorkSessionForm";
 import { NewAgentModel, useModelList } from "./NewAgentModel";
+
+// several forwarded at once (#3838): their bar, from the group's chunk, which Forward to has loaded by then
+const ForwardGroupBar = lazyPage(() => import("./chat/ForwardGroup").then((m) => m.ForwardGroupBar));
+// a start in a desktop app's parts (#5480), loaded when such a launcher runs: their words stay off the first screen
+const DesktopTemporaryRow = lazyPage(() => import("./NewAgentDesktop").then((m) => m.DesktopTemporaryRow));
+const DesktopFolderNote = lazyPage(() => import("./NewAgentDesktop").then((m) => m.DesktopFolderNote));
+const NewFolderButton = lazyPage(() => import("./NewAgentDesktop").then((m) => m.NewFolderButton));
+const NewFolderNaming = lazyPage(() => import("./NewAgentDesktop").then((m) => m.NewFolderNaming));
 
 /** A forwarded picture (lib/drafts.ts DraftImage, base64) as a file for the first message's tray. */
 function draftImageFile(img: DraftImage): File {
@@ -79,9 +98,23 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   const adding = useAddComputer();
   const [mid, setMid] = useState(() => localStorage.getItem("new.machine") ?? "");
   const [cwd, setCwd] = useState("");
+  // The folder was picked in this opening (typed, a row, a card, a page's own), not filled in from the last start: a start
+  // in a desktop app with none is a temporary session (lib/desktop-start.ts, #5480), as on iOS.
+  const [cwdPicked, setCwdPicked] = useState(false);
+  const pickCwd = (dir: string) => {
+    setCwd(dir);
+    setCwdPicked(true);
+  };
+  // a new folder is being named for a desktop-app start, in the folder browsed (NewAgentDesktop.tsx)
+  const [naming, setNaming] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceTarget | null>(null);
+  // the workspace was chosen from this sheet's list (#7259), not handed in by a space or row menu: another computer, a
+  // recent setup or a folder may still replace it
+  const [workspacePicked, setWorkspacePicked] = useState(false);
   const [launcher, setLauncher] = useState("");
   const [launchers, setLaunchers] = useState<Launcher[]>([]);
+  // the providers left out on this computer, with why (#8109): listed off in the model panel, "How to fix" opens one
+  const [skipped, setSkipped] = useState<UnavailableLauncher[]>([]);
   // the model configuration's providers' names (#5029): titles for a launcher ID this computer's list doesn't have (a
   // preset's, a recent setup's, the default's)
   const [providerNames, setProviderNames] = useState<Named[]>([]);
@@ -111,15 +144,40 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   const features = useStore((s) => s.features);
   // Claude Code's permission mode for this start ("": the launcher's), remembered per computer like iOS's mode.<machine>
   const [mode, setMode] = useState("");
+  // the mode picked for a launcher that lists its own (Paseo's other providers, #8261): its own ("") or Full access,
+  // picked on this sheet and never remembered, so a mode left from a Claude Code start never reaches such a start
+  const [providerMode, setProviderMode] = useState("");
   const [host, setHost] = useState(""); // the engine host to open in (#2576); "": the machine's default
   const [dirs, setDirs] = useState<Dirs | null>(null);
+  // the listed folder's subfolders kept: those starting with this ("": all), for a typed path naming no folder yet
+  const [dirsPrefix, setDirsPrefix] = useState("");
   const [browse, setBrowse] = useState("");
+  // The folder the list follows (#9452, lib/typed-folder.ts): the folder field's text, filled in (the last start's, a card's, a
+  // recent row's) or typed once typing pauses. Browsing from the list takes over until the field changes again.
+  const [follow, setFollow] = useState({ text: "", typed: false });
+  const typing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(typing.current), []);
+  const typeCwd = (text: string) => {
+    pickCwd(text);
+    clearTimeout(typing.current);
+    typing.current = setTimeout(() => {
+      setFollow({ text, typed: true });
+      setBrowse("");
+    }, 250);
+  };
+  // the list shows a folder filled in: its subfolders, under the recent folders
+  const followFilled = (dir: string) => {
+    clearTimeout(typing.current);
+    setFollow({ text: dir, typed: false });
+    setBrowse("");
+  };
   const [loadingDirs, setLoadingDirs] = useState(false);
   const [prompt, setPrompt] = useState(() => localStorage.getItem("draft:new-agent") ?? "");
   const keys = useMemo(browserStartKeys, []);
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
-  // a message forwarded to a new Agent (#3899, lib/forward.ts): its card over the first message, which carries it in front
-  const [forward, setForward] = useState<ContextRef | null>(null);
+  // messages forwarded to a new Agent (#3899, #3838, lib/forward.ts): their card over the first message, which carries
+  // them in front
+  const [forwards, setForwards] = useState<ContextRef[]>([]);
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const submitted = useRef(false);
@@ -131,6 +189,13 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   const targetOnline = online.some((m) => m.id === mid);
   const workspaceCurrent = !workspace || (workspace.owner === credential && workspace.manager === manager
     && workspace.machineId === mid && workspace.cwd === cwd && Boolean(workspace.host.trim() && workspace.workspaceId.trim()));
+  // The chosen computer's Orca and Paseo workspaces, by project (#7259): the catalog the sidebar shares, read while the
+  // sheet is open; only its own assistant's (a computer of another one has none listed here).
+  const catalog = useWorkspaceCatalog(open);
+  const workspaceGroups = useMemo(
+    () => (catalog.owner === credential && catalog.manager === manager ? startGroups(startChoices(catalog.workspaces, mid)) : []),
+    [catalog, credential, manager, mid],
+  );
   const retirePreparation = () => {
     const previous = preparation.current;
     preparation.current = null;
@@ -167,7 +232,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
 
   useEffect(() => {
     if (!open) {
-      setForward(null); // a forward goes with the sheet it came in, not into the next one
+      setForwards([]); // a forward goes with the sheet it came in, not into the next one
       shownMid.current = "";
       touched.current = false;
       carrying.current = null;
@@ -176,6 +241,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     }
     submitted.current = false;
     setEffort("");
+    setProviderMode("");
     setTier(null);
     setDropped(null);
     setRecents(loadRecentSetups());
@@ -184,6 +250,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     setInWorktree(false);
     setWtBranch("");
     setWtError("");
+    setRunTimes(1);
   }, [open]);
   // a worktree of its own (#6115): offered for a folder in a Git repository (what the computer says of it), off each
   // time the sheet opens
@@ -191,6 +258,9 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   const [wtBranch, setWtBranch] = useState("");
   const [wtBusy, setWtBusy] = useState(false);
   const [wtError, setWtError] = useState("");
+  // Compare runs (#8916): the same start 2–4 times, each in a worktree of its own; offered only with the worktree switch
+  // on, 1 (a start as ever) each time the sheet opens
+  const [runTimes, setRunTimes] = useState(1);
   // Cleanup fences completions even when the transport ignores abort. A target change starts a new admission scope.
   useLayoutEffect(() => {
     submitted.current = false;
@@ -198,22 +268,49 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     setWtError("");
     return retirePreparation;
   }, [open, preset, mid, cwd, workspace, manager, credential, targetOnline]);
+  // a Paseo workspace picked from the list (#8856) can still start in a new worktree of its repository, which Paseo
+  // makes as a workspace of its own; an Orca one makes its worktrees through Orca's own New Worktree
+  const paseoPicked = workspacePicked && workspace?.host === "paseo";
   const [repo, setRepo] = useState<WorktreeStatus | null>(null);
   useEffect(() => {
     setRepo(null);
     const dir = cwd.trim();
-    if (!open || !mid || !dir || workspace) return;
+    if (!open || !mid || !dir || (workspace && !paseoPicked)) return;
     const c = new AbortController();
-    const timer = setTimeout(() => void worktreeStatus(mid, dir, c.signal).then((st) => { if (!c.signal.aborted) setRepo(st); }), 400);
+    // the engine it opens in says where its worktree goes (Paseo makes its own)
+    const kind = paseoPicked ? "paseo" : host || undefined;
+    const timer = setTimeout(() => void worktreeStatus(mid, dir, c.signal, kind).then((st) => { if (!c.signal.aborted) setRepo(st); }), 400);
     return () => {
       clearTimeout(timer);
       c.abort();
     };
-  }, [open, mid, cwd, workspace, manager, credential]);
-  const worktreeOffered = !workspace && Boolean(repo?.path);
+  }, [open, mid, cwd, workspace, paseoPicked, manager, credential, host]);
+  const worktreeOffered = (!workspace || paseoPicked) && Boolean(repo?.path);
+  // Back to a folder: typed, browsed or a recent one, on the computer's default engine.
+  const clearWorkspace = () => {
+    retirePreparation();
+    presetCwd.current = null;
+    setWorkspace(null);
+    setWorkspacePicked(false);
+    setHost("");
+    setInWorktree(false);
+    setRepo(null);
+  };
+  // A workspace from the list (#7259): the start opens in it, on its own engine, in its folder.
+  const pickWorkspace = (w: HostWorkspace) => {
+    retirePreparation();
+    presetCwd.current = null;
+    setWorkspace(workspaceTarget(w, catalog.owner, catalog.manager));
+    setWorkspacePicked(true);
+    pickCwd(w.cwd);
+    setHost("");
+    setInWorktree(false);
+    setRepo(null);
+  };
   useEffect(() => {
     if (!open) return;
     presetCwd.current = null;
+    setWorkspacePicked(false);
     if (!preset) {
       setWorkspace(null);
       return;
@@ -222,7 +319,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
       promptRevision.current++;
       setPrompt((draft) => presetPrompt(preset.prompt, draft));
     }
-    if (preset.forward) setForward(preset.forward);
+    if (preset.forwards?.length) setForwards(preset.forwards);
     if (preset.images?.length) {
       const picked: LocalAttachment[] = [];
       for (const img of preset.images) {
@@ -237,20 +334,20 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     if (target) {
       presetCwd.current = { mid: target.machineId, cwd: target.cwd };
       setMid(target.machineId);
-      setCwd(target.cwd);
+      pickCwd(target.cwd);
       setInWorktree(false);
       return;
     }
     if (preset.machineId && preset.cwd && online.some((m) => m.id === preset.machineId)) {
       presetCwd.current = { mid: preset.machineId, cwd: preset.cwd };
       setMid(preset.machineId);
-      setCwd(preset.cwd);
+      pickCwd(preset.cwd);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, preset]);
   useEffect(() => {
-    if (prompt) localStorage.setItem("draft:new-agent", prompt);
-    else localStorage.removeItem("draft:new-agent");
+    if (prompt) safeDraftWrite("draft:new-agent", () => localStorage.setItem("draft:new-agent", prompt));
+    else safeDraftRemove("draft:new-agent");
   }, [prompt]);
   useEffect(() => () => releaseAttachments(attachmentsRef.current), []);
 
@@ -304,6 +401,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     carrying.current = carry;
     touched.current = false;
     setLaunchers([]);
+    setSkipped([]);
     setProviderNames([]);
     setHelpFor("");
     setDropped(null);
@@ -328,6 +426,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
         if (controller.signal.aborted) return;
         const ls = r.launchers ?? [];
         setLaunchers(ls);
+        setSkipped(r.unavailable ?? []);
         setHubDefault(r.default);
         setTiers(r.tiers ?? []);
         setLaunchersOf(mid);
@@ -347,25 +446,18 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     const p = presetCwd.current;
     if (p?.mid === mid) presetCwd.current = null;
     const card = pendingSetup.current?.machine === mid ? pendingSetup.current : null;
-    setCwd(card ? card.cwd : p?.mid === mid ? p.cwd : (localStorage.getItem(`new.cwd.${mid}`) ?? ""));
+    const filled = card ? card.cwd : p?.mid === mid ? p.cwd : (localStorage.getItem(`new.cwd.${mid}`) ?? "");
+    setCwd(filled);
+    // the last start's folder is not picked; a card's is (a card of a temporary session has none)
+    setCwdPicked(card ? Boolean(card.cwd) : p?.mid === mid);
     setMode(card?.agent_type === "claude" ? card.mode : (localStorage.getItem(`new.mode.${mid}`) ?? ""));
-    setBrowse("");
+    followFilled(filled);
+    setNaming(false);
     return () => {
       controller.abort();
       setLaunchersOf("");
     };
   }, [open, mid]);
-
-  useEffect(() => {
-    if (!open || !mid || workspace) return;
-    const controller = new AbortController();
-    setLoadingDirs(true);
-    api<Dirs>(`/machines/${enc(mid)}/dirs?path=${enc(browse)}`, { signal: controller.signal })
-      .then((dirs) => { if (!controller.signal.aborted) setDirs(dirs); })
-      .catch((error) => { if (!controller.signal.aborted && !isAbort(error)) setDirs(null); })
-      .finally(() => { if (!controller.signal.aborted) setLoadingDirs(false); });
-    return () => controller.abort();
-  }, [open, mid, browse, workspace, manager, credential]);
 
   // The model list of the launcher that will run (the chosen one, or the model configuration's), read on each opening and
   // kept for the page's life with the chat's (lib/session-models.ts): the pill names its model, a start sends what it
@@ -405,6 +497,11 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   const hostDefault = picked ? currentHosts(picked).default : "";
   useEffect(() => { setHost(""); }, [open, mid]);
   const agent = launcherAgent(listLauncher, launchers, models.list);
+  // what a start on it takes besides the model (#8261): Claude Code's modes and efforts, or the permission modes a
+  // launcher lists (Paseo's other providers) and the efforts its model lists, or neither (Codex keeps its own)
+  const listEntry = launchers.find((l) => l.name === listLauncher);
+  const claudeModes = takesEffort(agent) && !listedModes(listEntry);
+  const providerModes = claudeModes ? undefined : listedModes(listEntry);
   // Codex takes its first message with the start (lib/new-agent.ts); a computer that can opens it without one too
   // (prompt_optional, docs/integrations/codex.md "Starting without a first message"), an older one needs it
   const codex = agent === "codex";
@@ -413,19 +510,69 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   // it now (#1643): said under the box with a way to see how to fix it; Start stays enabled
   const runs = launchersOf === mid ? listLauncher : "";
   const runsBlock = runs ? launcherBlock(launchers.find((l) => l.name === runs)) : null;
+  // A start in a desktop app (lib/desktop-start.ts, #5480 Claude's, #5726 the Codex App): no folder picked is a temporary
+  // session, browsing starts in the folder holding the app's projects (worked out when the computer or the launcher
+  // changes, not on every push), and a new folder may be named.
+  const desktopLauncher = runs ? launchers.find((l) => l.name === runs) : undefined;
+  const desktopStart = startsInDesktopApp(desktopLauncher);
+  const codexApp = desktopLauncher?.source === CODEX_APP_SOURCE;
+  const desktopScratch = desktopStart && !cwdPicked && !workspace;
+  // not for a start handed in for something of its own (Inbox's "New agent…", #5933): that waits for one Agent
+  const runsOffered = inWorktree && worktreeOffered && !desktopScratch && !preset?.onStarted;
+  const runCount = runsOffered ? runTimes : 1;
+  const desktopProjects = useMemo(
+    () => (desktopStart ? projectsFolder(getState().sessions[mid] ?? [], codexApp) ?? "" : ""),
+    [mid, desktopStart, codexApp],
+  );
+  // the folder listed: the one browsed to, else the field's (none for a temporary session, whose field is empty), else
+  // where browsing starts (home, or the app's projects for a start in it)
+  const browseStart = desktopStart ? desktopProjects : "";
+  const following = browse || desktopScratch ? null : typedFolder(follow.text);
+  const listing = browse || following?.path || browseStart;
+  // where to look when that is no folder: for a typed path, beside its last part; for one filled in (a folder since
+  // removed), where browsing starts
+  const near = following && (follow.typed ? following.near : { path: browseStart, prefix: "" });
+  const nearPath = near?.path;
+  const nearPrefix = near?.prefix ?? "";
+  useEffect(() => {
+    if (!open || !mid || workspace) return;
+    const controller = new AbortController();
+    const read = (path: string) => api<Dirs>(`/machines/${enc(mid)}/dirs?path=${enc(path)}`, { signal: controller.signal });
+    setLoadingDirs(true);
+    read(listing)
+      .then((dirs) => ({ dirs, prefix: "" }))
+      // the field's path naming no folder (yet): beside it, or where browsing starts
+      .catch((error) => {
+        if (isAbort(error) || nearPath === undefined) throw error;
+        return read(nearPath).then((dirs) => ({ dirs, prefix: nearPrefix }));
+      })
+      .then(({ dirs, prefix }) => {
+        if (controller.signal.aborted) return;
+        setDirs(dirs);
+        setDirsPrefix(prefix);
+      })
+      .catch((error) => {
+        if (controller.signal.aborted || isAbort(error)) return;
+        setDirs(null);
+        setDirsPrefix("");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoadingDirs(false); });
+    return () => controller.abort();
+  }, [open, mid, listing, nearPath, nearPrefix, workspace, manager, credential]);
+  useEffect(() => { if (!desktopStart) setNaming(false); }, [desktopStart]);
   const defaultRuns = unified && launchersOf === mid ? pickerLauncher("", followedBinding("", configured)) : "";
   const defaultBlock = defaultRuns ? launcherBlock(launchers.find((l) => l.name === defaultRuns)) : null;
   const helpLauncher = helpFor ? launchers.find((l) => l.name === helpFor) : undefined;
   const helpBlock = helpLauncher ? launcherBlock(helpLauncher) : null;
   // what a launcher ID is called (#5029): this computer's launchers first, then the model configuration's providers
   const names: Named[] = [...launchers, ...providerNames];
-  const efforts = effortChoices(models.list, model, followed);
+  const efforts = effortChoices(models.list, model, followed, effortRule(agent, listEntry));
   const effortsKey = efforts.join(" ");
   useEffect(() => { setEffort((e) => fitEffort(e, effortsKey ? effortsKey.split(" ") : [])); }, [effortsKey]);
   // offered with Claude Code whose effort can be set here; grayed when this computer's Claude Code is known to be too old
   const ultracodeShown = !loadingModels && efforts.length > 0 && ultracodeStartOffered(features, agent);
   // what of the picked preset this launcher can't take, said once its list is in
-  const tierMissed = tier && listLauncher === tier.launcher && models.list !== undefined ? tierLeftOut(tier, { agent, list: models.list, followed }) : [];
+  const tierMissed = tier && listLauncher === tier.launcher && models.list !== undefined ? tierLeftOut(tier, { agent, list: models.list, followed, launcher: listEntry }) : [];
   // the follow row's second line: what Model settings › New agent runs (the hub's default, by display names)
   const defaultList = useModelList(open ? mid : "", defaultRuns).list;
   const followDetail = hubDefault
@@ -449,12 +596,14 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     carrying.current = null;
     setEffort(setup.agent_type === "claude" ? setup.effort : "");
     pendingSetup.current = null;
+    if (workspacePicked) clearWorkspace();
     if (setup.machine !== mid) {
       pendingSetup.current = setup;
       setMid(setup.machine);
     } else {
       setCwd(setup.cwd);
-      setBrowse("");
+      setCwdPicked(Boolean(setup.cwd));
+      followFilled(setup.cwd);
       if (setup.agent_type === "claude") setMode(setup.mode);
       if (launchersOf === mid) restoreLauncher(mid, setup, launchers, unified ? configured : null);
       else pendingSetup.current = setup; // the launchers being read put it in
@@ -465,7 +614,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
   };
 
   const start = () => {
-    if (!open || submitted.current || loadingModels || !workspaceCurrent || !online.some((m) => m.id === mid) || !cwd.trim()) return;
+    if (!open || submitted.current || loadingModels || !workspaceCurrent || !online.some((m) => m.id === mid) || !(cwd.trim() || desktopScratch)) return;
     // Read ownership at admission too: credential/store changes can precede React's next render.
     if (workspace && (workspace.owner !== credentialOwner()
       || workspace.manager !== (getState().machines.find((m) => m.id === mid)?.manager || defaultManager()))) return;
@@ -475,49 +624,78 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
     const owner = credentialOwner();
     const token = getToken();
     const revision = promptRevision.current;
-    const sent = forward ? withContexts([forward], prompt, attachments.some((a) => a.mime.startsWith("image/"))) : prompt.trim();
+    // who opened New agent for something of its own hears the Agent started (Inbox's "New agent…", #5933)
+    const onStarted = preset?.onStarted;
+    const sent = forwards.length ? withContexts(forwards, prompt, attachments.some((a) => a.mime.startsWith("image/"))) : prompt.trim();
     const snapshot = { text: sent, attachments: [...attachments] };
     const current = () => preparation.current === controller && !controller.signal.aborted && owner === credentialOwner()
       && getState().machines.some((m) => m.id === mid && m.online)
       && manager === (getState().machines.find((m) => m.id === mid)?.manager || defaultManager());
-    localStorage.setItem(`new.cwd.${mid}`, cwd.trim());
+    // a temporary session keeps the last folder for the next start; its folder is the computer's to pick (#5480)
+    const dir = desktopScratch ? "" : cwd.trim();
+    if (dir) localStorage.setItem(`new.cwd.${mid}`, dir);
     if (launcher && !unified) localStorage.setItem(`new.launcher.${mid}`, launcher);
-    const picks = startPicks({ agent, list: models.list, model, effort, followed });
-    // a Codex keeps its own modes; the choice stays for this computer's next Claude Code
-    const permissionMode = takesEffort(agent) ? mode : "";
-    if (takesEffort(agent)) {
+    const picks = startPicks({ agent, list: models.list, model, effort, followed, launcher: listEntry });
+    // a Codex keeps its own modes; the choice stays for this computer's next Claude Code. A launcher that lists its own
+    // takes one of those alone, never the remembered one (its own goes as no mode).
+    const permissionMode = claudeModes ? mode : providerModes?.includes(providerMode) && providerMode !== "default" ? providerMode : "";
+    if (claudeModes) {
       if (mode) localStorage.setItem(`new.mode.${mid}`, mode);
       else localStorage.removeItem(`new.mode.${mid}`);
     }
-    const opensIn = workspace?.host ?? (host || undefined);
+    // a desktop app's session opens in the app, never in an engine host
+    const opensIn = workspace?.host ?? (desktopStart ? undefined : host || undefined);
     // this start as a recent setup (#2134): the folder picked (not the worktree made from it), the model and effort sent;
     // mode and effort only for Claude Code
     const claude = agent === "claude";
-    const setup = { machine: mid, cwd: cwd.trim(), launcher, model: picks.model ?? "", agent_type: agent, mode: claude ? permissionMode : "", effort: claude ? (picks.effort ?? "") : "" };
+    const setup = { machine: mid, cwd: dir, launcher, model: picks.model ?? "", agent_type: agent, mode: claude ? permissionMode : "", effort: claude ? (picks.effort ?? "") : "" };
     // only an explicit "on" is sent: off is what a new Claude is anyway
     const ultra = ultracodeShown && !ultracodeBlocked && ultracode ? true : undefined;
-    const launch = (dir: string) => {
+    const inline = !workspace && !desktopStart && launchersOf === mid && agent === "traex"
+      ? inlineTextStart(launchers.find((l) => l.name === listLauncher), opensIn ?? hostDefault, snapshot.text, snapshot.attachments.length)
+      : undefined;
+    // what every start of this sheet goes with (each run of a comparison too)
+    const target = { launcher, ...picks, permissionMode: permissionMode || undefined, host: opensIn, ultracode: ultra,
+      ...(codex ? { agentType: "codex", inlinePrompt: true } : inline) };
+    const launch = (dir: string, workspaceId: string | undefined) => {
       if (!current()) return;
       // The launch owns its previews; removing or unmounting the editable draft cannot revoke them.
       const sent = snapshot.attachments.map((a) => ({ ...a, url: a.url ? URL.createObjectURL(a.file) : undefined }));
       rememberSetup({ ...setup, at: setupTime() });
-      launchAgent({ machineId: mid, cwd: dir, workspaceId: workspace?.workspaceId, launcher, ...picks, permissionMode: permissionMode || undefined, host: opensIn, ultracode: ultra, text: snapshot.text, attachments: sent,
-        ...(codex ? { agentType: "codex", inlinePrompt: true } : {}) });
+      const id = launchAgent({ machineId: mid, cwd: dir, workspaceId, ...target, text: snapshot.text, attachments: sent });
+      if (onStarted) whenStarted(id, onStarted);
       const ids = new Set(snapshot.attachments.map((a) => a.id));
       releaseAttachments(attachmentsRef.current.filter((a) => ids.has(a.id)));
       attachmentsRef.current = attachmentsRef.current.filter((a) => !ids.has(a.id));
       setAttachments(attachmentsRef.current);
       if (promptRevision.current === revision) setPrompt("");
-      setForward(null);
+      setForwards([]);
       dismiss();
     };
-    // in a worktree of its own (#6115): made first; a failure says why here, and nothing starts
-    if (!workspace && inWorktree && worktreeOffered) {
+    // in a worktree of its own (#6115): made first, by the engine it opens in; a failure says why here, and nothing starts.
+    // From a picked Paseo workspace (#8856) the start goes into the workspace Paseo made for the worktree, not the one picked.
+    if ((!workspace || paseoPicked) && inWorktree && worktreeOffered && !desktopScratch) {
+      // Compare runs (#8916): the sheet closes at once on the runs' page, which shows each worktree and start as it goes
+      // (lib/compare-runner.ts); the task stays in this tab for a run's retry, so the draft goes now
+      if (runCount > 1) {
+        const hint = agentNameHint(prompt, cwd);
+        const id = startCompare({ mid, cwd: cwd.trim(), nameHint: hint, branch: wtBranch.trim() || agentBranch(hint), count: runCount, spec: target,
+          paseo: paseoPicked, text: snapshot.text, attachments: snapshot.attachments });
+        rememberSetup({ ...setup, at: setupTime() });
+        releaseAttachments(attachmentsRef.current);
+        attachmentsRef.current = [];
+        setAttachments([]);
+        if (promptRevision.current === revision) setPrompt("");
+        setForwards([]);
+        dismiss();
+        navigate({ name: "compare", id });
+        return;
+      }
       setWtBusy(true);
       setWtError("");
-      void addAgentWorktree(mid, cwd.trim(), agentNameHint(prompt, cwd), wtBranch, { signal: controller.signal, token, tokenOwner: owner })
+      void addAgentWorktree(mid, cwd.trim(), agentNameHint(prompt, cwd), wtBranch, { signal: controller.signal, token, tokenOwner: owner }, opensIn)
         .then(
-          (wt) => launch(wt.path),
+          (wt) => launch(wt.path, paseoPicked ? wt.workspace_id || undefined : undefined),
           (e) => {
             if (!current()) return;
             submitted.current = false;
@@ -531,7 +709,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
         });
       return;
     }
-    launch(workspace ? workspace.cwd : cwd.trim());
+    launch(workspace ? workspace.cwd : dir, workspace?.workspaceId);
   };
 
   if (none)
@@ -583,12 +761,12 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
         width={520}
         footer={
           <>
-            <span className="mr-auto min-w-0 truncate text-[11.5px] text-ink-3">{cwd ? shortPath(cwd) : t("newagent.pick_folder")}</span>
+            <span className="mr-auto min-w-0 truncate text-[11.5px] text-ink-3">{desktopScratch ? t("newagent.temporary_session") : cwd ? shortPath(cwd) : t("newagent.pick_folder")}</span>
             <Button tone="quiet" onClick={dismiss}>
               {t("common.cancel")}
             </Button>
-            <Button tone="primary" busy={wtBusy} disabled={loadingModels || !workspaceCurrent || !online.some((m) => m.id === mid) || !cwd.trim() || (needsFirst && !prompt.trim())} onClick={start}>
-              {t("newagent.start")}
+            <Button tone="primary" busy={wtBusy} disabled={loadingModels || !workspaceCurrent || !online.some((m) => m.id === mid) || !(cwd.trim() || desktopScratch) || (needsFirst && !prompt.trim())} onClick={start}>
+              {runCount > 1 ? t("newagent.start_runs", { count: runCount }) : t("newagent.start")}
             </Button>
           </>
         }
@@ -614,11 +792,15 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
                 <button
                   key={m.id}
                   type="button"
-                  disabled={Boolean(workspace) || !m.online}
-                  onClick={() => setMid(m.id)}
+                  disabled={(Boolean(workspace) && !workspacePicked) || !m.online}
+                  onClick={() => {
+                    if (m.id === mid) return;
+                    if (workspacePicked) clearWorkspace();
+                    setMid(m.id);
+                  }}
                   className={cx(
                     "flex h-8 items-center gap-1.5 rounded-control px-2.5 text-[12.5px] whitespace-nowrap transition-[background-color,box-shadow,color]",
-                    workspace && mid === m.id ? "disabled:opacity-100" : "disabled:opacity-40",
+                    workspace && !workspacePicked && mid === m.id ? "disabled:opacity-100" : "disabled:opacity-40",
                     mid === m.id ? "bg-ink font-medium text-surface" : "bg-surface text-ink-2 shadow-btn enabled:hover:bg-hover enabled:hover:text-ink",
                   )}
                 >
@@ -637,47 +819,52 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
               <span className="text-ink-2 [overflow-wrap:anywhere]">{engineName(workspace.host, picked)}</span>
               <p className="text-[11.5px] text-ink-3">{t("newagent-workspace.existing_hint")}</p>
               {!workspaceCurrent && <p role="alert" className="text-red">{t("newagent-workspace.owner_changed")}</p>}
-              <Button tone="quiet" onClick={() => {
-                retirePreparation();
-                presetCwd.current = null;
-                setWorkspace(null);
-                setHost("");
-                setInWorktree(false);
-                setRepo(null);
-              }}>{t("newagent-workspace.choose_folder")}</Button>
+              <Button tone="quiet" onClick={clearWorkspace}>{t("newagent-workspace.choose_folder")}</Button>
             </div>
-          </Field> : <Field label={t("newagent.folder")}>
+          </Field> : <>
+          {workspaceGroups.length > 0 && <Field label={t("newagent-workspace.destination")}>
+            <WorkspaceChoices groups={workspaceGroups} onPick={pickWorkspace} />
+          </Field>}
+          <Field label={t("newagent.folder")}>
+            {desktopScratch && <Suspense fallback={null}><DesktopTemporaryRow codex={codexApp} /></Suspense>}
             <input
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
+              value={desktopScratch ? "" : cwd}
+              onChange={(e) => typeCwd(e.target.value)}
               placeholder={t("newagent.folder_placeholder")}
               spellCheck={false}
               className="h-9 w-full rounded-control bg-inset px-3 font-mono text-[12.5px] text-ink shadow-hairline outline-none placeholder:font-sans placeholder:text-ink-3 focus:shadow-[0_0_0_1px_var(--line-strong)]"
             />
             <div className="mt-1.5 max-h-52 overflow-y-auto rounded-control bg-surface p-1 shadow-hairline">
-              {!browse && (dirs?.recent?.length ?? 0) > 0 && (
+              {!browse && !(following && follow.typed) && (dirs?.recent?.length ?? 0) > 0 && (
                 <>
                   <div className="px-2 pt-1 pb-0.5 text-[10.5px] font-medium tracking-[0.06em] text-ink-3 uppercase">{t("newagent.recent")}</div>
                   {dirs!.recent!.slice(0, 6).map((d) => (
-                    <DirRow key={d.path} name={d.name || baseName(d.path)} path={d.path} sub={shortPath(d.path)} selected={cwd === d.path} onPick={() => setCwd(d.path)} />
+                    <DirRow key={d.path} name={d.name || baseName(d.path)} path={d.path} sub={shortPath(d.path)} selected={!desktopScratch && cwd === d.path} onPick={() => { pickCwd(d.path); followFilled(d.path); }} />
                   ))}
                 </>
               )}
               <div className="flex items-center gap-1 px-2 pt-1.5 pb-0.5 text-[10.5px] font-medium tracking-[0.06em] text-ink-3 uppercase">
-                {browse && dirs?.parent !== undefined && (
+                {listing && dirs?.parent !== undefined && (
                   <button type="button" aria-label={t("newagent.parent_folder")} onClick={() => setBrowse(dirs!.parent!)} className="-ml-1 flex size-4.5 items-center justify-center rounded-[4px] hover:bg-hover hover:text-ink">
                     <Icon name="chevronLeft" size={12} stroke={2.4} />
                   </button>
                 )}
-                <span className="truncate normal-case tracking-normal">{dirs?.path ? shortPath(dirs.path) : t("newagent.home_folder")}</span>
+                <span className="min-w-0 flex-1 truncate normal-case tracking-normal">{dirs?.path ? shortPath(dirs.path) : t("newagent.home_folder")}</span>
                 {loadingDirs && <Spinner size={10} />}
+                {desktopStart && dirs?.path && !naming && <Suspense fallback={null}><NewFolderButton onClick={() => setNaming(true)} /></Suspense>}
               </div>
-              {dirs?.entries?.map((d) => (
-                <DirRow key={d.path} name={d.name} path={d.path} git={d.is_git} selected={cwd === d.path} onPick={() => setCwd(d.path)} onOpen={() => setBrowse(d.path)} />
+              {naming && dirs?.path && (
+                <Suspense fallback={null}>
+                  <NewFolderNaming key={dirs.path} folder={dirs.path} onCancel={() => setNaming(false)} onUse={(made) => { pickCwd(made); setNaming(false); }} />
+                </Suspense>
+              )}
+              {startingWith(dirs?.entries, dirsPrefix).map((d) => (
+                <DirRow key={d.path} name={d.name} path={d.path} git={d.is_git} selected={!desktopScratch && cwd === d.path} onPick={() => pickCwd(d.path)} onOpen={() => setBrowse(d.path)} />
               ))}
             </div>
-          </Field>}
-          {worktreeOffered && (
+            {desktopStart && <Suspense fallback={null}><DesktopFolderNote codex={codexApp} scratch={desktopScratch} onUseTemporary={() => setCwdPicked(false)} /></Suspense>}
+          </Field></>}
+          {worktreeOffered && !desktopScratch && (
             <div data-testid="new-agent-worktree" className="-mt-2 rounded-control bg-surface px-3 py-2 shadow-hairline">
               <div className="flex items-center gap-2">
                 <Icon name="branch" size={13} stroke={2.2} className="shrink-0 text-ink-2" />
@@ -706,11 +893,24 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
                   {t("newagent.worktree_path", { path: shortPath(suggestedPath(repo.checkouts, wtBranch.trim() || agentBranch(agentNameHint(prompt, cwd)))) })}
                 </p>
               )}
+              {runsOffered && (
+                <div data-new-agent-runs className="mt-1.5 pl-[21px]">
+                  <div className="flex items-center gap-2">
+                    <span id="new-agent-runs" className="shrink-0 text-submeta text-ink-3">{t("newagent.runs")}</span>
+                    <div role="radiogroup" aria-labelledby="new-agent-runs" className="flex gap-1">
+                      {Array.from({ length: MAX_RUNS }, (_, i) => i + 1).map((n) => (
+                        <Choice key={n} radio selected={runTimes === n} onClick={() => setRunTimes(n)}>{n}</Choice>
+                      ))}
+                    </div>
+                  </div>
+                  {runTimes > 1 && <p className="mt-1 text-submeta leading-snug text-ink-3">{t("newagent.runs_hint", { count: runTimes })}</p>}
+                </div>
+              )}
               {wtError && <p role="alert" className="mt-1 pl-[21px] text-[11.5px] leading-snug text-red">{t("newagent.worktree_failed", { error: wtError })}</p>}
             </div>
           )}
 
-          {!workspace && hosts.length > 1 && (
+          {!workspace && !desktopStart && hosts.length > 1 && (
             <Field label={t("lib-engines.start_in")}>
               <div role="radiogroup" aria-label={t("lib-engines.start_in")} data-testid="start-host" className="flex flex-wrap gap-1.5">
                 {hosts.map((h) => (
@@ -723,7 +923,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
             </Field>
           )}
 
-          {takesEffort(agent) && (
+          {claudeModes && (
             <Field label={t("newagent.permission_mode")}>
               <div role="radiogroup" aria-label={t("newagent.permission_mode")} className="flex flex-wrap gap-1.5">
                 <Choice radio selected={mode === ""} onClick={() => setMode("")}>{t("newagent.follow_launcher")}</Choice>
@@ -739,12 +939,32 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
             </Field>
           )}
 
+          {/* a launcher that lists its own modes (Paseo's other providers, #8261): its own, or what else it lists (Full
+              access), the two its conversation switches between; one with nothing more than its own shows no field */}
+          {providerModes && providerModes.some((m) => m !== "default") && (
+            <Field label={t("newagent.permission_mode")}>
+              <div role="radiogroup" aria-label={t("newagent.permission_mode")} data-testid="new-agent-provider-modes" className="flex flex-wrap gap-1.5">
+                <Choice radio selected={providerMode === "" || !providerModes.includes(providerMode)} onClick={() => setProviderMode("")}>{t("newagent.follow_launcher")}</Choice>
+                {providerModes.filter((id) => id !== "default").map(listedModeOption).map((m) => (
+                  <Choice key={m.id} radio selected={providerMode === m.id} onClick={() => setProviderMode(m.id)} title={m.detail}>
+                    {m.title}
+                  </Choice>
+                ))}
+              </div>
+              <p className={cx("mt-1.5 text-submeta", providerMode === BYPASS_MODE ? "text-red" : "text-ink-3")}>
+                {providerMode === BYPASS_MODE ? BYPASS_WARNING : t("newagent.provider_mode_hint")}
+              </p>
+            </Field>
+          )}
+
           <Field label={t(needsFirst ? "newagent.first_message" : "newagent.first_message_optional")}>
             <div className={cx("flex flex-col gap-2 rounded-control bg-inset shadow-hairline focus-within:shadow-[0_0_0_1px_var(--line-strong)]", dragging && "outline-2 outline-accent")}
               onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragging(true); } }}
               onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }}
               onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}>
-              {forward && <div className="px-2 pt-2" data-new-agent-forward><ForwardBar forward={forward} onRemove={() => setForward(null)} /></div>}
+              {/* an Inbox item handed to a new Agent (#5933) shows as forwarded from where it came ("Lark · <title>"); shown
+                  only: it goes as the <persona-context> an Agent target gets */}
+              {forwards.length > 0 && <div className="px-2 pt-2" data-new-agent-forward>{forwards.length > 1 ? <Suspense fallback={null}><ForwardGroupBar forwards={forwards} onRemove={() => setForwards([])} /></Suspense> : <ForwardBar forward={forwards[0].kind === "context" ? { ...forwards[0], attrs: { author: forwards[0].title } } : forwards[0]} onRemove={() => setForwards([])} />}</div>}
               {attachments.length > 0 && <div className="px-3 pt-2"><AttachmentTray attachments={attachments} onRemove={(id) => {
                 releaseAttachments(attachments.filter((a) => a.id === id));
                 setAttachments((current) => current.filter((a) => a.id !== id));
@@ -777,6 +997,7 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
                     runs={runs}
                     configured={unified ? configured : null}
                     tiers={tiers}
+                    unavailable={skipped}
                     follow={unified ? { label: t("newagent.follow_row"), active: launcher === "", detail: followDetail, warning: defaultBlock?.reason } : undefined}
                     fallback={modelDefault || t("chat-modelpill.default_model")}
                     ultracode={ultracodeShown ? <div data-testid="new-agent-ultracode"><UltracodeStartRow on={ultracode} onChange={setUltracode} blocked={ultracodeBlocked} /></div> : undefined}
@@ -787,7 +1008,12 @@ function AgentForm({ open, onClose, preset }: NewAgentProps) {
                       if (x) pickTier(x);
                     }}
                     onFollow={followDefault}
-                    onHelp={setHelpFor}
+                    onHelp={(name) => {
+                      // a provider left out here: its page in Settings, where "Computers" turns its own-service rule off
+                      if (!skipped.some((u) => u.name === name)) return setHelpFor(name);
+                      onClose();
+                      navigate(providersPath(name));
+                    }}
                     onConfigure={() => {
                       onClose();
                       navigate(settingsHref("models", null, false, null, "providers"));
@@ -878,7 +1104,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 // · model · mode · effort); an offline computer's is dimmed and can't be picked. The ⋯ removes one or clears them all.
 function RecentSetups({ cards, machines, names, picked, onPick, onForget, onClear }: { cards: RecentCard[]; machines: Machine[]; /** What a launcher ID is called (#5029). */ names: Named[]; /** The card the form holds (setupKey); "": none. */ picked: string; onPick: (card: RecentCard) => void; onForget: (setup: RecentSetup) => void; onClear: () => void }) {
   const menu = useMenu();
-  const title = (s: RecentSetup) => `${baseName(shortPath(s.cwd))} · ${machines.find((m) => m.id === s.machine)?.name ?? s.machine}`;
+  // a card of a temporary session (a start in a desktop app with no folder, #5480) says so where the folder goes
+  const folder = (s: RecentSetup) => (s.cwd ? baseName(shortPath(s.cwd)) : t("newagent.temporary_session"));
+  const title = (s: RecentSetup) => `${folder(s)} · ${machines.find((m) => m.id === s.machine)?.name ?? s.machine}`;
   return (
     <div data-testid="recent-setups">
       <div className="mb-1.5 flex h-[18px] items-center justify-between gap-2">
@@ -931,7 +1159,7 @@ function RecentSetups({ cards, machines, names, picked, onPick, onForget, onClea
               )}
             >
               <span className="flex min-w-0 items-baseline gap-1 text-[12.5px] leading-snug">
-                <span className={cx("min-w-0 shrink truncate font-medium", on ? "text-accent-ink" : "text-ink")}>{baseName(shortPath(s.cwd))}</span>
+                <span className={cx("min-w-0 shrink truncate font-medium", on ? "text-accent-ink" : "text-ink")}>{folder(s)}</span>
                 <span className="shrink-0 text-ink-3">·</span>
                 <span className="min-w-0 shrink-[2] truncate text-ink-2">{machines.find((m) => m.id === s.machine)?.name ?? s.machine}</span>
               </span>

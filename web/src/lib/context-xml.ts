@@ -30,11 +30,13 @@ export function contextXML(r: Pick<ContextRef, "kind" | "title" | "url" | "text"
   return `<persona-context kind="${escAttr(r.kind)}" title="${escAttr(r.title)}" url="${escAttr(r.url)}"${extra}>\n${body}\n</persona-context>`;
 }
 
-/** A message with its picked contexts in front (ChatView.swift sendText). With nothing typed, a forward says to look at it. */
+/** A message with its picked contexts in front (ChatView.swift sendText). With nothing typed, a forward says to look at it
+ *  (at them, when several were forwarded, #3838). */
 export function withContexts(refs: Pick<ContextRef, "kind" | "title" | "url" | "text" | "attrs">[], text: string, hasImages = false): string {
   const typed = text.trim();
   if (!refs.length) return typed;
-  const body = typed || (hasImages ? t("lib-links.see_images") : refs.some((r) => r.kind === "forward") ? t("lib-links.see_forward") : t("lib-links.see_context"));
+  const forwards = refs.filter((r) => r.kind === "forward").length;
+  const body = typed || (hasImages ? t("lib-links.see_images") : forwards > 1 ? t("lib-links.see_forwards") : forwards ? t("lib-links.see_forward") : t("lib-links.see_context"));
   return `${refs.map(contextXML).join("\n")}\n\n${body}`;
 }
 

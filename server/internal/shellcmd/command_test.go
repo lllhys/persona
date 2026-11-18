@@ -24,3 +24,14 @@ func TestCommandIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestCommandEnvironmentReset(t *testing.T) {
+	for _, flag := range []string{"-i", "--ignore-environment", "-"} {
+		env := map[string]string{"INHERITED": "1", "UNSET": "1"}
+		words := []string{"BEFORE=1", "env", "-u", "UNSET", flag, "AFTER=2", "claude"}
+		index, reset := CommandEnvironment(words, env)
+		if index != 6 || !reset || !maps.Equal(env, map[string]string{"AFTER": "2"}) {
+			t.Errorf("%q: index=%d reset=%t env=%v", flag, index, reset, env)
+		}
+	}
+}

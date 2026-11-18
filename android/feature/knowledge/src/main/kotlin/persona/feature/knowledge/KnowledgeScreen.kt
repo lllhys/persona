@@ -16,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalUriHandler
@@ -76,7 +75,8 @@ internal fun KnowledgeScreen(model: KnowledgeViewModel, navigator: Navigator) {
     var ignored by rememberSaveable(page.scope?.path) { mutableStateOf(false) }
     val search = page.filter.query.isNotBlank()
     val shown = if (search) page.groups.isNotEmpty() else page.entries.isNotEmpty()
-    JListPage(stringResource(R.string.knowledge_title), onBack = navigator::back, largeTitle = true,
+    // A regular-width root draws the sidebar button (LocalIsSidebarRoot); elsewhere this Back stays (iOS sidebarRootPage).
+    JListPage(stringResource(R.string.knowledge_title), onBack = if (LocalIsSidebarRoot.current) null else navigator::back, largeTitle = true,
         refreshing = page.loading && shown, onRefresh = model::refresh,
         actions = {
             if (!search) JIconButton(PhIcons.FunnelSimple, page.filter.tag?.let { stringResource(R.string.knowledge_filter_tag_current, it) }
@@ -641,11 +641,11 @@ private fun KnowledgeMarkdown(text: String) {
                     textLink = TextLinkStyles(SpanStyle(color = palette.accent, textDecoration = TextDecoration.Underline))),
                 components = markdownComponents(
                     orderedList = { model -> MarkdownOrderedList(model.content, model.node, depth = model.listDepth,
-                        markerModifier = { Modifier.alignBy(FirstBaseline).padding(end = Tokens.Space.s) },
-                        listModifier = { Modifier.weight(1f).alignBy(FirstBaseline) }) },
+                        markerModifier = { firstBaselineAligned().padding(end = Tokens.Space.s) },
+                        listModifier = { firstBaselineAligned(Modifier.weight(1f)) }) },
                     unorderedList = { model -> MarkdownBulletList(model.content, model.node, depth = model.listDepth,
-                        markerModifier = { Modifier.alignBy(FirstBaseline).padding(end = Tokens.Space.s) },
-                        listModifier = { Modifier.weight(1f).alignBy(FirstBaseline) }) },
+                        markerModifier = { firstBaselineAligned().padding(end = Tokens.Space.s) },
+                        listModifier = { firstBaselineAligned(Modifier.weight(1f)) }) },
                     codeFence = { model ->
                         MarkdownFence(model.content.substring(model.node.startOffset, model.node.endOffset)) { CurrentComponentsBridge.codeFence(model) }
                     },

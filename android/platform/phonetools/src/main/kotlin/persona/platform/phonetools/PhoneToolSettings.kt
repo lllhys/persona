@@ -30,7 +30,7 @@ class PhoneToolSettings(context: Context, scope: HubScope, coroutineScope: Corou
 class PhonePermissions(private val context: Context) {
     fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
     fun permissions(source: PhoneSource): Array<String> = when (source) {
-        PhoneSource.Contacts -> arrayOf(READ_CONTACTS)
+        PhoneSource.Contacts -> arrayOf(READ_CONTACTS, WRITE_CONTACTS)
         PhoneSource.Calendar -> arrayOf(READ_CALENDAR, WRITE_CALENDAR)
         PhoneSource.Location -> arrayOf(ACCESS_COARSE_LOCATION, ACCESS_FINE_LOCATION)
         PhoneSource.Photos -> when {
@@ -42,7 +42,10 @@ class PhonePermissions(private val context: Context) {
         else -> emptyArray()
     }
     fun allowed(name: String, source: PhoneSource): Boolean = when (source) {
-        PhoneSource.Calendar -> granted(READ_CALENDAR) && (name != "phone_calendar_create_event" || granted(WRITE_CALENDAR))
+        PhoneSource.Contacts -> granted(READ_CONTACTS) &&
+            (name !in PhoneToolCatalog.confirmedWriteNames || granted(WRITE_CONTACTS))
+        PhoneSource.Calendar -> granted(READ_CALENDAR) &&
+            (name !in PhoneToolCatalog.confirmedWriteNames || granted(WRITE_CALENDAR))
         PhoneSource.Location -> granted(ACCESS_COARSE_LOCATION) || granted(ACCESS_FINE_LOCATION)
         PhoneSource.Photos -> permissions(source).any(::granted)
         PhoneSource.Notifications -> name == "phone_notifications_list" ||
@@ -64,8 +67,10 @@ class PhonePermissions(private val context: Context) {
             !(granted(READ_MEDIA_IMAGES) && granted(READ_MEDIA_VIDEO)) && allowed("", source) -> PhoneAccess.Partial
         source == PhoneSource.Location && granted(ACCESS_COARSE_LOCATION) && !granted(ACCESS_FINE_LOCATION) -> PhoneAccess.Approximate
         source == PhoneSource.Calendar && granted(READ_CALENDAR) && !granted(WRITE_CALENDAR) -> PhoneAccess.ReadOnly
+        source == PhoneSource.Contacts && granted(READ_CONTACTS) && !granted(WRITE_CONTACTS) -> PhoneAccess.ReadOnly
         permissions(source).isEmpty() && source != PhoneSource.Notifications -> PhoneAccess.NotNeeded
-        allowed(if (source == PhoneSource.Calendar) "phone_calendar_create_event" else "", source) -> PhoneAccess.Granted
+        allowed(if (source == PhoneSource.Calendar) "phone_calendar_create_event" else
+            if (source == PhoneSource.Contacts) "phone_contacts_create" else "", source) -> PhoneAccess.Granted
         else -> PhoneAccess.Denied
     }
 

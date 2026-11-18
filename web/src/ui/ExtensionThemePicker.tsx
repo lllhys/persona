@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { useDeclaredResult } from "../lib/extension-declared";
 import { t } from "../i18n";
-import { allowedTheme, extensionThemeTokens, themeKey, type ExtensionTheme } from "./extension-theme";
+import { allowedTheme, extensionThemeTokens, scopedThemeCSS, themeKey, type ExtensionTheme } from "./extension-theme";
 import { setExtensionThemeActive } from "./look";
 
 const KEY = "persona.extension-theme";
@@ -35,10 +35,14 @@ export function ExtensionThemeProvider({ children }: { children: ReactNode }) {
       root.dataset.extensionTheme = themeKey(current);
     };
     apply();
+    // the terminal's own scheme (its Appearance) reads the theme's colors of that scheme
+    const scoped = document.createElement("style");
+    scoped.textContent = scopedThemeCSS(tokens);
+    document.head.appendChild(scoped);
     setExtensionThemeActive(true);
     const observer = new MutationObserver(apply);
     observer.observe(root, { attributes: true, attributeFilter: ["class"] });
-    return () => { observer.disconnect(); restore(); delete root.dataset.extensionTheme; setExtensionThemeActive(false); };
+    return () => { observer.disconnect(); restore(); scoped.remove(); delete root.dataset.extensionTheme; setExtensionThemeActive(false); };
   }, [current]);
   return <PaletteContext.Provider value={{ available, selected, select }}>{children}</PaletteContext.Provider>;
 }

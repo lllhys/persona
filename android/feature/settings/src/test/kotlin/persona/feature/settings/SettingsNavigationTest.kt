@@ -47,6 +47,8 @@ class SettingsNavigationTest {
             SettingsPage.Connectors to "connectors",
             SettingsPage.AgentSettings to "agent-settings",
             SettingsPage.NotificationBackground to "notification-background",
+            SettingsPage.KnowledgeSelection to "knowledge-selection",
+            SettingsPage.StandingAuthorizations to "standing-authorizations",
         )
         assertEquals(SettingsPage.entries.toSet(), pages.keys)
         assertEquals(pages.size, pages.values.toSet().size)
@@ -70,7 +72,8 @@ class SettingsNavigationTest {
     @Test fun aSwitchClosesOnlyTheCurrentAssistantsPages() {
         val assistants = listOf(SettingsPage.Providers, SettingsPage.ModelConfig, SettingsPage.Triage, SettingsPage.Connectors,
             SettingsPage.Mail, SettingsPage.Feishu, SettingsPage.FeishuBot, SettingsPage.Sent, SettingsPage.Extensions,
-            SettingsPage.Channels, SettingsPage.ClaudeCode, SettingsPage.Codex, SettingsPage.AgentSettings)
+            SettingsPage.Channels, SettingsPage.ClaudeCode, SettingsPage.Codex, SettingsPage.AgentSettings, SettingsPage.KnowledgeSelection,
+            SettingsPage.StandingAuthorizations)
         SettingsPage.entries.forEach { page ->
             assertEquals(page.name, page in assistants, isAssistantSettingsDestination(SettingsPageRoute(page)))
             assertEquals(page.name, page in assistants, isAssistantSettingsPage(page.toInitialPage()))

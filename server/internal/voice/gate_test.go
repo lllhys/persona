@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +19,11 @@ import (
 	"github.com/nwverse/persona/server/internal/prompts"
 	"github.com/nwverse/persona/server/internal/proto"
 )
+
+// unpromptedWords are words of what the model is told of a handover the user-speech gate refused (voice/refused.md
+// unprompted, zh-Hans: the tests' language), with or without the screen's Send Anyway: the one place to change when
+// its wording does.
+const unpromptedWords = "没听到你新的请求，为了安全先没发"
 
 // delegate makes the model hand text over as client delegation id.
 func delegate(u *fakeUpstream, c *websocket.Conn, id, text string) {
@@ -65,6 +73,7 @@ func TestGateClosesWhenTheModelTakesTheAnswerIn(t *testing.T) {
 		}
 	})
 	pl := testPlugin(t, liveProvider(up), hub.server(t))
+	logs := captureLog(t, pl)
 	a := dialApp(t, pl, map[string]any{"type": "start"})
 	a.until(ofType("ready"))
 	a.send(map[string]any{"type": "text", "text": "明天有什么会"})
@@ -75,13 +84,19 @@ func TestGateClosesWhenTheModelTakesTheAnswerIn(t *testing.T) {
 		})
 		answers[f["delegation_id"].(string)] = content(f)
 	}
-	if !strings.Contains(answers["dlg3"], "这条不是你说的，我没发") || !strings.Contains(answers["dlg2"], "邮件没什么要紧的") {
+	if !strings.Contains(answers["dlg3"], unpromptedWords) || !strings.Contains(answers["dlg2"], "邮件没什么要紧的") {
 		t.Fatalf("answers: %v", answers)
 	}
 	msgs := hub.messages()
 	if len(msgs) != 2 || !strings.HasPrefix(msgs[1].Text, "查一下邮件") {
 		t.Fatalf("sent %+v", msgs)
 	}
+	// What the gate went by (#5904): dlg2 was held to the result as sent, and the caption came after it; dlg3 to the
+	// result as the model took it in (its ack), after that caption.
+	logs.wait("delegation dlg2: the user-speech gate let it through (caption)", "from the handover: agent words ", " before (sent)",
+		", caption ", " (counted)")
+	logs.wait("delegation dlg3: the user-speech gate refused it (unprompted)", " before (acked)", ", caption ",
+		" (not counted: not after the agent words)", ", typed line ", ", own voice none")
 }
 
 // The app's level stays over voiceRMS with nobody talking to the model (a TV, a car, echo residue): a delegation's
@@ -397,6 +412,145 @@ func TestEchoCaptionGate(t *testing.T) {
 	}
 }
 
+// #5904: what the gate's decision went by, for the log: the agent time from the handover and what moved it there (the
+// last move, or the one before), and each of the user's caption, typed line and own voice from the handover with
+// whether it counted and the first reason it did not.
+func TestGateExplainsItsDecision(t *testing.T) {
+	acted := time.Now()
+	agent := acted.Add(-2 * time.Second)
+	sec := func(n float64) time.Time { return acted.Add(time.Duration(n * float64(time.Second))) }
+	moved := speechGate{}
+	moved.told(agent, agentAcked)
+	moved.told(sec(1), agentSent) // after the handover: it is held to the one before
+	for _, c := range []struct {
+		name string
+		g    speechGate
+		at   time.Time
+		want string
+	}{
+		{"nothing", speechGate{}, time.Time{}, "from the handover: agent words none, caption none, typed line none, own voice none"},
+		{"the agent time moved again", moved, agent, "agent words 2s before (acked), caption none"},
+		{"counted", speechGate{agent: agent, agentBy: agentSent, caption: sec(-1), typed: sec(-0.5), voice: sec(-1.5)}, agent,
+			"agent words 2s before (sent), caption 1s before (counted), typed line 500ms before (counted), own voice 1.5s before (counted)"},
+		{"before the agent's words", speechGate{agent: agent, agentBy: agentReconnect, caption: sec(-3), typed: sec(-3), voice: sec(-3)}, agent,
+			"agent words 2s before (reconnect), caption 3s before (not counted: not after the agent words), " +
+				"typed line 3s before (not counted: not after the agent words), own voice 3s before (not counted: not after the agent words)"},
+		{"no echo cancellation, old, late", speechGate{caption: sec(-1), typed: sec(-40), voice: sec(0.3), echoes: true}, time.Time{},
+			"caption 1s before (not counted: no echo cancellation), typed line 40s before (not counted: over 30s old), " +
+				"own voice 300ms after (not counted: after the handover)"},
+		{"a caption after the handover", speechGate{agent: agent, agentBy: agentSent, caption: sec(0.4)}, agent, "caption 400ms after (counted)"},
+	} {
+		if got := c.g.explain(c.at, acted, sec(0.5), c.g.voice); !strings.Contains(got, c.want) {
+			t.Errorf("%s: %s\nwant %s", c.name, got, c.want)
+		}
+	}
+}
+
+// #5904 review: the gate's line says what its decision went by: the user's own voice as it was when the model handed
+// it over (heardSince), not as it is when the line is written. Their voice 1 s before the handover opens the gate,
+// their caption is due and does not come, and they go on speaking while it is waited for: the line says the voice it
+// went by counted, never that it came after the handover.
+func TestGateLogsTheOwnVoiceItWentBy(t *testing.T) {
+	setVar(t, &gateWait, 300*time.Millisecond)
+	pl := &Plugin{logger: log.New(io.Discard, "", 0)}
+	logs := captureLog(t, pl)
+	c := &conversation{version: 2, pl: pl, ctx: t.Context()}
+	handover := time.Now()
+	agent := handover.Add(-3 * time.Second)
+	c.gate.told(agent, agentSent)
+	c.gate.voice = handover.Add(-time.Second)
+	c.pace.voice = c.gate.voice // the app's audio had their voice in it after their last caption: one is due
+	went := make(chan bool, 1)
+	c.mu.Lock()
+	c.waitGate("delegation dlg1", agent, true, "", func(spoken bool) { went <- spoken })
+	c.mu.Unlock()
+	// waitGate took the voice it goes by as it was called; the caption it waits for is due either way, so this comes
+	// while it waits (gateWait), before its line is written.
+	c.mu.Lock()
+	c.gate.voice = time.Now() // heardOwn: they go on speaking
+	c.pace.voice = c.gate.voice
+	c.mu.Unlock()
+	if !<-went {
+		t.Fatal("refused")
+	}
+	line := logs.wait("delegation dlg1: the user-speech gate let it through (own voice; their caption had not come)",
+		"waited ", "it had not come")
+	if _, voice, _ := strings.Cut(line, ", own voice "); !strings.HasPrefix(voice, "1s before (counted)") {
+		t.Errorf("own voice %q in: %s", voice, line)
+	}
+}
+
+// #5904: the user can turn the user-speech gate off on their device: a full device's start with speech_gate false
+// has a handover nobody was heard asking for sent, and the log says the gate is off and what it would have decided.
+// On (true, or not said) it is refused as ever, and another extension's call cannot turn it off. ready says the
+// extension takes it.
+func TestSpeechGateOff(t *testing.T) {
+	setVar(t, &gateWait, 300*time.Millisecond)
+	const task = "跑一下测试"
+	unasked := func(t *testing.T) *fakeUpstream {
+		return newFakeUpstream(t, func(u *fakeUpstream, c *websocket.Conn, f map[string]any) {
+			if f["type"] == "session.start" {
+				u.send(c, map[string]any{"type": "session.started", "session": map[string]any{}})
+				delegate(u, c, "dlg1", task) // nobody spoke
+			}
+		})
+	}
+	t.Run("off", func(t *testing.T) {
+		hub := agentHub(t)
+		pl := testPlugin(t, liveProvider(unasked(t)), hub.server(t))
+		logs := captureLog(t, pl)
+		a := dialApp(t, pl, boundStart("a1", map[string]any{"speech_gate": false}))
+		ready := a.until(ofType("ready"))
+		if features, _ := ready["features"].([]any); !slices.Contains(features, any("speech_gate")) {
+			t.Errorf("ready: %v", ready)
+		}
+		if m := hub.waitSent(1); m.Session != "a1" || !strings.HasPrefix(m.Text, task+"\n") {
+			t.Fatalf("sent %+v", m)
+		}
+		logs.wait("call 1: start: protocol 2", ", speech gate off")
+		logs.wait("call 1: delegation dlg1: the user-speech gate is off (the app's setting): let it through in",
+			"; on, it would have refused it (unprompted)", "; from the handover: agent words none, caption none, typed line none, own voice none")
+		if all := logs.String(); strings.Contains(all, task) {
+			t.Errorf("the log has the task:\n%s", all)
+		}
+	})
+	for name, more := range map[string]map[string]any{"on": {"speech_gate": true}, "not said": nil} {
+		t.Run(name, func(t *testing.T) {
+			hub := agentHub(t)
+			pl := testPlugin(t, liveProvider(unasked(t)), hub.server(t))
+			logs := captureLog(t, pl)
+			a := dialApp(t, pl, boundStart("a1", more))
+			a.until(ofType("ready"))
+			if refused := a.until(runIn(runRefused)); refused["code"] != "unprompted" {
+				t.Fatalf("refused: %v", refused)
+			}
+			logs.wait("call 1: delegation dlg1: the user-speech gate refused it (unprompted)")
+			if start := logs.wait("call 1: start:"); strings.Contains(start, "speech gate") {
+				t.Errorf("start: %s", start)
+			}
+			if msgs := hub.messages(); len(msgs) != 0 {
+				t.Fatalf("sent %+v", msgs)
+			}
+		})
+	}
+	t.Run("another extension", func(t *testing.T) {
+		hub := newFakeHub(t)
+		up := unasked(t)
+		pl := testPlugin(t, liveProvider(up), hub.server(t))
+		logs := captureLog(t, pl)
+		a := dialApp(t, pl, map[string]any{"type": "start", "speech_gate": false}, http.Header{"X-Persona-Role": {"extension"}})
+		a.until(ofType("ready"))
+		if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, unpromptedWords) {
+			t.Fatalf("told: %s", got)
+		}
+		logs.wait("call 1: delegation dlg1: the user-speech gate refused it (unprompted)")
+		logs.wait("call 1: start:", "speech gate off asked: not for another extension's call")
+		if msgs := hub.messages(); len(msgs) != 0 {
+			t.Fatalf("sent %+v", msgs)
+		}
+	})
+}
+
 // lateCaptionUpstream is a live service with tools whose model asks a card's question it is told with speech of
 // speech's length (acked first, its reply's start said, as the measured service does), and whose user caption comes
 // only after the result of a call that said nothing (docs/lessons/voice.md "Late captions on replies that only call a
@@ -528,7 +682,7 @@ func TestNoUserVoiceStillRefused(t *testing.T) {
 			c.sound(a, speech)
 			waitFor(t, "the service has the app's audio", func() bool { return framesOf(up.fakeUpstream, 100) >= 15 })
 			up.call("dlg1", "回答：第二个")
-			if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "这条不是你说的，我没发") {
+			if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, unpromptedWords) {
 				t.Fatalf("told: %s", got)
 			}
 			if res := hub.resolutions(); len(res) != 0 {
@@ -543,7 +697,7 @@ func TestNoUserVoiceStillRefused(t *testing.T) {
 // that says nothing after it is refused as unprompted, unless the user's own voice was heard once the speech played
 // out. An app with echo cancellation, or one that does not say, has the caption count as before.
 func TestEchoCaptionDoesNotOpenTheGate(t *testing.T) {
-	const answered, refused = "用户的回答已经交给 Claude Code 了", "这条不是你说的，我没发"
+	const answered, refused = "用户的回答已经交给 Claude Code 了", unpromptedWords
 	for _, c := range []struct {
 		name  string
 		start map[string]any

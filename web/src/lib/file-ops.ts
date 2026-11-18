@@ -10,6 +10,12 @@ import { currentLanguage, t } from "../i18n";
 export const UPLOAD_DIR_FEATURE = "upload_dir";
 /** hello `features`: rename / move / trash / restore (#4858 part 2). */
 export const FILE_EDIT_FEATURE = "file_edit";
+/** New folders, text files and zips (#5828; docs/protocol/protocol.md "Changing files"). */
+export const FILE_MKDIR_FEATURE = "file_mkdir";
+export const FILE_WRITE_FEATURE = "file_write";
+export const FILE_ZIP_FEATURE = "file_zip";
+/** Copy and duplicate (#5830). */
+export const FILE_COPY_FEATURE = "file_copy";
 
 /** What an upload with a name already there does: `replace` it, or `keep` both ("name 2.extension", as Finder does). */
 export type Conflict = "replace" | "keep";
@@ -47,8 +53,34 @@ export function uploadToDir(
   file: File,
   opts: { dir: string; cwd?: string; conflict?: Conflict; credential?: UploadCredential; signal?: AbortSignal; onProgress?: (sent: number, total: number) => void },
 ): Promise<Uploaded> {
-  const credential = opts.credential ?? { owner: credentialOwner(), token: getToken() };
   const q = `name=${enc(file.name)}&dest=dir&dir=${enc(opts.dir)}${opts.cwd ? `&cwd=${enc(opts.cwd)}` : ""}${opts.conflict ? `&conflict=${opts.conflict}` : ""}`;
+  return uploadWithProgress(mid, file, q, opts);
+}
+
+/** The hub feature for `dest=attachment`: a file sent with a chat message, kept on the computer (#8361). */
+export const UPLOAD_ATTACHMENT_FEATURE = "upload_attachment";
+
+/**
+ * Sends `file` with a chat message to machine `mid` (docs/protocol/protocol.md "Sending files", #8361), reporting the
+ * bytes sent: `dest` "attachment" keeps it beside the chat's pictures, "health" in the health space's reports, none in
+ * the temp directory. Rejects as `uploadToDir` does.
+ */
+export function uploadAttachment(
+  mid: string,
+  file: File,
+  opts: { name?: string; dest?: string; signal?: AbortSignal; onProgress?: (sent: number, total: number) => void } = {},
+): Promise<Uploaded> {
+  return uploadWithProgress(mid, file, `name=${enc(opts.name ?? file.name)}${opts.dest ? `&dest=${enc(opts.dest)}` : ""}`, opts);
+}
+
+/** POST /machines/{mid}/files?<query> over XHR, the bytes sent reported as they go. */
+function uploadWithProgress(
+  mid: string,
+  file: File,
+  q: string,
+  opts: { credential?: UploadCredential; signal?: AbortSignal; onProgress?: (sent: number, total: number) => void },
+): Promise<Uploaded> {
+  const credential = opts.credential ?? { owner: credentialOwner(), token: getToken() };
   return new Promise((resolve, reject) => {
     // XHR, not fetch: only it reports an upload's progress
     const xhr = new XMLHttpRequest();
@@ -124,6 +156,24 @@ export async function moveEntries(mid: string, paths: string[], cwd: string, dir
   return r.moved ?? [];
 }
 
+/** A long copy / zip: its original request can be aborted and its operation polled for progress. */
+export interface RemoteRequestOptions {
+  operationId?: string;
+  signal?: AbortSignal;
+}
+
+/** Copies `paths` into folder `dir` (#5830); a copy into their own folder with `keep` duplicates them. */
+export async function copyEntries(mid: string, paths: string[], cwd: string, dir: string, conflict?: Conflict, credential?: FileCredential, options: RemoteRequestOptions = {}): Promise<{ from: string; to: string }[]> {
+  const r = await api<{ copied?: { from: string; to: string }[] }>(`/machines/${enc(mid)}/files/copy`, {
+    method: "POST",
+    json: { paths, cwd, dir, ...(conflict ? { conflict } : {}), ...(options.operationId ? { operation_id: options.operationId } : {}) },
+    timeout: 610_000,
+    signal: options.signal,
+    ...mutationAuth(credential),
+  });
+  return r.copied ?? [];
+}
+
 /** Moves `paths` to the machine's trash; resolves to what puts each back (restoreEntries). */
 export async function trashEntries(mid: string, paths: string[], cwd: string, credential?: FileCredential): Promise<{ path: string; trash_id: string }[]> {
   const r = await api<{ trashed?: { path: string; trash_id: string }[] }>(`/machines/${enc(mid)}/files/trash`, { method: "POST", json: { paths, cwd }, ...mutationAuth(credential) });
@@ -134,6 +184,59 @@ export async function trashEntries(mid: string, paths: string[], cwd: string, cr
 export async function restoreEntries(mid: string, trashIds: string[], credential?: FileCredential): Promise<string[]> {
   const r = await api<{ restored?: { path: string }[] }>(`/machines/${enc(mid)}/files/restore`, { method: "POST", json: { trash_ids: trashIds }, ...mutationAuth(credential) });
   return (r.restored ?? []).map((x) => x.path);
+}
+
+/** Makes folder `name` in `dir` (#5828); resolves to its path. */
+export async function makeFolder(mid: string, dir: string, cwd: string, name: string, credential?: FileCredential): Promise<string> {
+  const r = await api<{ path: string }>(`/machines/${enc(mid)}/files/mkdir`, { method: "POST", json: { dir, cwd, name }, ...mutationAuth(credential) });
+  return r.path;
+}
+
+/** What files/write answers: the file as it is now, for the next save's check. */
+export interface WrittenFile {
+  path: string;
+  size: number;
+  revision: string;
+  mtime?: string;
+}
+
+/** Writes a text file (#5828, #5829): `create` makes a new one (409 `exists` when taken); otherwise it replaces the file
+ *  while it is still at `revision` (or hashes to `sha256`), else 409 `file_changed`; `force`: Overwrite Anyway. */
+export async function writeTextFile(
+  mid: string,
+  path: string,
+  cwd: string,
+  text: string,
+  opts: { create?: boolean; revision?: string; sha256?: string; force?: boolean } = {},
+  credential?: FileCredential,
+): Promise<WrittenFile> {
+  return api<WrittenFile>(`/machines/${enc(mid)}/files/write`, { method: "POST", json: { path, cwd, text, ...opts }, ...mutationAuth(credential) });
+}
+
+/** Zips `paths` into `dir` as `name`, or with no `dir` into a temporary file on the computer for a download (#5828). */
+export async function zipEntries(mid: string, paths: string[], cwd: string, name: string, dir?: string, credential?: FileCredential, options: RemoteRequestOptions = {}): Promise<{ path: string; name: string; size: number; files: number }> {
+  return api(`/machines/${enc(mid)}/files/zip`, {
+    method: "POST",
+    json: { paths, cwd, name, ...(dir ? { dir } : {}), ...(options.operationId ? { operation_id: options.operationId } : {}) },
+    timeout: 610_000,
+    signal: options.signal,
+    ...mutationAuth(credential),
+  });
+}
+
+export interface FileOperation {
+  id: string;
+  kind: string;
+  state: "running" | "done" | "failed" | "cancelled";
+  files_done: number;
+  files_total: number;
+  bytes_done: number;
+  bytes_total: number;
+}
+
+/** Progress for a copy / zip's original POST. A terminal state here never substitutes for that POST's response. */
+export function fileOperation(mid: string, id: string, credential?: FileCredential, signal?: AbortSignal): Promise<FileOperation> {
+  return api(`/machines/${enc(mid)}/files/operations/${enc(id)}`, { signal, ...mutationAuth(credential) });
 }
 
 /** Why a name can't be a file's (`null`: it can). The node checks again; this is only to say it before asking. */

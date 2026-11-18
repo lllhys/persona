@@ -71,7 +71,7 @@ func (s *Service) applyModelProfileLocked(ctx context.Context, id string, by Pro
 		if err != nil {
 			return sw, false, err
 		}
-		b.Runtime = purpose.Override.Runtime // the main chat's runtime is not the profile's
+		b.ConfigDir = purpose.Override.ConfigDir // where the main chat's new conversations start is not a profile's (#4633)
 		if b == purpose.Override {
 			continue
 		}
@@ -90,12 +90,12 @@ func (s *Service) applyModelProfileLocked(ctx context.Context, id string, by Pro
 			if err != nil {
 				return sw, false, err
 			}
-			if !messagesAPI(config.API) && config.API != "responses" {
+			if !messagesAPI(config.API) && config.API != "responses" && config.API != "chat" {
 				return sw, false, i18n.Err("assistant-models.err_api_effort")
 			}
 		}
 		modelOnly := b
-		modelOnly.Runtime = ""
+		modelOnly.ConfigDir = ""
 		if modelOnly != (ModelBinding{}) {
 			if err := s.validateModel(ctx, purpose, effective, providers); err != nil {
 				return sw, false, i18n.Err("assistant-model_profiles.err_cannot_run", i18n.Args{"purpose": purpose.Name, "error": err})
@@ -206,12 +206,12 @@ func (s *Service) rollbackModelProfileLocked(ctx context.Context, by ProfileActo
 		if !ok {
 			continue
 		}
-		// Restore model choices while preserving the runtime selected since the switch.
+		// Restore model choices while preserving the new conversations' profile selected since the switch.
 		r, err := s.modelRecord(ctx, cat)
 		if err != nil {
 			return sw, false, err
 		}
-		b.Runtime = r.Binding.Runtime
+		b.ConfigDir = r.Binding.ConfigDir
 		if b == r.Binding {
 			continue
 		}

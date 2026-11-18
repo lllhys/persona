@@ -1,0 +1,16 @@
+{
+  "title": "变更",
+  "exchange": "本次交互",
+  "session": "整个会话",
+  "open_file": "打开文件",
+  "review_git": "使用 Git 评审",
+  "scope_label": "变更范围",
+  "files_label": "编辑过的文件",
+  "new_changes_one": "{count} 项新变更",
+  "new_changes_other": "{count} 项新变更",
+  "loading_history": "正在加载较早的变更…",
+  "loading_fold": "正在加载此文件的编辑…",
+  "fold_failed": "编辑内容未能完整加载。",
+  "retry": "重试",
+  "empty": "此范围还没有编辑"
+}

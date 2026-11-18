@@ -49,6 +49,7 @@ func releaseDir(t *testing.T, version string, build func(name string) int64) str
 	write("persona-hub-"+here+".gz", script("persona-hub-"+here+".gz"))
 	write("personad-"+other+".gz", foreign("personad-"+other+".gz"))
 	write("persona-node-"+other+".gz", foreign("persona-node-"+other+".gz"))
+	write("persona-link-windows-amd64.exe.gz", foreign("persona-link-windows-amd64.exe.gz"))
 	return dir
 }
 
@@ -61,7 +62,8 @@ func TestVerifyReleaseAcceptsItsOwnBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Files) != 2 || len(m.Programs["persona-hub"]) != 1 || len(m.Nodes["persona-node"]) != 1 {
+	if len(m.Files) != 2 || len(m.Programs["persona-hub"]) != 1 || len(m.Nodes["persona-node"]) != 1 ||
+		m.Links["windows-amd64"].Name != "persona-link-windows-amd64.exe.gz" {
 		t.Fatalf("the release is not all there: %+v", m)
 	}
 	if err := VerifyRelease(context.Background(), dir, m); err != nil {
@@ -81,6 +83,7 @@ func TestVerifyReleaseRefusesAnotherRunsBinaries(t *testing.T) {
 		{"persona-hub-" + here + ".gz", "says"},
 		{"personad-" + other + ".gz", "is not build 202611110749"},
 		{"persona-node-" + other + ".gz", "is not build 202611110749"},
+		{"persona-link-windows-amd64.exe.gz", "is not build 202611110749"},
 	} {
 		t.Run(tc.stale, func(t *testing.T) {
 			dir := releaseDir(t, "0.2.1", func(name string) int64 {
@@ -169,5 +172,64 @@ func TestStampScan(t *testing.T) {
 				t.Errorf("%q in writes of %d: found %v, want %v", tc.body, chunk, got, tc.want)
 			}
 		}
+	}
+}
+
+// Helpers (persona-iphone-bridge) carry their own version, not the build number: a release lists each platform's,
+// checks their bytes, runs this machine's and wants its name; one that says something else, or whose bytes are not the
+// manifest's, is refused (#8199).
+func TestVerifyReleaseChecksHelpers(t *testing.T) {
+	here, other := runtime.GOOS+"-"+runtime.GOARCH, otherPlatform()
+	write := func(dir, name string, body []byte) {
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		zw.Write(body)
+		zw.Close()
+		if err := os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name, says, want string
+	}{
+		{"its own", "persona-iphone-bridge 0.1.0 (wire 1)", ""},
+		{"another program", "something 1.0", "not persona-iphone-bridge's version"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := releaseDir(t, "0.2.1", same(202611110749))
+			write(dir, "persona-iphone-bridge-"+here+".gz", []byte("#!/bin/sh\necho '"+tc.says+"'\n"))
+			write(dir, "persona-iphone-bridge-"+other+".gz", []byte("\x7fELF\x00no build number in a helper"))
+			m, err := BuildManifest(dir, Manifest{Version: "0.2.1", Build: 202611110749})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(m.Helpers["persona-iphone-bridge"]) != 2 || len(m.Nodes["persona-node"]) != 1 {
+				t.Fatalf("helpers: %+v", m.Helpers)
+			}
+			if f, ok := m.HelperFile("persona-iphone-bridge", other); !ok || f.Name != "persona-iphone-bridge-"+other+".gz" || f.BinarySHA256 == "" {
+				t.Fatalf("HelperFile = %+v %v", f, ok)
+			}
+			err = VerifyRelease(context.Background(), dir, m)
+			if tc.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+	// A helper replaced after the manifest was written.
+	dir := releaseDir(t, "0.2.1", same(202611110749))
+	write(dir, "persona-iphone-bridge-"+other+".gz", []byte("one build"))
+	m, err := BuildManifest(dir, Manifest{Version: "0.2.1", Build: 202611110749})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(dir, "persona-iphone-bridge-"+other+".gz", []byte("another build"))
+	if err := VerifyRelease(context.Background(), dir, m); err == nil || !strings.Contains(err.Error(), "size or sha256") {
+		t.Fatalf("a replaced helper: %v", err)
+	}
+	if _, ok := m.HelperFile("persona-iphone-bridge", "windows-amd64"); ok {
+		t.Fatal("no build for a platform the release lacks")
 	}
 }

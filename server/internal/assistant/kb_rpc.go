@@ -54,6 +54,9 @@ func kbRPCError(err error) error {
 	if errors.Is(err, kb.ErrNotFound) {
 		return &rpc.Error{Code: "not_found", Message: err.Error()}
 	}
+	if errors.Is(err, kb.ErrInvalidProfile) {
+		return &rpc.Error{Code: bus.CodeInvalidParams, Message: "kb.update: " + err.Error()}
+	}
 	return kbError(err)
 }
 
@@ -258,10 +261,11 @@ func (s *Service) kbRPCRequest(ctx context.Context, method string, raw json.RawM
 			if err != nil {
 				return nil, true, kbRPCError(err)
 			}
-			return assistantwire.KBUpdateResult{ID: res.ID, Before: res.Before}, true, nil
+			return assistantwire.KBUpdateResult{ID: res.ID, Before: res.Before, Ignored: res.Ignored}, true, nil
 		}
+		ignored := kb.Unsupported(update.Kind, update.Update)
 		id, err := e.Apply(update.Kind, update.ID, update.Update)
-		return assistantwire.KBUpdateResult{ID: id}, true, kbRPCError(err)
+		return assistantwire.KBUpdateResult{ID: id, Ignored: ignored}, true, kbRPCError(err)
 	}
 }
 

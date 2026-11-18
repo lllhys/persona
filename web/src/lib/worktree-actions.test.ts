@@ -5,7 +5,9 @@ import { chooseManager, resetManagerChoice, setRosterDefault } from "./manager-c
 import type { Machine, Session } from "./types";
 import type { HostWorkspace, WorkspaceCatalogSnapshot } from "./workspace-catalog";
 import type { OwnedWorkspaceTarget } from "./worktree-actions";
-import { firstDirectWorktreeAgent, resolveWorktreeAction } from "./worktree-actions-context";
+import { firstDirectWorktreeAgent, renamesRuntimeSpace, resolveWorktreeAction, spaceWorktreeSources } from "./worktree-actions-context";
+import type { SpaceLike } from "./agent-filter";
+import { sessionWorkspace } from "./agent-repos";
 
 let target: OwnedWorkspaceTarget;
 let catalog: WorkspaceCatalogSnapshot;
@@ -19,6 +21,54 @@ beforeEach(() => {
   machines = [{ id: "computer", manager: "manager", name: "Computer", online: true, engine_hosts: ["orca", "herdr"] }];
 });
 afterEach(() => resetManagerChoice());
+
+describe("worktree creation sources in a logical space", () => {
+  const space = (extra: Partial<Session> = {}): SpaceLike => ({ key: "runtime-space", machineId: "computer", name: "Work", sessions: [{
+    machine_id: "computer", session_id: "agy-session", title: "Runtime Agent", status: "idle", cwd: "/repo/work",
+    source_kind: "runtime", space_kind: "agy", space_id: "/repo/work", ...extra,
+  }] });
+  it("uses the native source id for a runtime folder without changing its ownership", () => {
+    const sp = space();
+    expect(sessionWorkspace(sp.sessions[0], catalog.workspaces, catalog.manager)).toBeUndefined();
+    expect(spaceWorktreeSources(sp, catalog, machines)).toEqual([{ ...target, label: "work" }]);
+    expect(resolve(false).canDelete).toBe(false);
+  });
+  it("retains exact native bindings even when another source shares the directory", () => {
+    catalog.workspaces.push(row("native", { source: "herdr", cwd: target.cwd }));
+    expect(spaceWorktreeSources(space({ source_kind: undefined, space_kind: "herdr", space_id: "native" }), catalog, machines))
+      .toMatchObject([{ host: "herdr", workspaceId: "native" }]);
+    expect(spaceWorktreeSources(space({ space_kind: "herdr", space_id: "missing" }), catalog, machines)).toEqual([]);
+  });
+  it("returns every matching native source for explicit selection and excludes other computers", () => {
+    catalog.workspaces.push(row("native", { source: "herdr", cwd: target.cwd }), row("elsewhere", { machine_id: "other", cwd: target.cwd }));
+    expect(spaceWorktreeSources(space(), catalog, machines).map((source) => source.workspaceId)).toEqual(["work", "native"]);
+  });
+  it("uses a runtime's verified Git worktree when the Agent works in a subdirectory", () => {
+    expect(spaceWorktreeSources(space({ cwd: "/repo/work/src", worktree: "/repo/work/" }), catalog, machines)).toEqual([{ ...target, label: "work" }]);
+    expect(spaceWorktreeSources(space({ cwd: "/repo/work-other" }), catalog, machines)).toEqual([]);
+  });
+  it("excludes unsupported, offline, unavailable and duplicate native identities", () => {
+    machines[0].online = false; expect(spaceWorktreeSources(space(), catalog, machines)).toEqual([]); machines[0].online = true;
+    catalog.workspaces[0].available = false; expect(spaceWorktreeSources(space(), catalog, machines)).toEqual([]); catalog.workspaces[0].available = true;
+    catalog.workspaces.push(row("work")); expect(spaceWorktreeSources(space(), catalog, machines)).toEqual([]);
+    catalog.workspaces = [row("work", { source: "session-directory" })];
+    expect(spaceWorktreeSources(space(), catalog, machines)).toEqual([]);
+  });
+  it("offers a Paseo space's Git workspace its Agents are in, never a Paseo folder", () => {
+    machines[0].engine_hosts = ["paseo"];
+    catalog.workspaces = [row("wks_0000000000000001", { source: "paseo", cwd: "/repo/work", workspace_kind: "git", is_main: true }),
+      row("wks_0000000000000002", { source: "paseo", cwd: "/notes", workspace_kind: "folder" })];
+    const paseo = (workspaceId: string, cwd: string) => space({ space_kind: "paseo", host: "paseo", space_id: "prj_0000000000000001", workspace_id: workspaceId, cwd });
+    expect(spaceWorktreeSources(paseo("wks_0000000000000001", "/repo/work"), catalog, machines))
+      .toMatchObject([{ host: "paseo", workspaceId: "wks_0000000000000001", cwd: "/repo/work" }]);
+    expect(spaceWorktreeSources(paseo("wks_0000000000000002", "/notes"), catalog, machines)).toEqual([]);
+  });
+  it("binds suggestions to the current credential and discovery manager", () => {
+    expect(spaceWorktreeSources(space({ manager: "elsewhere" }), catalog, machines)).toEqual([]);
+    chooseManager("other"); expect(spaceWorktreeSources(space(), catalog, machines)).toEqual([]);
+    resetManagerChoice(); setToken("replacement"); expect(spaceWorktreeSources(space(), catalog, machines)).toEqual([]);
+  });
+});
 
 describe("exact worktree action admission", () => {
   it("uses the chosen assistant's catalog and rejects the previous assistant's target", () => {
@@ -67,6 +117,38 @@ describe("exact worktree action admission", () => {
     expect(resolve()).toMatchObject({ canRename: true, canCreate: true, canDelete: false });
     target.host = "future"; catalog.workspaces[0].source = "future"; machines[0].engine_hosts = ["future"];
     expect(resolve()).toMatchObject({ writable: true, canRename: false, canCreate: false, canDelete: false });
+  });
+  it("makes Paseo worktrees of its Git workspaces, titles any of its workspaces, and deletes only a worktree, never by closing", () => {
+    target.host = "paseo"; machines[0].engine_hosts = ["herdr", "paseo"];
+    catalog.workspaces[0] = { ...catalog.workspaces[0], source: "paseo", workspace_kind: "git", is_main: true };
+    expect(resolve()).toMatchObject({ writable: true, canCreate: true, canRename: true, canClose: false, canDelete: false });
+    catalog.workspaces[0].is_main = false;
+    // a worktree Paseo did not make: it would only archive it, so no Delete
+    expect(resolve()).toMatchObject({ canCreate: true, canRename: true, canClose: false, canDelete: false });
+    catalog.workspaces[0].owned = true;
+    expect(resolve()).toMatchObject({ canCreate: true, canRename: true, canClose: false, canDelete: true });
+    catalog.workspaces[0].workspace_kind = "folder"; catalog.workspaces[0].is_main = undefined;
+    expect(resolve()).toMatchObject({ writable: true, canCreate: false, canRename: true, canDelete: false });
+    machines[0].engines = [{ id: "paseo", name: "Paseo", available: false }];
+    catalog.workspaces[0].workspace_kind = "git";
+    expect(resolve()).toMatchObject({ writable: false, canCreate: false, canRename: false, canDelete: false });
+  });
+  it("renames a Paseo space in Paseo only while the catalog has its project's workspaces from Paseo", () => {
+    const paseo: Session = { machine_id: "computer", session_id: "paseo-1", title: "Agent", status: "idle", source_kind: "runtime", space_kind: "paseo",
+      space_id: "prj_0000000000000001", workspace_id: "wks_0000000000000001", cwd: "/repo/work" };
+    catalog.workspaces.push(row("wks_0000000000000001", { source: "paseo", project_id: "prj_0000000000000001" }));
+    expect(renamesRuntimeSpace(paseo, catalog)).toBe(true);
+    expect(renamesRuntimeSpace({ ...paseo, machine_id: "other" }, catalog)).toBe(false);
+    expect(renamesRuntimeSpace({ ...paseo, manager: "elsewhere" }, catalog)).toBe(false);
+    expect(renamesRuntimeSpace({ ...paseo, space_id: "prj_0000000000000002" }, catalog)).toBe(false);
+    expect(renamesRuntimeSpace({ ...paseo, space_kind: "agy" }, catalog)).toBe(false);
+    expect(renamesRuntimeSpace({ ...paseo, source_kind: undefined }, catalog)).toBe(false);
+  });
+  it("closes herdr workspaces and deletes only a verified linked checkout", () => {
+    target.host = "herdr"; catalog.workspaces[0].source = "herdr";
+    expect(resolve()).toMatchObject({ canClose: true, canDelete: false });
+    expect(resolveWorktreeAction(target, { catalog, machines, writable: true, linkedWorktree: true }).canDelete).toBe(true);
+    expect(resolve(false).canClose).toBe(false);
   });
 });
 

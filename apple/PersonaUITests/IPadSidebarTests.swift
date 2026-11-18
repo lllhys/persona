@@ -1,7 +1,7 @@
 import XCTest
 
-/// The iPad's Persona sidebar is the iPhone drawer's (docs/apple/ios.md「iPad」, 2026-11-05 user): Persona (the main
-/// conversation) first, then Inbox … Machines, the conversations, New Chat + Settings at the foot above Persona's face and machine.
+/// The iPad's Persona sidebar is the iPhone drawer's (docs/apple/ios.md「iPad」, 2026-11-05 user): the main conversation,
+/// named after the current assistant (#6489), first, then Inbox … Machines, the conversations, New Chat + Settings at the foot above Persona's face and machine.
 /// Inbox and Settings are not tabs: Inbox opens beside the sidebar, Settings as a sheet. Against scripts/mock/mock_hub.py
 /// (PERSONA_MOCK_HUB), on an iPad simulator, portrait and landscape. TEST_RUNNER_PERSONA_SHOTS=<dir> keeps screenshots;
 /// TEST_RUNNER_PERSONA_HOLD=<seconds> stays on each page for `simctl io screenshot` (XCUITest's own turn in landscape).
@@ -42,7 +42,13 @@ final class IPadSidebarTests: XCTestCase {
             XCTAssertTrue(inbox.exists && machines.exists, "\(name): the places are missing")
             // Persona first, then Inbox … Machines (the sidebar is the left column).
             XCTAssertLessThan(main.frame.minY, inbox.frame.minY, "\(name): Persona is not on top")
-            XCTAssertTrue(main.label.hasPrefix("Persona"), "\(name): the main row is not named Persona: \(main.label)")
+            // The main conversation is named after the current assistant, as the sidebar's head names it (#6489):
+            // the name is read there, not written here.
+            let head = element("assistant-switcher")
+            XCTAssertTrue(head.waitForExistence(timeout: 5), "\(name): no assistant at the sidebar's head:\n\(app.debugDescription)")
+            let assistant = head.label.split(separator: ",").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+            XCTAssertFalse(assistant.isEmpty, "\(name): the sidebar's head says no name: \(head.label)")
+            XCTAssertTrue(main.label.hasPrefix(assistant), "\(name): the main row is not named after the assistant (\(assistant)): \(main.label)")
             XCTAssertEqual(app.buttons.matching(identifier: "sidebar-main").count, 1, "\(name): the main conversation shows more than once")
             XCTAssertLessThan(inbox.frame.minY, machines.frame.minY)
             XCTAssertLessThan(main.frame.maxX, app.windows.firstMatch.frame.width / 2 + 100, "\(name): not in the left column")
@@ -52,6 +58,8 @@ final class IPadSidebarTests: XCTestCase {
             XCTAssertGreaterThan(new.frame.minY, machines.frame.maxY)
             XCTAssertEqual(new.frame.midY, settings.frame.midY, accuracy: 4, "\(name): 新对话 and 设置 in one row")
             XCTAssertLessThan(new.frame.minX, settings.frame.minX)
+            // The foot's New Chat is the only one (#4206): none on the conversation's top bar beside it.
+            XCTAssertFalse(element("assistant-new").exists, "\(name): a New Chat on the page beside the sidebar")
             // The tabs (iPad's bar at the top, above the sidebar's rows): Persona and Agents, no Inbox or Settings.
             func tabs(_ label: String) -> [XCUIElement] {
                 app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).allElementsBoundByIndex
@@ -71,7 +79,7 @@ final class IPadSidebarTests: XCTestCase {
             shot("inbox-\(name)")
             // Persona goes back to the conversation.
             main.tap()
-            XCTAssertTrue(element("assistant-sidebar-search").waitForExistence(timeout: 5))
+            XCTAssertTrue(element("sidebar-search").waitForExistence(timeout: 5)) // Search at the column's foot (#4206)
 
             // Settings is a sheet with its ×.
             settings.tap()

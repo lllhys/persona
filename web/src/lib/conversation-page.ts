@@ -12,9 +12,10 @@ import type { Route } from "./router";
 /** The page of conversation sid, on computer mid, of manager (none: the default's). Without the computer (a to-do names
  *  only its origin conversation) the manager is named even when it is the default: the page reads where its assistant
  *  runs. */
-export function conversationPage(sid: string, mid?: string, manager?: string): Route {
-  if (!multiManager(currentRoster())) return { name: "persona", sid };
-  if (!mid) return { name: "persona", sid, manager: manager || defaultManager() };
+export function conversationPage(sid: string, mid?: string, manager?: string, at?: string): Route {
+  const msg = at ? { at } : {};
+  if (!multiManager(currentRoster())) return { name: "persona", sid, ...msg };
+  if (!mid) return { name: "persona", sid, manager: manager || defaultManager(), ...msg };
   const other = otherManager(manager);
-  return { name: "persona", sid, mid, ...(other ? { manager: other } : {}) };
+  return { name: "persona", sid, mid, ...(other ? { manager: other } : {}), ...msg };
 }

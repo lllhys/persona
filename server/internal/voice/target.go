@@ -38,7 +38,21 @@ type startFrame struct {
 	} `json:"resume"`
 	// EchoCancellation false: the app records without echo cancellation (absent: not said, taken as with it).
 	EchoCancellation *bool `json:"echo_cancellation"`
+	// Mode "meeting" (protocol 2) is a meeting call bound to recording RecordingID's room (meeting.go); any other mode
+	// is an ordinary call.
+	Mode        string `json:"mode"`
+	RecordingID string `json:"recording_id"`
+	// SpeechGate false: the user turned the user-speech gate off on this device (#5904, gate.go; true or absent: on).
+	// Only a full device's ordinary call can: another extension's call and a meeting call keep it. Said at all, the app
+	// has Send Anyway (conversation.sendsAnyway): an app from before #5904 says nothing.
+	SpeechGate *bool `json:"speech_gate"`
+	// Surface "call" (#9290): the app places this call as a system call (the iPhone's call to Persona); absent for an
+	// in-app or CarPlay call. Informational: only the call's log says it (logStart), and only "call", never the raw value.
+	Surface string `json:"surface"`
 }
+
+// surfaceCall is start.surface of a system call (#9290).
+const surfaceCall = "call"
 
 type wireLine struct {
 	Role string `json:"role"`
@@ -56,8 +70,10 @@ type resumeRun struct {
 }
 
 // The features this extension's protocol 2 has (GET /info, ready): only what is there (docs/assistant/voice.md "Version negotiation").
-// speak is POST /speak (speak.go), outside a call.
-var features = []string{"target", "runs", "asks", "resume", "suspend", "speak"}
+// speak is POST /speak (speak.go), outside a call. speech_gate (#5904): a run the user-speech gate refused (unprompted)
+// can be sent again (resend), and start takes speech_gate. meeting is the meeting call (meeting.go, #3862 phase 4). hold
+// (#9290): the app's hold frame pauses the upstream at once and nothing wakes it until the hold is off (suspend.go).
+var features = []string{"target", "runs", "asks", "resume", "suspend", "speak", "speech_gate", "meeting", "hold"}
 
 const (
 	// snapshotWait is how long the snapshot's parts that may be left out are waited for (docs/assistant/voice.md 4.5): it is
@@ -128,7 +144,9 @@ func sendable(s *proto.Session) bool {
 }
 
 // prepare binds the call to machine/session and takes its snapshot (recent: what the app sent of its last turns).
-func (c *conversation) prepare(ctx context.Context, machine, session string, recent []prompts.VoiceLine) prepared {
+// recording is a meeting call's recording (meeting.go): its room must be the target, and ready; "" an ordinary call,
+// which a meeting's room refuses.
+func (c *conversation) prepare(ctx context.Context, machine, session string, recent []prompts.VoiceLine, recording string) prepared {
 	hub := c.pl.hub
 	opt, cancel := context.WithTimeout(ctx, snapshotWait)
 	defer cancel()
@@ -145,7 +163,7 @@ func (c *conversation) prepare(ctx context.Context, machine, session string, rec
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			page, pageErr = hub.lastTurns(opt, machine, session, 3)
+			page, pageErr = hub.lastTurns(opt, machine, session, c.snapshotTurns())
 		}()
 	}
 	bctx, bcancel := context.WithTimeout(ctx, bindTimeout)
@@ -157,11 +175,22 @@ func (c *conversation) prepare(ctx context.Context, machine, session string, rec
 		defer wg.Done()
 		m, merr = hub.machine(bctx, machine)
 	}()
+	var room chan roomRead
+	if recording != "" {
+		room = make(chan roomRead, 1)
+		go func() { r, err := hub.meetingRoom(bctx, recording); room <- roomRead{r, err} }()
+	}
 	sess, err := hub.session(bctx, machine, session)
 	if err != nil {
 		wg.Wait()
 		c.logf("bind %s/%s: %s", machine, session, hubOutcome(err))
 		return prepared{err: &codedError{msg: "连不上 Persona，没能找到要绑定的对话"}} // no code: not known to be gone
+	}
+	if room != nil {
+		if err := c.checkRoom(recording, <-room, machine, session); err != nil {
+			wg.Wait()
+			return prepared{err: err}
+		}
 	}
 	if sess == nil {
 		wg.Wait()
@@ -171,7 +200,17 @@ func (c *conversation) prepare(ctx context.Context, machine, session string, rec
 		wg.Wait()
 		return prepared{err: &codedError{code: codeTargetReadOnly, msg: "这个对话只能查看，不能用语音：" + sess.ReadOnlyReason}}
 	}
+	if recording == "" && isMeetingRoom(sess) {
+		wg.Wait()
+		c.logf("bind %s/%s: a meeting's room takes only meeting calls", machine, session)
+		return prepared{err: &codedError{code: codeMeetingRoom, msg: i18n.T(c.language(), "voice-meeting.meeting_room")}}
+	}
 	t := &boundTarget{MachineID: machine, SessionID: session, Kind: "agent", Label: agentLabel(sess), Title: sess.Title}
+	if recording != "" {
+		// A meeting's room is a Persona conversation (a guest of the assistant's), though the hub does not list it as one
+		// (it runs outside the assistant's directory): its answers are Persona's, never an agent's (no triage either).
+		sess.Assistant = true
+	}
 	if sess.Assistant {
 		t.Kind, t.Label = "assistant", "Persona"
 		if am, main, err := hub.assistant(bctx); err == nil && am == machine && main == session {
@@ -188,7 +227,7 @@ func (c *conversation) prepare(ctx context.Context, machine, session string, rec
 		t.MachineName, online = m.Name, m.Online
 	}
 	if len(recent) == 0 && pageErr == nil {
-		recent = recentOf(c.language(), page.Items)
+		recent = c.recentFrom(page.Items)
 	}
 	return prepared{target: t, snap: snapshotOf(t, sess, recent, cardsOf(cards, t), agents), online: online}
 }
@@ -206,7 +245,10 @@ func (c *conversation) refreshSnapshot(ctx context.Context, t *boundTarget) *pro
 	var agents []proto.Session
 	wg.Add(2)
 	go func() { defer wg.Done(); cards, _ = hub.interactions(ctx) }()
-	go func() { defer wg.Done(); page, pageErr = hub.lastTurns(ctx, t.MachineID, t.SessionID, 3) }()
+	go func() {
+		defer wg.Done()
+		page, pageErr = hub.lastTurns(ctx, t.MachineID, t.SessionID, c.snapshotTurns())
+	}()
 	if t.Kind == "main" {
 		wg.Add(1)
 		go func() { defer wg.Done(); agents, _ = hub.agents(ctx) }()
@@ -218,7 +260,7 @@ func (c *conversation) refreshSnapshot(ctx context.Context, t *boundTarget) *pro
 	}
 	var recent []prompts.VoiceLine
 	if pageErr == nil {
-		recent = recentOf(c.language(), page.Items)
+		recent = c.recentFrom(page.Items)
 	}
 	return snapshotOf(t, sess, recent, cardsOf(cards, t), agents)
 }

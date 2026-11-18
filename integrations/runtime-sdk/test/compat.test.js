@@ -57,13 +57,15 @@ test('compat websocket selects only a protocol actually offered and still checks
 
 test('compat package names use identical files and hashes and keep exact name verification', () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '../..')
-  for (const canonical of ['persona-dsh-runtime', 'persona-pi-runtime', 'persona-paseo-runtime', 'persona-agent-sdk-runtime']) {
+  for (const canonical of ['persona-dsh-runtime', 'persona-pi-runtime', 'persona-paseo-runtime']) {
     const legacy = wirePackageName(canonical)
     assert.equal(legacy, canonical.replace('persona-', 'jarvis-'))
     assert.deepEqual(PACKAGES[legacy], PACKAGES[canonical])
     assert.equal(packageHash(readShipped(root, PACKAGES[legacy])), packageHash(readShipped(root, PACKAGES[canonical])))
   }
   assert.equal(selfPackage(new URL('../../pi/index.js', import.meta.url).href, 'persona-pi-runtime').name, 'jarvis-pi-runtime')
+  assert.equal(wirePackageName('persona-antigravity-runtime'), 'persona-antigravity-runtime')
+  assert.equal(selfPackage(new URL('../../antigravity/companion.mjs', import.meta.url).href, 'persona-antigravity-runtime').name, 'persona-antigravity-runtime')
   const files = [{path:'pi/index.js', data:Buffer.from('safe')}]
   const pkg = {name:'jarvis-pi-runtime', hash:packageHash(files), files:files.map((f)=>({path:f.path,data:f.data.toString('base64')}))}
   assert.ok(verifyPackage(pkg, 'jarvis-pi-runtime'))
@@ -113,7 +115,7 @@ test('compat context only strips bare live snapshots and MCP aliases keep sessio
     assert.equal((snapshot+'<persona-view-errors>\nThe view v1 failed its check.\n</persona-view-errors>\nhello').replace(SNAPSHOT_RE,''), 'hello')
   }
   const servers = mcpServers('/bin/personad','session',true)
-  assert.deepEqual(servers.map((s)=>s.name),['persona','jarvis'])
+  assert.deepEqual(servers.map((s)=>s.name),['persona']) // agy: one server, its tool budget counts each (#7333)
   for(const server of servers) assert.deepEqual(server.env,[{name:'PERSONA_SESSION_ID',value:'session'},{name:'JARVIS_SESSION_ID',value:'session'},{name:'PERSONA_ASSISTANT',value:'1'},{name:'JARVIS_ASSISTANT',value:'1'}])
   const home = temp(t)
   const bin = join(home,'.jarvis','bin','jarvisd')

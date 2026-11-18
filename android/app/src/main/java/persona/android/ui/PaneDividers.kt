@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -73,7 +74,13 @@ internal class PaneSplitStore(context: Context) {
  * [tab] keeps the share the user left in [store]; null (the settings sheet) keeps it only while the panes are shown.
  */
 @Stable
-internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSplitStore?, collapsible: Boolean) {
+internal class PaneSplitter(
+    private val tab: AppTab?,
+    private val store: PaneSplitStore?,
+    collapsible: Boolean,
+    initialCollapsed: Boolean = false,
+    private val onCollapsedChange: ((Boolean) -> Unit)? = null,
+) {
     var collapseEnabled by mutableStateOf(collapsible)
     /** The panes' area, in dp, and the vertical folds across it (dp from its left edge). */
     var width by mutableFloatStateOf(0f)
@@ -83,7 +90,7 @@ internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSpl
     var share by mutableStateOf(tab?.let { store?.share(it) })
         private set
     /** The user dragged the list closed; it shows again whenever nothing is open beside it. */
-    var collapsed by mutableStateOf(false)
+    var collapsed by mutableStateOf(initialCollapsed)
         private set
     /** The list's width while it is dragged or settles. */
     var at by mutableFloatStateOf(0f)
@@ -100,6 +107,7 @@ internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSpl
     val split: PaneSplit get() = paneSplit(width, hinges, share)
     val canCollapse: Boolean get() = collapseEnabled && detailOpen
     private val shownCollapsed: Boolean get() = collapsed && canCollapse
+    val listHidden: Boolean get() = !split.fixed && shownCollapsed
 
     val look: PaneDividerState get() = when {
         moving && canCollapse && closesList(at) -> PaneDividerState.Closing
@@ -139,18 +147,24 @@ internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSpl
         if (ticks.reached(at, split.snaps, canCollapse)) haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
     }
 
+    private fun setCollapsed(value: Boolean, notify: Boolean) {
+        if (collapsed == value) return
+        collapsed = value
+        if (notify) onCollapsedChange?.invoke(value)
+    }
+
     /** Let go: onto a flat fold nearby, where it is, or (dragged far left) the list closes. */
     fun stop(state: PaneExpansionState, velocityPx: Float, scope: CoroutineScope) {
         if (!moving) return
         val target = settleDivider(at, width, split.snaps, canCollapse)
         if (target == null) {
             generation++
-            collapsed = true
+            setCollapsed(true, notify = true)
             moving = false
             apply(state, 0f)
             return
         }
-        collapsed = false
+        setCollapsed(false, notify = true)
         settleTo(state, target, velocityPx / density, scope)
     }
 
@@ -193,7 +207,7 @@ internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSpl
         generation++
         settling?.cancel()
         moving = false
-        collapsed = true
+        setCollapsed(true, notify = true)
         apply(state, 0f)
     }
 
@@ -201,9 +215,19 @@ internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSpl
         generation++
         settling?.cancel()
         moving = false
-        collapsed = false
+        setCollapsed(false, notify = true)
         apply(state, restingLeft())
     }
+}
+
+@Stable
+internal class ShellListDetail(
+    val strategy: ListDetailSceneStrategy<NavKey>,
+    private val splitter: PaneSplitter,
+    private val state: PaneExpansionState,
+) {
+    val listHidden: Boolean get() = splitter.listHidden
+    fun expand() = splitter.expand(state)
 }
 
 /**
@@ -211,6 +235,7 @@ internal class PaneSplitter(private val tab: AppTab?, private val store: PaneSpl
  * nearby, kept per tab as a share of the width, and (where [collapsible], with something open beside it) dragged far
  * left to close the list; a separating fold fixes the split there and shows no handle. [width] is the panes' area and
  * [hinges] the vertical folds across it, both in dp. [tab] null: the settings sheet's, whose divider is not kept.
+ * [keepScaffoldWhenSingle]: keep the list-detail scene when only one pane fits, instead of the single-page scene.
  */
 @Composable
 internal fun rememberShellListDetail(
@@ -221,12 +246,18 @@ internal fun rememberShellListDetail(
     detailOpen: Boolean,
     store: PaneSplitStore?,
     collapsible: Boolean,
-): ListDetailSceneStrategy<NavKey> {
+    keepScaffoldWhenSingle: Boolean = false,
+    initialCollapsed: Boolean = false,
+    onCollapsedChange: ((Boolean) -> Unit)? = null,
+): ShellListDetail {
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     val state = rememberPaneExpansionState()
-    val splitter = remember(tab, store) { PaneSplitter(tab, store, collapsible) }
+    val currentOnCollapsedChange by rememberUpdatedState(onCollapsedChange)
+    val splitter = remember(tab, store) {
+        PaneSplitter(tab, store, collapsible, initialCollapsed) { currentOnCollapsedChange?.invoke(it) }
+    }
     // The inputs change only with the window, its folds and what is open; the scaffold follows them at once.
     SideEffect {
         splitter.density = density
@@ -252,10 +283,12 @@ internal fun rememberShellListDetail(
             )
         }
     }
-    return rememberListDetailSceneStrategy<NavKey>(
+    val strategy = rememberListDetailSceneStrategy<NavKey>(
+        shouldHandleSinglePaneLayout = keepScaffoldWhenSingle,
         backNavigationBehavior = BackNavigationBehavior.PopUntilContentChange,
         directive = directive,
         paneExpansionDragHandle = if (fixed) null else handle,
         paneExpansionState = state,
     )
+    return remember(strategy, splitter, state) { ShellListDetail(strategy, splitter, state) }
 }

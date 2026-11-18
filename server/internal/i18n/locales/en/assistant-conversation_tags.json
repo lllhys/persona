@@ -1,0 +1,4 @@
+{
+  "tag_too_long": "A tag can be at most {max} characters.",
+  "too_many": "A conversation can carry at most {max} tags."
+}

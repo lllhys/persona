@@ -31,6 +31,8 @@ var composerDeletions = struct {
 type composerDeletion struct {
 	node       *Node
 	workspace  orcart.Worktree
+	herdr      *herdrWorkspaceDeletion
+	runtime    *runtimeWorkspaceDeletion // an engine runtime's worktree (runtimeworkspaces_manage.go)
 	pathInfo   os.FileInfo
 	gitInfo    os.FileInfo
 	dirtyState string
@@ -38,19 +40,31 @@ type composerDeletion struct {
 	dispatched bool
 }
 
+type workspaceDeletionInput struct {
+	Preview      bool   `json:"preview"`
+	Reconcile    bool   `json:"reconcile"`
+	Token        string `json:"preview_token"`
+	Force        bool   `json:"force"`
+	DeleteBranch bool   `json:"delete_branch"`
+	CloseOnly    bool   `json:"close_only"`
+}
+
 func (n *Node) worktreeDelete(ctx context.Context, kind, id string, raw json.RawMessage) (any, error) {
-	var in struct {
-		Preview      bool   `json:"preview"`
-		Reconcile    bool   `json:"reconcile"`
-		Token        string `json:"preview_token"`
-		Force        bool   `json:"force"`
-		DeleteBranch bool   `json:"delete_branch"`
-	}
+	var in workspaceDeletionInput
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return nil, err
 	}
 	if in.Preview && (in.Reconcile || in.Token != "" || in.Force || in.DeleteBranch) {
 		return nil, composerError(ctx, "preview_invalid")
+	}
+	if kind == "herdr" {
+		return n.herdrWorktreeDelete(ctx, id, in)
+	}
+	if _, _, runtime := n.runtimeEngine(kind); runtime && kind != "" { // Paseo's (runtimeworkspaces_manage.go)
+		return n.runtimeWorktreeDelete(ctx, kind, id, in)
+	}
+	if in.CloseOnly {
+		return nil, composerError(ctx, "close_unsupported")
 	}
 	var prior *composerDeletion
 	if !in.Preview {
@@ -58,7 +72,7 @@ func (n *Node) worktreeDelete(ctx context.Context, kind, id string, raw json.Raw
 		prior = composerDeletions.previews[in.Token]
 		dispatched := prior != nil && prior.dispatched
 		composerDeletions.Unlock()
-		if prior == nil || prior.node != n || kind != "orca" || prior.workspace.WorktreeID != id || time.Since(prior.created) > 24*time.Hour {
+		if prior == nil || prior.node != n || prior.herdr != nil || prior.runtime != nil || kind != "orca" || prior.workspace.WorktreeID != id || time.Since(prior.created) > 24*time.Hour {
 			return nil, composerError(ctx, "preview_required")
 		}
 		if in.Reconcile {
@@ -108,19 +122,10 @@ func (n *Node) worktreeDelete(ctx context.Context, kind, id string, raw json.Raw
 	}
 	current.node = n
 	if in.Preview {
-		var token [32]byte
-		if _, err = rand.Read(token[:]); err != nil {
+		key, err := rememberWorkspaceDeletion(current)
+		if err != nil {
 			return nil, err
 		}
-		key := hex.EncodeToString(token[:])
-		composerDeletions.Lock()
-		for k, entry := range composerDeletions.previews {
-			if time.Since(entry.created) > 24*time.Hour {
-				delete(composerDeletions.previews, k)
-			}
-		}
-		composerDeletions.previews[key] = current
-		composerDeletions.Unlock()
 		return proto.WorktreeDeletePreview{WorkspaceID: id, Kind: kind, HostID: "local", InstanceID: w.InstanceID,
 			Path: w.Path, Branch: strings.TrimPrefix(w.Branch, "refs/heads/"), Dirty: dirty,
 			Folder: folderComposerWorkspace(w), PreviewToken: key}, nil
@@ -182,6 +187,23 @@ func (n *Node) worktreeDelete(ctx context.Context, kind, id string, raw json.Raw
 	return completed, nil
 }
 
+func rememberWorkspaceDeletion(entry *composerDeletion) (string, error) {
+	var token [32]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	key := hex.EncodeToString(token[:])
+	composerDeletions.Lock()
+	defer composerDeletions.Unlock()
+	for k, old := range composerDeletions.previews {
+		if time.Since(old.created) > 24*time.Hour {
+			delete(composerDeletions.previews, k)
+		}
+	}
+	composerDeletions.previews[key] = entry
+	return key, nil
+}
+
 func sameComposerWorkspace(a, b orcart.Worktree) bool {
 	return a.WorktreeID == b.WorktreeID && a.InstanceID == b.InstanceID && a.RepoID == b.RepoID &&
 		localComposerWorkspace(a) && localComposerWorkspace(b) && a.Path == b.Path && a.Branch == b.Branch &&
@@ -230,20 +252,28 @@ func (n *Node) reconcileComposerDeletion(ctx context.Context, prior *composerDel
 }
 
 func inspectComposerDeletion(ctx context.Context, w orcart.Worktree) (*composerDeletion, int, error) {
-	entry := &composerDeletion{workspace: w, created: time.Now()}
-	info, err := os.Lstat(w.Path)
+	entry, dirty, err := inspectWorktreeDeletion(ctx, w.Path, folderComposerWorkspace(w))
+	if entry != nil {
+		entry.workspace = w
+	}
+	return entry, dirty, err
+}
+
+func inspectWorktreeDeletion(ctx context.Context, path string, folder bool) (*composerDeletion, int, error) {
+	entry := &composerDeletion{created: time.Now()}
+	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, 0, composerError(ctx, "identity_unavailable")
 	}
 	entry.pathInfo = info
-	if folderComposerWorkspace(w) {
+	if folder {
 		return entry, 0, nil
 	}
-	gitDir, err := absGit(ctx, w.Path, "--git-dir")
+	gitDir, err := absGit(ctx, path, "--git-dir")
 	if err != nil {
 		return nil, 0, err
 	}
-	common, err := absGit(ctx, w.Path, "--git-common-dir")
+	common, err := absGit(ctx, path, "--git-common-dir")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -254,7 +284,7 @@ func inspectComposerDeletion(ctx context.Context, w orcart.Worktree) (*composerD
 	if err != nil {
 		return nil, 0, err
 	}
-	status, err := git(ctx, w.Path, "status", "--porcelain", "--untracked-files=all")
+	status, err := git(ctx, path, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
 		return nil, 0, err
 	}
@@ -262,30 +292,30 @@ func inspectComposerDeletion(ctx context.Context, w orcart.Worktree) (*composerD
 	if strings.TrimSpace(status) != "" {
 		dirty = len(strings.Split(strings.TrimSpace(status), "\n"))
 	}
-	diff, err := git(ctx, w.Path, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--")
+	diff, err := git(ctx, path, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--")
 	if err != nil {
 		return nil, 0, err
 	}
-	untracked, err := git(ctx, w.Path, "ls-files", "--others", "--exclude-standard", "-z")
+	untracked, err := git(ctx, path, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil, 0, err
 	}
-	head, err := git(ctx, w.Path, "rev-parse", "HEAD")
+	head, err := git(ctx, path, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, 0, err
 	}
 	sum := sha256.New()
 	_, _ = fmt.Fprintf(sum, "%s\x00%s\x00%s\x00", head, status, diff)
-	for _, path := range strings.Split(untracked, "\x00") {
-		if path == "" {
+	for _, name := range strings.Split(untracked, "\x00") {
+		if name == "" {
 			continue
 		}
-		full := filepath.Join(w.Path, path)
+		full := filepath.Join(path, name)
 		stat, err := os.Lstat(full)
 		if err != nil {
 			return nil, 0, err
 		}
-		_, _ = fmt.Fprintf(sum, "%s\x00%s\x00", path, stat.Mode())
+		_, _ = fmt.Fprintf(sum, "%s\x00%s\x00", name, stat.Mode())
 		if stat.Mode()&os.ModeSymlink != 0 {
 			target, err := os.Readlink(full)
 			if err != nil {

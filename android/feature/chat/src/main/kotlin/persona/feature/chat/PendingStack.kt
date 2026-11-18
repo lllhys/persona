@@ -38,47 +38,54 @@ internal object PendingStack {
     }
 
     /**
-     * How tall the cards may be before they scroll: half the [page], and never so tall that the composer leaves it: the
-     * [page] less the [header] over the conversation, the [rest] of the footer (an open tray, the entries, the composer)
-     * and the conversation's [floor]. With the [keyboard] up (the page is short, and a card is often what is being
-     * answered) they take all of that room, so a card is whole or scrolls in all the room there is and the composer stays
-     * over the keyboard (iOS `PendingCards.cap`). Never under a finger's height; half the page until the footer is measured.
+     * How tall one place of cards may be before it scrolls: half the [page], and never so tall that the composer leaves
+     * it. The room is the [page] less the [header] over the conversation, the [rest] of the footer (an open tray, the
+     * entries, the queue, the composer: everything that is not a card) and the conversation's [floor]. With the
+     * [keyboard] up (the page is short, and a card is often what is being answered) the cards take all of that room, so
+     * a card is whole or scrolls in all the room there is and the composer stays over the keyboard (iOS
+     * `PendingCards.cap`). Never under a finger's height; half the page until the footer is measured.
+     *
+     * Persona's conversation has two places of cards, its tasks' question above the entries and its own stack below them
+     * (iOS draws the question uncapped; Android keeps the composer on the page, so both count toward the room). [other]
+     * is the height the other place takes now: null when it has no card, 0 while it is not measured yet. The two places
+     * each have at least half of the room, and one that needs less leaves the rest to the other, so together they never
+     * take more than the room and the composer stays where it is.
      */
-    fun cap(page: Dp, keyboard: Boolean, rest: Dp, header: Dp, floor: Dp): Dp {
+    fun cap(page: Dp, keyboard: Boolean, rest: Dp, header: Dp, floor: Dp, other: Dp? = null): Dp {
         val half = page * SHARE
-        if (rest <= Tokens.Space.flush) return half
+        if (rest <= Tokens.Space.flush) return if (other == null) half else half / 2f
         val room = page - header - rest - floor
-        return max(Tokens.MinTouch.android, if (keyboard) room else min(half, room))
+        // the other place's height only counts once it is measured; until then it is taken to hold its half
+        val mine = if (other == null) room else max(room / 2f, room - if (other > Tokens.Space.flush) other else room / 2f)
+        return max(Tokens.MinTouch.android, if (keyboard) mine else min(half, mine))
     }
 }
-
-/** The line over a card that is not the conversation's own (iOS `TaskQuestions`): the task it comes from, and how many more it and the others ask. */
-internal data class StackLabel(val title: String, val more: Int = 0)
-
-/** What a chat's stack holds, in order, with the lines over the cards that are not the conversation's own (its tasks'). */
-internal data class StackCards(val cards: List<Interaction>, val labels: Map<String, StackLabel>) {
-    val ids: Set<String> get() = cards.mapTo(mutableSetOf()) { it.id }
-}
-
-private val OldestFirst = compareBy<Interaction> { parseTime(it.createdAt) ?: Instant.MAX }
 
 /**
- * A Persona conversation's stack above its composer (#4339 C10, iOS `TaskQuestions` and `PendingCards`, `DESIGN_SYSTEM.md`
- * section 4.8): a card the Needs you tray's Review opened ([reviewed]) first, then the oldest question its tasks' Agents
- * ask ([taskKeys]) under its task's name with how many more they ask (`titleOf`), then its own cards (#4883), as they come.
- * The next task question comes up when that one is answered; the tray keeps a row with Review for the others.
+ * The line over a card that is not the conversation's own (iOS `TaskQuestions`): the task it comes from, with the askFirst
+ * mark in the needs-you tone, and on the right how many more questions its tasks' Agents ask.
  */
-internal fun assistantStack(requests: List<Interaction>, key: SessionKey, taskKeys: Set<SessionKey>, reviewed: Interaction?,
-    titleOf: (Interaction) -> String?): StackCards {
-    val own = requests.filter { it.sessionKey == key }
+internal data class StackLabel(val title: String, val more: Int = 0)
+
+/**
+ * The oldest question of a Persona conversation's tasks (iOS `TaskQuestions`, `DESIGN_SYSTEM.md` section 4.8): a card
+ * above its Needs you / In progress entries, answered there, under its task's name with how many more its tasks' Agents ask
+ * ([more]); the next comes up once it is answered.
+ */
+internal data class TaskQuestion(val card: Interaction, val label: StackLabel)
+
+/** Oldest first, one without a time the oldest, then by id: the order the Needs you tray reads a task's cards in (`assistantEntries`). */
+private val OldestFirst = compareBy<Interaction> { parseTime(it.createdAt) ?: Instant.MIN }.thenBy { it.id }
+
+/**
+ * The card of [requests] that a Persona conversation draws above its entries (#4339 C10): the oldest one asked by an Agent
+ * of its tasks ([taskKeys]), named by [titleOf] (the task's title, else what the card knows of where it comes from); null with
+ * none. The conversation's own cards are not in it: they are the stack below the entries.
+ */
+internal fun taskQuestion(requests: List<Interaction>, taskKeys: Set<SessionKey>, titleOf: (Interaction) -> String?): TaskQuestion? {
     val asks = requests.filter { it.sessionKey in taskKeys }.sortedWith(OldestFirst)
-    val oldest = asks.firstOrNull()
-    val opened = reviewed?.takeIf { r -> r.id != oldest?.id && own.none { it.id == r.id } }
-    val labels = buildMap {
-        oldest?.let { ask -> titleOf(ask)?.let { put(ask.id, StackLabel(it, asks.size - 1)) } }
-        opened?.takeIf { it.sessionKey != key }?.let { card -> titleOf(card)?.let { put(card.id, StackLabel(it)) } }
-    }
-    return StackCards(listOfNotNull(opened, oldest) + own, labels)
+    val oldest = asks.firstOrNull() ?: return null
+    return TaskQuestion(oldest, StackLabel(titleOf(oldest).orEmpty(), asks.size - 1))
 }
 
 /** Which of a conversation's cards are folded to their one line (iOS: each `InteractionPanel`'s own `collapsed`); all open at first. */

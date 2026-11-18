@@ -108,9 +108,13 @@ data class MinutesAction(
     val added: Boolean get() = !todoId.isNullOrBlank()
 }
 
-/** One line of a recording's transcript: [start] and [end] are seconds from the recording's `started_at`. */
+/**
+ * One line of a recording's transcript: [start] and [end] are seconds from the recording's `started_at`. [echo]: the line
+ * is Persona's own answer as the meeting's microphone heard it (#5905, docs/assistant/meeting-minutes.md "Persona's echo"),
+ * kept on the hub but not what the meeting said.
+ */
 @Serializable
-data class KnowledgeSegment(val start: Double = 0.0, val end: Double = 0.0, val text: String = "")
+data class KnowledgeSegment(val start: Double = 0.0, val end: Double = 0.0, val text: String = "", val echo: Boolean = false)
 
 /** [agents]: the live, non-assistant sessions working in a project's code directories (projects only). */
 @Serializable

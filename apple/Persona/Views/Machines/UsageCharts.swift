@@ -1,5 +1,6 @@
 import Charts
 import SwiftUI
+import PersonaWire
 
 /// A machine's token usage on its page (docs/server/machines.md "Token usage", #4973): the range, model and launcher filters,
 /// the range's sums, throughput per minute (all tokens, or the four kinds stacked; a legend entry hides its kind:
@@ -139,7 +140,7 @@ struct MachineUsageSection: View {
                 // What the chart shows: every token, or the kinds not hidden.
                 let counted = stacked ? kinds : UsageKind.allCases
                 let at = picked ?? data.points.last(where: { !$0.gap })
-                let shown = UsageChartData.perMinute(counted.reduce(Int64(0)) { $0 + (at?.tokens.value($1) ?? 0) }, data)
+                let shown = at.map { at in UsageChartData.perMinute(counted.reduce(Int64(0)) { $0 + at.tokens.value($1) }, data, at: at.t) } ?? 0
                 Text(TokenFormat.perMinute(shown)).font(Theme.Font.bodyStrong.monospacedDigit())
                     .contentTransition(.numericText())
             }
@@ -174,7 +175,7 @@ struct MachineUsageSection: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.l), GridItem(.flexible())], alignment: .leading, spacing: Theme.Space.s) {
             ForEach(UsageKind.allCases) { kind in
                 let off = hidden.contains(kind)
-                let value = picked.map { TokenFormat.count(UsageChartData.perMinute($0.tokens.value(kind), data)) }
+                let value = picked.map { TokenFormat.count(UsageChartData.perMinute($0.tokens.value(kind), data, at: $0.t)) }
                     ?? TokenFormat.count(data.total.value(kind))
                 Button {
                     withAnimation(Theme.Motion.standard) {
@@ -313,13 +314,13 @@ nonisolated enum UsageChartData {
         var value: Double
     }
 
-    /// A step's sum per minute.
-    static func perMinute(_ n: Int64, _ data: MachineUsageSeries) -> Int64 { Int64((Double(n) / data.minutesPerStep).rounded()) }
+    /// The sum n of the step starting at t, per minute (the step under way: over the part that had passed, #9205).
+    static func perMinute(_ n: Int64, _ data: MachineUsageSeries, at t: Int64) -> Int64 { Int64((Double(n) / data.minutes(at: t)).rounded()) }
 
     /// Each kind's per-minute value at every step (an offline step is 0, drawn under its shade).
     static func stacked(_ data: MachineUsageSeries, kinds: [UsageKind]) -> [Value] {
         kinds.flatMap { kind in
-            data.points.map { p in Value(kind: kind, date: p.date, value: Double(p.tokens.value(kind)) / data.minutesPerStep) }
+            data.points.map { p in Value(kind: kind, date: p.date, value: Double(p.tokens.value(kind)) / data.minutes(at: p.t)) }
         }
     }
 
@@ -374,7 +375,7 @@ struct UsageThroughputChart: View {
             }
             if kinds.isEmpty {
                 ForEach(data.points, id: \.t) { p in
-                    let v = Double(p.tokens.total) / data.minutesPerStep
+                    let v = Double(p.tokens.total) / data.minutes(at: p.t)
                     AreaMark(x: .value(String(localized: "Time"), p.date), y: .value(String(localized: "Tokens"), v))
                         .foregroundStyle(UsageColor.total.opacity(0.12))
                         .interpolationMethod(.monotone)
@@ -408,7 +409,7 @@ struct UsageThroughputChart: View {
     }
 
     private var summary: String {
-        let peak = data.points.map { UsageChartData.perMinute($0.tokens.total, data) }.max() ?? 0
+        let peak = data.points.map { UsageChartData.perMinute($0.tokens.total, data, at: $0.t) }.max() ?? 0
         return String(localized: "\(TokenFormat.count(data.total.total)) tokens in this range, peak \(TokenFormat.perMinute(peak))")
     }
 }

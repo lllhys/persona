@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -23,8 +24,9 @@ import (
 
 // agentToolNames are the tools of the agents (not the assistant's conversations) that are this manager's own; their
 // descriptions and schemas are in prompts/mcp (docs/assistant/prompts.md). Each needs to know which agent calls it: the node
-// names the session of the agent's pane for them (node.callerTools).
-var agentToolNames = []string{"report_to_supervisor", "todo_decisions", "todo_decision_add", "todo_bind_thread"}
+// names the session of the agent's pane for them (node.callerTools). The list lives in assistantwire so the node reads
+// the same one (#9089).
+var agentToolNames = assistantwire.AgentToolNames
 
 // AgentTools are the agents' own tools (mcpTools for an agent).
 func (s *Service) AgentTools() []proto.Tool { return toolsNamed(agentToolNames) }
@@ -40,9 +42,17 @@ func isAgentTool(name string) bool {
 
 // ---- agent_interrupt ----
 
+// interruptSettleWait is how long agent_interrupt waits for a stopped turn to end before saying it has not yet;
+// interruptSettleEvery how often it looks meanwhile (tests shorten both).
+var (
+	interruptSettleWait  = 15 * time.Second
+	interruptSettleEvery = 500 * time.Millisecond
+)
+
 // toolAgentInterrupt stops an agent's turn (session.interrupt) and, with then, sends it the new instruction right
 // after: steering instead of agent_send's queueing behind the turn. An agent not working is not stopped; then still
-// goes to it.
+// goes to it. "Stopped" is said only once the turn has ended: the runtime saw it end (settled), or the agent no longer
+// reads as working; otherwise it says the stop was asked for and the instruction is queued behind the turn (#8097).
 func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, args json.RawMessage) (string, error) {
 	var a struct {
 		Machine   string `json:"machine"`
@@ -61,8 +71,10 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 	if c.SourceKind != "" && (c.Capabilities == nil || !c.Capabilities.Interrupt || then != "" && !c.Capabilities.Send) {
 		return "", fmt.Errorf("this agent can only be read: %s", c.ReadOnlyReason)
 	}
-	if stoppedAgent(c) { // read-only (#4754): nothing runs to stop, and nothing here starts it again
-		return "", fmt.Errorf("%s has already stopped and is read-only: nothing to interrupt, and nothing was sent", agentLabel(c))
+	if stoppedAgent(c) { // read-only (#4754): nothing runs to stop; a resume is agent_send's (#8099)
+		return "", fmt.Errorf("%s has already stopped: nothing to interrupt, and nothing was sent. To go on with it and its "+
+			"context, use agent_send with resume true and resume_why; otherwise start a replacement: for its task, task_plan "+
+			"with continues (the task's todo id) and continues_why; for work on no task, agent_start", agentLabel(c))
 	}
 	if err := s.exitAllowed(ctx, self, am, c, then, 0); err != nil { // refused before the turn is stopped or the user asked
 		return "", err
@@ -82,15 +94,24 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 	}
 	// Only a turn under way is stopped: an agent still starting has none yet (then is queued for it, as agent_send does).
 	working := c.Status == proto.StatusWorking
+	stopped := false // its turn is known to have ended
 	if working {
-		if err := s.call(ctx, am.ID, "session.interrupt", map[string]any{"session_id": c.SessionID}, nil); err != nil {
+		var res struct {
+			Settled bool `json:"settled"`
+		}
+		if err := s.call(ctx, am.ID, "session.interrupt", map[string]any{"session_id": c.SessionID}, &res); err != nil {
 			return "", fmt.Errorf("stop: %w", err)
 		}
 		s.logf("agent_interrupt %s on %s (from %s)", short(c.SessionID), am.ID, short(self))
+		stopped = res.Settled || s.interruptLanded(ctx, am.ID, c.SessionID)
 	}
 	if then == "" {
 		if !working {
 			return fmt.Sprintf("%s on %s was not working: nothing to stop.", agentLabel(c), am.Name), nil
+		}
+		if !stopped {
+			return fmt.Sprintf("Asked %s on %s to stop, but its turn has not ended yet: it still reads as working after %s. "+
+				"Do not tell the user it stopped; look again with agent_read before counting on it.", agentLabel(c), am.Name, interruptSettleWait), nil
 		}
 		return fmt.Sprintf("Stopped %s on %s: its turn was cut off, the session stays (agent_send to go on). What it did already is not undone.",
 			agentLabel(c), am.Name), nil
@@ -99,7 +120,15 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 	// closed agent is resumed first (as agent_send does), which can take minutes.
 	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
 	defer cancel()
-	if err := s.call(sctx, am.ID, DeviceSessionSend, sendParams(c.SessionID, then, false), nil); err != nil {
+	var sent struct {
+		Queued bool `json:"queued"` // the runtime holds it behind a turn still running
+	}
+	note, err := s.noteAgentSend(sctx, self, am.ID, c.SessionID, "", then) // more from its task's conversation reopens an accepted task (#6726, #7539)
+	if err == nil {
+		err = s.call(sctx, am.ID, DeviceSessionSend, sendParams(c.SessionID, then, false), &sent)
+	}
+	note.sent(sctx, err) // an unknown answer counts for the agent's next turn: it may still arrive
+	if err != nil {
 		if working {
 			return "", fmt.Errorf("stopped it, but sending the new instruction failed: %w", err)
 		}
@@ -114,7 +143,35 @@ func (s *Service) toolAgentInterrupt(ctx context.Context, machine, self string, 
 	if !working {
 		return fmt.Sprintf("%s on %s was not working: sent the new instruction.", agentLabel(c), am.Name), nil
 	}
+	if !stopped {
+		return fmt.Sprintf("Asked %s on %s to stop, but its turn has not ended yet (it still reads as working after %s): the new "+
+			"instruction is queued and is read only when that turn ends. Do not tell the user it stopped; look again with agent_read.",
+			agentLabel(c), am.Name, interruptSettleWait), nil
+	}
+	if sent.Queued {
+		return fmt.Sprintf("Stopped %s on %s; the new instruction is queued behind what it is doing now and is read when that ends. "+
+			"What it did already is not undone.", agentLabel(c), am.Name), nil
+	}
 	return fmt.Sprintf("Stopped %s on %s and sent the new instruction. What it did already is not undone.", agentLabel(c), am.Name), nil
+}
+
+// interruptLanded waits up to interruptSettleWait for the agent's session to stop reading as working, after it was asked
+// to stop: true once it does (or the session is gone), false when it still works at the end.
+func (s *Service) interruptLanded(ctx context.Context, machine, id string) bool {
+	deadline := time.Now().Add(interruptSettleWait)
+	for {
+		if c, ok := s.session(ctx, machine, id); !ok || c.Status != proto.StatusWorking {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interruptSettleEvery):
+		}
+	}
 }
 
 // ---- agent_supervise ----
@@ -383,7 +440,7 @@ func (s *Service) handTask(ctx context.Context, self string, am Device, c proto.
 	}
 	if made {
 		wake := wakeActive
-		if c.Status == proto.StatusOffline { // closed: the send resumes it first
+		if c.Status == proto.StatusOffline || stoppedAgent(c) { // closed: the send (or its resume, #8099) starts it first
 			wake = wakeResumed
 		}
 		return &handedTask{todo: todo, made: true, self: self, wake: wake}, nil
@@ -604,6 +661,12 @@ func (s *Service) agentTool(ctx context.Context, machine, session, name string, 
 			return proto.TextResult(err.Error(), true)
 		}
 		return proto.TextResult(res, false)
+	case "todo_repositories_get", "todo_repositories_set", "todo_repository_links_set", "todo_repository_links_add":
+		res, err := s.agentRepositoryTool(ctx, machine, session, name, args)
+		if err != nil {
+			return proto.TextResult(err.Error(), true)
+		}
+		return proto.TextResult(res, false)
 	case "todo_bind_thread": // todo_thread.go
 		res, err := s.agentThreadTool(ctx, machine, session, args)
 		if err != nil {
@@ -729,6 +792,7 @@ func (s *Service) reportLater(ctx context.Context, t Todo, machine, session, tex
 
 // reportNow sends a report to the supervisor of task t as a signal, and shows it in its conversation.
 func (s *Service) reportNow(ctx context.Context, t Todo, machine, session, kind, text string, evidence []string, step, steps int, now time.Time) (string, error) {
+	s.progressReported(machine, session, len(evidence), step, now) // evidence or a later step is progress (supervise_progress.go)
 	s.signal(superviseSignal{Todo: t.ID, Kind: sigReport, Key: now.UTC().Format(time.RFC3339Nano), At: now, Machine: machine,
 		Session: session, Report: kind, Detail: text, Evidence: evidence, Step: step, Steps: steps})
 	progress := TaskProgress{Kind: kind, Step: step, Steps: steps, Text: clip(oneLine(text), 200), At: now.UTC()}
@@ -758,6 +822,14 @@ func (s *Service) reportNow(ctx context.Context, t Todo, machine, session, kind,
 // stoppedAgent: c is an agent that has stopped and is read-only (node stopped.go, #4754): its terminal engine keeps its
 // conversation and terminal, and a message to it is refused (agent_stopped).
 func stoppedAgent(c proto.Session) bool {
-	return c.SourceKind == "" && c.Capabilities != nil && !c.Capabilities.Send &&
-		(c.Status == proto.StatusOffline || c.Status == proto.StatusInterrupted)
+	if c.SourceKind == "codex_history" {
+		return c.Capabilities != nil && !c.Capabilities.Send && c.Capabilities.Read && c.Capabilities.Terminal && !c.IsSubagent
+	}
+	if c.Status != proto.StatusOffline && c.Status != proto.StatusInterrupted {
+		return false
+	}
+	if c.SourceKind == "" {
+		return c.Capabilities == nil || !c.Capabilities.Send
+	}
+	return false
 }

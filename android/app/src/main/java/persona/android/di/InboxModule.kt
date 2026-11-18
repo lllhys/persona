@@ -61,8 +61,9 @@ class InboxDataOwner @Inject constructor(
 ) {
     private val app = application as PersonaApp
     private data class Repositories(val data: ScopedHubData, val inbox: persona.feature.inbox.InboxRepository,
+        val handOffInbox: persona.feature.inbox.InboxRepository,
         val assistant: AssistantConversations, val mail: StateFlow<MailTransport?>,
-        val composers: ReplyComposers, val reading: LarkReadingStore, val names: GroupNames,
+        val composers: ReplyComposers, val handOffBars: InboxHandOffBars, val reading: LarkReadingStore, val names: GroupNames,
         val conversations: InboxConversations)
     // The inbox and Persona are the selected group's (docs/android/android.md "Multiple hubs"): its own transports speak its plain
     // ids, which are moved into the merged lists' ids on the way out. Agent requests in the inbox stay merged.
@@ -93,6 +94,7 @@ class InboxDataOwner @Inject constructor(
             val realInbox = RealInboxRepository(connection, data.inboxReplies, sessions, interactions, data.coroutineScope,
                 snapshots = snapshots, hubPreferences = preferences, hubConnection = runtime,
                 subscriptionsShownFlow = socket.serverFeatures.map { "source_subscriptions" in it }.distinctUntilChanged(),
+                inboxSourcesShownFlow = socket.serverFeatures.map { "inbox_sources" in it }.distinctUntilChanged(),
                 mainConversationSender = data.messages.inGroup(names, data.coroutineScope), actions = actions,
                 lookupReply = { target, clientId ->
                     try {
@@ -133,9 +135,26 @@ class InboxDataOwner @Inject constructor(
             val assistant = RealAssistantRepository(connection, stack.repositories.shownRepository, data.coroutineScope, snapshots,
                 stack.repositories.preferences ?: preferences.takeIf { names.plain }, events = socket.events)
             persona = assistant.inGroup(names, data.coroutineScope)
+            // Hand-off work created in this pairing must never resolve the selected group again. This fixed view also
+            // keeps the group's namespaced targets and preferences for memory / Done after another group is selected.
+            val handOffInbox = object : persona.feature.inbox.InboxRepository by wrapped {
+                override val snapshot = if (names.plain) wrapped.snapshot else wrapped.snapshot.map { it.inGroup(names) }
+                    .stateIn(data.coroutineScope, SharingStarted.Eagerly, wrapped.snapshot.value.inGroup(names))
+                override val handOffMemory = data.listPreferences.data.map { saved ->
+                    saved[stringPreferencesKey("inbox.handOff")]?.let {
+                        runCatching { JsonCodec.decodeFromString(ListSerializer(HandOffMemoryEntry.serializer()), it) }.getOrNull()
+                    } ?: emptyList()
+                }
+                override suspend fun saveHandOffMemory(value: List<HandOffMemoryEntry>) {
+                    data.listPreferences.edit {
+                        it[stringPreferencesKey("inbox.handOff")] = JsonCodec.encodeToString(ListSerializer(HandOffMemoryEntry.serializer()), value)
+                    }
+                }
+            }
             val composers = ReplyComposers(wrapped, data.coroutineScope)
-            Repositories(data, wrapped, checkNotNull(persona), mail,
-                composers, reading, names, InboxConversations(wrapped, data.scope.path, data.coroutineScope, composers))
+            val handOffBars = InboxHandOffBars(data.coroutineScope, app.resources, handOffInbox)
+            Repositories(data, wrapped, handOffInbox, checkNotNull(persona), mail,
+                composers, handOffBars, reading, names, InboxConversations(wrapped, data.scope.path, data.coroutineScope, composers))
         }?.await()
     }.stateIn(app.scope, SharingStarted.Eagerly, null)
 
@@ -178,11 +197,12 @@ class InboxDataOwner @Inject constructor(
         }
     }
 
-    val inbox = object : persona.feature.inbox.InboxRepository {
+    val inbox: persona.feature.inbox.InboxRepository = object : persona.feature.inbox.InboxRepository, InboxHandOffBarOwner {
         override val supportsThreadOutbox = true
         override val conversationInbox = observe<InboxConversations?>(null) { flowOf(it.conversations) }
         override val messageReads = observe(emptySet<InboxMessageRead>()) { it.inbox.messageReads }
         override val replyComposers = observe<ReplyComposers?>(null) { flowOf(it.composers) }
+        override val handOffBars = observe<InboxHandOffBars?>(null) { flowOf(it.handOffBars) }
         override suspend fun readingStore() = use { it.reading }
         override fun replyUpdates(target: ReplyTarget) = current.flatMapLatest {
             if (it == null || runtime.scopedData.value !== it.data) emptyFlow() else it.inbox.replyUpdates(target)
@@ -206,17 +226,10 @@ class InboxDataOwner @Inject constructor(
         }
         // Its own key: the list's filters are saved from a copy the screen holds, which must not write an older memory back.
         override val handOffMemory = current.flatMapLatest { repositories ->
-            repositories?.data?.listPreferences?.data?.map { saved ->
-                saved[stringPreferencesKey("inbox.handOff")]?.let {
-                    runCatching { JsonCodec.decodeFromString(ListSerializer(HandOffMemoryEntry.serializer()), it) }.getOrNull()
-                } ?: emptyList()
-            } ?: flowOf(emptyList())
+            repositories?.handOffInbox?.handOffMemory ?: flowOf(emptyList())
         }
         override suspend fun saveHandOffMemory(value: List<HandOffMemoryEntry>) = use { repositories ->
-            repositories.data.listPreferences.edit {
-                it[stringPreferencesKey("inbox.handOff")] = JsonCodec.encodeToString(ListSerializer(HandOffMemoryEntry.serializer()), value)
-            }
-            Unit
+            repositories.handOffInbox.saveHandOffMemory(value)
         }
         override suspend fun refresh() = use { it.inbox.refresh() }
         override suspend fun refreshNow() = use { it.inbox.refreshNow() }
@@ -230,7 +243,10 @@ class InboxDataOwner @Inject constructor(
         override suspend fun latestConversation(feedId: String) = use { it.inbox.latestConversation(feedId) }
         override suspend fun markVisible(feedId: String, messages: List<LarkMessage>) = use { it.inbox.markVisible(feedId, messages) }
         override suspend fun setDone(itemId: String, done: Boolean) = use { it.inbox.setDone(itemId, done) }
+        override suspend fun item(itemId: String) = use { it.inbox.item(itemId) }
         override suspend fun setDone(items: List<persona.core.contracts.api.InboxDoneTarget>, done: Boolean) = use { it.inbox.setDone(items, done) }
+        override suspend fun doneHistory(manager: String?, cursor: persona.feature.inbox.InboxDoneCursor?) = use { it.inbox.doneHistory(manager, cursor) }
+        override suspend fun doneDays(manager: String?, zone: java.time.ZoneId) = use { it.inbox.doneDays(manager, zone) }
         override suspend fun bulk(items: List<persona.core.contracts.api.InboxDoneTarget>, action: persona.core.contracts.api.InboxBulkAction) = use { it.inbox.bulk(items, action) }
         override suspend fun readDraft(target: ReplyTarget) = use { it.inbox.readDraft(target) }
         override suspend fun saveDraft(target: ReplyTarget, draft: ReplyDraft) = use { it.inbox.saveDraft(target, draft) }

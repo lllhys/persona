@@ -5,7 +5,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../lib/api";
-import type { BriefRow, FeedItem } from "../../lib/feed";
+import { askRow, briefBody, type BriefRow, type FeedItem } from "../../lib/feed";
+import type { TodoAsk } from "../../lib/todos";
 
 const api = vi.hoisted(() => vi.fn());
 vi.mock("../../lib/api", async (orig) => ({ ...(await orig<typeof import("../../lib/api")>()), api }));
@@ -161,6 +162,14 @@ describe("a brief item", () => {
     expect([...host.querySelectorAll("button")].some((b) => b.textContent === "通过")).toBe(false);
   });
 
+  it("says when the decision is recorded for the supervisor because no Agent can take it", async () => {
+    api.mockResolvedValueOnce({ ok: true, delivered: "none" });
+    drawDecision({ id: "todo_stopped", title: "Demo rollout", outcome: "decide", recommend: "Stage it", waited_s: 60, asked_at: ASKED });
+    const take = [...rows("accept")[0].querySelectorAll("button")].find((b) => b.textContent === "按推荐来")!;
+    await act(async () => take.click());
+    expect(host.querySelector("[data-brief-accepted=recorded]")?.textContent).toBe("已记下，Agent 已停，督办会接手");
+  });
+
   it("a round that is over (409) says it was handled; another failure keeps the button for a retry", async () => {
     draw(item());
     api.mockRejectedValueOnce(new ApiError(409, "已经处理过了", {}));
@@ -279,8 +288,57 @@ describe("a brief item", () => {
     expect(location.search).toBe("?tab=persona");
   });
 
+  it("opens the background supervisor's model purpose from the lower-tier line, and changes nothing", () => {
+    draw(item(body({ setup: [
+      { id: "supervisor_tier", setting: "assistant.supervise", count: 24, text: "A lower tier for the background supervisor: … 24 acceptances on big-model …" },
+    ] })));
+    const setup = rows("setup");
+    expect(setup.map((r) => r.querySelector("div")?.textContent)).toEqual(["A lower tier for the background supervisor: … 24 acceptances on big-model …"]);
+    expect(setup[0].querySelectorAll("button").length).toBe(1);
+    act(() => setup[0].querySelector("button")!.click());
+    expect(api).not.toHaveBeenCalled();
+    expect(location.search).toBe("?tab=models&purpose=assistant.supervise");
+  });
+
   it("has no setup section on a briefing without the block", () => {
     draw(item(body()));
     expect(rows("setup")).toEqual([]);
+  });
+});
+
+// A row's meta line is "waited · nudged · from" and only text goes into it: a to-do's `ask.from` is an object (where the
+// task came from), and a hub row's fields are not checked by TypeScript, so a field of another type once read
+// "[object Object]" in the Needs you tray.
+describe("a row's meta line", () => {
+  const ASK: TodoAsk = {
+    outcome: "decide", verdict: "🤔 要你拍板：旧接口留不留", recommend: "先合入", asked_at: ASKED,
+    from: { conversation: "c1", title: "发版群", main: true, at: ASKED, message: "今天能发吗", by_assistant: false, started_by: "me" },
+  };
+
+  it("never carries a to-do's ask.from into its accept row", () => {
+    const row = askRow({ id: "todo_1", title: "检查 PR" }, ASK, Date.parse(ASKED) + 12.5 * 3_600_000);
+    expect(row.from).toBeUndefined();
+    drawDecision(row);
+    const meta = host.querySelector("[data-brief-meta]")!.textContent!;
+    expect(meta).toBe("已等 12 小时 30 分");
+    expect(host.textContent).not.toContain("[object Object]");
+    expect(host.querySelector("[data-brief-recommend]")!.textContent).toContain("先合入");
+  });
+
+  it("drops a wire field that is not text before any row draws it", () => {
+    const wire = body({
+      accept: [{ id: "todo_v1", title: "改设置页", from: { conversation: "c1" }, detail: ["x"], verdict: 3, recommend: {}, waited_s: 60, nudged: {}, asked_at: ASKED }, { title: "no id" }, "nope"],
+      waiting: [{ id: "ix1", title: "问题", from: 7, waited_s: "soon" }],
+    });
+    const got = briefBody(item(wire))!;
+    expect(got.accept).toEqual([{ id: "todo_v1", title: "改设置页", waited_s: 60, asked_at: ASKED }]);
+    expect(got.waiting).toEqual([{ id: "ix1", title: "问题", waited_s: 0 }]);
+    draw(item(wire));
+    expect(host.textContent).not.toContain("[object Object]");
+  });
+
+  it("keeps the fields a row is declared with", () => {
+    const got = briefBody(item(body()))!;
+    expect(got.waiting[0]).toEqual({ id: "ix1", title: "先发预发还是直接上线？", from: "来自 Agent「登录修复」", link: "https://hub.example/s/box/ag1", waited_s: 4800, nudged: true });
   });
 });

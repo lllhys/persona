@@ -434,12 +434,14 @@ func (s *Service) askTodoDecided(ctx context.Context, row db.TodoDecisionRow) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
-		text := renderAskAnswer(a, s.location(ctx), []askChoice{{Question: row.Question, Choice: row.Choice, Reason: row.Reason}}, false, false)
+		choice := askChoice{Question: row.Question, Choice: row.Choice, Reason: row.Reason}
+		text := renderAskAnswer(a, s.location(ctx), []askChoice{choice}, false, false)
 		if err := s.tellAsker(ctx, a, t.Title, text); err != nil {
 			s.logf("ask_user to-do %s: the decision goes nowhere: %v", row.TodoID, err)
 			s.settleAskClaim(ctx, row.TodoID, false)
 			return
 		}
+		s.recordLateAnswer(a, []askChoice{choice}, "", "") // the user's own, on the to-do: the card's history says so
 		s.settleAskClaim(ctx, row.TodoID, true)
 		s.closeAskTodo(ctx, row.TodoID)
 	}()

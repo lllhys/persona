@@ -11,7 +11,8 @@ nonisolated struct VNCDisplay: Equatable, Sendable, Identifiable {
 /// The displays the VNC page offers (docs/extensions/computer-use.md "Displays"), most trusted source first:
 /// 1. the server's own screens (ExtendedDesktopSize), already in framebuffer pixels;
 /// 2. else the node's arrangement (points, global display space), scaled onto the framebuffer;
-/// 3. else none. Fewer than two displays, or an arrangement whose shape is not the framebuffer's, offers none either.
+/// 3. else, for displays of different scales, the node's arrangement laid out as Screen Sharing draws them (`anchored`);
+/// 4. else none. Fewer than two displays, or an arrangement whose shape is not the framebuffer's, offers none either.
 nonisolated enum VNCDisplays {
     /// How far the arrangement's aspect ratio may be from the framebuffer's (a fraction) before it is not trusted: a
     /// display changed since the node last looked, or the server draws the displays at different scales.
@@ -19,7 +20,33 @@ nonisolated enum VNCDisplays {
 
     static func layout(server: [RFBClient.Screen], machine: [MachineDisplay], framebuffer: CGSize) -> [VNCDisplay] {
         let own = fromServer(server, framebuffer: framebuffer)
-        return own.isEmpty ? fromMachine(machine, framebuffer: framebuffer) : own
+        if !own.isEmpty { return own }
+        let scaled = fromMachine(machine, framebuffer: framebuffer)
+        return scaled.isEmpty ? anchored(machine, framebuffer: framebuffer) : scaled
+    }
+
+    /// Displays of different scales (#9314, docs/extensions/computer-use.md "Phone Screen"): macOS's Screen Sharing draws
+    /// each display at its own pixels, and the edge of a display that touches the main display sits at main's pixel
+    /// coordinate (measured on macOS 26.6 for a display left of, right of, above, below and offset from main). Each
+    /// display is laid out that way from main; the result is used only when its box is the framebuffer's size (2 pixels
+    /// of slack), and every display needs its scale.
+    static func anchored(_ displays: [MachineDisplay], framebuffer: CGSize) -> [VNCDisplay] {
+        let sized = displays.filter { !$0.frame.isEmpty }
+        guard sized.count > 1, sized.allSatisfy({ $0.scale > 0 }),
+              let main = sized.first(where: \.main) ?? sized.first else { return [] }
+        let k = main.scale, m = main.frame
+        let rects = sized.map { d -> (String, CGRect) in
+            let f = d.frame, w = f.width * d.scale, h = f.height * d.scale
+            let x = f.maxX <= m.minX && d.id != main.id ? f.maxX * k - w : f.minX * k
+            let y = f.maxY <= m.minY && d.id != main.id ? f.maxY * k - h : f.minY * k
+            return ("display-\(d.id)", CGRect(x: x, y: y, width: w, height: h))
+        }
+        let box = rects.dropFirst().reduce(rects[0].1) { $0.union($1.1) }
+        guard abs(box.width - framebuffer.width) <= 2, abs(box.height - framebuffer.height) <= 2 else { return [] }
+        let whole = CGRect(origin: .zero, size: framebuffer)
+        return ordered(rects.map { id, r in
+            VNCDisplay(id: id, frame: r.offsetBy(dx: -box.minX, dy: -box.minY).integral.intersection(whole))
+        })
     }
 
     /// The server's screens that lie on the framebuffer; none unless at least two do.
@@ -50,6 +77,23 @@ nonisolated enum VNCDisplays {
     /// Left to right, then top to bottom: the order the menu numbers them in.
     static func ordered(_ displays: [VNCDisplay]) -> [VNCDisplay] {
         displays.sorted { ($0.frame.minX, $0.frame.minY) < ($1.frame.minX, $1.frame.minY) }
+    }
+
+    /// Framebuffer pixels a point of the Mac's screen (#7775: a wheel notch scrolls a point): the framebuffer's width
+    /// over the node's arrangement's (2 where Screen Sharing sends a Retina display at its full size); 1 without an
+    /// arrangement, or one whose shape is not the framebuffer's.
+    static func pixelsPerMacPoint(_ displays: [MachineDisplay], framebuffer: CGSize, shown: String? = nil) -> CGFloat {
+        let sized = displays.filter { !$0.frame.isEmpty }
+        // Displays of different scales: the shown one's own (#9314), when the layout holds.
+        if let shown, let d = sized.first(where: { "display-\($0.id)" == shown }), d.scale > 0,
+           !anchored(sized, framebuffer: framebuffer).isEmpty {
+            return min(max(d.scale, 1), 4)
+        }
+        guard let first = sized.first, framebuffer.width > 0, framebuffer.height > 0 else { return 1 }
+        let box = sized.dropFirst().reduce(first.frame) { $0.union($1.frame) }
+        let sx = framebuffer.width / box.width, sy = framebuffer.height / box.height
+        guard abs(sx / sy - 1) <= aspectTolerance else { return 1 }
+        return min(max(sx, 1), 4)
     }
 }
 
@@ -95,5 +139,12 @@ nonisolated struct VNCViewport: Equatable {
     func framebufferFrame(_ size: CGSize) -> CGRect {
         let k = rect.width / visible.width
         return CGRect(x: -visible.minX * k, y: -visible.minY * k, width: size.width * k, height: size.height * k)
+    }
+
+    /// Where a part of the framebuffer (pixels) is drawn, in the same space as `framebufferFrame` (the clip's).
+    func frame(of part: CGRect) -> CGRect {
+        let k = rect.width / visible.width
+        return CGRect(x: (part.minX - visible.minX) * k, y: (part.minY - visible.minY) * k,
+                      width: part.width * k, height: part.height * k)
     }
 }

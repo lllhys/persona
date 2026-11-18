@@ -5,6 +5,7 @@ import persona.core.contracts.Hello
 import persona.core.contracts.HubScope
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.SessionKey
+import persona.core.contracts.Session
 import persona.core.contracts.api.MessageRequest
 import persona.core.contracts.api.MessageEvidence
 import persona.core.contracts.api.MessageTransportResult
@@ -115,6 +116,7 @@ class HttpMessageTransportTest {
         val responses = Channel<MockResponse>(Channel.UNLIMITED)
         val requests = Channel<RecordedRequest>(Channel.UNLIMITED)
         val expired = AtomicBoolean()
+        val started = mutableListOf<Pair<SessionKey, Session>>()
         val jobs = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         MockWebServer().use { server ->
             server.useHttps(HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
@@ -140,7 +142,9 @@ class HttpMessageTransportTest {
                 onReady = { enteredReady.complete(Unit); ready.await(); transport.onReady() }).use { connection ->
                 try {
                     val pairing = HubScope("test-hub", "generation")
-                    transport = HttpMessageTransport(pairing, connection, "test-token", jobs) { expired.set(true) }
+                    transport = HttpMessageTransport(pairing, connection, jobs,
+                        onSessionStarted = { previous, session -> started += previous to session },
+                        onPairingExpired = { expired.set(true) })
                     val message = MessageRequest(pairing, SessionKey("machine", "session/encoded"), "hello", "stable-id", "draft")
                     assertEquals(MessageTransportResult.NotSent, transport.send(message))
                     connection.updateNetwork(HubNetwork("online"))
@@ -209,6 +213,23 @@ class HttpMessageTransportTest {
                     assertEquals(MessageTransportResult.Accepted, transport.send(message.copy(applySwitch = true)))
                     val switching = JsonCodec.parseToJsonElement(withTimeout(5000) { requests.receive() }.body.readUtf8()).jsonObject
                     assertEquals(JsonPrimitive(true), switching["apply_switch"])
+                    // A first Codex send returns the new thread before it enters the session-list window.
+                    val firstReply = """{"ok":true,"session":{"machine_id":"","session_id":"thread","agent":"codex","pane_id":"pane"}}"""
+                    responses.send(MockResponse().setBody(firstReply))
+                    assertEquals(MessageTransportResult.Accepted, transport.send(message))
+                    withTimeout(5000) { requests.receive() }
+                    assertEquals(message.session, started.single().first)
+                    assertEquals("machine", started.single().second.machineId)
+                    assertEquals("thread", started.single().second.sessionId)
+                    assertEquals("pane", started.single().second.paneId)
+                    // A lost HTTP answer recovered through its operation receipt preserves the same target.
+                    val savedFirst = Base64.getEncoder().encodeToString(firstReply.toByteArray())
+                    responses.send(MockResponse().setBody("""{"state":"done","result":{"status":200,"body":"$savedFirst"}}"""))
+                    responses.send(MockResponse().setBody("""{"items":[]}"""))
+                    assertEquals(MessageEvidence.Receipt(MessageTransportResult.Accepted), transport.reconcile(message, 0))
+                    repeat(2) { withTimeout(5000) { requests.receive() } }
+                    assertEquals(2, started.size)
+                    assertEquals(started.first(), started.last())
                     responses.send(MockResponse().setResponseCode(401).setBody("""{"error":"expired","code":"invalid_token"}"""))
                     assertTrue(transport.send(message) is MessageTransportResult.HubError)
                     assertTrue(expired.get())

@@ -3,7 +3,9 @@
 // its own (both models, category, explanation, the refusal's words) and a card above the composer names both models and
 // the error since. A terminal agent's card only says to type /model there, and its API error offers no "Continue". The
 // main conversation's card offers "Back to configured model" and "New main chat"; going back answers with a card that
-// only says the next start will use the configured model, and offers nothing more.
+// only says the next start will use the configured model, and offers nothing more. The main conversation is for
+// everyday people (#5202): the line and the card each say one sentence with the model's short name, the record under a
+// closed Details, which opens to all of it.
 //
 // Needs the web page against the fake hub with the two refused sessions, and Chrome or Edge (playwright-core drives it):
 //
@@ -81,6 +83,18 @@ async function checkNotice(page, tag) {
   if (text.includes("{") || text.includes("model_refusal_fallback")) fail(`${tag}: the line shows the record itself`);
 }
 
+/** A Persona conversation's line (#5202): one sentence, the record only once Details is open. */
+async function checkPlainNotice(page, tag) {
+  const notice = await showNotice(page);
+  const text = await notice.innerText();
+  if (!text.includes("上游拒绝了这次请求，已改用 Sonnet 5.5。")) fail(`${tag}: the refusal line lacks its plain sentence`);
+  for (const hidden of ["claude-sonnet-5-5", "cyber", "拒绝原文"]) {
+    if (text.includes(hidden)) fail(`${tag}: the closed line shows ${hidden}`);
+  }
+  await notice.getByTestId("refusal-details").locator("summary").click();
+  await checkNotice(page, tag);
+}
+
 const browser = await chromium.launch({ channel, headless: true });
 try {
   for (const width of [1280, 390]) {
@@ -108,15 +122,21 @@ try {
       await page.goto(`${base}/persona/${MAIN}`, { waitUntil: "domcontentloaded", timeout: 30000 });
       const main = page.getByTestId("model-fallback");
       await main.waitFor({ state: "visible", timeout: 15000 });
-      await checkNotice(page, `${tag} main`);
+      const plainCard = await main.innerText();
+      if (!plainCard.includes("这个对话现在用 Sonnet 5.5 回复")) fail(`${tag} main: the card lacks its plain sentence`);
+      if (plainCard.includes("claude-sonnet-5-5") || plainCard.includes("API Error")) fail(`${tag} main: the closed card shows the record`);
+      await save(page, `main-${tag}`);
+      await checkPlainNotice(page, `${tag} main`);
+      await main.getByTestId("model-fallback-details").locator("summary").click();
+      if (!(await main.innerText()).includes("回退模型：claude-sonnet-5-5")) fail(`${tag} main: Details doesn't open to the record`);
+      await save(page, `main-details-${tag}`);
       const back = main.getByRole("button", { name: "回到配置的模型" });
       if ((await back.count()) !== 1) fail(`${tag} main: no "Back to configured model"`);
       if ((await main.getByRole("button", { name: "新主对话" }).count()) !== 1) fail(`${tag} main: no "New main chat"`);
-      await save(page, `main-${tag}`);
       await back.click();
       await main.getByText("下次启动将使用配置的模型").first().waitFor({ state: "visible", timeout: 10000 });
       const pending = await main.innerText();
-      if (!pending.includes("配置的模型：claude-opus-5-5")) fail(`${tag} main: the pending card doesn't name the configured model`);
+      if (!pending.includes("配置的模型：Opus 5.5")) fail(`${tag} main: the pending card doesn't name the configured model`);
       if ((await back.count()) !== 0) fail(`${tag} main: going back is still offered`);
       if (/已恢复|已切换回/.test(pending)) fail(`${tag} main: the pending card claims the model was restored`);
       await save(page, `main-pending-${tag}`);

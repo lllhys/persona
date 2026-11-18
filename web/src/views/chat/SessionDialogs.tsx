@@ -1,125 +1,35 @@
 // The chat's ⋯ menu dialogs: session info, rename (the agent / its space), delete, close, and the header's permission mode.
+// Session info and Rename / Rename space / Delete load as chunks of their own; what stays here is what the first screen uses.
 import { useEffect, useRef, useState } from "react";
-import { api, enc, errorText, HubTimeoutError, pastHub, sessionPath } from "../../lib/api";
-import { ago, externalLink, resumeCommand, sessionCan, sessionTitle, shortPath, tabLabel } from "../../lib/format";
-import { openLink } from "../../lib/links";
-import { effortTitle, modeTitle, renameBody } from "../../lib/session-actions";
+import { api, errorText, HubTimeoutError, pastHub, sessionPath } from "../../lib/api";
+import { shortPath } from "../../lib/format";
+import { BYPASS_MODE, renameBody } from "../../lib/session-actions";
+import { bypassRestarts } from "../../lib/header-mode";
 import { sessionLauncher } from "../../lib/model-switch";
-import { href, navigate, parse, showsSession } from "../../lib/router";
-import { stripBase } from "../../lib/base";
-import { dropSession, getSession, refresh, refreshAssistant, upsertSession } from "../../lib/store";
+import { getSession, refreshAssistant, upsertSession } from "../../lib/store";
 import type { Session } from "../../lib/types";
-import { Button, copyText, cx, Dialog, Loading, Switch, toast } from "../../ui/atoms";
+import { cx, Switch, toast } from "../../ui/atoms";
 import { removeAgentWorktree, worktreeLoss, worktreeStatus, type WorktreeStatus } from "../../lib/worktree";
 import { Icon } from "../../ui/icons";
 import { t } from "../../i18n";
-import { AlwaysPermissions } from "./AlwaysPermissions";
-import { DelegatedHistory } from "./Delegated";
-import { appArchiveDeps, archiveAgent } from "../../lib/agent-archives";
+import { lazyDialog } from "../LazyOverlay";
 
-interface SessionInfo {
-  session_id?: string;
-  transcript_path?: string;
-  cwd?: string;
-  model?: string;
-  launcher?: string;
-  git_branch?: string;
-  version?: string;
-  permission_mode?: string;
-  effort?: string;
-  context_tokens?: number;
-  output_tokens?: number;
-  compactions?: number;
-  turns?: number;
-  started_at?: string;
-  last_activity?: string;
+// "Session info" (iOS SessionInfoSheet, SessionInfoDialog.tsx): its own chunk, loaded on the dialog's first open, so
+// its fetch and rows are not the first screen's (#8261). The same component as before for the header that draws it.
+export const SessionInfoDialog = lazyDialog(() => import("./SessionInfoDialog").then((m) => m.SessionInfoDialog));
+
+// Rename, Rename space and Delete (SessionMenuDialogs.tsx): one chunk of their own, loaded on the first open or, sooner,
+// when a menu that offers one opens (preloadSessionDialogs: the chat's ⋯ menu, an Agent row's, a space's), so the click
+// draws the dialog at once. Off the first screen (#10382, docs/web/web.md "First screen").
+const loadMenuDialogs = () => import("./SessionMenuDialogs");
+export const RenameDialog = lazyDialog(() => loadMenuDialogs().then((m) => m.RenameDialog));
+export const RenameSpaceDialog = lazyDialog(() => loadMenuDialogs().then((m) => m.RenameSpaceDialog));
+export const DeleteSessionDialog = lazyDialog(() => loadMenuDialogs().then((m) => m.DeleteSessionDialog));
+/** Starts loading the three, once (a failed load is asked again by the next menu or open). */
+export function preloadSessionDialogs(): void {
+  for (const d of [RenameDialog, RenameSpaceDialog, DeleteSessionDialog]) void d.preload().catch(() => {});
 }
 
-const count = (n?: number) => (n === undefined ? "" : n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}K` : String(n));
-
-// "Session info" (iOS SessionInfoSheet): how it runs, how much it used, where it lives; ids and the resume command copy.
-export function SessionInfoDialog({ session, machineName, open, onClose }: { session: Session; machineName: string; open: boolean; onClose: () => void }) {
-  const [info, setInfo] = useState<SessionInfo | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!open) return;
-    let live = true;
-    setInfo(null);
-    setError("");
-    api<SessionInfo>(`${sessionPath(session.machine_id, session.session_id)}/info`)
-      .then((r) => live && setInfo(r))
-      .catch((e) => live && setError(errorText(e)));
-    return () => {
-      live = false;
-    };
-  }, [open, session.machine_id, session.session_id]);
-
-  const groups: { title: string; rows: [string, string | undefined, boolean?][] }[] = info
-    ? [
-        { title: t("chat-sessiondialogs.group_run"), rows: [[t("chat-sessiondialogs.model"), info.model], [t("chat-sessiondialogs.launcher"), info.launcher || session.launcher], [t("chat-sessiondialogs.permission_mode"), modeTitle(info.permission_mode)], [t("chat-sessiondialogs.effort"), effortTitle(info.effort)], [t("chat-sessiondialogs.version"), info.version, true]] },
-        { title: t("chat-sessiondialogs.group_usage"), rows: [[t("chat-sessiondialogs.context"), count(info.context_tokens) && `${count(info.context_tokens)} tokens`], [t("chat-sessiondialogs.output"), count(info.output_tokens) && `${count(info.output_tokens)} tokens`], [t("chat-sessiondialogs.turns"), info.turns !== undefined ? String(info.turns) : ""], [t("chat-sessiondialogs.compaction"), info.compactions ? t("chat-sessiondialogs.compactions", { count: info.compactions }) : ""], [t("chat-sessiondialogs.started"), info.started_at && ago(info.started_at)], [t("chat-sessiondialogs.last_activity"), info.last_activity && ago(info.last_activity)]] },
-        { title: t("chat-sessiondialogs.group_location"), rows: [[t("chat-sessiondialogs.machine"), machineName], [t("chat-sessiondialogs.folder"), info.cwd ? shortPath(info.cwd) : undefined, true], [t("chat-sessiondialogs.branch"), info.git_branch, true], [t("chat-sessiondialogs.transcript"), info.transcript_path ? shortPath(info.transcript_path) : undefined, true]] },
-      ]
-    : [];
-
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={t("chat-sessiondialogs.info_title")}
-      width={480}
-      footer={
-        <>
-          <Button tone="quiet" icon="copy" onClick={() => copyText(session.session_id)}>
-            {t("chat-sessiondialogs.copy_session_id")}
-          </Button>
-          {externalLink(session) && (
-            <Button tone="secondary" icon="external" onClick={() => openLink(externalLink(session)!)}>
-              {t("chat-sessiondialogs.open_in_lark")}
-            </Button>
-          )}
-          {!session.assistant && (
-            <Button tone="secondary" icon="terminal" onClick={() => copyText(resumeCommand(session))}>
-              {t("chat-sessiondialogs.copy_resume_command")}
-            </Button>
-          )}
-        </>
-      }
-    >
-      {!info && !error && (
-        <div className="flex justify-center py-6">
-          <Loading />
-        </div>
-      )}
-      {error && <p className="py-4 text-[13px] text-red">{error}</p>}
-      <div className="flex flex-col gap-3">
-        {open && session.assistant && <AlwaysPermissions key={session.session_id} session={session.session_id} />}
-        {open && !session.assistant && <DelegatedHistory key={`${session.machine_id}/${session.session_id}`} session={session} />}
-        {groups.map((g) => {
-          const rows = g.rows.filter(([, v]) => v);
-          if (!rows.length) return null;
-          return (
-            <section key={g.title}>
-              <h3 className="mb-1 text-[11.5px] font-medium text-ink-3">{g.title}</h3>
-              <div className="divide-y divide-line overflow-hidden rounded-[10px] bg-inset shadow-hairline">
-                {rows.map(([k, v, mono]) => (
-                  <div key={k} className="flex items-center gap-3 px-3 py-1.5 text-[12.5px]">
-                    <span className="w-16 shrink-0 text-ink-3">{k}</span>
-                    <span title={v} className={cx("min-w-0 flex-1 truncate text-ink", mono && "font-mono text-[12px]")}>
-                      {v}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-    </Dialog>
-  );
-}
-
-// "Rename": the herdr tab and the session's name (Claude's /rename), each only when changed (iOS RenameSessionAlert).
 /** Saves a new title from the header's in-place rename (#5421, cindy's double-click on the title, which updates at once and
  *  puts the old title back if the save fails): only the title, the tab keeps its name. False when nothing changed or it
  *  failed (the error toasted). */
@@ -141,138 +51,6 @@ export async function renameTitle(session: Session, title: string): Promise<bool
   }
 }
 
-export function RenameDialog({ session, open, onClose }: { session: Session; open: boolean; onClose: () => void }) {
-  const [tab, setTab] = useState("");
-  const [title, setTitle] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    setTab(session.slot_name ?? "");
-    setTitle(session.title ?? "");
-    // only when it opens: a push while typing must not overwrite the field
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  const hasTab = !session.assistant && Boolean(session.slot_id);
-  const body = renameBody(session, tab, title);
-  const save = async () => {
-    // the form submits on Enter while the field stays editable: a second Enter would rename (type /rename) twice
-    if (busy) return;
-    if (!body) return onClose();
-    setBusy(true);
-    try {
-      await api(`${sessionPath(session.machine_id, session.session_id)}/rename`, { method: "POST", json: body });
-      // the list shows the new name at once; the hub's push confirms it
-      upsertSession({ ...session, ...(body.title ? { title: body.title } : {}), ...(body.tab_name ? { slot_name: body.tab_name } : {}) });
-      if (session.assistant) void refreshAssistant().catch(() => {});
-      toast(t("chat-sessiondialogs.renamed"), "ok");
-      onClose();
-    } catch (e) {
-      toast(t("chat-sessiondialogs.change_failed", { error: errorText(e) }), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={t("chat-sessiondialogs.rename")}
-      footer={
-        <>
-          <Button tone="quiet" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button tone="primary" busy={busy} disabled={!body} onClick={() => void save()}>
-            {t("common.save")}
-          </Button>
-        </>
-      }
-    >
-      <form
-        className="flex flex-col gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void save();
-        }}
-      >
-        {hasTab && <Field label={t("chat-sessiondialogs.tab_name")} value={tab} onChange={setTab} autoFocus />}
-        <Field label={t("chat-sessiondialogs.session_name")} value={title} onChange={setTitle} autoFocus={!hasTab} />
-        <p className="text-[12px] leading-relaxed text-ink-3">{session.assistant ? t("chat-sessiondialogs.rename_hint_assistant") : t("chat-sessiondialogs.rename_hint_agent")}</p>
-        <button type="submit" hidden />
-      </form>
-    </Dialog>
-  );
-}
-
-// "Rename space": herdr's workspace (and the pins / mutes that name it).
-export function RenameSpaceDialog({ session, open, onClose }: { session: Session; open: boolean; onClose: () => void }) {
-  const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (open) setName(session.space_name ?? "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-  const next = name.trim();
-  const save = async () => {
-    if (busy) return; // a second Enter while the first rename is out
-    if (!session.space_id || !next || next === session.space_name) return onClose();
-    setBusy(true);
-    try {
-      await api(`/machines/${enc(session.machine_id)}/spaces/${enc(session.space_id)}/rename`, { method: "POST", json: { name: next } });
-      void refresh().catch(() => {});
-      toast(t("chat-sessiondialogs.space_renamed"), "ok");
-      onClose();
-    } catch (e) {
-      toast(t("chat-sessiondialogs.change_failed", { error: errorText(e) }), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={t("chat-sessiondialogs.rename_space")}
-      footer={
-        <>
-          <Button tone="quiet" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button tone="primary" busy={busy} disabled={!next || next === session.space_name} onClick={() => void save()}>
-            {t("common.save")}
-          </Button>
-        </>
-      }
-    >
-      <form
-        className="flex flex-col gap-3"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void save();
-        }}
-      >
-        <Field label={t("chat-sessiondialogs.space_name")} value={name} onChange={setName} autoFocus />
-        <p className="text-[12px] leading-relaxed text-ink-3">{t("chat-sessiondialogs.rename_space_hint")}</p>
-        <button type="submit" hidden />
-      </form>
-    </Dialog>
-  );
-}
-
-function Field({ label, value, onChange, autoFocus }: { label: string; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[12px] text-ink-3">{label}</span>
-      <input
-        value={value}
-        autoFocus={autoFocus}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 rounded-control bg-surface px-3 text-[13px] text-ink shadow-btn outline-none focus:shadow-[inset_0_0_0_1px_var(--accent)]"
-      />
-    </label>
-  );
-}
-
 /** The hub gives a mode call 90 seconds. Five more lets its own refusal arrive first; a lost response still ends Apply. */
 const MODE_CONFIRM_MS = pastHub(90_000);
 
@@ -285,13 +63,17 @@ function modeChangeError(e: unknown) {
  *  a pick applies the model and then the effort, and the second must build on the session the first changed. */
 export async function applyModes(latest: () => Session, patch: { permission_mode?: string; effort?: string; model?: string }): Promise<boolean> {
   const base = latest();
-  const before = { permission_mode: base.permission_mode, effort: base.effort, model: base.model };
-  upsertSession({ ...base, ...patch });
+  const before = { permission_mode: base.permission_mode, effort: base.effort, model: base.model, bypass_pending: base.bypass_pending };
+  // Full access the agent reaches only by a restart (#6476): drawn as waiting for it, in the mode it still runs in;
+  // any other mode drops a restart that waits
+  const restart = patch.permission_mode === BYPASS_MODE && bypassRestarts(base);
+  const drawn: Partial<Session> = restart ? { ...patch, permission_mode: base.permission_mode, bypass_pending: true } : patch.permission_mode ? { ...patch, bypass_pending: undefined } : patch;
+  upsertSession({ ...base, ...drawn });
   try {
     await api(`${sessionPath(base.machine_id, base.session_id)}/modes`, { method: "POST", json: patch, timeout: MODE_CONFIRM_MS });
     return true;
   } catch (e) {
-    if (!(e instanceof HubTimeoutError)) upsertSession({ ...latest(), ...Object.fromEntries(Object.keys(patch).map((k) => [k, before[k as keyof typeof before]])) });
+    if (!(e instanceof HubTimeoutError)) upsertSession({ ...latest(), ...Object.fromEntries(Object.keys(drawn).map((k) => [k, before[k as keyof typeof before]])) });
     modeChangeError(e);
     return false;
   }
@@ -338,54 +120,6 @@ export async function setServiceTier(s: Session, tier: string): Promise<boolean>
   }
 }
 
-// "Delete chat" (issue #801): the hub takes it out of every app's list; the transcript stays on the computer and the
-// conversation comes back once it is used again (claude --resume).
-export function DeleteSessionDialog({ session, machineName, open, onClose }: { session: Session; machineName: string; open: boolean; onClose: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const wt = useAgentWorktree(session, open);
-  const [cleanup, setCleanup] = useState<Cleanup>(KEEP);
-  useEffect(() => {
-    if (open) setCleanup(KEEP); // each time: keeping is the default
-  }, [open]);
-  const go = async () => {
-    setBusy(true);
-    try {
-      await api(sessionPath(session.machine_id, session.session_id), { method: "DELETE" });
-      dropSession(session.machine_id, session.session_id);
-      if (location.pathname === href({ name: "session", mid: session.machine_id, sid: session.session_id })) navigate({ name: "home" }, true);
-      toast(t("chat-sessiondialogs.deleted"), "ok");
-      onClose();
-      await runCleanup(session.machine_id, wt, cleanup);
-    } catch (e) {
-      toast(t("chat-sessiondialogs.delete_failed", { error: errorText(e) }), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={t("chat-sessiondialogs.delete_title")}
-      footer={
-        <>
-          <Button tone="quiet" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button tone="danger" busy={busy} disabled={!cleanupReady(wt, cleanup)} onClick={go}>
-            {t("chat-sessiondialogs.delete")}
-          </Button>
-        </>
-      }
-    >
-      <p className="text-[13px] leading-relaxed text-ink-2">
-        {t("chat-sessiondialogs.delete_detail", { title: sessionTitle(session), machine: machineName })}
-      </p>
-      {wt && <WorktreeCleanup st={wt} value={cleanup} onChange={setCleanup} />}
-    </Dialog>
-  );
-}
-
 // ── the worktree a closed or deleted agent worked in (#6115) ──
 
 /** What to do with it: keep it (the default), or remove it, its branch too if asked; `confirmed` that what it loses goes. */
@@ -395,20 +129,21 @@ export interface Cleanup {
   confirmed: boolean;
 }
 
-const KEEP: Cleanup = { remove: false, deleteBranch: false, confirmed: false };
+export const KEEP: Cleanup = { remove: false, deleteBranch: false, confirmed: false };
 
 /** The worktree the agent's folder is, when Persona made it; null otherwise (and while the computer is asked). */
-function useAgentWorktree(s: Session, open: boolean): WorktreeStatus | null {
+export function useAgentWorktree(s: Session, open: boolean): WorktreeStatus | null {
   const [st, setSt] = useState<WorktreeStatus | null>(null);
   useEffect(() => {
     setSt(null);
     if (!open || !s.cwd) return;
     const c = new AbortController();
-    void worktreeStatus(s.machine_id, s.cwd, c.signal).then((x) => {
+    // asked of the engine it ran in, which made it (a Paseo agent's is Paseo's)
+    void worktreeStatus(s.machine_id, s.cwd, c.signal, s.host).then((x) => {
       if (!c.signal.aborted) setSt(x?.ours && x.path ? x : null);
     });
     return () => c.abort();
-  }, [open, s.machine_id, s.cwd]);
+  }, [open, s.machine_id, s.cwd, s.host]);
   return st;
 }
 
@@ -419,12 +154,13 @@ export function cleanupReady(st: WorktreeStatus | null, c: Cleanup): boolean {
   return c.confirmed || (loss.dirty === 0 && loss.unmerged === 0);
 }
 
-/** After the agent is closed or deleted: removes its worktree when asked, forced only for what the user confirmed. */
-async function runCleanup(mid: string, st: WorktreeStatus | null, c: Cleanup) {
+/** After the agent is closed or deleted: removes its worktree when asked, forced only for what the user confirmed, by
+ *  the engine the agent ran in (kind: its host). */
+export async function runCleanup(mid: string, st: WorktreeStatus | null, c: Cleanup, kind?: string) {
   if (!st?.path || !c.remove) return;
   const loss = worktreeLoss(st, c.deleteBranch);
   try {
-    const r = await removeAgentWorktree(mid, st.path, { deleteBranch: c.deleteBranch, force: loss.dirty > 0 || loss.unmerged > 0 });
+    const r = await removeAgentWorktree(mid, st.path, { deleteBranch: c.deleteBranch, force: loss.dirty > 0 || loss.unmerged > 0, kind });
     toast(t(r.branch_deleted ? "chat-sessiondialogs.wt_removed_branch" : "chat-sessiondialogs.wt_removed"), "ok");
   } catch (e) {
     toast(t("chat-sessiondialogs.wt_remove_failed", { error: errorText(e) }), "error");
@@ -479,96 +215,5 @@ export function WorktreeCleanup({ st, value, onChange }: { st: WorktreeStatus; v
         </div>
       )}
     </div>
-  );
-}
-
-// "Close Agent": quits the agent and closes its tab. The chat's ⋯ and the Agents list's row menu both ask here (#3405).
-// `onClosed`: what to do once it is closed; without it, the page leaves the agent's chat only when that chat is open.
-export function CloseAgentDialog({ open, onClose, onClosed, session, machineName }: { open: boolean; onClose: () => void; onClosed?: () => void; session: Session; machineName: string }) {
-  const [busy, setBusy] = useState(false);
-  const wt = useAgentWorktree(session, open);
-  const [cleanup, setCleanup] = useState<Cleanup>(KEEP);
-  useEffect(() => {
-    if (open) setCleanup(KEEP); // each time: keeping is the default
-  }, [open]);
-  const go = async () => {
-    // the agent went away while the dialog was open: nothing left to close, so don't leave a button that does nothing
-    const current = getSession(session.machine_id, session.session_id);
-    if (!current || current.status === "offline" || !sessionCan(current, "close")) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    try {
-      await api(`${sessionPath(session.machine_id, session.session_id)}/close`, { method: "POST" });
-      toast(t("chat-chatview.closed"), "ok");
-      onClose();
-      if (onClosed) onClosed();
-      else if (showsSession(parse(stripBase(location.pathname), location.search), session.machine_id, session.session_id)) navigate({ name: "home" });
-      await runCleanup(session.machine_id, wt, cleanup);
-    } catch (e) {
-      toast(t("chat-chatview.close_failed", { error: errorText(e) }), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={t("chat-chatview.close_agent_title")}
-      footer={
-        <>
-          <Button tone="quiet" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button tone="danger" busy={busy} disabled={!cleanupReady(wt, cleanup)} onClick={go}>
-            {t("chat-chatview.close_agent")}
-          </Button>
-        </>
-      }
-    >
-      <p className="text-[13px] leading-relaxed text-ink-2">
-        {t(session.source_kind === "runtime" ? "chat-chatview.close_runtime_detail" : "chat-chatview.close_agent_detail", { machine: machineName, title: sessionTitle(session), where: [session.space_name, tabLabel(session)].filter(Boolean).join(" › ") || sessionTitle(session) })}
-      </p>
-      {wt && <WorktreeCleanup st={wt} value={cleanup} onChange={setCleanup} />}
-    </Dialog>
-  );
-}
-
-// "Archive and close" (lib/agent-archives.ts): archives the agent and closes its tab and process on its computer
-// (session.retire); its transcript stays, and a message resumes it. Asked first because it stops a process; the
-// worktree is never removed here (the archive is meant to come back). The chat's ⋯ and the row menu both ask here.
-export function ArchiveCloseDialog({ open, onClose, session, machineName }: { open: boolean; onClose: () => void; session: Session; machineName: string }) {
-  const [busy, setBusy] = useState(false);
-  const go = async () => {
-    // the latest row (its title); if it got busy meanwhile, the hub refuses (409) and the toast says why
-    const now = getSession(session.machine_id, session.session_id) ?? session;
-    setBusy(true);
-    try {
-      await archiveAgent(now, true, appArchiveDeps);
-      onClose();
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      title={t("chat-sessiondialogs.archive_close_title")}
-      footer={
-        <>
-          <Button tone="quiet" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button tone="primary" icon="archive" busy={busy} onClick={go}>
-            {t("chat-sessiondialogs.archive_close")}
-          </Button>
-        </>
-      }
-    >
-      <p className="text-[13px] leading-relaxed text-ink-2">{t("chat-sessiondialogs.archive_close_detail", { title: sessionTitle(session), machine: machineName })}</p>
-    </Dialog>
   );
 }

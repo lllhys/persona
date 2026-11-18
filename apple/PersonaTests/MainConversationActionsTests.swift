@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The main conversation's Compact Context / New Main Chat (#1762): what the chat shows for a compaction, the divider's words, and
 /// the session's `compaction` from the hub.
@@ -63,5 +64,93 @@ struct MainConversationActionsTests {
         #expect(odd.compaction == nil, "a state this app does not know drops the compaction, not the session")
         let none = try JSON.decoder.decode(Session.self, from: Data(#"{"session_id":"s"}"#.utf8))
         #expect(none.compaction == nil)
+    }
+}
+
+/// Clear context for the main conversation (#5100): offered only with the hub's feature, `/clear` alone, and the empty
+/// page until a different main appears.
+struct MainClearTests {
+    @Test func offeredOnlyOnTheMainConversationWhenTheHubCan() {
+        let feature = MainConversationActions.clearFeature
+        #expect(feature == "assistant_main_clear")
+        #expect(MainConversationActions.offersClear(isMain: true, features: [feature]))
+        #expect(!MainConversationActions.offersClear(isMain: false, features: [feature]))
+        #expect(!MainConversationActions.offersClear(isMain: true, features: []))
+        #expect(!MainConversationActions.offersClear(isMain: true, features: ["assistant_main_new"]))
+    }
+
+    @Test func theWordAloneIsTheCommand() {
+        #expect(MainClearCommand.isCommand("/clear", attachments: 0))
+        #expect(MainClearCommand.isCommand("  /CLEAR  ", attachments: 0))
+        #expect(!MainClearCommand.isCommand("/clear now", attachments: 0))
+        #expect(!MainClearCommand.isCommand("/clear", attachments: 1))
+        #expect(!MainClearCommand.isCommand("clear", attachments: 0))
+        #expect(!MainClearCommand.isCommand("", attachments: 0))
+    }
+
+    @Test func theEmptyPageStaysUntilAnotherMainStarts() {
+        var state = MainClearState()
+        // #expect cannot call a mutating method: it invokes the call on an immutable copy.
+        let started = state.begin(group: "hub", manager: "", sessionID: "old")
+        #expect(started)
+        let again = state.begin(group: "hub", manager: "", sessionID: "old")
+        #expect(!again, "a second one while it is on its way is used up")
+        #expect(state.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: "old"))
+        #expect(!state.showsPage(group: "hub", manager: "", currentEmpty: false, mainSessionID: "old"), "an open conversation stays")
+        #expect(!state.showsPage(group: "hub", manager: "other", currentEmpty: true, mainSessionID: nil))
+        state.succeed()
+        #expect(state.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: nil), "after the refresh, still the empty page")
+        #expect(!state.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: "new"))
+        let sameMain = state.note(group: "hub", manager: "", mainSessionID: nil)
+        #expect(sameMain == false)
+        let otherHub = state.note(group: "other", manager: "", mainSessionID: "new")
+        #expect(otherHub == false, "another hub does not drop this one's flag")
+        let replaced = state.note(group: "hub", manager: "", mainSessionID: "new")
+        #expect(replaced)
+        #expect(state.cleared == nil)
+        #expect(!state.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: "new"))
+    }
+
+    @Test @MainActor func newChatFromAnOpenConversationForgetsTheClearedPage() {
+        let model = AppModel()
+        var state = MainClearState()
+        let started = state.begin(group: "hub", manager: "", sessionID: "old")
+        #expect(started)
+        state.succeed()
+        model.mainClear = state
+        let side = SessionKey(machineID: "m", sessionID: "side")
+        model.forgetMainClearForNewChat(from: side)
+        #expect(model.mainClear.cleared == nil)
+        #expect(!model.mainClear.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: nil),
+                "New chat from an open conversation shows the welcome page")
+
+        var staying = MainClearState()
+        let again = staying.begin(group: "hub", manager: "", sessionID: "old")
+        #expect(again)
+        staying.succeed()
+        model.mainClear = staying
+        model.forgetMainClearForNewChat(from: nil)
+        #expect(model.mainClear.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: nil),
+                "New chat from the empty page stays on it")
+    }
+
+    @Test func aFailureOrARefusalDropsTheEmptyPage() {
+        var state = MainClearState()
+        let started = state.begin(group: "hub", manager: "", sessionID: "old")
+        #expect(started)
+        state.fail()
+        #expect(state.cleared == nil)
+        #expect(!state.busy)
+        #expect(!state.showsPage(group: "hub", manager: "", currentEmpty: true, mainSessionID: nil))
+        let again = state.begin(group: "hub", manager: "", sessionID: "old")
+        #expect(again, "it can be asked again")
+    }
+
+    @Test func clearResultDecodesTheArchivedId() throws {
+        let done = try JSON.decoder.decode(ClearMainResult.self, from: Data(#"{"ok":true,"archived":"old"}"#.utf8))
+        #expect(done.ok == true)
+        #expect(done.archived == "old")
+        let none = try JSON.decoder.decode(ClearMainResult.self, from: Data(#"{"ok":true,"archived":""}"#.utf8))
+        #expect(none.archived == "")
     }
 }

@@ -127,6 +127,8 @@ func TestRoomUploadRoles(t *testing.T) {
 		markedAnyPrivates bool
 	}{
 		{"listener", `"kind":"meeting","room":{"attendance":"listener"}`, true, false, AttendanceListener, "", false, false},
+		{"notes (#8851)", `"kind":"meeting","room":{"attendance":" Notes "}`, true, false, AttendanceNotes, "", false, false},
+		{"notes on a note", `"kind":"note","room":{"attendance":"notes"}`, true, false, AttendanceOff, AttendanceNotMeeting, false, false},
 		{"off", `"kind":"meeting","room":{"attendance":"off"},"private":false`, true, false, AttendanceOff, "", true, true},
 		{"empty room", `"kind":"meeting","room":{}`, true, false, AttendanceOff, "", false, false},
 		{"unknown", `"kind":"meeting","room":{"attendance":"speaker"}`, true, false, AttendanceOff, AttendanceUnknownRole, false, false},
@@ -144,6 +146,9 @@ func TestRoomUploadRoles(t *testing.T) {
 				t.Fatalf("put %+v %v", put, err)
 			}
 			r := recordingNow(t, e, recID)
+			if answering := c.role == AttendanceListener || c.role == AttendanceParticipant; r.Answering() != answering || r.Attending() != (c.role != AttendanceOff) {
+				t.Fatalf("answering %v attending %v for %s", r.Answering(), r.Attending(), c.role)
+			}
 			if r.RoomMeeting() != c.room || r.MarkedNotPrivate() != c.markedNotPrivate || (r.Conv != nil && r.Conv.Private != nil) != c.markedAnyPrivates {
 				t.Fatalf("stored %+v", r.Conv)
 			}
@@ -286,7 +291,7 @@ func TestUploadKeepsAMeetingUpdateMadeMeanwhile(t *testing.T) {
 	}
 	u := roomUploadJSON(t, body(2, AttendanceParticipant))
 	u.Kind = RecordingMeeting
-	m, parts, err := e.putMeetingFields(recID, &u)
+	m, parts, err := e.putMeetingFields(recID, &u, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,4 +301,61 @@ func TestUploadKeepsAMeetingUpdateMadeMeanwhile(t *testing.T) {
 	if r := recordingNow(t, e, recID); r.MarkedNotPrivate() || r.Conv.Room.Attendance != AttendanceParticipant {
 		t.Fatalf("stored %+v", r.Conv)
 	}
+}
+
+// A lean room's record (#8253): its batching and bookkeeping go through meeting.json and back, and their changes raise
+// no revision and tell MeetingChanged nothing (the apps see nothing new); a change the apps read still does. An older
+// manager's meeting.json, without them, reads as an older room.
+func TestMeetingRoomLeanRaisesNoRevision(t *testing.T) {
+	now := time.Date(2026, 11, 10, 14, 0, 0, 0, goldenZone)
+	e := goldenEngine(t, nil)
+	start := now.Add(-time.Hour).UTC().Format(time.RFC3339)
+	body := `{"revision":1,"started_at":"` + start + `","device":"phone","kind":"meeting","segments":[],"room":{"attendance":"listener"}}`
+	if _, err := e.PutRecording(recID, roomUploadJSON(t, body), now); err != nil {
+		t.Fatal(err)
+	}
+	var changed [][]string
+	e.MeetingChanged = func(_ string, parts []string) { changed = append(changed, parts) }
+	m, err := e.MeetingUpdate(recID, func(m *Meeting, _ Recording) error {
+		m.Room.State, m.Room.Batching = RoomStarting, RoomBatchingLean
+		return nil
+	})
+	if err != nil || len(changed) != 1 || !slices.Equal(changed[0], []string{PartRoom}) {
+		t.Fatalf("a change the apps read: %v %v", err, changed)
+	}
+	rev := m.Revs[PartRoom]
+	m, err = e.MeetingUpdate(recID, func(m *Meeting, _ Recording) error {
+		m.Room.Lean = MeetingRoomLean{ListsAt: now, SpanAt: 120, CompactStartedAt: now, CompactFed: 450, Attempts: 1}
+		return nil
+	})
+	if err != nil || m.Revs[PartRoom] != rev || len(changed) != 1 {
+		t.Fatalf("the bookkeeping raised a revision: %v %v %v", err, m.Revs, changed)
+	}
+	got, _, err := e.MeetingRead(recID)
+	if err != nil || got.Room.Batching != RoomBatchingLean || got.Room.Lean.SpanAt != 120 || got.Room.Lean.CompactFed != 450 || !got.Room.Lean.CompactStartedAt.Equal(now) {
+		t.Fatalf("read back %+v %v", got.Room, err)
+	}
+	raw, err := os.ReadFile(e.Store.path(KindRecording, recID, meetingFile))
+	if err != nil || !strings.Contains(string(raw), `"batching": 2`) || !strings.Contains(string(raw), `"compact_fed": 450`) {
+		t.Fatalf("meeting.json %s %v", raw, err)
+	}
+	if m, err := e.MeetingUpdate(recID, func(m *Meeting, _ Recording) error { m.Room.Lean = MeetingRoomLean{}; return nil }); err != nil ||
+		m.Revs[PartRoom] != rev || strings.Contains(mustJSON(t, m), `"lean"`) {
+		t.Fatalf("cleared %v %v", m, err)
+	}
+	// An older manager's file: no batching, no bookkeeping.
+	var older Meeting
+	if err := json.Unmarshal([]byte(`{"room":{"attendance":"listener","state":"ready","session_id":"s","started":true}}`), &older); err != nil ||
+		older.Room.Batching != 0 || older.Room.Lean != (MeetingRoomLean{}) {
+		t.Fatalf("an older file %+v %v", older.Room, err)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

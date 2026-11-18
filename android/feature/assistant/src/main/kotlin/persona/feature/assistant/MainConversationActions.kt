@@ -6,14 +6,18 @@ import persona.core.contracts.SessionCompaction
 import persona.core.designsystem.LocalizedFormats
 import java.util.Locale
 
-/** Hub features behind the main conversation's "Compact context" and "New main chat" (docs/assistant/assistant.md, #1727). */
+/**
+ * Hub features behind the main conversation's "Compact context" and "New main chat" (docs/assistant/assistant.md, #1727)
+ * and "Clear context" (#5095, the apps' side #5100).
+ */
 internal const val CompactFeature = "assistant_compact"
 internal const val NewMainFeature = "assistant_main_new"
+internal const val ClearMainFeature = "assistant_main_clear"
 
 /** The main conversation's menu: which of its actions the hub offers. */
-internal data class MainActions(val compact: Boolean, val newMain: Boolean) {
+internal data class MainActions(val compact: Boolean, val newMain: Boolean, val clear: Boolean = false) {
     companion object {
-        fun of(features: Set<String>) = MainActions(CompactFeature in features, NewMainFeature in features)
+        fun of(features: Set<String>) = MainActions(CompactFeature in features, NewMainFeature in features, ClearMainFeature in features)
     }
 }
 

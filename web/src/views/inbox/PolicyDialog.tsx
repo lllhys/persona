@@ -2,10 +2,8 @@
 // PolicyDialog (the tier its items get, what the AI twin does with them); "Rules" in the Inbox's ⋯ menu lists them
 // (RulesDialog) with Edit and Remove. The hub decides in code; this only sets and lists.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import {
-  listInboxPolicies, muteLine, muteShortName, policySummary, policyTierName, policyTwinName, removeInboxPolicy, saveInboxPolicy,
-  type InboxItem, type InboxMuteOption, type InboxPolicy, type PolicyTier, type PolicyTwin,
-} from "../../lib/inbox";
+import { saveInboxPolicy, type InboxItem, type InboxMuteOption, type InboxPolicy, type PolicyTier, type PolicyTwin } from "../../lib/inbox";
+import { listInboxPolicies, muteLine, muteShortName, policySummary, policyTierName, policyTwinName, removeInboxPolicy } from "../../lib/inbox-page";
 import { errorText } from "../../lib/api";
 import { otherManager } from "../../lib/manager-choice";
 import { type Manager } from "../../lib/managers";

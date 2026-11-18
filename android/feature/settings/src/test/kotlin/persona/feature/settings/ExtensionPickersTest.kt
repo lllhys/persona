@@ -68,6 +68,32 @@ class ExtensionPickersTest {
             ExtensionField("x", type = "array", items = ExtensionItems(format = "machine")), null, machines, launchers))
     }
 
+    @Test fun aCustomStepMovesFromTheCurrentValueAndClampsToBounds() {
+        val goal = ExtensionField("goal", type = "integer", minimum = 1000.0, maximum = 3000.0, step = 250, default = JsonPrimitive(2000))
+        assertEquals(2250L, ExtensionPickers.stepped(goal, null, up = true))
+        assertEquals(1750L, ExtensionPickers.stepped(goal, null, up = false))
+        assertEquals(2350L, ExtensionPickers.stepped(goal, 2100, up = true))
+        assertEquals(1850L, ExtensionPickers.stepped(goal, 2100, up = false))
+        assertEquals(3000L, ExtensionPickers.stepped(goal, 2900, up = true))
+        assertEquals(1000L, ExtensionPickers.stepped(goal, 1100, up = false))
+        assertEquals(3000L, ExtensionPickers.stepped(goal, 3000, up = true))
+        assertEquals(1000L, ExtensionPickers.stepped(goal, 1000, up = false))
+        assertTrue(ExtensionPickers.canStep(goal, 2900, up = true))
+        assertTrue(ExtensionPickers.canStep(goal, 1100, up = false))
+        assertFalse(ExtensionPickers.canStep(goal, 3000, up = true))
+        assertFalse(ExtensionPickers.canStep(goal, 1000, up = false))
+        assertEquals(1250L, ExtensionPickers.stepped(goal.copy(default = null), null, up = true))
+        assertEquals(-250L, ExtensionPickers.stepped(goal.copy(default = null, minimum = null, maximum = null), null, up = false))
+    }
+
+    @Test fun largeStepsDoNotWrapTheIntegerRange() {
+        val field = ExtensionField("count", type = "integer", step = 9007199254740991)
+        assertEquals(Long.MAX_VALUE, ExtensionPickers.stepped(field, Long.MAX_VALUE - 100, up = true))
+        assertEquals(Long.MIN_VALUE, ExtensionPickers.stepped(field, Long.MIN_VALUE + 100, up = false))
+        assertEquals(9007199254740991L, ExtensionPickers.stepped(field, 0, up = true))
+        assertEquals(-9007199254740991L, ExtensionPickers.stepped(field, 0, up = false))
+    }
+
     @Test fun aWholeNumberStepsWithinItsBounds() {
         val hours = ExtensionField("hours", type = "integer", minimum = 1.0, maximum = 72.0, default = JsonPrimitive(4))
         assertEquals("from the default", 5L, ExtensionPickers.stepped(hours, null, up = true))

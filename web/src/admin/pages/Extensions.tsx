@@ -58,7 +58,7 @@ export function Extensions() {
   }, [loadRunning]);
   useVisiblePoll(loadRunning, 60_000);
 
-  const replace = (p: AdminExtension) => data && set({ ...data, extensions: data.extensions.map((x) => (x.id === p.id ? p : x)) });
+  const replace = (p: AdminExtension) => set((cur) => cur && { ...cur, extensions: cur.extensions.map((x) => (x.id === p.id ? p : x)) });
   const missing = error instanceof AdminError && (error.status === 404 || error.code === "no_plugins");
 
   return (

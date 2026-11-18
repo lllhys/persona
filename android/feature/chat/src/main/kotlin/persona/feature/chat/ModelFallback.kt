@@ -21,11 +21,14 @@ import kotlinx.coroutines.launch
 import persona.core.contracts.Item
 import persona.core.contracts.ModelRefusal
 import persona.core.contracts.Session
+import persona.core.contracts.parseTime
 import persona.core.contracts.api.ChatActions
 import persona.core.contracts.api.hubCodedFailure
 import persona.core.designsystem.*
 import persona.core.designsystem.dense
 import persona.core.designsystem.icons.PersonaIcons
+import java.time.Instant
+import java.time.ZoneId
 
 // A refusal fallback (#2289, #2528; web lib/model-fallback.ts): the upstream refused a request and Claude Code answered
 // it with another model on its own, keeping the session there. The transcript shows the refusal as a line of its own;
@@ -42,8 +45,51 @@ internal const val FALLBACK_UNAVAILABLE = "model_fallback_unavailable"
  */
 val LocalNewMainChat = compositionLocalOf<(() -> Unit)?> { null }
 
-/** What the card shows: the models as recorded, the error since, and a pending restore's configured model. */
-internal data class FallbackView(val original: String, val fallback: String, val error: String, val pending: Boolean, val target: String)
+/**
+ * What the card shows: the models as recorded, the error since, and a pending restore's configured model. A switch the
+ * node's own recovery made (#7824) also carries [cause], one of [recoveryCause]'s categories, and [returning]: the
+ * configured model answered a probe, so the next message runs on it again. A runtime-written record has neither.
+ */
+internal data class FallbackView(
+    val original: String, val fallback: String, val error: String, val pending: Boolean, val target: String,
+    val cause: String? = null, val returning: Boolean = false,
+)
+
+/**
+ * Why the node's own recovery left the configured model (#7824, server `proto.ModelRecoveryReason*`), in plain words;
+ * null for any other category, such as the runtime's own refusal categories, which keep their words as recorded.
+ */
+internal fun recoveryCause(category: String?): Int? = when (category) {
+    "safeguards_refusal" -> R.string.chat_model_fallback_cause_safeguards_refusal
+    "quota_exhausted" -> R.string.chat_model_fallback_cause_quota_exhausted
+    "rate_limited" -> R.string.chat_model_fallback_cause_rate_limited
+    "server_error" -> R.string.chat_model_fallback_cause_server_error
+    "model_unavailable" -> R.string.chat_model_fallback_cause_model_unavailable
+    else -> null
+}
+
+/**
+ * When the configured model is available again, in the phone's zone, as iOS `Session.usageLimitClock` and the web's
+ * `usageLimitClock` say a usage limit's reset: the clock when that is today, the date as well on another day. Null
+ * without a readable time, where the failure card offers Retry with no time.
+ */
+internal fun recoveryResetText(reset: String?, resources: Resources, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): String? {
+    val at = parseTime(reset) ?: return null
+    val today = at.atZone(zone).toLocalDate() == now.atZone(zone).toLocalDate()
+    val clock = LocalizedFormats.format(at, if (today) LocalizedFormats.TIME else LocalizedFormats.MONTH_DAY_TIME,
+        resources.configuration.locales[0], zone)
+    return resources.getString(R.string.chat_model_fallback_recovery_reset, clock)
+}
+
+/**
+ * What an exhausted recovery chain's failure card says above Retry (#7824): the cause in plain words and, when the
+ * upstream named one, when the configured model is available again. The models tried fold with the card's details.
+ */
+internal fun recoveryExhaustedLines(refusal: ModelRefusal, resources: Resources, now: Instant = Instant.now(),
+                                    zone: ZoneId = ZoneId.systemDefault()): List<String> = listOfNotNull(
+    recoveryCause(refusal.category)?.let { resources.getString(R.string.chat_model_fallback_recovery_cause, resources.getString(it)) },
+    recoveryResetText(refusal.recoveryReset, resources, now, zone),
+)
 
 /** The card for [session], or null when it has no active refusal fallback. */
 internal fun fallbackView(session: Session): FallbackView? {
@@ -51,7 +97,7 @@ internal fun fallbackView(session: Session): FallbackView? {
     if (f.subtype != "model_refusal_fallback" || f.fallbackModel.isNullOrEmpty()) return null
     val pending = session.modelRestore?.state == "next_start"
     return FallbackView(f.originalModel.orEmpty(), f.fallbackModel!!, session.turnError.orEmpty(), pending,
-        if (pending) session.modelRestore?.to.orEmpty() else "")
+        if (pending) session.modelRestore?.to.orEmpty() else "", f.category?.takeIf { recoveryCause(it) != null }, f.recoveryReturning)
 }
 
 /** A refused restore in the app's language by its code (web `restoreErrorText`); otherwise the usual failure words. */
@@ -97,7 +143,13 @@ internal fun ModelFallbackCard(session: Session, actions: ChatActions?, modifier
                 Text(stringResource(if (view.pending) R.string.chat_model_fallback_pending_title else R.string.chat_model_fallback_title),
                     style = line.copy(fontWeight = FontWeight.SemiBold), color = palette.ink)
                 if (view.original.isNotEmpty()) Text(stringResource(R.string.chat_model_fallback_original, view.original), style = line, color = palette.ink2)
-                Text(stringResource(R.string.chat_model_fallback_fallback, view.fallback), style = line, color = palette.ink2)
+                // The node's own switch names its cause (#7824); a runtime-written record keeps its words.
+                val cause = recoveryCause(view.cause)?.let { stringResource(it) }
+                Text(if (cause != null) stringResource(R.string.chat_model_fallback_switched_cause, view.fallback, cause)
+                    else stringResource(R.string.chat_model_fallback_fallback, view.fallback), style = line, color = palette.ink2)
+                // The configured model answered a probe: the next message switches back without anything to tap (#7824).
+                if (view.returning && view.original.isNotEmpty())
+                    Text(stringResource(R.string.chat_model_fallback_recovery_returning, view.original), style = line, color = palette.ink)
                 if (view.pending && view.target.isNotEmpty())
                     Text(stringResource(R.string.chat_model_fallback_pending_target, view.target), style = line, color = palette.ink)
                 if (view.error.isNotEmpty()) Text(stringResource(R.string.chat_model_fallback_error_after, view.error), style = line, color = palette.ink2)

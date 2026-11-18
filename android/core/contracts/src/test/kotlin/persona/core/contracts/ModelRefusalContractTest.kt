@@ -18,6 +18,45 @@ class ModelRefusalContractTest {
         assertEquals("configured-model", s.modelRestore?.to)
     }
 
+    @Test fun theNodesOwnRecoveryCarriesItsResetExhaustionReturnAndModelsTried() {
+        // decorateModelRecovery (#7824): an exhausted chain has no fallback model; the reset is RFC3339 with an offset.
+        val s = JsonCodec.decodeFromString<Session>(
+            """{"machine_id":"m","session_id":"s","model_fallback":{"subtype":"model_refusal_fallback","original_model":"primary-model",
+               "category":"quota_exhausted","scope":"session","explanation":"the account's quota was exhausted",
+               "recovery_reset":"2026-11-16T07:59:00+08:00","recovery_exhausted":true,"recovery_tried":"primary-model → fallback-model"}}""")
+        val f = s.modelFallback!!
+        assertEquals("quota_exhausted", f.category)
+        assertNull(f.fallbackModel)
+        assertEquals(java.time.Instant.parse("2026-11-15T23:59:00Z"), parseTime(f.recoveryReset))
+        assertEquals(true, f.recoveryExhausted)
+        assertEquals(false, f.recoveryReturning)
+        assertEquals("primary-model → fallback-model", f.recoveryTried)
+        val back = JsonCodec.decodeFromString<Session>(
+            """{"session_id":"s","model_fallback":{"subtype":"model_refusal_fallback","original_model":"primary-model",
+               "fallback_model":"fallback-model","category":"rate_limited","recovery_returning":true}}""").modelFallback!!
+        assertEquals(true, back.recoveryReturning)
+        assertEquals(false, back.recoveryExhausted)
+        // A zero or malformed time is no time (D5), and the rest of the record stays.
+        val zero = JsonCodec.decodeFromString<Session>(
+            """{"session_id":"s","model_fallback":{"subtype":"model_refusal_fallback","fallback_model":"fallback-model",
+               "recovery_reset":"0001-01-01T00:00:00Z"}}""").modelFallback!!
+        assertNull(zero.recoveryReset)
+        assertEquals("fallback-model", zero.fallbackModel)
+    }
+
+    @Test fun aRuntimeWrittenRecordHasNoRecoveryFields() {
+        val f = JsonCodec.decodeFromString<Session>(
+            """{"session_id":"s","model_fallback":{"subtype":"model_refusal_fallback","original_model":"primary-model",
+               "fallback_model":"fallback-model","category":"synthetic-policy","scope":"session"}}""").modelFallback!!
+        assertNull(f.recoveryReset)
+        assertEquals(false, f.recoveryExhausted)
+        assertEquals(false, f.recoveryReturning)
+        assertNull(f.recoveryTried)
+        // and none are written back for it
+        val json = JsonCodec.encodeToString(ModelRefusal.serializer(), f)
+        assertEquals(false, json.contains("recovery_"))
+    }
+
     @Test fun anOlderHubsRawLineIsNotKept() {
         val it = JsonCodec.decodeFromString<Item>(
             """{"id":"n","kind":"notice","text":"words","model_refusal":{"subtype":"model_refusal_fallback","raw":"{\"secret\":1}","text":"words"}}""")

@@ -27,7 +27,7 @@ const imessageAIKey = "imessage.ai"
 func (h *Manager) addIMessage(cfg imessage.Config) error {
 	name := cfg.Machine
 	if m := h.localMachine(cfg.Machine); m != nil {
-		name = m.cfg.Name
+		name = m.name()
 	}
 	c := imessage.NewRemote(cfg, name, h.imessageCall(cfg.Machine))
 	c.Zone = h.userLocation

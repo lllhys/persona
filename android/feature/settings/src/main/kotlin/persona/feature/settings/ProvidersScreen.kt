@@ -15,6 +15,7 @@ import persona.core.contracts.GroupKeys
 import persona.core.contracts.Machine
 import persona.core.contracts.api.HubLauncher
 import persona.core.contracts.api.LauncherCheck
+import persona.core.contracts.api.LauncherImportResult
 import persona.core.contracts.api.ProviderSetup
 import persona.core.designsystem.*
 import persona.core.designsystem.icons.PhIcons
@@ -346,15 +347,24 @@ private fun CheckRow(place: String, asked: Boolean, check: LauncherCheck?, failu
  * through the phone.
  */
 @Composable
-internal fun ProviderImportPage(providers: ProviderSetup, machines: List<Machine>, onBack: () -> Unit, onDone: () -> Unit) {
-    val model = remember(providers) { ProviderImportModel(providers) }
+internal fun ProviderImportPage(
+    providers: ProviderSetup, machines: List<Machine>, onBack: () -> Unit, onDone: (LauncherImportResult) -> Unit,
+    initialMachine: String? = null, initialAlias: String? = null,
+) {
+    val model = remember(providers, initialMachine, initialAlias) { ProviderImportModel(providers) }
     val state by model.state.collectAsState()
     val scope = rememberCoroutineScope()
     // The current assistant's computers alone: the hub reads another assistant's through that one, not this one.
     val assistant = currentAssistant()
     val online = machines.filter { it.online && assistant.ownsOn(it.id, it.manager) }
+    LaunchedEffect(model) {
+        if (initialAlias != null && !initialMachine.isNullOrBlank()) {
+            model.choose(initialMachine, initialAlias)
+            model.load()
+        }
+    }
     LaunchedEffect(online.map { it.id }) {
-        if (state.machine.isBlank()) (online.firstOrNull { it.kind == "local" } ?: online.firstOrNull())?.let { model.choose(GroupKeys.raw(it.id)) }
+        if (initialAlias == null && state.machine.isBlank()) (online.firstOrNull { it.kind == "local" } ?: online.firstOrNull())?.let { model.choose(GroupKeys.raw(it.id)) }
     }
     var picking by remember { mutableStateOf(false) }
     JListPage(title = stringResource(R.string.settings_providers_import), onBack = onBack, bottomBar = {
@@ -364,16 +374,20 @@ internal fun ProviderImportPage(providers: ProviderSetup, machines: List<Machine
                     Modifier.fillMaxWidth(), enabled = state.machine.isNotBlank() && state.phase == ImportPhase.Machine, loading = state.phase == ImportPhase.Loading)
                 ImportPhase.Preview, ImportPhase.Importing -> JButton(pluralStringResource(R.plurals.settings_providers_import_n, state.picked.size, state.picked.size),
                     { scope.launch { model.runImport() } }, Modifier.fillMaxWidth(), enabled = state.canImport, loading = state.phase == ImportPhase.Importing)
-                ImportPhase.Done -> JButton(stringResource(R.string.settings_providers_import_done), onDone, Modifier.fillMaxWidth())
+                ImportPhase.Done -> JButton(stringResource(R.string.settings_providers_import_done), { state.result?.let(onDone) }, Modifier.fillMaxWidth(), enabled = state.result != null)
             }
         }
     }) {
-        item("intro") { SettingsCaption(stringResource(R.string.settings_providers_import_intro), Modifier.padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.s)) }
+        item("intro") {
+            val intro = initialAlias?.let { stringResource(R.string.settings_paste_alias_import_intro, it) } ?: stringResource(R.string.settings_providers_import_intro)
+            SettingsCaption(intro, Modifier.padding(horizontal = Tokens.Space.xs, vertical = Tokens.Space.s))
+        }
         item("machine") {
             JGroupItem(GroupPosition.Single) {
                 JRow(stringResource(R.string.settings_src_claude_machine), leadingIcon = PhIcons.Laptop,
                     value = state.machine.takeIf { it.isNotBlank() }?.let { machineLabel(machines, it) } ?: stringResource(R.string.settings_src_claude_no_online),
-                    enabled = online.isNotEmpty() && state.phase in setOf(ImportPhase.Machine, ImportPhase.Preview, ImportPhase.Done), onClick = { picking = true })
+                    enabled = initialAlias == null && online.isNotEmpty() && state.phase in setOf(ImportPhase.Machine, ImportPhase.Preview, ImportPhase.Done),
+                    onClick = if (initialAlias == null) ({ picking = true }) else null)
             }
         }
         state.error?.let { error -> item("error") { JNotice(error.text(), Modifier.padding(top = Tokens.Space.m), status = Status.NeedsYou) } }

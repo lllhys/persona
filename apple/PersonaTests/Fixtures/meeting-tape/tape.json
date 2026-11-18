@@ -1,0 +1,288 @@
+{
+  "audio": "audio.m4a",
+  "duration": 31.5,
+  "endedAfter": 32,
+  "events": [
+    {
+      "at": 1,
+      "kind": "room",
+      "room": {
+        "state": "ready"
+      },
+      "t": 1
+    },
+    {
+      "at": 1.5,
+      "kind": "interim",
+      "start": 0.5,
+      "t": 1.5,
+      "text": "好，我们开始。今天"
+    },
+    {
+      "at": 2.7,
+      "kind": "interim",
+      "start": 0.5,
+      "t": 2.7,
+      "text": "好，我们开始。今天聊两件事：新版录音"
+    },
+    {
+      "at": 7.6,
+      "end": 6.6,
+      "kind": "line",
+      "n": 0,
+      "source": "hub",
+      "start": 0.5,
+      "t": 7.6,
+      "text": "好，我们开始。今天聊两件事：新版录音入口，还有发布时间。"
+    },
+    {
+      "at": 8.2,
+      "kind": "interim",
+      "start": 7.2,
+      "t": 8.2,
+      "text": "录音入口已经合"
+    },
+    {
+      "at": 9.4,
+      "kind": "interim",
+      "start": 7.2,
+      "t": 9.4,
+      "text": "录音入口已经合进主干了，开始"
+    },
+    {
+      "at": 12.1,
+      "end": 11.1,
+      "kind": "line",
+      "n": 1,
+      "source": "hub",
+      "start": 7.2,
+      "t": 12.1,
+      "text": "录音入口已经合进主干了，开始录音只要一步。"
+    },
+    {
+      "at": 12.7,
+      "kind": "interim",
+      "start": 11.7,
+      "t": 12.7,
+      "text": "锁屏和灵动岛"
+    },
+    {
+      "at": 13.899999999999999,
+      "kind": "interim",
+      "start": 11.7,
+      "t": 13.899999999999999,
+      "text": "锁屏和灵动岛也能看到时长，"
+    },
+    {
+      "at": 17.0,
+      "end": 16.0,
+      "kind": "line",
+      "n": 2,
+      "source": "hub",
+      "start": 11.7,
+      "t": 17.0,
+      "text": "锁屏和灵动岛也能看到时长，可以直接停止。"
+    },
+    {
+      "at": 17.6,
+      "kind": "interim",
+      "start": 16.6,
+      "t": 17.6,
+      "text": "发布时间我建"
+    },
+    {
+      "at": 18.8,
+      "kind": "interim",
+      "start": 16.6,
+      "t": 18.8,
+      "text": "发布时间我建议定在下周三"
+    },
+    {
+      "at": 21.6,
+      "end": 20.6,
+      "kind": "line",
+      "n": 3,
+      "source": "hub",
+      "start": 16.6,
+      "t": 21.6,
+      "text": "发布时间我建议定在下周三，先发测试版。"
+    },
+    {
+      "at": 22.3,
+      "kind": "interim",
+      "start": 21.3,
+      "t": 22.3,
+      "text": "同意，下周三"
+    },
+    {
+      "at": 23.5,
+      "kind": "interim",
+      "start": 21.3,
+      "t": 23.5,
+      "text": "同意，下周三先发测试版，正"
+    },
+    {
+      "at": 26.6,
+      "end": 25.6,
+      "kind": "line",
+      "n": 4,
+      "source": "hub",
+      "start": 21.3,
+      "t": 26.6,
+      "text": "同意，下周三先发测试版，正式版再等一周。"
+    },
+    {
+      "at": 27.2,
+      "kind": "interim",
+      "start": 26.2,
+      "t": 27.2,
+      "text": "那我周五"
+    },
+    {
+      "at": 28.4,
+      "kind": "interim",
+      "start": 26.2,
+      "t": 28.4,
+      "text": "那我周五前把发布"
+    },
+    {
+      "at": 29.9,
+      "end": 28.9,
+      "kind": "line",
+      "n": 5,
+      "source": "hub",
+      "start": 26.2,
+      "t": 29.9,
+      "text": "那我周五前把发布说明写好。"
+    },
+    {
+      "at": 10.5,
+      "kind": "topics",
+      "t": 10.5,
+      "topics": [
+        {
+          "at": 0.5,
+          "note": "一步开始录音，锁屏可停止",
+          "state": "current",
+          "title": "录音入口"
+        },
+        {
+          "state": "open",
+          "title": "发布时间"
+        }
+      ]
+    },
+    {
+      "at": 13,
+      "highlights": [
+        {
+          "at": 7.2,
+          "end": 11.1,
+          "text": "录音入口已合进主干，开始录音只要一步"
+        }
+      ],
+      "kind": "highlights",
+      "t": 13
+    },
+    {
+      "at": 22.5,
+      "kind": "topics",
+      "t": 22.5,
+      "topics": [
+        {
+          "at": 0.5,
+          "note": "一步开始录音，锁屏可停止",
+          "state": "done",
+          "title": "录音入口"
+        },
+        {
+          "at": 16.6,
+          "note": "下周三先发测试版",
+          "state": "current",
+          "title": "发布时间"
+        }
+      ]
+    },
+    {
+      "at": 27,
+      "highlights": [
+        {
+          "at": 7.2,
+          "end": 11.1,
+          "text": "录音入口已合进主干，开始录音只要一步"
+        },
+        {
+          "at": 21.3,
+          "end": 25.6,
+          "text": "下周三先发测试版，正式版晚一周"
+        }
+      ],
+      "kind": "highlights",
+      "t": 27
+    },
+    {
+      "at": 30.5,
+      "kind": "topics",
+      "t": 30.5,
+      "topics": [
+        {
+          "at": 0.5,
+          "note": "一步开始录音，锁屏可停止",
+          "state": "done",
+          "title": "录音入口"
+        },
+        {
+          "at": 16.6,
+          "note": "下周三先发测试版",
+          "state": "done",
+          "title": "发布时间"
+        },
+        {
+          "at": 26.2,
+          "note": "周五前写好",
+          "state": "current",
+          "title": "发布说明"
+        }
+      ]
+    }
+  ],
+  "finalTitle": "产品周会",
+  "format": "persona-meeting-tape",
+  "locale": "zh-CN",
+  "minutes": {
+    "actions": [
+      {
+        "at": 26.2,
+        "by": "周五",
+        "text": "写好发布说明"
+      }
+    ],
+    "attendees": [],
+    "decisions": [
+      {
+        "at": 21.3,
+        "text": "下周三先发测试版，正式版再等一周"
+      }
+    ],
+    "open": [],
+    "points": [
+      {
+        "at": 7.2,
+        "text": "新版录音入口已合进主干，开始录音只要一步"
+      },
+      {
+        "at": 11.7,
+        "text": "锁屏和灵动岛能看到时长，也能直接停止"
+      }
+    ],
+    "title": "产品周会"
+  },
+  "minutesAfter": 50,
+  "minutesState": "ready",
+  "role": "listener",
+  "service": "volc",
+  "startedAt": "2027-01-15T09:00:00Z",
+  "title": "产品周会",
+  "transcription": "hub",
+  "version": 1
+}

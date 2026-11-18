@@ -1,11 +1,1 @@
-// Persona runtime SDK: what a runtime without a terminal (DSH, a pi extension, a platform built on DSH…) needs to plug
-// into Persona the standard way (docs/integrations/runtimes.md), dialing the node's runtime.sock or, as a daemon the node dials,
-// serving a WebSocket endpoint (docs/integrations/daemons.md). Testing helpers are under ./testing.
-
-export { createRuntime, defaultSocketPath, DEFAULT_LISTEN_PATH, PROTOCOL } from './lib/runtime.js'
-export { SUBPROTOCOL, tokenMatches, upgrade } from './lib/listen.js'
-export { Peer, RpcError } from './lib/wire.js'
-export { PAGE_TEXT, PAGE_OUTPUT, MAX_INPUT, appToolName, clipTo, clipInput, light, page, snippet, summaryOf, interactionId } from './lib/items.js'
-export { createLoader, LOADER_API } from './lib/loader.js'
-export { PACKAGES, packageHash, readShipped, readTree, storeVersion, validPath, verifyPackage } from './lib/package.js'
-export { currentHash, installCurrent, selfPackage } from './lib/package.js'
+import{createRuntime,defaultSocketPath,DEFAULT_LISTEN_PATH,PROTOCOL}from"./lib/runtime.js";import{SUBPROTOCOL,tokenMatches,upgrade}from"./lib/listen.js";import{Peer,RpcError}from"./lib/wire.js";import{PAGE_TEXT,PAGE_OUTPUT,MAX_INPUT,appToolName,clipTo,clipInput,light,page,snippet,summaryOf,interactionId}from"./lib/items.js";import{createLoader,LOADER_API}from"./lib/loader.js";import{PACKAGES,packageHash,readShipped,readTree,storeVersion,validPath,verifyPackage}from"./lib/package.js";import{currentHash,installCurrent,selfPackage}from"./lib/package.js";export{DEFAULT_LISTEN_PATH,LOADER_API,MAX_INPUT,PACKAGES,PAGE_OUTPUT,PAGE_TEXT,PROTOCOL,Peer,RpcError,SUBPROTOCOL,appToolName,clipInput,clipTo,createLoader,createRuntime,currentHash,defaultSocketPath,installCurrent,interactionId,light,packageHash,page,readShipped,readTree,selfPackage,snippet,storeVersion,summaryOf,tokenMatches,upgrade,validPath,verifyPackage};

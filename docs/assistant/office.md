@@ -86,6 +86,8 @@ Why it works this way (tried on real claude on 2026-11-04):
 ## Formula values
 
 Formulas in the workbook are computed at write time and their values written into the file, like Excel does on save (`formula.go`). Many viewers (QuickLook, the App's preview, many web viewers) do not compute formulas; they only show the stored value, and with no value the cell is blank.
+
+Cached range evaluation is bounded to 65,536 cells per range and 262,144 across the workbook. A formula exceeding either limit, or referring outside Excel's sheet bounds, is kept without a cached value for a spreadsheet application to calculate. Dependent formulas whose values cannot be established are also left uncached.
 Excel and Numbers still recompute everything on open (`fullCalcOnLoad`).
 
 - Supported: `+ - * / ^ & %`, comparisons, cells and ranges (other sheets too: `Sheet!A1`, `'with space'!A1:B2`), and SUM AVERAGE MIN MAX COUNT COUNTA ROUND ABS IF IFERROR AND OR NOT.

@@ -1,0 +1,2555 @@
+{
+  "schema_version": 1,
+  "operation": "inbox_bar",
+  "cases": [
+    {
+      "name": "opens_on_needs_you",
+      "description": "默认停在需要你：只画需要你；需要你的数是事项加等你的 Agent，蓝色；进行中和知悉即可是灰色数；已处理和全部不带数；已折叠没有自己的选项。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 3,
+            "tone": "needs"
+          },
+          {
+            "id": "working",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "fyi",
+            "count": 2,
+            "tone": "neutral"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "all_is_the_stacked_page",
+      "description": "全部：今天的整页，非空分段按顺序都在，已折叠和已处理也在。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "all"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 3,
+            "tone": "needs"
+          },
+          {
+            "id": "working",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "fyi",
+            "count": 2,
+            "tone": "neutral"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action",
+          "working",
+          "fyi",
+          "noise",
+          "done"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "fyi_alone",
+      "description": "选知悉即可：只画知悉即可这一段。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "fyi"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 3,
+            "tone": "needs"
+          },
+          {
+            "id": "working",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "fyi",
+            "count": 2,
+            "tone": "neutral"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "fyi"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "done_alone",
+      "description": "选已处理：只画已处理。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "done"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 3,
+            "tone": "needs"
+          },
+          {
+            "id": "working",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "fyi",
+            "count": 2,
+            "tone": "neutral"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "done"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "empty_choices_leave_the_bar",
+      "description": "没有进行中、没有已处理时这两个选项不出现；需要你和全部总在。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "a_chosen_choice_stays_while_empty",
+      "description": "选中的进行中处理完变空：选项留着（数是 0），这一段说「没有进行中的」。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "working"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "working",
+            "count": 0,
+            "tone": "neutral"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "section"
+      }
+    },
+    {
+      "name": "nothing_needs_you_while_fyi_has_some",
+      "description": "需要你空、知悉即可有：需要你说「没有需要你处理的」，不说全部处理完了。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 2,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "section"
+      }
+    },
+    {
+      "name": "all_caught_up",
+      "description": "什么都没开着、只有已处理：需要你说全部处理完了，已处理选项在。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "caught_up"
+      }
+    },
+    {
+      "name": "all_caught_up_under_all",
+      "description": "全部：没开着的，已处理还在下面。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "all"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "done"
+        ],
+        "empty": "caught_up"
+      }
+    },
+    {
+      "name": "done_from_the_hubs_day_counts",
+      "description": "列表里没有已处理，但 hub 的按天计数有：已处理选项在，选它画已处理（按天分组，打开再读）。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "done"
+        },
+        "done_days_total": 40
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "done"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "day_counts_dont_apply_under_a_filter",
+      "description": "筛选时 hub 的按天计数不算：已加载的里没有匹配的就没有已处理选项。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "acc1",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        },
+        "done_days_total": 40
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "section"
+      }
+    },
+    {
+      "name": "a_source_filter_counts_and_hides_agents",
+      "description": "来源筛选：数跟着变，等你的 Agent 不出现也不算。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "acc1",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "the_agent_kind",
+      "description": "类型 Agent：只有等你的 Agent，其它都是 0。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "agent",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "filtered_to_nothing",
+      "description": "筛选后什么都没有：用今天的筛选空状态。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "acc9",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "filtered"
+      }
+    },
+    {
+      "name": "filtered_section_empty_elsewhere_not",
+      "description": "筛选后当前段空但别的段有：说这一段没有，不说筛选空。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "mail",
+          "query": "",
+          "chosen": "working"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "working",
+            "count": 0,
+            "tone": "neutral"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "section"
+      }
+    },
+    {
+      "name": "search_counts_where_the_matches_are",
+      "description": "搜索时显示全部，数是各段匹配的个数。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "合同",
+          "chosen": "all"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "fyi"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "search_without_matches",
+      "description": "搜索没有匹配：用今天的「没有匹配」。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "zzz",
+          "chosen": "all"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "no_match"
+      }
+    },
+    {
+      "name": "a_muted_agent_is_not_counted",
+      "description": "静音的 Agent 不进需要你也不算数。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          }
+        ],
+        "interactions": [
+          {
+            "id": "q1",
+            "machine_id": "machine-a",
+            "session_id": "q1",
+            "kind": "question",
+            "created_at": "2026-01-01T00:10:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          },
+          {
+            "id": "q2",
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "kind": "question",
+            "created_at": "2026-01-01T00:11:00Z",
+            "session_title": "示例会话",
+            "title": "Claude 在问你"
+          }
+        ],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [
+            "machine-a/muted"
+          ],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "action"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 2,
+            "tone": "needs"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "unknown_status_falls_back_to_tier",
+      "description": "status 不认识按 tier；tier 也没有按需要你。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "x1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "fyi",
+            "status": "later"
+          },
+          {
+            "id": "x2",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z",
+            "status": "later"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "all"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action",
+          "fyi"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "old_hub_without_status",
+      "description": "旧 hub 不发 status：没有进行中，按 tier 分。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z",
+            "tier": "fyi"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "noise"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "",
+          "kind": "",
+          "query": "",
+          "chosen": "all"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 1,
+            "tone": "needs"
+          },
+          {
+            "id": "fyi",
+            "count": 1,
+            "tone": "neutral"
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [
+          "action",
+          "fyi",
+          "noise"
+        ],
+        "empty": null
+      }
+    },
+    {
+      "name": "done_filtered_empty",
+      "description": "选已处理且筛选后没有：用筛选空状态。",
+      "source": [
+        "docs/assistant/inbox.md: Section bar (#9053)"
+      ],
+      "derived": true,
+      "input": {
+        "items": [
+          {
+            "id": "a1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:59:00Z",
+            "tier": "action",
+            "status": "action"
+          },
+          {
+            "id": "a2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:58:00Z"
+          },
+          {
+            "id": "w1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:57:00Z",
+            "tier": "action",
+            "status": "working"
+          },
+          {
+            "id": "f1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:56:00Z",
+            "tier": "fyi",
+            "status": "fyi"
+          },
+          {
+            "id": "f2",
+            "source": "mail",
+            "kind": "mail",
+            "account": "acc1",
+            "account_name": "个人邮箱",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:55:00Z",
+            "tier": "fyi",
+            "summary": "合同条款确认"
+          },
+          {
+            "id": "n1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:54:00Z",
+            "tier": "noise",
+            "status": "noise"
+          },
+          {
+            "id": "d1",
+            "source": "lark",
+            "kind": "dm",
+            "account": "feishu",
+            "account_name": "飞书",
+            "title": "示例事项",
+            "preview": "示例内容",
+            "count": 1,
+            "updated_at": "2026-01-01T00:53:00Z",
+            "tier": "fyi",
+            "done_at": "2026-01-01T00:59:30Z"
+          }
+        ],
+        "interactions": [],
+        "sessions": [
+          {
+            "machine_id": "machine-a",
+            "session_id": "muted",
+            "title": "示例会话",
+            "cwd": "/home/user/project",
+            "status": "idle",
+            "state": "idle",
+            "space_id": "space-a",
+            "space_name": "示例项目"
+          }
+        ],
+        "mutes": {
+          "spaces": [],
+          "sessions": [],
+          "allowed": []
+        },
+        "settings": {
+          "source": "acc9",
+          "kind": "",
+          "query": "",
+          "chosen": "done"
+        }
+      },
+      "expected": {
+        "bar": [
+          {
+            "id": "action",
+            "count": 0,
+            "tone": "needs"
+          },
+          {
+            "id": "done",
+            "count": null,
+            "tone": null
+          },
+          {
+            "id": "all",
+            "count": null,
+            "tone": null
+          }
+        ],
+        "shown_sections": [],
+        "empty": "filtered"
+      }
+    }
+  ]
+}

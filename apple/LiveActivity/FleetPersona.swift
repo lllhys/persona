@@ -110,8 +110,17 @@ nonisolated struct FleetFaces: Hashable, Sendable {
     var states: [String: Picture]
     var avatar: Picture?
 
-    /// The sizes the activity draws a face at, in points: compact 22, minimal / limited 24, expanded and lock screen 26.
-    static let sizes = Set([IslandMetrics.face, IslandMetrics.limitedContent, IslandMetrics.expandedFace, IslandMetrics.lockFace].map { Int($0) }).sorted()
+    /// The sizes the activity draws a face at, in points: compact 22, minimal / limited 24, expanded and lock screen 26;
+    /// and the Home Screen widgets' larger ones (`widgetSizes`).
+    static let sizes = Set([IslandMetrics.face, IslandMetrics.limitedContent, IslandMetrics.expandedFace, IslandMetrics.lockFace].map { Int($0) }
+                           + widgetSizes).sorted()
+    #if os(iOS)
+    /// The widgets' faces past the island's: the Lock Screen's 40 and the empty states' 46 (their corner's 22 is the
+    /// island's), docs/apple/home-widgets.md「The persona, as an accent」.
+    static let widgetSizes = [HomeWidgetTokens.faceLock, HomeWidgetTokens.faceEmpty].map { Int($0) }
+    #else
+    static let widgetSizes: [Int] = []
+    #endif
     /// Pixels a point: every iPhone with a Dynamic Island.
     static let scale: CGFloat = 3
 
@@ -224,10 +233,11 @@ nonisolated struct FleetLookStore: Sendable {
         return error == nil
     }
 
-    /// The package's directory: its id and rev with anything but letters, digits, `.`, `-` and `_` as `_`, and `_3x`
-    /// (a picture at each face size: the ones an older build made, all at 4 KB, are made again, #349).
+    /// The package's directory: its id and rev with anything but letters, digits, `.`, `-` and `_` as `_`, and `_3xw`
+    /// (a picture at each face size, the widgets' too: the ones an older build made, all at 4 KB (#349) or without the
+    /// widgets' sizes (`_3x`), are made again).
     static func folder(_ package: String) -> String {
-        String(package.map { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) ? $0 : "_" }) + "_3x"
+        String(package.map { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) ? $0 : "_" }) + "_3xw"
     }
 
     func hasFaces(_ package: String) -> Bool {

@@ -1,0 +1,15 @@
+{
+  "busy_waiting": "It's waiting for your answer. Closing it now interrupts it.",
+  "busy_working": "It's still working. Closing it now interrupts it.",
+  "busy_loop": "It's running a loop. Closing it now stops the loop.",
+  "busy_server": "It's running a server. Closing it now stops the server.",
+  "close_anyway": "Close anyway",
+  "closed": "Closed",
+  "close_failed": "Couldn't close: {error}",
+  "close_agent_title": "Close this agent?",
+  "close_agent": "Close agent",
+  "close_agent_detail": "This quits Claude in “{where}” on {machine} and closes the tab. Its conversation stays here, and you can resume it later from its terminal page.",
+  "close_runtime_detail": "This ends “{title}” on {machine}. The conversation history stays available.",
+  "archive_close_detail": "Persona archives “{title}” and closes its tab and process on {machine}. Its conversation stays: restore it from Archived agents, then resume it from its terminal page.",
+  "archive_close": "Archive and close"
+}

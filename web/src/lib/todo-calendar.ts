@@ -167,9 +167,12 @@ export function entriesOn(day: number, entries: readonly CalendarEntry[]): Calen
 
 // ---- the time axis ----
 
-/** Minutes from the start of day to ms. */
+/** Minutes from the start of day to ms on the clock, as the axis's hour lines, slotAt and dropOnAxis count them: on a day
+ * the clocks change, 10:00 is still 600 minutes in, not the 540 or 660 that have passed since midnight (#9851). */
 export function minutesInto(ms: number, day: number): number {
-  return (ms - startOfDay(day)) / 60_000;
+  const d = new Date(ms);
+  const days = Math.round((startOfDay(ms) - startOfDay(day)) / 86_400_000);
+  return days * 24 * 60 + d.getHours() * 60 + d.getMinutes() + (d.getSeconds() * 1000 + d.getMilliseconds()) / 60_000;
 }
 
 function blockEnd(e: CalendarEntry, minutes: number): number {

@@ -30,6 +30,35 @@ import Testing
         #expect(catalog.workspaces.isEmpty)
     }
 
+    @Test func nativePinsRefreshAndUnpinWithoutChangingWorkspaceIdentity() async throws {
+        let hub = FakeHub(), catalog = WorkspaceCatalog()
+        func answer(_ pin: String) {
+            hub.on("GET", "/api/v1/workspaces", json: """
+            {"workspaces":[{"machine_id":"m","source":"paseo","source_id":"task","title":"Task","cwd":"/work/task"\(pin)}]}
+            """)
+        }
+        answer("")
+        await catalog.refresh(["work"]) { _ in hub.client }
+        let key = try #require(catalog.workspaces.first?.key)
+        #expect(catalog.workspaces.first?.pinnedAt == nil, "old hubs and unpinned workspaces omit the field")
+        let before = catalog.revision
+        answer(#","pinned_at":"2026-11-16T08:00:00.250Z""#)
+        await catalog.refresh(["work"]) { _ in hub.client }
+        #expect(catalog.workspaces.first?.key == key)
+        #expect(catalog.workspaces.first?.pinnedAt?.timeIntervalSince1970 == 1_794_816_000.25)
+        #expect(catalog.revision == before + 1, "a pin alone invalidates the warm list projection")
+        await catalog.refresh(["work"]) { _ in hub.client }
+        #expect(catalog.revision == before + 1, "an unchanged native pin does not republish")
+        answer("")
+        await catalog.refresh(["work"]) { _ in hub.client }
+        #expect(catalog.workspaces.first?.pinnedAt == nil)
+        #expect(catalog.workspaces.first?.key == key)
+        #expect(catalog.revision == before + 2)
+        answer(#","pinned_at":"invalid""#)
+        await catalog.refresh(["work"]) { _ in hub.client }
+        #expect(catalog.workspaces.first?.pinnedAt == nil, "an invalid date is never treated as a pin")
+    }
+
     /// Hold the real FakeHub response after it was read, so later requests can finish first without scheduler sleeps.
     private actor Responses {
         private var count = 0

@@ -93,5 +93,6 @@ describe("TeamPanel", () => {
 
   it("says in a pill's hover text which Agent it is, its title and its state", () => {
     expect(workerHint(worker("r", 1, { agent: "codex", title: "Review", state: "needs_you" }), false)).toBe("Codex · Review · 需要你");
+    expect(workerHint(worker("r", 1, { agent: "codex", title: "Review", state: "idle" }), false, true)).toBe("Codex · Review · 刚做完待看");
   });
 });

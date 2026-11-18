@@ -98,7 +98,7 @@ final class AddComputerTests: XCTestCase {
 
             XCTAssertTrue(element(app, "addComputer.confirmed").waitForExistence(timeout: 10), "not confirmed:\n\(app.debugDescription)")
             shot(app, "confirmed-\(scheme)")
-            app.buttons["addComputer.done"].tap()
+            app.buttons["addComputer.close"].tap()
 
             XCTAssertTrue(text(app, "小林的 MacBook").waitForExistence(timeout: 10), "not in the list")
             XCTAssertTrue(text(app, "1/1 台在线").waitForExistence(timeout: 10), "not online:\n\(app.debugDescription)")

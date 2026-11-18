@@ -7,6 +7,11 @@ import (
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
+type sessionSnapshot struct {
+	peer     *rpc.Peer
+	revision uint64
+}
+
 func (m *Machine) sessionsRevision() uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -25,7 +30,23 @@ func (m *Machine) setInitialSessions(peer *rpc.Peer, revision uint64, list []pro
 		list[i].MachineID = m.cfg.ID
 	}
 	m.sessions = list
-	m.sessionRevision++
+	m.sessionsListed = true
 	m.lastSeen = time.Now().UTC()
 	return true
+}
+
+// acceptSessionsList installs and optionally forwards a response only while its attempt still owns the current list.
+// It always returns the current accepted list so a caller can make its own decision without using rejected rows.
+// sessionsEventMu makes accepting the response, reading the current list, and forwarding it one ordering unit.
+func (m *Machine) acceptSessionsList(snapshot *sessionSnapshot, list []proto.Session, forward bool) ([]proto.Session, bool) {
+	m.sessionsEventMu.Lock()
+	defer m.sessionsEventMu.Unlock()
+	if !m.setInitialSessions(snapshot.peer, snapshot.revision, list) {
+		return m.sessionList(), false
+	}
+	sessions := m.sessionList()
+	if forward {
+		m.d.forward(m.cfg.ID, "sessions.changed", map[string]any{"sessions": sessions})
+	}
+	return sessions, true
 }

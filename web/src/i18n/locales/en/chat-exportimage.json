@@ -1,0 +1,14 @@
+{
+  "copied": "Image copied",
+  "copy_failed": "Couldn't copy the image",
+  "copy_image": "Copy image",
+  "download": "Download PNG",
+  "download_n_one": "Download {count}",
+  "download_n_other": "Download {count}",
+  "failed": "Couldn't make the image",
+  "retry": "Try again",
+  "page_of": "Page {n} of {count}",
+  "page_alt": "Page {n}",
+  "include_detail": "Each answer brings the question before it",
+  "title_and_date": "Title and date"
+}

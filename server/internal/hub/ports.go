@@ -7,12 +7,14 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
 
+	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 	"github.com/nwverse/persona/server/internal/streams"
 )
@@ -79,6 +81,7 @@ func (h *Hub) portRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/v1/machines/{mid}/ports/{port}", h.withMachine(h.probePort))
 	api.HandleFunc("POST /api/v1/machines/{mid}/ports/{port}/open", h.withMachine(h.openPort))
 	api.HandleFunc("GET /api/v1/machines/{mid}/ports/{port}/connect", h.withMachine(h.connectPort))
+	api.HandleFunc("GET /api/v1/machines/{mid}/screen/video/connect", h.withMachine(h.screenVideoConnect)) // #3954
 }
 
 func pathPort(r *http.Request) (int, error) {
@@ -145,22 +148,26 @@ func (h *Hub) openPort(w http.ResponseWriter, r *http.Request, m *Machine) {
 const screenPort = 5900
 
 // portAllowed: an agent on the machine listens on port, or the user opened it, or it is the screen of a Mac the
-// plugin cua or ego is on for (ego's first-run setup is done over it, #1507).
+// plugin cua or ego is on for (ego's first-run setup is done over it, #1507). An agent is any row of the manager's
+// list, an archived one too: told apart from the list (Machine.archived, #6836) it allows what it allowed in it.
 func (h *Hub) portAllowed(m *Machine, port int) bool {
 	if port == screenPort && h.screenAllowed(m) { // the manager's report: cua or ego is on for it
 		return true
 	}
-	m.mu.Lock()
-	for _, s := range m.sessions {
-		for _, p := range s.Ports {
+	list, archived := m.keptWhole()
+	return listensOn(list, port) || listensOn(archived, port) || h.ports.has(m.cfg.ID, port)
+}
+
+// listensOn reports whether a session of list listens on port.
+func listensOn(list []proto.Session, port int) bool {
+	for i := range list { // by index: a range value copies every (large) session it passes
+		for _, p := range list[i].Ports {
 			if p.Port == port {
-				m.mu.Unlock()
 				return true
 			}
 		}
 	}
-	m.mu.Unlock()
-	return h.ports.has(m.cfg.ID, port)
+	return false
 }
 
 // connectPort is GET …/ports/{port}/connect: a WebSocket whose binary messages are one TCP connection's bytes to
@@ -204,7 +211,17 @@ func (h *Hub) connectPort(w http.ResponseWriter, r *http.Request, m *Machine) {
 	if port == screenPort && h.extReport().ScreenKeepAwake {
 		dial["keep_awake"] = true // someone is watching the Mac: it stays awake until this closes (node/awake.go)
 	}
-	err = m.call(dctx, "port.dial", dial, nil)
+	link := false
+	if port == screenPort {
+		if pair := r.URL.Query().Get("pair"); pair != "" {
+			dial["pair"] = pair // ties this 5900 stream to a later screen/video/connect for the video channel (#3954)
+			link = h.askScreenLink(r, dial)
+		}
+	}
+	var res struct {
+		Link int `json:"link"`
+	}
+	err = m.call(dctx, "port.dial", dial, &res)
 	cancel()
 	if err != nil {
 		mux.Abort(id, err)
@@ -213,11 +230,58 @@ func (h *Hub) connectPort(w http.ResponseWriter, r *http.Request, m *Machine) {
 			writeErr(w, http.StatusNotFound, err)
 			return
 		}
+		if errors.As(err, &re) && re.Code == "session_gone" {
+			writeErr(w, http.StatusGone, err) // the phone starts the screen over
+			return
+		}
 		callErr(w, err)
 		return
 	}
-	// noVNC may ask for the "binary" subprotocol (its frames are binary either way).
-	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, Subprotocols: []string{"binary"}})
+	h.bridgeStream(w, r, mux, id, link && res.Link == 1)
+}
+
+// screenLinkSubprotocol is the WebSocket subprotocol a phone offers to carry the live screen as a screen session
+// (#6398; the node's internal/screenlink, whose Subprotocol it equals). The hub only passes it on: it never reads the
+// session's framing.
+const screenLinkSubprotocol = "persona-screen-link.1"
+
+// askScreenLink passes the phone's request for a screen session on to the node (link, and attach for a relay
+// rejoining a live one) when the phone offered the subprotocol; it reports whether it did. Any other client (the
+// web's noVNC, an app before it) asks for nothing and gets the raw stream, as before, and so does every client while
+// hub.json's screen_link_off is set.
+func (h *Hub) askScreenLink(r *http.Request, dial map[string]any) bool {
+	if h.cfg.ScreenLinkOff {
+		return false
+	}
+	offered := false
+	for _, v := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, p := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(p), screenLinkSubprotocol) {
+				offered = true
+			}
+		}
+	}
+	if !offered {
+		return false
+	}
+	dial["link"] = true
+	if r.URL.Query().Get("attach") == "1" {
+		dial["attach"] = true
+	}
+	return true
+}
+
+// bridgeStream upgrades the request to a binary WebSocket and pumps it against stream `id` on `mux` until it ends.
+// The stream must already be Open on the mux and dialed on the node. Shared by the port relay and the live-screen
+// video relay (#3954). noVNC may ask for the "binary" subprotocol (its frames are binary either way). link: the node
+// answered with a screen session (#6398), so the phone's screenLinkSubprotocol is selected and it reads the session's
+// framing; otherwise only "binary" can be, and the phone reads the raw stream.
+func (h *Hub) bridgeStream(w http.ResponseWriter, r *http.Request, mux *streams.Mux, id string, link bool) {
+	protocols := []string{"binary"}
+	if link {
+		protocols = []string{screenLinkSubprotocol}
+	}
+	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true, Subprotocols: protocols})
 	if err != nil {
 		mux.Abort(id, err)
 		return

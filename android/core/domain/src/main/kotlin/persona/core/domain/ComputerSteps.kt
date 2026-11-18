@@ -51,13 +51,26 @@ object ComputerSteps {
 
     /**
      * A computer_run row's subject when the call says what it does (steps or a script): "MacBook · Click AC → 6 → ×";
-     * null for any other call, which keeps the row's own subject (its machine alone).
+     * null for any other call, which keeps the row's own subject (its machine alone). [machine] names the Mac the call's
+     * `machine` is ([machineName]).
      */
-    fun runSubject(name: String, input: JsonObject?): CoreText? {
+    fun runSubject(name: String, input: JsonObject?, machine: (String) -> String = { named -> named }): CoreText? {
         if (toolBaseName(name) != "computer_run" || input == null) return null
         val what = run(input) ?: return null
-        val machine = input.text("machine")?.takeIf(String::isNotBlank)
-        return CoreText.joined(" · ", listOfNotNull(machine?.let(CoreText::plain), what))
+        val named = input.text("machine")?.takeIf(String::isNotBlank)
+        return CoreText.joined(" · ", listOfNotNull(named?.let { CoreText.plain(machine(it)) }, what))
+    }
+
+    /**
+     * The Mac a tool's `machine` names, as the user knows it ("MacBook", not "macbook"; iOS `machineName`): matched by id
+     * or by name as the hub does, in the chat's own hub group ([chatMachine]'s) first and then in any; what the tool said
+     * when no machine goes by it.
+     */
+    fun machineName(named: String, machines: List<Machine>, chatMachine: String = ""): String {
+        fun match(m: Machine) = GroupKeys.raw(m.id) == named || m.name.equals(named, ignoreCase = true)
+        val group = GroupKeys.namespaceOf(chatMachine)
+        val found = machines.firstOrNull { GroupKeys.namespaceOf(it.id) == group && match(it) } ?: machines.firstOrNull(::match)
+        return found?.name?.takeIf(String::isNotEmpty) ?: named
     }
 
     /** A computer_run's steps, else its script's first line; null when it has neither. */

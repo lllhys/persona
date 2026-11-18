@@ -39,8 +39,9 @@ vi.mock("./assistant/Supervision", async (orig) => {
   };
 });
 
-const { getState, upsertSession, refreshTodos } = await import("../lib/store");
+const { getState, putTodo, upsertSession, refreshTodos } = await import("../lib/store");
 const { TodosView } = await import("./Todos");
+const { t } = await import("../i18n");
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,6 +82,17 @@ afterEach(async () => {
 });
 
 describe("todo rows on a sessions push", () => {
+  it("renders a fresh waiting PR in its own section with link and blocker details", async () => {
+    const url = "https://example.com/repo/pull/91";
+    await act(async () => putTodo({ ...getState().todos[0], id: "ta", title: "Waiting PR", agents: [], pr_url: url, delivery: { state: "pr" }, pr_status: { url, state: "open", draft: false, review: "required", checks: "failure", conflicts: false, checked_at: new Date(Date.now() - 30_000).toISOString() } }));
+    const section = host.querySelector<HTMLElement>('[data-testid="todo-section"][data-section="parked"]');
+    expect(section?.textContent).toContain("Waiting PR");
+    const link = section?.querySelector<HTMLAnchorElement>('[data-testid="todo-pr-line"] a');
+    expect(link?.href).toBe(url);
+    expect(section?.textContent).toContain(t("assistant-tasks.pr_blocker_review_required"));
+    expect(section?.textContent).toContain(t("assistant-tasks.pr_blocker_checks_failed"));
+  });
+
   it("refreshes N/M, evidence and reporter from a to-do update without waiting for a review", async () => {
     const list = getState().todos.map((td) => ({ ...td, supervision: {
       supervisor: "main", done_when: ["Tests pass", "PR opened"],
@@ -134,5 +146,21 @@ describe("todo rows on a sessions push", () => {
     expect(renders.get("ta")).toBeUndefined();
     const titles = [...host.querySelectorAll("[role=button] .truncate.font-semibold")].map((el) => el.textContent);
     expect(titles).toEqual(["修登录页", "整理发布清单"]);
+  });
+
+  it("labels open and closed concerns, not ordinary to-dos", async () => {
+    const list = [
+      { ...todo("ta", "Working concern", "s1"), kind: "concern" },
+      todo("tb", "Ordinary task", "s2"),
+      { ...todo("tc", "Reported concern", "s3"), kind: "concern", done_at: now, done_by: "reported", agents: [] },
+      { ...todo("td", "Open concern", "s4"), kind: "concern", agents: [] },
+    ];
+    api.mockImplementation(async (path) => path === "/todos" ? { todos: list } : {});
+    await act(async () => { await refreshTodos(); });
+    const tag = (id: string) => host.querySelector(`[data-todo="${id}"] [data-testid="todo-concern"]`);
+    expect(tag("ta")?.textContent).toBe(t("todos.concern"));
+    expect(tag("tc")?.textContent).toBe(t("todos.concern"));
+    expect(tag("td")?.textContent).toBe(t("todos.concern"));
+    expect(tag("tb")).toBeNull();
   });
 });

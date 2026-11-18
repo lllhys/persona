@@ -11,6 +11,7 @@ import java.time.Instant
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MessageSendReceiptsTest {
+    @get:org.junit.Rule val shadowParity = ShadowParityRule()
     private val key = SessionKey("computer", "chat")
     private val at = Instant.parse("2026-11-12T10:00:00Z")
     private val row = Session(key.machineId, key.sessionId, status = "idle")

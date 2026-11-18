@@ -2,6 +2,7 @@ package persona.feature.settings
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -24,6 +25,7 @@ import persona.core.contracts.api.PairingService
 import persona.core.contracts.api.ProviderSetup
 import persona.core.contracts.api.RequestManager
 import persona.core.contracts.api.SessionsRepository
+import persona.core.contracts.api.StandingAuthorizationsSource
 import java.lang.reflect.Proxy
 
 /**
@@ -42,6 +44,7 @@ class SettingsAssistantScopeTest {
             when (method.name) {
                 "getAvailable" -> flowOf(true)
                 "getConversations" -> flowOf(emptyList<persona.core.contracts.Session>())
+                "getChanges" -> emptyFlow<persona.core.contracts.api.KnowledgeSelectionChange>()
                 "getMachines" -> MutableStateFlow(emptyList<persona.core.contracts.Machine>())
                 "getState" -> MutableStateFlow(persona.core.contracts.api.ConnectionState.Online)
                 "getIsPaired" -> MutableStateFlow(true)
@@ -86,11 +89,13 @@ class SettingsAssistantScopeTest {
         providers = Providers(),
         models = Models(),
         triage = recorder(AgentTriage::class.java, "triage"),
+        knowledgeSelection = recorder(persona.core.contracts.api.KnowledgeSelection::class.java, "knowledgeSelection"),
         connectors = recorder(ConnectorsManagement::class.java, "connectors"),
         channels = recorder(ChannelManagement::class.java, "channels"),
         feishuBot = recorder(FeishuBotSettings::class.java, "bot"),
         sent = recorder(HubSent::class.java, "sent"),
         extensions = recorder(ExtensionManagement::class.java, "extensions"),
+        standing = recorder(StandingAuthorizationsSource::class.java, "standing"),
     )
 
     private val two = ManagerRoster(listOf(HubManager("assistant", "助手", online = true, isDefault = true), HubManager("m-2", "工作", online = true)), "assistant")
@@ -103,15 +108,17 @@ class SettingsAssistantScopeTest {
         runCatching { scoped.providers!!.launchers() }
         runCatching { scoped.models!!.catalog() }
         runCatching { scoped.triage!!.switches() }
+        runCatching { scoped.knowledgeSelection!!.selection() }
         runCatching { scoped.connectors!!.connectors() }
         runCatching { scoped.channels!!.channels() }
         runCatching { scoped.feishuBot!!.status() }
         runCatching { scoped.sent!!.page() }
         runCatching { scoped.extensions!!.extensions() }
+        runCatching { scoped.standing!!.list() }
         seen.toList()
     }
 
-    private val names = listOf("providers", "models", "triage", "connectors", "channels", "bot", "sent", "extensions")
+    private val names = listOf("providers", "models", "triage", "knowledgeSelection", "connectors", "channels", "bot", "sent", "extensions", "standing")
 
     @Test fun anOlderHubTheDefaultAndOneAssistantNameNone() {
         val one = ManagerRoster(listOf(HubManager("assistant", "助手", online = true, isDefault = true)), "assistant")

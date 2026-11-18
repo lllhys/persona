@@ -470,6 +470,55 @@ func TestSetup(t *testing.T) {
 	}
 }
 
+// The setup form has no pickers for who and where (#6165), read state (#6176) or replies (#6198): saving it keeps the
+// recipe's sender_id, chat, chat_name, seen and reply_to while the subscription reads the same tool, and drops them
+// for another tool, whose paths they would not fit.
+func TestSetupKeepsTheRecipesSenderAndChatIDs(t *testing.T) {
+	f := newFake()
+	sub := f.subs["sub_outlook"]
+	own := *sub.Recipe.Fields
+	own.SenderID, own.Chat, own.ChatName, own.Seen, own.ReplyTo = "$.from.address", "$.conversationId", "$.topic", "$.isRead", "$.replyLine"
+	sub.Recipe.Fields = &own
+	f.subs["sub_outlook"] = sub
+	src := &f.cats[0].Sources[0]
+	src.Tools = append(src.Tools, subscriptions.CatalogTool{Name: "list_flagged", Title: "Flagged", Subscribable: true})
+	form := map[string]string{"f.title": "$.subject", "f.sender": "$.from.name", "f.id": "$.id", "kind": "sub_mail", "group_by": "thread"}
+	handle(t, f, env(i18n.En, true), state{P: pageSetup, ID: "sub_outlook", C: "apps", S: "outlook", T: "search_messages", I: "$.value"}, "save", form)
+	got := f.patches["sub_outlook"][0].Recipe.Fields
+	if got.SenderID != own.SenderID || got.Chat != own.Chat || got.ChatName != own.ChatName || got.Seen != own.Seen || got.ReplyTo != own.ReplyTo || got.Title != "$.subject" {
+		t.Fatalf("saved fields: %+v", got)
+	}
+	handle(t, f, env(i18n.En, true), state{P: pageSetup, ID: "sub_outlook", C: "apps", S: "outlook", T: "list_flagged", I: "$.value"}, "save", form)
+	if got := f.patches["sub_outlook"][1].Recipe.Fields; got.SenderID != "" || got.Chat != "" || got.ChatName != "" || got.Seen != "" || got.ReplyTo != "" {
+		t.Fatalf("another tool kept them: %+v", got)
+	}
+}
+
+// A things subscription (#6296): its source page has no knowledge-base switch (its rows are the Inbox's only), and its
+// recipe page says the rows are provided by the connector, with no setup form (it maps no fields).
+func TestAThingsSubscriptionsPages(t *testing.T) {
+	f := newFake()
+	sub := f.subs["sub_outlook"]
+	sub.Recipe = subscriptions.Recipe{Mode: wire.ConnectorSubscriptionModeThings, Tool: "search_messages", Kind: "sub_mail", GroupBy: "thread"}
+	sub.ToKB = false
+	f.subs["sub_outlook"] = sub
+	v := draw(t, f, env(i18n.En, true), state{P: pageSource, ID: "sub_outlook"})
+	if item(v, "d.to_inbox") == nil || item(v, "d.to_kb") != nil {
+		t.Error("the destinations of a things subscription")
+	}
+	v = draw(t, f, env(i18n.En, true), state{P: pageRecipe, ID: "sub_outlook"})
+	if plain := item(v, "plain"); plain == nil || !strings.Contains(plain.Text, "provided by the connector") {
+		t.Errorf("what the recipe does: %+v", plain)
+	}
+	if item(v, "x.tool") != nil || item(v, "x.raw") == nil || section(v, "map") != nil {
+		t.Error("a things recipe offers the setup form, or maps fields")
+	}
+	v = draw(t, newFake(), env(i18n.En, true), state{P: pageRecipe, ID: "sub_outlook"})
+	if item(v, "x.tool") == nil || section(v, "map") == nil {
+		t.Error("an items recipe lost its setup form or fields")
+	}
+}
+
 // Runs: newest first, failures marked, nothing but counts.
 func TestRuns(t *testing.T) {
 	v := draw(t, newFake(), env(i18n.En, true), state{P: pageRuns, ID: "sub_github"})

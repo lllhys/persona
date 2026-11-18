@@ -1,0 +1,294 @@
+{
+  "items": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001#0",
+      "seq": 1,
+      "ts": "2026-01-01T00:00:01Z",
+      "role": "user",
+      "kind": "text",
+      "text": "Split the work into two tickets and hand each to an agent."
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002#0",
+      "seq": 2,
+      "ts": "2026-01-01T00:00:02Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Started two agents: Ticket 01 and Ticket 02.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003#0",
+      "seq": 3,
+      "ts": "2026-01-01T00:00:03Z",
+      "role": "system",
+      "kind": "turn_duration",
+      "turn_duration": {
+        "duration_ms": 1000,
+        "source": "claude_turn_duration",
+        "parent_uuid": "00000000-0000-4000-8000-000000000002"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004#0",
+      "seq": 4,
+      "ts": "2026-01-01T00:00:04Z",
+      "role": "user",
+      "kind": "text",
+      "text": "Ticket 01 is done, please review.\n- commit 1a2b3c4 on branch feat/tickets\n- checks: `go test ./... \u0026\u0026 echo ok` passed",
+      "from": "Ticket 01: drop the \"one instance\" assumption"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005#0",
+      "seq": 5,
+      "ts": "2026-01-01T00:00:05Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Reviewing Ticket 01.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000006#0",
+      "seq": 6,
+      "ts": "2026-01-01T00:00:06Z",
+      "role": "system",
+      "kind": "turn_duration",
+      "turn_duration": {
+        "duration_ms": 1000,
+        "source": "claude_turn_duration",
+        "parent_uuid": "00000000-0000-4000-8000-000000000005"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000007#0",
+      "seq": 7,
+      "ts": "2026-01-01T00:00:07Z",
+      "role": "system",
+      "kind": "notice",
+      "text": "子 Agent 完成 · Ticket 01: drop the \"one instance\" assumption",
+      "wake": true,
+      "task": {
+        "kind": "agent",
+        "status": "completed",
+        "title": "Ticket 01: drop the \"one instance\" assumption",
+        "detail": "Ticket 01 is done, please review.\n- commit 1a2b3c4 on branch feat/tickets"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000008#0",
+      "seq": 8,
+      "ts": "2026-01-01T00:00:08Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Ticket 01 accepted.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000009#0",
+      "seq": 9,
+      "ts": "2026-01-01T00:00:09Z",
+      "role": "user",
+      "kind": "text",
+      "text": "Starting on Ticket 02.",
+      "queued": true,
+      "from": "另一个会话"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000009#1000001",
+      "seq": 9,
+      "ts": "2026-01-01T00:00:09Z",
+      "role": "system",
+      "kind": "notice",
+      "text": "子 Agent 等待批准 · Ticket 02",
+      "task": {
+        "kind": "agent",
+        "status": "waiting",
+        "title": "Ticket 02",
+        "detail": "Bash: Run the smoke test\n\nWriting the smoke test now."
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000010#0",
+      "seq": 10,
+      "ts": "2026-01-01T00:00:10Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Ticket 02 asks to run its smoke test; it waits for your approval.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000011#0",
+      "seq": 11,
+      "ts": "2026-01-01T00:00:11Z",
+      "role": "system",
+      "kind": "turn_duration",
+      "turn_duration": {
+        "duration_ms": 4000,
+        "source": "claude_turn_duration",
+        "parent_uuid": "00000000-0000-4000-8000-000000000010"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000012#0",
+      "seq": 12,
+      "ts": "2026-01-01T00:00:12Z",
+      "role": "system",
+      "kind": "notice",
+      "text": "定时任务到点：nightly review",
+      "wake": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000013#0",
+      "seq": 13,
+      "ts": "2026-01-01T00:00:13Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Nothing new since the last review.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000014#0",
+      "seq": 14,
+      "ts": "2026-01-01T00:00:14Z",
+      "role": "system",
+      "kind": "turn_duration",
+      "turn_duration": {
+        "duration_ms": 1000,
+        "source": "claude_turn_duration",
+        "parent_uuid": "00000000-0000-4000-8000-000000000013"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000015#0",
+      "seq": 15,
+      "ts": "2026-01-01T00:00:15Z",
+      "role": "system",
+      "kind": "notice",
+      "text": "子 Agent 失败 · Ticket 02",
+      "wake": true,
+      "task": {
+        "kind": "agent",
+        "status": "failed",
+        "title": "Ticket 02",
+        "detail": "The smoke test could not reach the database."
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000016#0",
+      "seq": 16,
+      "ts": "2026-01-01T00:00:16Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Ticket 02 failed; I will look at the database.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000017#0",
+      "seq": 17,
+      "ts": "2026-01-01T00:00:17Z",
+      "role": "system",
+      "kind": "turn_duration",
+      "turn_duration": {
+        "duration_ms": 1000,
+        "source": "claude_turn_duration",
+        "parent_uuid": "00000000-0000-4000-8000-000000000016"
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000018#0",
+      "seq": 18,
+      "ts": "2026-01-01T00:00:18Z",
+      "role": "user",
+      "kind": "text",
+      "text": "Why does this show up?\n\u003cpaseo-system version=\"1\" kind=\"agent-message\" source-agent-id=\"00000000-0000-4000-8000-00000000c001\" message-id=\"m-3\"\u003e\nhello\n\u003c/paseo-system\u003e"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000019#0",
+      "seq": 19,
+      "ts": "2026-01-01T00:00:19Z",
+      "role": "assistant",
+      "kind": "text",
+      "text": "Because it is part of your message.",
+      "model": "claude-test",
+      "usage": [
+        {
+          "model": "claude-test",
+          "in": 10,
+          "out": 20,
+          "cache_read": 1000
+        }
+      ]
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000020#0",
+      "seq": 20,
+      "ts": "2026-01-01T00:00:20Z",
+      "role": "system",
+      "kind": "turn_duration",
+      "turn_duration": {
+        "duration_ms": 1000,
+        "source": "claude_turn_duration",
+        "parent_uuid": "00000000-0000-4000-8000-000000000019"
+      }
+    }
+  ],
+  "meta": {
+    "first_user": "Split the work into two tickets and hand each to an agent.",
+    "last_text": "Because it is part of your message.",
+    "model": "claude-test",
+    "cwd": "/work/project",
+    "turns": 4,
+    "compactions": 0,
+    "context_tokens": 1010,
+    "output_tokens": 140,
+    "last_activity": "2026-01-01T00:00:19Z"
+  }
+}

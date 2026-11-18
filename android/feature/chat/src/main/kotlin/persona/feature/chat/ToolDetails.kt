@@ -3,20 +3,27 @@ package persona.feature.chat
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -24,17 +31,27 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import coil3.ImageLoader
 import persona.core.contracts.Item
+import persona.core.contracts.SessionKey
 import persona.core.designsystem.AppStyle
 import persona.core.designsystem.JIcon
+import persona.core.designsystem.JSpinner
 import persona.core.designsystem.JTag
 import persona.core.designsystem.JTextButton
 import persona.core.designsystem.PersonaTheme
+import persona.core.designsystem.firstBaselineAligned
 import persona.core.designsystem.Tokens
+import persona.core.designsystem.icons.PersonaIcons
 import persona.core.designsystem.icons.PhIcons
+import persona.core.designsystem.resolve
+import persona.core.domain.ComputerSteps
 import persona.core.domain.ToolNaming
+import persona.core.domain.lines.ToolCall
 import persona.core.domain.toolDetail
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -49,12 +66,15 @@ import kotlinx.serialization.json.contentOrNull
 internal fun ToolInputDetail(item: Item, result: Item? = null) {
     val input = item.toolInput as? JsonObject
     val plain: @Composable () -> Unit = { CodeText(toolDetail(item), stringResource(R.string.chat_tool_details)) }
-    // iOS's default case (#2986, #4339 C1): the input as `key: value` lines in words, its JSON under Raw input (the
-    // reader actions below); Glass only, Brief and Board keep the input as code (decision 8).
+    // iOS's default case (#2986, #4339 C1): the input as `key: value` lines in words, its JSON under Raw input;
+    // Glass only, Brief and Board keep the input as code (decision 8).
     val listed: @Composable () -> Unit = {
         if (PersonaTheme.style == AppStyle.Glass && ToolArgumentRows.lists(item.toolName.orEmpty())) {
             val arguments = remember(item.toolInput) { ToolNaming.arguments(item.toolInput) }
-            if (arguments.isNotEmpty()) ToolArguments(arguments) else plain()
+            if (arguments.isNotEmpty()) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                ToolArguments(arguments)
+                RawInputToggle(item.id, remember(item.toolInput) { rawInputText(item.toolInput) })
+            } else plain()
         } else plain()
     }
     if (PersonaTools.isAskUser(item.toolName.orEmpty())) {
@@ -62,7 +82,7 @@ internal fun ToolInputDetail(item: Item, result: Item? = null) {
         return
     }
     when (item.toolName) {
-        "Read", "NotebookEdit" -> (input?.text("file_path") ?: input?.text("notebook_path"))?.takeIf { it.isNotBlank() }
+        "Read", "NotebookRead", "NotebookEdit" -> (input?.text("file_path") ?: input?.text("notebook_path"))?.takeIf { it.isNotBlank() }
             ?.let { PathLink(it) } ?: plain()
         "ExitPlanMode" -> input?.text("plan")?.takeIf { it.isNotBlank() }?.let { PlanDetail(it, item.id) } ?: plain()
         "AskUserQuestion" -> toolQuestions(item).takeIf { it.isNotEmpty() }?.let { QuestionsDetail(it) } ?: plain()
@@ -73,12 +93,89 @@ internal fun ToolInputDetail(item: Item, result: Item? = null) {
 
 /** Which opened tools list their arguments on Glass: any but those whose detail is their own (iOS `ToolDetail`). */
 private object ToolArgumentRows {
-    /** A command line, a diff, a computer's steps (iOS `ComputerToolDetail`, which Android doesn't draw yet: its input as code). */
+    /** A command line, a diff, a computer's steps ([ComputerToolDetail]). */
     private val own = setOf("Bash", "PowerShell", "Monitor", "Edit", "MultiEdit", "Write", "computer_run", "computer_state")
 
     fun lists(name: String): Boolean {
         val lower = name.lowercase()
         return ToolNaming.tableName(name) !in own && !lower.startsWith("mcp__cua") && "cua-driver" !in lower && "cua_driver" !in lower
+    }
+}
+
+/** The tools whose opened step has a detail of its own, with the input behind it ([ToolInputDetail]'s `when`). */
+private val specialDetail = setOf("Read", "NotebookRead", "NotebookEdit", "ExitPlanMode", "AskUserQuestion", "Task", "Agent")
+
+/**
+ * Whether an opened step draws iOS's inline Raw input toggle itself (#4339 C1), so the actions under it leave the reader's
+ * "Raw input" out: on Glass a tool no table knows with arguments to list, and a tool that operates a Mac. Everything
+ * else keeps the reader's button.
+ */
+@Composable
+internal fun drawsRawInput(item: Item): Boolean {
+    if (PersonaTheme.style != AppStyle.Glass) return false
+    val name = item.toolName.orEmpty()
+    if (ComputerSteps.isComputerTool(name)) return true
+    if (PersonaTools.isAskUser(name) || name in specialDetail || !ToolArgumentRows.lists(name)) return false
+    return remember(item.toolInput) { ToolNaming.arguments(item.toolInput).isNotEmpty() }
+}
+
+/** The JSON a tool was called with, as the inline Raw input shows it (iOS `JSONValue.pretty`). */
+internal fun rawInputText(input: JsonElement?): String = prettyInput.encodeToString(JsonElement.serializer(), input ?: JsonObject(emptyMap()))
+
+private val prettyInput = Json { prettyPrint = true }
+
+/**
+ * iOS's `RawInputToggle` (Glass): "Raw input" with a caret, and under it once opened the JSON the tool was called with
+ * ([text]), then [after] (what the driver answered). Kept per step.
+ */
+@Composable
+internal fun RawInputToggle(id: String, text: String, after: (@Composable () -> Unit)? = null) {
+    var raw by rememberSaveable(id) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
+        JTextButton(stringResource(if (raw) R.string.chat_tool_hide_raw_input else R.string.chat_reader_raw_input), { raw = !raw },
+            Modifier.semantics { testTag = "tool-raw" }, icon = if (raw) PersonaIcons.collapse else PersonaIcons.expand)
+        if (raw) {
+            CodeText(text, stringResource(R.string.chat_reader_raw_input))
+            after?.invoke()
+        }
+    }
+}
+
+/**
+ * A tool that operates a Mac, opened on Glass (iOS `ComputerToolDetail`, #4339 C1): what it did as a line of steps in
+ * words ("Click AC → 6 → × → 7 → ="), led by a mark for where the call stands (turning, failed, done); why it failed, the
+ * screenshot it brought back; and its JSON and what the driver answered under Raw input. Brief and Board keep the input
+ * as code.
+ */
+@Composable
+internal fun ComputerToolDetail(call: ToolCall, session: SessionKey, loader: ImageLoader) {
+    val item = call.use.item
+    val palette = PersonaTheme.palette
+    val resources = LocalResources.current
+    val steps = remember(item, resources) { ComputerSteps.describe(item.toolName.orEmpty(), item.toolInput as? JsonObject).resolve(resources) }
+    val raw = remember(item.toolInput) { rawInputText(item.toolInput) }
+    val result = call.result?.item
+    Column(Modifier.fillMaxWidth().semantics { testTag = "computer-detail" }, verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+        Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) { testTag = "computer-steps" },
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Space.s), verticalAlignment = Alignment.Top) {
+            Box(Modifier.size(Tokens.Space.xl).padding(vertical = Tokens.Space.xxs), contentAlignment = Alignment.Center) {
+                when {
+                    call.running -> JSpinner(Modifier.size(Tokens.Size.markS), stroke = Tokens.Size.lineMedium)
+                    call.failed -> JIcon(PersonaIcons.error, stringResource(persona.core.designsystem.R.string.designsystem_work_failed),
+                        size = Tokens.Space.l, tint = palette.danger.dot)
+                    else -> JIcon(PersonaIcons.success, null, size = Tokens.Space.l, tint = palette.done.dot, decorative = true)
+                }
+            }
+            Text(steps, Modifier.weight(1f), style = PersonaTheme.type.callout, color = palette.ink)
+        }
+        if (result?.isError == true) result.text?.let(ToolNaming::firstLine)?.takeIf { it.isNotEmpty() }?.let {
+            Text(it, style = PersonaTheme.type.caption, color = if (call.failed) palette.danger.text else palette.ink2,
+                maxLines = 3, overflow = TextOverflow.Ellipsis)
+        }
+        call.images.forEach { ChatPicture(session, it.item, loader) }
+        RawInputToggle(item.id, raw) {
+            result?.text?.takeIf { it.isNotEmpty() }?.let { CodeText(it, stringResource(R.string.chat_content_output)) }
+        }
     }
 }
 
@@ -103,10 +200,10 @@ internal fun ToolArguments(arguments: List<ToolNaming.Argument>) {
             arguments.forEach { argument ->
                 Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
                     DisableSelection {
-                        Text(argument.label, Modifier.width(column).alignByBaseline(), style = type.micro, color = palette.ink2,
+                        Text(argument.label, firstBaselineAligned(Modifier.width(column)), style = type.micro, color = palette.ink2,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Text(argument.value, Modifier.weight(1f).alignByBaseline(), style = if (argument.code) type.code else type.caption,
+                    Text(argument.value, firstBaselineAligned(Modifier.weight(1f)), style = if (argument.code) type.code else type.caption,
                         color = palette.ink, maxLines = argument.lines, overflow = TextOverflow.Ellipsis)
                 }
             }

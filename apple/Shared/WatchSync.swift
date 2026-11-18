@@ -3,6 +3,7 @@ import os
 #if canImport(WatchConnectivity)
 import WatchConnectivity
 #endif
+import PersonaWire
 
 /// Each group's credential the watch uses, and the groups' names (docs/protocol/multi-hub.md「Watch, Siri, Mac, and demo mode」).
 nonisolated struct WatchConfigs: Codable, Sendable, Equatable {
@@ -59,8 +60,11 @@ nonisolated struct WatchSummary: Codable, Sendable {
     /// Open inbox items that need the user (docs/assistant/inbox.md); nil from an older phone.
     var inbox: [InboxItem]? = nil
     var at: Date = .now
+    /// The groups whose hub folds side sessions (`SideFold.feature`): the summary's sessions are folded already, and the
+    /// watch folds its own reads of those hubs the same way. Nil from an older phone.
+    var sideFold: [String]? = nil
 
-    enum CodingKeys: String, CodingKey { case sessions, interactions, machines, inbox, at }
+    enum CodingKeys: String, CodingKey { case sessions, interactions, machines, inbox, at, sideFold = "side_fold" }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -69,6 +73,7 @@ nonisolated struct WatchSummary: Codable, Sendable {
         try c.encode(machines, forKey: .machines)
         try c.encodeIfPresent(inbox, forKey: .inbox)
         try c.encode(at, forKey: .at)
+        try c.encodeIfPresent(sideFold, forKey: .sideFold)
     }
 }
 
@@ -283,7 +288,7 @@ final class WatchSync: NSObject, WCSessionDelegate {
             done(false)
             return
         }
-        // Both handlers run on WatchConnectivity's queue: `@Sendable` keeps them off the main actor (BackgroundCallbackTests).
+        // Both handlers run on WatchConnectivity's queue: `@Sendable` keeps them off the main actor (test_apple_background_callbacks.py).
         WCSession.default.sendMessage(["request": "config"], replyHandler: { @Sendable reply in
             nonisolated(unsafe) let r = reply
             Task { @MainActor in

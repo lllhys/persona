@@ -3,9 +3,11 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,9 +21,10 @@ import (
 type fakeNotifications struct {
 	mu            sync.Mutex
 	notifications string
-	prs           map[string]string // path -> JSON
-	comments      map[string]string // path -> JSON
-	notModified   bool              // answer 304 when If-Modified-Since comes
+	prs           map[string]string   // path -> JSON
+	comments      map[string]string   // path -> JSON
+	pages         map[string][]string // path -> JSON of each page, served with GitHub's Link header
+	notModified   bool                // answer 304 when If-Modified-Since comes
 	sinceSeen     []string
 	requests      []string
 	posted        []string
@@ -55,6 +58,14 @@ func (f *fakeNotifications) server(t *testing.T) *Connector {
 			f.posted = append(f.posted, r.URL.Path+" "+string(b))
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{}`))
+		case len(f.pages[r.URL.Path]) > 0:
+			ps := f.pages[r.URL.Path]
+			n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			n = max(1, min(n, len(ps)))
+			if len(ps) > 1 {
+				w.Header().Set("Link", fmt.Sprintf(`<%s?per_page=100&page=%d>; rel="last"`, r.URL.Path, len(ps)))
+			}
+			_, _ = w.Write([]byte(ps[n-1]))
 		case f.prs[r.URL.Path] != "":
 			_, _ = w.Write([]byte(f.prs[r.URL.Path]))
 		case f.comments[r.URL.Path] != "":
@@ -114,7 +125,9 @@ func things(t *testing.T, c *Connector) map[string]connector.InboxThing {
 	return out
 }
 
-func TestNotificationsBecomeThings(t *testing.T) {
+// notificationsFixture is a GitHub with a review request, an assignment, and a subscription the rules leave out
+// (CI: ci_test.go).
+func notificationsFixture() *fakeNotifications {
 	f := &fakeNotifications{prs: map[string]string{
 		api12: openPR(`{"login":"me"}`),
 		"/repos/example-org/example-repo/issues/12": `{"comments":1}`,
@@ -126,7 +139,12 @@ func TestNotificationsBecomeThings(t *testing.T) {
 		note("1", "review_requested", "PullRequest", "https://api.github.com"+api12, t1),
 		note("2", "assign", "Issue", "https://api.github.com"+api7, t1),
 		note("4", "subscribed", "Issue", "https://api.github.com/repos/example-org/example-repo/issues/8", t1),
-	}, ",") + "]" // CI: ci_test.go
+	}, ",") + "]"
+	return f
+}
+
+func TestNotificationsBecomeThings(t *testing.T) {
+	f := notificationsFixture()
 	c := f.server(t)
 
 	wait, moved, err := c.poll(context.Background())
@@ -140,14 +158,16 @@ func TestNotificationsBecomeThings(t *testing.T) {
 	pr := got["example-org/example-repo#12"]
 	if pr.Kind != "review_requested" || pr.Label != "请你 review" || pr.Tier != "action" || pr.Done != "" || !pr.CanReply ||
 		pr.Sender != "bob" || pr.Preview != "请看一下示例" || pr.URL != "https://github.com/example-org/example-repo/pull/12" ||
-		pr.ReplyTo != "评论到 example-org/example-repo#12（仓库可见的人都能看到）" || pr.Last != t1 || pr.Why != "规则：请你 review" {
+		pr.ReplyTo != "评论到 example-org/example-repo#12（仓库可见的人都能看到）" || messageLastTime(t, pr.Last) != fixtureAt(8*time.Hour+59*time.Minute) ||
+		pr.Why != "规则：请你 review" {
 		t.Errorf("review request: %+v", pr)
 	}
 	if !strings.Contains(pr.Context, "GitHub PR example-org/example-repo#12：Add the example") || !strings.Contains(pr.Context, "等这些人 review：me") ||
 		!strings.Contains(pr.Context, "bob：\n请看一下示例") {
 		t.Errorf("context:\n%s", pr.Context)
 	}
-	if is := got["example-org/example-repo#7"]; is.Kind != "assign" || is.Sender != "bob" || is.Preview != "出错了" || is.Tier != "action" {
+	if is := got["example-org/example-repo#7"]; is.Kind != "assign" || is.Sender != "bob" || is.Preview != "出错了" || is.Tier != "action" ||
+		is.Last != t1 { // no comment or review yet: the notification names the move
 		t.Errorf("assignment: %+v", is)
 	}
 
@@ -248,4 +268,85 @@ func TestReplyComments(t *testing.T) {
 			t.Errorf("%s was replied to", bad)
 		}
 	}
+}
+
+// A push or an edit bumps a PR's notification but adds no comment or review: the thing keeps its Last, so the hub
+// takes no new message from it (#7471); a new review moves Last.
+func TestPushOrEditIsNoNewMessage(t *testing.T) {
+	f := notificationsFixture()
+	reviewAt := fixtureAt(9*time.Hour + 10*time.Minute)
+	f.comments["/repos/example-org/example-repo/pulls/12/reviews"] = `[{"user":{"login":"carol"},"state":"COMMENTED",` +
+		`"body":"Automated review found 2 issues.","submitted_at":"` + reviewAt + `"}]`
+	f.notifications = "[" + note("1", "author", "PullRequest", "https://api.github.com"+api12, t1) + "]"
+	c := f.server(t)
+	c.poll(context.Background())
+	pr := things(t, c)["example-org/example-repo#12"]
+	if messageLastTime(t, pr.Last) != reviewAt || pr.Preview != "评审了 Automated review found 2 issues." {
+		t.Fatalf("after the review: %+v", pr)
+	}
+
+	// The author pushes a commit and edits the body: a later notification, no new comment or review.
+	f.prs[api12] = strings.Replace(openPR(""), "示例描述", "示例描述（改过）", 1)
+	f.notifications = "[" + note("1", "author", "PullRequest", "https://api.github.com"+api12, t2) + "]"
+	c.inbox.fullAt = time.Time{}
+	c.poll(context.Background())
+	if again := things(t, c)["example-org/example-repo#12"]; again.Last != pr.Last || !strings.Contains(again.Context, "示例描述（改过）") {
+		t.Fatalf("a push or edit counted as a new message: Last %q → %q\n%s", pr.Last, again.Last, again.Context)
+	}
+
+	// A new review is a new message.
+	newer := fixtureAt(9*time.Hour + 40*time.Minute)
+	f.comments["/repos/example-org/example-repo/pulls/12/reviews"] = `[{"user":{"login":"carol"},"state":"COMMENTED",` +
+		`"body":"Automated review found 2 issues.","submitted_at":"` + reviewAt + `"},{"user":{"login":"carol"},"state":"APPROVED",` +
+		`"body":"Looks good now.","submitted_at":"` + newer + `"}]`
+	f.notifications = "[" + note("1", "author", "PullRequest", "https://api.github.com"+api12, fixtureAt(9*time.Hour+41*time.Minute)) + "]"
+	c.inbox.fullAt = time.Time{}
+	c.poll(context.Background())
+	if last := things(t, c)["example-org/example-repo#12"]; messageLastTime(t, last.Last) != newer {
+		t.Fatalf("a new review kept Last %q", last.Last)
+	}
+}
+
+// A PR with more than 100 reviews: the newest review is on the last page, and it is the new message (#7481).
+func TestNewestReviewBeyondTheFirstPage(t *testing.T) {
+	f := notificationsFixture()
+	review := func(i int) string {
+		return `{"user":{"login":"carol"},"state":"COMMENTED","body":"Review ` + strconv.Itoa(i) +
+			`","submitted_at":"` + fixtureAt(time.Duration(i)*time.Minute) + `"}`
+	}
+	var first []string
+	for i := range 100 {
+		first = append(first, review(i))
+	}
+	path := "/repos/example-org/example-repo/pulls/12/reviews"
+	f.comments["/repos/example-org/example-repo/issues/12/comments"] = `[{"user":{"login":"dave"},"body":"A comment.","created_at":"` +
+		fixtureAt(150*time.Minute) + `"}]`
+	f.pages = map[string][]string{path: {"[" + strings.Join(first, ",") + "]", "[" + review(100) + "]"}}
+	f.notifications = "[" + note("1", "author", "PullRequest", "https://api.github.com"+api12, t1) + "]"
+	c := f.server(t)
+	c.poll(context.Background())
+	if pr := things(t, c)["example-org/example-repo#12"]; messageLastTime(t, pr.Last) != fixtureAt(150*time.Minute) {
+		t.Fatalf("before the new review: %+v", pr)
+	}
+
+	newer := fixtureAt(200 * time.Minute)
+	f.mu.Lock()
+	f.pages[path][1] = "[" + review(100) + `,{"user":{"login":"carol"},"state":"APPROVED","body":"Looks good now.","submitted_at":"` + newer + `"}]`
+	f.notifications = "[" + note("1", "author", "PullRequest", "https://api.github.com"+api12, t2) + "]"
+	f.mu.Unlock()
+	c.inbox.fullAt = time.Time{}
+	c.poll(context.Background())
+	if pr := things(t, c)["example-org/example-repo#12"]; messageLastTime(t, pr.Last) != newer || pr.Preview != "批准了 Looks good now." {
+		t.Fatalf("a review on the second page was not the newest message: %+v", pr)
+	}
+}
+
+func messageLastTime(t *testing.T, last string) string {
+	t.Helper()
+	var head messageHead
+	if !strings.HasPrefix(unmarkedLast(last), messageLastPrefix) ||
+		json.Unmarshal([]byte(strings.TrimPrefix(unmarkedLast(last), messageLastPrefix)), &head) != nil {
+		t.Fatalf("invalid message identity: %q", last)
+	}
+	return head.At.UTC().Format(time.RFC3339)
 }

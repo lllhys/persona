@@ -1,0 +1,13 @@
+{
+  "unsupported": "This conversation cannot be taken over safely. Continue in a new session instead.",
+  "expired": "The takeover confirmation expired. Open Take over again.",
+  "continue_only": "The saved encrypted context cannot be reopened with this account. Continue in a new session instead.",
+  "confirmation_required": "Confirm ending the turn currently running in the terminal before taking over.",
+  "changed": "The original writer changed. Nothing was stopped. Open Take over again.",
+  "writer_busy": "The original writer has not safely released the conversation. No second writer was started.",
+  "unavailable": "The original writer could not be verified. Continue in a new session instead.",
+  "shared_unavailable": "A shared Codex app-server could not be started. The original process was left untouched.",
+  "user_only": "Only a signed-in device can confirm a Codex takeover.",
+  "token_required": "A takeover confirmation token is required.",
+  "not_ready": "Codex opened in the new terminal, but its shared connection is not ready. Check that terminal before sending."
+}

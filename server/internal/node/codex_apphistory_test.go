@@ -40,7 +40,7 @@ func TestCodexRolloutItemsReadAsARollout(t *testing.T) {
 	if len(answer) != 1 || answer[0].Role != "assistant" || answer[0].Kind != proto.KindText || answer[0].Text != "Done: the CSV is UTF-8 now." {
 		t.Fatalf("answer = %+v", answer)
 	}
-	if note := parse("agentMessage", `{"type":"agentMessage","id":"a2","text":"Looking at the writer.","phase":"commentary"}`); len(note) != 1 || note[0].Kind != proto.KindThinking {
+	if note := parse("agentMessage", `{"type":"agentMessage","id":"a2","text":"Looking at the writer.","phase":"commentary"}`); len(note) != 1 || note[0].Kind != proto.KindText || !note[0].Narration {
 		t.Fatalf("commentary = %+v", note)
 	}
 	if r := parse("reasoning", `{"type":"reasoning","id":"r1","summary":["Check the encoder"],"content":[]}`); len(r) != 1 || r[0].Kind != proto.KindThinking {
@@ -58,8 +58,9 @@ func TestCodexRolloutItemsReadAsARollout(t *testing.T) {
 	if len(edit) != 2 || edit[0].ToolName != "Edit" || !strings.Contains(string(edit[0].ToolInput), "/w/a.go") || edit[1].Text != "update /w/a.go" {
 		t.Fatalf("file change = %+v", edit)
 	}
-	mcp := parse("mcpToolCall", `{"type":"mcpToolCall","id":"m1","server":"docs","tool":"search","status":"completed","arguments":{"q":"csv"},"result":{"content":[{"type":"text","text":"3 hits"}]},"error":null}`)
-	if len(mcp) != 2 || mcp[0].ToolName != "mcp__docs__search" || mcp[1].Text != "3 hits" {
+	mcp := parse("mcpToolCall", `{"type":"mcpToolCall","id":"m1","server":"docs","tool":"search","status":"completed","arguments":{"q":"csv"},"result":{"content":[{"type":"text","text":"3 hits"},{"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}],"isError":false},"error":null}`)
+	if len(mcp) != 3 || mcp[0].ToolName != "mcp__docs__search" || mcp[1].Text != "3 hits" ||
+		mcp[2].Image == nil || mcp[2].Image.Data != "iVBORw0KGgo=" || mcp[2].Image.Mime != "image/png" {
 		t.Fatalf("mcp = %+v", mcp)
 	}
 	web := parse("webSearch", `{"type":"webSearch","id":"w1","query":"utf-8 bom csv","action":{"type":"search","url":""},"results":[{"title":"BOM","url":"https://example.com/bom","domain":"example.com","snippet":"…"}]}`)
@@ -268,6 +269,56 @@ func TestCodexAppChatHistoryComesFromTheAppsDatabase(t *testing.T) {
 	}
 }
 
+func TestCodexAppHistoryRebuildsLegacyMarks(t *testing.T) {
+	n := remoteTestNode(t)
+	home := n.codexHome()
+	project := t.TempDir()
+	writeCodexApp(t, home, project, codexAppSchema+codexAppRow(appChat, "", project, "Image chat", time.Now(), 0))
+	writeCodexHistory(t, home, []historyTurn{{thread: appChat, id: "t0", status: "completed", ordinal: 0, items: [][2]string{
+		userItem("u0", "show the frame"),
+		{"mcpToolCall", `{"type":"mcpToolCall","id":"m1","server":"persona","tool":"frames","status":"completed","arguments":{},"result":{"content":[{"type":"image","data":"iVBORw0KGgo=","mimeType":"image/png"}],"isError":false}}`},
+	}}})
+	var id string
+	for _, s := range n.codexSessions(map[string]bool{}) {
+		if s.SourceThreadID == appChat {
+			id = s.SessionID
+		}
+	}
+	if id == "" {
+		t.Fatal("the chat is not listed")
+	}
+	if _, err := n.file(id); err != nil {
+		t.Fatal(err)
+	}
+	p := n.transcriptPath(id)
+	const withImage = `{"type":"image","text":"","data":"iVBORw0KGgo=","mimeType":"image/png"}`
+	raw, err := os.ReadFile(p)
+	if err != nil || !strings.Contains(string(raw), withImage) {
+		t.Fatalf("the current history did not retain its image: %v", err)
+	}
+	// A pre-image converter wrote this same row without data/mimeType. Keep every other mark field and the size
+	// current so only its missing format version can force the rebuild.
+	legacy := strings.Replace(string(raw), withImage, `{"type":"image","text":""}`, 1)
+	if err := os.WriteFile(p, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mark, size := readCodexHistoryMark(p)
+	mark.Version, mark.Size = 0, size
+	if err := writeCodexHistoryMark(p, mark); err != nil {
+		t.Fatal(err)
+	}
+	if err := n.refreshCodexAppHistory(id); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := os.ReadFile(p)
+	if err != nil || !strings.Contains(string(rebuilt), withImage) {
+		t.Fatalf("a legacy mark kept the image-less history: %v; %s", err, rebuilt)
+	}
+	if got, _ := readCodexHistoryMark(p); got.Version != codexAppHistoryVersion {
+		t.Fatalf("the rebuilt history did not advance its mark: %+v", got)
+	}
+}
+
 // A chat registered with its rollout, which the App then deleted: its history comes from the database (the registry
 // keeps the path it knew).
 func TestCodexAppChatHistoryAfterItsRolloutWasDeleted(t *testing.T) {
@@ -284,7 +335,7 @@ func TestCodexAppChatHistoryAfterItsRolloutWasDeleted(t *testing.T) {
 			id = s.SessionID
 		}
 	}
-	if src, _ := n.codexSource(id); src.path != rollout {
+	if src, _ := n.codexSource(id); src.path != resolved(t, rollout) { // the node names it resolved (#9138)
 		t.Fatalf("registered with %q, want its rollout", src.path)
 	}
 	if err := os.Remove(rollout); err != nil {
@@ -688,7 +739,7 @@ func TestAWatchedCodexAppChatWhoseRolloutGoes(t *testing.T) {
 	turns := []historyTurn{{thread: appChat, id: "t0", status: "completed", ordinal: 0, items: [][2]string{userItem("u0", "first")}}}
 	writeCodexHistory(t, home, turns)
 	id, _ := readChat(t, n, appChat)
-	if src, _ := n.codexSource(id); src.path != rollout {
+	if src, _ := n.codexSource(id); src.path != resolved(t, rollout) { // the node names it resolved (#9138)
 		t.Fatalf("registered with %q, want its rollout", src.path)
 	}
 	hub := withHub(t, n)

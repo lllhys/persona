@@ -68,6 +68,9 @@ type FeishuBotSettings struct {
 	// NudgeAfter is how many minutes a card the bot sent may wait unanswered before the assistant nudges under it once
 	// (#6084, assistant/feishu_nudge.go): 0 is off, nil (never set) is assistantwire.NudgeAfterDefault.
 	NudgeAfter *int `json:"nudge_after,omitempty"`
+	// SourceReportDelayMinutes is the preview window before a reply to the source group. Zero skips it.
+	SourceReportDelayMinutes *int `json:"source_report_delay_minutes,omitempty"`
+	SourceReportFullReply    bool `json:"source_report_full_reply,omitempty"`
 }
 
 // BotFeatures are the parts that can be switched on one by one: kept here with the credentials, acted on by the
@@ -175,15 +178,17 @@ func (h *Manager) loadBotsLocked(ctx context.Context) {
 	}
 }
 
-func (h *Manager) saveBotSettingsLocked() {
+func (h *Manager) saveBotSettingsLocked() error {
 	if h.store == nil {
-		return
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := h.store.PutSetting(ctx, botSettingsKey, h.bots.set); err != nil {
 		h.logf("bots: save settings: %v", err)
+		return err
 	}
+	return nil
 }
 
 // botCredentialsLocked: the app's id, secret and domain, from the app's settings, else hub.json (h.bots.mu held).
@@ -279,6 +284,13 @@ func (s FeishuBotSettings) nudgeAfter() int {
 	return *s.NudgeAfter
 }
 
+func (s FeishuBotSettings) sourceReportDelayMinutes() int {
+	if s.SourceReportDelayMinutes == nil {
+		return assistantwire.SourceReportDelayDefault
+	}
+	return *s.SourceReportDelayMinutes
+}
+
 // copy is the settings with nothing shared: the owner is changed in place under h.bots.mu.
 func (s FeishuBotSettings) copy() FeishuBotSettings {
 	s.TopicChats = slices.Clone(s.TopicChats)
@@ -286,6 +298,10 @@ func (s FeishuBotSettings) copy() FeishuBotSettings {
 	if s.NudgeAfter != nil {
 		n := *s.NudgeAfter
 		s.NudgeAfter = &n
+	}
+	if s.SourceReportDelayMinutes != nil {
+		delay := *s.SourceReportDelayMinutes
+		s.SourceReportDelayMinutes = &delay
 	}
 	if s.Owner != nil {
 		o := *s.Owner
@@ -319,6 +335,9 @@ type feishuBotView struct {
 	Pairing     *botPairView  `json:"pairing,omitempty"`
 	TopicChats  []botChatView `json:"topic_chats,omitempty"` // the group chats the owner opted in
 	NudgeAfter  int           `json:"nudge_after"`           // minutes before the one nudge under an unanswered card, 0 off
+
+	SourceReportDelayMinutes int  `json:"source_report_delay_minutes"`
+	SourceReportFullReply    bool `json:"source_report_full_reply"`
 	// Target and Agents are the assistant's (feishu.view): where the chat's messages go now, the agents bound to
 	// threads of the chat; left out while it is not connected.
 	Target  string                      `json:"target,omitempty"`
@@ -343,7 +362,8 @@ func (h *Manager) botView(ctx context.Context) feishuBotView {
 	s := b.set
 	appID, _, domain, fromConfig, _ := h.botCredentialsLocked()
 	v := feishuBotView{Enabled: s.Enabled, AppID: appID, Domain: feishubot.ResolveDomain(domain), HasSecret: appID != "",
-		FromConfig: fromConfig, Features: s.Features, BotName: b.info.Name, NudgeAfter: s.nudgeAfter()}
+		FromConfig: fromConfig, Features: s.Features, BotName: b.info.Name, NudgeAfter: s.nudgeAfter(),
+		SourceReportDelayMinutes: s.sourceReportDelayMinutes(), SourceReportFullReply: s.SourceReportFullReply}
 	if b.conn != nil {
 		st := b.conn.State()
 		v.Connected, v.Error = st.Connected, st.Error
@@ -371,6 +391,36 @@ func (h *Manager) botView(ctx context.Context) feishuBotView {
 	return v
 }
 
+const sourceReportDelayMaxMinutes = 60
+
+func (h *Manager) setSourceReportSettings(ctx context.Context, delay *int, fullReply *bool) error {
+	b := &h.bots
+	b.mu.Lock()
+	h.loadBotsLocked(ctx)
+	previousDelay, previousFullReply := b.set.SourceReportDelayMinutes, b.set.SourceReportFullReply
+	var changes []botRecord
+	if delay != nil && b.set.sourceReportDelayMinutes() != *delay {
+		b.set.SourceReportDelayMinutes = delay
+		changes = append(changes, botRecord{auditBotSourceReportDelay, map[string]any{"minutes": *delay}})
+	}
+	if fullReply != nil && previousFullReply != *fullReply {
+		b.set.SourceReportFullReply = *fullReply
+		changes = append(changes, botRecord{auditBotSourceReportFullReply, map[string]any{"enabled": *fullReply}})
+	}
+	if len(changes) == 0 {
+		b.mu.Unlock()
+		return nil
+	}
+	if err := h.saveBotSettingsLocked(); err != nil {
+		b.set.SourceReportDelayMinutes, b.set.SourceReportFullReply = previousDelay, previousFullReply
+		b.mu.Unlock()
+		return err
+	}
+	b.mu.Unlock()
+	h.auditBot(ctx, changes...)
+	return nil
+}
+
 func (h *Manager) botRoutes(api *http.ServeMux) {
 	h.channelBindRoute(api) // binding a channel carries its secrets: the hub's, never relayed
 	api.HandleFunc("GET /api/v1/bots/feishu", func(w http.ResponseWriter, r *http.Request) {
@@ -395,6 +445,9 @@ func (h *Manager) botRoutes(api *http.ServeMux) {
 			// NudgeAfter is minutes before the one nudge under an unanswered card; 0 turns nudges off, absent leaves it.
 			// Read as raw JSON so that anything but a whole number in range gets the same answer (nudgeAfterValue).
 			NudgeAfter json.RawMessage `json:"nudge_after"`
+			// Zero posts as soon as the result is ready. Absent leaves the current setting.
+			SourceReportDelayMinutes json.RawMessage `json:"source_report_delay_minutes"`
+			SourceReportFullReply    *bool           `json:"source_report_full_reply"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
@@ -411,6 +464,11 @@ func (h *Manager) botRoutes(api *http.ServeMux) {
 			}
 		}
 		nudge, err := nudgeAfterValue(in.NudgeAfter)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		reportDelay, err := botMinutesValue(in.SourceReportDelayMinutes, sourceReportDelayMaxMinutes, "hub-bots.source_report_delay_range")
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
@@ -461,6 +519,12 @@ func (h *Manager) botRoutes(api *http.ServeMux) {
 		}
 		if nudge != nil {
 			h.setNudgeAfter(r.Context(), *nudge)
+		}
+		if reportDelay != nil || in.SourceReportFullReply != nil {
+			if err := h.setSourceReportSettings(r.Context(), reportDelay, in.SourceReportFullReply); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		if in.LarkCLIProfile != nil {
 			if err := h.setLarkCLIProfile(r.Context(), *in.LarkCLIProfile); err != nil {

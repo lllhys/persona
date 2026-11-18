@@ -31,21 +31,21 @@ type env struct {
 	// command runs a program and returns its combined output; passthrough runs one on this terminal.
 	command     func(name string, args ...string) (string, error)
 	passthrough func(name string, args ...string) error
-	now         func() time.Time
-	sleep       func(time.Duration)
+	// output runs a program and returns its stdout and stderr apart (the node's JSON commands).
+	output func(name string, args ...string) (stdout, stderr string, err error)
+	now    func() time.Time
+	sleep  func(time.Duration)
 	// wait is how long install waits for the link to come up (a setting).
 	wait time.Duration
 	// sshBin overrides the system ssh executable in tests; "" uses "ssh" from PATH.
 	sshBin string
-	// tray is the Windows tray's registry entries and process (tray.go).
-	tray trayControl
 }
 
 func newEnv() *env {
 	home, _ := os.UserHomeDir()
 	e := &env{home: home, goos: runtime.GOOS, uid: os.Getuid(), stdin: os.Stdin, stdout: os.Stdout, stderr: os.Stderr,
 		getenv: identity.Getenv, exe: os.Executable, lookPath: exec.LookPath, now: time.Now, sleep: time.Sleep,
-		exists: func(p string) bool { _, err := os.Stat(p); return err == nil }, wait: 20 * time.Second, tray: systemTray()}
+		exists: func(p string) bool { _, err := os.Stat(p); return err == nil }, wait: 20 * time.Second}
 	if u, err := user.Current(); err == nil {
 		e.user = u.Username
 	}
@@ -57,6 +57,16 @@ func newEnv() *env {
 		cmd.Env = e.commandEnv()
 		out, err := cmd.CombinedOutput()
 		return strings.TrimSpace(string(out)), err
+	}
+	e.output = func(name string, args ...string) (string, string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Env = e.commandEnv()
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		return stdout.String(), stderr.String(), err
 	}
 	e.passthrough = func(name string, args ...string) error {
 		cmd := exec.Command(name, args...)

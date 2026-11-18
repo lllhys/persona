@@ -2,6 +2,7 @@
 import PersonaTunnelCore
 #endif
 import Foundation
+import PersonaWire
 
 /// The in-app tunnel core (docs/operations/network.md「Connecting to hub through an in-app tunnel」): a C library with the PersonaTunnel interface, linked
 /// into device builds only when the build machine's config names one (`app.tunnel_core`, docs/operations/config.md). It runs the

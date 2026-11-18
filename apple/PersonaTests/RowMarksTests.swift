@@ -34,6 +34,18 @@ struct RowMarksTests {
         }
     }
 
+    /// A lead row's one activity mark (#6230): working under it spins even while its own conversation is idle, but a row
+    /// that needs the user or is unread keeps its dot so the quiet activity never hides a request.
+    @Test func aLeadWithWorkRunningSpinsWhileItsOwnRowIsIdleButNeverHidesANeedOrUnreadDot() {
+        #expect(RowStateMark(state: .idle, working: true).spins)
+        #expect(RowStateMark(state: .offline, working: true).spins)
+        #expect(RowStateMark(state: .working, working: false).spins)
+        #expect(RowStateMark(state: .working, working: true).spins)
+        #expect(!RowStateMark(state: .needsYou, working: true).spins)
+        #expect(!RowStateMark(state: .unread, working: true).spins)
+        #expect(!RowStateMark(state: .idle, working: false).spins)
+    }
+
     /// MB-03: the sidebar drew Unread in the accent, which in the default style is the Needs You blue.
     @Test func unreadIsGreenNotTheNeedsYouBlue() throws {
         let unread = try #require(RowStateMark.dot(.unread))

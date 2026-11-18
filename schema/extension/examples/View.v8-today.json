@@ -1,0 +1,44 @@
+{
+  "title": "Today",
+  "layout": "columns",
+  "sections": [
+    {
+      "title": "Needs me",
+      "span": "full",
+      "icon": "bell",
+      "icon_color": "orange",
+      "columns": 2,
+      "link": {"title": "All", "action": {"id": "open_needs", "push": {"state": "needs", "title": "Needs me"}}},
+      "items": [
+        {"type": "text", "text": "4 things wait for you, 1 of them due today", "style": "secondary"},
+        {"type": "row", "key": "need.1", "title": "Approve the travel request", "subtitle": "Approval · from Robin", "icon": "check", "icon_color": "blue", "badge": {"text": "Today", "tone": "caution"}, "action": {"id": "open_need", "values": {"need": "1"}}},
+        {"type": "row", "key": "need.2", "title": "Reply about the design review", "subtitle": "Chat · Kai asked 2 h ago", "icon": "chat", "icon_color": "teal", "action": {"id": "open_need", "values": {"need": "2"}}},
+        {"type": "row", "key": "need.3", "title": "Agent waits for a permission", "subtitle": "Running Agents · release notes", "icon": "robot", "icon_color": "purple", "action": {"id": "open_need", "values": {"need": "3"}}},
+        {"type": "row", "key": "need.4", "title": "Sign the quarterly report", "subtitle": "Document · due Friday", "icon": "doc", "icon_color": "gray", "action": {"id": "open_need", "values": {"need": "4"}}}
+      ]
+    },
+    {
+      "title": "Calendar",
+      "icon": "calendar",
+      "icon_color": "red",
+      "link": {"title": "Calendar", "action": {"id": "open_calendar"}},
+      "items": [
+        {"type": "text", "text": "3 events today, the next at 14:00", "style": "secondary"},
+        {"type": "row", "key": "cal.1", "title": "Weekly sync", "subtitle": "Room 4 · 6 people", "value": "14:00"},
+        {"type": "row", "key": "cal.2", "title": "1:1 with Robin", "value": "16:30"},
+        {"type": "row", "key": "cal.more", "title": "3 more this week", "action": {"id": "open_calendar", "values": {"range": "week"}}}
+      ]
+    },
+    {
+      "title": "Lark today",
+      "icon": "chat",
+      "icon_color": "blue",
+      "link": {"title": "Lark", "action": {"id": "open_chats"}},
+      "items": [
+        {"type": "text", "text": "12 unread in 4 chats", "style": "secondary"},
+        {"type": "row", "key": "lark.1", "title": "Design team", "subtitle": "Kai: the new cards look good", "badge": {"text": "5"}},
+        {"type": "row", "key": "lark.2", "title": "Release", "subtitle": "Build 812 is out", "badge": {"text": "2"}}
+      ]
+    }
+  ]
+}

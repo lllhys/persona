@@ -1,8 +1,9 @@
+import { conversationDeleted, onConversationDeleted } from "../../lib/conversation-deleted";
 // A session's items: the newest page over HTTP, then live over the WebSocket (docs/protocol/protocol.md "Continuity of items").
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorText, isAbort, sessionPath } from "../../lib/api";
+import { api, ApiError, errorText, isAbort, READ_TIMEOUT_MS, sessionPath } from "../../lib/api";
 import { sessionLoadError } from "../../lib/session-link";
-import { getState, listenSession, send, type ItemsEvent } from "../../lib/store";
+import { getState, listenSession, markConversationDeleted, send, type ItemsEvent } from "../../lib/store";
 import { afterPull, afterPush, FRESH_TALLY, newestItemAt, notLive as tallyNotLive, RevWatch, shouldPull, type StaleTally } from "../../lib/stale-page";
 import { mergeItems, withoutFolded } from "../../lib/turns";
 import { chosenManager } from "../../lib/manager-choice";
@@ -20,6 +21,11 @@ const lastPulls = new Map<string, number>();
 const EARLIER_RETRY_MS = 3000;
 const EARLIER_RETRY_MAX_MS = 30_000;
 
+/** The first page refused because reading it would start the agent: one its engine let go (Paseo's closed and archived
+ *  agents), which only a watched chat reads (docs/integrations/paseo.md "Content", #8132). The subscribe that follows
+ *  loads it, and its backlog brings the page. */
+const isNotLoaded = (e: unknown) => e instanceof ApiError && e.code === "not_loaded";
+
 /** Tests only: forget the asks, as a fresh page load does (each sync case starts its clock at the same moment again). */
 export function resetStalePullsForTests() {
   lastPulls.clear();
@@ -36,7 +42,7 @@ export interface Transcript {
   hasMore: boolean;
   loadingEarlier: boolean;
   loadEarlier: () => Promise<void>;
-  expandFold: (fold: Item) => Promise<void>;
+  expandFold: (fold: Item) => Promise<boolean | void>;
   /** The reply as it is written, before the transcript has it: the headless assistant's, or an agent's as Claude shows it
    *  (a Claude session Persona started; docs/integrations/claude-integration.md "Live replies"). "" for none. */
   streaming: string;
@@ -96,6 +102,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
   // fold asked for before that is dropped when it lands, so it never merges into the conversation shown by then.
   const generation = useRef(0);
   const earlierInFlight = useRef(false); // set at once, unlike loadingEarlier, so scroll events before a render do not ask twice
+  const rewrite = useRef<() => void>(() => {}); // the effect's cache invalidation, shared with older-page reads below
   // The back-off after a failed older page: when loadEarlier may ask again, and how long the last wait was.
   const earlierRetryAt = useRef(0);
   const earlierWait = useRef(0);
@@ -118,6 +125,17 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
   useEffect(() => {
     let dead = false;
     const ctl = new AbortController();
+    const offDeleted = onConversationDeleted((machine, session) => {
+      if (machine !== mid || session !== sid) return;
+      dead = true;
+      ctl.abort();
+      generation.current++;
+      snapshot.current = null;
+      setItems([]);
+      setStreaming("");
+      deltas.current.cancel();
+      send({ type: "unsubscribe", machine_id: mid, session_id: sid });
+    });
     // Older pages and folds still on their way were asked for from what is shown now: they must not land on what replaces it.
     const disownReads = () => {
       generation.current++;
@@ -153,6 +171,18 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
     let latestMore = cached?.hasMore ?? false;
     let pendingItems: Item[] = []; // pushes after the HTTP request started win over its answer
     let pendingHistory = "";
+    // The first read was refused as not_loaded (isNotLoaded): the chat keeps loading until the subscribe's items come,
+    // instead of showing the refusal for the second or three the load takes (#8321). It shows the refusal, with Retry,
+    // only when none came within a read's time (this timer): past the hub's own limits for a backlog (the watch's, then
+    // the read's), so a backlog the hub could not read shows then too.
+    let refused: number | undefined;
+    const endRefused = (error = "") => {
+      clearTimeout(refused);
+      refused = undefined;
+      setError(error);
+      setLoading(false);
+      setFirstRead(true);
+    };
     const memoryScope = cacheScope ? null : feedCacheScope();
     // The newest page may start after everything the cached one holds, with turns missing between them: showing both
     // would hide that hole, so the page takes over and older history loads on scroll.
@@ -184,6 +214,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       snapshot.current = null;
       setNonce((x) => x + 1);
     };
+    rewrite.current = rewritten;
 
     // The live text against the newest items, after they changed (`batch`) or a delta came: the assistant's ends at
     // its reply's item; an agent's shows what of its message the latest one does not hold (lib/live-text.ts).
@@ -205,7 +236,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       showLive();
     };
 
-    const subscribe = () => send({ type: "subscribe", machine_id: mid, session_id: sid, since_seq: covered.current || undefined, lazy_images: true, fold_work: true });
+    const subscribe = () => !conversationDeleted(mid, sid) && send({ type: "subscribe", machine_id: mid, session_id: sid, since_seq: covered.current || undefined, lazy_images: true, fold_work: true });
 
     // Items after what we have, a page at a time (past 8 the newest page is cheaper); how many of them were new.
     const pull = async (): Promise<number> => {
@@ -222,7 +253,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
         // Not what the stream brought while this was on its way: those are merged as they are, and not a miss.
         fresh += got.filter((i) => i.seq > covered.current).length;
         apply(got);
-        remember(got);
+        remember(got, Boolean(p.more_after));
         showLive(got);
         if (p.to_seq) covered.current = Math.max(covered.current, p.to_seq);
         lastArrival = Date.now();
@@ -236,9 +267,10 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
     };
     const fillGap = async () => void (await pull());
 
-    // The safety net (lib/stale-page.ts): the list says the transcript grew past what we hold and no push came.
+    // The safety net (lib/stale-page.ts): the list says the transcript grew past what we hold and no push came. Not while
+    // a refused first read waits for the backlog: that read is the one asked for, and the runtime refuses this one too.
     const checkStale = () => {
-      if (dead || !ready) return;
+      if (dead || !ready || refused) return;
       const now = Date.now();
       const asked = updatedAt.current;
       if (!shouldPull({
@@ -271,8 +303,9 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       }
       if (e.history) history.current = e.history;
       if (!ready && e.history) pendingHistory = e.history;
+      if (refused) endRefused(); // the watch brings the chat its first read could not
       if (e.has_more !== undefined) {
-        // The replay of a subscribe without since_seq (the first read failed) stands in for that read.
+        // The replay of a subscribe without since_seq (the first read failed or was refused) stands in for that read.
         latestMore = e.has_more;
         setHasMore(latestMore);
         setError("");
@@ -346,10 +379,15 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
         covered.current = Math.max(covered.current, p.to_seq ?? Math.max(0, ...batch.map((i) => i.seq)));
       } catch (e) {
         if (dead) return;
+        if (e instanceof ApiError && e.code === "conversation_deleted") { markConversationDeleted(mid, sid); return; }
         // a session that is still starting has no transcript yet
-        if (!opts.starting) setError(sessionLoadError(errorText(e)));
+        if (!opts.starting) {
+          const text = sessionLoadError(errorText(e));
+          if (isNotLoaded(e)) refused = window.setTimeout(() => endRefused(text), READ_TIMEOUT_MS);
+          else setError(text);
+        }
       } finally {
-        if (!dead) {
+        if (!dead && !refused) {
           setLoading(false);
           setFirstRead(true);
         }
@@ -362,7 +400,9 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
     return () => {
       dead = true;
       ctl.abort();
+      offDeleted();
       off();
+      clearTimeout(refused);
       deltas.current.cancel();
       clearTimeout(gapTimer.current);
       gapTimer.current = undefined; // the next session's first gap starts its own
@@ -388,8 +428,7 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
       const p = await api<ItemsPage>(`${sessionPath(mid, sid)}/items?${PAGE}&before_seq=${first.seq}`);
       if (gen !== generation.current) return;
       if (p.history && history.current && p.history !== history.current) {
-        generation.current++;
-        setNonce((n) => n + 1);
+        rewrite.current();
         return;
       }
       apply(p.items ?? []);
@@ -413,19 +452,26 @@ export function useTranscript(mid: string, sid: string, opts: { starting?: boole
   }, [mid, sid, hasMore, apply]);
 
   const expandFold = useCallback(
-    async (fold: Item) => {
-      if (!fold.fold) return;
+    async (fold: Item): Promise<boolean> => {
+      if (!fold.fold) return true;
       const gen = generation.current;
       let from = fold.seq;
       const out: Item[] = [];
+      let complete = false;
       for (let n = 0; n < 20; n++) {
         const p = await api<ItemsPage>(`${sessionPath(mid, sid)}/items?from_seq=${from}&through_seq=${fold.fold.through_seq}&lazy_images=1`);
-        if (gen !== generation.current) return;
-        out.push(...(p.items ?? []));
-        if (!p.more || !p.items?.length) break;
-        from = p.items[p.items.length - 1].seq + 1;
+        if (gen !== generation.current) return false;
+        const batch = p.items ?? [];
+        out.push(...batch);
+        if (!p.more || !batch.length) {
+          complete = !p.more;
+          break;
+        }
+        from = batch[batch.length - 1].seq + 1;
       }
       apply(out);
+      // The closeout's evidence reader needs to know a capped or superseded read; existing fold UI keeps the partial steps.
+      return complete;
     },
     [mid, sid, apply],
   );

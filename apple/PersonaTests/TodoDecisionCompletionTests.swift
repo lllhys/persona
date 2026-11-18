@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Completing an owner decision is a todo edit, not a recommendation or runtime answer.
 @MainActor struct TodoDecisionCompletionTests {
@@ -30,6 +31,24 @@ import Testing
         var done = todo
         done.doneAt = .now
         #expect(done.openAsk == nil && TaskState(todo: done, agents: [.idle]) == .done)
+    }
+
+    /// A decision that can wait (#4930, #5803): held for the next briefing, said on its row; a briefing's own rows and a
+    /// hub from before never say so.
+    @Test func aDecisionHeldForTheBriefingSaysSo() throws {
+        let held = try JSON.decoder.decode(TodoItem.self, from: Data(#"{"id":"decision","title":"Choose a cache","ask":{"outcome":"decide","verdict":"Needs your call","recommend":"Keep the current cache","asked_at":"2026-11-09T11:00:00.123456789Z","for_briefing":true}}"#.utf8))
+        let ask = try #require(held.openAsk)
+        #expect(ask.isForBriefing && ask.row(for: held).forBriefing)
+        #expect(ask.askedAt == asked && ask.row(for: held).take == .recommendation, "answered as any decision")
+        #expect(TaskState(todo: held, agents: [.idle]) == .needsYou, "still in Needs You at once")
+        #expect(try JSON.decoder.decode(TodoItem.self, from: JSON.encoder.encode(held)).ask == ask)
+        let pushed = try JSON.decoder.decode(TodoItem.self, from: Data(#"{"id":"decision","title":"Choose a cache","ask":{"outcome":"decide","verdict":"v","asked_at":"2026-11-09T11:00:00Z","for_briefing":false}}"#.utf8))
+        let before = try JSON.decoder.decode(TodoItem.self, from: Data(#"{"id":"decision","title":"Choose a cache","ask":{"outcome":"decide","verdict":"v","asked_at":"2026-11-09T11:00:00Z"}}"#.utf8))
+        #expect(pushed.openAsk?.isForBriefing == false && before.openAsk?.isForBriefing == false)
+        #expect(before.openAsk?.row(for: before).forBriefing == false && !row().forBriefing)
+        // The briefing that brings it lists it under To verify as any decision: its row carries no mark.
+        let listed = try JSON.decoder.decode(BriefBody.Row.self, from: Data(#"{"id":"decision","title":"Choose a cache","asked_at":"2026-11-09T11:00:00Z","outcome":"decide","for_briefing":true}"#.utf8))
+        #expect(!listed.forBriefing && listed.suggestion == nil)
     }
 
     @Test(arguments: [#"null"#, #"{"outcome":"decide"}"#, #""bad""#, #"{"asked_at":42}"#, #"{"asked_at":""}"#])

@@ -110,7 +110,7 @@ Cookies are login credentials: having them means being logged in. Every step bel
 - **Who can import**: only the user's own full-permission devices (not read-only devices), through an explicit action in the App or on the web. The assistant, Agents, and plugin processes cannot start it; the hub exposes no interface for it to the model.
 - **Viewing and revoking**:
   - the machine page's "Browser logins" lists domains with cookies in ego (count, latest expiry, **no values**), aggregated by the node with `Network.getAllCookies`;
-  - each domain can be "cleared" (`Network.deleteCookies`), or everything at once;
+  - each domain can be "cleared" (`Network.deleteCookies`), several in one call (`?site=a&site=b`), or everything at once (`?all=1`); with more than three sites the page folds them behind one summary row that opens the whole list with search, order and multi-select (#5821, `docs/design/DESIGN_SYSTEM.md` ("Long lists on a detail page"));
   - both clearing and importing go into the audit log (who, which machine, which domains, how many).
 - **One shared profile**: ego's cookies are shared across the whole profile, so imported logins are also used when the user browses in ego themselves. For the alternative see item 3 of "To decide".
 

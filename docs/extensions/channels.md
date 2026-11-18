@@ -182,7 +182,7 @@ While the assistant process is restarting or disconnected from hub, **receivers 
 
 ### Push and sync
 
-With `push`, a channel can enable `pushes` (send a copy when `notify_user` pushes to the phone; also send scheduled-task chat answers) and `sync` (send the answer when a main chat turn started outside this channel ends).
+With `push`, a channel can enable `pushes` (send a copy when `notify_user` pushes to the phone, not when the hub's low-distraction mode held it for the briefing; also send scheduled-task chat answers) and `sync` (send the answer when a main chat turn started outside this channel ends).
 The Lark bot already had both; extension channels use the same switches, off by default.
 
 When a `notify_user` copy reaches a channel with `pushes` on, that channel skips the main-chat or scheduled-task mirror

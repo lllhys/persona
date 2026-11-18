@@ -42,8 +42,10 @@ class ChatHeaderLineShotsTest {
     private val machine = Machine(id = "box", name = "MacBook", online = true)
     private val base = Session("box", "s1", title = "Refactor the sync layer", agent = "claude", paneId = "p1",
         cwd = "/Users/me/src/persona", spaceName = "persona", slotName = "review")
+    // The newest turn began 22 minutes ago (the chat gives the header the turn's start, iOS `Turn.startedAt`).
+    private val turnStart = Instant.now().minusSeconds(22 * 60 + 10)
     private val sessions = listOf(
-        base.copy(status = "working", state = "working", stateSince = Instant.now().minusSeconds(22 * 60 + 10).toString()),
+        base.copy(status = "working", state = "working", stateSince = turnStart.toString()),
         base.copy(sessionId = "s2", title = "Update the docs", status = "idle", state = "idle"),
         base.copy(sessionId = "s3", title = "Approve the migration", status = "blocked", state = "needs_you"),
         base.copy(sessionId = "s4", title = "Codex thread", status = "idle", state = "idle", sourceKind = "codex_app_server",
@@ -60,7 +62,8 @@ class ChatHeaderLineShotsTest {
                 val chrome = remember { ChatChromeState(resources, null, scope, {}, {}) }
                 Column(Modifier.testTag("headers").width(400.dp).background(PersonaTheme.palette.background)) {
                     for (s in sessions) ChatHeader(s, machine, sessions, chrome, null, false,
-                        onBack = {}, onOpenSession = {}, onConnectionDetails = {}, onOverlay = {})
+                        onBack = {}, onOpenSession = {}, onConnectionDetails = {}, onOverlay = {},
+                        turnStart = turnStart.takeIf { s.status == "working" })
                 }
             }
         }

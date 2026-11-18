@@ -109,6 +109,65 @@ final class HeaderModeShotTests: XCTestCase {
         }
     }
 
+    /// An agent that has not reported its mode yet (a Claude Code agent before its first prompt): the header's menu, its
+    /// button's VoiceOver label and the composer's model menu say just "Permission Mode", as the capsule does, never
+    /// "Permission Mode: Unknown" (#5596).
+    @MainActor func testUnknownModeShots() throws {
+        guard !isPad else { throw XCTSkip("iPhone shots") }
+        continueAfterFailure = true // every shot is taken even when a label is wrong (a build without the change)
+        let plain = ["权限模式", "Permission Mode"] // i18n-ignore: the test runs in zh-Hans
+        for scheme in ["light", "dark"] {
+            open(Self.review, scheme: scheme)
+            let mode = app.buttons["chat.permissionMode"]
+            XCTAssertTrue(mode.waitForExistence(timeout: 10), "the header's mode")
+            XCTAssertTrue(plain.contains(mode.label), "the header button's VoiceOver label: \(mode.label)")
+            mode.tap()
+            sleep(1)
+            shot("menu-unknown", scheme)
+            assertNoUnknownMode()
+            let title = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label IN %@ AND identifier != %@", plain, "chat.permissionMode")).firstMatch
+            XCTAssertTrue(title.waitForExistence(timeout: 3), "the menu's title line; the screen's elements:\n\(app.debugDescription)")
+
+            open(Self.review, scheme: scheme)
+            let field = app.descendants(matching: .any)["shell-composer-field"].firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 10), "the composer")
+            field.tap() // the model button is on the open composer's second row
+            let modes = app.buttons["shell-composer-modes"]
+            XCTAssertTrue(modes.waitForExistence(timeout: 10), "the composer's model button")
+            modes.tap()
+            sleep(1)
+            // The long model list opens at the current model. The mode item is at the far end, and the menu draws (and
+            // lists) a row only once it is scrolled into view.
+            let item = app.descendants(matching: .any).matching(NSPredicate(
+                format: "(label BEGINSWITH %@ OR label BEGINSWITH %@) AND identifier != %@", plain[0], plain[1], "chat.permissionMode")).firstMatch
+            for _ in 0..<4 where !(item.exists && item.isHittable) {
+                app.collectionViews.firstMatch.swipeDown()
+                sleep(1)
+            }
+            shot("composer-menu-unknown", scheme)
+            XCTAssertTrue(item.exists && item.isHittable, "the model menu's Permission Mode item on screen; the screen's elements:\n\(app.debugDescription)")
+            if item.exists { XCTAssertTrue(plain.contains(item.label), "the model menu's Permission Mode item: \(item.label)") }
+            assertNoUnknownMode()
+        }
+        // The largest accessibility text size (the UI change self-check): the header's menu.
+        let largest = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        for scheme in ["light", "dark"] {
+            open(Self.review, scheme: scheme, extra: largest)
+            let mode = app.buttons["chat.permissionMode"]
+            XCTAssertTrue(mode.waitForExistence(timeout: 10), "the header's mode")
+            mode.tap()
+            sleep(1)
+            shot("menu-unknown-ax", scheme)
+            assertNoUnknownMode()
+        }
+    }
+
+    @MainActor private func assertNoUnknownMode() {
+        let unknown = NSPredicate(format: "label BEGINSWITH %@ OR label BEGINSWITH %@", "权限模式：未知", "Permission Mode: Unknown") // i18n-ignore
+        XCTAssertFalse(app.descendants(matching: .any).matching(unknown).firstMatch.exists, "a mode named Unknown")
+    }
+
     /// The menu's first line says the mode, "Permission Mode: …", as on the web and Android (the header's button has the
     /// same words as its VoiceOver label, so it is left out).
     @MainActor private func assertMenuTitle() {
@@ -169,19 +228,7 @@ final class HeaderModeShotTests: XCTestCase {
         let title = app.descendants(matching: .any)[folded ? "chat.compactTitle" : "chat.title"].firstMatch
         XCTAssertTrue(title.waitForExistence(timeout: 20), "the chat did not open: \(session)")
         sleep(folded ? 5 : 3) // folded 3 s after it opens; the backlog is in and the header has settled
-        dismissIconNote()
-    }
-
-    /// The app icon follows the color scheme (`AppIconChoice`), and the system says so in an alert over the page when a
-    /// launch switches it: closed before the shot.
-    @MainActor private func dismissIconNote() {
-        let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        guard board.alerts.firstMatch.waitForExistence(timeout: 2) else { return }
-        for label in ["OK", "好"] where board.alerts.buttons[label].exists { // i18n-ignore: the system's own button
-            board.alerts.buttons[label].tap()
-            sleep(1)
-            return
-        }
+        HomeScreen.dismissIconNote()
     }
 
     /// A menu row by its first words: the modes are switches, which the system may list as buttons, switches or menu items.

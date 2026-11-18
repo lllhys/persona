@@ -3,7 +3,8 @@ import Testing
 @testable import Persona
 
 /// The to-dos' calendar (#2029): which to-dos it shows and on what day, the days of a day / week / month, side by side
-/// where blocks overlap, what a month's day fits, where a tap on the axis lands, and the headings.
+/// where blocks overlap, what a month's day fits, where a tap on the axis lands, where a dragged to-do lands and what
+/// moving it saves (#2045), and the headings.
 struct TodoCalendarTests {
     /// Monday-first, in a fixed time zone: Monday 2026-11-09 is "today" in these tests.
     private var cal: Calendar {
@@ -141,6 +142,143 @@ struct TodoCalendarTests {
         let week = TodoCalendar.days(.week, anchor: at(11, 0), calendar: cal)
         #expect(TodoCalendar.firstHour(days: week, timed: [entry("x", at(12, 7)), entry("y", at(20, 3))], now: at(1, 9), calendar: cal) == 6)
         #expect(TodoCalendar.firstHour(days: [at(11, 0)], timed: [], now: at(9, 14), calendar: cal) == TodoCalendar.morning)
+    }
+
+    // MARK: Moving one (#2045)
+
+    /// The axis: the block's top edge to the nearest quarter hour, within the day (the web's `dropOnAxis`).
+    @Test func aDropOnTheAxis() {
+        #expect(TodoCalendar.dropOnAxis(day: at(10, 9), minutes: 14 * 60 + 7, calendar: cal) == CalendarDrop(day: at(10, 0), at: at(10, 14)))
+        #expect(TodoCalendar.dropOnAxis(day: at(10, 0), minutes: 14 * 60 + 8, calendar: cal).at == at(10, 14, 15))
+        #expect(TodoCalendar.dropOnAxis(day: at(10, 0), minutes: 14 * 60 + 7.5, calendar: cal).at == at(10, 14, 15))
+        #expect(TodoCalendar.dropOnAxis(day: at(10, 0), minutes: -40, calendar: cal).at == at(10, 0))
+        // never past the day's last quarter hour
+        #expect(TodoCalendar.dropOnAxis(day: at(10, 0), minutes: 24 * 60 + 30, calendar: cal).at == at(10, 23, 45))
+    }
+
+    /// A whole day (the month, the All Day row): the same time there, or all day.
+    @Test func aDropOnADay() {
+        let timed = entry("timed", at(9, 14, 30))
+        let allDay = entry("rent", at(9, 0), allDay: true)
+        #expect(TodoCalendar.dropOnDay(timed, day: at(12, 8), calendar: cal) == CalendarDrop(day: at(12, 0), at: at(12, 14, 30)))
+        #expect(TodoCalendar.dropOnDay(timed, day: at(12, 8), allDay: true, calendar: cal) == CalendarDrop(day: at(12, 0), at: nil))
+        #expect(TodoCalendar.dropOnDay(allDay, day: at(13, 0), calendar: cal) == CalendarDrop(day: at(13, 0), at: nil))
+        // the time keeps its seconds, as on the web
+        let odd = entry("odd", at(9, 14).addingTimeInterval(20))
+        #expect(TodoCalendar.dropOnDay(odd, day: at(11, 0), calendar: cal).at == at(11, 14).addingTimeInterval(20))
+    }
+
+    /// What is saved: nothing for a drop where it already is; `due_at` or `due_date`; what Undo puts back; the to-do
+    /// drawn at once with its other due field cleared; how it is drawn where it would land.
+    @MainActor @Test func whatAMoveSaves() {
+        let timed = entry("timed", at(9, 14))
+        let allDay = entry("rent", at(9, 0), allDay: true)
+        #expect(!TodoCalendar.moves(timed, to: CalendarDrop(day: at(9, 0), at: at(9, 14)), calendar: cal))
+        #expect(TodoCalendar.moves(timed, to: CalendarDrop(day: at(9, 0), at: at(9, 14, 15)), calendar: cal))
+        #expect(TodoCalendar.moves(timed, to: CalendarDrop(day: at(9, 0), at: nil), calendar: cal))
+        #expect(!TodoCalendar.moves(allDay, to: CalendarDrop(day: at(9, 0), at: nil), calendar: cal))
+        #expect(TodoCalendar.moves(allDay, to: CalendarDrop(day: at(10, 0), at: nil), calendar: cal))
+        #expect(TodoCalendar.moves(allDay, to: CalendarDrop(day: at(9, 0), at: at(9, 9)), calendar: cal))
+
+        #expect(TodoCalendar.due(CalendarDrop(day: at(12, 0), at: at(12, 9)), calendar: cal) == .at(at(12, 9)))
+        #expect(TodoCalendar.due(CalendarDrop(day: at(12, 0), at: nil), calendar: cal) == .day("2026-11-12"))
+        #expect(TodosLogic.dayKey(at(1, 0), calendar: cal) == "2026-11-01")
+
+        let atMoment = TodoItem(id: "a", title: "A", dueAt: at(9, 14))
+        let onDay = TodoItem(id: "d", title: "D", dueDate: "2026-11-11")
+        #expect(TodoCalendar.due(of: atMoment) == .at(at(9, 14)))
+        #expect(TodoCalendar.due(of: onDay) == .day("2026-11-11"))
+        #expect(TodoCalendar.due(of: TodoItem(id: "n", title: "N")) == .none)
+        let toDay = TodoCalendar.moved(atMoment, to: .day("2026-11-12"))
+        #expect(toDay.dueAt == nil && toDay.dueDate == "2026-11-12")
+        let toMoment = TodoCalendar.moved(onDay, to: .at(at(12, 9)))
+        #expect(toMoment.dueAt == at(12, 9) && toMoment.dueDate == nil && toMoment.title == "D")
+
+        // A late one dragged to tomorrow is no longer drawn late there; dropped on an earlier hour today it is.
+        var late = entry("late", at(9, 11))
+        late.overdue = true
+        let now = at(9, 14)
+        let tomorrow = TodoCalendar.landed(late, at: CalendarDrop(day: at(10, 0), at: at(10, 9)), calendar: cal, now: now)
+        #expect(tomorrow.start == at(10, 9) && !tomorrow.allDay && !tomorrow.overdue)
+        let today = TodoCalendar.landed(entry("x", at(9, 16)), at: CalendarDrop(day: at(9, 0), at: at(9, 10)), calendar: cal, now: now)
+        #expect(today.overdue)
+        let allToday = TodoCalendar.landed(late, at: CalendarDrop(day: at(9, 0), at: nil), calendar: cal, now: now)
+        #expect(allToday.allDay && allToday.start == at(9, 0) && !allToday.overdue)
+        var done = entry("done", at(9, 11), done: true)
+        done.overdue = false
+        #expect(!TodoCalendar.landed(done, at: CalendarDrop(day: at(8, 0), at: at(8, 9)), calendar: cal, now: now).overdue)
+    }
+
+    /// Where on the timeline a finger is: the column under it (the nearest over the hours), on the axis the block's
+    /// top edge `grab` above it with the scroll counted, the All Day row above the axis, nowhere above or below.
+    @Test func whereOnTheTimelineAFingerIs() {
+        // 60 pt of hours and seven 40 pt columns; the row from y 50 to 80, the axis in sight from 81 to 581, scrolled
+        // 8 hours down (52 pt an hour).
+        let map = TimelineDropMap(width: 340, gutter: 60, days: 7, allDay: CGRect(x: 0, y: 50, width: 340, height: 30),
+                                  axis: CGRect(x: 0, y: 81, width: 340, height: 500), scrolled: 8 * 52, hour: 52)
+        #expect(map.day(10) == 0 && map.day(61) == 0 && map.day(101) == 1 && map.day(339) == 6 && map.day(500) == 6)
+        // a finger 20 pt into the block, 26 pt (half an hour) below the axis's top: the block's top is at 8:30 − 20 pt
+        // (the minutes as a typed constant: inside `#expect`, Xcode 26.0 reads the literals as Int)
+        let top: Double = (8 * 52 + 26 - 20) / 52 * 60
+        #expect(map.spot(CGPoint(x: 150, y: 81 + 26), grab: 20) == .axis(day: 2, minutes: top))
+        #expect(map.spot(CGPoint(x: 150, y: 60), grab: 20) == .allDay(day: 2))
+        #expect(map.spot(CGPoint(x: 150, y: 40), grab: 20) == nil)
+        #expect(map.spot(CGPoint(x: 150, y: 600), grab: 20) == nil)
+        // the axis scrolls near its edges, and on below it; not over the row
+        #expect(map.autoscroll(CGPoint(x: 150, y: 90), edge: 44) == -1)
+        #expect(map.autoscroll(CGPoint(x: 150, y: 570), edge: 44) == 1)
+        #expect(map.autoscroll(CGPoint(x: 150, y: 640), edge: 44) == 1)
+        #expect(map.autoscroll(CGPoint(x: 150, y: 300), edge: 44) == 0)
+        #expect(map.autoscroll(CGPoint(x: 150, y: 60), edge: 44) == 0)
+    }
+
+    /// The month: the day under the finger with the scroll counted, none off the grid.
+    @Test func whichDayOfTheMonthAFingerIsOver() {
+        let map = MonthDropMap(grid: CGRect(x: 0, y: 100, width: 350, height: 500), scrolled: 0, cell: 100, rows: 5)
+        #expect(map.day(CGPoint(x: 10, y: 110)) == 0)
+        #expect(map.day(CGPoint(x: 349, y: 110)) == 6)
+        #expect(map.day(CGPoint(x: 120, y: 350)) == 2 * 7 + 2)
+        #expect(map.day(CGPoint(x: 120, y: 90)) == nil)
+        var scrolled = map
+        scrolled.scrolled = 100
+        #expect(scrolled.day(CGPoint(x: 120, y: 350)) == 3 * 7 + 2)
+        #expect(scrolled.day(CGPoint(x: 120, y: 590)) == nil) // past the last week
+        // five weeks of 100 fit in 500: nothing to scroll
+        #expect(map.autoscroll(CGPoint(x: 120, y: 595), edge: 44) == 0)
+        // six don't (a phone on its side): down near the bottom or below it, up near the top or above it
+        var tall = map
+        tall.rows = 6
+        #expect(tall.scrollRange == 100)
+        #expect(tall.autoscroll(CGPoint(x: 120, y: 580), edge: 44) == 1)
+        #expect(tall.autoscroll(CGPoint(x: 120, y: 700), edge: 44) == 1)
+        #expect(tall.autoscroll(CGPoint(x: 120, y: 120), edge: 44) == -1)
+        #expect(tall.autoscroll(CGPoint(x: 120, y: 50), edge: 44) == -1)
+        #expect(tall.autoscroll(CGPoint(x: 120, y: 350), edge: 44) == 0)
+    }
+
+    /// A move is drawn at once and saved as `due_date` / `due_at`; a failed save puts only that to-do back.
+    @MainActor @Test func aMoveIsDrawnAtOnceAndPutBackWhenItFails() async throws {
+        let a = TodoItem(id: "a", title: "A", dueAt: at(9, 14))
+        let b = TodoItem(id: "b", title: "B", dueDate: "2026-11-10")
+        let store = TodoStore(cachedTodos: [a, b], cacheWriter: nil, hubListChanged: {})
+        let hub = FakeHub()
+        hub.on("PATCH", "/api/v1/todos/a") { req in
+            let body = try JSONSerialization.jsonObject(with: req.body ?? Data()) as? [String: Any]
+            #expect(body?["due_date"] as? String == "2026-11-12" && body?["due_at"] == nil)
+            return Data(#"{"todo":{"id":"a","title":"A","due_date":"2026-11-12"}}"#.utf8)
+        }
+        let saving = store.reschedule("a", to: .day("2026-11-12"), api: hub.client)
+        #expect(store.todo(id: "a")?.dueDate == "2026-11-12" && store.todo(id: "a")?.dueAt == nil) // drawn at once
+        #expect(await saving.value)
+        #expect(store.todo(id: "a")?.dueDate == "2026-11-12")
+
+        // The fake hub has no PATCH route for b: it answers 404.
+        let failing = store.reschedule("b", to: .at(at(12, 9)), api: hub.client)
+        #expect(store.todo(id: "b")?.dueAt == at(12, 9))
+        #expect(await failing.value == false)
+        #expect(store.todo(id: "b") == b)
+        #expect(store.todo(id: "a")?.dueDate == "2026-11-12") // the other move stays
+        #expect(hub.sent("PATCH", "/api/v1/todos/b").count == 1)
     }
 
     @Test func headings() {

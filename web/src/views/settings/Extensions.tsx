@@ -15,7 +15,7 @@ import { extensionsRoute, routeSub } from "../../lib/extension-market";
 import { composing } from "../../lib/send-history";
 import {
   asksFirst, changed, checkError, choiceLabel, clearedSecrets, clearExtensionSecret, compact, configError, fieldLabel, fieldTitle, isDirty, listItems, listExtensionsInfo, listSummary, numberProblems,
-  placeholder, extensionDetail, extensionState, extensionTone, pointText, readNumber, rebaseDraft, runNote, same, secretState, setAt, setContribution, setExtensionConfig, setExtensionEnabled,
+  placeholder, extensionDetail, extensionState, extensionTone, pointText, readNumber, rebaseDraft, runNote, same, secretState, setupSecret, setAt, setContribution, setExtensionConfig, setExtensionEnabled,
   channelOf, machineStatus, nodeProgramStatus, pickerChoices, sandboxState, saveFooter, setExtensionAutoUpgrade, setExtensionSecret, sourceText, stateLine, valueAt,
   removeHandoffRule, setExtensionSecretReference, type HandoffRule, type SecretUser,
   type HubExtension, type HubExtensionDetail, type Json, type JsonObject, type ExtensionField, type ExtensionNodeState, type ExtensionSandbox, type ExtensionSecret,
@@ -42,14 +42,20 @@ import { tRich } from "../../i18n/rich";
 import { ago } from "../../lib/format";
 import { scoped, useScope } from "../../lib/current-assistant";
 import { SubscriptionsEntry } from "../subscriptions/SubscriptionsEntry";
+import { isOpenBeside } from "./open-beside";
 
 /**
  * The tab's pages, by its `extension` parameter (lib/extension-market.ts extensionsRoute): the list, an extension, a page an extension
  * draws, and the market (its catalog, one extension of it, the markets).
  */
-export function Extensions({ open, onOpen, onChannel, onConnector }: {
+export function Extensions({ open, onOpen, onChannel, onConnector, headerBack, openBeside }: {
   open: string | null;
   onOpen: (id: string | null) => void;
+  /** The page's top bar has the way back (a phone, Settings.tsx itemParent): an extension's page, a page it draws, the
+   *  market's catalog, one of its extensions and the list of markets draw no Back of their own. */
+  headerBack?: boolean;
+  /** The extension open beside the list (Settings' two columns), whose row the list marks. */
+  openBeside?: string | null;
   /** `manager`: another manager's channel / connector (its extension's page links to its own); none: the default's. */
   onChannel?: (id: string, manager?: string) => void;
   onConnector?: (id: string, manager?: string) => void;
@@ -69,6 +75,7 @@ export function Extensions({ open, onOpen, onChannel, onConnector }: {
               id={r.id}
               manager={manager}
               onBack={() => onOpen(null)}
+              headerBack={headerBack}
               onPage={(ui) => go({ kind: "page", id: r.id, ui, manager })}
               onUpgrade={(market, id) => go({ kind: "item", market, id, manager })}
               onChannel={onChannel}
@@ -80,11 +87,11 @@ export function Extensions({ open, onOpen, onChannel, onConnector }: {
     case "page":
       return (
         <OwnedExtension id={r.id} manager={r.manager}>
-          {(manager) => <ExtensionPage key={`${open}@${manager ?? ""}`} id={r.id} ui={r.ui} manager={manager} onBack={() => go({ kind: "extension", id: r.id, manager })} />}
+          {(manager) => <ExtensionPage key={`${open}@${manager ?? ""}`} id={r.id} ui={r.ui} manager={manager} onBack={headerBack ? undefined : () => go({ kind: "extension", id: r.id, manager })} />}
         </OwnedExtension>
       );
     case "catalog":
-      return <MarketCatalog onBack={() => onOpen(null)} onOpen={(it) => go({ kind: "item", market: it.market, id: it.id })} onMarkets={() => go({ kind: "markets" })} />;
+      return <MarketCatalog onBack={headerBack ? undefined : () => onOpen(null)} onOpen={(it) => go({ kind: "item", market: it.market, id: it.id })} onMarkets={() => go({ kind: "markets" })} />;
     case "item":
       // another manager's upgrade goes back to that manager's extension: the catalog is the default's
       return (
@@ -93,14 +100,14 @@ export function Extensions({ open, onOpen, onChannel, onConnector }: {
           market={r.market}
           id={r.id}
           manager={r.manager ?? installTo}
-          onBack={() => go(r.manager ? { kind: "extension", id: r.id, manager: r.manager } : { kind: "catalog" })}
+          onBack={headerBack ? undefined : () => go(r.manager ? { kind: "extension", id: r.id, manager: r.manager } : { kind: "catalog" })}
           onInstalled={(id) => go({ kind: "extension", id, manager: r.manager })}
         />
       );
     case "markets":
-      return <Markets onBack={() => go({ kind: "catalog" })} />;
+      return <Markets onBack={headerBack ? undefined : () => go({ kind: "catalog" })} />;
     default:
-      return <ExtensionList onOpen={onOpen} onMarket={() => go({ kind: "catalog" })} onMarkets={() => go({ kind: "markets" })} />;
+      return <ExtensionList onOpen={onOpen} onMarket={() => go({ kind: "catalog" })} onMarkets={() => go({ kind: "markets" })} openBeside={openBeside} />;
   }
 }
 
@@ -114,8 +121,9 @@ function OwnedExtension({ id: _id, manager, children }: { id: string; manager?: 
   return <>{children(manager ?? otherManager(picked ?? undefined))}</>;
 }
 
-/** A page an extension draws (placement plugin_page), under the extension's name. */
-function ExtensionPage({ id, ui, manager, onBack }: { id: string; ui: string; manager?: string; onBack: () => void }) {
+/** A page an extension draws (placement plugin_page), under the extension's name. `onBack`: none where the page's top
+ *  bar has the way back (a phone). */
+function ExtensionPage({ id, ui, manager, onBack }: { id: string; ui: string; manager?: string; onBack?: () => void }) {
   usePinnedExtension(id, manager);
   const [d, setD] = useState<HubExtensionDetail | null>(null);
   const [n, setN] = useState(0);
@@ -126,9 +134,11 @@ function ExtensionPage({ id, ui, manager, onBack }: { id: string; ui: string; ma
   return (
     <>
       <div className="mb-3 flex items-center gap-2">
-        <Button tone="quiet" icon="chevronLeft" onClick={onBack} className="-ml-2">
-          <span className="max-w-[240px] truncate">{d?.name ?? id}</span>
-        </Button>
+        {onBack && (
+          <Button tone="quiet" icon="chevronLeft" onClick={onBack} className="-ml-2">
+            <span className="max-w-[240px] truncate">{d?.name ?? id}</span>
+          </Button>
+        )}
         <span className="flex-1" />
         <IconButton icon="retry" label={t("settings-extensions.redraw")} onClick={() => setN((x) => x + 1)} />
       </div>
@@ -154,7 +164,11 @@ function StateDot({ extension }: { extension?: HubExtension | null }) {
 
 // ── the list ────────────────────────────────────────────
 
-function ExtensionList({ onOpen, onMarket, onMarkets }: { onOpen: (id: string) => void; onMarket: () => void; onMarkets: () => void }) {
+/** `openBeside`: the extension open beside the list (Settings' two columns): its row is marked current, and every row
+ *  puts its state under its name (with a warning, when it has one, in place of the description), so the narrow column
+ *  shows the name whole. */
+function ExtensionList({ onOpen, onMarket, onMarkets, openBeside }: { onOpen: (id: string) => void; onMarket: () => void; onMarkets: () => void; openBeside?: string | null }) {
+  const picked = useChosenManager();
   const [extensions, setExtensions] = useState<HubExtension[] | null>(null);
   const [markets, setMarkets] = useState(false);
   const [error, setError] = useState("");
@@ -268,15 +282,31 @@ function ExtensionList({ onOpen, onMarket, onMarkets }: { onOpen: (id: string) =
           const kept = drafts.has(unsavedKey(p.id, p.manager));
           // the kept edits' mark goes before what is still missing, not instead of it
           const needs = p.needs_setup?.length ? t("settings-extensions.needs_setup", { items: formatList(p.needs_setup, NARROW_LIST) }) : "";
-          const note = p.error || [kept ? t("settings-extensions.unsaved") : "", needs].filter(Boolean).join(" · ") || p.description;
+          const warning = p.error || [kept ? t("settings-extensions.unsaved") : "", needs].filter(Boolean).join(" · ");
+          const compact = openBeside !== undefined;
+          const note = warning || (compact ? "" : p.description);
+          const sub = routeSub({ kind: "extension", id: p.id, manager: p.manager && p.manager !== defaultManager() ? p.manager : undefined }) ?? p.id;
+          // a route without @manager opens the current assistant's copy (OwnedExtension)
+          const current = isOpenBeside(openBeside, p.id, p.manager, picked);
+          const state = (
+            <span className={cx("flex items-center gap-1.5 whitespace-nowrap text-ink-2", compact ? "mt-0.5 min-w-0 text-submeta" : "shrink-0 text-[12px]")}>
+              <StateDot extension={p} />
+              <span className={cx(compact && "truncate")}>
+                {extensionState(p)}
+                {listAuthNote(p.auth)}
+                {p.upgrade?.state === "needs_permission" && t("settings-extensions.upgrade_pending")}
+              </span>
+            </span>
+          );
           return (
             <button
               key={`${p.manager ?? ""}:${p.id}`}
               type="button"
               data-extension-row={p.id}
               data-manager={p.manager ?? ""}
-              onClick={() => onOpen(routeSub({ kind: "extension", id: p.id, manager: p.manager && p.manager !== defaultManager() ? p.manager : undefined }) ?? p.id)}
-              className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-hover"
+              aria-current={current || undefined}
+              onClick={() => onOpen(sub)}
+              className={cx("flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors", current ? "bg-accent-tint" : "hover:bg-hover")}
               style={{ animation: `fade-up 320ms ${EASE} ${Math.min(i, 8) * 30}ms both` }}
             >
               <ExtensionLogo url={p.icon_url} manager={p.manager ?? ""} iconSize={15} className={cx("flex size-8 shrink-0 items-center justify-center rounded-[8px]", TILE[extensionTone(p)])} />
@@ -285,6 +315,7 @@ function ExtensionList({ onOpen, onMarket, onMarkets }: { onOpen: (id: string) =
                   <span className="truncate text-[13px] text-ink">{p.name}</span>
                   {p.source !== "installed" && sourceText(p.source) && <Pill>{sourceText(p.source)}</Pill>}
                 </div>
+                {compact && state}
                 {note && (
                   <div className={cx("mt-0.5 truncate text-[11.5px]", p.error ? "text-red" : kept || needs ? "text-orange" : "text-ink-3")}>
                     {note}
@@ -292,12 +323,7 @@ function ExtensionList({ onOpen, onMarket, onMarkets }: { onOpen: (id: string) =
                 )}
                 {packageDownloads(p.downloads) !== null && <div className="mt-0.5"><ExtensionDownloads downloads={p.downloads} /></div>}
               </div>
-              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[12px] text-ink-2">
-                <StateDot extension={p} />
-                {extensionState(p)}
-                {listAuthNote(p.auth)}
-                {p.upgrade?.state === "needs_permission" && t("settings-extensions.upgrade_pending")}
-              </span>
+              {!compact && state}
               <Icon name="chevronRight" size={12} stroke={2} className="shrink-0 text-ink-3" />
             </button>
           );
@@ -388,11 +414,13 @@ function useUnsaved(): ReadonlyMap<string, Unsaved> {
   return unsaved;
 }
 
-function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChannel, onConnector }: {
+function ExtensionDetail({ id, manager, onBack: back, headerBack, onPage, onUpgrade, onChannel, onConnector }: {
   id: string;
   /** Whose extension it is (several managers); none: the default's. */
   manager?: string;
   onBack: () => void;
+  /** The page's top bar has the way back (a phone): no Back of its own. */
+  headerBack?: boolean;
   onPage: (ui: string) => void;
   onUpgrade: (market: string, id: string) => void;
   onChannel?: (id: string, manager?: string) => void;
@@ -463,14 +491,21 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
     else void getAuth(id).then((v) => setDetail((cur) => (cur ? { ...cur, auth: v } : cur)), () => {});
   };
   // a reconnect the hub could not resume: an extension_auth push missed meanwhile is not replayed (#4954); only the
-  // sign-in is read again, so what is being typed into the settings stays
-  useEffect(() => onHubEvent("hello", (m) => !isResumed(m) && authChanged()), [id]);
+  // sign-in is read again, so what is being typed into the settings stays. Only an extension one signs in to has a
+  // sign-in to read: the hub answers the others 404 (#8854)
+  const signsIn = !!detail?.auth;
+  useEffect(() => (signsIn ? onHubEvent("hello", (m) => !isResumed(m) && authChanged()) : undefined), [id, signsIn]);
 
   const problems = useMemo(() => numberProblems(typed), [typed]);
   const dirty = !!detail && (isDirty(draft, detail.config) || Object.keys(problems).length > 0);
   const canSave = dirty && !Object.keys(problems).length && !saving && !offline;
   const fields = detail?.form?.fields ?? [];
   const editable = !!detail && !detail.read_only && detail.source !== "dev" && detail.source !== "hub.json";
+  const setupTarget = editable ? setupSecret(detail?.needs_setup, detail?.secrets) : undefined;
+  // Nothing to set here: the configuration's heading stands over "No configuration required". Otherwise every group in
+  // it has a heading of its own and the configuration's would stand over nothing (#8853).
+  const noConfiguration = !!detail && editable && !fields.length && !detail.secrets?.length && !shownPages(detail.ui, detail.auth).length && !detail.auth
+    && !channelOf(detail) && !detail.contributes?.connectors?.length;
 
   // The draft is the user's edits on top of `base`, the configuration last read (null until the page's first read is
   // shown). Each newer configuration the hub sends (another device's or app's change, an upgrade, a save) takes the
@@ -655,9 +690,11 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
     <div>
       <div className="relative mb-3 flex items-center gap-2">
         {/* unsaved edits stay (the list marks them); Revert in the save bar drops them */}
-        <Button tone="quiet" icon="chevronLeft" onClick={back} className="-ml-2">
-          {t("settings-extensions.title")}
-        </Button>
+        {!headerBack && (
+          <Button tone="quiet" icon="chevronLeft" onClick={back} className="-ml-2">
+            {t("settings-extensions.title")}
+          </Button>
+        )}
         <OwnerMark manager={manager} />
         <span className="flex-1" />
         <IconButton icon="retry" label={t("settings-extensions.reload")} onClick={load} disabled={loading} />
@@ -680,7 +717,13 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
           <div className="flex flex-col gap-1.5 border-t border-line px-4 py-3">
             {p?.description && <p className="text-[12.5px] leading-relaxed text-ink-2">{p.description}</p>}
             {p && runNote(p) && <p className="text-[11.5px] text-ink-3">{runNote(p)}</p>}
-            {!!p?.needs_setup?.length && <p className="text-[12px] text-orange">{t("settings-extensions.needs_setup", { items: formatList(p.needs_setup, NARROW_LIST) })}</p>}
+            {!!p?.needs_setup?.length && (setupTarget ? (
+              // What is missing is a secret to set here: the line opens it (#8853).
+              <button type="button" onClick={() => setSecret(setupTarget)} className="flex items-center gap-1 text-left text-label text-orange hover:underline" data-extension-needs-setup>
+                {t("settings-extensions.needs_setup", { items: formatList(p.needs_setup, NARROW_LIST) })}
+                <Icon name="chevron" size={10} stroke={2.4} className="shrink-0" style={{ transform: "rotate(-90deg)" }} />
+              </button>
+            ) : <p className="text-label text-orange" data-extension-needs-setup>{t("settings-extensions.needs_setup", { items: formatList(p.needs_setup, NARROW_LIST) })}</p>)}
             {p?.error && <p className="text-[12px] break-words text-red select-text">{p.error}</p>}
             {error && <p className="text-[12px] break-words text-red select-text">{t("settings-extensions.detail_error", { error })}</p>}
           </div>
@@ -699,11 +742,12 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
           onUpgrade={onUpgrade}
           onUninstall={() => setRemoving(true)}
           onChecked={async () => { await readDetail((d) => dirtyNow.current ? setDetail(d) : apply(d), (error) => { throw error; }); }}
+          configurationTitle={noConfiguration}
           configuration={<>
           {p.auth && <AuthGroup id={p.id} auth={p.auth} enabled={p.enabled ?? true} start={startSignIn} onChange={authChanged} />}
           {onChannel && channelOf(p) && <ChannelLink id={channelOf(p)!} manager={manager} onOpen={onChannel} />}
           {!editable && <Group><Row label={t(p.read_only || p.source === "hub.json" ? "settings-extensions.read_only" : "settings-extensions.externally_managed")} wrapHint /></Group>}
-          {editable && !fields.length && !p.secrets?.length && !shownPages(p.ui, p.auth).length && !p.auth && !channelOf(p) && !p.contributes?.connectors?.length && <Group><Row label={t("settings-extensions.no_configuration")} /></Group>}
+          {noConfiguration && <Group><Row label={t("settings-extensions.no_configuration")} /></Group>}
 
           {shownPages(p.ui, p.auth).length > 0 && (
             <Group title={t("settings-extensions.pages_title")} footer={t("settings-extensions.pages_footer")}>
@@ -730,7 +774,7 @@ function ExtensionDetail({ id, manager, onBack: back, onPage, onUpgrade, onChann
             <>
               {fieldErrors[""] && <p role="alert" className="mb-3 rounded-[8px] bg-red-tint px-3 py-2 text-[12px] break-words text-red">{t("settings-extensions.not_saved", { error: fieldErrors[""] })}</p>}
               {fields.some((f) => f.type !== "object") && (
-                <Group footer={saveFooter(fields)}>
+                <Group title={t("settings-extensions.fields_title")} footer={saveFooter(fields)}>
                   {fields
                     .filter((f) => f.type !== "object")
                     .map((f) => (

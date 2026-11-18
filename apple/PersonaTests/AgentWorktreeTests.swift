@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// A new agent's own worktree (#6115): the branch it gets, where it checks out, and what closing or deleting the agent
 /// asks before removing it.
@@ -31,6 +32,20 @@ struct AgentWorktreeTests {
         // Not in a repository: no path, so no switch.
         let none = try JSONDecoder().decode(WorktreeStatus.self, from: Data(#"{"worktree":false,"ours":false,"dirty":0,"unmerged":0}"#.utf8))
         #expect(none.path.isEmpty)
+    }
+
+    /// The engine an agent ran in made its worktree, and is the one asked about it and to remove it (a Paseo agent's is
+    /// Paseo's); a session that names none leaves it to the computer's default.
+    @Test func theEngineTheAgentRanInIsAsked() throws {
+        func session(_ fields: String) throws -> Session {
+            try JSON.decoder.decode(Session.self, from: Data(#"{"machine_id":"mac","session_id":"s1","status":"idle"\#(fields)}"#.utf8))
+        }
+        #expect(AgentWorktree.engine(of: try session(#","pane_id":"w1:p1""#)) == "herdr")
+        #expect(AgentWorktree.engine(of: try session(#","pane_id":"orca:t1""#)) == "orca")
+        #expect(AgentWorktree.engine(of: try session(#","source_kind":"runtime","space_kind":"paseo""#)) == "paseo")
+        #expect(AgentWorktree.engine(of: try session(#","pane_id":"botmux:x1""#)) == nil) // a Feishu topic, no engine
+        #expect(AgentWorktree.engine(of: try session(#","source_kind":"runtime","space_kind":"dsh""#)) == nil)
+        #expect(AgentWorktree.engine(of: try session("")) == nil)
     }
 
     @Test func onlyOneOfOursIsOfferedForCleanup() {

@@ -222,10 +222,14 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
 	var recording map[string][]byte
+	var meeting *Meeting
+	var hub HubTranscript
 	var raw []byte
 	var err error
 	if kind == KindRecording {
-		recording, err = e.Store.recordingSnapshot(id)
+		// Its files with its meeting.json and the hub's transcript, read together: detail.segments is the transcript of
+		// record, detail.meta has the transcription.
+		recording, meeting, hub, err = e.Store.recordSnapshot(id)
 		raw = recording["meta.json"]
 		if err == nil && raw == nil {
 			err = ErrNotFound
@@ -238,10 +242,7 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 	}
 	d.Meta = raw
 	if kind == KindRecording {
-		e.Store.recFilesMu.RLock()
-		m, _ := e.Store.readMeeting(id)
-		e.Store.recFilesMu.RUnlock()
-		d.Meta = metaWithMeeting(raw, m)
+		d.Meta = metaWithNameSource(metaWithMeeting(raw, meeting))
 	}
 	if kind == KindProject {
 		d.Log = e.Store.Log(id, 30)
@@ -255,9 +256,7 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 		}
 	}
 	if kind == KindRecording {
-		var segs []RecordingSegment
-		_ = json.Unmarshal(recording["segments.json"], &segs)
-		d.Segments = nonNilSegments(segs)
+		d.Segments = nonNilSegments(recordOf(recording, meeting, hub))
 		if raw, err := os.ReadFile(e.Store.path(kind, id, "minutes.json")); err == nil && json.Valid(raw) {
 			var r Recording
 			if json.Unmarshal(recording["meta.json"], &r) == nil {
@@ -285,6 +284,11 @@ func (e *Engine) Get(kind, id string, recentChars int) (*Detail, error) {
 	}
 	if kind == KindTopic {
 		d.Points = e.Store.TopicPoints(id)
+	}
+	if kind == KindPerson {
+		if all := e.Store.profiles(SafeID(id)); len(all) > 0 {
+			d.Profiles = all
+		}
 	}
 	var refs struct {
 		Projects []string `json:"projects"`
@@ -316,8 +320,7 @@ func (e *Engine) itemEntries(refs []string) []Entry {
 			continue
 		}
 		if it, ok := e.Store.Item(kind, id); ok && it.Title != "" {
-			by[kind] = append(by[kind], Entry{Kind: kind, ID: it.ID, Name: it.Title, OneLine: it.Note, Importance: it.Importance,
-				Relevance: it.Relevance, Tags: it.Tags, Updated: it.At, Extra: it.URL})
+			by[kind] = append(by[kind], itemEntry(kind, it))
 		}
 	}
 	var out []Entry
@@ -398,6 +401,12 @@ func (e *Engine) Apply(kind, id string, u Update) (string, error) {
 	if e.Store.ReadOnly() {
 		return "", ErrReadOnly
 	}
+	u = stripUnsupported(kind, u) // what the kind does not use is neither applied nor locked (Unsupported says it)
+	if err := checkProfile(u.Profile); err != nil {
+		return "", err
+	}
+	profile := u.Profile
+	u.Profile = nil
 	e.Store.applyMu.Lock()
 	defer e.Store.applyMu.Unlock()
 	if kind == KindProject {
@@ -407,7 +416,21 @@ func (e *Engine) Apply(kind, id string, u Update) (string, error) {
 	if err == nil && u.MergeInto == "" {
 		err = e.claim(kind, out, u, "", nil, nil)
 	}
+	if err == nil && profile != nil {
+		_, err = e.putProfile(out, UserWriter, profile)
+	}
 	return out, err
+}
+
+// putProfile replaces writer's profile of person pid and writes the person's summary.md again; it answers the profile
+// it replaced (nil for none).
+func (e *Engine) putProfile(pid, writer string, p *PersonProfile) (*PersonProfile, error) {
+	before, err := e.Store.putProfile(pid, writer, p, time.Now())
+	if err != nil {
+		return before, err
+	}
+	e.WritePersonSummary(pid)
+	return before, nil
 }
 
 func (e *Engine) apply(kind, id string, u Update) (string, error) {

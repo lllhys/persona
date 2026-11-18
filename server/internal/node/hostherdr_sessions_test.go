@@ -303,6 +303,53 @@ func TestHerdrHostRoutesEachCallToItsSession(t *testing.T) {
 	fs.assertUntouched(t)
 }
 
+func TestHerdrHostCreateWorktreeFromMainUsesFreshSessionLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mainDir string
+		fails   bool
+	}{
+		{name: "main workspace is open", mainDir: "/srv/proj"},
+		{name: "main workspace moved to an ancestor", mainDir: "/srv"},
+		{name: "main workspace was closed"},
+		{name: "snapshot failed", fails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fs := namedHerdr(t, nil)
+			ns := h.named.lookup(t.Context(), "build")
+			ns.layout = &host.Layout{Spaces: []host.Space{{ID: "@build:w-main", Cwd: "/srv/proj"}}}
+			ns.busy.Store(true)
+			defer ns.busy.Store(false)
+			var spaces []any
+			if tc.mainDir != "" {
+				spaces = append(spaces, map[string]any{"workspace_id": "w-main", "cwd": tc.mainDir})
+			}
+			fs.build.reply("session.snapshot", snapshot(spaces, nil, nil, nil))
+			if tc.fails {
+				fs.build.reply("session.snapshot", herdrFail{Code: "unavailable", Message: "snapshot unavailable"})
+			}
+			fs.build.reply("worktree.create", map[string]any{"workspace": map[string]any{"workspace_id": "w9"},
+				"tab": map[string]any{"tab_id": "w9:t1"}, "root_pane": map[string]any{"pane_id": "w9:p1"}})
+			created, err := h.CreateWorktreeFromMain(t.Context(), "@build:w4", "/srv/proj", "c2", "b", "/tmp/wt")
+			if err != nil || created.SpaceID != "@build:w9" || created.SlotID != "@build:w9:t1" || created.Pane.ID != "@build:w9:p1" {
+				t.Fatalf("worktree from main: %+v %v", created, err)
+			}
+			want := map[string]any{"cwd": "/srv/proj", "base": "c2", "branch": "b", "path": "/tmp/wt", "focus": false}
+			if tc.mainDir == "/srv/proj" {
+				delete(want, "cwd")
+				want["workspace_id"] = "w-main"
+			}
+			assertTrace(t, fs.build.trace("worktree.create"), []string{call("worktree.create", want)})
+			for _, f := range []*fakeHerdr{fs.own, fs.review} {
+				if calls := f.calls(); len(calls) != 0 {
+					t.Errorf("worktree creation left its source session: %v", calls)
+				}
+			}
+			fs.assertUntouched(t)
+		})
+	}
+}
+
 // A named session that does not answer does not hold up the own server's list: its agents come from its last answer
 // meanwhile, and it is not asked again while a call to it is out.
 func TestNamedSessionThatHangsHoldsNothingUp(t *testing.T) {

@@ -105,9 +105,9 @@ class AssistantDraftScopeTest {
         override suspend fun deleteMemory(name: String) = Unit
     }
     private fun mount(repository: DraftRepository = drafts, management: Management? = null,
-        hub: Hub = Hub(), startWith: (suspend (String) -> SessionKey)? = null): Hub {
+        hub: Hub = Hub(), style: AppStyle = AppStyle.Default, startWith: (suspend (String) -> SessionKey)? = null): Hub {
         rule.setContent {
-            PersonaTheme(reduceMotion = true) {
+            PersonaTheme(reduceMotion = true, style = style) {
                 CompositionLocalProvider(LocalManagerRoster provides ManagerRoster(listOf(
                     HubManager("assistant", "助手", online = true, isDefault = true), HubManager("work", "工作", online = true),
                 ), "assistant"), LocalHubFeatures provides setOf(AssistantReadinessFeature)) {
@@ -215,7 +215,8 @@ class AssistantDraftScopeTest {
 
     @Test fun failedLauncherSendRetainsCreatedTargetAndClientIdAfterSwitchingBack() {
         val created = mutableListOf<SessionKey>()
-        val hub = mount(management = Management(), hub = Hub().apply { failNext = true }, startWith = {
+        // The launcher chip remains on Brief; Glass uses the model panel covered by ModelPillTest.
+        val hub = mount(management = Management(), hub = Hub().apply { failNext = true }, style = AppStyle.Brief, startWith = {
             SessionKey("mac", "branch-${created.size}").also { created += it }
         })
         rule.onNodeWithText("默认：default").performClick()
@@ -230,7 +231,7 @@ class AssistantDraftScopeTest {
         pick("工作")
         text("工作稿")
         pick("助手")
-        rule.onNodeWithText("codex-test · 仅这一次").assertExists()
+        rule.onNodeWithText("codex-test").assertExists()
         // The failed first message waits as a bubble on its assistant's page (#4339 C18): Resend sends it again.
         rule.onNodeWithText("重发").performClick()
         rule.waitForIdle()

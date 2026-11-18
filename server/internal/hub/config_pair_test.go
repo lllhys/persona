@@ -29,6 +29,7 @@ func TestPairURLMetadataContract(t *testing.T) {
 }
 
 func TestPairCLIUsesLoopbackAndTemporaryToken(t *testing.T) {
+	setPairLanguage(t, "zh-Hans")
 	p := pairCode{URL: "http://example.com:18660", Token: "jp_temporary", ExpiresAt: time.Now().Add(pairLifetime), HubID: "hub-example", FP: strings.Repeat("A", 43), TLSPort: 18662, Alt: []string{"https://example.com:18662"}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/" { // a node's port probe (node/ports.go), not this test's client
@@ -62,6 +63,7 @@ func TestPairCLIUsesLoopbackAndTemporaryToken(t *testing.T) {
 }
 
 func TestPairCLIOfflineAndLegacy(t *testing.T) {
+	setPairLanguage(t, "zh-Hans")
 	srv := httptest.NewServer(http.NotFoundHandler())
 	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	srv.Close()

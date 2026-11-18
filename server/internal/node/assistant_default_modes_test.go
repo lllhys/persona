@@ -2,7 +2,6 @@ package node
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -13,8 +12,8 @@ import (
 func TestClaudeNewConversationPermissionModes(t *testing.T) {
 	for _, mode := range proto.PermissionModes {
 		t.Run(mode, func(t *testing.T) {
-			f := sdkTest(t)
-			id, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "hello", nil, mode, "", sdkExec(proto.AssistantRuntimeAgentSDK))
+			f := cliTest(t)
+			id, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "hello", nil, mode, "", cliExec())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -31,14 +30,8 @@ func TestClaudeNewConversationPermissionModes(t *testing.T) {
 				t.Fatalf("applied mode: %q, want %q", applied, mode)
 			}
 			if mode == proto.ModeBypass {
-				var start struct {
-					Options struct{ PermissionMode string }
-				}
-				if err := json.Unmarshal([]byte(f.file("start.json")), &start); err != nil {
-					t.Fatal(err)
-				}
-				if start.Options.PermissionMode != mode {
-					t.Fatalf("start options: %+v", start)
+				if argv := f.file("cli-argv"); !strings.Contains(argv, "--permission-mode "+mode) {
+					t.Fatalf("start args: %q", argv)
 				}
 			} else if !strings.Contains(f.file("stdin.jsonl"), `"mode":"`+mode+`"`) {
 				t.Fatalf("Claude did not receive mode %s: %s", mode, f.file("stdin.jsonl"))

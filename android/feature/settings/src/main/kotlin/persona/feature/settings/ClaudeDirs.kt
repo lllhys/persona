@@ -77,6 +77,13 @@ internal data class ClaudeDirsUiState(
     val unsupported: Boolean = false,
 )
 
+/**
+ * The state to draw for [machineId]: what was read for another computer is not this computer's folders, so until this
+ * computer's own read starts the section shows it reading (iOS draws the section only for its own `ref`, #9276).
+ */
+internal fun ClaudeDirsUiState.forMachine(machineId: String): ClaudeDirsUiState =
+    if (this.machineId == machineId) this else ClaudeDirsUiState(machineId = machineId, loading = true)
+
 internal class ClaudeDirsModel(private val api: MachineManagement) {
     private val mutable = MutableStateFlow(ClaudeDirsUiState())
     val state = mutable.asStateFlow()
@@ -88,26 +95,31 @@ internal class ClaudeDirsModel(private val api: MachineManagement) {
             val dirs = api.claudeDirs(machineId)
             mutable.update { if (it.machineId == machineId) it.copy(state = dirs, error = null) else it }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: UnsupportedOperationException) { mutable.update { it.copy(unsupported = true) } }
+        catch (_: UnsupportedOperationException) { mutable.update { if (it.machineId == machineId) it.copy(unsupported = true) else it } }
         catch (error: Exception) {
             mutable.update { if (it.machineId == machineId) it.copy(error = ResText.of(R.string.settings_claude_dirs_load_failed, failureReasonText(error))) else it }
         } finally { mutable.update { if (it.machineId == machineId) it.copy(loading = false) else it } }
     }
 
-    /** Saves [blocked]; returns whether it worked (the notice to show is the caller's). */
-    suspend fun save(blocked: List<String>, key: String): Boolean {
+    /**
+     * Saves [blocked] for [machineId] (the computer now shown). Returns whether it worked (the notice to show is the
+     * caller's). Another computer's list must not be sent, and a tap before this computer's own load must no-op (#9276).
+     */
+    suspend fun save(machineId: String, blocked: List<String>, key: String): Boolean {
         val s = state.value
-        if (s.busy != null || s.machineId.isBlank()) return false
+        if (s.busy != null || machineId.isBlank() || s.machineId != machineId || s.state == null) return false
         mutable.update { it.copy(busy = key) }
         return try {
-            val next = api.setBlockedClaudeDirs(s.machineId, blocked)
-            mutable.update { if (it.machineId == s.machineId) it.copy(state = next, error = null) else it }
+            val next = api.setBlockedClaudeDirs(machineId, blocked)
+            // Another computer was picked while this write was out: keep its rows, and do not toast a success for the old one.
+            if (state.value.machineId != machineId) return false
+            mutable.update { if (it.machineId == machineId) it.copy(state = next, error = null) else it }
             true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
-            mutable.update { it.copy(error = ResText.of(R.string.settings_claude_dirs_save_failed, failureReasonText(error))) }
+            mutable.update { if (it.machineId == machineId) it.copy(error = ResText.of(R.string.settings_claude_dirs_save_failed, failureReasonText(error))) else it }
             false
-        } finally { mutable.update { it.copy(busy = null) } }
+        } finally { mutable.update { if (it.machineId == machineId) it.copy(busy = null) else it } }
     }
 }
 
@@ -231,9 +243,16 @@ internal fun rememberClaudeDirs(management: MachineManagement, machineId: String
 }
 
 @Composable
-internal fun claudeDirsSaver(model: ClaudeDirsModel, onDone: () -> Unit): (List<String>, String, ResText) -> Unit {
+internal fun claudeDirsSaver(model: ClaudeDirsModel, machineId: () -> String, onDone: () -> Unit): (List<String>, String, ResText) -> Unit {
     val scope = rememberCoroutineScope()
     val feedback = LocalAppFeedback.current
     val res = androidx.compose.ui.platform.LocalResources.current
-    return { blocked, key, done -> scope.launch { if (model.save(blocked, key)) { feedback?.notice(done.resolve(res)); onDone() } } }
+    return { blocked, key, done ->
+        scope.launch {
+            if (model.save(machineId(), blocked, key)) {
+                feedback?.notice(done.resolve(res))
+                onDone()
+            }
+        }
+    }
 }

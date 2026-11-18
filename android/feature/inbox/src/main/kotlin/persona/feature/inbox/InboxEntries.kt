@@ -85,7 +85,7 @@ fun EntryProviderScope<NavKey>.inboxEntries(
 }
 
 @Serializable @SerialName("persona.feature.inbox.MailRoute")
-data class MailRoute(val itemId: String) : NavKey
+data class MailRoute(val itemId: String, val uid: Long? = null) : NavKey
 
 @Serializable @SerialName("persona.feature.inbox.LarkMomentRoute")
 data class LarkMomentRoute(val postId: String, val itemId: String? = null) : NavKey

@@ -110,6 +110,8 @@ def build(config, checkout, sha, directory, name=None):
         if (built.get("repository") == config["repository"] and built.get("source_sha") == sha
                 and built.get("version_code") == code and built.get("version_name") == name
                 and built.get("package") == config["application_id"]
+                # A receipt from before the build commit was injected has no such field: its APK shows Unknown in About.
+                and built.get("build_commit") == sha
                 and built.get("unsigned_sha256") == digest(unsigned)):
             return built
     tests = ["python3", "-m", "unittest", "discover", "-s", "scripts/release", "-p", "test_*android*.py"]
@@ -125,6 +127,8 @@ def build(config, checkout, sha, directory, name=None):
     run(["./gradlew", "--no-daemon", "--console=plain",
          "-PpersonaApplicationId=" + config["application_id"],
          f"-PpersonaVersionCode={code}", "-PpersonaVersionName=" + name,
+         # The About page shows the commit this APK is built from: the checkout's full sha, passed explicitly.
+         "-PpersonaBuildCommit=" + sha,
          ":core:hub:test", ":feature:settings:testDebugUnitTest",
          ":feature:agents:testDebugUnitTest", ":platform:notify:testDebugUnitTest",
          ":app:assembleRelease"], checkout / "android", env=env)
@@ -132,6 +136,8 @@ def build(config, checkout, sha, directory, name=None):
     # R8 keeps only what code references; stop before signing when it dropped something reached by name.
     run(["python3", "scripts/release/check_android_shrink.py", str(apk), str(outputs / "mapping/release")],
         checkout, env=env)
+    # About's commit comes from the APK's own resources: missing, wrong or left over from an earlier build stops here.
+    run(["python3", "scripts/release/check_android_build_commit.py", str(apk), sha], checkout, env=env)
     shutil.copyfile(apk, unsigned)
     unsigned_sha256 = digest(unsigned)
     # Frames of optimized code need R8's mapping to read (docs/android/android.md "Release shrinking"); it is about
@@ -140,7 +146,8 @@ def build(config, checkout, sha, directory, name=None):
     if mapping.exists():
         gzip_file(mapping, directory / f"mapping-{unsigned_sha256}.txt.gz")
     result = dict(repository=config["repository"], source_sha=sha, unsigned_sha256=unsigned_sha256,
-                  package=config["application_id"], version_code=code, version_name=name)
+                  package=config["application_id"], version_code=code, version_name=name,
+                  build_commit=sha)
     atomic_json(receipt, result)
     return result
 

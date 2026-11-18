@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_rule_always">总是</string>
+    <string name="chat_rule_not_now">暂不</string>
+    <string name="chat_rule_scope">适用于 %1$s</string>
+    <string name="chat_rule_creates_trust">点「总是」会记住这类任务：以后同类任务由 Persona 直接开始，不再出计划卡。</string>
+    <string name="chat_rule_creates_standing">点「总是」会创建一条长期授权：%1$s。</string>
+    <string name="chat_rule_action_merge">合并</string>
+    <string name="chat_rule_action_push">推送</string>
+    <string name="chat_rule_action_deploy_test">部署到测试环境</string>
+    <string name="chat_rule_conditions">仅在以下条件满足时：%1$s</string>
+    <string name="chat_rule_condition_ci_green">检查通过</string>
+    <string name="chat_rule_condition_no_conflicts">没有冲突</string>
+    <string name="chat_rule_quote">记录为你的原话：“%1$s”</string>
+    <string name="chat_rule_creates_none">点「总是」不会保存任何规则，只是收起这一行。</string>
+    <string name="chat_rule_creates_none_setting">点「总是」不会保存任何规则，只是收起这一行。要让 Persona 先回答这类问题，需要在 hub 所在机器上助手的配置文件里开启 %1$s。</string>
+    <string name="chat_rule_made_trust">规则已建立：这类任务以后直接开始。它列在网页版 Persona 设置的「已记住的自动开始规则」里，可以在那里移除。</string>
+    <string name="chat_rule_made_standing">长期授权已添加。可以在助手资料的「长期授权」里查看和撤销。</string>
+    <string name="chat_rule_made_none">没有保存任何规则。</string>
+    <string name="chat_rule_made_none_setting">没有保存任何规则。要让 Persona 先回答这类问题，请在 hub 所在机器上助手的配置文件里开启 %1$s。</string>
+    <string name="chat_rule_made_other">规则已建立。</string>
+    <string name="chat_decision_for_briefing">随下一次简报一起送达</string>
+</resources>

@@ -14,20 +14,24 @@ import (
 // terminal engine (herdr, Herdr App, Orca, Tern) that is not running — stopped by Persona (retire.go), closed by the
 // user, exited by itself or cut off by a restart — keeps its conversation and its terminal and takes no messages: a
 // send to it is refused as agent_stopped with nothing typed, where it used to be resumed (claude --resume, codex
-// resume) in a new tab. The one way back is the user's Resume on its terminal page: session.start with
-// resume_session_id, which types the resume into the shell the agent left behind when its tab is still there
+// resume) in a new tab. The one path back is session.start with resume_session_id: the user's Resume, or an explicit
+// supervised resume with a known non-user stop cause (#8214). It types into the shell the agent left when it is still there
 // (inKeptTerminal), else opens a new tab as before. Left as they were: assistant conversations, sessions of Claude's
 // desktop app, of runtimes and of engines that run agents themselves (Paseo, Cindy), and a branch nothing has started
 // yet (fork.go), whose first message starts it.
 
-const agentStopped = "agent_stopped"
+const agentStopped = proto.CodeAgentStopped
 
 // stoppedReason is a stopped agent's read_only_reason (the apps show their own words for it).
 const stoppedReason = "Agent 已停止：对话和终端可以看，它不再收消息；要它接着做，在终端页点「恢复」"
 
 // desktopSession: Claude's desktop app names transcript id (a session of its sidebar, archived or not, or one it went
-// on from): the app's session, which a message continues as before (claudedesktop_open.go), not a stopped agent.
+// on from): the app's session, which a message continues as before (claudedesktop_open.go), not a stopped agent. Only
+// where the app takes it (claudeDesktopOpens): elsewhere a send is handled as it was before the index was read.
 func (n *Node) desktopSession(id string) bool {
+	if !claudeDesktopOpens {
+		return false
+	}
 	x := readClaudeDesktopIndex(n.home)
 	_, named := x.visible[id]
 	return named || len(x.earlier[id]) > 0
@@ -92,7 +96,7 @@ func (n *Node) markStopped(s *proto.Session) {
 	if n.isAssistantSession(s.SessionID) || n.runtimeAssistant(s.SessionID) || n.freshFork(s.SessionID) {
 		return
 	}
-	s.Capabilities = &proto.SessionCapabilities{Read: true, Terminal: true}
+	s.Capabilities = &proto.SessionCapabilities{Read: true, Terminal: true, StopCause: n.stopCause(s.SessionID)}
 	s.ReadOnlyReason = stoppedReason
 }
 
@@ -207,30 +211,42 @@ func (n *Node) closeFinished(ctx context.Context, only string, preview bool) (ma
 	n.mu.Unlock()
 	closed, kept := []finishedTerminal{}, []finishedTerminal{}
 	for _, c := range cands {
-		t := finishedTerminal{Pane: c.p.PaneID, SessionID: c.p.Tokens[personaTabToken], TabID: c.p.TabID, WorkspaceID: c.p.WorkspaceID}
-		fg, ok := c.h.(host.ForegroundNamer)
-		org, ok2 := c.h.(host.Organizer)
-		if !ok || !ok2 {
-			t.Why = "this engine cannot close it from here"
-			kept = append(kept, t)
-			continue
-		}
-		ref := n.hosts.Ref(c.p.PaneID)
-		names, err := fg.PaneForeground(ctx, ref)
-		if err != nil || len(names) == 0 || !allShells(names) {
-			t.Why = "something runs in it" // the user is using it
-			kept = append(kept, t)
-			continue
-		}
-		if !preview {
-			if err := org.Close(ctx, ref, c.p.WorkspaceID, c.p.TabID); err != nil {
-				t.Why = err.Error()
-				kept = append(kept, t)
-				continue
+		func() {
+			t := finishedTerminal{Pane: c.p.PaneID, SessionID: c.p.Tokens[personaTabToken], TabID: c.p.TabID, WorkspaceID: c.p.WorkspaceID}
+			if !preview {
+				release := n.recovery.lock(t.SessionID)
+				defer release()
 			}
-			log.Printf("finished terminal %s (session %s): closed by the user", c.p.PaneID, t.SessionID)
-		}
-		closed = append(closed, t)
+			fg, ok := c.h.(host.ForegroundNamer)
+			org, ok2 := c.h.(host.Organizer)
+			if !ok || !ok2 {
+				t.Why = "this engine cannot close it from here"
+				kept = append(kept, t)
+				return
+			}
+			ref := n.hosts.Ref(c.p.PaneID)
+			names, err := fg.PaneForeground(ctx, ref)
+			if err != nil || len(names) == 0 || !allShells(names) {
+				t.Why = "something runs in it" // the user is using it
+				kept = append(kept, t)
+				return
+			}
+			if !preview {
+				if err := n.saveStopCause(ctx, t.SessionID, proto.StopUser); err != nil {
+					t.Why = err.Error()
+					kept = append(kept, t)
+					return
+				}
+				defer n.state.stopped(t.SessionID, proto.StopUser)
+				if err := org.Close(ctx, ref, c.p.WorkspaceID, c.p.TabID); err != nil {
+					t.Why = err.Error()
+					kept = append(kept, t)
+					return
+				}
+				log.Printf("finished terminal %s (session %s): closed by the user", c.p.PaneID, t.SessionID)
+			}
+			closed = append(closed, t)
+		}()
 	}
 	if !preview && len(closed) > 0 {
 		_ = n.refreshHosts(ctx)

@@ -44,6 +44,9 @@ type Devices interface {
 	Canonical(id string) string
 	// Sessions copies the whole list out: the caller owns its rows (not their slices, shared and never written into).
 	Sessions(id string) ([]proto.Session, bool)
+	// AppendSessions is Sessions appended to dst: a reader that copies the same machine's list again and again passes
+	// its last copy as dst[:0] and keeps one array (liveLoop).
+	AppendSessions(dst []proto.Session, id string) ([]proto.Session, bool)
 	// SessionsWhere copies out only the sessions keep accepts, read in place under the devices' lock (keep must not
 	// change or keep them, nor call the devices): a view that keeps a few rows of a busy machine copies only those.
 	SessionsWhere(id string, keep func(*proto.Session) bool) ([]proto.Session, bool)
@@ -96,6 +99,9 @@ func (b *BusHub) keepFromSnapshot(s Snapshot) {
 // model a message the node sends a conversation by itself runs on (assistant.model), and the live snapshot before
 // each message (assistant.context).
 func (s *Service) NodeAnswer(ctx context.Context, machine, method string, params json.RawMessage) (any, bool, error) {
+	if err := s.conversationParamsAvailable(ctx, machine, params); err != nil {
+		return nil, true, err
+	}
 	var p struct {
 		SessionID string                           `json:"session_id"`
 		Ack       []assistantwire.ViewErrorReceipt `json:"ack"`
@@ -104,9 +110,18 @@ func (s *Service) NodeAnswer(ctx context.Context, machine, method string, params
 	case NodeLaunchersPull: // a provider's secrets for this computer (models_launchers_scope.go): the connection's machine decides
 		out, err := s.pullLauncher(ctx, machine, params)
 		return out, true, err
+	case NodeAgentsDefault: // what pi starts a new session on (models_launchers_scope.go agentsDefault)
+		return s.agentsDefault(ctx, machine), true, nil
 	case "assistant.model":
 		_ = json.Unmarshal(params, &p)
-		if !s.assistantCaller(ctx, machine, p.SessionID) {
+		allowed := s.assistantCaller(ctx, machine, p.SessionID)
+		if !allowed {
+			// The main conversation may still run on its confirmed computer after the
+			// default computer changes. Only its kept external pick grants this scope.
+			pick, kept := s.modelPickOf(ctx, machine, p.SessionID)
+			allowed = kept && proto.IsExternalLauncher(pick.Launcher) && s.externalMainScope(ctx, machine, p.SessionID)
+		}
+		if !allowed {
 			return map[string]any{}, true, nil
 		}
 		out, err := s.SendParams(ctx, SendParams{MachineID: machine, SessionID: p.SessionID, Params: map[string]any{}})

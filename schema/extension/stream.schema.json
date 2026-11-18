@@ -354,7 +354,12 @@
           }
         },
         "more": {},
-        "pane": {}
+        "pane": {},
+        "span": {},
+        "icon": {},
+        "icon_color": {},
+        "link": {},
+        "columns": {}
       },
       "required": [
         "key"

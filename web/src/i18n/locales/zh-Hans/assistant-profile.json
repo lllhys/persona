@@ -19,5 +19,10 @@
   "avatar_footer": "换形象会一起换 Persona 的名字、头像、网页的标志和标签页图标，以及对话里会动的状态；hub 支持时你的各台设备一起换。主题色选「跟随形象」时网页的颜色也跟着变。",
   "access": "能访问",
   "access_footer": "发飞书消息、发邮件、新建日程这类会替你出面的操作，都先在手机上问你。",
+  "edit_name": "编辑名字",
+  "name_dialog_title": "修改助手的名字",
+  "name_placeholder": "给助手起个名字",
+  "name_saved": "名字已保存",
+  "name_failed": "改名失败：{error}",
   "subtitle_no_machine": "你的私人助手 · 还没接上电脑"
 }

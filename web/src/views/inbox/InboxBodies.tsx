@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, enc, errorText } from "../../lib/api";
 import { bytes, clock } from "../../lib/format";
-import { docTypeName, isDone, itemKey, momentText, withToken, type InboxItem, type MomentComment, type MomentPost } from "../../lib/inbox";
+import { docTypeName, isDone, itemKey, withToken, type InboxItem, type MomentComment, type MomentPost } from "../../lib/inbox";
+import { momentText } from "../../lib/inbox-page";
 import { defaultManager, itemHeaders, useItemManager, withManager } from "../../lib/manager-choice";
 import { openLink } from "../../lib/links";
 import { addressText, markMailSeen, replyAllDraft, replyDraft, useMailAccounts, type ComposeDraft, type MailMessage } from "../../lib/mail";

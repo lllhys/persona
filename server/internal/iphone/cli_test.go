@@ -54,6 +54,9 @@ func TestCommand(t *testing.T) {
 		t.Fatalf("forget twice: %d %q", code, errOut)
 	}
 	t.Setenv("FAKE_PAIR_FAIL", "1")
+	saved := pairTimeout
+	pairTimeout = 100 * time.Millisecond // the phone never trusts this computer: the command waits this long
+	t.Cleanup(func() { pairTimeout = saved })
 	if code, _, errOut := runCLI(t, m, "pair", testUDID); code != 1 || !strings.Contains(errOut, "Trust") {
 		t.Fatalf("pair failure: %d %q", code, errOut)
 	}

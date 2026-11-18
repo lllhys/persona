@@ -90,6 +90,12 @@
         <item quantity="other">%d 件を取り込む</item>
     </plurals>
     <string name="settings_claude_dirs">ブロックした設定ディレクトリ</string>
+    <string name="settings_live_replies">リアルタイム返信</string>
+    <string name="settings_live_replies_toggle">書きながら返信を送る</string>
+    <string name="settings_live_replies_on">返信が行ごとに届き、数秒早く読めます</string>
+    <string name="settings_live_replies_off">Claude が返信を保存してから表示されます</string>
+    <string name="settings_live_replies_load_failed">このコンピューターの設定を読み込めません：%1$s</string>
+    <string name="settings_live_replies_note">オンにすると、Persona がこのコンピューターで起動した Claude Code セッションは Claude が書いている途中の返信を送るため、このアプリと Web で文字を早く確認できます。代わりに、このコンピューターのターミナルでは返信が一語ずつではなく数行ずつ表示されます。この設定はハブに保存され、~/.claude/settings.json は変更しません。上の「全オンラインマシンを変更」がオンのときは、ほかのオンラインのコンピューターも一緒に変わります。変更はその後に起動したセッションに適用され、実行中のセッションは Claude を再起動すると切り替わります。</string>
     <string name="settings_claude_dirs_load_failed">このコンピューターの設定ディレクトリを読めません：%1$s</string>
     <string name="settings_claude_dirs_save_failed">変更できません：%1$s</string>
     <string name="settings_claude_dirs_block">ブロック</string>

@@ -476,7 +476,7 @@ func TestClassify(t *testing.T) {
 		{429, `{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}`, ReasonQuota},
 		{529, `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`, ReasonBusy},
 		{503, `upstream connect error`, ReasonBusy},
-		{500, quotaBody, ""},
+		{500, quotaBody, ReasonQuota},
 		{400, `{"error":{"message":"bad request"}}`, ""},
 	}
 	for _, c := range cases {

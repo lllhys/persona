@@ -1,3 +1,5 @@
+import { lazy, Suspense, useState } from "react";
+import { useCanDeleteConversation } from "../lib/conversation-delete";
 // A Persona conversation's menu in the sidebar (the iOS sidebar's long press, Android's drawer): "设为常驻" / "取消常驻",
 // "Rename…", "Archive", "Copy session ID", then "End…" while it runs. The main conversation is never a lead, renamed or
 // archived; the background supervisor (#5082, lib/background-supervisor.ts) is built in and only has "Copy session ID".
@@ -7,7 +9,7 @@ import { api, enc, errorText, sessionPath } from "../lib/api";
 import { sessionTitle } from "../lib/format";
 import { refreshAssistant } from "../lib/store";
 import type { Session } from "../lib/types";
-import { copyText, Menu, toast, type MenuItem, type ToastAction } from "../ui/atoms";
+import { copyText, Dialog, Loading, Menu, toast, type MenuItem, type ToastAction } from "../ui/atoms";
 import type { MenuAt } from "../ui/menu-model";
 import { t } from "../i18n";
 
@@ -50,7 +52,9 @@ async function undoArchive(s: Session, title: string, deps: ConversationMenuDeps
   reread(deps);
 }
 
-/** 设为常驻 / 取消常驻 for a conversation that is not the main one (`leader`: it is one now). */
+/** 设为常驻 / 取消常驻 for a conversation that is not the main one (`leader`: it is one now). Both ask a second time
+ * before the hub call (#6214): the first choice only arms the row, the second runs it, and the detail says what moves —
+ * unpinning sends the chat back to 最近 and returns its open tasks to the main chat's supervision, nothing deleted. */
 export function leaderItem(s: Session, leader: boolean, deps: ConversationMenuDeps = conversationMenuDeps): MenuItem {
   const title = sessionTitle(s);
   return {
@@ -58,6 +62,12 @@ export function leaderItem(s: Session, leader: boolean, deps: ConversationMenuDe
     label: leader ? t("conversation-menu.end_leader") : t("conversation-menu.make_leader"),
     icon: "pin",
     accel: "p",
+    confirm: leader ? t("conversation-menu.end_leader_confirm") : t("conversation-menu.make_leader_confirm"),
+    confirmDetail: leader
+      ? t("conversation-menu.end_leader_confirm_detail")
+      : t("conversation-menu.make_leader_confirm_detail"),
+    // The menu stays open while the hub call runs, shows a refusal in place, and closes only on success.
+    inline: true,
     onSelect: async () => {
       try {
         await deps.lead(s, !leader);
@@ -70,12 +80,31 @@ export function leaderItem(s: Session, leader: boolean, deps: ConversationMenuDe
   };
 }
 
+/** Archive is the same reversible action in a sidebar row and the open conversation's title menu (#6565). */
+export function conversationArchiveItem(s: Session, deps: ConversationMenuDeps = conversationMenuDeps): MenuItem {
+  const title = sessionTitle(s);
+  return {
+    key: "archive",
+    label: t("conversation-menu.archive"),
+    icon: "archive",
+    onSelect: async () => {
+      try {
+        await deps.archive(s);
+        // Undo puts it back as it was (an open conversation stays open: its page reads the machine's sessions)
+        deps.notify(t("conversation-menu.archived", { title }), "ok", { label: t("conversation-menu.undo"), run: () => void undoArchive(s, title, deps) });
+      } catch (e) {
+        deps.notify(errorText(e), "error");
+      }
+      reread(deps);
+    },
+  };
+}
+
 /** `leader`: the conversation is a leader (常驻) now. `builtIn`: it is the background supervisor, which the hub keeps
  *  listed and running: no 设为常驻, Rename, Archive or End. */
-export function conversationMenuItems(s: Session, o: { main: boolean; leader?: boolean; builtIn?: boolean }, deps: ConversationMenuDeps = conversationMenuDeps): MenuItem[] {
+export function conversationMenuItems(s: Session, o: { main: boolean; leader?: boolean; builtIn?: boolean; canDelete?: boolean; onDelete?: () => void }, deps: ConversationMenuDeps = conversationMenuDeps): MenuItem[] {
   const copy: MenuItem = { key: "copy", label: t("conversation-menu.copy_id"), icon: "copy", accel: "c", onSelect: () => void deps.copy(s.session_id) };
   if (o.builtIn) return [copy];
-  const title = sessionTitle(s);
   const own: MenuItem[] = o.main
     ? []
     : [
@@ -96,25 +125,12 @@ export function conversationMenuItems(s: Session, o: { main: boolean; leader?: b
             },
           },
         },
-        {
-          key: "archive",
-          label: t("conversation-menu.archive"),
-          icon: "archive",
-          onSelect: async () => {
-            try {
-              await deps.archive(s);
-              // Undo puts it back as it was (an open conversation stays open: its page reads the machine's sessions)
-              deps.notify(t("conversation-menu.archived", { title }), "ok", { label: t("conversation-menu.undo"), run: () => void undoArchive(s, title, deps) });
-            } catch (e) {
-              deps.notify(errorText(e), "error");
-            }
-            reread(deps);
-          },
-        },
+        conversationArchiveItem(s, deps),
       ];
   return [
     ...own,
     copy,
+    ...(!o.main && o.canDelete && o.onDelete ? [{ key: "delete", label: t("conversation-menu.delete"), icon: "trash" as const, danger: true, divider: true, keepOpen: true, onSelect: o.onDelete }] : []),
     ...(conversationLive(s)
       ? [
           {
@@ -140,6 +156,18 @@ export function conversationMenuItems(s: Session, o: { main: boolean; leader?: b
 /** The menu of a row (`at`: where a right click opened it; without it, beside `anchor`). */
 export function ConversationRowMenu({ s, main, leader, builtIn, anchor, at, onClose }: { s: Session; main: boolean; leader?: boolean; builtIn?: boolean; anchor: HTMLElement; at?: MenuAt; onClose: () => void }) {
   const p = at ?? { anchor };
-  return <Menu anchor={p.anchor ?? null} point={p.point} onClose={onClose} align="right" width={200} items={conversationMenuItems(s, { main, leader, builtIn })} />;
+  const canDelete = useCanDeleteConversation(s, main, builtIn);
+  const [deleting, setDeleting] = useState(false);
+  if (deleting) return <ConversationDeleteConfirmation s={s} onClose={onClose} />;
+  return <Menu anchor={p.anchor ?? null} point={p.point} onClose={onClose} align="right" width={200} items={conversationMenuItems(s, { main, leader, builtIn, canDelete, onDelete: () => setDeleting(true) })} />;
 }
 
+
+const DeleteConversationDialog = lazy(() => import("./DeleteConversationDialog").then((m) => ({ default: m.DeleteConversationDialog })));
+
+/** The destructive confirmation loads on intent, keeping the common first screen small. */
+export function ConversationDeleteConfirmation(props: { s: Session; onClose: () => void }) {
+  return <Suspense fallback={<Dialog open title={t("conversation-menu.delete")} onClose={props.onClose}><Loading /></Dialog>}>
+    <DeleteConversationDialog {...props} />
+  </Suspense>;
+}

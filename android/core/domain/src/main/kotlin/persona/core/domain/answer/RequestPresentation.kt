@@ -6,11 +6,13 @@ import persona.core.contracts.Interaction
 import persona.core.contracts.Item
 import persona.core.contracts.mcpServerLabel
 import persona.core.contracts.toolDisplayName
+import persona.core.domain.sort.fromSide
 import kotlinx.serialization.json.*
 
-/** Only metadata supplied by the hook is a source; tool names are not proof. */
+/** Only metadata supplied by the hook is a source; tool names are not proof. A side session's own card says it is one (#7944). */
 fun Interaction.requestSourceLabel(): CoreText? = listOfNotNull(
-    agentType?.trim()?.takeIf(String::isNotEmpty)?.let { CoreText.of(Key.RequestFromSubagent, it) },
+    (if (!foldedUnder.isNullOrBlank()) sessionTitle else agentType)?.trim()?.takeIf(String::isNotEmpty)
+        ?.let { CoreText.of(if (fromSide) Key.RequestFromSide else Key.RequestFromSubagent, persona.core.domain.lines.Subagents.compact(it, 48)) },
     mcpServerName?.trim()?.takeIf(String::isNotEmpty)?.let { server ->
         val name = mcpServerLabel(server)
         mcpConfigSource?.trim()?.takeIf(String::isNotEmpty)?.let { CoreText.of(Key.RequestFromMcpConfigured, name, it) }
@@ -24,7 +26,7 @@ fun Interaction.requestSourceLabel(): CoreText? = listOfNotNull(
  * offers it ("Always allow this session"), and another agent's card (Codex, a compatible CLI, a runtime's) only when
  * its TUI names what it would allow ([Interaction.alwaysLabel]), as on iOS and the web.
  */
-val Interaction.offersAlways: Boolean get() = alwaysHonored ?: (agentDisplayName == null || !alwaysLabel.isNullOrBlank())
+val Interaction.offersAlways: Boolean get() = alwaysHonored ?: (!fromOtherAgent || !alwaysLabel.isNullOrBlank())
 
 /**
  * A permission card that needs its fields filled in (a password) before it can be allowed, so no quick answer
@@ -43,13 +45,13 @@ val Interaction.hasFieldsForm: Boolean get() = kind == "permission" && !isSecret
 
 /** The button for it: Claude's "Always allow this session", another agent's "Always allow" (what it allows is shown beside it). */
 val Interaction.alwaysActionLabel: CoreText
-    get() = CoreText.of(if (agentDisplayName == null) Key.AlwaysAllowSession else Key.AlwaysAgree)
+    get() = CoreText.of(if (!fromOtherAgent) Key.AlwaysAllowSession else Key.AlwaysAgree)
 
 /** Describe the remembered rule, retaining the scope supplied by other agents. */
 val Interaction.alwaysScopeDetail: CoreText?
     get() {
         alwaysLabel?.takeIf(String::isNotBlank)?.let { return CoreText.plain(it) }
-        if (agentDisplayName != null) return null
+        if (fromOtherAgent) return null
         val keys = alwaysKeys.orEmpty()
         val key = when {
             keys.isNotEmpty() && keys.all { it.startsWith("tool:Read(") && it.endsWith("/**)") } -> Key.AlwaysScopeReadDirectory

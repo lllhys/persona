@@ -41,11 +41,14 @@ func TestReceiptAndConclusionListTheBriefsCriteria(t *testing.T) {
 	}
 	before := len(posts())
 	reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "合并了",
-		"checks":    []map[string]any{{"criterion": "PR 合并到 master", "met": true, "evidence": "已合并"}},
+		"checks": []map[string]any{
+			{"criterion": "PR 合并到 master", "met": true, "evidence": "已合并"},
+			{"criterion": "浅色 / 深色截图贴进 PR", "met": true, "evidence": "两种截图已核对"},
+		},
 		"also_done": []string{"补了回归测试"}})
 	waitFor(t, "the conclusion card", func() bool { return len(cardsWith(posts()[before:], "结论：修登录崩溃")) == 1 })
 	card := cardsWith(posts()[before:], "结论：修登录崩溃")[0]
-	for _, want := range []string{"对照当初的要求", "✅ PR 合并到 master", "▫️ 浅色 / 深色截图贴进 PR（未核对）", "另外做了：补了回归测试", "✅ 做完了"} {
+	for _, want := range []string{"对照当初的要求", "✅ PR 合并到 master", "✅ 浅色 / 深色截图贴进 PR", "另外做了：补了回归测试", "✅ 做完了"} {
 		if !strings.Contains(card, want) {
 			t.Errorf("card lacks %q:\n%s", want, card)
 		}

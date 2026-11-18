@@ -27,6 +27,9 @@ const POLL_EVERY = 2000 // ms: while a turn runs, look for messages the events d
 const STALE_MS = 60_000 // an unfinished message of a session that is running is final after this (events missed)
 const SETTLE_MS = 1500 // ...and of one that is not running, after this (an interrupted step never says it completed)
 const MODELS_EVERY = 10 * 60_000 // ms: the models' context windows are asked again
+const MEDIA_REF = /^media:([0-9a-f]{64})$/
+// Base64 takes 4/3 the raw size; leave 1 KiB of the runtime protocol's 64 MiB line for the JSON envelope.
+const MAX_BLOB_BYTES = (64 * 1024 * 1024 - 1024) * 3 / 4
 
 /**
  * @typedef {object} OpencodeDeps
@@ -278,6 +281,8 @@ export function createOpencodeHost(deps, options = {}) {
     }
     if (r.type === 'compaction') return t.status !== 'pending'
     if (typeof t.time?.completed === 'number' || t.finish) return true
+    if (r.type === 'shell' && t.status === 'running') return false
+    if (r.type === 'shell' && t.status) return true
     return now() - (r.time_updated ?? 0) > (s?.running ? STALE_MS : SETTLE_MS)
   }
 
@@ -368,9 +373,20 @@ export function createOpencodeHost(deps, options = {}) {
 
   async function image(params) {
     const { seq, idx } = splitItemID(params.item_id)
-    const b = imageOf(await messageAt(params.session_id, seq), idx)
-    if (!b) throw new RpcError(`no image ${params.item_id}`, 'not_found')
-    return b
+    const msg = await messageAt(params.session_id, seq)
+    const inline = imageOf(msg, idx)
+    if (inline) return inline
+    const f = msg?.type === 'user' ? msg.files?.[idx - 1] : undefined
+    const ref = typeof f?.mime === 'string' && f.mime.startsWith('image/') && typeof f.uri === 'string' ? MEDIA_REF.exec(f.uri) : null
+    if (!ref) throw new RpcError(`no image ${params.item_id}`, 'not_found')
+    const [r] = await rows(
+      `select b.data from blob b join blob_ref r on r.hash = b.hash
+       where b.hash = ? and r.session_id = ? and r.message_id = ? and r.seq = ?`,
+      ref[1], params.session_id, msg.id, seq)
+    const data = r?.data
+    if (!(data instanceof Uint8Array) || data.byteLength > MAX_BLOB_BYTES) throw new RpcError(`no image ${params.item_id}`, 'not_found')
+    const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+    return { mime: f.mime, data: bytes.toString('base64') }
   }
 
   /** Push what became final since the last push (the items only when the phone watches the session). */

@@ -1,9 +1,10 @@
 // The open conversation's row in the sidebar (#2283): marked for assistive tech, its own fill, its actions without hover.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { t } from "../i18n";
 import type { AgentSession } from "../lib/agents";
 import type { Session } from "../lib/types";
-import { setAgentDetails, setContextAsUsed } from "../lib/context-usage";
+import { setAgentDetails } from "../lib/context-usage";
 import { AgentRow, PersonaRow, SessionRow } from "./Sidebar";
 import { conversationMenuItems } from "./ConversationMenu";
 
@@ -106,23 +107,20 @@ describe("an agent's row with 「Agent 行显示详情」 (#2430)", () => {
   const render = (s: Session, extra = {}) => renderToStaticMarkup(<SessionRow {...rowProps} s={s} active={false} {...extra} />);
   afterEach(() => {
     setAgentDetails(false);
-    setContextAsUsed(false);
   });
   it("is byte for byte the same as before while the setting is off", () => {
     expect(render(detailed)).toBe(render(session)); // the model and context change nothing
     expect(render(detailed)).not.toContain("opus 5.5");
   });
-  it("adds a second line with folder, model and what is left when on", () => {
+  it("adds a second line with folder, model and labelled context used when on", () => {
     setAgentDetails(true);
     const html = render(detailed);
     expect(html).toContain("opus 5.5");
-    expect(html).toContain("61%");
+    expect(html).toContain("上下文 39%");
     expect(html).toContain("code");
   });
-  it("shows what is used with 「上下文显示为已用」 and warns at 80%", () => {
+  it("uses amber caution from 80% context used", () => {
     setAgentDetails(true);
-    setContextAsUsed(true);
-    expect(render(detailed)).toContain("39%");
     expect(render({ ...detailed, context_tokens: 170000 })).toContain("text-orange");
     const danger = render({ ...detailed, context_tokens: 185000 });
     expect(danger).toContain("text-orange");
@@ -163,7 +161,84 @@ describe("Persona's main row", () => {
   it("draws no ⋯ without it", () => {
     expect(renderToStaticMarkup(<PersonaRow {...props} main={undefined} active={false} />)).not.toContain("对话的操作");
   });
-  it("whose menu has only 拷贝会话 ID and 结束…", () => {
+  it("whose menu has only 复制会话 ID and 结束…", () => {
     expect(conversationMenuItems(main, { main: true }).map((i) => i.key)).toEqual(["copy", "end"]);
+  });
+});
+
+describe("a 常驻 lead row (#6214 keepTrailing)", () => {
+  const lead: Session = { machine_id: "hub", session_id: "lead-a", title: "增长", cwd: "/", status: "idle", state: "idle", assistant: true };
+  const props = { s: lead, k: "j:lead-a", reg: () => () => {}, hover: () => {}, to: { name: "session", mid: "hub", sid: "lead-a" } as const, go: () => () => {}, onMenu: () => {}, hint: "在做 1 · 等你 1", hintFull: true, showState: false, keepTrailing: true };
+  it("keeps its counts visible on hover and gives the ⋯ an in-flow slot instead of an overlay", () => {
+    const html = renderToStaticMarkup(<SessionRow {...props} active={false} />);
+    // the direction's name stays in the row even with no second line; the menu never replaces it
+    expect(html).toContain("增长");
+    // the counts never carry the hover-hiding class
+    const counts = html.match(/<span[^>]*>在做 1 · 等你 1<\/span>/)![0];
+    expect(counts).not.toContain("group-hover/row:invisible");
+    // the ⋯ is an in-flow fader, not an absolute overlay covering the words
+    const button = html.match(/<button [^>]*aria-label="Agent 的操作"[^>]*>/)![0];
+    expect(button).toContain("opacity-0 group-hover/row:opacity-100");
+    expect(button).not.toContain("absolute");
+    // and the anchor reserves no overlay room of its own
+    expect(link(html)).toMatch(/pr-1\b/);
+  });
+  it("draws its name once, with or without a second line (it read 「Per… Per…」 in a narrow sidebar)", () => {
+    const named = { ...props, label: "Persona 产品" };
+    expect(renderToStaticMarkup(<SessionRow {...named} active={false} />).match(/>Persona 产品</g)).toHaveLength(1);
+    expect(renderToStaticMarkup(<SessionRow {...named} active />).match(/>Persona 产品</g)).toHaveLength(1);
+    // a second line puts the name in the column, still once
+    const busy = { ...named, showState: true, s: { ...lead, last_text: "整理了三条进展" } };
+    expect(renderToStaticMarkup(<SessionRow {...busy} active={false} />).match(/>Persona 产品</g)).toHaveLength(1);
+  });
+  it("an ordinary row still overlays its ⋯ and hides its tail on hover", () => {
+    const html = renderToStaticMarkup(<SessionRow {...rowProps} active={false} />);
+    expect(more(html)).toMatch(/class="[^"]*\bhidden\b/);
+    expect(more(html)).toContain("absolute");
+  });
+});
+
+describe("a session's associated tab name (#7595)", () => {
+  const named: Session = { ...session, slot_id: "w1:t2", slot_name: "Release Review", pane_id: "w1:p1", updated_at: "2026-11-14T09:00:00Z" };
+  const render = (patch: Partial<Session>, extra = {}) => renderToStaticMarkup(<SessionRow {...rowProps} s={{ ...session, ...patch }} hint="Project" active={false} {...extra} />);
+  const tabName = (label: string) => t("sidebar.tab_named", { label });
+
+  it("stays visible beside an aged terminal row and follows a rename", () => {
+    const first = render(named);
+    expect(first).toContain(tabName("Release Review"));
+    expect(first).toContain("Project");
+
+    const renamed = render({ ...named, slot_name: "Triage" });
+    expect(renamed).toContain(tabName("Triage"));
+    expect(renamed).not.toContain(tabName("Release Review"));
+  });
+
+  it("keeps the session title and the existing fallbacks", () => {
+    const numeric = render({ ...named, slot_name: "2" });
+    expect(numeric).toContain("整理文档");
+    expect(numeric).toContain(tabName("#2"));
+
+    const missing = render({ ...named, slot_id: undefined, slot_name: undefined, pane_id: undefined });
+    expect(missing).not.toContain(tabName("Release Review"));
+    expect(missing).toContain("整理文档");
+
+    const unassociated = render({ ...named, slot_id: undefined, tab_id: undefined, slot_name: "Workspace name" });
+    expect(unassociated).not.toContain(tabName("Workspace name"));
+    expect(unassociated).toContain("整理文档");
+
+    expect(render(named, { endRoom: true })).toContain(tabName("Release Review"));
+    expect(render({ ...named, status: "offline", state: "offline" })).toContain(tabName("Release Review"));
+  });
+
+  it("keeps the index-only fallback with a real association", () => {
+    const indexOnly = render({ ...named, slot_name: undefined, slot_index: 2 });
+    expect(indexOnly).toContain(tabName("#2"));
+    expect(indexOnly).toContain("整理文档");
+  });
+
+  it("does not mint a localized identity from an unassociated structural fallback", () => {
+    const html = render({ ...named, slot_id: undefined, tab_id: undefined, slot_name: "Workspace name", updated_at: undefined }, { tab: true, hint: undefined });
+    expect(html).toContain("Workspace name");
+    expect(html).not.toContain(tabName("Workspace name"));
   });
 });

@@ -117,29 +117,34 @@ final class ShareViewController: UIViewController {
         }
     }
 
+    /// What was shared, in order: each item's text, then its attachments' links and texts as they come. Safari's page
+    /// comes as a property list from `SharePage.js` (its title, link and selection) beside the plain link and the item's
+    /// text; `ShareText.compose` puts it first and keeps each piece once (#2282).
     private func loadItems() async {
-        var parts: [String] = []
+        var page: ShareText.Page?
+        var pieces: [String] = []
         for item in items {
-            if let title = item.attributedContentText?.string.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
-                parts.append(title)
-            }
+            if let caption = item.attributedContentText?.string, !caption.isEmpty { pieces.append(caption) }
             for provider in item.attachments ?? [] {
-                if images.count < Self.maxImages, let img = await provider.image() {
+                // Before `fileType`: the page's property list is data, and would otherwise go as a file.
+                if provider.hasItemConformingToTypeIdentifier(UTType.propertyList.identifier), let p = await provider.page() {
+                    if page == nil { page = p }
+                } else if images.count < Self.maxImages, let img = await provider.image() {
                     images.append(img)
                 } else if let type = provider.fileType {
                     await add(try? await provider.staged(type, into: staging))
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier), let url = try? await provider.url() {
                     if url.isFileURL {
                         await add(try? await NSItemProvider.staged(url, into: staging))
-                    } else if !parts.contains(url.absoluteString) {
-                        parts.append(url.absoluteString)
+                    } else {
+                        pieces.append(url.absoluteString)
                     }
                 } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
-                    if let s = try? await provider.text(), !s.isEmpty, !parts.contains(s) { parts.append(s) }
+                    if let s = try? await provider.text() { pieces.append(s) }
                 }
             }
         }
-        text = parts.joined(separator: "\n")
+        text = ShareText.compose(page: page, pieces: pieces)
     }
 
     private func add(_ copy: URL?) async {
@@ -235,7 +240,7 @@ struct ShareView: View {
                 }
                 targets
                 if !model.text.isEmpty || !model.images.isEmpty || !model.files.isEmpty || !model.tooLarge.isEmpty {
-                    Section("Shared") {
+                    Section {
                         if !model.text.isEmpty {
                             Text(model.text).font(Theme.Font.secondary).foregroundStyle(.secondary).lineLimit(6)
                         }
@@ -256,6 +261,10 @@ struct ShareView: View {
                         if model.phase == .sending, model.totalBytes > 0 {
                             ProgressView(value: Double(min(model.sentBytes, model.totalBytes)), total: Double(model.totalBytes))
                         }
+                    } header: {
+                        Text("Shared")
+                    } footer: {
+                        ShareSizeFooter(files: model.files.count, total: model.totalBytes)
                     }
                 }
                 if case .failed(let why) = model.phase {
@@ -295,6 +304,26 @@ struct ShareView: View {
                     Label("All Chats and Agents", systemImage: Theme.Icon.search).lineLimit(1)
                 }
                 .accessibilityIdentifier("share-all-targets")
+            }
+        }
+    }
+}
+
+/// Under the shared files, before Send (#2282): their total and the limit for each, and when the total is large
+/// (`ShareTargets.takesAWhile`) that the upload takes a while with the sheet kept open. Nothing without files.
+struct ShareSizeFooter: View {
+    var files: Int
+    var total: Int64
+
+    var body: some View {
+        if files > 0 {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                Text("\(total.storageText) in total · up to 200 MB per file")
+                    .accessibilityIdentifier("share-size-total")
+                if ShareTargets.takesAWhile(total) {
+                    Label("Large uploads can take a few minutes. Keep this open until it's sent.", systemImage: Theme.Icon.time)
+                        .accessibilityIdentifier("share-size-slow")
+                }
             }
         }
     }
@@ -407,6 +436,12 @@ private extension String {
 }
 
 private extension NSItemProvider {
+    /// Safari's page, when this is the property list `SharePage.js` filled; nil for any other property list.
+    func page() async -> ShareText.Page? {
+        ShareText.page(try? await loadItem(forTypeIdentifier: UTType.propertyList.identifier))
+    }
+
+
     /// The type to upload this item as, when it is a file: a movie, a document or archive, a file's text (it has a
     /// name with an extension), a picture past the ones that go as pictures. Nil for a web link or selected text.
     var fileType: UTType? {

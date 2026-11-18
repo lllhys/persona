@@ -98,7 +98,8 @@ func TestDirectionTreeGroupsTasksBySupervisor(t *testing.T) {
 	if want := sortedIDs(mainTask, none, empty, ended, unknown); !slices.Equal(sortedIDs(taskIDs(sec)...), want) {
 		t.Fatalf("secretary's tasks: %v, want %v", taskIDs(sec), want)
 	}
-	if sec.Counts != (treeCounts{Working: 5}) || got[0].Counts != (treeCounts{Working: 1}) {
+	// No agent has worked on any of them: not started.
+	if sec.Counts != (treeCounts{Planned: 5}) || got[0].Counts != (treeCounts{Planned: 1}) {
 		t.Fatalf("counts: %+v %+v", got[0].Counts, sec.Counts)
 	}
 }
@@ -199,7 +200,7 @@ func TestDirectionTreeLeavesOutWhatIsNotOpen(t *testing.T) {
 	e.task("Shelved", func(t *Todo) {
 		t.Supervision, t.Origin, t.CreatedAt, t.UpdatedAt = &Supervision{Supervisor: "conv_lead_a"}, treeMain, long, long
 	})
-	if a := e.tree().Directions[0]; !slices.Equal(taskIDs(a), []string{open}) || a.Counts != (treeCounts{Working: 1}) {
+	if a := e.tree().Directions[0]; !slices.Equal(taskIDs(a), []string{open}) || a.Counts != (treeCounts{Planned: 1}) {
 		t.Fatalf("A: %+v", a)
 	}
 }
@@ -245,6 +246,47 @@ func TestDirectionTreeNestsWorkersUnderTheirLeaderAgent(t *testing.T) {
 	}
 	if !slices.Equal(taskIDs(b), []string{orphan}) || b.Counts != (treeCounts{Working: 1}) {
 		t.Fatalf("B lists the closed leader's worker: %+v", b)
+	}
+}
+
+// Running (#6626) is whether an Agent under the direction is at work, at any depth and whatever its task's state: not
+// the working count, which also holds tasks whose Agents all stopped.
+func TestDirectionTreeRunningIsAnAgentAtWork(t *testing.T) {
+	e := treeEnv(t)
+	e.f.setSessions("mac",
+		proto.Session{MachineID: "mac", SessionID: "s-ask", State: proto.StateNeedsYou},
+		proto.Session{MachineID: "mac", SessionID: "s-run", State: proto.StateWorking},
+		proto.Session{MachineID: "mac", SessionID: "s-idle", State: proto.StateIdle},
+		proto.Session{MachineID: "mac", SessionID: "s-p", State: proto.StateIdle,
+			Subagents: []proto.Subagent{{ID: "a1", SessionID: "s-p@a1", Description: "Search", Running: true}}})
+	on := func(lead string, sids ...string) func(*Todo) {
+		return func(t *Todo) {
+			t.Supervision = &Supervision{Supervisor: lead}
+			for _, sid := range sids {
+				t.Agents = append(t.Agents, TodoAgent{MachineID: "mac", SessionID: sid})
+			}
+		}
+	}
+	// A: its only task is in the working state, but its Agent stopped.
+	e.task("Stopped", on("conv_lead_a", "s-idle"))
+	// B: its task needs the user (one Agent asks) while another of its Agents still works.
+	e.task("Asks while another works", on("conv_lead_b", "s-ask", "s-run"))
+	tr := e.tree()
+	a, b, sec := tr.Directions[0], tr.Directions[1], tr.Directions[2]
+	if a.Counts.Working != 1 || a.Running {
+		t.Fatalf("A, a working task with nothing at work: counts %+v, running %v", a.Counts, a.Running)
+	}
+	if b.Counts.Working != 0 || b.Counts.NeedsYou != 1 || !b.Running {
+		t.Fatalf("B, a task that needs the user with an Agent at work: counts %+v, running %v", b.Counts, b.Running)
+	}
+	if sec.Running {
+		t.Fatal("the secretary's group holds nothing")
+	}
+
+	// Deeper: an idle Agent whose sub-agent runs is work going on under the direction.
+	e.task("Sub-agent at work", on("conv_lead_a", "s-p"))
+	if a := e.tree().Directions[0]; !a.Running {
+		t.Fatalf("a running sub-agent under an idle Agent: %+v", a)
 	}
 }
 
@@ -325,14 +367,18 @@ func TestDirectionTreeRouteShape(t *testing.T) {
 		slices.Sort(out)
 		return out
 	}
-	if k := keys(got.Directions[0]); !slices.Equal(k, []string{"counts", "id", "name", "tasks"}) {
+	if k := keys(got.Directions[0]); !slices.Equal(k, []string{"counts", "id", "name", "running", "tasks"}) {
 		t.Fatalf("a direction's fields: %v", k)
 	}
-	if k := keys(got.Directions[2]); !slices.Equal(k, []string{"counts", "id", "name", "secretary", "tasks"}) ||
+	// running is sent false too: a client tells it from a hub without it (#6626)
+	if r, idle := string(got.Directions[0]["running"]), string(got.Directions[1]["running"]); r != "true" || idle != "false" {
+		t.Fatalf("running: %s, idle direction %s", r, idle)
+	}
+	if k := keys(got.Directions[2]); !slices.Equal(k, []string{"counts", "id", "name", "running", "secretary", "tasks"}) ||
 		string(got.Directions[2]["secretary"]) != "true" || string(got.Directions[2]["name"]) != `""` {
 		t.Fatalf("the secretary's fields: %v %s", k, got.Directions[2]["secretary"])
 	}
-	if c := string(got.Directions[0]["counts"]); c != `{"working":1,"needs_you":0,"stuck":0,"review":0}` {
+	if c := string(got.Directions[0]["counts"]); c != `{"working":1,"needs_you":0,"stuck":0,"review":0,"planned":0}` {
 		t.Fatalf("counts: %s", c)
 	}
 	if ts := string(got.Directions[1]["tasks"]); ts != "[]" {
@@ -463,8 +509,8 @@ func TestDirectionTreeCountsAddUpToTheOpenCount(t *testing.T) {
 	sum := 0
 	for _, d := range e.tree().Directions {
 		c := d.Counts
-		sum += c.Working + c.NeedsYou + c.Stuck + c.Review
-		if n := c.Working + c.NeedsYou + c.Stuck + c.Review; n != len(d.Tasks) {
+		sum += c.Working + c.NeedsYou + c.Stuck + c.Review + c.Planned
+		if n := c.Working + c.NeedsYou + c.Stuck + c.Review + c.Planned; n != len(d.Tasks) {
 			t.Fatalf("%s: counts %+v for %d tasks", d.ID, c, len(d.Tasks))
 		}
 	}

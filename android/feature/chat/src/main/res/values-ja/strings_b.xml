@@ -45,6 +45,8 @@
     <string name="chat_chrome_actions_title">セッションの操作</string>
     <string name="chat_chrome_todo">ToDo · %1$s</string>
     <string name="chat_chrome_terminal">ターミナル</string>
+    <string name="chat_chrome_resume_in_terminal">ターミナルで再開</string>
+    <string name="chat_chrome_resume_no_engine">%1$s ではターミナルエンジンが有効になっていません</string>
     <string name="chat_chrome_search">検索</string>
     <string name="chat_chrome_files">ファイル</string>
     <string name="chat_chrome_details">セッションの詳細</string>
@@ -181,6 +183,17 @@
     <string name="chat_screen_command_ids">リクエスト%1$s、ツール呼び出し%2$s</string>
     <string name="chat_screen_type_answer">回答を入力</string>
     <string name="chat_screen_unreadable">このダイアログはまだ読み取れません。コンピューターで確認して対応してください。</string>
+    <string name="chat_command_ask_title">%1$sがコマンドを実行しようとしています</string>
+    <string name="chat_command_ask_risk_delete">このコマンドでファイルが削除されないか確認できません</string>
+    <string name="chat_command_ask_risk_other">Claude Codeがこのコマンドについて警告しています</string>
+    <string name="chat_command_ask_countdown_deny">%1$s後に自動で拒否されます</string>
+    <string name="chat_command_ask_countdown_allow">%1$s後に自動で許可されます</string>
+    <string name="chat_command_ask_countdown_over_deny">時間切れのため、Claude Codeが自動で拒否します</string>
+    <string name="chat_command_ask_countdown_over_allow">時間切れのため、Claude Codeが自動で許可します</string>
+    <string name="chat_command_ask_show_original">原文を表示</string>
+    <string name="chat_command_ask_hide_original">原文を隠す</string>
+    <string name="chat_command_ask_show_all">すべて表示</string>
+    <string name="chat_command_ask_collapse">折りたたむ</string>
     <string name="chat_request_unsupported">このリクエストはまだスマートフォンで対応できません。コンピューターで確認して対応してください。</string>
     <string name="chat_request_terminal_help">ターミナルでの対応</string>
     <string name="chat_request_dismiss">コンピューターに任せる</string>
@@ -231,7 +244,6 @@
     <string name="chat_links_context_default">上の内容を参考にしてください。</string>
     <string name="chat_menu_copied">コピーしました</string>
     <string name="chat_menu_no_share">共有できるアプリがありません</string>
-    <string name="chat_menu_select_title">テキストを選択</string>
     <string name="chat_menu_copy">コピー</string>
     <string name="chat_menu_select">選択</string>
     <string name="chat_menu_quote">引用</string>
@@ -249,6 +261,7 @@
     <string name="chat_source_conversation">会話</string>
     <string name="chat_source_patrol">定期チェック</string>
     <string name="chat_source_followup">フォローアップ</string>
+    <string name="chat_source_scheduled_task">定期タスクから送信</string>
     <string name="chat_source_supervision">進捗確認</string>
     <string name="chat_source_unknown">送信元</string>
     <string name="chat_source_expand">もっと見る</string>
@@ -296,6 +309,9 @@
     <string name="chat_modes_model_sonnet_detail">バランス型</string>
     <string name="chat_modes_model_haiku_detail">最速</string>
     <string name="chat_modes_unknown_detail">このバージョンのアプリはこのモードにまだ対応していません</string>
+    <string name="chat_modes_launcher_default">ランチャーに従う</string>
+    <string name="chat_modes_launcher_default_detail">何を確認するかは自身の承認設定で決まります。すでにすべて許可している場合もあります</string>
+    <string name="chat_modes_bypass_listed_detail">確認なしですべて許可します。チャットで元に戻せます</string>
     <string name="chat_modes_effort_hint">思考：%1$s</string>
     <string name="chat_modes_hint_separator">、</string>
     <string name="chat_modes_button_bypass">モード：すべて許可</string>
@@ -326,6 +342,9 @@
     </plurals>
     <string name="chat_queue_deleted">キューから削除しました</string>
     <string name="chat_queue_restored">入力欄に戻しました。編集してから送信してください。</string>
+    <plurals name="chat_queue_photos_lost">
+        <item quantity="other">入力欄に戻しました。画像%1$d枚は戻せませんでした。</item>
+    </plurals>
     <string name="chat_queue_not_found">このメッセージが見つかりません。キューが変わった可能性があります。確認してもう一度お試しください</string>
     <string name="chat_queue_failed">変更できませんでした：%1$s</string>
     <string name="chat_queue_edit">取り消して編集</string>
@@ -335,10 +354,12 @@
     <string name="chat_queue_move_up">上へ移動</string>
     <string name="chat_queue_move_down">下へ移動</string>
     <string name="chat_queue_send_now">今すぐ送信</string>
-    <string name="chat_queue_send_now_title">送信待ちのメッセージを今すぐ送りますか？</string>
     <string name="chat_queue_send_now_message">送信待ちのメッセージを今すぐエージェントに送ります。実行中のコマンドはバックグラウンドで続き、書いている途中の返信はあなたのメッセージを含めてやり直します。</string>
     <string name="chat_queue_send_now_message_persona">%1$s は次のステップを待たずにすぐ受け取ります。今の作業は止まるか、できるものはバックグラウンドで続き、あなたのメッセージを含めてやり直します。</string>
     <string name="chat_queue_relayed_note">この会話が空いたら届きます</string>
+    <plurals name="chat_queue_relayed_summary">
+        <item quantity="other">別の会話からのメッセージが %1$d 件待機中</item>
+    </plurals>
     <string name="chat_queue_sent_now">今すぐエージェントに送りました</string>
     <string name="chat_composer_photos_only">画像を見てください</string>
     <string name="chat_composer_photo_placeholder">[画像]</string>
@@ -358,6 +379,7 @@
     <string name="chat_reader_empty">内容がありません</string>
     <string name="chat_reader_open">全文を表示</string>
     <string name="chat_reader_raw_input">元の入力</string>
+    <string name="chat_tool_hide_raw_input">元の入力を隠す</string>
     <string name="chat_reader_full_output">出力全体</string>
     <string name="chat_reader_raw_output">元の出力</string>
     <string name="chat_reader_copy_both">すべてコピー</string>
@@ -388,8 +410,10 @@
     <string name="chat_search_at_start">最初の記録に到達しました</string>
     <string name="chat_search_enter">キーワードを入力</string>
     <string name="chat_search_no_match">一致する記録はありません</string>
-    <string name="chat_search_scope">本文、思考、ツール名、ツールの入出力、システムイベントを検索できます。</string>
-    <string name="chat_search_note">読み込んだ内容のみを検索します。展開していない作業記録と省略された全文は対象外です。</string>
+    <string name="chat_search_scope">本文、引用、思考、ツール名、ツールの入力と出力、システムイベントを検索できます。</string>
+    <string name="chat_search_note">読み込み済みの内容のみを検索します（折りたたまれた作業記録を含む）。省略された全文は対象外です。</string>
+    <string name="chat_search_folds_loading">折りたたまれた作業記録を検索中…</string>
+    <string name="chat_search_folds_partial">一部の折りたたまれた作業記録は検索できませんでした。</string>
     <string name="chat_search_return">検索前の位置に戻る</string>
     <string name="chat_search_unlocatable">この記録は現在見つけられません。検索前の位置に戻れます</string>
     <string name="chat_search_origin_changed">元の記録が変わりました。現在の記録をそのままご覧ください</string>
@@ -411,6 +435,7 @@
     <string name="chat_slash_report_text">これまでの進捗と残りの作業を簡潔に報告してください</string>
     <string name="chat_slash_clear_title">コンテキストをクリア（/clear）</string>
     <string name="chat_slash_clear_detail">コンテキストをクリアして新しいセッションを開始</string>
+    <string name="chat_slash_clear_main_detail">チャットをクリアして最初から</string>
     <string name="chat_tasks_origin_gone">元の記録は現在のリストにありません</string>
     <string name="chat_tasks_load_failed">関連する記録を読み込めませんでした。作業の過程を展開してもう一度お試しください</string>
     <string name="chat_tasks_record_gone">関連する記録は現在のリストにありません</string>
@@ -451,8 +476,8 @@
     <string name="chat_doc_rtf">RTF 書類</string>
     <string name="chat_doc_pdf">PDF 書類</string>
     <string name="chat_doc_other">書類</string>
-    <string name="chat_turn_fix_not_logged_in">モデル未接続：Claude Code にログインしていません</string>
-    <string name="chat_turn_fix_not_logged_in_detail">そのコンピュータで一度ログインするか、代わりに API キーを使ってください。</string>
+    <string name="chat_turn_fix_not_logged_in">モデル未接続：Claude Code CLI にログインしていません</string>
+    <string name="chat_turn_fix_not_logged_in_detail">Claude デスクトップアプリのログインはこれに含まれません。そのコンピュータのターミナルで claude auth login を実行するか、代わりに API キーを使ってください。</string>
     <string name="chat_turn_fix_auth_failed">モデル未接続：キーが正しくありません</string>
     <string name="chat_turn_fix_auth_failed_detail">キーが正しくないか期限切れです。使えるキーに変えてください。</string>
     <string name="chat_turn_fix_model_route">モデル未接続：このモデルは使えません</string>

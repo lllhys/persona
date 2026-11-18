@@ -21,6 +21,8 @@ struct ComputerSection: View {
     @State private var askOneTap = false
     /// 「扩展开着时不自动锁屏」 asked about before it is turned on (#1507 b2).
     @State private var askNoLock = false
+    /// x264 for the live screen, asked about before it is turned on (#8859).
+    @State private var askX264 = false
     /// The apps always allowed for the assistant here (#1507).
     @State private var apps: [ComputerApp] = []
 
@@ -157,6 +159,8 @@ struct ComputerSection: View {
                 }
                 if c.screenSharing, screenKept { unlockRow(locked: false) }
                 noLockRow(c)
+                // Only where the user installed ffmpeg with libx264 (or while it is on, so it can be turned off).
+                if c.screenVideo?.x264 != nil || c.screenX264 { x264Row(c) }
                 if !apps.isEmpty { allowedApps }
             }
         } else {
@@ -329,6 +333,45 @@ struct ComputerSection: View {
         defer { saving = false }
         do {
             fresh = try await api.setComputerNoAutoLock(machine: ref.id, on)
+            Haptics.success()
+        } catch {
+            if let m = error.shown { model.toast = Toast(on ? String(localized: "Couldn't turn on: \(m)") : String(localized: "Couldn't turn off: \(m)"), style: .error) }
+        }
+    }
+
+    static let x264Warning = String(localized: "On the same network, this Mac's live screen will be encoded by the ffmpeg you installed. x264 is GPL software that Persona doesn't include. It uses more CPU, and when it can't keep up, the Mac's built-in encoder takes over.")
+
+    /// x264 for this Mac's live screen (#8859; the plugin's screen_x264, asked about first): on a direct LAN route the
+    /// ffmpeg the user installed encodes instead of the Mac's built-in encoder (docs/extensions/computer-use.md "x264 on a
+    /// direct LAN (#8859)").
+    private func x264Row(_ c: MachineComputer) -> some View {
+        Toggle(isOn: Binding(get: { c.screenX264 }, set: { on in
+            if on { askX264 = true } else { Task { await setX264(false) } }
+        })) {
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text("Live Screen with x264").font(Theme.Font.body).lineLimit(1).minimumScaleFactor(0.8)
+                Text(c.screenVideo?.x264.map { String(localized: "Faster on the same network, using your \($0)") }
+                    ?? String(localized: "No ffmpeg with libx264 on this Mac now; the built-in encoder is used"))
+                    .font(Theme.Font.label).foregroundStyle(.secondary)
+            }
+        }
+        .disabled(saving)
+        .accessibilityIdentifier("computer-x264")
+        .padding(.top, Theme.Space.xs)
+        .confirmationDialog("Turn On x264 for the Live Screen?", isPresented: $askX264, titleVisibility: .visible) {
+            Button(String(localized: "action.turnOn", defaultValue: "Turn On")) { Task { await setX264(true) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(Self.x264Warning)
+        }
+    }
+
+    private func setX264(_ on: Bool) async {
+        guard let api = model.api(ref.group) else { return }
+        saving = true
+        defer { saving = false }
+        do {
+            fresh = try await api.setComputerScreenX264(machine: ref.id, on)
             Haptics.success()
         } catch {
             if let m = error.shown { model.toast = Toast(on ? String(localized: "Couldn't turn on: \(m)") : String(localized: "Couldn't turn off: \(m)"), style: .error) }

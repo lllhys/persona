@@ -123,7 +123,6 @@ func TestInboxAgentModelValidationAndProviderUse(t *testing.T) {
 	putLaunchers(t, s, storedLauncher{ManagedLauncher: proto.ManagedLauncher{Name: "twin-fast"}})
 	for _, body := range []string{
 		`{"provider":"launcher.twin-fast"}`,
-		`{"revision":0,"runtime":"agentsdk"}`,
 		`{"revision":0,"provider":"launcher.missing"}`,
 		`{"revision":0,"effort":"unsupported"}`,
 		`{"revision":0,"model":"not a model id"}`,

@@ -9,9 +9,6 @@ import SwiftUI
 /// class change would rebuild the chat under them.
 private struct DetailPresentation<Page: View>: ViewModifier {
     @Environment(\.horizontalSizeClass) private var widthClass
-    /// Pushed in Agents' column on a phone's tabs, the page carries the Assistant | Agents switch as the column's other
-    /// pages do (#3680).
-    @Environment(\.splitDetail) private var split
     @Binding var isPresented: Bool
     @ViewBuilder var page: () -> Page
 
@@ -31,7 +28,6 @@ private struct DetailPresentation<Page: View>: ViewModifier {
             #if os(iOS)
             .navigationDestination(isPresented: Binding(get: { isPresented && pushes }, set: { isPresented = $0 })) {
                 page().environment(\.detailPushed, true)
-                    .modifier(PageTabSwitchInset(shown: split?.pageSwitch == true))
             }
             #endif
     }

@@ -42,15 +42,15 @@ Turning off the extension or a machine removes the tools and entry points; Cua D
 
 When LCU's runtime actually touches an App (and a website origin when Chrome is open), it asks the client through MCP `elicitation/create`: allow once, allow for this session, always allow, deny; high-risk actions carry its own warning, and websites offer allow or deny. Official adapters hand these to Claude, Codex and Pi's own interfaces.
 
-Persona doesn't register those adapters. The node handles this elicitation itself as the MCP client, and the hub's `computer.elicit` turns it into the **existing** phone and web approval cards (the same `permission` cards used by Ask Before First Operating an App and Confirm on Phone Before Acting; `question` when there are more options):
+Persona doesn't register those adapters. The node handles this elicitation itself as the MCP client, and the hub's `computer.elicit` turns it into the **existing** phone and web approval cards (the same `permission` cards used by Ask Before First Operating an App and Confirm on Phone Before Acting; `question` when there are more options). For an MCP call that opted into wait updates, the existing `computer.call` and `computer.elicit` requests carry only the node's opaque UUID `call_id`, and only when the target node advertises `mcp_wait_v1`. The manager keeps the live call's originating machine and wait state, so the nested card joins that same reporter even when the tool operates another computer; no machine-routing field crosses either request. An unknown or malformed id gets no reporter. An older target receives no id: the manager reports `unknown` (`Still waiting`) for that delegated RPC, then restores the previous state rather than implying that the target can correlate its approval:
 
 | Runtime request | Card |
 | --- | --- |
 | Allow once only, or also one of "this session" / "always" | Permission card: Allow / Always Allow (text specifies this session or permanently) / Deny |
-| Both "this session" and "always" | Question card: Allow once, allow for this session, always allow, deny. A permission card only has one Always Allow and can't represent two durations |
+| Both "this session" and "always" | Question card: Allow once, allow for this session, always allow, deny. A permission card only has one Always Allow and can't represent two durations; the wait kind is still `approval` |
 | Website origin, form without fields | Permission card: Allow / Deny. Doesn't invent "always allow" when the runtime didn't offer it |
 | Open a URL | Permission card includes the URL, allow or deny |
-| One enum field | Question card, with the enum values plus deny |
+| One enum field | Question card, with the enum values plus deny; the wait kind is `answer` |
 | Simple fields to fill in | Permission card input fields (phone can fill them; the web card can't, so missing required values never count as approval) |
 | Unknown structure | Still a card; even tapping Allow returns cancellation, never pretends consent |
 
@@ -105,12 +105,30 @@ In these cases tools still attempt the call, returning Cua Driver's original err
 
 The assistant's two tools (descriptions in `server/internal/prompts/mcp/computer/`):
 
-- **`computer_state {machine, app?, query?, screenshot?}`**
-  - With `app`: first use `cua.getApp(app)` in `run_script` to find its frontmost window (Cua Driver's own lookup), then `get_window_state`: accessibility tree (markdown) plus screenshot.
-  - Without: `get_accessibility_tree` (on-screen Apps and windows) plus `get_desktop_state` (full-screen screenshot).
-- **`computer_run {machine, steps | script, app?, observe?, timeout_ms?}`**
-  - `steps` → `run_steps`: a sequence of actions, finding targets by role and name or `element_token`; stops on the first failure.
-  - `script` → `run_script`: JS with loops and conditions, up to 120 seconds.
+- **`computer_state {machine, app?, pid?, window_id?, query?, screenshot?}`**
+  - With `app`: `list_windows` for the app's windows. With one process, `cua.getApp(app)` in `run_script` finds its frontmost window (Cua Driver's own lookup); with several, the manager chooses (below). Then `get_window_state`: accessibility tree (markdown) plus screenshot.
+  - With `pid` or `window_id`: that process's best window, or that window.
+  - Without any: `get_accessibility_tree` (on-screen Apps and windows) plus `get_desktop_state` (full-screen screenshot).
+- **`computer_run {machine, steps | script, app?, pid?, window_id?, observe?, timeout_ms?}`**
+  - `steps` → `run_steps`: a sequence of actions, finding targets by role and name or `element_token`; stops on the first failure. `pid` / `window_id` (or the process chosen of an app with several) go to `run_steps` as the default window of steps that name none.
+  - `script` → `run_script`: JS with loops and conditions, up to 120 seconds. Not with `pid` / `window_id`.
+- **An app with several processes (#7591)** (`extmgr/computer_window.go`): two processes can share an app's name and
+  bundle id (the user's browser and another copy of it with its own profile). Cua Driver's own lookup takes whichever it
+  finds first, so it once read another copy's small untitled window and the user's own could not be chosen.
+  - Each process's best window: a titled ordinary (layer 0) window, then on the current Space, on screen, in front of
+    the process's others.
+  - Between processes: the one with a titled window, then on the current Space, then the app active now (`list_apps`).
+    Window stacking does not decide between processes: the other copy's windows were stacked over the user's.
+  - Still more than one: nothing runs, and the result lists the candidates (pid, window_id, title, size, on the
+    current Space) for the model to call again with `pid` or `window_id`, asking the user by the titles when unsure.
+  - `computer_run`: the call's `app` with several processes is pinned to the chosen pid (not its window, so a dialog
+    over it in that process is still found). A step that names such an app itself, or a script that does
+    (`cua.getApp` takes no process), is refused with the candidates: a step's own app has Cua Driver choose again.
+  - `pid` / `window_id` are checked against the Mac (`list_windows`, `list_apps`) and stand for their app in per-app
+    approval and the protected-app checks. A pid of another app than the one named is an error, never a way around
+    them. LCU takes neither.
+  - The cost: one `list_windows` (about 75 ms on the Mac) per `computer_state` with an app, and per app a run's steps
+    or script name.
 
 **Session**: each chat's calls carry the same Cua Driver session name, `persona-<first 8 characters of chat id>`.
 - Tested locally (Cua Driver 0.38.0):
@@ -118,11 +136,29 @@ The assistant's two tools (descriptions in `server/internal/prompts/mcp/computer
   - With the **same** session name, tokens work across calls: read the Clear token once, click it in the next `call`, and Calculator resets.
   - Named sessions expire after 5 minutes idle.
   - So line numbers from `computer_state` can be used in later `computer_run` calls.
+- **A session that ended (#7590)**: once Cua Driver ends a session, it refuses every later call under that label
+  ("session has ended; … Call start_session …") until `start_session` starts it again. It ends one after 5 minutes idle,
+  and when the user presses Stop on the bar it shows on the Mac's screen ("You're in control / Return to agent / Stop").
+  The error is the same for both, `get_session` on it is refused too, and Cua Driver keeps no reason (0.38.0, measured).
+  The manager tells them apart by its own record of the label (`extmgr/computer_session.go`, in memory):
+  | Found ended | Taken for | What happens |
+  | --- | --- | --- |
+  | Used under 5 minutes ago | The user's Stop (it cannot have idled out) | Nothing runs. The model is told the user stopped it on that Mac, not to call again in this turn, and to ask the user with a sentence in their language (`hub-computer.session_stopped`). Retries keep getting that answer |
+  | After that, the owner spoke in the conversation (a message, or an answer to its question; the assistant's `ownerHeard`) | Their go-ahead | `start_session` under the same label, then the call once more |
+  | Used 5 minutes ago or more, or never used by a manager that has run that long | Idled out | `start_session`, then the call once more, silently |
+  | Never used, by a manager that started under 5 minutes ago and has not heard the owner since | Cannot tell | Treated as the user's Stop |
+  - The manager's own label (`persona-apps`, its look at the apps and windows for the protected-app checks) and the
+    node's (`persona-gate`, `cua_gate.go`) only read: no cursor, no bar, nothing for the user to stop. They always start
+    again (the node does its own), or every check would fail as unreadable and every run would be refused.
+  - What it can miss: a Stop after the label's last use, when the manager restarted in between and its next call
+    comes 5 minutes or more after that restart with no word from the owner since. That call is taken for an
+    idled-out session.
+  - The node takes `start_session` only for the call's own label and with no other arguments.
 - **Why not keep a `cua-driver mcp` child resident on the node**: a session name already preserves tokens. One `call` per invocation is stateless: node restarts, hub redeployments and two concurrent chats don't affect it. It costs one extra process per call (tens of milliseconds), negligible next to Cua Driver operations (about 0.3 seconds per click, 1.3 seconds to find a window).
 
 **Arguments and tools**:
 - Arguments go to `cua-driver call` through stdin: no length limit, and absent from process listings.
-- The node accepts only 7 tools: `get_desktop_state`, `get_accessibility_tree`, `get_window_state`, `list_apps`, `list_windows`, `run_script`, `run_steps`. Cua Driver settings, updates, extensions and clipboard don't go through this path.
+- The node accepts only 8 tools: `get_desktop_state`, `get_accessibility_tree`, `get_window_state`, `list_apps`, `list_windows`, `run_script`, `run_steps`, and `start_session` for the call's own label (a session that ended, above). Cua Driver settings, updates, extensions and clipboard don't go through this path.
 
 **If the daemon isn't running**: the node first runs `open -g -b com.trycua.driver`, opening CuaDriver.app in the background through LaunchServices with no window. Measured: starts within 1 second, retaining permissions, then the call proceeds.
 
@@ -256,12 +292,45 @@ Only through the hub tunnel, no new externally exposed port:
   - View Only (`viewOnly`) by default. Switching View Only / Take Over in the top bar hands keyboard and mouse (touch) input to that Mac.
   - Scale to the window (`scaleViewport`), without changing the Mac's resolution.
   - On a Mac with several displays, the top bar's Displays menu shows one of them ("Displays" below).
+  - The top bar's Connection stats shows this connection's numbers ("Connection stats on the web" below).
   - On disconnection, offer Reconnect.
 - **Without `crypto.subtle`**: ARD login AES-encrypts the account and password; noVNC's AES uses browser `crypto.subtle`. Pages opened over HTTP (hub LAN address, App WebView) aren't secure contexts and lack `crypto.subtle`.
   - `aes.ts` supplies an AES-CBC-encryption-only substitute when missing.
   - Tests: three FIPS-197 standard vectors and byte-for-byte comparison with WebCrypto.
   - HTTPS or localhost uses the browser's implementation, without the substitute.
 - **View**: Cua Driver operates in the background without taking focus, so the view is the real desktop. Its agent cursor is a topmost window and visible.
+
+#### Connection stats on the web (#6558)
+
+- **Toggle**: the top bar's **Connection stats**, on any live Mac as the App's ⋯ › Connection Stats, off by default and
+  kept per Mac in this browser (`video.ts` `statsShown`). It shows a small panel at the top right of the picture, which
+  drags anywhere inside it and has a close button. A page an app embeds has no bar and no panel. The toggle and the panel
+  are a chunk of their own (`StatsOverlay.tsx`, words in `screen-video`), loaded once the screen is live.
+- **What it shows**, once a second (`meter.ts`): `VNC · Via hub`, then bitrate and frame rate, then on a line of its own
+  **Round trip to the hub N ms**. Only what was measured: a number with nothing behind it is left out, never guessed. A
+  still screen sends nothing, so it says 0 fps.
+- **How**, only while the panel is shown (`probes.ts`):
+  - Bitrate: the page opens the RFB WebSocket itself and hands it to noVNC (its constructor takes a channel: the same URL,
+    no subprotocols, and noVNC closes it). A listener beside noVNC's counts each message's bytes, RFB's own without the
+    WebSocket and TLS framing.
+  - Frame rate: noVNC has no frame event. The hook wraps its display's `flip()`, which puts each finished update on the
+    screen, at once or from its render queue, and counts the flips that draw. A noVNC whose display has no `flip()` and
+    `_renderQ` is not hooked, and the frame rate is left out. `probes.test.ts` runs the hook on the real noVNC 1.7, so an
+    upgrade that changes it fails there.
+  - Round trip to the hub: the screen page holds no hub connection (`main.tsx` loads only `ScreenView` here), and another
+    `/api/v1/ws` would count as one more connection of the device (a `device_sessions` row, every broadcast, the snapshots
+    sent on connect). So every 2 s while the page is visible it fetches `GET /api/v1/health?probe=N` (no sign-in, the
+    hub's memory only; `cache: "no-store"`, `redirect: "manual"`) and takes `responseStart − requestStart` from that
+    request's own Resource Timing entry, through a `PerformanceObserver` (the global buffer is never cleared). A probe
+    counts only when the hub answered `{"ok":true}` and both times are there; the panel shows the median of the last 5
+    from the last 20 s, and a background tab probes nothing. That is the browser's HTTP round trip to the hub, a little
+    of it the hub answering, and not the hub's way on to the Mac, so it never sits on the first line, where the App puts
+    the video's end-to-end total.
+- **Not yet**: the video channel's segments (capture · encode · network · decode), `path` (#6398) and `tier` (#6396)
+  come with the web video path.
+- **Tests**: `meter.test.ts`, `probes.test.ts`, `ScreenView.stats.test.tsx`, and in a real browser against the mock's
+  moving box (`MOCK_COMPUTER=ready MOCK_SCREEN=fake MOCK_SCREEN_ANIMATE=1`) `node web/e2e/screen-stats.mjs <web URL>`:
+  off by default, measured numbers in light and dark, kept per Mac, no round-trip line while the hub's health is refused.
 
 ### Native client in the App (#1343, `apple/Persona/Screen/`)
 
@@ -270,10 +339,15 @@ Picture in Picture (`AVSampleBufferDisplayLayer`) needs access to each frame, wh
 - **Connection**: hub's 5900 forwarding (`RFBWebSocket`), a binary WebSocket over the same route as the App's hub connection (`APIClient.url`: via SSH tunnel when used; `APIClient.session`: pinning for public TLS), with device token (`Authorization`).
 - **Login** (`RFBAuth`):
   - macOS Screen Sharing offers 30 (Apple Remote Desktop), 33, 35, 36. This uses 30:
-    1. Server sends the generator, prime and its public key.
-    2. Client calculates the DH shared secret, using its MD5 as the AES-128 key (ECB).
+    1. Server sends the generator, prime and its public key: macOS 26 a 4096-bit prime with generator 5, older macOS 1024 bits.
+    2. Client calculates the DH shared secret, using its MD5 as the AES-128 key (ECB). This needs no account or password,
+       so `RFBAuth.exchange` runs as soon as the server's numbers arrive, while the sign-in form waits (#7809).
     3. Account and password each occupy 64 bytes, NUL-terminated and padded with random bytes. Send the encrypted 128 bytes first, then the client's public key.
-  - Large-number arithmetic is a custom Montgomery modular exponentiation (`RFBBigUInt`), checked against Python `pow`.
+  - Large-number arithmetic is a custom Montgomery modular exponentiation (`RFBBigUInt`: 64-bit limbs on raw buffers,
+    a 4-bit window, the two exponentiations side by side), checked against Python `pow`. With a 4096-bit prime the old
+    32-bit-limb array version took 48 s in a Debug build after Connect (0.6 s optimized); this takes 0.65 s and 0.03 s.
+    A shared Rust implementation in PersonaCore was weighed and not taken: a new big-number crate and entry points on
+    three clients for one function the Swift fix makes fast enough.
   - Mock Screen Sharing also offers VeNCrypt Plain (19 → 256) for tests; no authentication (1) is accepted too.
   - Account/password come from saved credentials (`ScreenCredentials`, #1322).
 - **Frames** (`RFBFramebuffer`):
@@ -320,6 +394,14 @@ It signs in with the login keychain's generic password `persona-vnc-bench` (adde
   its own shown in a browser on that Mac; per scene the Mbit/s, updates a second, input-to-pixels latency (the page's
   marker changing colour, split into getting the input and drawing it back), and the picture's SSIM / PSNR against a
   second, lossless connection of the same moment. `-delay` and `-rate` add a phone link's latency and bandwidth.
+- `wheel -apps page,finder,terminal -browser <executable> [-replay <schedules.json>]` (#7775): how far wheel notches
+  scroll on that Mac. One notch at a time, then 20 at gaps from 100 ms down to none (does macOS speed quick notches up,
+  or merge them?), then each named schedule (`{"name": "ms:n,…"}`, a gesture's notches at the times the app sends
+  them). A browser page reports its own scroll position and each wheel event's `deltaY`; Finder and Terminal are
+  measured from the picture, by how far their rows moved. It uses only windows it opens itself (a browser of its own
+  with a profile of its own, a Finder window on a folder of its own, a Terminal window running its own script),
+  closes them and brings back the app that was in front. It starts only after a minute with no input on the Mac and
+  stops at the first key, click or pointer move it did not send.
 - `record`: what the server sends, for replaying through the app's own client (decode CPU, bytes copied).
 - `trace -scene <scene> -rec-mode <mode> [-trace-area x,y,w,h|page|stage]`: each request and each update's start, end,
   size and painted box in order, to see how the server answers a way of asking (or a part of the screen).
@@ -368,9 +450,10 @@ displays to offer; on a narrow screen the button keeps only its icon). The rules
   framebuffer changes size (a display plugged in or out, another resolution), so a chosen display that comes back is shown again
   without a reload, and as the menu opens, so its list is the Mac's as the choice is made. Two displays of one size swapped while the
   menu stays closed keep the old crop until it opens.
-- **Loading**: the menu (`screen/DisplayMenu.tsx`) is imported once there is a choice to offer, so its words (`screen-displays`) stay
-  out of the first screen's catalog. One that would not load (offline, the hub redeployed) leaves every display shown and is asked for
-  again the next time the screen goes live.
+- **Loading**: the menu (`screen/DisplayMenu.tsx`) is a chunk of its own, so its words (`screen-displays`) stay out of the first
+  screen's catalog. It is fetched while a Mac whose status lists several displays connects, and the page crops to a kept display only
+  once it is in, so a cropped picture always has the menu to go back. One that would not load (offline, the hub redeployed) leaves
+  every display shown and is asked for again as the connection moves on.
 - Pages an app embeds (`embed=1`) have no top bar: they show every display and ignore a choice this browser kept.
 - **Tests**: `web/src/screen/displays.test.ts`, `ScreenView.displays.test.tsx`, and in a real browser against the mock hub
   (`MOCK_COMPUTER=ready MOCK_SCREEN=fake MOCK_SCREEN_DISPLAYS=2:node`) `node web/e2e/screen-displays.mjs <web URL> <mock hub URL>`: the
@@ -391,20 +474,29 @@ displays to offer; on a narrow screen the button keeps only its icon). The rules
   no hub field says a session is operating a computer. Android (Glass, #4339) draws the same pill from the same items
   (`ComputerActivity` in core/domain) and has no VNC, so its tap opens the work line that holds the call; the web shows none.
 - **Full page** (`VNCPage`, #1343): native client fills the screen in its own window (`ScreenWindow`, #1604: iOS `UIWindow` above the shell, below toasts; separate Mac window; follows `AppModel.screenOpen`). Previously a `fullScreenCover` on `RootView`, whose presentation was swallowed when the machine page was in a sheet. The old web drawer (WKWebView + noVNC + bridge) is removed; the web still uses noVNC.
-  - Top bar: Close, Picture in Picture (iOS, right of Close, #3075), connection stage (connecting / login required / connected / disconnected) and machine name, Help, "…" (Mouse Mode / Trackpad Mode, Center Pointer, Picture in Picture Diagnostics; Picture in Picture itself on the Mac). Where the row is too narrow (the largest text sizes) the name and stage go on a line under the buttons, never cut to less than the name's first four letters, and where even the buttons don't fit, Picture in Picture goes into "…". When the assistant or an Agent operates this Mac, another line: "Now: tap AC → 6 → × → 7 → =".
-  - Bottom bar: Clipboard, I'm Done (only when the Agent that opened it is waiting for you), Keyboard.
-  - **Landscape** (#3075): on an iPhone the page turns to either landscape while it is up; the rest of the app stays upright (`AppOrientation`: the app delegate's mask, upright unless the page is up; Info.plist still lists only portrait, so the app launches upright however the phone is held). The bars become rails down either side (`verticalSizeClass == .compact`; one `AnyLayout`, so the picture and the keyboard's catcher stay the same views as the phone turns): Close, Picture in Picture, the status dot (name and stage for VoiceOver), Help and "…" down the leading rail; Clipboard, I'm Done (icon only) and Keyboard down the trailing one; short of room (the keyboard up), a rail's buttons close up; at the largest text sizes Picture in Picture then goes into "…" so Close, Help and "…" stay above the keyboard, and only then does a rail scroll. Each rail stays one set of views whichever way it fits (#5289): a menu opened from it hides the keyboard and gives it room, and the menu morphs out of its button, which must still be there. The picture takes the whole height between them; the sign-in form scrolls. UIKit decides from the shell window's controllers and what they present (a machine's page in a sheet), not the screen window's, so opening and closing the page asks every controller in the scene to read the mask again; closing on its side turns the app upright at once (`requestGeometryUpdate`).
+  - Top bar: Close, Picture in Picture (iOS, right of Close, #3075), connection stage (connecting / login required / connected / disconnected) and machine name, Help, "…" (Mouse Mode / Trackpad Mode, Zoom In or Zoom to Fit (iOS, #6196), Center Pointer, Picture in Picture Diagnostics; Picture in Picture itself on the Mac). Where the row is too narrow (the largest text sizes) the name and stage go on a line under the buttons, never cut to less than the name's first four letters, and where even the buttons don't fit, Picture in Picture goes into "…". When the assistant or an Agent operates this Mac, another line: "Now: tap AC → 6 → × → 7 → =".
+  - Bottom bar: Clipboard, Rotate (iPhone only, #6196), I'm Done (only when the Agent that opened it is waiting for you), Keyboard.
+  - **Rotate** (#6196): right of Clipboard on an iPhone, a tap turns the page on its side (`requestGeometryUpdate`), and on its side, where it sits under Clipboard down the trailing rail, back upright; its symbol and VoiceOver label name where the tap turns it (`Theme.Icon.rotateToLandscape` / `rotateToPortrait`). Once tapped, the page keeps that orientation however the phone is held (`AppOrientation.screenTurned`: `.landscape`, either side, or `.portrait`) until it is tapped again or the page closes, so it works with Portrait Orientation Lock on; untapped, the page turns with the phone as below. An iPad is never made to turn, so it has no button.
+  - **Landscape** (#3075): on an iPhone the page turns to either landscape while it is up; the rest of the app stays upright (`AppOrientation`: the app delegate's mask, upright unless the page is up; Info.plist still lists only portrait, so the app launches upright however the phone is held). The bars become rails down either side (`verticalSizeClass == .compact`; one `AnyLayout`, so the picture and the keyboard's catcher stay the same views as the phone turns): Close, Picture in Picture, the status dot (name and stage for VoiceOver), Help and "…" down the leading rail; Clipboard, Rotate, I'm Done (icon only) and Keyboard down the trailing one; short of room (the keyboard up), a rail's buttons close up; at the largest text sizes Picture in Picture then goes into "…" so Close, Help and "…" stay above the keyboard, and only then does a rail scroll. Each rail stays one set of views whichever way it fits (#5289): a menu opened from it hides the keyboard and gives it room, and the menu morphs out of its button, which must still be there. The picture takes the whole height between them; the sign-in form scrolls. UIKit decides from the shell window's controllers and what they present (a machine's page in a sheet), not the screen window's, so opening and closing the page asks every controller in the scene to read the mask again; closing on its side turns the app upright at once (`requestGeometryUpdate`).
   - **Reconnects on return** (#4243): a suspended app's connection is often gone. Coming back from the background with the full page up (not Control Center or a dismissed alert), a connection already closed reconnects at once, and a drop reported within 5 seconds of returning reconnects once by itself. Login required, connecting and connected are left alone, so Reconnect is no longer needed. If it still says connected on return, the page asks the Mac for the whole screen once; when no frame arrives within 10 seconds, the connection is taken as silently gone in the background and reconnects once (#4380), instead of staying on a frozen picture.
   - **Two modes** (remembered per Mac, `vnc.mode.<group>/<machine>`):
-    - Mouse Mode (default): pointer follows the finger. Tap clicks there; one-finger drag drags; two-finger drag scrolls; two-finger tap or long-press right-clicks; pinch zooms, then two-finger drag pans the zoomed view.
-    - Trackpad Mode: finger moves the pointer relatively; tap clicks at the pointer, tap then immediately drag drags, two-finger drag scrolls at the pointer. Use Center Pointer if it strays.
-    - **Two-finger scrolling** (same in both modes, `VNCWheel`, #4878): at original view size, every 8 pt of finger motion sends one wheel notch (scaled up when zoomed, so a notch travels the same distance on screen); the first notch is sent at half a notch. Remainders are retained and reverse motion subtracts them, so small movements also scroll; 100 pt gives about 13 notches (previously one per 24 pt, discarding remainders on lift, giving only 4). Natural scrolling: pulling down reveals content above, like iOS and Mac defaults. Lift at over 300 pt/s continues with UIScrollView deceleration (0.997 remaining per millisecond), adding at most 30 notches so a fling doesn't jump to the bottom; touching again stops immediately.
+    - Mouse Mode (default): pointer follows the finger. Tap clicks there; one-finger drag drags; two-finger drag scrolls; two-finger tap or long-press right-clicks; pinch zooms, then two-finger drag pans the zoomed view. A two-finger touch is a scroll or a pinch, never both (`VNCTwoFingers`, #6196): pinch and pan are recognized together, and any change in the fingers' spread used to zoom, so a scroll whose fingers drifted apart zoomed (and, zoomed in, turned into a pan). Whichever the fingers show first wins until they lift: a pinch needs the spread to change by 15% (10 pt at least) and by more than the fingers travel together; a scroll, 6 pt of travel, at least as much as the spread changed. Until then neither acts, and the travel is kept for the scroll.
+    - Trackpad Mode: finger moves the pointer relatively; tap clicks at the pointer, tap then immediately drag drags, two-finger drag scrolls at the pointer. Use Center Pointer if it strays. No pinch (#6196): two fingers only scroll.
+    - **Zoom** from "…" (#6196): Zoom In is twice the fitted size, around the pointer (the middle when the pointer is not on the part shown); once zoomed in, by it or a pinch, "…" offers Zoom to Fit instead. It is the only zoom in Trackpad Mode, where the zoomed picture moves to keep the pointer 32 pt inside the view (`VNCZoom.following`), so the pointer can reach every edge. When the page turns, a zoomed picture keeps its zoom against the new fit and the part that was in the middle of the view stays in the middle (`VNCZoom.turned`).
+    - **Two-finger scrolling** (same in both modes, `VNCWheel`, #4878, #7775):
+      - **What a notch does on the Mac** (measured with `vncbench`'s wheel probe on macOS 26.6, #7775): macOS's Screen Sharing scrolls a wheel notch one point, however fast notches come and with no speed-up: a browser page gets a 1-pixel wheel event (`deltaY` 1 in pixels; notches close together merge into one larger event, none lost) and a Finder list moves 1 pixel. A terminal (Terminal.app) scrolls a whole line (15 px) for each event it gets, and notches that arrive together merge into one or a few lines. Screen Sharing keeps up with 2000 notches a second (the page stopped 0.1 s after the last); at 6000 a second every notch arrived but the page went on scrolling for 6.5 s. Before #7775 the app sent a notch every 8 pt of finger travel, so a slow 300 pt drag scrolled a page 37 points.
+      - **Speed curve**: a notch is a Mac point. While the fingers go no faster than 250 pt/s the Mac's content moves as far as they travel over its picture at the current zoom (view points × framebuffer pixels a view point ÷ framebuffer pixels a Mac point, `VNCDisplays.pixelsPerMacPoint`: 2 where Screen Sharing sends a Retina display at its full size, else 1), as if dragging it. Faster, each point counts for more: the gain rises in a straight line to 4× at 2000 pt/s (1.6× at 600, 3.1× at 1500), from UIKit's pan velocity.
+      - **Pacing**: the fingers and the coast only move where the wheel should be. A display link sends what that has come to once a frame, about 12 ms behind, at most 2000 notches a second (33 a frame at 60 Hz). No more than 0.1 s worth waits; beyond that the fingers are held to that top speed, so the Mac stops scrolling soon after they do. `RFBSession.scroll` sends every notch it is given (it once dropped any past 20 in a call). The first notch is sent at half a notch; remainders are retained and reverse motion subtracts them.
+      - **Coast**: letting go at 250 pt/s or faster continues from the speed the notches were going, with UIScrollView's normal deceleration (0.998 remaining per millisecond), sent no faster than 2000 a second: a harder flick keeps that pace longer before it slows, so it goes further. Touching again stops it and anything not yet sent.
+      - In numbers (model of 300 pt drags reaching their speed in 50 ms and lifted moving; a 1920-point Mac on an iPhone's fitted picture, about 4.9 Mac points a view point): slow (200 pt/s) 1470 points, medium (600) about 2990, fast (1500) about 3930; before, 37, 61 and 66.
+      - **Scroll Speed** (Settings › Live Screen, `VNCScrollSpeed`): Slower, Default or Faster scale the whole curve by 0.6, 1 or 1.6, read as two fingers go down; the 2000-a-second top speed stays.
+      - Natural scrolling: pulling down reveals content above, like iOS and Mac defaults. Measuring: `VNCTests/testScrollMeasure` (`PERSONA_VNC_SCROLL_MEASURE=1`) plays slow, medium and fast 300 pt drags against the mock, whose relay stamps each notch as it arrives (`wheel_in`). A terminal still moves line by line, and a page stops dead at its ends: smooth, trackpad-like scrolling there needs a process on the Mac that posts continuous scroll events (#7775).
     - Pointer draws the cursor sent by the Mac (Cursor pseudo-encoding), or the app's own arrow until it does, through `VNCPointerArt` (#3075). Drawn at the picture's scale it was a speck: a 1920-pixel Mac on a 402-point phone is 4.8 pixels a point, so macOS's arrow came out about 4 points tall and its one-pixel white outline averaged into the black body; on a dark window or terminal it vanished. Now it is at least `Theme.Size.pointer` (22 pt) tall (its visible part; the Mac's own size when zoomed in further), scaled about the hot spot by whole device pixels so the outline stays a crisp line, and given the rings it needs to read on any background: a pointer that reads on both black and white (macOS's own arrow and I-beam, black with a white outline) is only enlarged; one with no light edge gets a 1 pt white ring, one with no dark edge a 1 pt black ring ("reads": every outline pixel has one within 2 pt that differs from the background by 0.5 in luminance). Any background is far from black or from white, so a pointer that reads on both reads on all. `VNCPointerArtTests` check macOS's arrow (with and without its shadow as a rim), the I-beam and black / white / red crosses over black, white, gray, a dark terminal and a busy picture.
   - **Keyboard**: the bottom-bar Keyboard opens the system keyboard; typed text goes directly to the Mac (`VNCKeyInputView`). A row of Mac keys above it (`VNCShortcutBar`, in the page, moving up with the keyboard): ⌘ ⌥ ⌃ ⇧ tap to hold, tap again to release; Esc, Tab, arrow keys, ⌘C ⌘V ⌘Z ⌘Tab ⌘Space. Latin-1 characters are sent as keys; Chinese and other characters are pasted via clipboard (put in the Mac clipboard, then ⌘V). ⌘ sends Super_L (0xffeb), interpreted as Command by macOS Screen Sharing.
   - **Clipboard**: Paste from iPhone puts the phone clipboard text in the Mac clipboard and presses ⌘V; Copy to Mac's Clipboard Only skips the keypress; Copy to iPhone retrieves the Mac clipboard text. Writing and reading go through the node (`computer.clipboard`: `pbcopy` / `pbpaste`, up to 1 MB; hub `GET/POST /api/v1/machines/{mid}/computer/clipboard`, requiring `cua` or `ego` enabled for the machine, like 5900 forwarding), which answers once the text is on the clipboard, and only then ⌘V goes out (`RFBInputQueue`). RFB cut text (ClientCutText) is used only when the node can't (one too old): it carries Latin-1 alone and has no answer, and macOS's Screen Sharing stores it only as the legacy `com.apple.traditional-mac-plain-text` type, with no `public.utf8-plain-text`, which `pbpaste` and Terminal don't read: on macOS 26 a ⌘V after it pasted nothing into Terminal (0 of 12, with or without a 0.5 s wait). It used to be the path for all Latin-1 text, so English pasted into a terminal never arrived (#3075). The node runs `pbcopy` / `pbpaste` in `en_US.UTF-8` (`LANG`, `LC_ALL`, `LC_CTYPE`): the resident node runs under launchd with no locale, where they take text as MacRoman and a pasted 中文 arrived as ‰∏≠Êñá (`TestMacClipboardRealRoundTrip`, `PERSONA_REAL_CLIPBOARD=1` on a Mac). Reading text copied by another App on the phone causes iOS to ask Allow Paste once. The page reads it off the main thread, where the read would hold the picture and the session still until it is answered; refused, the page says why rather than that there is no text (#3075).
   - **A new session's first seconds** (#3075): macOS's Screen Sharing drops every key event it gets in roughly the first 2 to 3 seconds after a client signs in (measured on macOS 26 against Terminal: a ⌘V or Return then never arrived, the latest loss 3.05 s in on a heavily loaded Mac, 2.2 s on a quiet one), while pointer events land at once, and nothing on the wire says when keys start to count. The page signs in again whenever the app comes back from the background, so text copied in another app and pasted right away was lost. `RFBInputQueue` holds keys, and a paste's ⌘V (not its clipboard write), for 3.5 s after each sign-in and then sends them in order; One-Tap Unlock's pause after its Shift is queued too (`pause`), so it counts from when the Shift goes out.
   - **I'm Done**: when the Agent waits for you to act on the computer (its chat opened this page), tapping sends 我在电脑上操作完了，你继续吧。 ("I'm done on the computer; please continue.") to its chat. Closing the page also hands control back.
-  - **Help**: Using VNC page covers touch controls, input and clipboard, when to use Trackpad Mode, Picture in Picture, and handing back the computer.
+  - **Help**: Using VNC page covers touch controls (zoom in each mode, and Rotate on an iPhone), input and clipboard, when to use Trackpad Mode, Picture in Picture, and handing back the computer.
 - **Picture in Picture** (`VNCPiP`, #1343):
   - On iOS, system Picture in Picture: `AVPictureInPictureController` + `AVSampleBufferDisplayLayer`, floats over other Apps and the home screen, draggable and resizable. View-only; all input is on the full page. Restore (or tap the small window) returns to the full page; the full page's Picture in Picture button (right of Close) returns to the small window.
   - Background: audio session `.playback` (`mixWithOthers`, silent and doesn't interrupt other audio), `audio` in `UIBackgroundModes`; the small window keeps updating in the background. Closing it disconnects (unless the full page is still open).
@@ -412,11 +504,13 @@ displays to offer; on a narrow screen the button keeps only its icon). The rules
   - One connection per Mac (`VNC.hold` / `release`), shared by full page and PiP. Disconnects 2 seconds after the last release, so switching doesn't reconnect.
   - Frames: between updates, `RFBFrameSink` copies the framebuffer (locked) into `CVPixelBufferPool` (32BGRA, IOSurface), up to 30 fps, with increasing host-clock timestamps. The full-page layer sets DisplayImmediately; PiP's source layer has its own `controlTimebase` (host clock, rate 1) and receives samples without DisplayImmediately (AVFoundation advises against mixing them).
   - **PiP source** (#1839): a 192pt-wide display layer matching the Mac screen ratio (`Theme.Size.pictureInPictureSource`), in the App's main window behind content: in the window, not hidden, but not visible. Previously 2×2pt, and attached to the full-page window when opened from there; closing the full page removed it and PiP couldn't start on real devices (TestFlight 161).
-  - **When it opens**: once the full page connects, prepare PiP (source, controller, audio session). The Picture in Picture button calls `startPictureInPicture` directly from the tap; once started, close the full page as if × were tapped. Going home with the full page open starts PiP automatically (`canStartPictureInPictureAutomaticallyFromInline`). Tapping VNC from a machine page or chat (with login remembered) also starts from the tap: first put a card in the source (next item), don't wait for connection. If `isPictureInPicturePossible` is false or the system doesn't respond, try again when it becomes true, after 0.4 seconds, then every second, at most 6 times, only in the foreground (background relies on automatic start). If it can't start within 8 seconds, or the system refuses (`failedToStart`), show "Picture in Picture couldn't open: reason; switched to full page" and open the full page.
+  - **Where the source lies** (#6333): the system's zoom into the small window starts at the source layer's frame, and Restore's ends there. It used to sit in the main window's bottom-left corner, so a small copy of the picture popped up there before it jumped into the small window. Now, while the full page is up, the source lies exactly over the page's whole picture (`VNCScreenUIView` reports it in screen points through `onPicture`; zoomed in it runs off the screen as the picture does), so the picture itself shrinks into the small window; with no page, it is in the top trailing corner, where the small window comes up (`VNCPiPPlacement`).
+  - **Handing the picture over** (#6333): at `willStart` the page closes with the transition (`AppModel.vncPiP` set then, not at `didStart`) and its picture turns transparent, so the picture never shows twice and no blank frame shows between them; the source stays where it was while the page goes. On Restore the full page opens first, and the system is told to animate (`restoreUserInterfaceForPictureInPictureStopWithCompletionHandler`'s completion) once the page has drawn its picture and the source lies over it, or after 0.6 seconds at the latest (`VNCPiPRestore`, answered once; the wait runs on a timer of its own, so a page slow to open on a busy main thread never holds the system's restore), so the small window grows back into the page's picture. The page's picture fades as the small window starts (`Theme.Motion.conceal`), since the system's copy comes over it a few frames later, and is back at once on Restore. Left: on the iPad simulator the system sometimes draws the small window's first frames (about 0.1 s) at the size it last had, in the top-left of a window that starts at the source's frame, before the picture fills it. The old corner source, about that size, hid it; a new content source, or a new controller and source for each start, did not change it, so it stays the system's.
+  - **When it opens**: once the full page connects, prepare PiP (source, controller, audio session). The Picture in Picture button calls `startPictureInPicture` directly from the tap; as it starts (`willStart`), the full page closes as if × were tapped. Going home with the full page open starts PiP automatically (`canStartPictureInPictureAutomaticallyFromInline`). Tapping VNC from a machine page or chat (with login remembered) also starts from the tap: first put a card in the source (next item), don't wait for connection. If `isPictureInPicturePossible` is false or the system doesn't respond, try again when it becomes true, after 0.4 seconds, then every second, at most 6 times, only in the foreground (background relies on automatic start). If it can't start within 8 seconds, or the system refuses (`failedToStart`), show "Picture in Picture couldn't open: reason; switched to full page" and open the full page.
   - **Card** (`VNCPiPCard`, #1839 follow-up: user found "PiP only after connecting" sluggish): before a Mac frame arrives, the source shows an `ImageRenderer` frame (black background, machine name, spinning Connecting…, every 0.1 seconds), converted to a sample with the host clock and fed to the source layer. The first frame of this connection (`RFBSession.pictured`, reset each connection) replaces it with the Mac view. Failure or disconnection shows the reason and "Tap ▶ to reconnect, or Restore to return to the App"; mark playback paused, and PiP's ▶ (`setPlaying(true)`) reconnects. Saved password wrong: in the foreground, open the full page to sign in again (PiP hands over); in the background, the card asks you to return to the App to sign in.
   - Why a card (TestFlight 161 PiP diagnostics): `startPictureInPicture` with an empty source (still connecting), even with `isPictureInPicturePossible` true, made the system do nothing—neither opening nor reporting failure. Picture in Picture on the full page (already displaying frames) opened immediately. #1928 waited for the first frame, making it work, but requiring connection first.
   - **PiP diagnostics** (full-page "…" menu): device PiP support, audio session, background audio, and each recent step (`VNCPiPLog`: tapped VNC, prepared, possible, started during tap or after waiting for a frame, opened, closed, why fallback). Copy All sends it to us. DEBUG runtime CLI `state` includes `vncPiP`; system logs use subsystem persona, category vnc.
-  - **No PiP in the simulator** (`isPictureInPictureSupported()` is false in iOS 27.0 and 27.1 simulators); tapping VNC opens the full page. PiP itself needs a real device; DEBUG `-showPiPSource YES` places the source at the App's top right (without opening the full page), so card → frame → disconnection can be checked in the simulator (`VNCTests.testTheSmallWindowConnectsInIt`). Starting system PiP, ▶ and Restore still require a real device.
+  - **No PiP in iPhone simulators** (`isPictureInPictureSupported()` is false in iOS 27.0 and 27.1 iPhone simulators, slim or stock); tapping VNC opens the full page. DEBUG `-showPiPSource YES` shows the source over the app (without system PiP), so card → frame → disconnection (`VNCTests.testTheSmallWindowConnectsInIt`) and where the source lies, over the page's picture upright and turned, else the top trailing corner (`VNCTests.testTheSourceLiesOverThePicture`), can be checked there. A stock iPad simulator (`scripts/app/sim-boot.sh --profile stock`) has system PiP: `VNCTests.testPictureInPictureRoundTrips` (`TEST_RUNNER_PERSONA_PIP_ROUNDS=1`) goes into the small window and back twice, for recordings. How it feels on a phone still needs a real device.
 - **Where VNC opens**: with that Mac's login saved, no full page open and PiP supported, go straight to PiP (`AppModel.openVNC`); otherwise full page (always full page when login is needed).
 - **Remember login** (#1322):
   - Login form adds Remember on This iPhone (Remember on This Mac on Mac), checked by default. Browser pages lack this; the form uses `username` / `current-password`, leaving it to browser password management.
@@ -431,6 +525,783 @@ displays to offer; on a narrow screen the button keeps only its icon). The rules
   - **··· menu** (`ScreenMenu`, #1604): an Agent chat has "VNC · <its Mac>"; absent if not a Mac, extension off or Screen Sharing off. An assistant chat uses its most recently controlled Mac, or lists viewable Macs if none (submenu for several).
   - VNC (`ScreenEntry`) on the machine page and in tool details opens the same thing (PiP or full page).
 - **Readable tools** (#1323, `ComputerSteps`): tool details show a step summary first (consecutive clicks become "tap AC → 6 → × → 7 → =", Calculator key names become symbols), then screenshot and VNC. Original JSON is tucked into Raw Input, visible only when expanded. Titles use machine display names (MacBook), resolving by id or name (same as hub), falling back to the tool's text if unknown. Truncate at the end if it doesn't fit (file paths still truncate in the middle).
+
+### Live screen video (#3954)
+
+A hardware video channel next to RFB, so the phone shows a Mac's screen at a fraction of today's bitrate for the same
+picture (from #3067's frames: 0.27–0.31 Mbit/s as HEVC at SSIM ≥ 0.98, against 2.1–2.6 as ZRLE). RFB stays open for
+input, the clipboard and as the fallback; only the picture moves to video. The iPhone offers it for a Mac whose node
+advertises `screen_video`, which a node does once it has the helper (the picture switcher in ⋯ stays hidden
+otherwise). The web plays it too (Chrome, Edge and Safari as HEVC, Firefox as H.264; "Browser" below). The Mac app and
+Android don't decode video yet: they keep RFB and show no switcher.
+
+- **Persona Screen** (`apple/PersonaLink/Sources/PersonaScreen`, `apple/Packages/PersonaScreenCore`): a Swift helper app inside
+  Persona Link.app (`Contents/Helpers/Persona Screen.app`, bundle id `<link id>.screen`) that captures one display
+  with ScreenCaptureKit and encodes it with VideoToolbox (HEVC Main, else H.264 High). It is an app bundle so its
+  Screen Recording grant is its own, not the node's: the node starts it through LaunchServices
+  (`open -g -n <helper> --args --socket <path> --token <t>`), and it connects back over a 0600 Unix socket, one
+  per stream, whose first line is the token.
+  - **Keeping its grant** (#7927): signed ad hoc, macOS holds the grant to the helper's exact bytes. So the helper is
+    built only from `PersonaScreenCore` (the wire, `CapturePlan`, `CaptureTick`, `HelperArguments`, `ScreenSource`,
+    `RateController`, `Refinement`, `Timing`, `CaptureConfigGate`, and `X264Plan` and `X264Process` for "x264 on a
+    direct LAN (#8859)"), never from the rest of `PersonaScreenKit` (the
+    route session, the quality tiers), which changes far more often. `mac-link.sh` builds it with `swift build -c
+    release`, linked with `-S` (no debug symbols, so no checkout paths), and keeps the executable by a hash of its
+    sources, `PersonaScreenCore`'s, its Info.plist template and the architectures
+    (`~/.persona/cache/persona-screen`). Every later Persona Link build reuses it byte for byte until those change,
+    as it does for Persona Input. `mac-link.sh verify-screen` checks that two clean copies at different paths build
+    the same executable and cdhash. With a certificate set (`mac.link_signing_identity`,
+    `docs/operations/persona-link-install.md`) both helpers are signed with it, and their grants follow the certificate
+    across any change.
+  - `--request-permission` calls `CGRequestScreenCaptureAccess()` and exits;
+  `--preflight` prints whether Screen Recording is granted without asking (`CGPreflightScreenCaptureAccess()`), which
+  the node reports as `screen_video.permission`.
+  - **Capture** (`ScreenCaptureSource`): the encoder settings gate ① measured (`RealTime`, low-latency rate control,
+    no frame reordering, capture queue depth 3, NV12 straight into the encoder; ≈5 ms p50 and ≈10 ms p95 from a screen
+    change to an encoded frame at 1080p60, since ScreenCaptureKit hands a frame over about 4.5 ms before its display
+    time). The encode alone, as Connection Stats shows it, is about 7–8 ms on an M1-class media engine plus about 1 ms
+    for VideoToolbox to hand the frame back: the engine's floor at this quality. Low-latency rate control selects
+    VideoToolbox's real-time encoder, which refuses every speed setting (#8713). While a stream runs the helper holds a
+    latency-critical activity, with idle system sleep still allowed, so macOS doesn't nap it: a clamped helper reads
+    18–35 ms. The picture's long edge is at most `start.max_size`
+    (never upscaled, even sides), the frame rate 1–60, and a keyframe comes at least every 10 s and whenever asked.
+    A configuration change (an `update`'s frame rate or size) made before `startCapture` has completed waits and is
+    applied from its completion (`CaptureConfigGate`, #7856): ScreenCaptureKit would keep the stream's first
+    configuration, so a client's first tier, which comes right after `hello`, never took effect.
+  - **Messages**: `start` gets `hello` (codec, display, size, and `features` from a helper that has more, `tiers` for #6396's
+    quality tiers), then `format` and a keyframe; `format` again whenever the
+    parameter sets change. A still screen gives no frames, so a `heartbeat` goes out each second nothing did. Each
+    second frames did, `timing` carries the helper's medians for the phone's Connection Stats (`TimingWindow`):
+    capture (display time to ScreenCaptureKit's callback, about 0), encode (VideoToolbox in to out) and network (half
+    the round trip from a frame going out to the phone's report on it, so no clocks need to agree), and what went out.
+    `update` changes the bitrate cap, the frame rate and the size in place (a new size gets a new encoder, then `format`
+    and a keyframe; no new `hello`); a new display or codec restarts capture with a fresh `hello`, `format` and keyframe. `paused` says why capture stopped (`permission`, `locked`, `login_window`,
+    `display_gone`, `busy`); when the Mac unlocks it sends `resumed` and starts again. The stream closing ends the
+    helper.
+- **Node** (`screen.dial {id, pair, keep_awake, x264}`, `node/screen.go`, `node/screenhelper.go`): starts the helper and
+  joins its socket to the stream, or refuses with `video_unavailable` (no helper or no permission), `not_signed_in` (no
+  RFB stream with this `pair` past Screen Sharing's SecurityResult) or `busy` (two streams already open). It binds the
+  video to the signed-in 5900 stream carrying the same `pair` and follows that handshake's security types (30, 2, 1)
+  to confirm the login; video ends when that RFB stream closes. `keep_awake` works as it does for 5900
+  (`node/awake.go`).
+  - **Which helper**: the one in Persona Link.app under `/Applications` or `~/Applications`. On a Mac with a node
+    signing certificate (`docs/operations/mac-node-signing.md`) the node runs its own copy instead,
+    `~/.persona/bin/Persona Screen.app`, signed with that certificate under the helper's bundle id, so its grant lasts
+    through helper updates too. It copies and signs again only when Persona Link installs another helper (a hash of its
+    executable and `Info.plist`, kept beside the copy), never touches the one inside Persona Link (that would break the
+    app's seal), and runs the installed one when signing fails.
+  - **Start**: the socket is in the user's own temporary directory (0700), 0600 itself, and goes as soon as the helper
+    is connected; the token is 16 random bytes, compared in constant time, and the line is read unbuffered so no
+    stream bytes go with it. The helper has 10 s to connect and say it.
+  - **Permission**: the helper's `--preflight`, run through LaunchServices (so it is about the helper's grant), at most
+    once a minute. `screen_video {version, codecs, permission, asked}` carries it (`advertiseScreenVideo`, on since the
+    official TestFlight build decodes the video; apps before it show no picture switcher). `screen.dial` works either
+    way.
+  - **Asking once**: macOS lists Persona Screen under Screen & System Audio Recording only after the helper has asked.
+    The first time an app that plays the video (its 5900 stream carries a `pair`) signs in while the helper has no
+    grant, the node starts the helper with `--request-permission`, once per helper version (its stamp, kept in
+    `~/.persona/bin/Persona Screen.asked`). macOS shows its alert on the Mac's own screen, which that app is showing over
+    VNC at that moment; `asked` then tells the app that Persona Screen is in the list.
+- **Hub** (`GET …/screen/video/connect?pair=…`): a binary WebSocket with the same checks as `…/ports/5900/connect`
+  (full device, `cua` or `ego` on), counted against the same 64 streams per machine. It calls `screen.dial` and relays
+  the bytes without parsing them. The iOS app's screen-sharing stream carries the pair it will bind to
+  (`…/ports/5900/connect?pair=…`, `RFBWebSocket`): 16 random bytes in hex, a new one each connection, so no other
+  stream can bind video to it by guessing. Hubs and nodes from before the video channel ignore the parameter.
+  A refused `screen.dial` is the handshake's status: 403 `not_signed_in`, 410 `session_gone`, 429 `busy`, 503
+  `video_unavailable`. A browser can't read that, so with `refusals=close` (the web page, #8320) the hub accepts the
+  WebSocket instead and closes it at once with 4000 + the status and the node's code as the reason (4429 `busy`).
+- **Wire** (length-prefixed messages: u32 big-endian length, u8 type, body). Helper → phone: `hello`, `format`,
+  `frame`, `heartbeat`, `paused`, `resumed`, `timing`, `encoding`. Phone → helper: `start`, `report`, `keyframe`, `update`. Unknown types
+  are skipped by length, so either side may add more. `PersonaScreenCore` (`apple/Packages/PersonaScreenCore`, its own
+  package for macOS and iOS) is the codec, shared by the helper and the app's client through `PersonaScreenKit`
+  (`apple/Packages/PersonaScreenKit`), which re-exports it. `update.path`
+  `{kind, via, min_rtt_ms}` (#6398) says the stream moved to another network route, so the helper can start its delay
+  baseline again (#6396); helpers that don't know the field skip it. `kind` (`lan`, `tailscale`, `ipv6`, `relay`) and
+  `via` (the phone's `wifi`, `cellular`, `wired` or `other` interface) name the cases of `LinkStats`, the route
+  measurement the route choice and the quality tiers share (`LinkStats.swift`, with `PathChange` and the
+  `UpdateMessage.Path` conversions, in `PersonaScreenKit`: the helper only carries the strings). `start.path` (same
+  shape) is the route a stream starts on, and `hello.encoder` / `hello.fallback` say what encodes it: "x264 on a
+  direct LAN (#8859)".
+- **Adaptation** (`RateController`): the phone reports when each frame arrived; the helper turns that into a queueing
+  delay and cuts the bitrate 30% over 150 ms, skips frames over 500 ms, and raises it 10% under 50 ms for 2 s. The
+  delay is measured above the lowest one-way delay of the last 10 s, so the phone's and the Mac's clocks needn't agree.
+  After a cut the next waits 500 ms, so one congested moment cuts once; while skipping, one frame still goes every
+  250 ms, so reports keep saying when the queue has drained. A stream starts at the phone's cap but at most 4 Mbit/s,
+  and never goes below 0.2. The phone caps it: 12 Mbit/s
+  on Wi-Fi, 4 on cellular, 1.5 in Low Data Mode; 15 fps in Low Power Mode or a serious thermal state.
+- **Quality tiers (#6396, the helper's side)**: a helper that can is a `hello` with `features: ["tiers"]` and the
+  display's size in `points` and `pixels`. A phone that picks tiers then adds the tier to `start` and `update`:
+  `scale` (pixels per point to encode at, never past the display's pixels, still capped by `max_size`), `min_kbps` (the
+  bitrate band's floor; `max_kbps` is its ceiling) and `target_kbps` (the bitrate to go to now). The helper applies a
+  new size or frame rate to the running capture and answers with `encoding` (type 8: width, height, fps, scale, band)
+  once it took effect, and after `hello`. With a band set, `RateController` keeps the bitrate inside it, a cut goes to
+  85% of the rate the last second's reports say arrived (30% down when they say too little), and the first 10 s raise
+  25% after each calm second until the first cut; the phone moves to another tier when the band no longer fits.
+  `update.path` (with or without a band) starts the 10 s delay floor, the delivered rate and the calm stretch over
+  (`RateController.pathChanged`): the new route's one-way delay is its own, not a queue.
+  `timing` adds `target_kbps` (the bitrate asked of the encoder; `kbps` is what went out), `skipped` (frames left out
+  over the 500 ms queue), `blocked_ms` (time frames waited to be written to the stream) and `pending` (the most frames
+  the encoder held at once). An app without tiers sends none of the new fields and gets the adaptation above unchanged;
+  apps and helpers before it skip `encoding` by length and ignore the new JSON keys.
+- **Idle refinement** (`Refinement`, `frame` flag 2; for a phone that sets a band): 300 ms after the screen stops
+  changing, the latest captured picture (even one skipped while a queue drained) is encoded again at four times the
+  target bitrate, then twice more 200 ms apart, so text sharpens at any tier. A pass goes only while the link is calm
+  (not skipping, the last frame's queueing under 150 ms) and the encoder holds nothing; one that comes back queued past
+  150 ms ends the passes until the next change. Its report changes nothing in `RateController` but a keyframe request,
+  and `timing` counts only its bytes. A still screen after a size change gets its keyframe through the first pass.
+  ScreenCaptureKit's queue depth is 4 for such a stream, since refinement holds one picture. Over budget, VideoToolbox's
+  low-latency rate control drops whole frames, for seconds after a keyframe at the lowest tier (`screenbench`), so a
+  dropped pass doesn't count and is tried again 200 ms later, up to `Refinement.attempts` (12) tries per still moment:
+  the screen's final picture still goes out once the budget allows.
+- **Quality tiers (#6396, the phone's side)** (`PersonaScreenKit`: `TierLadder`, `ReceiverSignals`, `TierPolicy`):
+  - **Ladder**: a tier is a scale (pixels per point) and a frame rate, best first. Auto steps 2×60, 1.5×60, 1.5×30, 1×30,
+    1×15; Sharper gives up frame rate first (2×60, 2×30, 2×15, 1.5×15, 1×15), Smoother pixels (2×60, 1.5×60, 1×60, 1×30,
+    1×15). Every tier keeps at least a pixel per point, so text stays readable. Each band is 0.02–0.08 bits per pixel per
+    frame, the ceiling at the phone's cap; a tier whose floor is above the cap is left out, and ones that come out the
+    same on a display merge. Each tier also carries the scale its picture really has (`pixelsPerPoint`, #7842): on a
+    display at one pixel per point every tier is 1×, and 2× under the phone's long-edge cap is less; the tier line shows
+    it and Data Saver's one pixel per point holds to it. On `screenbench` the floor keeps scrolling text at SSIM ≥ 0.98 against what was encoded.
+    The band is per codec (`TierLadder.bitsFactor`; #6558: a browser without HEVC gets H.264). H.264's factor is 1, the
+    same as HEVC's, as `screenbench` measured it (2026-11-14, every Auto tier, scene and band end at the same targets):
+    text (typing, scrolling) within 0.002 SSIM of HEVC, the video scene 0.003–0.007 lower, and 0–11% more data an hour
+    of the typical mix, so the cards' figures hold for both.
+  - **Shared with the browser** (#6558): `spec/fixtures/screen-tiers` holds the ladder's and the signals' scenarios
+    (input and expected output, one per file), which `TierFixtureTests` writes from these Swift types
+    (`PERSONA_WRITE_TIER_FIXTURES=1`) and otherwise checks unchanged. The browser's port (`web/src/screen/tiers/`)
+    replays them, so a change on either side fails both until they agree; so do the policy's timelines (route starts, every way down and up, a route change, a new bias, Data Saver and a warm device).
+  - **Signals** (the phone's, from the frames): queueing above the 10 s floor of the one-way delay (p50 / p95 over
+    0.5 s, rising or falling over 1 s), the rate the link carried while busy (frames queued behind one another: their
+    bytes over their arrival gaps, so quiet stretches don't read as a slow link; frames read together all count, #7842),
+    the newest frame's queueing (a backlog now, or one already in),
+    bursts of large frames, late frames, decode time and pictures replaced before they showed. A keyframe (one every
+    10 s) and the frames queued behind it are left out of the p95 that says whether the link is calm: that queue is the
+    keyframe's size, not a slower link, and its burst is the proof of headroom (#7842). The route's round trip, jitter and loss are `LinkStats`'.
+  - **Policy**, every 250 ms. A tier fits the link when its floor is at most 80% of what the link carries. Down, fast:
+    a long queue (over 400 ms for a quarter second, or skipped frames with the queue over 150 ms) or one the bitrate
+    can't fix (the helper's bitrate within 15% of the band's floor and over 150 ms), with the newest frame still queued
+    and a tier that no longer fits, goes straight to the best tier that does. A backlog that came in all at once after a
+    stall (its newest frame barely waited), or skipped frames the helper reports once the queue is under 150 ms, steps
+    nothing down: the stall is over; another step down waits 1 s and a queue that isn't draining, unless the queue runs away. A phone that
+    can't decode or show as fast for 2 s gets a lower frame rate. Up, slow: one tier after a calm window (8 s; 3 s in the
+    first 10 s or after a route change) with proof the link carried 1.25× the next floor, or three large frames at 1.5×
+    it. Light content, sending at most half the next floor, never fills the bitrate, and on a fast link its keyframes
+    come in too quickly to measure: it steps up after twice the window without proof. A step up undone within 15 s
+    doubles that tier's window, to 60 s. The start comes from the route, as a step of
+    the bias (Auto: 2×60, 1.5×60, 1.5×30): the same network the first, Tailscale (direct IPv6 too) under 30 ms the first
+    else the second, the relay the second over Wi-Fi, the third over cellular; the stream starts on the best tier no
+    richer in pixels a second than that step on this display, so a display at one pixel per point, where steps merge,
+    starts as high as a Retina one (the relay at 60 fps, not 30). A slower route steps down at once; a new bias or cap takes the tier the rate fits,
+    the rate at least the current tier's floor, which the link carries. The helper's `timing` comes once a second only
+    while frames flow, so its skipped frames count until the next is due (1.25 s) and its bitrate proves headroom once:
+    a still screen never steps down or up on an old second's numbers (#7842).
+  - **Simulated links** (`TierPolicySimulationTests`, the real types over a shaped link): a steady link never moves in
+    10 minutes; the relay settles on 2×60 in 5 s; 25 → 3 Mbit/s steps down in 1 s to 1.5×30 and holds (queueing p50 32
+    / p95 179 ms, against 543 / 1,033 with 2×60 fixed); a link jittering 5–9 Mbit/s for 10 minutes never moves. On a
+    display at one pixel per point with light content (scrolling text) and a keyframe every 10 s, as on a real Mac
+    (#7842), a 3 Mbit/s cap steps down once, to 1.5×30, frames read one at a time or several together, and back to 2×60
+    20.5 s after the cap lifts.
+  - **The app** (`ScreenVideoTiers`, `ScreenVideoStream`, `ScreenVideoLink`): when the helper's `hello` lists `tiers`
+    with the display's points and pixels and this app has them (`ScreenTiers.appSupported`), the stream starts a policy
+    and sends its first tier as an `update` (`scale`, `fps`, `min_kbps`, `max_kbps`, `target_kbps`) once the first frame
+    arrives: on `hello` the helper's capture hasn't really started, and ScreenCaptureKit drops a configuration change
+    made then, so capture stayed at 60 fps (#7842). Every tier change waits the same way after `hello` and after
+    `paused`, the latest one kept. The stream feeds it
+    every frame from its own task (arrival, the time a frame spread over several reads began, decode time, pictures
+    replaced before they showed) and ticks it every 250 ms; a new tier goes out as an `update` and to the link (the
+    overlay's tier and reason). ⋯ › Quality changes the bias on the running stream; a route change (#6398) restarts the
+    phone's delay floor and lets the policy look again; the tier each computer settles on, by kind of route, is where its
+    next stream starts in this app run. ⋯ › Quality shows only with tiers on both sides.
+  - **Mobile data** (`ScreenMobileData`, the user's choice, for every computer, Settings › Live Screen › Quality on Mobile
+    Data): on an expensive network (cellular or a personal hotspot, `NWPath.isExpensive`) with tiers, Clearer keeps the
+    4 Mbit/s cap (about 0.6 GB an hour of typical use on `screenbench`), Data Saver 1.5 Mbit/s at one pixel per point
+    (about 0.2–0.3 GB an hour, `TierPolicy`'s `maxScale`); Low Data Mode is always Data Saver. Until the user chooses, the
+    picture starts on Data Saver and the page asks once (`ScreenMobileDataCard`, titled for cellular or a hotspot by
+    whether the path uses the cellular interface); unanswered, it asks once more next time, then no more. Without tiers
+    the caps are as before.
+- **Switching**: RFB signs in first and shows until the first video frame decodes; the phone then stops asking RFB for
+  updates (Screen Sharing encodes nothing meanwhile). It returns to RFB within about a second on any of: the stream
+  closes, no frame or heartbeat for 3 s, a decoding error, or the Mac locks (`paused`), then retries video after 30 s
+  doubling to 5 min, and at once when the helper reports the Mac unlocked (`resumed`). While capture is paused the
+  helper sends no heartbeat, so the 3 s rule waits for `resumed`.
+- **iPhone** (`apple/Persona/Screen/ScreenVideoStream.swift`, `ScreenVideoLink.swift`): the iOS app links
+  `PersonaScreenKit` (Mac and Vision compile the same sources and leave video out). `ScreenVideoStream` sends `start`,
+  decodes each frame with VideoToolbox as it comes (the helper never reorders), sends a `report` for every frame, and
+  shows only the newest picture of a burst. `ScreenVideoLink`, one per RFB session, opens the stream once RFB is
+  signed in, shows its pictures in a layer over RFB's on the same display (`hello.rect`, else the display shown; RFB's layer is
+  hidden meanwhile, so a picture of another shape leaves black, not a stale frame), and holds RFB's update requests while
+  they show; the request held goes out when video stops, so RFB's picture catches up.
+  Video is chosen by default on a Mac that offers it (⋯ › Picture, kept per Mac; ⋯ › Quality appears only once the
+  helper's `hello.features` has `tiers` and the app has its side of them too, `ScreenTiers.appSupported`, since one
+  release carries both and before #6396's iPhone policy the choice would change nothing) and runs only while one display is
+  shown: the Mac's only one, or one picked from several the node numbered; all of several displays at once stay RFB.
+  It pauses while Picture in Picture shows the screen or the app is in the background (RFB carries the picture then).
+  When VNC shows instead, a line under the bars says why in plain words: the video stopped, the Mac is locked, the
+  Mac hasn't allowed video yet (`permission` missing, so no stream is opened), or two devices already watch its video
+  (the hub's 429 for the node's `busy`, read from the WebSocket task's response, #8320; tried again as a stopped one).
+  Connection Stats (⋯, off by default) reads the video once a second: frames shown and megabits that arrived, the
+  helper's capture, encode and network from `timing`, the phone's decode, and their total first when encode, network
+  and decode are all known (a helper before `timing` gives the phone's numbers only). With quality tiers (#6396) a Tier
+  line shows the Quality choice, the picture's own scale and frame rate ("Auto · 1.5× · 60 fps", `ScreenTierText`;
+"1×" on a display at one pixel per point, #7842) and why it last
+  changed in plain words with how long ago (picked for this connection, the connection slowed down or is steady, the
+  network changed, the iPhone is warm or saving power or couldn't keep up, you changed Quality); the resolution is the
+  encoder's after an in-place change (`encoding`), not `hello`'s. Over VNC it shows RFB's bitrate
+  and frame rate and, on a line of its own, **Round trip to the hub** (#6558): while the overlay is shown and the app is
+  in front, the page pings the app's own connection to that Mac's hub every 2 s (`LiveConnection.roundTrip`, the
+  heartbeat's kind of ping) and shows the median of the last 5 from the last 20 s (`HubRoundTrips`). It is the same leg
+  the web overlay times ("Connection stats on the web"), and like it never sits on the first line. Bitrates have two
+  decimals under 1 Mbps, one above, as on the web.
+- **Browser** (#6558; on since it was checked on a real Mac on 2026-11-15, over the hub's relay, all at 1920×1080:
+  Chrome 157, Edge 157 and Safari 26.6 with HEVC on the hardware decoder, Firefox 160 with H.264, as it has no HEVC
+  decoder. Each showed video in at least 39 of 41 two-second samples, about 15 ms end to end, 2–3 ms to decode, and
+  the tier's frame rate. `video.ts` `webVideo.plays` false turns the web's video off for everyone: the page keeps RFB
+  and offers no Picture switcher):
+  - **Wire and decoding**: `web/src/screen/video-wire.ts` frames the wire as `PersonaScreenKit` does (both replay
+    `spec/fixtures/screen-video`, written from Swift's own messages by `ScreenVideoFixtureTests`); `video-bitstream.ts`
+    turns `format` into WebCodecs' codec string (`hvc1.1.6.L93.B0`, `avc1.64001F`) and decoder configuration record.
+  - **What the browser offers** (`video-probe.ts`, once a page): WebCodecs exists only on a secure address (https or
+    localhost); HEVC counts only with a hardware decoder, H.264 either way (`isConfigSupported`, never the user agent).
+    `start.codecs` is what passed, HEVC first; nothing passed means no Picture switcher and VNC.
+  - **The channel** (`video-stream.ts`, `video-link.ts`, `VideoPicture.tsx`, a chunk loaded only for a Mac that offers
+    video): the RFB connection carries a `pair`, and once it signs in the page opens `…/screen/video/connect` with it
+    over the hub's relay (a transport function, where #6398's browser route will plug in). Each picture is decoded as
+    it comes, the newest of a burst drawn on a canvas over noVNC's at `hello.rect` (noVNC's canvas stays underneath,
+    clear, and keeps the pointer and keyboard), and a `report` goes back for every frame. While video shows, noVNC's
+    update requests are held (`rfb-hold.ts`, a guarded hook on `RFB.messages.fbUpdateRequest`; the last one goes out
+    when video stops). The iPhone's rules: video by default where it plays, one display at a time, back to VNC with the
+    same four lines (the Mac locked, video stopped, not allowed with "How to turn it on", two devices already watching), 3 s of silence, 30 s doubling
+    to 5 min, reset after a minute of video, and nothing while the tab is in the background. A decoder that fails on the
+    stream before any picture means this browser can't play it: no switcher, no retry on that page.
+  - **Connection stats**: video mode shows the iPhone's lines (Video · Via hub · total; with tiers, Tier · Quality ·
+    scale · fps and, under it, why it last changed and how long ago; bitrate · fps · codec · size, the size the
+    encoder runs at after an `encoding`; capture · encode · network · decode); over VNC, when the Mac offers video but
+    this page can't play it, one line says why: not a secure address, a browser that can't play it, or a decoder that
+    couldn't start.
+  - **Quality tiers** (`video-tiers.ts`, the iPhone's `ScreenVideoTiers`, on the ported `tiers/` types): once the
+    helper's `hello` lists `tiers` with its display's points and pixels, the page's tiers start (`webTiers.supported`).
+    The stream feeds `ReceiverSignals` from each frame as it arrives (when its first bytes came, for a frame over
+    several reads; refinement passes apart), from each decode time and from each picture drawn or replaced before the
+    next animation frame; the helper's `timing` goes to the policy, which decides every 250 ms (not while capture is
+    paused). Each change goes out as an `update` (`scale`, `fps`, `min_kbps`, `target_kbps`, `max_kbps`), but not before
+    the first frame after a `hello` or `paused` (capture starts again on resume): until then the newest change waits,
+    as on the iPhone, since Persona Screen can lose an `update` that comes before its capture has started (#7856); a
+    new `hello` drops it. ⋯ › Quality
+    (Auto, Sharper, Smoother, kept per Mac) moves the bias at once; the data cap and the mobile-data choice go to the
+    policy (`setBudget`). The route is the hub's relay, read as an unmeasured one (the relay over Wi-Fi); the tier a
+    computer settles on is where its next stream on the page starts. A helper without tiers keeps the cap as before.
+  - **Data use** (`data-use.ts`, the iPhone's `ScreenVideoBudget` and `ScreenMobileData`): the cap goes in
+    `start.max_kbps` and, when `navigator.connection` changes, in an `update`. Without tiers the caps are the iPhone's:
+    1.5 Mbit/s with the browser's Data Saver on (`saveData`, its Low Data Mode), 4 on mobile data, 12 otherwise. Chrome
+    and Edge say `type: "cellular"`; Safari and Firefox say nothing, so a phone's browser (a coarse pointer and a screen
+    no wider than 600 CSS pixels on its short side) gets 4 and nothing is asked, any other 12. With tiers on both sides
+    mobile data follows the user's choice as on the iPhone: Data Saver (1.5 Mbit/s and at most one pixel per point,
+    the policy's `maxScale`) until they choose, Clearer 4. The stream starts on the cap without tiers, which aren't
+    known before `hello`; the tiers then pick under the cap with the choice. The card (`MobileDataCard`: On mobile data, The screen is
+    saving data. Make it clearer?, Clearer about 0.6 GB an hour, Data Saver about 0.2–0.3 GB an hour) sits under the bar
+    while video shows, is asked at most twice while nothing is chosen (once a page), and the choice is kept in this
+    browser for every computer (`persona.screen.mobileData`). The web has no Settings row for it: it sits in ⋯ as
+    "Quality on mobile data" while it applies. The browser's Data Saver is always Data Saver and asks nothing. The card
+    and the choice show only with a helper that has tiers.
+  - **Tests**: `video-wire.test.ts`, `video-bitstream.test.ts`, `video-probe.test.ts`, `video-stream.test.ts`,
+    `video-link.test.ts`, `video-tiers.test.ts`, `rfb-hold.test.ts` (on the real noVNC), `data-use.test.ts`,
+    `VideoPicture.test.tsx`, `ScreenView.video.test.tsx`; `node web/e2e/screen-video-decode.mjs <web URL>` decodes both fixtures in a real
+    browser, `node web/e2e/screen-video.mjs <web URL> <mock hub URL>` runs the page against the mock's helper side
+    (`MOCK_SCREEN_VIDEO=1`, which plays `fixture.bin` (HEVC) or `fixture-h264.bin` as the helper picks from
+    `start.codecs`), and `node web/e2e/screen-data-use.mjs <web URL> <mock hub URL>` the tiers against a helper with
+    them (`MOCK_SCREEN_VIDEO_TIERS=1`): the tier under each data choice, the card and the choice, and on Wi-Fi the
+    tier in the stats and Quality moving it.
+- **Permission and login**: only input on that Mac answers macOS's Screen Recording question — someone at the Mac, or
+  the user's own taps through Screen Sharing. Nothing in Persona answers it, and Agents' computer-use calls can't target
+  System Settings' Privacy & Security or the system alert. Video needs the same login as Screen Sharing (the `pair`
+  binding); no password travels anywhere new. `computer.status` / `browser.status` gain `screen_video {version, codecs,
+  permission, asked}` (absent from an old node or one without the helper, so an old app keeps RFB). The phone's "How to
+  turn it on" follows `asked`: before it, the Mac is about to show a window (choose Open System Settings, then turn on
+  Persona Screen); after it, where in System Settings to turn it on.
+
+### Live screen routes (#6398)
+
+The live screen, picture and input together, takes the fastest route the phone can reach: the same local network,
+Tailscale, or the hub relay ([#6398](https://github.com/nwverse/persona/issues/6398) has the design). The node's end is
+`internal/screenlink`. What is in place: the screen session over the hub's relays and the node's direct routes; the
+iPhone's side comes next.
+
+- **Screen session**: a phone that asks for one gets its RFB stream and its video stream as channels of one session at
+  the node, keyed by `pair`: channel 1 is the connection to Screen Sharing (still followed for the login, so video binds
+  to the pair as before), and each video stream is a channel of its own from 2 up (Persona Screen's socket). Each channel
+  is a resumable byte stream: bytes carry their offset, the receiver acknowledges them, and the sender keeps what isn't
+  acknowledged yet, so any of the session's transports can carry a channel on from where the other side is.
+  **A transport only carries a session the hub opened**: Screen Sharing is dialed and Persona Screen started through
+  `port.dial` / `screen.dial` exactly as before; a transport joining later sends the session's token first.
+- **Asking for it**: the phone offers the WebSocket subprotocol `persona-screen-link.1` (beside `binary`) on
+  `…/ports/5900/connect?pair=…` and `…/screen/video/connect?pair=…`. The hub then passes `link: true` in `port.dial` /
+  `screen.dial`, and selects the subprotocol only when the node answers `{link: 1}`. The web's noVNC (`binary`), apps
+  before it (no subprotocol), a hub before it (never passes `link`) and a node before it (answers `{}`) all keep the raw
+  stream, byte for byte. hub.json's `screen_link_off` turns sessions off for everyone: the hub then never passes `link` on.
+- **Wire**: the video wire's framing (u32 length, u8 type, body) with its own types: `data` (channel, offset, bytes),
+  `ack` (channel, received through), `paths` (the token; candidates and the certificate with the direct routes), `attach`
+  / `attached` (a transport joining with the token), `ping` / `pong` (the pong adds the node's TCP retransmitted and sent
+  packets on a direct route; 0 on a relay), `use` / `resumed` (carry these channels on this transport from these
+  offsets), `close` (a channel's end) and `reset` (the video channel goes on at a message boundary). A new video
+  channel's relay starts with `resumed` naming it.
+- **Limits** (`screenlink.Limits`): the node keeps at most 4 MB of RFB and 512 KB of video unacknowledged, and reads
+  Screen Sharing or Persona Screen only with room (Screen Sharing waits; the helper drops frames as it already does when
+  the stream is full), so memory never grows with how long a route is down. Bytes left unacknowledged for 10 s mean the
+  transport carrying them is stuck: it is closed and the channel goes on elsewhere. A channel with no transport for 10 s
+  closes (RFB's ends the session), and so does a session with no hub relay for 10 s, so revoking the device or turning
+  the screen off on the hub also ends it.
+- **Moving a channel**: RFB is always sent on exactly from the phone's offset; its protocol state can't lose a byte.
+  Video with a backlog older than 200 ms is not replayed: the node drops it, sends `reset` with where the stream goes
+  on, asks Persona Screen for a keyframe (between two of the phone's messages, never inside one) and drops frames until
+  it comes, so a late picture replaces a burst of old ones and the rate control isn't misled by their delay. Every move
+  applies that age drop first, whether or not an earlier jump is confirmed; the new jump replaces an unconfirmed one.
+  When the transport carrying a channel fails, the node moves it to the channel's own relay (or another transport) by itself.
+  A dropped backlog's reset stays owed until an offset stated by the phone confirms the jump; dequeuing or successfully
+  writing the reset does not confirm delivery. When an unconfirmed jump changes transport, the new route sends its reset
+  before data; if post-jump data was already handed to a writer, the node drops to a fresh message boundary and keyframe
+  first, so the reset cannot land inside a message the phone may have started. While no close has gone out, that safety
+  drop retains non-frame decoder messages (`format`, `encoding`, …), even at EOF, because the helper need not repeat them
+  for the new keyframe. Once a close has gone out, the drop discards the remaining video buffer instead: no later keyframe
+  can follow, and retained messages must not move the stream's end beyond that close. EOF by itself leaves buffered messages
+  intact while a reset awaits confirmation. The close of a stream is handed out only once the phone has confirmed its
+  final jump. A new jump after a close went out owes another close after confirmation, because the phone's reset handler
+  does not re-check an earlier close; moving or losing a route alone does not owe the close again. A reset handed to a
+  writer is outstanding until the phone confirms it, whatever the buffer holds and whether or not EOF has arrived. If no
+  bytes were already in flight, its stall interval starts at handout. A route that keeps it unconfirmed for the stall
+  limit is closed, and the next route owes the reset again.
+- **Direct routes** (`screenlink.Direct`): while at least one session is live, the node listens on one TCP port bound
+  to each of its candidate addresses (never the wildcard), and closes the listener with the last session. Candidates
+  come from its own interfaces, with no Tailscale API or command: private IPv4 and unique-local IPv6 on Ethernet or
+  Wi-Fi (`lan`, with the prefix length so the phone can tell whether it is on the same network), and Tailscale's ranges
+  (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) on a point-to-point interface (`tailscale`). Loopback, link-local, global
+  addresses (not in v1), proxies' tunnels and their fake-IP range (RFC 2544's benchmark block, 198.18/15), other VPNs, and VM or container
+  bridges are left out, and so are MagicDNS names. At most 8; the node reads them again every 5 s and sends new `paths`
+  when they change. A connection must finish TLS 1.3 with ALPN `persona-screen/1` against a self-signed P-256
+  certificate made per node process (named `screen.persona.invalid`; `paths` carries its SHA-256 for the phone to
+  pin), then send `attach` with a live session's token, all within 3 s; at most 16 handshakes at once and 8 direct
+  transports per session. Its pongs carry the TCP packets retransmitted and sent on it since the last pong (macOS
+  `TCP_CONNECTION_INFO`, Linux `TCP_INFO`), the phone's measure of loss. When macOS's application firewall is on and the
+  node isn't explicitly allowed through it (read with `socketfilterfw`, at most once a minute, never changed), the node
+  doesn't listen and `paths` says `unavailable: "firewall"`, so no prompt appears on the Mac. Beside the TCP listener the
+  node opens a UDP socket on each candidate address for the video over UDP ("Video over UDP (#7873)" below).
+- **The phone's side** (`PersonaScreenKit`, pure and tested with `swift test`): `ScreenLinkMessage` frames the wire
+  exactly as the node does (both check `spec/fixtures/screen-link`); `LinkReceiver` / `LinkSender` keep each channel's
+  offsets (bytes once and in order, what the node hasn't acknowledged kept within a window); `VideoMessageAssembler`
+  hands the decoder whole video messages only and drops a partial one on `reset`; `LinkMeter` turns pongs into
+  `LinkStats`; `RouteEligibility` names the phone interface a candidate may be dialed on (a LAN address only from
+  Wi-Fi or Ethernet on its subnet, a Tailscale address only through the phone's own Tailscale tunnel, never cellular,
+  another VPN or a proxy); `PathPolicy` picks the route: by minimum round trip, a direct route winning a tie with the
+  relay; at the stream's start at once, later only after 10 s healthy, a clear gain and 20 s since the last move; a lost
+  route left at once and a degraded one (loss ≥ 5 %, or 50 ms over its own floor for 5 s) when another is healthy.
+- **The iPhone** (`apple/Persona/Screen/ScreenLinkRoutes.swift`): on since the acceptance before real devices passed
+  (a simulator on a real hub and a Mac on the same LAN: the direct route within a second, back on the relay 2.6 s after
+  it went silent and 1.1 s after it broke, direct again 39 s after it recovered, every typed byte once). Still to check
+  on a real iPhone: the Tailscale route, the local network question, and Wi-Fi to cellular. `ScreenRoutes.releaseEnabled`
+  false turns it off in the next build; the hub's `screen_link_off` keeps every live screen on its relays at once.
+  **Settings › This Device › Live Screen** (`LiveScreenSettingsView`, shown when a computer offers its live screen)
+  has one switch, "Choose the Fastest Route Automatically", on by default; turned off, the
+  phone asks for no session (everything through the hub, as before) and live sessions move back to their relays at
+  once. The quality tiers (#6396) add their own section to the same page, and Scroll Speed (#7775) a third: Slower,
+  Default or Faster (`VNCScrollSpeed`, this device's, for every computer: 0.6×, 1× and 1.6× the two-finger scroll's
+  distance, slow drags too; the top speed stays Screen Sharing's). Since Scroll Speed applies to every computer that
+  shows its live screen, the page is there whenever one does. The stats overlay's Route row shows the route's
+  round trip and packet loss and why it last changed ("Faster route", "Previous route dropped", "Network changed", …, or
+  that the computer's firewall blocks direct connections). The first try of a same-network route shows iOS's local
+  network question with `NSLocalNetworkUsageDescription`; refused, those routes fail quietly and the relay stays.
+  How it works: the RFB and video relays offer the subprotocol beside `binary`; `ScreenLinkRFBStream` /
+  `ScreenLinkVideoStream` (`PersonaScreenKit`) read the first message, and when the hub selected the subprotocol the
+  stream is the session's channel (`ScreenLinkSession`, an actor holding the channels, the transports, the pings and
+  `PathPolicy`), else the same raw stream as before, so the RFB client and the video stream don't change. A session
+  starts a `ScreenLinkProber` (its own actor): it reads the phone's interfaces (`NWPathMonitor`, `getifaddrs`), dials each
+  candidate `RouteEligibility` allows on that interface (`NWParameters.requiredInterface`, TLS 1.3 with the ALPN, the
+  certificate accepted only by its SHA-256 from `paths`) as `ProbePlan` says (at once, then 30 s doubling to 5 min after a
+  failure, again at once when the phone's networks change), and hands what connects to the session, which pings and
+  measures every route (the one in use every second, the others every two) and runs the policy once a second.
+- **Moving**: when the policy picks another route, every live channel moves
+  there (to its own relay for the relay): `use` with what the phone has of each, and nothing more goes out on it until
+  the node's `resumed` says what the node has; each side then sends on from there, so RFB loses and repeats nothing,
+  and a stale video backlog is dropped for a keyframe on the node's side. A direct route that fails, or stays silent for
+  1.5 s with a ping out, puts the channels back on their relays at once (the node does the same on its side). A direct
+  connection whose attach isn't answered within 3 s (`attachWithin`) is lost too, so the route is dialed again (#9218:
+  a redial whose answer went missing used to stay, never pinged, and kept the stream on the relay for good). A relay
+  that drops while a direct route carries the session doesn't end it: the session asks the app to open the relay again
+  (`attach=1`), which attaches with the token and is the channel's relay again, so the hub keeps the last word. A new
+  video stream joins the route in use. Each move is a `PathChange` (the stream's first route is one too, `start`):
+  `ScreenVideoLink` sends `update.path` to Persona Screen, keeps it as `route` and calls `onPathChange`, the quality
+  tiers' hook (#6396). Logs (category `screen-link`) carry route kinds and reasons, never addresses: dials that
+  connect or fail ("direct lan: connected" / "no connection"), routes lost ("direct lan: lost"), and moves.
+- **Rejoining**: a relay that dropped while the session went on (a hub restart, the phone changing networks) is opened
+  again with the same `pair` and `attach=1`; the node attaches it to the live session instead of dialing Screen Sharing
+  or starting Persona Screen again (`session_gone`, 410 at the hub, when there is none). The phone then sends `use`.
+- **Relays replaced (#8709)**: the relays leave on the phone's interface too, so turning Wi-Fi off under a direct LAN
+  route takes them with it, often without a word from their sockets. The session opens a channel's relay again, beside
+  the old one, when:
+  - the relays' interface changes (`setRelayVia`; the app's first report only replaces the guess);
+  - a relay's oldest unanswered ping is 3 s old, or four of its round trips if longer, with at least two pings
+    unanswered (`relaySilentAfter`), as on Wi-Fi with no way out. A shorter hiccup costs nothing.
+
+  The new relay is the channel's relay once it attaches. The channel moves onto it once, with `use`, if a relay or
+  nothing carried it (a direct route keeps it), and the old relay closes. If the old relay spoke again meanwhile, it
+  stays and the new one closes, so nothing moves.
+
+  A channel whose relay ends with nothing else attached waits up to 8 s for a relay opened again (`relayGrace`, within
+  the node's 10 s `Grace`), asking every 3 s, and keeps what the app sends meanwhile; then it ends, and the RFB
+  channel's end ends the session. A gap still ends it at once.
+
+### Video over UDP (#7873)
+
+On a direct route (same network or Tailscale), the live screen's video can ride a UDP flow instead of the route's TLS
+connection, so a lost packet delays only the frame it belongs to, usually by no round trip, and never slows the stream
+by itself ([#7873](https://github.com/nwverse/persona/issues/7873) has the design and the shaped-link numbers it rests
+on). The node's end is `internal/screenlink` (`udp.go`, `udp_wire.go`, `rs.go`); the shared cases are
+`spec/fixtures/screen-udp`. In place: the node's side, offered in `paths` as `"udp": 1`, and the iPhone's, on in
+release builds since the live check against a real Mac (`ScreenRoutes.udpReleaseEnabled` turns it off again; a DEBUG
+build launched with -showScreenUDP has it either way). No setting of its own: the Settings switch for direct routes
+covers it.
+
+- **What rides it**: only the video channel's bytes from the node to the phone, plus the phone's acknowledgements,
+  requests to send again, give-ups and pings for it. RFB, the phone's video messages (`start`, `report`, `keyframe`,
+  `update`) and every link message stay on the TLS connection or the relays, so input never moves. Persona Screen is
+  unchanged: the node re-frames the video messages it already reads from it.
+- **Opening**: on a direct route's TLS connection (never a relay) the phone sends `udp_open` (link type 12); the node
+  answers `udp_ready` (type 13: `{port, flow}`, the flow's 8-byte id in base64url, or `{unavailable}`). The node listens
+  on one UDP port per candidate address beside the TCP listener (the TCP port number when free there), only while a
+  session is live, and never on the wildcard. One flow per TLS connection and eight per session; a flow ends with its
+  connection, its session, or after `Limits.FlowSilence` (5 s) without a packet from the phone.
+- **Keys and sealing**: both ends take 88 bytes from the TLS 1.3 exporter of that connection (label
+  `EXPORTER-persona-screen-udp-1`, the flow id as context): a key and IV for each direction. Every packet is a clear
+  header (version, flow id, packet number) and its body sealed with AES-256-GCM, the header as additional data and the
+  IV XOR the packet number as the nonce. Only an end of the connection that proved the session's token and pinned the
+  node's certificate can derive the keys, so the flow is exactly as authenticated as that connection.
+- **Threat model** (each with a test in `udp_security_test.go`): a replayed packet is dropped (a 4,096-packet window); a
+  changed one doesn't open; one sealed with any other key doesn't open, the node's own packets reflected back and keys
+  exported from another connection included; nothing that doesn't open is ever answered; nothing goes to an address
+  the phone hasn't proved (a hello, the node's challenge sent to that address, a hello answering it), and the one
+  answer before the proof is smaller than the hello, so a forged source address gains nothing; each direction numbers
+  its packets from 0 without repeating, and a flow that would run out of numbers is closed instead.
+- **Sending**: the node sends each video message whole from the phone's offset, cut into 1,146-byte shards, at most 128
+  to a Reed-Solomon block (systematic, Cauchy, GF(2⁸)) with ⌈ratio × shards⌉ + 1 parity shards: the phone asks for the
+  ratio in its pings (none by default, at most 40 %), and any `shards` of a block rebuild it. Packets are paced at the
+  rate the phone asks for (from the rate its packets arrive at), kept between 1.25 × the video's own rate (1 Mbit/s
+  at least) and 150 Mbit/s, 40 Mbit/s until it asks. The pong reports the bytes sent as data, parity and again, so the phone can count them against mobile data.
+- **Recovering**: the phone asks again for the data shards a block still lacks (`nack`) and for messages it learned of
+  only from a later one (`want`); the node sends them from the 512 KB window. Video left unacknowledged with nothing
+  newer to send gets its newest message's last shard again after 50 ms (doubling to 800 ms), so a message lost whole
+  at the end of a burst is found; the phone answers a shard it already has with its acknowledgement.
+- **Giving a frame up**: frames other than keyframes (and only those) may be given up; giving a keyframe up would ask
+  for another as large, and on a slow link the stream would fill with keyframes that never come whole. On `skip`, the node drops the backlog's frames,
+  sends `reset` with where the stream goes on, asks Persona Screen for a keyframe and drops frames until it comes,
+  as a move with an old backlog does; the backlog's other messages (`format`, `encoding`, …) still go out after the
+  reset, so the keyframe decodes.
+- **Falling back**: when a flow is lost (silent, or its route gone), the video goes on over the flow's own TLS
+  connection from what the phone acknowledged, or over its relay when the route went too. The node never moves RFB or
+  link messages onto a flow, and moving the video onto one takes the phone's `use` on it.
+- **The phone's side** (`PersonaScreenKit`, tested with `swift test` against the shared cases): `ScreenUDPWire` (packets,
+  sealed with CryptoKit's AES-256-GCM, `ScreenUDPAESGCM`), `ReedSolomon`, `ScreenUDPReceiver` (blocks rebuilt from parity; a block still short asked for again
+  once all of it was sent, a message gone quiet for max(6 ms, 2 × jitter) counting as sent; again after max(10 ms,
+  1.5 round trips); a message known only from a later one asked for by its place; a frame that held the picture back
+  100 ms plus a round trip given up), `ScreenUDPParity` and `ScreenUDPLoss` (below). `ScreenLinkSession` asks for a
+  flow once a direct route attaches, takes its keys from the route's TLS exporter, has the app open the socket on the
+  route's interface (`openFlow`, `ScreenLinkUDPSocket`), proves its address, and moves the
+  video onto the flow once the route carries the session, from the start of the message it was in the middle of; the
+  video's bytes on other transports are ignored meanwhile. It pings the flow every second with the parity and pacing
+  it asks for (1.25 × the rate a message's packets arrive at, `ScreenUDPPace`; 150 Mbit/s on a LAN route, 40 on
+  Tailscale and 8 on cellular before it knows), and leaves the flow for the route's TLS connection, from
+  what the phone has, when the flow is silent for 1 s, gives more than 2 frames up in 10 s, or the phone's networks
+  change; a route asks again after 30 s, doubling to 5 min, and at once after a network change. Each move onto or off
+  the flow is a `PathChange` whose `LinkStats.transport` says `udp` or `tcp`, so the quality tiers look again.
+- **What people see**: no setting of its own. Connection Stats' Route row (off by default) says "Direct · LAN · UDP" or
+  "Direct · Tailscale · UDP" while the video rides a flow, with the flow's round trip and its loss before recovery;
+  otherwise as before. A DEBUG build shows it in the stats demo with `-showScreenStatsDemo` and `-showScreenUDP`.
+- **Not on cellular**: the phone opens no flow while its route, or its path under Tailscale, is cellular. On #7873's
+  shaped cellular-like link (40 ms, a 3 Mbit/s bottleneck with a short queue) a flow kept the picture going but brought
+  nothing over TCP: about the same bitrate, as many stalls or more, a worse tail. There the loss is a queue
+  overflowing, which parity and resends only add to. Before the fixes found there, it showed nothing at all: a
+  keyframe given up asked for another, and the node paced far above the bottleneck. A keyframe is now never given up
+  (the node never marks one droppable, and the phone reads its first shard), and 10 % loss or more over 2 s cuts the
+  cap given to the helper by half the loss, at most every 2 s, recovering 5 % a second below 2 %
+  (`ScreenUDPCongestion`); parity stays at 15 % or less meanwhile.
+- **Parity and mobile data**: the phone asks for three times the loss the packet numbers show (before recovery), from
+  5 % up to the cap: 40 % on Wi-Fi, 15 % on cellular (kept for when cellular gets flows); none under 0.2 %. Each block
+  gets one parity shard more than the ratio, a lot for the few-shard frames of a low bitrate, so the ratio is the
+  largest whose parity on the recent blocks stays within the cap's share, and none when even one shard per block would
+  not. On mobile data the cap the phone gives the helper is divided by one plus the flow's overhead (parity and resent
+  bytes per byte of video, from the node's pong counters, at least the parity asked for), so the bytes on the wire stay
+  within Data Saver's 1.5 Mbit/s or Clearer's 4, and the card's figures per hour hold.
+
+### Pixel scrolling (#7775)
+
+Two-finger scrolling over RFB sends wheel notches, and macOS's Screen Sharing scrolls a notch one point: a page follows
+the fingers, but Screen Sharing falls behind past about 2000 notches a second, a terminal moves a whole line per event
+(notches that come together merge), and a page stops dead at its ends. Continuous scroll events posted on the Mac
+itself, as a trackpad's are, scroll by the point with no such ceiling, with the app's own momentum and rubber-banding.
+Approved on #7775: a helper of its own posts them, with the Accessibility permission asked for once; without it,
+scrolling stays on RFB's notches.
+
+- **Persona Input** (`apple/PersonaLink/Input`, a package of its own; bundle `Persona Link.app/Contents/Helpers/Persona
+  Input.app`, bundle id `<link id>.input`): started by the node through LaunchServices as Persona Screen is, on a 0600
+  Unix socket whose first line is a token. It then says `granted` or `missing` (`CGPreflightPostEventAccess()`; missing
+  ends it) and posts every scroll record that comes as `CGEvent(scrollWheelEvent2Source:units: .pixel, …)` with
+  `scrollWheelEventIsContinuous`, the scroll phase and the momentum phase, at the pointer (RFB has just put it there),
+  carrying fractions of a point to the next event. Scroll events only: no clicks, no keys. `--preflight` prints
+  `post_event: granted|missing`, asking nothing; `--request-permission` asks macOS once (`CGRequestPostEventAccess()`),
+  whose window only the user answers. Persona Screen is not touched: its package, binary and Screen Recording grant stay
+  as they were, and the two share no code.
+- **Same bits from build to build**: macOS ties the permission to the helper's code. The package builds in Swift 6 mode
+  (`#file` is the module and file name) and links no debug map, so a build does not depend on its path:
+  `scripts/app/mac-link.sh verify-input` builds it twice from clean copies at two paths and compares the executable and
+  the signed bundle's cdhash (the same on 2026-11-15: executable `659dc1e66ff90a6f`, cdhash `da868531…`). On top of that,
+  `mac-link.sh` keeps the built executable in `~/.persona/cache/persona-input/<key>` (`PERSONA_INPUT_CACHE`), the key a
+  hash of the helper's and `PersonaInputKit`'s sources and the architectures, and reuses it byte for byte: a Persona Link
+  update that leaves those sources alone never changes the helper, whatever checkout or Xcode builds it.
+- **The record** (`PersonaInputKit`'s `ScrollRecord`, the helper and the iOS app; the node's codec in Go, both checked
+  against `spec/fixtures/screen-input`): 16 bytes, big-endian. Byte 0 is **200**, an RFB client message type that IANA's
+  registry leaves unassigned (151–244 are, checked 2026-11-15); the phone sends it inside the RFB stream and the node
+  takes it out, so Screen Sharing never sees it. Then the version (1), the kind (0 hello: the phone can scroll by pixels;
+  1 scroll), the scroll phase (CGScrollPhase: 0 none, 1 began, 2 changed, 4 ended, 8 cancelled), the momentum phase
+  (CGMomentumScrollPhase: 0 none, 1 begin, 2 continue, 3 end), three reserved bytes, then dy and dx as `f32` Mac points
+  (> 0 shows what is above or to the left, as the RFB wheel's up and CGEvent's axes). Another version is refused, never
+  guessed at. The node hands the helper the same 16 bytes.
+- **The node** (`node/rfbinput.go`, `node/inputhelper.go`): on a Mac every paired 5900 stream (after the login observer)
+  is read on the phone's side.
+  - **The handshake** is followed as the bytes go by. With types 1, 2 and 30, macOS's Screen Sharing speaks plain RFB
+    after the login (type 30's key length comes from Screen Sharing's own bytes). With Apple's other types (33, 35, 36)
+    or anything else, nothing is read and the stream passes as it came.
+  - **Messages**: then the six client messages (fixed lengths; SetEncodings' and ClientCutText's from their headers),
+    each passed on at once, byte for byte, however the stream is cut. A message type it doesn't know ends the reading
+    for good.
+  - **Records** (type 200) are taken out:
+    - A hello starts Persona Input for the stream if it may post events: at most 2 at once, only for a stream that
+      signed in, and it ends with the stream. If it may not, the node asks macOS once for this helper version
+      (`--request-permission`, recorded in `~/.persona/bin/Persona Input.asked`; macOS's window shows on the Mac's
+      screen, which the phone is showing).
+    - A scroll goes to the helper through a short queue, so the relay never waits.
+    - One the helper can't take (not started yet, the permission gone, the helper stuck) goes to Screen Sharing as
+      wheel notches instead: a notch a Mac point, at the pointer the phone last placed, at most 200 a record, fractions
+      carried.
+    - A record that doesn't decode is dropped, never passed on.
+  - **Status**: `computer.status` / `browser.status` gain `screen_input {version, permission, asked}`, from the helper's
+    `--preflight`, at most once a minute (`asked` while missing). It is absent without the helper or from an older node,
+    so the phone never sends a record to a node that would pass it to Screen Sharing.
+  - With the node signing setting the node runs its own signed copy (`~/.persona/bin/Persona Input.app`), as for Persona
+    Screen. None of Persona Screen's node code changes for it.
+- **The phone** (`VNCPixelScroll`, `RFBSession`, `VNCScreenView`; the iOS app, which links `PersonaInputKit`; Vision
+  scrolls by notches):
+  - A two-finger touch scrolls by pixels when the Mac's status says its node reads records and Persona Input may post
+    them (`screen_input.permission` granted, read as the touch begins). As the page goes live on such a Mac it says
+    hello once a connection, so the helper is started before the first scroll.
+  - While scrolling by pixels: the Mac's pointer goes where the scroll began and stays there (as a trackpad's). One
+    record a display frame carries that frame's distance, by the same curve as the notches (slow fingers one to one,
+    quick ones up to 4×) but with no ceiling. The phases are `began`, `changed`, then `ended` at the lift. After a flick
+    comes the coast as momentum (`begin`, `continue`, `end`), with UIScrollView's normal deceleration, at most 6000
+    Mac points. A touch during the coast ends it, and its end goes too.
+  - Where the helper may not post yet and macOS was never asked (`permission` missing, `asked` false), the first
+    two-finger scroll of a connection says hello, so the node asks macOS once. A line under the page's bar, as the
+    video's fallback line, says what the window now on the Mac's screen is for ("To scroll more smoothly, allow Persona
+    Input on this Mac."). A tap on it gives the way through it in an alert (Open System Settings, then Persona Input
+    under Privacy & Security › Accessibility; scrolling still works meanwhile). The line goes once the Mac allows it or
+    the connection ends, and doesn't come back on later connections (macOS asks only once). Scrolling goes on by wheel
+    notches meanwhile, and for anyone who never allows it.
+  - Measuring: `VNCTests/testPixelScrolling` (mock `MOCK_SCREEN_INPUT=granted`) and `testPersonaInputNotice`
+    (`=missing`, with the notice's screenshots). The mock's relay takes records out as the node does and lists them as
+    `input`.
+
+### x264 on a direct LAN (#8859)
+
+When the user has installed ffmpeg with libx264 themselves and x264 is on for a Mac, Persona Screen may encode that
+Mac's live screen with x264 instead of VideoToolbox, on a direct LAN route only. On an M1 Ultra at 1080p60 a frame
+comes back in 1.5–2.8 ms p50 (1.7–4.5 ms p95), against VideoToolbox's 7–8 ms plus about 1 ms to hand it back, for
+0.3–0.5 of a core and about 1.3–1.5× the bits for the same quality (measurements in #8859).
+
+- **License boundary**: Persona ships, links, downloads and installs nothing of x264's or ffmpeg's (Homebrew's ffmpeg
+  is GPL with libx264), and no x264 header is in the build. The helper starts the user's `ffmpeg` as a separate
+  program with fixed arguments: raw NV12 frames in, an FLV stream out. The GPL FAQ treats pipes, sockets and
+  command-line arguments as communication between separate programs. Never `dlopen` libx264 or libavcodec into the
+  helper: that makes one program with them, and code the user installed would run inside the process that holds the
+  Screen Recording grant. Docs may tell the user to install ffmpeg (`brew install ffmpeg`); nothing installs it for them.
+- **Finding ffmpeg** (node, `node/screenx264.go`): at fixed paths only, `/opt/homebrew/bin`, `/usr/local/bin` and
+  `/opt/local/bin`, never `PATH`. One counts when `-encoders` lists libx264 and a 3-frame self-test through the
+  helper's command line gives back 3 FLV frames, the first a keyframe. A pass is kept for the file's path, size and
+  modification time (a `brew upgrade` is tested again; a probe takes about 0.15–0.3 s); a failure is tried again after
+  a minute. The probe runs on its own 5 s deadline, never the status call's, and the node logs each outcome once
+  ("screen x264: … qualifies" or "doesn't qualify: <why>"). The result is reported as
+  `screen_video.x264` (`"ffmpeg 9.0.2"`). The x264 command-line tool alone won't do: it never flushes its output, so
+  each frame waits for later ones (18–57 ms).
+- **Switching it on**: per Mac and off by default, in the plugin cua's settings as `screen_x264` (a list of Macs, like
+  `no_auto_lock`, asked about first through `x-confirm`). On the iPhone the Mac's page shows "Live Screen with x264"
+  under Control Computer only while its node reports `screen_video.x264` (or while it is on, so it can be turned off),
+  and asks before turning it on: the ffmpeg the user installed encodes, x264 is GPL software Persona doesn't include,
+  it uses more CPU, and the built-in encoder takes over when it can't keep up. The switch is `PUT
+  /api/v1/machines/{mid}/computer {"screen_x264": bool}`; the Mac's status says `screen_x264` while it and Control
+  Computer are on. The hub adds `x264: true` to that Mac's `screen.dial`, and the node starts the helper with `--x264
+  <ffmpeg>` when its probe passed; otherwise the helper starts as before and uses VideoToolbox. The web page and the
+  Android app reach the setting through the plugin's settings form.
+- **Which encoder** (`X264Plan.encoder`): x264 only while the phone says the stream is on a direct LAN route: kind
+  `lan` in `start.path` (the route the stream starts on, shaped like `update.path`), then in each `update.path`. The
+  iPhone app sends the route it knows when the video opens; when it doesn't know one yet, the route's first reading
+  goes as an `update.path`. A phone that sends no `start.path` (one from before #8859) and the web page get VideoToolbox. `hello.encoder` is
+  `hardware` or `x264`; `hello.fallback` says why x264, on for this Mac, isn't the encoder now: `unavailable` (no
+  disclaim call, ffmpeg didn't start, or the phone offers no H.264), `route`, `slow`, `failed` or `congested`. A
+  route change across the LAN's edge, or x264 stopping, starts capture again with a new `hello`, as a new codec does;
+  a reason x264 stopped holds for the rest of the stream.
+- **Running ffmpeg** (`X264Process`, `X264Session`): started as **its own responsible process** with
+  `responsibility_spawnattrs_setdisclaim`, a private libSystem call (Chromium uses it for its helpers), looked up with
+  `dlsym`. A child is otherwise attributed to its parent for macOS's privacy checks and could use Persona Screen's
+  Screen Recording grant; verified on macOS 26.6.2 (25G83) that a disclaimed child no longer has its parent's grants.
+  Without the call the helper offers no x264. ffmpeg gets an empty environment and only stdin (a socket pair with
+  16 MB buffers), stdout (a pipe) and /dev/null as stderr; it is killed when the stream stops, and ends by itself at
+  end of input when the helper is gone. Its arguments (`X264Plan.arguments`): raw NV12 at the capture's size and frame
+  rate, `-fps_mode passthrough`, libx264 `ultrafast` + `zerolatency` with sliced threads (the performance cores, at
+  most 8) and `keyint=infinite`, CRF 20 under the phone's `max_kbps` (`-maxrate`, a buffer of 1/20 s), BT.709 video
+  range through `-x264-params` (ffmpeg 9.0.2 crashes on the `-colorspace` output option with these settings), and
+  `-flush_packets 1 -f flv`.
+- **Frames**: an FLV tag carries its length, so a frame's end is known when it arrives (raw H.264 says so only with the
+  next frame), and its AVC payload is already the wire's NAL units with 4-byte lengths. The sequence header becomes
+  `format`; tag frame type 1 is the keyframe flag; SEI (x264's 680 bytes of version text) and access unit delimiters
+  are dropped. Each tag's timestamp (frame i at i/fps s, to the millisecond) maps it back to the picture given in, and
+  `timing.encode_ms` runs from the write to the end of the tag. The stream is Constrained Baseline with no B-frames and
+  8 slices per frame in one sample, which the phone decodes as it is.
+- **Keyframes and bitrate**: ffmpeg can't be asked for a keyframe or another bitrate while it runs. The rate controller
+  still reads the reports, but only VideoToolbox follows it. A keyframe (the phone's `keyframe`, a decoding error, the
+  node after dropping frames) comes from a spare ffmpeg, started and waiting: its first frame always is one (6–7 ms; a
+  cold Homebrew ffmpeg takes 34–37 ms, so both start when capture opens). The old process ends and the frames still in
+  it are dropped. A new size or frame rate starts new processes. Refinement stays VideoToolbox's: x264 already encodes
+  at a constant quality.
+- **Falling back**, for the rest of the stream: ffmpeg can't start (`unavailable`); it ends, or puts out something
+  that isn't the next frame (`failed`); any frame takes over 50 ms of its own, more than 10% of the last 2 s's frames
+  take over 8 ms of their own, judged once there are 60 of them, or a frame is still inside after 200 ms (`slow`). A
+  process's first frame counts for none of these, and its next 30 (its warm-up: x264's threads starting, the
+  capture's fresh buffers) only for the 50 ms bound; the reason in the log names the frame, the share and the
+  window's median and maximum. A
+  frame's own time starts when ffmpeg could start on it (it came in and the frame before it was out): frames that
+  waited behind a cold process's first one (30–40 ms) are not slow themselves, which on the first real session they
+  were (x264 stopped a fraction of a second in); a report cuts the bitrate or
+  skips frames (`congested`: VideoToolbox can lower its bitrate as it runs, ffmpeg can't).
+- **Connection Stats** (iPhone): a line under the codec line reads "Encoder x264" while x264 encodes (on the codec
+  line it would widen the panel past the screen at the larger text sizes); with x264 on for the Mac but not encoding,
+  that line says why ("x264 off: not on the same network", "… the Mac couldn't keep
+  up", "… the network was busy", "… ffmpeg stopped", or "x264 isn't available on this Mac"). Screenshots:
+  `-showScreenStatsDemo` with `-showScreenX264Demo` or `-showScreenX264OffDemo` (`VNCTests.testTheOverlayNamesTheEncoder`);
+  the switch: `ComputerSectionTests.testX264AsksFirst` with the mock's `MOCK_SCREEN_X264=1`.
+- **Log**: the helper writes x264's starts ("x264 on: 1920x1080 at 60 fps, 8 threads, …"), why it isn't used ("x264
+  not used: route …") and why it stopped ("x264 off: slow: frame 12: 61.0 ms on its own") to the Mac's unified log:
+  `log show --predicate 'subsystem == "persona-screen" AND category == "x264"'` (its stderr goes nowhere under
+  LaunchServices).
+- **Verifying**: `PERSONA_TEST_FFMPEG=/opt/homebrew/bin/ffmpeg swift test --filter X264` in
+  `apple/Packages/PersonaScreenCore` (encodes, decodes with VideoToolbox as the phone does, a keyframe from the spare)
+  and `PERSONA_TEST_FFMPEG=… go test -run 'X264|FFmpeg' ./internal/node/` (the probe on the real thing). Without the
+  variable both skip the parts that need ffmpeg.
+
+### Phone Screen (#9314)
+
+A third mode next to Mouse Mode and Trackpad Mode: the Mac gets a portrait virtual display shaped like the phone's
+picture, the window the phone picks fills it, and the phone switches windows from a list. Text reads at phone size
+without zooming. For people who already work on their Mac from the live screen; Mouse Mode stays the default.
+The approach and its measurements of macOS follow [Snug](https://github.com/zephyr4123/snug) (MIT; code adapted from it
+keeps its notice, `THIRD_PARTY_NOTICES.md`).
+
+- **Who does what**: Persona Input (Persona Link's helper that already holds Accessibility for pixel scrolling) runs a
+  session, `--socket <path> --token <t> --phone-screen`, started by the node like its scroll session. Moving other apps'
+  windows needs Accessibility (`AXIsProcessTrusted`), which the same System Settings switch gives it. `--preflight`
+  prints a second line, `phone_screen: <version> granted|missing`; a helper from before prints none, and the node then
+  offers nothing.
+- **The virtual display** (`PhoneScreenDisplay.swift`, the sizes in `PersonaInputKit`'s `PhoneScreenFit`): private
+  `CGVirtualDisplay`, portrait, aspect = the picture's height / width (clamped 1…2.2). macOS offers a 2× desktop mode only
+  from 540 × 800 points, so the base width is 540 (wider for a short picture); every 10 points up to 1080 is a mode of the
+  same aspect, HiDPI on, so a window with a large minimum size gets a wider mode and the picture only scales. Three fixed
+  identities (vendor, product, serial), so ColorSync keeps one profile. A new display comes online at the mode macOS
+  remembers for it (the first time 1080 wide at 1×), so the helper switches it to the base width at 2× and places it.
+- **Switching modes from a child**: a short-lived run of the helper's own binary (`--phone-screen-set`, `-mode`, `-has`)
+  does every mode switch and move. A process that switched a virtual display's mode itself keeps it online about 40 s
+  after letting it go (Snug); switched from a child, it went offline 0.02 s after release here. The helper also can't read
+  the modes of a display that appeared after it started, so its size comes from `CGDisplayBounds` and a child checks that
+  a new mode is listed.
+- **Where it goes**: against the main display on the first side with room (right, left, below, above), aligned to main's
+  top or left edge (`PhoneScreenPlacement`), because of how Screen Sharing lays out displays of different scales (next).
+- **Framebuffer layout** (measured on macOS 26.6 with one 1920 × 1080 1× display and a 540 × 950 pt 2× virtual one):
+  Screen Sharing draws each display at its own pixel size, so the framebuffer was 3000 × 1900, not the displays' point
+  box (2460 × 1080). Five placements (left, right, below, above, offset) all fit one rule: the edge of a display that
+  touches the main display sits at main's pixel coordinate, and the display extends by its own pixels. A 540 × 1021 pt
+  display right of main gave 3000 × 2042, as the rule says. The node's `displays[]` carry `scale` (AppKit's
+  `backingScaleFactor`) so the phone can apply it.
+- **Other displays and windows stay put**: before adding and after removing, the helper records the other displays' modes
+  and the frames of every window on screen; once the virtual display is offline it sets back any mode macOS changed (it
+  applies the modes it remembers per combination of displays) and moves back windows that moved.
+- **Windows** (`PhoneScreenSession.swift`, `PhoneScreenAX.swift`): the list is the standard windows of apps in the Dock
+  (Accessibility, minimized ones included), front to back as on screen. Placing a window writes where it was (frame,
+  minimized, full screen) to `~/.persona/phone-screen.json` first (no record, no move), takes it out of full screen or the
+  Dock, sets size, position, size and checks (up to 10 tries; the same frame twice means the app or the menu bar holds it
+  there), takes a wider mode when the app's minimum size is larger, and brings it to the front through Accessibility's
+  `AXFrontmost` (macOS 14 and later ignore `activate()` from a helper in the background). Placing another window puts the
+  previous one back. Every placement starts again from the base width (#9500): before, one window with a large minimum
+  size (800 pt) left the display at 800 pt for every window after it. The `place` answer carries `displays`, the whole
+  arrangement after the change, since the phone finds the display on the picture by all of them. Every Accessibility call waits at most 1 s for an app that hangs. A session that died leaves records,
+  and the next one puts those windows back before anything else.
+- **Text size** (#9500): 540 pt on a phone about 400 pt wide is about three quarters of the Mac's size, and a narrower
+  display can't help: macOS marks every 2× mode under 540 pt wide not usable for the desktop (measured 402, 420, 430,
+  480 and 500 pt on macOS 26.6). So terminals and editors (Ghostty, Terminal, iTerm2, VS Code, Cursor, Zed;
+  `PhoneScreenZoom`) get ⌘+ twice when placed, posted to their process alone, and ⌘− twice when they go back; the steps
+  are kept in the restore record first, so a crash still undoes them. Browsers are left alone: their zoom is per site and
+  would follow the user's other tabs, and a page at 540 pt is already laid out narrow. Measured: Ghostty's text about
+  15 pt instead of 13 on the display, and its window back at 13 afterwards. It goes back on every way a session ends: `stop` (another mode, the
+  page closed), the socket closing without `stop` (the connection lost, the app killed, the node or Link restarting:
+  the helper sees the socket end and puts everything back), and SIGTERM. A helper that died first (a crash, `kill -9`)
+  leaves its records: the node runs `--phone-screen-restore`, which replays them, 5 s after any session ends and when it
+  starts, only while no session runs, a new session waiting for it, so a window's text is never made smaller twice. For
+  an app whose zoom is the whole app's (Zed), ⌘− goes to the app even when the window went away. Measured on this Mac:
+  Ghostty raised, its helper killed with `kill -9`, then `--phone-screen-restore` ("put back 1, kept 0"): records gone,
+  window and text size as before; the socket closed without `stop`: the same. Left: VS Code and Cursor keep a zoom per
+  workspace, so one of their windows closed on the phone keeps it when reopened (as Snug notes).
+- **Ending**: when the node closes the socket (the phone sent `stop`, its RFB stream ended, or the node went away) or the
+  helper gets SIGTERM, it puts every window back, lets the display go, waits until it is offline and sets back what moved.
+  A display let go while the Mac's monitor sleeps goes offline only when it wakes (Snug).
+- **Node** (`phonescreen.go`): `screen.phone {pair, op, width, height, pid, window}` with `op` start, windows, place or
+  stop. Like the video channel it needs the RFB stream carrying `pair` open and signed in (`not_signed_in`), allows one
+  session per Mac (`busy` for another pair), and attaches the session to that stream, so it ends when the stream does.
+  Requests go to the helper one at a time; one that takes longer than its limit (start 30 s, place 30 s, windows 15 s)
+  ends the session. The statuses carry `phone_screen {version, permission}` from the cached `--preflight`.
+- **Manager**: `POST /api/v1/machines/{mid}/computer/phone-screen` (protocol.md), with the clipboard's gate. Window titles
+  are never logged.
+- **iPhone** (`VNCPage`, `PhoneScreenLink`, `PhoneScreenWindows`): ⋯ › Mode lists Phone Screen when the Mac's status has
+  `phone_screen` (a kept choice on a Mac that no longer offers it acts as Mouse Mode). While the mode is on and the screen
+  is live, the page starts the session for its RFB connection's `pair` with the picture's size in points, and a new
+  connection starts it again. The shape is read with the keyboard down, followed until the display is up and then kept
+  (#9500): only the phone turning reads it again. The keyboard, the shortcut row and the lines over the picture change
+  its height for a while and never send `start`; before, a size read with the keyboard up made the Mac rebuild the
+  display nearly square. A line over the top of the picture says "Setting up the phone screen…" meanwhile, or why it
+  couldn't (Accessibility not allowed, another device has it, Persona Link too old). Upright, the picture always fills
+  the view's width (`VNCZoom.phoneFit`): with the keyboard up it keeps its size and the keyboard covers its bottom, moved
+  up just enough to keep the pointer (where the user tapped, usually the text field) above the keyboard, and two fingers
+  move it to show the rest. The page shows only the new display: RFB crops to it with the mixed-scale rule
+  (`VNCDisplays.anchored`; Screen Sharing sends DesktopSize when the display comes and goes, measured), and the video
+  channel captures it by its id. Each `place` answer's `displays` replaces the arrangement, so a display that widened
+  (Screen Sharing's picture grew from 3000 × 2042 to 3520 × 3024) is found again; before #9500 the page kept the
+  arrangement from `start` and lost the display after such a window. The first time it is
+  up with nothing on it, and from the bottom bar's Windows button, a sheet lists the Mac's windows by app (the one on the
+  display checked, minimized ones marked); a tap puts one there and closes it. Leaving the mode or closing the page sends
+  `stop`. Touches: a tap clicks there; one finger scrolls (by the point through Persona Input where it may, with a coast);
+  held half a second then dragged, it drags (selects text); held and lifted, the right button; two fingers and pinching as
+  in Mouse Mode. The mock hub's `MOCK_PHONE_SCREEN=1` (with `MOCK_SCREEN=fake`) plays a Mac that has it, for screenshots.
+- **Picture in Picture** (#9659): the small window shows what the page shows, the portrait display alone, so it is
+  portrait and shaped like it. Its source's frames are cut to the display at the framebuffer's own pixels (2× on the
+  Mac, so it stays sharp) by `RFBFrameSink`, with the same damage-only copying; the page sets the cut
+  (`RFBSession.cutSmallWindow`), and a new connection or a framebuffer of another size shows all of the picture. The
+  source lies over the display as the page draws it, where the system's transition starts and Restore ends. As the
+  small window takes the Mac, the page closes without sending `stop`: `VNCPiP` keeps its `PhoneScreenLink`, so the
+  display and the window on it stay; Restore hands it back to the page (no second `start`, no window list again), and
+  closing the small window sends `stop` as leaving the mode does. A mode switch, another window (the display may
+  widen) or turning the phone changes the cut, so the small window's shape follows; Mouse and Trackpad Mode keep the
+  whole picture. Only the iPhone changed: the Mac and the node do as before. The iPhone simulators have no Picture in
+  Picture; `VNCTests` checks the source's shape there (`-showPiPSource`) and the system's small window on a stock iPad
+  simulator.
+- **Measured on a Mac** (macOS 26.6, 2026-11-16, a node stand-in driving the signed helper): start 1.7–2.1 s to a 540 ×
+  1021 pt display at 2×; place 0.6–0.9 s; switching windows put the previous one back; stop 0.9 s, after which the display
+  was gone, the main display's mode unchanged and none of 180 windows had moved.
+- **Measured over Screen Sharing**: a client connected when the display comes gets DesktopSize 3000 × 2042 about 1.7 s
+  after `start` and 1920 × 1080 again after `stop`.
+- **Known limits**: `CGVirtualDisplay` is private and may change with macOS. On a Mac with no display attached any added
+  display replaces the default one (Snug). Windows in another Space or in full screen in their own Space are not listed
+  yet. With displays of mixed scales chained away from the main display, RFB may still not find the virtual display
+  (video captures it by id either way).
 
 ## Locking, preventing sleep and per-App approval (plan, #1507, decided)
 
@@ -546,16 +1417,23 @@ Flags used:
   - Any step without an app, a `launch_app` step naming no app, computed app names in a script (`getApp` or `launch`), or a script naming no app makes identification incomplete: ask every time for the whole call, without Always Allow.
     A `getApp` / `launch` occurrence the literal reader cannot parse counts the same way: space or a comment before the call's parentheses (`getApp ("Terminal")`), a computed callee (`cua["getApp"]`, a saved function), or an argument that is not a plain string. The completeness check compares every occurrence of the callee's name with the parsed literal calls, so an unreadable one cannot be missed.
 - **Always ask, never offer Always Allow**: terminals (Terminal, iTerm2, Warp, Ghostty, etc.), System Settings, Keychain Access, password managers (Passwords, 1Password, Bitwarden, etc.), Persona, identified by bundle id or name (Chinese/English).
-- **Never operated** (#4336, `computer_protected.go`): System Settings and the system's permission and authorization prompts (`com.apple.UserNotificationCenter`, `com.apple.SecurityAgent`, `com.apple.LocalAuthentication.UIAgent`, and older systems' Accessibility alert). macOS's privacy permissions are meant to be answered by a person; one Allow on a card that said "operate System Settings" would otherwise let an Agent turn any of them on. Reading them (`computer_state`) is still asked about every time; acting is refused before any card, whatever App approval or Confirm on Phone say:
-  - a `computer_run` that names one (a step's or the call's `app`, a `launch_app`, a literal `cua.getApp` / `cua.launch`), by bundle id or by name in English, Chinese or Japanese, names resolved through Cua `list_apps` first;
-  - a script whose apps can't all be read (they were asked about every time before): it could open one under a computed name. The model is told to name them literally;
-  - on Cua Driver, any `computer_run` while one has a window on the screen (`list_windows`, each window's pid matched to its bundle id through `list_apps`, so System Settings counts in any language; the prompts by their process names): an element token, a pid or a step naming no app could still reach it. When the windows can't be read, nothing is done;
-  - steps naming no app (they act on whatever has the focus) run one `run_steps` call at a time, the screen checked before each, so a prompt that an earlier step brought up stops the rest. The answer lists each step's own answer (`one_by_one`);
+- **Never operated** (#4336, #7560, `computer_protected.go`): System Settings and the system's permission and authorization prompts (`com.apple.UserNotificationCenter`, `com.apple.SecurityAgent`, `com.apple.LocalAuthentication.UIAgent`, and older systems' Accessibility alert). macOS's privacy permissions are meant to be answered by a person; one Allow on a card that said "operate System Settings" would otherwise let an Agent turn any of them on. Reading them (`computer_state`) is still asked about every time. Acting is decided by one check, `protectedapps.Look.Check` (`server/internal/protectedapps/check.go`), before any card and again after one, whatever App approval or Confirm on Phone say. It refuses only what could reach one of them; having System Settings open does not stop other apps:
+  - **Named or aimed at, always**: a `computer_run` that names one (a step's or the call's `app`, a `launch_app`, a literal `cua.getApp` / `cua.launch`), by bundle id or by name in English, Chinese or Japanese (names resolved through Cua `list_apps` first), or aims at one's pid, window id or window title.
+  - **A prompt on the screen stops everything**: while a permission or password prompt has a window on the screen, every acting call is refused. Prompts are modal and float on top, and #4349 found the Screen Recording prompt takes synthetic clicks.
+  - **While System Settings has a window** (each window of `list_windows` matched to its bundle id through `list_apps`, so it counts in any language), a call is refused only when it could reach it:
+    - **element tokens**: a token carries its own pid, so it is traced to its window by reading each of System Settings' windows with `since: <the token's snapshot id>`. `other_window` means another window's token, which goes. Its own token, or one that can't be traced, is refused, minimized windows included. Only System Settings' windows are read, never the one the call is for, because a read replaces a window's current snapshot and would make the caller's tokens stale;
+    - **points** (a click, drag, scroll or pointer move at `x, y`): refused where System Settings' window can be the topmost one, by `z_index`, or by its bounds when the order isn't known. The pixels map back by a screenshot scale the call doesn't carry (up to 2 on a Retina display at full size, below 1 for a capped image). So every place they can land is checked: from the window's origin plus half the point, out along the same line to the window's edge;
+    - **keys**: keys aimed at an app (a pid, a window, an element token, a named app, or a step's inherited window) are judged by that app. Keys with no target are refused only while System Settings is the frontmost app (`list_apps` `active`);
+    - **scripts** don't run while System Settings is on the screen, because what a script will click can't be checked beforehand. Steps can be used instead;
+    - **anything that can't be placed** (a pixel point in no known window, a tool whose target isn't known) is refused. Browser page tools, the clipboard and the agent cursor go.
+  - **Not checked**: windows that can't be read stop the call ("could not be read", nothing done). A script whose apps can't all be read is refused (they were asked about every time before): it could open one under a computed name. The model is told to name them literally.
+  - Steps naming no app (they act on whatever has the focus) run one `run_steps` call at a time, each checked just before it runs, so a prompt that an earlier step brought up stops the rest. The answer lists each step's own answer (`one_by_one`).
   - LCU: a native-app question about one of them is declined without a card (`lcuconfirm.NativeApp`). App-less steps already fail there.
-  The model is told the user does it themselves, on the Mac or through the live screen, and not to retry; the hub log says `refused: protected app <id>` and nothing else of the call.
-  - **The Agents' own Cua Driver** (#4349, `server/internal/node/cua_gate.go`): in the sessions Persona starts on a Mac, a PreToolUse hook on Cua Driver's MCP tools (`mcp__<server>__<tool>`, any server name with "cua" in it) and on Bash commands that run `cua-driver call` applies the same rules on the computer, at once, with no card. The rules and their wording live in `server/internal/protectedapps`, shared with the manager. Reads pass without a look. A call is denied when it names a protected app, aims at one's pid, or acts while one has a window on the screen. A script whose apps can't be read is denied, and so is a `cua-driver call` whose arguments aren't in the command, or one the gate can't follow (a heredoc, a subshell). `cua-driver` counts only where it is the program run (after variable assignments, `env` / `sudo` and the like, or inside `sh -c`), so a `grep` or a commit message that mentions it is no call.
+  Each refusal tells the model which case applies and what can still be done: only the protected app is off limits, for example "System Settings is on top where this would click; act by `element_token`, or ask the user to move it out of the way or close it". When an app is named or aimed at, the model is told the user does that themselves, on the Mac or through the live screen, and not to retry. The hub log says which rule refused it and the app's name, and nothing else of the call.
+  - **The Agents' own Cua Driver** (#4349, `server/internal/node/cua_gate.go`): in the sessions Persona starts on a Mac, a PreToolUse hook on Cua Driver's MCP tools (`mcp__<server>__<tool>`, any server name with "cua" in it) and on Bash commands that run `cua-driver call` applies the same check on the computer, at once, with no card. Reads pass without a look. A script whose apps can't be read is denied, and so is a `cua-driver call` whose arguments aren't in the command, or one the gate can't follow (a heredoc, a subshell). `cua-driver` counts only where it is the program run (after variable assignments, `env` / `sudo` and the like, or inside `sh -c`), so a `grep` or a commit message that mentions it is no call.
   - **Not covered**:
     - what a script does with a window it finds once it is running;
+    - a window that comes up partway through steps that each name their app: those run as one batch, checked before it starts (steps naming no app are checked one by one);
     - the sessions the user starts themselves (Persona's global hooks only report, `docs/integrations/claude-integration.md` "Global report-only hooks");
     - Codex Agents' own MCP tools;
     - any other program a shell can use to drive the screen.
@@ -614,6 +1492,14 @@ Follow the order above, one PR per area. Item 6 can go with b, or a separate sma
   - `ComputerSectionTests.testTheLiveScreenAsksForTheMacsSignIn` taps VNC through to login required (ARD).
   - `ScreenDrawerTests` (mock with `MOCK_COMPUTER_OPERATING=1 MOCK_SCREEN=fake`; without `MOCK_SCREEN=fake`, it uses this Mac's real Screen Sharing, showing "hub doesn't allow this machine's screen" and failing if off; assistant and Agent chats each have a running operation): open the full page from the operating bar and ··· menu in assistant and Agent chats, close with ×.
   - `ScreenPasswordTests`: remember, automatic login next time (PiP on real device, full page in simulator), reenter changed password, forget; one-tap unlock.
+  - `VNCTests.testNotAskedYetSaysAWindowWillShow` (#3954, a second mock with `MOCK_SCREEN_VIDEO=missing` at
+    `TEST_RUNNER_PERSONA_SCREEN_VIDEO_MISSING`): before macOS asked, "How to turn it on" says a window will show.
+  - `VNCTests.testVideoTakesThePictureAndFallsBack` (#3954, mock `MOCK_SCREEN_VIDEO=1`, runner
+    `TEST_RUNNER_PERSONA_SCREEN_VIDEO=1`): video takes the picture after the sign-in, with Wi-Fi's cap in `start` and
+    reports coming back; the Mac locking and the stream dropping each put VNC back with their line, unlocking brings
+    video back. `testTheOverlayBreaksTheLatencyDown`: Connection Stats over the video shows every segment.
+    `ScreenVideoTests` (unit) decode the mock's fixture and drive the stream, the link and the overlay's reading from
+    a script; `TimingWindowTests` (`swift test`) the helper's medians.
   - `VNCTests`: PiP (real device: menu → PiP → remains on home screen → restore full page → PiP again; simulator has no PiP, verifies full-page fallback only). PiP source (`-showPiPSource`, also runs in simulator): appears within 1.5 seconds of tapping, shows Connecting (mock delays 3 seconds), then live view, and Failed to Connect after mock disconnects. On full page, tap/drag in both modes, Center Pointer (mock records clicks and pointer positions), clipboard both ways, typing and Mac shortcut row, Help. `TEST_RUNNER_PERSONA_VNC_PAUSE=2` slows it for recording; `testMeasure` (`MOCK_SCREEN_ANIMATE=1`, `TEST_RUNNER_PERSONA_VNC_MEASURE=1`) prints frame rate and latency.
   - Logging into a real Mac needs that Mac's password, so tests don't do it.
 - **Screenshots**: mock `MOCK_COMPUTER=ready|permissions|locked|missing|off` ([testing.md](../operations/testing.md)), with `-tab settings -openMachines YES -openMachineDetail macbook`.

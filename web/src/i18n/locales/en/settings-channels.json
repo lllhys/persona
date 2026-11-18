@@ -56,5 +56,7 @@
   "waiting_pair": "Waiting for you to send it to the bot in {name}…",
   "waiting_auth": "Waiting for authorization…",
   "verifying": "Verifying…",
-  "next": "Next"
+  "next": "Next",
+  "summary": "{count} connected",
+  "summary_with_errors": "{on} connected · {bad} with errors"
 }

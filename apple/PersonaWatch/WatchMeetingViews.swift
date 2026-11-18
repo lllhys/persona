@@ -1,20 +1,21 @@
 import SwiftUI
 
-/// Meetings on the watch's home list (docs/apple/recording.md「Apple Watch」): Meeting Recording, one tap to record the meeting
-/// in the room; while something records, the same card opens it. While all-day recording runs it is Mark Meeting
-/// instead: one microphone, so the meeting is marked in the day (docs/assistant/day-recap.md). Then the meetings'
-/// minutes, once the phone relays some.
+/// Recordings and meetings on the watch's home list (docs/apple/recording.md「Apple Watch」). **Recordings** is a place,
+/// as the iPhone drawer's row (#5493, #5517): it opens the recording page, whose Record starts, and starts nothing itself;
+/// while a recording runs it reads "Recording… Open" and opens it. While all-day recording runs, **Mark Meeting** comes
+/// first: one microphone, so the meeting is marked in the day (docs/assistant/day-recap.md). Then the meetings' minutes,
+/// once the phone relays some.
 struct WatchMeetingEntries: View {
     @Environment(WatchModel.self) private var model
     @State private var capture = RecordingCapture.shared
     @State private var allDay = WatchAllDay.shared
-    var open: () -> Void
 
     var body: some View {
         if capture.allDay {
             Button { allDay.markMeeting() } label: {
                 VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
-                    Label("Mark Meeting", systemImage: Theme.Icon.meetingMark).font(Theme.Font.secondaryMedium).lineLimit(1)
+                    Label("Mark Meeting", systemImage: Theme.Icon.meetingMark).labelStyle(.watchRow)
+                        .font(Theme.Font.secondaryMedium).lineLimit(1)
                     if allDay.feedback == .meetingMarked {
                         Text("Meeting marked").font(Theme.Font.caption).foregroundStyle(.secondary)
                     }
@@ -22,22 +23,31 @@ struct WatchMeetingEntries: View {
             }
             .watchCard()
             .accessibilityIdentifier("watch-meeting-mark")
-        } else {
-            Button(action: open) {
-                Label(capture.state == .idle ? String(localized: "Meeting Recording") : String(localized: "Recording… Open"),
-                      systemImage: Theme.Icon.recording)
-                    .font(Theme.Font.secondaryMedium).lineLimit(1)
-            }
+        }
+        // The identifier stays what it was when the row was Meeting Recording.
+        NavigationLink { WatchRecordingView() } label: { WatchRecordingsLabel().font(Theme.Font.secondaryMedium) }
             .watchCard()
             .accessibilityIdentifier("watch-meeting-recording")
-        }
         if !model.minutes.meetings.isEmpty {
             NavigationLink { WatchMinutesList() } label: {
-                Label("Meeting Minutes", systemImage: Theme.Icon.minutes).font(Theme.Font.secondaryMedium).lineLimit(1)
+                Label("Meeting Minutes", systemImage: Theme.Icon.minutes).labelStyle(.watchRow).font(Theme.Font.secondaryMedium).lineLimit(1)
             }
             .watchCard()
             .accessibilityIdentifier("watch-meeting-minutes")
         }
+    }
+}
+
+/// The recording page where a row opens it (the home list, the unpaired page): Recordings, or "Recording… Open" while a
+/// recording other than all-day's runs (the day has its own card and page). Reads only the capture's state, never its
+/// clock, so the row isn't redrawn every second.
+struct WatchRecordingsLabel: View {
+    @State private var capture = RecordingCapture.shared
+
+    var body: some View {
+        Label(capture.state == .idle || capture.allDay ? String(localized: "Recordings") : String(localized: "Recording… Open"),
+              systemImage: Theme.Icon.recording)
+            .labelStyle(.watchRow).lineLimit(1)
     }
 }
 

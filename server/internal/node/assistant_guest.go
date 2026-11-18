@@ -16,11 +16,11 @@ import (
 )
 
 // Guest conversations (the hub's assistant/guest.go, docs/assistant/assistant.md ("Guest conversations")): an assistant conversation that
-// answers someone else for the user. It runs on Claude Code on the CLI or the Agent SDK (no other agent or runtime),
-// never in the warm spare, and every CLI process has no built-in tools (--tools ""). The SDK uses tools: [] and an
-// in-process server for its declared MCP tools. Both load only Persona's MCP server (strict MCP config, no user's or
-// extensions' servers), and only their own tools. The hub lists and runs only those for it and gives it no live
-// snapshot; the tools it has are kept in its sessionState.Guest.
+// answers someone else for the user. It runs on Claude Code (no other agent or runtime), never in the warm spare, and its
+// process has no built-in tools (--tools "") and none of the owner's Claude Code setup (guestSettingArgs,
+// guestSettingsFile: no user settings, CLAUDE.md or AGENTS.md files, rules or auto memory). It loads only Persona's MCP
+// server (strict MCP config, no user's or extensions' servers), and only its own tools. The hub lists and runs only those
+// for it and gives it no live snapshot; the tools it has are kept in its sessionState.Guest.
 
 // maxGuestTools is the hub's bound (assistant/guest.go).
 const maxGuestTools = 8
@@ -48,8 +48,8 @@ type guestParams struct {
 }
 
 // guestMeeting is the kind of a meeting's room conversation (docs/assistant/meeting-minutes.md "The room
-// conversation"): its own directory below guestMeetingDir, and nothing of the owner's Claude Code setup in any of its
-// processes (meetingRoomArgs).
+// conversation"): its own directory below guestMeetingDir, and, as every guest, nothing of the owner's Claude Code
+// setup in any of its processes (guestSettingArgs).
 const guestMeeting = "meeting"
 
 // guestMeetingDir is where the rooms' directories are, one per meeting, relative to the home as the hub names them.
@@ -104,7 +104,7 @@ func (n *Node) knowsConversation(id string) bool {
 	return p != nil || n.transcriptPath(id) != ""
 }
 
-// errGuestAgent refuses a guest conversation anything but Claude Code on the CLI or the Agent SDK.
+// errGuestAgent refuses a guest conversation anything but Claude Code on the CLI.
 var errGuestAgent = errors.New("a guest conversation runs on Claude Code only (its built-in tools can be taken away there)")
 
 // assistantGuestPrepare makes a guest conversation's directory and writes only its instructions there. A meeting's room
@@ -262,33 +262,48 @@ func (n *Node) roomCwd(cwd string) bool {
 // assistant's.
 var errRoomRecord = errors.New("this meeting's room lost its record on this computer: it does not run without it")
 
-// meetingRoomArgs are what a room's process runs with besides a guest's flags, so that only the meeting CLAUDE.md
-// and what the node passes itself reach the model (docs/assistant/meeting-minutes.md "Nothing of the owner's Claude
-// Code setup"): only the project's settings sources (never the user's: their CLAUDE.md, hooks, output style,
-// plugins and permissions), and the room's own --settings, which carries the launcher's environment and excludes
-// every CLAUDE.md of the directories above the room's (~/CLAUDE.md…), which the project source would load too.
-func meetingRoomArgs() []string {
+// guestSettingArgs are what every guest's process runs with besides its tool flags, so that only its own CLAUDE.md
+// (the guest's, or a room's meeting CLAUDE.md) and what the node passes itself reach the model
+// (docs/assistant/assistant.md "Guest conversations", docs/assistant/meeting-minutes.md "Nothing of the owner's Claude
+// Code setup"): only the project's settings sources (never the user's: their CLAUDE.md, rules, auto memory, hooks,
+// output style, plugins and permissions), and the guest's own --settings (guestSettingsFile), which carries the
+// launcher's environment and excludes every CLAUDE.md, AGENTS.md and .claude/rules of the directories above the
+// guest's (~/CLAUDE.md, ~/.claude/rules…), which the project source would load too.
+func guestSettingArgs() []string {
 	return []string{"--setting-sources", "project"}
 }
 
-// meetingRoomSettings adds to a room's settings s what keeps the owner's instructions out: the CLAUDE.md files of
-// every directory above cwd and of its profile (configDir, "" for none) excluded, no auto-memory.
-func meetingRoomSettings(s map[string]any, cwd, home, configDir string) {
+// guestIsolation adds to a guest's settings s what keeps the owner's instructions out: the CLAUDE.md and AGENTS.md
+// files and rules of every directory above cwd and of its profile (configDir, "" for none) excluded, no auto-memory.
+// --setting-sources project still reads a directory above cwd as a project's: below the home that is
+// ~/.claude/CLAUDE.md and every ~/.claude/rules file (#5786), which claudeMdExcludes takes as paths or globs. AGENTS.md
+// is read in place of CLAUDE.md where the guest's directory has none of its own.
+func guestIsolation(s map[string]any, cwd, home, configDir string) {
 	var excludes []string
+	add := func(f string) {
+		if !slices.Contains(excludes, f) {
+			excludes = append(excludes, f)
+		}
+	}
 	for dir := filepath.Dir(filepath.Clean(cwd)); ; dir = filepath.Dir(dir) {
-		for _, name := range []string{"CLAUDE.md", "CLAUDE.local.md", filepath.Join(".claude", "CLAUDE.md")} {
-			excludes = append(excludes, filepath.Join(dir, name))
+		for _, name := range []string{"CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", filepath.Join(".claude", "CLAUDE.md"),
+			filepath.Join(".claude", "AGENTS.md"), filepath.Join(".claude", "rules", "**")} {
+			add(filepath.Join(dir, name))
 		}
 		if dir == filepath.Dir(dir) {
 			break
 		}
 	}
 	if home != "" {
-		excludes = append(excludes, filepath.Join(home, ".claude", "CLAUDE.md"))
+		add(filepath.Join(home, ".claude", "CLAUDE.md"))
+		add(filepath.Join(home, ".claude", "AGENTS.md"))
+		add(filepath.Join(home, ".claude", "rules", "**"))
 	}
 	for _, cfg := range []string{os.Getenv("CLAUDE_CONFIG_DIR"), configDir} {
-		if f := filepath.Join(cfg, "CLAUDE.md"); cfg != "" && !slices.Contains(excludes, f) {
-			excludes = append(excludes, f)
+		if cfg != "" {
+			add(filepath.Join(cfg, "CLAUDE.md"))
+			add(filepath.Join(cfg, "AGENTS.md"))
+			add(filepath.Join(cfg, "rules", "**"))
 		}
 	}
 	s["claudeMdExcludes"] = excludes
@@ -300,12 +315,12 @@ func meetingRoomSettings(s map[string]any, cwd, home, configDir string) {
 	s["env"] = env
 }
 
-// meetingRoomKeys are what a room's settings keep of the start's (a launcher's own --settings merged with Persona's)
+// guestSettingsKeys are what a guest's settings keep of the start's (a launcher's own --settings merged with Persona's)
 // and of its profile's own settings.json: the environment, the login and the model. Never the rest of those files:
 // they are user settings files (`claude --settings ~/.claude/settings.work.json`, ~/.claude/settings.json) whose
-// hooks, plugins, output style, status line or permissions would reach the room, since flag settings load whatever
+// hooks, plugins, output style, status line or permissions would reach the guest, since flag settings load whatever
 // --setting-sources says.
-var meetingRoomKeys = []string{"env", "model", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "forceLoginMethod", "forceLoginOrgUUID",
+var guestSettingsKeys = []string{"env", "model", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "forceLoginMethod", "forceLoginOrgUUID",
 	"enableArtifact"}
 
 // meetingRoomProfile is the profile a new room of a node with no session scope signs in with when its start names
@@ -323,14 +338,15 @@ func (n *Node) startProfile(asked, guestKind string, resume bool) string {
 	return asked
 }
 
-// meetingRoomSettingsFile writes room id's settings: meetingRoomKeys of its profile's settings.json (configDir's,
-// "" for none), which --setting-sources project leaves out (a gateway and its token in its env, an apiKeyHelper), with
-// those of settings (a file or JSON, "" for none) over them as Claude Code ranks them (env merged by name), Persona's
-// own hooks when they go in --settings (personaHooks: no plugin carries them) and meetingRoomSettings.
-func (n *Node) meetingRoomSettingsFile(id, cwd, configDir, settings string, personaHooks bool) (string, error) {
+// guestSettingsFile writes guest id's settings: guestSettingsKeys of its profile's settings.json (configDir's, "" for
+// none), which --setting-sources project leaves out (a gateway and its token in its env, an apiKeyHelper), with those
+// of settings (a file or JSON, "" for none) over them as Claude Code ranks them (env merged by name), Persona's own
+// hooks when they go in --settings (personaHooks: no plugin carries them) and guestIsolation. A room's file is named
+// for the room, another guest's for the guest.
+func (n *Node) guestSettingsFile(id, cwd, configDir, settings string, personaHooks bool) (string, error) {
 	s := map[string]any{}
 	keep := func(from map[string]any) {
-		for _, k := range meetingRoomKeys {
+		for _, k := range guestSettingsKeys {
 			v, ok := from[k]
 			if !ok {
 				continue
@@ -368,7 +384,7 @@ func (n *Node) meetingRoomSettingsFile(id, cwd, configDir, settings string, pers
 			return "", err
 		}
 	}
-	meetingRoomSettings(s, cwd, n.home, configDir)
+	guestIsolation(s, cwd, n.home, configDir)
 	b, err := json.Marshal(s)
 	if err != nil {
 		return "", err
@@ -377,7 +393,11 @@ func (n *Node) meetingRoomSettingsFile(id, cwd, configDir, settings string, pers
 	if dir == "" {
 		dir = filepath.Join(n.home, ".persona")
 	}
-	return writeSettings(dir, "assistant-room-"+id+".json", b)
+	name := "assistant-guest-" + id + ".json"
+	if n.guestKindOf(id) == guestMeeting {
+		name = "assistant-room-" + id + ".json"
+	}
+	return writeSettings(dir, name, b)
 }
 
 // guestOf is conversation id's guest tools (nil: not a guest).
@@ -390,13 +410,13 @@ func (n *Node) guestOf(id string) []string {
 }
 
 // guestMCPAndTools are a guest conversation's process flags: Persona's MCP server alone, told it is a guest's, and
-// only its tools allowed. The Agent SDK maps these to its stdio proxy with no built-in tools (assistant_start.go).
-func (n *Node) guestMCPAndTools(id string, tools []string, legacyMCP bool) (mcpJSON string, toolFlags []string) {
+// only its tools allowed.
+func (n *Node) guestMCPAndTools(id string, tools []string, legacyMCP bool) []string {
 	env := assistantMCPEnv(id, n.dir)
 	env["PERSONA_GUEST"] = "1"
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": compat.MCPRegistrationServers(map[string]any{"persona": map[string]any{"command": n.bin, "args": []string{"mcp"}, "env": env}}, legacyMCP)})
 	allowed := compat.MCPAllowedToolNames(tools, legacyMCP)
-	return string(mcp), []string{"--mcp-config", string(mcp), "--strict-mcp-config", "--tools", "", "--allowedTools", strings.Join(allowed, ",")}
+	return []string{"--mcp-config", string(mcp), "--strict-mcp-config", "--tools", "", "--allowedTools", strings.Join(allowed, ",")}
 }
 
 // assistantDirOf is where a directory the hub names relative to HOME for the assistant (".persona/assistant",

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/link"
 )
 
@@ -14,15 +15,19 @@ import (
 // with the raw error kept on the next line for debugging (#5045): the hub cannot be reached, or it refused the
 // pairing link. Anything else is printed as it was.
 func explain(err error) string {
-	raw := err.Error()
+	return explainLanguage(i18n.Terminal(), err)
+}
+
+func explainLanguage(l i18n.Lang, err error) string {
+	raw := link.ErrorText(l, err)
 	var se *link.SSHError
 	switch {
 	case rejected(err):
-		return "hub 不认这条配对链接（过期了、用过了或被撤销了）：在 hub 机器上运行 personad hub pair --machine <这台的 id> --add 拿一条新链接，再 persona-link pair '<链接>'\n（原始错误：" + raw + "）"
+		return i18n.T(l, "link-cli.explain_rejected", i18n.Args{"raw": raw})
 	case errors.As(err, &se):
-		return se.Error()
+		return se.Text(l)
 	case unreachable(err):
-		return "连不上 hub（" + strings.Join(hostsOf(err), "、") + "）：检查 hub 在不在跑、地址对不对、这台电脑的网络通不通，再试一次\n（原始错误：" + raw + "）"
+		return i18n.T(l, "link-cli.explain_unreachable", i18n.Args{"hosts": terminalJoin(hostsOf(err)), "raw": raw})
 	}
 	return raw
 }
@@ -33,8 +38,8 @@ func explain(err error) string {
 func rejected(err error) bool {
 	for _, e := range leavesOf(err) {
 		s := e.Error()
-		if i := strings.LastIndex(s, "hub 拒绝了："); i >= 0 {
-			answer := s[i+len("hub 拒绝了："):]
+		if i := strings.LastIndex(s, "hub 拒绝了："); i >= 0 { // i18n-ignore: detects the canonical hub-refusal prefix before presentation
+			answer := s[i+len("hub 拒绝了："):] // i18n-ignore: detects the canonical hub-refusal prefix before presentation
 			if answer == "invalid token" || strings.HasPrefix(answer, "401 ") {
 				return true
 			}
@@ -103,5 +108,5 @@ func nodeHint(nodeErr string) string {
 	if strings.Contains(nodeErr, link.NodeDownMarker) {
 		return ""
 	}
-	return "：运行 persona-link node status 看常驻 node 在不在跑"
+	return terminalText("link-cli.node_hint")
 }

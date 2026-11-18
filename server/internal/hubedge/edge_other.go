@@ -18,7 +18,7 @@ type Options struct {
 	Control       string
 	Version       string
 	Logf          func(format string, args ...any)
-	RestoreUpdate func(build int64, cause error) (binary string, ok bool)
+	RestoreUpdate func(build int64, cause error) (binary string, ok bool, err error)
 
 	HoldMax, StandbyWait, ReleaseWait, ActivateWait, ConfirmWait time.Duration
 }

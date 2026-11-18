@@ -82,6 +82,8 @@ type sessionModes struct {
 	// Codex: an effort waiting for the phone's next turn/start on a Codex thread whose app-server has no
 	// thread/settings/update (codex_effort.go); nil none. Apart from Mode / Effort, which are Claude's.
 	Codex *codexPending
+	// App: the effort the phone set for the next turn of a chat of the Codex App (codex_desktop_effort.go); nil none.
+	App *codexAppPick
 	// Model: the model the app switched a Claude Code session to, shown until its transcript shows another (model_switch.go).
 	Model     *pendingModel
 	Ultracode *ultracodeState // independent, session-only workflow switch (ultracode.go)
@@ -95,6 +97,42 @@ func validModes(mode, effort string) error {
 		return fmt.Errorf("unknown effort level %q", effort)
 	}
 	return nil
+}
+
+// validModesFor validates a start's mode / effort against the launcher it runs on: a Codex start takes Codex's own
+// effort list (ultra included, proto.CodexEffortLevels), everything else keeps Claude Code's. Permission modes stay
+// Claude's for both.
+func validModesFor(launcher, mode, effort string) error {
+	if mode != "" && !slices.Contains(permissionModes, mode) {
+		return fmt.Errorf("unknown permission mode %q", mode)
+	}
+	levels := effortLevels
+	if launcherAgentType(launcher) == "codex" {
+		levels = append([]string{effortAuto}, proto.CodexEffortLevels...)
+	}
+	if effort != "" && !slices.Contains(levels, effort) {
+		return fmt.Errorf("unknown effort level %q", effort)
+	}
+	return nil
+}
+
+// An assistant's custom launcher name does not identify its agent. Only resolve the launcher for levels that need
+// Codex: ordinary Claude levels remain a cheap check, and unknown levels never become valid through a probe.
+func (n *Node) validAssistantModes(ctx context.Context, launcher, mode, effort string) error {
+	if err := validModes(mode, ""); err != nil {
+		return err
+	}
+	if effort == "" || slices.Contains(effortLevels, effort) {
+		return nil
+	}
+	if !slices.Contains(proto.CodexEffortLevels, effort) {
+		return validModes(mode, effort)
+	}
+	agent, err := n.assistantAgent(ctx, launcherOr(launcher, "claude"))
+	if err != nil {
+		return err
+	}
+	return validModesFor(agent, mode, effort)
 }
 
 // modeFlags are the claude flags starting a session with a mode / effort (values already validated).
@@ -271,6 +309,23 @@ func (n *Node) setModes(ctx context.Context, id, mode, effort string) error {
 	}
 	if n.codexPath(id) != "" || n.traexPath(id) != "" { // not driven through an app-server: no way to set either
 		return fmt.Errorf("Codex / TRAEX 的会话不支持在手机上改权限模式和思考强度")
+	}
+	if mode != "" {
+		// Allow All for a claude that has no bypass flag: no key reaches it, so it is restarted in it once its turn is
+		// over (mode_restart.go, #6476). Any other pick drops such a restart that waits.
+		if n.needsModeRestart(id, mode) {
+			if err := n.restartable(ctx, id); err == nil {
+				if err := n.queueModeRestart(id, mode); err != nil {
+					return err
+				}
+				mode = ""
+				if effort == "" {
+					return nil
+				}
+			}
+		} else {
+			n.dropModeRestart(id)
+		}
 	}
 	pane, err := n.paneFor(ctx, id)
 	if err != nil {
@@ -552,13 +607,20 @@ func (n *Node) syncAssistantModes(ctx context.Context, p *assistantProc) error {
 		effort = p.model.Effort
 	}
 	p.mu.Unlock()
-	return n.applyAssistantModes(ctx, p, mode, effort)
+	return n.setAssistantModes(ctx, p, mode, effort)
 }
 
-// applyAssistantModes commits each field only after Claude acknowledges it. A refused startup setting also
-// restores the previously recorded choice, so the next message does not silently retry it. settingsMu is held.
+// applyAssistantModes is setAssistantModes for a change made in the app: the list goes out with it at once.
 func (n *Node) applyAssistantModes(ctx context.Context, p *assistantProc, mode, effort string) error {
 	defer func() { p.ownerOr(n).notifySessions() }()
+	return n.setAssistantModes(ctx, p, mode, effort)
+}
+
+// setAssistantModes commits each field only after Claude acknowledges it. A refused startup setting also
+// restores the previously recorded choice, so the next message does not silently retry it. settingsMu is held.
+// It pushes no list: the message it runs for (syncAssistantModes) has one pushed once its line is written, and
+// building one here held every send up for as long as a list takes on a busy computer.
+func (n *Node) setAssistantModes(ctx context.Context, p *assistantProc, mode, effort string) error {
 	for _, field := range []string{"mode", "effort"} {
 		p.mu.Lock()
 		want, previous := mode, p.mode
@@ -596,8 +658,17 @@ func (n *Node) applyAssistantModes(ctx context.Context, p *assistantProc, mode, 
 			if !errors.As(err, &refused) {
 				// An unconfirmed request might still apply later. Retire this process so a late response
 				// cannot leave the conversation running with a setting the client was told had failed.
+				var timeout *assistantControlTimeoutError
+				if errors.As(err, &timeout) {
+					n.logf("assistant %s: control_timeout stage=%s wait_ms=%d", short(p.id), timeout.stage, timeout.wait.Milliseconds())
+				}
+				p.mu.Lock()
+				p.stopReason = err.Error()
+				p.mu.Unlock()
+				n.logf("assistant %s: control request %s failed after startup elapsed_ms=%d: %v; stopping process from node", short(p.id), field, time.Since(p.born).Milliseconds(), err)
 				p.stop()
-				return &assistantControlUnconfirmed{refusal("assistant_control_failed", err.Error(), nil)}
+				message := i18n.T(i18n.Default, "node-assistant-start.stopped_by_node", i18n.Args{"reason": err.Error()})
+				return &assistantControlUnconfirmed{error: refusal("assistant_control_failed", message, nil), cause: err}
 			}
 			return err
 		}

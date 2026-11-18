@@ -1,3 +1,4 @@
 {
-  "outdated": "{name} 上的 personad 太旧，不能重命名、移动或删除文件，需要重新部署"
+  "outdated": "{name} 上的 personad 太旧，不能重命名、移动或删除文件，需要重新部署",
+  "outdated_feature": "{name} 上的 personad 太旧，做不了这个，重新部署一下"
 }

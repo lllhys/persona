@@ -58,19 +58,21 @@ func requestDeclares(r *http.Request, feature string) bool {
 	return false
 }
 
-// cardCompatItems is items as a client gets them: unchanged when it draws rings, else a copy with each assistant
-// text's ring cards rewritten (ringCardsDowngraded). The node's slice is shared, so it is never written to.
+// cardCompatItems is items as a client gets them: a copy with each assistant text's paseo-ui blocks written as cards
+// (paseoUIConverted) and, when the client does not draw rings, its ring cards rewritten (ringCardsDowngraded); items
+// itself when nothing changes. The node's slice is shared, so it is never written to.
 func cardCompatItems(l i18n.Lang, ring bool, items []proto.Item) []proto.Item {
-	if ring {
-		return items
-	}
 	var out []proto.Item
 	for i := range items {
 		it := items[i]
 		if it.Kind != proto.KindText || it.Role != "assistant" {
 			continue
 		}
-		text := ringCardsDowngraded(l, it.Text)
+		text := it.Text
+		if !ring {
+			text = ringCardsDowngraded(l, text)
+		}
+		text = paseoUIConverted(l, text)
 		if text == it.Text {
 			continue
 		}

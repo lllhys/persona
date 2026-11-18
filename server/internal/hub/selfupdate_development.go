@@ -1,0 +1,292 @@
+package hub
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/identity"
+	"github.com/nwverse/persona/server/internal/update"
+)
+
+type developmentView struct {
+	Configured       bool   `json:"configured"`
+	Branch           string `json:"branch"`
+	CurrentCommit    string `json:"current_commit,omitempty"`
+	CurrentUpdatedAt string `json:"current_updated_at,omitempty"`
+}
+
+// Installation time is recorded by confirmation, never inferred from a build or Git date.
+// Caller holds u.mu.
+func (u *updater) currentUpdatedAtLocked() string {
+	for i := len(u.settings.History) - 1; i >= 0; i-- {
+		r := u.settings.History[i]
+		if r.Result == "updated" && r.ToVersion == u.h.version && r.ToBuild == u.h.build.Number && !r.Ended.IsZero() {
+			return r.Ended.Format(time.RFC3339)
+		}
+	}
+	return ""
+}
+
+func (u *updater) developmentConfig() *update.DevelopmentConfig {
+	if u.h.cfg == nil {
+		return nil
+	}
+	return u.h.cfg.Update.Development
+}
+
+func (u *updater) developmentAvailable() bool {
+	c := u.developmentConfig()
+	return c != nil && len(c.Backup.Quiesce) > 0 && len(c.Backup.Resume) > 0 && u.h.build.Channel != update.Docker && runtime.GOOS != "windows"
+}
+
+func (u *updater) developmentLocked() bool { return u.settings.Source == "web-dev" }
+
+func (u *updater) adoptionUnresolved() bool {
+	_, err := os.Lstat(update.DevelopmentAdoptionPath(u.dir))
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+func (u *updater) autoLocked() bool {
+	if u.developmentLocked() {
+		return u.settings.DevelopmentAuto
+	}
+	return u.settings.auto()
+}
+
+func (u *updater) selectedDevelopment() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.developmentLocked()
+}
+
+func (u *updater) candidateNewer(r *update.Published) bool {
+	if r == nil {
+		return false
+	}
+	if r.Development != nil {
+		return r.Development.BackupID == "" && r.Development.Commit != u.h.build.Commit
+	}
+	return u.h.build.Newer(r.Manifest.Build)
+}
+
+func (u *updater) developmentHold(m *update.Manifest) string {
+	// A known clean installed commit must be an ancestor for automatic adoption.
+	// Unknown/dirty builds can still be updated manually, like release updates.
+	return u.h.build.Hold(m)
+}
+
+func (u *updater) unreplacedCandidate(r *update.Published) error {
+	if r.Development == nil {
+		return u.unreplaced(r.Manifest)
+	}
+	// A rollback can have a lower build number, but must still replace every active split service.
+	target, err := u.target()
+	if err != nil {
+		return err
+	}
+	self, _ := u.self()
+	return unreplaced(r.Manifest, target, self, u.services)
+}
+
+func (u *updater) runDevelopment(ctx context.Context, operation string, input map[string]any, result any) error {
+	if err := u.devRun(ctx, u.developmentConfig(), filepath.Join(u.dir, "development"), operation, input, result); err != nil {
+		return i18n.Err("hub-selfupdate.err_development_phase", i18n.Args{"phase": operation})
+	}
+	return nil
+}
+
+func (u *updater) checkDevelopment(ctx context.Context) (*update.Published, error) {
+	if !u.developmentAvailable() {
+		return nil, i18n.Err("hub-selfupdate.err_development_config")
+	}
+	if err := u.developmentTopology(); err != nil {
+		return nil, err
+	}
+	var candidate update.DevelopmentCandidate
+	err := u.runDevelopment(ctx, "resolve", nil, &candidate)
+	u.mu.Lock()
+	u.lastCheck = time.Now()
+	u.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	number := update.DevelopmentNumber(u.h.build.Number)
+	m := &update.Manifest{Version: fmt.Sprintf("web-dev-%s-%d", candidate.Commit[:12], number), Build: number,
+		Commit: candidate.Commit, Released: time.Now()}
+	r := &update.Published{Manifest: m, Development: &candidate}
+	u.mu.Lock()
+	// A repeated check of the same object retains the attempt identity (including
+	// its bad-build marker), rather than creating a new build to bypass rollback.
+	if u.release != nil && u.release.Development != nil && u.release.Development.BackupID == "" && u.release.Development.Commit == candidate.Commit {
+		copy := *u.release
+		manifest := *copy.Manifest
+		copy.Manifest = &manifest
+		r = &copy
+	}
+	for _, record := range u.settings.History {
+		if record.Source == "web-dev" && record.Commit == candidate.Commit && record.Result == "rolled_back" {
+			r.Manifest.Build = record.ToBuild
+			r.Manifest.Version = record.ToVersion
+		}
+	}
+	if !u.updateActiveLocked() {
+		u.release, u.blocked = r, nil
+	}
+	u.mu.Unlock()
+	return r, nil
+}
+
+// Build only this Hub and the platforms its registered computers last reported.
+// Offline computers keep their platform; never-seen computers supply none yet.
+func (u *updater) developmentPlatforms() []string {
+	platforms := []string{runtime.GOOS + "-" + runtime.GOARCH}
+	for _, mc := range u.h.knownEntries() {
+		if m := u.h.machineByID(mc.ID); m != nil {
+			s := m.snapshot()
+			if s.OS != "" && s.Arch != "" {
+				platforms = append(platforms, s.OS+"-"+s.Arch)
+			}
+		}
+	}
+	slices.Sort(platforms)
+	return slices.Compact(platforms)
+}
+
+func (u *updater) buildDevelopment(ctx context.Context, r *update.Published) error {
+	operation := "build"
+	state := "building"
+	if r.Development.BackupID != "" {
+		operation, state = "prepare_backup", "applying_backup"
+	}
+	u.set(state, "web/hub/node", "")
+	var built struct {
+		Artifacts string   `json:"artifacts"`
+		Ancestors []string `json:"ancestors"`
+	}
+	platforms := u.developmentPlatforms()
+	if operation == "prepare_backup" && !u.nodesEnabled() {
+		platforms = []string{runtime.GOOS + "-" + runtime.GOARCH}
+	}
+	err := u.runDevelopment(ctx, operation, map[string]any{
+		"candidate": r.Development, "version": r.Manifest.Version, "build": r.Manifest.Build,
+		"backup_id": r.Development.BackupID, "runtime": u.h.cfg.dir,
+		"platform": runtime.GOOS + "-" + runtime.GOARCH, "platforms": platforms, "release_url": u.h.updateURL()}, &built)
+	if err != nil {
+		return err
+	}
+	r.Source = (&url.URL{Scheme: "file", Path: built.Artifacts}).String()
+	var ancestors string
+	if operation == "build" {
+		ancestors, err = update.EncodeAncestors(built.Ancestors)
+		if err != nil {
+			return err
+		}
+	}
+	m, err := update.BuildManifest(built.Artifacts, *r.Manifest)
+	if err != nil {
+		return err
+	}
+	m.Ancestors = ancestors
+	r.Manifest = m
+	return nil
+}
+
+func (u *updater) backupDevelopment(ctx context.Context, r *update.Published, target string) (*update.DevelopmentBackup, error) {
+	if err := u.developmentTopology(); err != nil {
+		return nil, err
+	}
+	// Immutable package pointers belong to the release publisher. Do not alter it
+	// or silently leave development nodes on the previous release.
+	if info, err := os.Lstat(identity.NodeBinaryDir()); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("node package directory is publisher-managed; configure a dedicated development installation")
+	}
+	u.set("backing_up", "", "")
+	programs := map[string]string{"personad": target}
+	for _, name := range update.ProgramNames {
+		path := filepath.Join(filepath.Dir(target), name)
+		if _, err := os.Stat(path); err == nil {
+			programs[name] = path
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
+	var backup update.DevelopmentBackup
+	u.mu.Lock()
+	updatedAt := u.currentUpdatedAtLocked()
+	u.mu.Unlock()
+	err := u.runDevelopment(ctx, "backup", map[string]any{
+		"runtime": u.h.cfg.dir, "candidate": r.Development, "hub_database": u.h.cfg.DatabaseURL,
+		"from_version": u.h.version, "from_commit": u.h.build.Commit, "from_build": u.h.build.Number,
+		"from_updated_at": updatedAt, "platform": runtime.GOOS + "-" + runtime.GOARCH,
+		"executables": programs, "node_directory": identity.NodeBinaryDir()}, &backup)
+	if err != nil {
+		return nil, err
+	}
+	u.mu.Lock()
+	u.settings.DevelopmentBackup = &backup
+	err = u.saveLocked(ctx)
+	u.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return &backup, nil
+}
+
+// Only the built-in child manager is known to share this Hub's package directory
+// and restart with it. Independent managers keep their original update channel.
+func (u *updater) developmentTopology() error {
+	if u.h.cfg == nil || !u.h.cfg.Assistant.StartsBuiltin() {
+		return i18n.Err("hub-selfupdate.err_development_topology")
+	}
+	for _, mc := range u.h.knownEntries() {
+		if u.h.entryOwner(mc.ID) != devicesOwner {
+			return i18n.Err("hub-selfupdate.err_development_topology")
+		}
+	}
+	return nil
+}
+
+func pendingSource(p update.Pending) string {
+	if p.Development != nil {
+		return "web-dev"
+	}
+	return "release"
+}
+
+func pendingCommit(p update.Pending) string {
+	if p.Development != nil {
+		return p.Development.Commit
+	}
+	return ""
+}
+
+// detachDevelopmentWeb makes the newly embedded Web authoritative. Keep a local
+// override with the same transaction so rollback restores the old UI too.
+func (u *updater) detachDevelopmentWeb(p *update.Pending) error {
+	return update.DetachDevelopmentWeb(u.dir, filepath.Join(u.h.cfg.dir, "web"), p)
+}
+
+// Remove only the checkout built by this exact invocation, after the existing
+// installer has copied its artifacts. The owned helper directory is not a Git checkout supplied by a user.
+func (u *updater) removeDevelopmentBuild(r *update.Published) {
+	if r.Source == "" {
+		return
+	}
+	parsed, err := url.Parse(r.Source)
+	if err != nil || parsed.Scheme != "file" {
+		return
+	}
+	root := filepath.Dir(parsed.Path)
+	if filepath.Dir(root) == filepath.Join(u.dir, "development") && (strings.HasPrefix(filepath.Base(root), "build-") || strings.HasPrefix(filepath.Base(root), "prepare_backup-")) {
+		_ = os.RemoveAll(root)
+	}
+}

@@ -227,7 +227,8 @@ nonisolated struct AgentListProjection: Sendable {
         var preferences: [String: Preferences] = [:]
         var pagedGroups = Set<String>()
         var listQuery = SessionListQuery()
-
+        /// The hubs that fold side sessions into their parent's chat (`SideFold`, #7944).
+        var sideFold = Set<String>()
         func pinned(_ key: SessionKey) -> Bool {
             preferences[key.group]?.pins.sessions.contains("\(key.machineID)/\(key.sessionID)") == true
         }
@@ -263,6 +264,8 @@ nonisolated struct AgentListProjection: Sendable {
         var machines: [Machine]
         var settings: Settings
         var workspaces: [HostWorkspace] = []
+        /// What a waiting child asks, keyed by the parent the card is shown on. Empty leaves every row's own line.
+        var asks: [SessionKey: String] = [:]
     }
 
     struct Rows: Sendable {
@@ -297,6 +300,8 @@ nonisolated struct AgentListProjection: Sendable {
     var repositories: [String: Repository] = [:]
     var busyRepositories: [String: [RepoTree.Repo]] = [:]
     var quietRepositories: [String: [SpaceGroup]] = [:]
+    /// Every listed agent and nested subtask in a folded quiet repository, for the row's O(1) selection lookup.
+    var quietRepositoryBySession: [SessionKey: String] = [:]
     var rows: [String: Rows] = [:]
     /// A listed session's subtasks (`CodexTasks.flattened`: a Codex chat's subagents, the agents a runtime's agent
     /// created): behind its Subtasks row, not rows or counts of the list. None needs the user: one that does is a row.
@@ -311,22 +316,48 @@ nonisolated struct AgentListProjection: Sendable {
     /// Searching can match an Agent-free worktree even when no session matches the query.
     var hasSearchResults: Bool { !base.isEmpty || !tree.isEmpty }
 
-    static func build(_ input: Input) -> Self {
+    static func preparedSessions(_ input: Input) -> [Session] {
+        ChildSessions.fold(SideFold.fold(input.sessions, groups: input.settings.sideFold).listed, asks: input.asks)
+    }
+
+    /// The hub's paged totals for the same immutable space, with manager routing and hub scoping preserved.
+    static func aggregateScope(_ space: SpaceGroup, settings: Settings) -> RuntimeSessionLists.Scope {
+        settings.scope(machine: space.machineID, hub: space.group, space: space.spaceID == "-" ? "" : space.spaceID)
+    }
+
+    static func scopeKey(_ scope: RuntimeSessionLists.Scope) -> String {
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "hub", value: scope.hub)]
+            + scope.query.parameters.sorted(by: { $0.key < $1.key }).map { URLQueryItem(name: $0.key, value: $0.value) }
+        return components.string ?? ""
+    }
+
+    static func build(_ input: Input, now: Date? = nil) -> Self {
         let settings = input.settings
         let order = settings.order
         var result = Self()
         let plan = AgentSearchPlan.compile(query: settings.query, settings: settings)
         result.searchPlan = plan
         let parsed = plan.parsed
-        result.sessionsByKey = Dictionary(input.sessions.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        let nativePins = Set(input.workspaces.filter { $0.source == "paseo" && $0.pinnedAt != nil }.map(\.key))
+        let inPinnedWorkspace: (Session) -> Bool = { session in
+            guard settings.grouping == "repo", session.archived != true, session.spaceKind == "paseo",
+                  let id = session.workspaceID else { return false }
+            return nativePins.contains(session.machineRef.path + "/paseo:" + id)
+        }
+        // A side session lives in its parent's chat (#7944): a paged window's rows fold here, once per revision (the
+        // model's own list is folded already, and folding it again changes nothing). Then the folded children are not
+        // rows; what the hub did not fold still goes through CodexTasks below.
+        let sessions = preparedSessions(input)
+        result.sessionsByKey = Dictionary(sessions.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
         result.machinesByRef = Dictionary(input.machines.map { ($0.ref, $0) }, uniquingKeysWith: { a, _ in a })
         // Subtasks go under the session that started them, as in the Codex App and on Android: the list and its counts
         // are the others'. A working one hangs under its parent only while the list draws a row above it (`runs`): the
         // groupings that list what runs draw the pinned and live agents; Recently Used and By App draw every one.
         let runs: ((Session) -> Bool)? = settings.grouping == "recent" || settings.grouping == "app" ? nil
-            : { $0.state.isLive || settings.pinned($0.key) }
+            : { $0.state.isLive || settings.pinned($0.key) || inPinnedWorkspace($0) }
         // A row a quick filter showed stays a row while it is on, a subtask answered under Needs You too.
-        let forest = CodexTasks.build(input.sessions, ownRows: settings.filter == .all ? [] : settings.kept, runs: runs)
+        let forest = CodexTasks.build(sessions, ownRows: settings.filter == .all ? [] : settings.kept, runs: runs)
         let admits: (Session) -> Bool = { session in
             guard !session.assistant else { return false }
             guard settings.machine.isEmpty || session.machineRef.path == settings.machine else { return false }
@@ -357,7 +388,7 @@ nonisolated struct AgentListProjection: Sendable {
                 guard parsed.states.contains(session.state.rawValue.lowercased()) else { return false }
             }
             if let hrs = parsed.sinceHours {
-                guard let updated = session.updatedAt, Date.now.timeIntervalSince(updated) <= hrs * 3600 else { return false }
+                guard let updated = session.updatedAt, (now ?? Date()).timeIntervalSince(updated) <= hrs * 3600 else { return false }
             }
             if settings.query.isEmpty && settings.searchScope == .all { return true }
             if settings.pagedGroups.contains(session.group) && parsed.terms.isEmpty && settings.searchScope == .all { return true }
@@ -396,7 +427,7 @@ nonisolated struct AgentListProjection: Sendable {
         if settings.grouping == "space" {
             let groups = SpaceGroup.build(result.unpinned).map { group in
                 var group = group
-                let scope = settings.scope(machine: group.machineID, hub: group.group, space: group.spaceID == "-" ? "" : group.spaceID)
+                let scope = aggregateScope(group, settings: settings)
                 result.scopes[group.id] = scope
                 group.bounded = settings.pagedGroups.contains(group.group)
                 return group
@@ -416,7 +447,7 @@ nonisolated struct AgentListProjection: Sendable {
                     (settings.machine.isEmpty || workspace.machineRef.path == settings.machine) &&
                     (!settings.multiHub || HubFilter.matches(settings.hub, workspace.group))
             }
-            result.tree = RepoTree.build(result.unpinned.filter { $0.state.isLive }, machines: input.machines.map(\.ref),
+            result.tree = RepoTree.build(result.unpinned.filter { $0.archived != true && ($0.state.isLive || inPinnedWorkspace($0)) }, machines: input.machines.map(\.ref),
                                          workspaces: catalog, includeEmpty: settings.filter == .all, search: settings.query)
             result.byHost = settings.machine.isEmpty && result.tree.count > 1
             for host in result.tree {
@@ -445,7 +476,7 @@ nonisolated struct AgentListProjection: Sendable {
             if settings.sort == "updated" {
                 result.tree = result.tree.map { host in
                     var host = host
-                    host.repos = AgentListOrder.latestFirst(host.repos,
+                    host.repos = host.repos.filter { $0.latestPinnedAt != nil } + AgentListOrder.latestFirst(host.repos.filter { $0.latestPinnedAt == nil },
                         date: { result.repositories[$0.id]?.sessions.map(\.sortDate).max() ?? .distantPast }, id: \.id)
                     return host
                 }
@@ -457,14 +488,41 @@ nonisolated struct AgentListProjection: Sendable {
                                name: repo.name, index: 0, sessions: order.ordered(result.repositories[repo.id]!.sessions))
                 }
             }
+            result.quietRepositoryBySession = quietRepositoryMembership(
+                groups: result.tree.flatMap { result.quietRepositories[$0.id] ?? [] }, tasks: result.tasks, folded: input.sessions)
             result.menuSections = result.tree.flatMap(\.repos).filter { result.repositories[$0.id]?.quiet != true }.map(\.id)
         } else if settings.grouping == "app" {
             result.apps = AppGroups.build(result.unpinned) // the list's sections, built once (`AppGroups`)
             result.menuSections = result.apps.map(\.id)
-        } else if settings.grouping != "recent" && settings.grouping != "todo" {
+        } else if settings.grouping != "recent" && settings.grouping != "todo" && settings.grouping != "direction" {
             result.menuSections = order.sectionIDs(result.unpinned, byMachine: settings.grouping == "machine")
         }
         return result
+    }
+
+    /// Maps a quiet repository's root rows and every nested subtask they can unfold to that repository.
+    static func quietRepositoryMembership(groups: [SpaceGroup], tasks: [SessionKey: [CodexTasks.Task]],
+                                          folded: [Session] = []) -> [SessionKey: String] {
+        var out: [SessionKey: String] = [:]
+        for group in groups {
+            for session in group.sessions {
+                out[session.key] = group.id
+                for task in tasks[session.key] ?? [] { out[task.id] = group.id }
+            }
+        }
+        // The hub can fold a child out of the rendered roots before CodexTasks sees it; its open chat still belongs here.
+        for session in folded {
+            if let parent = ChildSessions.parentKey(session), let repository = out[parent] { out[session.key] = repository }
+        }
+        return out
+    }
+
+    /// The folded quiet repository whose agent is open beside the list. Once its agent row is built, or there is no
+    /// matching open agent, no folded line is selected. Membership was derived with the immutable projection, not here in a row's body.
+    static func selectedQuietRepositoryID(open: SessionKey?, membership: [SessionKey: String], expandedQuiet: Set<String>,
+                                          forceExpanded: Bool) -> String? {
+        guard let open, !forceExpanded, let selected = membership[open], !expandedQuiet.contains(selected) else { return nil }
+        return selected
     }
 
     private static func latestFirst(_ groups: [SpaceGroup]) -> [SpaceGroup] {

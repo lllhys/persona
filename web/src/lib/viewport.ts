@@ -75,17 +75,52 @@ function mediaList(q: string): MediaQueryList | undefined {
 const matches = (q: string) => Boolean(mediaList(q)?.matches);
 
 const FINE = "(any-pointer: fine)";
+const MOUSE_EVENTS = ["pointermove", "pointerdown"] as const;
+let sawMouse = false;
+let watchingMouse = false;
+const fineListeners = new Set<() => void>();
 
-/** Some pointer is precise (a mouse, a trackpad; an iPad with its keyboard and trackpad): Enter sends there. */
+function stopMouseWatch() {
+  if (!watchingMouse) return;
+  watchingMouse = false;
+  MOUSE_EVENTS.forEach((type) => window.removeEventListener(type, mousePointer, true));
+  mediaList(FINE)?.removeEventListener("change", mousePointer);
+}
+
+function mousePointer(e?: PointerEvent | MediaQueryListEvent) {
+  // The media listener also covers an imperative hasFinePointer() caller with no hook mounted.
+  // Only a mouse proves the query wrong; a correctly reported stylus already matches fine, and touch must not promote.
+  if (e && "pointerType" in e) {
+    if (e.pointerType !== "mouse") return;
+    sawMouse = true;
+  } else if (!matches(FINE)) return;
+  stopMouseWatch();
+  fineListeners.forEach((listener) => listener());
+}
+
+function watchMouse() {
+  if (watchingMouse || typeof window === "undefined") return;
+  watchingMouse = true;
+  // A click need not move the mouse first. Capture before a surface stops propagation; passive because this only observes.
+  MOUSE_EVENTS.forEach((type) => window.addEventListener(type, mousePointer, { capture: true, passive: true }));
+  mediaList(FINE)?.addEventListener("change", mousePointer);
+}
+
+/** Some pointer is precise (a mouse, a trackpad; an iPad with its keyboard and trackpad): Enter sends there. Once a real
+ *  mouse pointer is seen it stays true for this page, even on Windows browsers that misreport the media query. */
 export function hasFinePointer(): boolean {
-  return matches(FINE);
+  if (sawMouse) return true;
+  const fine = matches(FINE);
+  if (fine) stopMouseWatch();
+  else watchMouse();
+  return fine;
 }
 
 /** Whether Enter (without Shift) sends: with a precise pointer, yes; on a touch screen alone it is a new line there and
- *  only the button sends. Mod+Alt+Enter is left out: that is the waiting-card shortcut (lib/shortcuts.ts), and the
- *  composer must not swallow the key before the shortcut dispatcher sees it. */
+ *  only the button sends. Mod+Enter always sends, but Mod+Alt+Enter is left out: that is the waiting-card shortcut
+ *  (lib/shortcuts.ts), and the composer must not swallow the key before the shortcut dispatcher sees it. */
 export function enterSends(e: { key: string; shiftKey: boolean; altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }, fine: boolean): boolean {
-  return e.key === "Enter" && !e.shiftKey && !(e.altKey && (e.ctrlKey || e.metaKey)) && fine;
+  return e.key === "Enter" && !e.shiftKey && (e.ctrlKey || e.metaKey ? !e.altKey : fine);
 }
 
 /** The narrow layout (below lg: the sidebar is a drawer, the side panel covers the page): Tailwind's `max-lg:`, kept in step. */
@@ -109,5 +144,18 @@ export function useMedia(query: string): boolean {
   return useSyncExternalStore(subscribe, () => matches(query), () => false);
 }
 
-/** Whether a precise pointer is there, following it (a trackpad attached to an iPad). */
-export const useFinePointer = () => useMedia(FINE);
+function subscribeFine(listener: () => void) {
+  fineListeners.add(listener);
+  hasFinePointer();
+  return () => {
+    fineListeners.delete(listener);
+  };
+}
+
+/** Whether a precise pointer is there, following the media query and the one-time mouse promotion. */
+export function useFinePointer(): boolean {
+  const fine = useMedia(FINE);
+  const mouse = useSyncExternalStore(subscribeFine, () => sawMouse, () => false);
+  if (!fine && !mouse) watchMouse();
+  return fine || mouse;
+}

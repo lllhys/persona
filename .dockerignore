@@ -1,11 +1,12 @@
-# Only server/, web/, deploy/docker/, the shared cases the web tests read (spec/fixtures/), the extension schema
+# Only server/, web/, deploy/docker/, the shared cases the web tests read (spec/fixtures/) and the desktop bridge's types, the extension schema
 # the web build uses (schema/extension/) and the runtime packages' sources (integrations/, go generate) go into the hub
 # image (Dockerfile).
 *
 !server/
 !web/
 !deploy/docker/
-!integrations/agent-sdk/
+!integrations/antigravity/
+!integrations/claude-code-plugin/
 !integrations/dsh/
 !integrations/paseo/
 !integrations/pi/
@@ -14,6 +15,8 @@
 !sdk/go/
 # the shared cases the web app's tests import: the web build's tsc checks the tests too (Dockerfile)
 !spec/fixtures/
+# the desktop bridge's types, which the web app's desktop-types.d.ts re-exports (Dockerfile)
+!spec/desktop-bridge.d.ts
 # the extension schema and its examples: the web app builds them in and its tests import them (Dockerfile)
 !schema/extension/
 integrations/**/node_modules/

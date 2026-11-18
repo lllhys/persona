@@ -1,0 +1,194 @@
+{
+  "description" : "Skipped frames with the queue under 150 ms, a backlog that came in at once (its newest frame barely waited), the band's floor with no backlog now: nothing steps down; a backlog still there does.",
+  "init" : {
+    "bias" : "auto",
+    "capKbps" : 12000,
+    "display" : {
+      "maxSize" : 2868,
+      "pixels" : [
+        3024,
+        1964
+      ],
+      "points" : [
+        1512,
+        982
+      ]
+    },
+    "link" : {
+      "kind" : "lan",
+      "minRttMs" : null,
+      "srttMs" : null,
+      "via" : "wifi"
+    },
+    "maxFps" : 60,
+    "maxScale" : null,
+    "now" : 0,
+    "remembered" : null
+  },
+  "name" : "backlog_gone",
+  "start" : {
+    "fps" : 60,
+    "height" : 1862,
+    "index" : 0,
+    "maxKbps" : 12000,
+    "minKbps" : 6408,
+    "pixelsPerPoint" : 1.8968253968253967,
+    "reason" : "start",
+    "scale" : 2,
+    "targetKbps" : 6408,
+    "width" : 2868
+  },
+  "steps" : [
+    {
+      "helper" : {
+        "kbps" : 12000,
+        "skipped" : 4,
+        "targetKbps" : 12000
+      }
+    },
+    {
+      "expected" : null,
+      "tick" : {
+        "now" : 1,
+        "signals" : {
+          "burstKbps" : [
+
+          ],
+          "decodeP95Ms" : 4,
+          "deliveredKbps" : null,
+          "frames" : 30,
+          "lateShare" : null,
+          "queueFalling" : false,
+          "queueLastMs" : 100,
+          "queueP50Ms" : 100,
+          "queueP95Ms" : 100,
+          "queueRising" : false,
+          "replacedShare" : 0
+        }
+      }
+    },
+    {
+      "expected" : null,
+      "tick" : {
+        "now" : 1.25,
+        "signals" : {
+          "burstKbps" : [
+
+          ],
+          "decodeP95Ms" : 4,
+          "deliveredKbps" : null,
+          "frames" : 30,
+          "lateShare" : null,
+          "queueFalling" : false,
+          "queueLastMs" : 100,
+          "queueP50Ms" : 100,
+          "queueP95Ms" : 100,
+          "queueRising" : false,
+          "replacedShare" : 0
+        }
+      }
+    },
+    {
+      "expected" : null,
+      "tick" : {
+        "now" : 1.5,
+        "signals" : {
+          "burstKbps" : [
+
+          ],
+          "decodeP95Ms" : 4,
+          "deliveredKbps" : 1000,
+          "frames" : 30,
+          "lateShare" : null,
+          "queueFalling" : false,
+          "queueLastMs" : 3,
+          "queueP50Ms" : 500,
+          "queueP95Ms" : 500,
+          "queueRising" : false,
+          "replacedShare" : 0
+        }
+      }
+    },
+    {
+      "expected" : null,
+      "tick" : {
+        "now" : 1.75,
+        "signals" : {
+          "burstKbps" : [
+
+          ],
+          "decodeP95Ms" : 4,
+          "deliveredKbps" : 1000,
+          "frames" : 30,
+          "lateShare" : null,
+          "queueFalling" : false,
+          "queueLastMs" : 3,
+          "queueP50Ms" : 500,
+          "queueP95Ms" : 500,
+          "queueRising" : false,
+          "replacedShare" : 0
+        }
+      }
+    },
+    {
+      "helper" : {
+        "kbps" : 900,
+        "skipped" : 0,
+        "targetKbps" : 2500
+      }
+    },
+    {
+      "expected" : null,
+      "tick" : {
+        "now" : 2.25,
+        "signals" : {
+          "burstKbps" : [
+
+          ],
+          "decodeP95Ms" : 4,
+          "deliveredKbps" : 1000,
+          "frames" : 30,
+          "lateShare" : null,
+          "queueFalling" : false,
+          "queueLastMs" : 2,
+          "queueP50Ms" : 200,
+          "queueP95Ms" : 200,
+          "queueRising" : false,
+          "replacedShare" : 0
+        }
+      }
+    },
+    {
+      "expected" : {
+        "fps" : 15,
+        "height" : 982,
+        "index" : 4,
+        "maxKbps" : 1782,
+        "minKbps" : 200,
+        "pixelsPerPoint" : 1,
+        "reason" : "link_slowed",
+        "scale" : 1,
+        "targetKbps" : 850,
+        "width" : 1512
+      },
+      "tick" : {
+        "now" : 2.5,
+        "signals" : {
+          "burstKbps" : [
+
+          ],
+          "decodeP95Ms" : 4,
+          "deliveredKbps" : 1000,
+          "frames" : 30,
+          "lateShare" : null,
+          "queueFalling" : false,
+          "queueLastMs" : 180,
+          "queueP50Ms" : 200,
+          "queueP95Ms" : 200,
+          "queueRising" : false,
+          "replacedShare" : 0
+        }
+      }
+    }
+  ]
+}

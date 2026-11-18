@@ -195,3 +195,33 @@ func TestListMessagesSnippetCutInsideACharacter(t *testing.T) {
 		checkCutSnippet(t, m.Snippet, "x"+snippetHan)
 	}
 }
+
+// The list fetch's cut can land inside an HTML character reference. html.UnescapeString would leave the start of a
+// name as typed ("&nb") and read the start of a number as the number so far ("&#82" of "&#8212;" is "R"), so the
+// preview must drop what the cut left of it, as it drops a split character.
+func TestSnippetOfDropsTheReferenceTheCutSplits(t *testing.T) {
+	const header = "Content-Type: text/html; charset=utf-8\r\n\r\n"
+	snippet := func(tail string) string {
+		text := "<p>Hello world "
+		fill := snippetBytes - len("<style></style>") - len(text) - len(tail)
+		return snippetOf(listSections(header, "<style>"+strings.Repeat(" ", fill)+"</style>"+text+tail+"more text"))
+	}
+	for _, c := range []struct{ name, tail, want string }{
+		{"a name cut short", "&nb", "Hello world"},
+		{"an unknown name", "&eacu", "Hello world"},
+		{"the start of an em dash", "&#82", "Hello world"},
+		{"the start of a hexadecimal reference", "&#x2", "Hello world"},
+		{"a lone ampersand", "&", "Hello world"},
+		{"a complete name", "&nbsp;", "Hello world"},
+		{"a complete reference with text", "&amp;", "Hello world &"},
+		{"a complete number", "&#8212;", "Hello world —"},
+	} {
+		if got := snippet(c.tail); got != c.want {
+			t.Errorf("%s: snippet = %q, want %q", c.name, got, c.want)
+		}
+	}
+	// A body that was not cut ends as it ends.
+	if got := snippetOf(listSections(header, "<p>Tom &amp; Jerry &")); got != "Tom & Jerry &" {
+		t.Errorf("uncut: snippet = %q", got)
+	}
+}

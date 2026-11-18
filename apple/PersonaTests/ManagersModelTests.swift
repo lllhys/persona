@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Settings › Managers (docs/assistant/managers.md): the roster decodes, the status line and where it runs, why Delete is off,
 /// a new manager's install code (with and without the commands) and its countdown, the changes and the hub's refusals in
@@ -190,6 +191,71 @@ struct ManagersModelTests {
         #expect(try body(sent.last)["default"] as? Bool == true)
         #expect(await page.newCode(try #require(page.manager("m-1"))))
         #expect(page.shown?.id == "m-1" && page.shown?.name == "工作" && page.shown?.code.code == "mi_move")
+    }
+
+    /// The built-in assistant's switcher choice (#9055): both fields, and their absence (an older hub, or false).
+    @Test func readsTheSwitcherChoice() throws {
+        let list = try JSON.decoder.decode(APIClient.ManagerList.self, from: Data(#"""
+        {"default":"m-1","managers":[{"id":"assistant","name":"助手","online":true,"builtin":true,"hide":true,"hidden":true},
+          {"id":"m-1","name":"工作","online":true,"default":true}]}
+        """#.utf8)).managers
+        #expect(list[0].hide && list[0].hidden)
+        #expect(!list[1].hide && !list[1].hidden, "left out: false")
+        let inUse = try JSON.decoder.decode(HubManager.self, from: Data(#"{"id":"assistant","builtin":true,"hide":true}"#.utf8))
+        #expect(inUse.hide && !inUse.hidden)
+    }
+
+    /// Show in Switcher on the built-in assistant's page: off sends `{"hide": true}`, on `{"hide": false}`, each shown
+    /// at once; a refusal puts it back and says why; an older hub that keeps nothing says the hub needs updating.
+    @Test func showsOrHidesTheBuiltInAssistantInTheSwitcher() async throws {
+        let hub = FakeHub()
+        var hide = false, oldHub = false
+        hub.on("GET", "/api/v1/managers") { _ in
+            let choice = hide && !oldHub ? #","hide":true,"hidden":true"# : ""
+            return Data(#"""
+            {"default":"m-1","managers":[{"id":"assistant","name":"助手","online":true,"builtin":true\#(choice)},
+              {"id":"m-1","name":"工作","online":true,"default":true}]}
+            """#.utf8)
+        }
+        hub.on("PATCH", "/api/v1/managers/assistant") { req in
+            hide = (try? JSONSerialization.jsonObject(with: req.body ?? Data()) as? [String: Bool])?["hide"] ?? hide
+            return Data(#"{"manager":{"id":"assistant","name":"助手","online":true}}"#.utf8)
+        }
+        let page = model(hub)
+        await page.load()
+        let builtin = try #require(page.manager("assistant"))
+        #expect(!ManagersText.switcherLocked(builtin) && !builtin.hide)
+
+        #expect(await page.showInSwitcher(builtin, false))
+        #expect(page.manager("assistant")?.hide == true && page.manager("assistant")?.hidden == true && page.failure == nil)
+        #expect(await page.showInSwitcher(try #require(page.manager("assistant")), true))
+        #expect(page.manager("assistant")?.hide == false && page.manager("assistant")?.hidden == false)
+        let sent = try hub.sent("PATCH", "/api/v1/managers/assistant").map { try body($0)["hide"] as? Bool }
+        #expect(sent == [true, false])
+
+        hub.on("PATCH", "/api/v1/managers/assistant", refuse(409, code: "builtin_in_use"))
+        #expect(await page.showInSwitcher(try #require(page.manager("assistant")), false) == false)
+        #expect(page.manager("assistant")?.hide == false, "put back")
+        #expect(page.failure == "它正在使用（是默认助手或有电脑），现在不能隐藏")
+
+        oldHub = true
+        hub.on("PATCH", "/api/v1/managers/assistant", json: #"{"manager":{"id":"assistant","name":"助手","online":true}}"#)
+        #expect(await page.showInSwitcher(try #require(page.manager("assistant")), false) == false)
+        #expect(page.manager("assistant")?.hide == false && page.failure == "这台 hub 的版本还不能隐藏它，升级 hub 后再试")
+    }
+
+    /// Why the switch is off-limits or what it waits for, under it.
+    @Test func theSwitchSaysWhyAndWhen() {
+        func builtin(isDefault: Bool = false, hide: Bool = false, hidden: Bool = false) -> HubManager {
+            HubManager(id: "assistant", name: "助手", online: true, isDefault: isDefault, builtin: true, hide: hide, hidden: hidden)
+        }
+        #expect(ManagersText.switcherLocked(builtin(isDefault: true)), "the default can't be hidden")
+        #expect(ManagersText.switcherNote(builtin(isDefault: true)) == "默认助手总会列出。要隐藏这个助手，先把别的助手设为默认。")
+        #expect(!ManagersText.switcherLocked(builtin(isDefault: true, hide: true)), "but shown again it always can be")
+        #expect(ManagersText.switcherNote(builtin(isDefault: true, hide: true)) == "它是默认助手，所以暂时仍会列出；别的助手成为默认后会再次隐藏。")
+        #expect(ManagersText.switcherNote(builtin(hide: true)) == "它有电脑，所以暂时仍会列出；没有电脑后会再次隐藏。")
+        #expect(ManagersText.switcherNote(builtin(hide: true, hidden: true)).hasPrefix("关掉后"))
+        #expect(ManagersText.switcherNote(builtin()).hasPrefix("关掉后") && !ManagersText.switcherLocked(builtin()))
     }
 
     @Test func refusalsInPlainWords() async throws {

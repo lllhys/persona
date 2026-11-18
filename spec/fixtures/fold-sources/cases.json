@@ -1,0 +1,631 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "claude_links",
+      "description": "A Claude Code WebSearch: the entries of its Links line, in order, with their titles.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "kyoto weather"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Web search results for query: \"kyoto weather\"\n\nLinks: [{\"title\":\"Kyoto weather next week\",\"url\":\"https://weather.example.com/kyoto\"},{\"title\":\"Kyoto travel guide\",\"url\":\"https://travel.example.org/kyoto\"}]\n\nSummary of what was found."
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://weather.example.com/kyoto",
+            "title": "Kyoto weather next week"
+          },
+          {
+            "url": "https://travel.example.org/kyoto",
+            "title": "Kyoto travel guide"
+          }
+        ]
+      }
+    },
+    {
+      "name": "opened_pages_first",
+      "description": "A page the run opened comes before the search results, once, with the title a search result gave it.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "tax rule 2026"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Web search results for query: \"tax rule 2026\"\n\nLinks: [{\"title\":\"New tax rule explained\",\"url\":\"https://news.example.com/tax\"},{\"title\":\"Official notice\",\"url\":\"https://gov.example.org/notice\"}]\n\nSummary of what was found."
+          },
+          {
+            "id": "use2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_2",
+            "tool_name": "WebFetch",
+            "tool_input": {
+              "url": "https://gov.example.org/notice",
+              "prompt": "What changed?"
+            }
+          },
+          {
+            "id": "res2#0",
+            "seq": 2,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_2",
+            "text": "The notice says the rate changes on January 1."
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://gov.example.org/notice",
+            "title": "Official notice"
+          },
+          {
+            "url": "https://news.example.com/tax",
+            "title": "New tax rule explained"
+          }
+        ]
+      }
+    },
+    {
+      "name": "codex_lines",
+      "description": "A Codex web search: one \"title  url\" line each; a line with only a domain names no page; a bare URL has no title.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "release notes"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Release notes  https://docs.example.com/releases\nexample.net\nChangelog page  https://blog.example.com/changelog\nhttps://plain.example.com/page"
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://docs.example.com/releases",
+            "title": "Release notes"
+          },
+          {
+            "url": "https://blog.example.com/changelog",
+            "title": "Changelog page"
+          },
+          {
+            "url": "https://plain.example.com/page"
+          }
+        ]
+      }
+    },
+    {
+      "name": "clipped_links",
+      "description": "A result the hub cut inside its Links list keeps the entries before the cut one.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "cut list"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Web search results for query: \"cut list\"\n\nLinks: [{\"title\":\"First result\",\"url\":\"https://a.example.com/1\"},{\"title\":\"Second result\",\"url\":\"https://b.exa\n…（已截断，点开看全文，共 9000 字节）",
+            "full_size": 9000
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://a.example.com/1",
+            "title": "First result"
+          }
+        ]
+      }
+    },
+    {
+      "name": "clipped_lines",
+      "description": "A Codex result the hub cut loses its last line, which may be cut.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "lines"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "One  https://one.example.com/a\nTwo  https://two.example.com/b\nThree  https://three.example.com/c-is-cut-he\n…（已截断，点开看全文，共 9000 字节）",
+            "full_size": 9000
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://one.example.com/a",
+            "title": "One"
+          },
+          {
+            "url": "https://two.example.com/b",
+            "title": "Two"
+          }
+        ]
+      }
+    },
+    {
+      "name": "only_successful_web_calls",
+      "description": "Only web calls whose result is there and is not an error count; other tools never do.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebFetch",
+            "tool_input": {
+              "url": "https://failed.example.com/"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Request failed with status 403",
+            "is_error": true
+          },
+          {
+            "id": "use2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_2",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "running"
+            }
+          },
+          {
+            "id": "use3#0",
+            "seq": 3,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_3",
+            "tool_name": "WebFetch",
+            "tool_input": {
+              "url": "https://ok.example.com/page"
+            }
+          },
+          {
+            "id": "res3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_3",
+            "text": "Page summary."
+          },
+          {
+            "id": "use4#0",
+            "seq": 4,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_4",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "curl https://cmd.example.com"
+            }
+          },
+          {
+            "id": "res4#0",
+            "seq": 4,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_4",
+            "text": "ok"
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://ok.example.com/page"
+          }
+        ]
+      }
+    },
+    {
+      "name": "only_web_urls",
+      "description": "Only http and https URLs count (either case), without white space inside.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebFetch",
+            "tool_input": {
+              "url": "ftp://files.example.com/a"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "x"
+          },
+          {
+            "id": "use2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_2",
+            "tool_name": "WebFetch",
+            "tool_input": {
+              "url": "/relative/path"
+            }
+          },
+          {
+            "id": "res2#0",
+            "seq": 2,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_2",
+            "text": "x"
+          },
+          {
+            "id": "use3#0",
+            "seq": 3,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_3",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "q"
+            }
+          },
+          {
+            "id": "res3#0",
+            "seq": 3,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_3",
+            "text": "Web search results for query: \"q\"\n\nLinks: [{\"title\":\"Script\",\"url\":\"javascript:alert(1)\"},{\"title\":\"Spaced\",\"url\":\"https://bad.example.com/a b\"},{\"title\":\"Good\",\"url\":\"HTTPS://Good.example.com/\"}]\n\nSummary of what was found."
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "HTTPS://Good.example.com/",
+            "title": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "deduplicated_and_capped",
+      "description": "Each URL once (the first mention's title stays), at most 10.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "first"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Web search results for query: \"first\"\n\nLinks: [{\"title\":\"Result 1\",\"url\":\"https://r1.example.com/\"},{\"title\":\"Result 2\",\"url\":\"https://r2.example.com/\"},{\"title\":\"Result 3\",\"url\":\"https://r3.example.com/\"},{\"title\":\"Result 4\",\"url\":\"https://r4.example.com/\"},{\"title\":\"Result 5\",\"url\":\"https://r5.example.com/\"},{\"title\":\"Result 6\",\"url\":\"https://r6.example.com/\"},{\"title\":\"Result 7\",\"url\":\"https://r7.example.com/\"}]\n\nSummary of what was found."
+          },
+          {
+            "id": "use2#0",
+            "seq": 2,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_2",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "second"
+            }
+          },
+          {
+            "id": "res2#0",
+            "seq": 2,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_2",
+            "text": "Web search results for query: \"second\"\n\nLinks: [{\"title\":\"Again\",\"url\":\"https://r1.example.com/\"},{\"title\":\"More 1\",\"url\":\"https://m1.example.com/\"},{\"title\":\"More 2\",\"url\":\"https://m2.example.com/\"},{\"title\":\"More 3\",\"url\":\"https://m3.example.com/\"},{\"title\":\"More 4\",\"url\":\"https://m4.example.com/\"},{\"title\":\"More 5\",\"url\":\"https://m5.example.com/\"}]\n\nSummary of what was found."
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://r1.example.com/",
+            "title": "Result 1"
+          },
+          {
+            "url": "https://r2.example.com/",
+            "title": "Result 2"
+          },
+          {
+            "url": "https://r3.example.com/",
+            "title": "Result 3"
+          },
+          {
+            "url": "https://r4.example.com/",
+            "title": "Result 4"
+          },
+          {
+            "url": "https://r5.example.com/",
+            "title": "Result 5"
+          },
+          {
+            "url": "https://r6.example.com/",
+            "title": "Result 6"
+          },
+          {
+            "url": "https://r7.example.com/",
+            "title": "Result 7"
+          },
+          {
+            "url": "https://m1.example.com/",
+            "title": "More 1"
+          },
+          {
+            "url": "https://m2.example.com/",
+            "title": "More 2"
+          },
+          {
+            "url": "https://m3.example.com/",
+            "title": "More 3"
+          }
+        ]
+      }
+    },
+    {
+      "name": "long_title",
+      "description": "A title past 200 characters is cut to 199 and an ellipsis; titles are trimmed.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "long"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Web search results for query: \"long\"\n\nLinks: [{\"title\":\"Very long title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"url\":\"https://long.example.com/\"},{\"title\":\"  Padded  \",\"url\":\"https://pad.example.com/\"}]\n\nSummary of what was found."
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://long.example.com/",
+            "title": "Very long title xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+          },
+          {
+            "url": "https://pad.example.com/",
+            "title": "Padded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "several_links_lines",
+      "description": "A result with several searches reads every Links line.",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "WebSearch",
+            "tool_input": {
+              "query": "a b"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "Web search results for query: \"a\"\n\nLinks: [{\"title\":\"A\",\"url\":\"https://a.example.com/\"}]\n\nWeb search results for query: \"b\"\n\nLinks: [{\"title\":\"B\",\"url\":\"https://b.example.com/\"}]\n\nDone."
+          }
+        ]
+      },
+      "expected": {
+        "sources": [
+          {
+            "url": "https://a.example.com/",
+            "title": "A"
+          },
+          {
+            "url": "https://b.example.com/",
+            "title": "B"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no_web_calls",
+      "description": "A run without web calls has no sources (the hub leaves the field out).",
+      "source": [
+        "server/internal/transcript/fold_sources.go: foldSources",
+        "web/src/lib/turn-sources.ts: turnSources",
+        "docs/protocol/protocol.md: Folded work"
+      ],
+      "input": {
+        "items": [
+          {
+            "id": "use1#0",
+            "seq": 1,
+            "role": "assistant",
+            "kind": "tool_use",
+            "tool_use_id": "call_1",
+            "tool_name": "Read",
+            "tool_input": {
+              "file_path": "/home/user/notes.md"
+            }
+          },
+          {
+            "id": "res1#0",
+            "seq": 1,
+            "role": "user",
+            "kind": "tool_result",
+            "tool_use_id": "call_1",
+            "text": "notes"
+          }
+        ]
+      },
+      "expected": {
+        "sources": []
+      }
+    }
+  ]
+}

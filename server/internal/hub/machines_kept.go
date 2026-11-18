@@ -134,7 +134,8 @@ func (h *Hub) warnKeeperOld(id string) {
 }
 
 // loadMachinesKept reads machinesKeptKey (startDevices, with the owners): a machine whose manager the roster no longer
-// has is gone with it. An error leaves it unread: the next change reads it first.
+// has is gone with it. An error leaves it unread: the next change reads it first. A successful read after startDevices
+// also restores the saved entries and the machine list, whichever operation completed the read.
 func (h *Hub) loadMachinesKept(ctx context.Context) error {
 	var m map[string]string
 	if s := h.managerStore(); s != nil {
@@ -155,8 +156,23 @@ func (h *Hub) loadMachinesKept(ctx context.Context) error {
 	}
 	d := &h.devices
 	d.mu.Lock()
-	d.kept, d.keptRead = kept, true
+	d.kept = kept
+	reconcile := d.fleetReady
 	d.mu.Unlock()
+	if reconcile {
+		// The first entries read filtered out machines whose kept record was unread. Read them again before listing them,
+		// and do not call the kept-list recovery complete until that read succeeds too.
+		if err := h.loadMachineEntries(ctx); err != nil {
+			return err
+		}
+	}
+	d.mu.Lock()
+	d.keptRead = true
+	d.mu.Unlock()
+	if reconcile {
+		h.reconcileKeptMachines()
+		h.devicesConfigChanged()
+	}
 	return nil
 }
 

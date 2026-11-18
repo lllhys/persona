@@ -108,7 +108,7 @@ func TestAcceptanceFeedbackGoesToTheAgent(t *testing.T) {
 	agentTurn(s, f, proto.StatusWorking, "", 0)
 	agentTurn(s, f, proto.StatusDone, deployedReply, 0)
 	waitAcceptCard(t, s, todo.ID, posts)
-	if card := acceptCardOf(posts()); strings.Contains(card, "evil.example.com") || !strings.Contains(card, "/todos?id="+todo.ID) {
+	if card := acceptCardOf(posts()); strings.Contains(card, "evil.example.com") || !strings.Contains(card, "/todos/"+todo.ID) {
 		t.Fatalf("link:\n%s", card)
 	}
 	mid := askOf(s, todo.ID).MessageID
@@ -414,7 +414,7 @@ func TestAcceptancePassReplyWhenAlreadyHandled(t *testing.T) {
 	ctx := context.Background()
 	s, f, _, notes, id := askedToAccept(t)
 	mid := askOf(s, id).MessageID
-	if ok, err := s.acceptTry(ctx, id, mid); !ok || err != nil { // the card's button
+	if ok, err := s.acceptTry(ctx, id, mid); !ok.taken || err != nil { // the card's button
 		t.Fatalf("the card was not accepted: %v", err)
 	}
 	before, sent := len(notes()), len(f.agentSent)

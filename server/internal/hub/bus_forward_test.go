@@ -30,8 +30,10 @@ import (
 func TestBusForwardsTrustedDeviceActor(t *testing.T) {
 	h := newTestHub(t)
 	const token = "test-device-token"
+	const limited = "test-answer-token"
 	h.store = &tokenStore{memStore: *newMemStore(), rows: map[string]db.DeviceToken{
-		hashToken(token): {ID: "device-1", Name: "Trusted device", Role: roleFull},
+		hashToken(token):   {ID: "device-1", Name: "Trusted device", Role: roleFull},
+		hashToken(limited): {ID: "device-2", Role: roleAnswer},
 	}, rev: map[string]bool{}}
 	hubIn, assistantOut := io.Pipe()
 	assistantIn, hubOut := io.Pipe()
@@ -100,6 +102,30 @@ func TestBusForwardsTrustedDeviceActor(t *testing.T) {
 			}
 		})
 	}
+	for _, tt := range []struct {
+		name, token string
+		want        bool
+	}{
+		{"owner card answer", token, true},
+		{"answer-only with forged fields", limited, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/interactions/test-card/resolve",
+				strings.NewReader(`{"allow":false,"owner_answer":true,"owner_input":true}`))
+			r.RemoteAddr = "127.0.0.1:12345"
+			r.Header.Set("Authorization", "Bearer "+tt.token)
+			r.Header.Set("Owner-Answer", "true")
+			w := httptest.NewRecorder()
+			routes.ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("resolve: %d %s", w.Code, w.Body)
+			}
+			if req := <-got; req.OwnerAnswer != tt.want {
+				t.Errorf("typed owner provenance = %v, want %v", req.OwnerAnswer, tt.want)
+			}
+		})
+	}
+
 }
 
 // The assistant's routes (assistantwire.Routes) are its to answer, unchanged; the hub's own stay the hub's; while the

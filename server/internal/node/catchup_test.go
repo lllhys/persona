@@ -78,9 +78,9 @@ func testNode(t testing.TB) (*Node, string) {
 	home := t.TempDir()
 	n := &Node{home: home, paths: map[string]string{}, files: map[string]*transcript.File{}, procs: map[string]*assistantProc{},
 		agents: map[string]host.Agent{}, watches: map[string]*watch{}, state: &stateFile{Sessions: map[string]sessionState{}},
-		// A start pauses 300 ms before typing, as before #2570, instead of watching the shell: tests of the settle
-		// wait turn it on (shellsettle_test.go watchShell).
-		shellPause: 300 * time.Millisecond}
+		// The scripted shell is ready as soon as the fake creates it. Tests of shell readiness opt back into
+		// observation with watchShell (shellsettle_test.go).
+		shellSettled: true, readyPoll: 20 * time.Millisecond}
 	t.Cleanup(n.starts.close)
 	return n, home
 }

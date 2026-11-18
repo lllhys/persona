@@ -158,3 +158,81 @@ func TestUpdateCheckWhileWaitingForIdle(t *testing.T) {
 	}
 	assertUpdateInstallView(t, u.view(), before)
 }
+
+// Install scripts refresh published checksums independently of the settings
+// screen. A response that arrives after a channel switch or install must not
+// take over that newer selection or the install's progress.
+func TestInstallScriptRefreshPreservesNewerOperation(t *testing.T) {
+	for _, next := range []string{"development", "install"} {
+		t.Run(next, func(t *testing.T) {
+			p := newPublisher(t, "v2-202611021700", 202611021700)
+			h, _, _, _ := updatingHub(t, p, update.Release)
+			u := h.upd
+			h.cfg.Update.Development = &update.DevelopmentConfig{}
+			ctx := context.Background()
+			if err := u.load(ctx); err != nil {
+				t.Fatal(err)
+			}
+			candidate := &update.Published{Manifest: &update.Manifest{Version: "web-dev-selected", Build: 202611021800},
+				Development: &update.DevelopmentCandidate{Branch: "main", Commit: gitA}}
+			transport := p.srv.Client().Transport
+			interleaved := false
+			u.client = &http.Client{Transport: updateCheckTransport(func(r *http.Request) (*http.Response, error) {
+				if !interleaved {
+					interleaved = true
+					if next == "development" {
+						w := nodePolicyRequest(t, u, http.MethodPut, `{"source":"web-dev"}`)
+						if w.Code != http.StatusOK {
+							t.Fatalf("channel switch failed: %d", w.Code)
+						}
+						u.mu.Lock()
+						u.release = candidate
+						u.mu.Unlock()
+					} else {
+						u.mu.Lock()
+						u.running = true // begin reserved the install before its first progress event
+						u.progress, u.errText = "hub", "retained install detail"
+						u.mu.Unlock()
+					}
+				}
+				return transport.RoundTrip(r)
+			})}
+			u.freshRelease(ctx)
+			if !interleaved {
+				t.Fatal("fixture did not reach the publisher")
+			}
+			if next == "development" {
+				if u.release != candidate || !u.lastCheck.IsZero() || u.state != "idle" {
+					t.Fatal("late published release replaced the development selection")
+				}
+			} else if u.state != "idle" || u.progress != "hub" || u.errText != "retained install detail" {
+				t.Fatal("late published release replaced the reserved install state")
+			}
+		})
+	}
+}
+
+func TestInstallScriptRefreshLoadsSelectedChannel(t *testing.T) {
+	for _, unavailable := range []bool{false, true} {
+		t.Run(map[bool]string{false: "stored development", true: "settings unavailable"}[unavailable], func(t *testing.T) {
+			u, st, settings := updaterWithStoredSettings(t)
+			settings.Source = "web-dev"
+			if err := st.PutSetting(context.Background(), updateSettingsKey, settings); err != nil {
+				t.Fatal(err)
+			}
+			u.h.build = update.Make("v1", update.Release, "1", "https://example.com/releases")
+			if unavailable {
+				st.readErr = errors.New("settings unavailable")
+			}
+			requested := false
+			u.client = &http.Client{Transport: updateCheckTransport(func(r *http.Request) (*http.Response, error) {
+				requested = true
+				return nil, errors.New("unexpected release request")
+			})}
+			u.freshRelease(context.Background())
+			if requested || st.reads != 1 || u.release != nil {
+				t.Fatal("install script refreshed a release without a loaded release selection")
+			}
+		})
+	}
+}

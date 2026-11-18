@@ -1,20 +1,21 @@
 // One conversation: an agent in herdr on one of your computers, or a Persona assistant conversation.
 import { useAssistantTitle, useManagerOffline } from "../ManagerParts";
-import { LinkManager } from "../../lib/manager-choice";
+import { LinkManager, useShownManager } from "../../lib/manager-choice";
 import { alsoOpenText } from "../../lib/engines";
 import { lazy, memo, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, errorText, pastHub, sessionPath } from "../../lib/api";
-import { attentionReason, backgroundWaiting, externalLink, failureReason, isStoppedAgent, resumeCommand, sessionCan, sessionDeletable, sessionMenuActions, sourceSubtitle, sessionTitle, shortPath, stateOf, tabLabel, uuid } from "../../lib/format";
+import { api, ApiError, errorText, fullItem, pastHub, sessionPath } from "../../lib/api";
+import { attentionReason, externalLink, failureReason, isStoppedAgent, resumeCommand, sessionCan, sessionCanRename, sessionDeletable, sessionMenuActions, sourceSubtitle, sessionTitle, shortPath, stateOf, tabLabel, uuid } from "../../lib/format";
 import { conversationPage } from "../../lib/conversation-page";
 import { navigate, type SessionView } from "../../lib/router";
-import { canShowTerminal, composerSlot, otherView, useSessionView, viewOnlyRow } from "../../lib/session-view";
+import { canShowTerminal, composerSlot, otherView, terminalJump, terminalWaits, useSessionView, viewOnlyRow } from "../../lib/session-view";
+import { resumeInTerminal, terminalResume } from "../../lib/agent-resume";
 import { openLink } from "../../lib/links";
 import { getPanel, openPanel, togglePanel, usePanel } from "../../lib/panel";
-import { backgroundPanelOf, hasBackgroundWork, isWorkflowsCommand, latestWorkflowRun, openBackgroundPanel, provideBackgroundChat, toggleBackgroundPanel, WORKFLOWS_COMMAND } from "../../lib/background-panel";
+import { isWorkflowsCommand, latestWorkflowRun, openBackgroundPanel, provideBackgroundChat, WORKFLOWS_COMMAND } from "../../lib/background-panel";
 import { machineWithHub } from "../../lib/mesh";
 import { useLayout } from "../../lib/layout";
-import { hasModes, isMuted, toggleMute } from "../../lib/session-actions";
-import { attachLive, flipPin } from "../../lib/agent-actions";
+import { hasModes, isMuted, listedModesOf, toggleMute } from "../../lib/session-actions";
+import { flipPin } from "../../lib/agent-actions";
 import { isPinned } from "../../lib/pins";
 import { acknowledgeLaunch } from "../../lib/new-agent";
 import { useRuntimeSession } from "../../lib/runtime-session";
@@ -30,22 +31,27 @@ import { runStep, sameStep, turnDone, type RunStep } from "../../lib/run-step";
 import { stabilizeLines, stableValue } from "../../lib/stable-lines";
 import { planProgress, workLineStyle } from "../../lib/work-groups";
 import { echoed, taggedSeen } from "../../lib/echo";
-import { acceptOutgoing, forgetOutgoing, inSendOrder, keepFailed, keepOutgoing, noteWritten, outboxKey, placeFailed, restoreOutbox, retryOutbox, SENT_GRACE_MS, settleOutbox } from "../../lib/outbox";
+import { assertDelivered, isKept, keptBubble, showKept, shownUndelivered, type KeptReply } from "../../lib/undelivered";
+import { lazyPage } from "../../lib/lazy-page";
+import { acceptOutgoing, forgetOutgoing, inSendOrder, keepFailed, keepOutgoing, noteWritten, outboxKey, placeFailed, registerOutboxRecheck, relayNotice, restoreOutbox, retryOutbox, SENT_GRACE_MS, settleOutbox, type DeliveryReply } from "../../lib/outbox";
 import { apiOp } from "../../lib/ops";
 import { beginMessageSend, observeMessageItems, settleMessageEcho, stopMessageFeedback, useMessageFeedback } from "../../lib/message-send";
-import { conversationKey, pickedLauncher, pickedModel } from "../../lib/assistant-chat";
+import { conversationKey, pickedLauncher, pickedModel, usePickedLauncher } from "../../lib/assistant-chat";
+import { splitSkillDraft } from "../../lib/skill-mentions";
 import { unlinkAgentFromTodo } from "../../lib/todos";
 import { t as tr } from "../../i18n";
 import { lastEditablePrompt, promptsOf, rewindBlock, rewindDone, rewindSession, rewindTarget, type RewindRestore } from "../../lib/rewind";
 import { EDIT_SEND_SETTLE_MS } from "../../lib/edit-last-key";
 import { sendDraft } from "../../lib/drafts";
-import { chatLines, freshWords, openRecap, parseUserText, segments, type ChatLine, type UserMessage } from "../../lib/turns";
+import { chatLines, freshWords, insideFold, openRecap, parseUserText, segments, type ChatLine, type UserMessage } from "../../lib/turns";
+import { foldsBackgroundRounds } from "../../lib/background-fold";
 import type { Interaction, Item, Session, Subagent } from "../../lib/types";
 import { anchoredScroll, followsAgain, isScrollbarPress, jumpLabel, leavesOnKey, leavesOnScrollbarDrag, leavesOnTouch, leavesOnWheel, followsAfterUnfold, UNFOLD_PAUSE, type ScrollAnchor } from "../../lib/disclosure";
 import { Button, copyText, cx, Dialog, IconButton, Loading, Menu, toast, useMenu, useNow, type MenuItem } from "../../ui/atoms";
 import { StatusMark } from "../../ui/StatusMark";
 import { Icon } from "../../ui/icons";
 import { StoppedAgentLine } from "./StoppedAgentLine";
+const TakeoverAction = lazy(() => import("./TakeoverAction"));
 import { scrollBehavior } from "../../ui/stream/motion";
 import { segmentChanges, shiftAbove } from "./offscreen";
 import { glide } from "./glide";
@@ -60,27 +66,26 @@ import { CloseoutCard } from "./CloseoutCard";
 import { shownCloseout } from "../../lib/closeout";
 import { AWAIT_MS, awaitingTurn, DOCK_MAX, turnStart } from "./dock";
 import { HEADER_SLOT, HEADER_SLOT_END, HEADER_SLOT_START } from "./header";
-import { contextUsage } from "../../lib/context-usage";
-import { ContextMeter } from "./ContextMeter";
-import { AgentModelPill, AssistantModelPill } from "./ModelPill";
+import { AgentModelPill, AssistantModelPill, useAssistantTurnFix } from "./ModelPill";
 import { switchRefused } from "../../lib/session-models";
 import { mediaMatches, NARROW, NO_HOVER, SHORT, useFinePointer, useMedia } from "../../lib/viewport";
 import { UserBubble } from "./SegmentView";
 import { LatestMessageTime } from "./latest-message-time";
 import { scrollsAFold } from "./fold-scroll";
-import { GoalBar } from "./GoalBar";
 import { CommentMarks } from "./CommentMarks";
 import { isWorker, recordTeam, shownWorker, teamPanelOf, teamWorkers, useTeamReveal, workerCount } from "../../lib/team";
+import { hubSides, isSide, sidesAmong, SESSIONS_SIDE_FOLD_FEATURE } from "../../lib/side-fold";
+import { doneSideAsk, shownSide, sidesPanelOf, toggleSides, useSideAsk } from "../../lib/side-panel";
 import { RunningStatusBar } from "./RunningStatusBar";
 import { latestPlan, usePlanClosed, usePlanOutOfView } from "./latest-plan";
 import { ChatContext, LiveClockContext, type ChatContextValue } from "./chat-context";
 import { addFreshWords, resetFreshWords } from "./fresh-words";
-import { backgroundCount, backgroundLine, backgroundWaitLine, waitingOnWorkflow, workflowAgentFor, workflowCalls, workflowCallsKey } from "../../lib/workflows";
-import { waitingOnSubagents } from "../../lib/background-work";
+import { backgroundCount, backgroundLine, backgroundWaitLine, workflowAgentFor, workflowCalls, workflowCallsKey } from "../../lib/workflows";
+import { backgroundTurn, waitingOnSubagents } from "../../lib/background-work";
 import { doneSubagentLink, useSubagentLink } from "../../lib/subagent-link";
 import { childCall, childCardKey, childOfCall, childPlaces, exchangeStarts, placeChildren, type ChildPlace } from "../../lib/child-cards";
 import { useChildSessions } from "../../lib/use-child-sessions";
-import { openExpanded } from "./expanded";
+import { openExpanded, openFoldRange } from "./expanded";
 import { seekCall } from "./jump";
 import { navRailTicks, type NavRailSource, type NavRailTick } from "../../lib/nav-rail";
 import { containsInput, indexedNavTicks, userInputRevision, windowUserInputs, USER_INPUT_PAGE_SIZE } from "../../lib/user-input-index";
@@ -89,10 +94,15 @@ import { NavRail } from "./NavRail";
 import { useChatScrollbar } from "./useChatScrollbar";
 import { ChatLineView, closedRecap, closeRecap, dismissedError, dismissError, ErrorBanner, errorKey, OpenRecapLine } from "./Lines";
 import { useTranscript } from "./useTranscript";
+import { publishTranscript, unpublishTranscript } from "./transcript-share";
 import { useEarlierStretches } from "./useEarlierStretches";
-import { ArchiveCloseDialog, CloseAgentDialog, DeleteSessionDialog, RenameDialog, RenameSpaceDialog, renameTitle, SessionInfoDialog } from "./SessionDialogs";
+import { dayRowKey, withDayDividers } from "./day-dividers";
+import type { ChatRowWithModes, ModeChanges } from "./mode-changes";
+import { useFoldSearch } from "./useFoldSearch";
+import { DeleteSessionDialog, preloadSessionDialogs, RenameDialog, RenameSpaceDialog, renameTitle, SessionInfoDialog } from "./SessionDialogs";
 import { PermissionPicker, usePlanMode } from "./PermissionPicker";
-import { archiveItems } from "../AgentMenus";
+import { permissionsCommand } from "../../lib/permissions-command";
+import { archiveCloseItems, closeItems } from "../AgentMenus";
 import { ChatSidebarButton } from "../ShellSwitch";
 import { appArchiveDeps, deleteInsteadOfArchive, restoreAgent, useArchived } from "../../lib/agent-archives";
 import { UltracodeLostNote } from "./Ultracode";
@@ -101,8 +111,10 @@ import { ChatActionsContext, liveValue, type ChatActions } from "./chat-actions"
 import { QueueStrip } from "./QueueStrip";
 import type { LoadOutcome } from "./ChatSearch";
 import { forgetReveals, revealItem, undoReveals, clearReveal } from "./search-reveal";
-import { forwardDraftOf, openForward, peekJump, takeJump } from "../../lib/forward";
-import { lineOfItem, loadEarlierForSearch, untilStill, type ChatSearchHit, type SearchLoadOutcome } from "../../lib/chat-search";
+import { jumpWhenOpen, openForward, peekJump, takeJump, type ForwardChat, type ForwardPick } from "../../lib/forward";
+import { pickParts } from "./picking-parts";
+import type { MessagePick } from "../../lib/message-pick";
+import { foldHolding, lineOfItem, loadEarlierForSearch, untilStill, type ChatSearchHit, type SearchLoadOutcome } from "../../lib/chat-search";
 import { chatFiles } from "../../lib/mentions";
 import { sameMessage } from "../../lib/queue";
 import { OutboxBubbles } from "./OutboxBubbles";
@@ -111,6 +123,7 @@ import { AssistantFace, CompactionStrip, useAssistantMenu } from "../assistant/A
 import { PageBoundary } from "../PageBoundary";
 import { ViewLayer } from "../session/ViewLayer";
 import { conversationTitle } from "../assistant/conversations";
+import { useDirectionName } from "../../lib/direction-names";
 import { chatPlaceIn, dropChatPlace, firstLineInView, handoffFrom, type ChatPlace, type HandoffFrom } from "../../lib/handoff";
 import { externalOpening } from "../../lib/conversation-origins";
 import { usePersona } from "../assistant/Persona";
@@ -119,14 +132,14 @@ import { agentLabel } from "../../lib/mentions";
 import { VoiceBar } from "./voice/VoiceBar";
 import { useVoiceEntry, VoiceEnded, VoiceTail } from "./voice/VoiceParts";
 import { ChatOnlyNote, FailureCard, ReadinessCard, useReadinessGate, type ReadinessGate } from "../assistant/Readiness";
-import { codedFailure, refreshReadiness, turnErrorFix, type CodedFailure } from "../../lib/readiness";
-import { FALLBACK_UNAVAILABLE } from "../../lib/model-fallback";
+import { codedFailure, knownAction, refreshReadiness, type CodedFailure } from "../../lib/readiness";
+import { FALLBACK_UNAVAILABLE, recoveryExhausted } from "../../lib/model-fallback";
 import { BASE } from "../../lib/base";
-import { ModelFallbackCard } from "./ModelFallbackCard";
 import { usageLimitLabel } from "../../lib/usage-limit";
 import { displayLines, getFeedState, loadedFrom, loadFeed, loadToday, sendRouted, startOfDay, useFeed, type FeedItem } from "../../lib/feed";
 import { CardConversation } from "../../ui/AssistantCard";
 import { SessionMark, sessionMarkName } from "../../ui/AgentMark";
+import { sessionAgentName } from "../../lib/agent-kind";
 import { AssistantActionBar, DayLine, FeedLineView, QuickResultCard, RouteChip, TaskQuestions } from "../assistant/Tasks";
 import { t } from "../../i18n";
 import { lazyDialog, lazyOverlay } from "../LazyOverlay";
@@ -140,12 +153,27 @@ const ChatSearch = lazyDialog(() => import("./ChatSearch").then((m) => m.ChatSea
 const LinkTodoDialog = lazyDialog(() => import("../LinkTodoDialog").then((m) => m.LinkTodoDialog));
 const SharingDialog = lazyOverlay(() => import("../../sharing/SharingDialog").then((m) => m.default));
 const TerminalPanel = lazy(() => loadTerminal().then((m) => ({ default: m.TerminalPanel })));
-// only on an Agent's page opened from a conversation's hand-off card (#5096): not part of the first screen
+const GoalBar = lazy(() => import("./GoalBar").then((m) => ({ default: m.GoalBar })));
+const SessionOverview = lazy(() => import("./SessionOverview").then((m) => ({ default: m.SessionOverview })));
+// Full pages opened from a conversation's hand-off card or belonging to an Inbox item load their way-back strip on demand.
+const AgentStatusLine = lazy(() => import("./AgentStatusLine").then((m) => ({ default: m.AgentStatusLine })));
 const HandoffBack = lazy(() => import("./HandoffBack").then((m) => ({ default: m.HandoffBack })));
+const InboxBack = lazy(() => import("./InboxBack").then((m) => ({ default: m.InboxBack })));
 // the plan's pill and its flyout load once a plan wants it shown, off the first screen
 const PlanPill = lazy(() => import("./PlanCard").then((m) => ({ default: m.PlanPill })));
+// "Wrap up: <item>" over the main conversation's composer (#5932): with the hand-off card's chunk, not the first screen's
+const LazyWrapUpChips = lazy(() => import("../assistant/HandoffCard").then((m) => ({ default: m.WrapUpChips })));
+// a chat that is nowhere (a stale or mistyped link): rare, so its notice and words are a chunk of their own
+const LazyNotFoundNotice = lazy(() => import("./NotFoundNotice").then((m) => ({ default: m.NotFoundNotice })));
+// a start stopped on its tab's shell question, answered from here (#10365): only then
+const ShellQuestion = lazy(() => import("../ShellQuestionCard"));
 // only in a conversation that moved between Claude Code and Codex (#5054): its earlier sessions, read above the live one
 const EarlierStretches = lazy(() => import("./EarlierStretches"));
+// Recovery cards are rare: their rendering and words load only when the session actually carries a fallback record.
+const ModelFallbackCard = lazy(() => import("./ModelFallbackCard").then((m) => ({ default: m.ModelFallbackCard })));
+// A message the assistant keeps after it could not go in (#10194) is rare: its status line, Retry and Delete load only in
+// a conversation that holds one (#10357). Until they are in it shows as the owner's bubble alone, so it never blinks out.
+const UndeliveredBubble = lazyPage(() => import("./UndeliveredBubbles").then((m) => m.UndeliveredBubble));
 
 const NO_FEED: FeedItem[] = [];
 // A worker's card as its own conversation shows it (#5180): without the fold that makes it "From worker" on its lead's page.
@@ -154,7 +182,7 @@ const ownCopies = new WeakMap<Interaction, Interaction>();
 function asOwnCard(ix: Interaction): Interaction {
   let c = ownCopies.get(ix);
   if (!c) {
-    c = { ...ix, folded_under: undefined, folded_as: undefined };
+    c = { ...ix, folded_under: undefined, folded_as: undefined, folded_side: undefined };
     ownCopies.set(ix, c);
   }
   return c;
@@ -171,6 +199,8 @@ const NO_RAIL_TICKS: NavRailTick[] = [];
  *  up, and how long it stays lit (Android: 3 s). */
 const FIND_MS = 400;
 const GIVE_UP_MS = 2000;
+/** How long landing on a message waits for the chat to stop loading before it pages back itself. */
+const LANDING_WAIT_MS = 5000;
 const HIT_MS = 3000;
 const SEARCH_NOTICE: Record<SearchLoadOutcome, string | null> = {
   start: null,
@@ -213,15 +243,17 @@ async function forkAt(mid: string, sid: string, itemId: string, assistant: boole
   }
 }
 
-/** "Rewind to here" (#2436): the node drives Claude's /rewind to before the message; the message then goes back into the composer. */
-async function rewindTo(mid: string, sid: string, draftKey: string, items: Item[], messageId: string, text: string, restore: RewindRestore) {
+/** "Rewind to here" (#2436): the node drives Claude's /rewind to before the message; the message then goes back into the composer.
+ *  `declared`: the session's node declares rewind (a runtime's session or a Codex thread, #6294), which goes back by itself:
+ *  there is no Claude input box on the computer to have kept the message. */
+async function rewindTo(mid: string, sid: string, draftKey: string, items: Item[], messageId: string, text: string, restore: RewindRestore, declared: boolean) {
   const target = rewindTarget(items, messageId);
   if (!target) throw new Error(tr("rewind.no_text"));
   const res = await rewindSession(mid, sid, target, restore);
   const done = rewindDone(res, restore);
   toast(done.text, done.tone);
   if (res.input_cleared) sendDraft(draftKey, { type: "replace", text });
-  else toast(tr("rewind.input_kept"), "info");
+  else if (!declared) toast(tr("rewind.input_kept"), "info");
 }
 
 /** In a side panel (TaskPanel, AgentPanel; #3333, iOS #3255; opened while Agents open in the side panel, #5424): the
@@ -236,7 +268,18 @@ export interface PanelChrome {
   beside?: React.ReactNode;
 }
 
-export function ChatView({ mid, sid, assistant, starting: launching, onToggleSidebar, topCenter, inPage, embedded, panel: chrome, terminalAvailable, banner, offline, mainCache, refreshError, onRefresh, headerActions }: {
+const DeletedConversation = lazy(() => import("../DeletedConversation").then((m) => ({ default: m.DeletedConversation })));
+
+/** A deleted chat has no composer or retained transcript, wherever its old link is opened. */
+export function ChatView(props: Parameters<typeof ActiveChatView>[0]) {
+  const deleted = useStore(() => getSession(props.mid, props.sid)?.deleted === true);
+  if (deleted) return <Suspense fallback={<div className="flex h-full items-center justify-center"><Loading /></div>}>
+    <DeletedConversation onToggleSidebar={props.onToggleSidebar} />
+  </Suspense>;
+  return <ActiveChatView {...props} />;
+}
+
+function ActiveChatView({ mid, sid, assistant, starting: launching, onToggleSidebar, topCenter, inPage, embedded, panel: chrome, terminalAvailable, banner, offline, mainCache, refreshError, onRefresh, headerActions, landAt, placeholder: askPlaceholder }: {
   mid: string;
   sid: string;
   assistant?: boolean;
@@ -264,10 +307,20 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   onRefresh?: () => void;
   /** The page's own buttons at the header's end, before the permission mode and ⋯ (Health's New and its past conversations, #4329). */
   headerActions?: React.ReactNode;
+  /** A message to open the chat at (`?at=`, a search hit's, #6283): landed on once it is in, paging back for it. */
+  landAt?: string;
+  /** What an idle Persona chat's box asks, in place of the main chat's: a space's own (Health's, docs/assistant/health.md).
+   *  The box's other states (offline, queued, unavailable…) say theirs as before. */
+  placeholder?: string;
 }) {
-  const { session, detail, retry: retryDetail } = useRuntimeSession(mid, sid);
-  // opened from a conversation's hand-off card (#5096): the way back to it, until put away
-  const [cameFrom, setCameFrom] = useState<HandoffFrom | undefined>(() => (inPage && !assistant ? handoffFrom() : undefined));
+  const { session, detail, retry: retryDetail, known } = useRuntimeSession(mid, sid);
+  // The main conversation is always Persona (#1313): not its first message, the node's title for it.
+  const mainConversation = useStore((s) => s.assistant?.main);
+  const isMain = Boolean(assistant && (mainCache || sid === mainConversation));
+  // Full Agent pages and non-main Persona conversations may offer a way back; side panels, Team panels and the main chat do not.
+  const backPage = Boolean(!embedded && !chrome && (inPage || (assistant && !isMain)));
+  // A conversation's hand-off strip wins over the Inbox item's when both are present; null keeps it hidden after ✕.
+  const [cameFrom, setCameFrom] = useState<HandoffFrom | null | undefined>(() => (backPage ? handoffFrom() : undefined));
   // the main conversation, with a hub that clears its context in place: /clear in its command list (#5095)
   const clears = useStore((s) => Boolean(assistant) && s.assistant?.main === sid && hubHas(s.features, CLEAR_MAIN_FEATURE));
   // an archived agent (lib/agent-archives.ts) is not in the lists: its chat says so and offers Restore
@@ -305,16 +358,36 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const narrowPage = useMedia(NARROW);
   const panelDrawn = !maximized || narrowPage;
   const teamOpen = Boolean(leads && panelDrawn && teamPanelOf(panel, mid, sid));
+  // its side sessions (#7944, lib/side-fold.ts): in its Side sessions panel, never rows or cards of their own; the panel
+  // opens by hand or for a link to one of them (lib/side-panel.ts), never by itself
+  const sideFold = useStore((s) => s.features.includes(SESSIONS_SIDE_FOLD_FEATURE));
+  const sidesHere = leads && sideFold;
+  const sidesOpen = Boolean(sidesHere && panelDrawn && sidesPanelOf(panel, mid, sid));
+  const sideAsk = useSideAsk(mid, sid);
+  useEffect(() => {
+    // after the page's other effects, as the Team panel's link does: App may bring back this session's own panel
+    if (sideAsk && sidesHere) queueMicrotask(() => doneSideAsk(mid, sid, sideAsk));
+  }, [sideAsk, sidesHere, mid, sid]);
+  // a side session's own chat (in its parent's panel): its own children fold under that parent, naming it (folded_side)
+  const sideParent = session && isSide(session) ? session.folded_under : undefined;
   // the space's other agents, its child sessions folded into their parents (#5120: a child is never one of them)
   const siblings = useStore((s) => (session?.space_id ? foldRows(s.sessions[mid] ?? []).filter((x) => x.space_id === session.space_id && stateOf(x) !== "offline") : []));
   // its own requests and those of the child sessions folded under it (#5120): a child's are answered here, in the order
-  // they came, each saying which child asks
-  const ownCard = (ix: Interaction) => ix.machine_id === mid && (ix.session_id === sid || ix.folded_under === sid);
+  // they came, each saying which child asks; a side session's chat (#7944) takes the cards of the rows that belong to it
+  const ownCard = (ix: Interaction) => ix.machine_id === mid && (ix.session_id === sid || ix.folded_under === sid || ix.folded_side === sid);
   const interactions = useStore((s) => s.interactions.filter(ownCard));
   const answered = useStore((s) => Object.values(s.answered).filter((a) => ownCard(a.ix)));
   const delegated = useStore((s) => Object.values(s.delegated).filter((d) => ownCard(d.ix)));
   // the list as pushed: its updated_at and rev are what tell the page it fell behind (useTranscript)
   const tr = useTranscript(mid, sid, { starting: Boolean(launching), updatedAt: session?.updated_at, rev: session?.rev, cache: mainCache, assistant });
+  const transcriptOwner = useRef<object>({});
+  useEffect(() => {
+    if (!embedded) publishTranscript(transcriptOwner.current, mid, sid, tr);
+  }, [embedded, mid, sid, tr]);
+  useEffect(() => {
+    if (embedded) return;
+    return () => unpublishTranscript(transcriptOwner.current, mid, sid);
+  }, [embedded, mid, sid]);
   // a conversation that moved between Claude Code and Codex (#5054): its earlier sessions read above the live one, as
   // one conversation; without engine_history this is the transcript as it is
   const earlier = useEarlierStretches(mid, sid, assistant ? undefined : session?.engine_history, tr);
@@ -323,6 +396,11 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   trNow.current = { ...tr, hasMore: earlier.liveHasMore };
   const railChat = useRef(`${mid}/${sid}`);
   railChat.current = `${mid}/${sid}`;
+  // The mounted conversation owns late Check refreshes, including a Check started before leaving and returning.
+  const recheckTranscript = useCallback(() => {
+    if (railChat.current === `${mid}/${sid}`) trNow.current.reload();
+  }, [mid, sid]);
+  useEffect(() => registerOutboxRecheck(mid, sid, recheckTranscript), [mid, sid, recheckTranscript]);
   const railRun = useRef(0);
   useEffect(() => () => { railRun.current++; }, [mid, sid]);
   const fine = useFinePointer();
@@ -346,6 +424,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   // a message Claude queued shows in the queue strip, not as a sending bubble too (ChatView.swift chatScroll)
   const queued = session?.queued ?? [];
   const shownPending = queued.length ? pending.filter((p) => !queued.some((q) => sameMessage(q, p.msg.text))) : pending;
+  // the owner's messages the assistant keeps after they could not go in, from the row: on every device (#10194)
+  // (not one this page still draws as sending: the row can come before the send's answer)
+  const keptUndelivered = shownUndelivered(session, tr.items, pending.map((p) => p.id));
   // a queued message taken back or deleted (QueueStrip) is not on its way any more: its sending bubble goes with it,
   // rather than showing again until the turn ends (#4342)
   // the photos a Persona chat's queued message went with, when it was sent from here (its queue holds only the words).
@@ -435,10 +516,11 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const canCompose = sessionCan(session, "send");
   // a stopped Agent (#4754): a read-only line with Terminal and Resume where the composer goes
   const stoppedLine = composerSlot(session, { assistant: Boolean(assistant), offline: Boolean(offlineLine) }) === "stopped";
-  const openTerminal = () => (switchable ? setView("term") : navigate({ name: "session", mid, sid, view: "term" }));
-  // The main conversation is always Persona (#1313): not its first message, the node's title for it.
-  const mainConversation = useStore((s) => s.assistant?.main);
-  const isMain = Boolean(assistant && (mainCache || sid === mainConversation));
+  // one function while this chat stays put: the header takes it, and must not draw again for every pushed item
+  const openTerminal = useCallback(
+    () => (switchable ? setView("term") : navigate({ name: "session", mid, sid, view: "term" })),
+    [switchable, setView, mid, sid],
+  );
   // No row for this chat yet is not "you may not write": the box takes typing and says it is connecting, or, when the hub
   // answered that the session is gone, says that instead. Only the main conversation may already send; every other chat
   // waits for its row, because the node would start an Agent for an id nobody has. A lookup that found nothing leaves
@@ -454,7 +536,12 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const noRowBlock = useMemo(() => (refusedNoRow ? { label: t(gone ? "chat-chatview.session_gone" : "chat-chatview.connecting") } : undefined), [refusedNoRow, gone]);
   // A Persona conversation without a title yet is "New chat", as All chats and the sidebar call it, not its folder's name (#1697)
   const named = session ?? archivedHere;
-  const title = isMain ? mainTitle : named ? (assistant ? conversationTitle(named) : sessionTitle(named)) : assistant ? t("chat-chatview.new_chat") : t("chat-chatview.session");
+  // the hub has no such chat and nothing of it is here (no row, no cached lines, no message kept in this browser):
+  // "Conversation not found" with the way back, never its id, nor cached content said to be readable
+  const notFound = gone && !known && !archivedHere && !tr.loading && tr.items.length === 0 && outbox.length === 0;
+  // a leader conversation is its direction, as its sidebar row says, not the hub's "MMDD | kind | prompt" title
+  const directionName = useDirectionName(sid);
+  const title = isMain ? mainTitle : notFound ? t("chat-chatview.not_found_title") : named ? (directionName ?? (assistant ? conversationTitle(named) : sessionTitle(named))) : assistant ? t("chat-chatview.new_chat") : t("chat-chatview.session");
   const canFork = Boolean(session?.can_fork);
   // "Rewind to here" (#2436): offered on your messages of a session in a terminal; off with a reason while it cannot. Live
   // (chat-actions.ts): it changes with every turn, and in `actions` it would render every message's actions again.
@@ -462,6 +549,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const [rewindLive] = useState(() => liveValue(rewindOff));
   useLayoutEffect(() => rewindLive.set(rewindOff), [rewindLive, rewindOff]);
   const canRewind = canCompose && !assistant;
+  // Legacy terminals retain both choices. Native rewind needs explicit file-restoration support.
+  const rewindCode = session?.capabilities?.rewind_code ?? !session?.capabilities?.rewind;
+  const rewindDeclared = session?.capabilities?.rewind === true;
   // Edit last message (#2945) and ↑ in an empty box (#4503), Slack's way: ↑, Esc twice or the safeguards card's button put
   // the last prompt in the box with an "Editing" bar, and the conversation-only rewind to before it runs when the edit is
   // sent (commitEdit), so starting or cancelling an edit changes nothing on the computer. One edit, of this conversation:
@@ -530,25 +620,40 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   // the chat a forward comes from, read when Forward is picked (lib/forward.ts): a push does not draw every message again
   const forwardChat = useRef<{ session?: Session; title: string }>({ title });
   forwardChat.current = { session: session ?? archivedHere ?? undefined, title };
+  const forwardFrom = useCallback(
+    (): ForwardChat => ({ mid, sid, assistant: Boolean(assistant), title: forwardChat.current.title, items: items.current, session: getSession(mid, sid) ?? forwardChat.current.session, machine: getState().machines.find((m) => m.id === mid)?.name }),
+    [mid, sid, assistant],
+  );
+  // Forward to's Select messages… (#3838) hands the chat its picks (lib/message-pick.ts): while it holds them, each
+  // message with a Forward has a checkbox and the bar takes the composer's place (Picking.tsx, which comes with Forward
+  // to); they are dropped on Cancel or once they went (every host keys a ChatView by its chat: a new chat starts afresh)
+  const [picker, setPicker] = useState<MessagePick>();
+  const endPick = useCallback(() => setPicker(undefined), []);
   const actions = useMemo<ChatActions>(
     () => ({
       draftKey,
       title,
       canCompose,
-      forward: (pick) => {
-        const machine = getState().machines.find((m) => m.id === mid)?.name;
-        openForward(forwardDraftOf({ mid, sid, assistant: Boolean(assistant), title: forwardChat.current.title, items: items.current, session: getSession(mid, sid) ?? forwardChat.current.session, machine }, pick));
-      },
+      // `now`: the message menu's Select messages (#9469), Forward to's chunk starts picking with it, showing nothing
+      forward: (p: ForwardPick, now?: boolean) => openForward({ from: { chat: forwardFrom(), picks: [p] }, select: { first: p, start: setPicker }, now }),
+      pick: picker,
       speaker: assistant ? persona.name : "Agent",
       images: () => items.current.filter((i) => i.kind === "image"),
       fork: canFork ? (itemId: string) => void forkAt(mid, sid, itemId, Boolean(assistant), session?.space, session?.manager) : undefined,
       assistant: Boolean(assistant),
-      rewind: canRewind ? { block: rewindLive, run: (messageId, text, restore) => rewindTo(mid, sid, draftKey, items.current, messageId, text, restore) } : undefined,
+      rewind: canRewind ? { block: rewindLive, code: rewindCode, run: (messageId, text, restore) => rewindTo(mid, sid, draftKey, items.current, messageId, text, restore, rewindDeclared) } : undefined,
     }),
-    [draftKey, title, canCompose, canFork, canRewind, rewindLive, mid, sid, assistant, persona.name],
+    [draftKey, title, canCompose, canFork, canRewind, rewindCode, rewindDeclared, rewindLive, mid, sid, assistant, persona.name, forwardFrom, picker],
   );
   // the assistant works on any computer, so its @ menu offers workspaces too
-  const mention = useMemo(() => ({ cwd: session?.cwd, self: draftKey, files: () => chatFiles(items.current), workspaces: Boolean(assistant) }), [session?.cwd, draftKey, assistant]);
+  const shownManager = useShownManager();
+  const skillLauncher = usePickedLauncher(conversationKey(mid, sid));
+  const assistantLauncher = useStore((s) => assistant ? s.assistant?.launcher : undefined);
+  const skillManager = useStore((s) => session?.manager ?? s.machines.find((m) => m.id === mid)?.manager) ?? shownManager;
+  const skillEnvironment = JSON.stringify([session?.launcher, session?.model_pick, session?.pending_switch, session?.source_kind, assistantLauncher]);
+  const mention = useMemo(() => ({ cwd: session?.cwd, self: draftKey, files: () => chatFiles(items.current), workspaces: Boolean(assistant),
+    skills: { manager: skillManager, session: sid, launcher: assistant ? skillLauncher : undefined, environment: skillEnvironment, agent: !assistant },
+  }), [session?.cwd, skillManager, draftKey, assistant, sid, skillLauncher, skillEnvironment]);
 
   // a sent message stays as a "sending" bubble until the transcript has it (lib/echo.ts): an item the hub tied to it
   // (any kind, a notice too), or else a latest user message with its words; one that answered one answers no other
@@ -764,7 +869,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       const was = atEnd.current;
       atEnd.current = false;
       moved = false;
-      anchor.current = { el, edge: "top", at: el.getBoundingClientRect().top, follow: false, quiet: window.setTimeout(drop, 1000) };
+      // A disclosure below its contents anchors the card, not the button that moves down when it opens.
+      const row = el.closest("[data-disclosure-anchor]") ?? el;
+      anchor.current = { el: row, edge: "top", at: row.getBoundingClientRect().top, follow: false, quiet: window.setTimeout(drop, 1000) };
       resume = window.setTimeout(() => {
         if (!was) return;
         if (!followsAfterUnfold({ wasAtEnd: was, readerMoved: moved, gap: sc.scrollHeight - sc.scrollTop - sc.clientHeight })) return follow(false);
@@ -947,14 +1054,15 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       setSendFailure(null);
       noteWritten(id, p.at);
       setPending((ps) => [...ps.filter((x) => x.id !== id), p]);
-      follow(true); // your own message: to the end, whatever you were reading
+      // Quote replies keep an earlier reader's place; at the end, every own message still follows (#10346).
+      if (!out.quoteReply || atEnd.current) follow(true);
       const key = outboxKey(mid, sid);
       const launcher = assistant ? pickedLauncher(conversationKey(mid, sid)) : undefined;
       const model = assistant ? pickedModel(conversationKey(mid, sid)) : undefined;
       keepOutgoing(key, { id, text: out.text, images: out.images, at: p.at, launcher, model });
       try {
         // the bubble stays as sending while a gap (a hub restart) is waited out; the id is the op id too
-        const reply = await inSendOrder(key, () => apiOp<{ session?: Session } | undefined>(`${sessionPath(mid, sid)}/messages`, {
+        const reply = await inSendOrder(key, () => apiOp<({ session?: Session; waits_on_computer?: boolean } & DeliveryReply & KeptReply) | undefined>(`${sessionPath(mid, sid)}/messages`, {
           ...flight.request,
           method: "POST",
           opId: id,
@@ -964,10 +1072,24 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
             apply_switch: !assistant && row?.pending_switch ? true : undefined },
         }));
         if (!flight.current()) return true;
+        assertDelivered(reply); // a bare operation receipt is no delivery: in doubt, with Check (#10194)
+        if (isKept(reply)) {
+          // it did not go in, and the assistant keeps it and sends it by itself: the row's bubble shows it from now on
+          flight.finish("failed");
+          forgetOutgoing(key, id);
+          setPending((ps) => ps.filter((x) => x.id !== id));
+          showKept(mid, sid, reply?.undelivered);
+          return true;
+        }
         flight.finish("delivered");
         const acceptedAt = Date.now();
         acceptOutgoing(key, id, acceptedAt);
         setPending((ps) => ps.map((x) => (x.id === id ? { ...x, posting: false, acceptedAt } : x)));
+        // a terminal Agent waiting on a question at the computer reads it only after that is answered (#5890)
+        if (reply?.waits_on_computer) toast(t("lib-outbox.waits_on_computer"), "info");
+        // your own message went through a Claude's inbox although Persona's plugin is there: it may not count as approval
+        const relayed = relayNotice(reply);
+        if (relayed) toast(relayed, "info");
         // a Codex's first message: the answer is the thread it began, where the conversation goes on (lib/codex-waiting.ts)
         const began = reply?.session;
         if (began?.session_id && began.session_id !== sid) {
@@ -1021,7 +1143,10 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     if (e instanceof ApiError && e.code === "input_draft") {
       setDraftRefusal({ id: p.id, draft: String(e.body.draft ?? ""), clearable: typeof e.body.clearable === "string" ? e.body.clearable : undefined });
     } else if (assistant && !(e instanceof ApiError && (e.code === "dialog_open" || e.body.delivered === "unknown"))) {
-      setSendFailure({ chat: `${mid}/${sid}`, failure: codedFailure(e), entry: p.id });
+      // the card is for a refusal with something to set up first (a code or an action, with its button); a failure with
+      // nothing more to it (the hub away, a server error) is the bubble's alone, said once with its one Retry
+      const failure = codedFailure(e);
+      if (failure.code || knownAction(failure.action)) setSendFailure({ chat: `${mid}/${sid}`, failure, entry: p.id });
       void refreshReadiness({ force: true });
     }
   }
@@ -1042,6 +1167,10 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       return false;
     }
     if (assistant && !out.images.length && out.text.trim() && getFeedState().routes[sid]) {
+      if (splitSkillDraft(out.text).skills.length) {
+        toast(t("chat-chatview.skills_route"), "error");
+        return false;
+      }
       try {
         // in turn: the route is used up by the first message that takes it, and the next one must see that
         if (await inSendOrder(outboxKey(mid, sid), () => sendRouted(sid, out.text))) return true;
@@ -1057,12 +1186,28 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   sendNow.current = onSend;
   const send = useCallback((out: Outgoing) => sendNow.current(out), []);
   // The assistant's tasks (docs/assistant/unified-entry.md): the conversation's feed, and the main one's "Today" card.
-  const feed = useFeed((s) => (assistant ? (s.feeds[sid] ?? NO_FEED) : NO_FEED));
+  const taskFeed = useFeed((s) => (assistant ? (s.feeds[sid] ?? NO_FEED) : NO_FEED));
   useEffect(() => {
     if (!assistant) return;
     void loadFeed(sid);
     if (sid === mainConversation) void loadToday(sid);
   }, [assistant, sid, mainConversation]);
+  // Its urgent calls (docs/assistant/urgent-call.md), each a row at its time among the feed: read by a module of their own.
+  const [calls, setCalls] = useState<FeedItem[]>(NO_FEED);
+  useEffect(() => {
+    if (!assistant) return;
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void import("../assistant/urgent-calls").then((m) => {
+      if (!gone) stop = m.watchCalls(sid, setCalls);
+    });
+    return () => {
+      gone = true;
+      stop?.();
+      setCalls(NO_FEED);
+    };
+  }, [assistant, sid]);
+  const feed = useMemo(() => (calls.length ? [...taskFeed, ...calls].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)) : taskFeed), [taskFeed, calls]);
   // The "Today" card's actions say something to Persona here.
   useEffect(() => {
     if (!assistant) return;
@@ -1113,7 +1258,9 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       // a worker's conversation in a Team panel, and an Agent's in a task's or an Agent's side panel, leave Esc to the
       // panel (it closes it) and to the page beside it
       if (embedded || inPanel) return;
-      if (e.key === "Escape" && (state === "working" || awaiting) && view !== "term" && !document.querySelector("[role=dialog],[role=menu]")) {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (e.target instanceof Element && e.target.closest("[data-session-overview]")) return;
+      if ((state === "working" || awaiting) && view !== "term" && !document.querySelector("[role=dialog],[role=menu]")) {
         e.preventDefault();
         void interrupt();
       }
@@ -1123,14 +1270,13 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, awaiting, session, view, embedded, inPanel]);
 
-  // The hub says its turn is over and a workflow it launched keeps it working (#3434): the exchange is drawn finished
-  // (its work folded, the run's card inside it), and the running bar says the workflow, timed from its start, instead
-  // of the turn's "Working…" clock going on. Other background work (a command, a Monitor, a subagent) leaves the turn as
-  // it was. A message of yours on its way, or one it is answering, is a turn again.
-  // The same for an agent that only waits on background commands (#6045): its turn is drawn finished.
-  // The same for a background subagent still running after the turn ended (#5030, cindy's background subtasks).
-  const subtasks = waitingOnSubagents(session, subagents);
-  const backgroundOnly = (waitingOnWorkflow(session) || Boolean(session && backgroundWaiting(session)) || subtasks) && !tr.streaming && !outgoing && !awaiting;
+  // Once the hub says the turn is over, four kinds of background work draw the last exchange finished (its work folded,
+  // any run's card inside it) instead of keeping the turn's "Working…" clock going: first a workflow (#3434), then
+  // background subagents (#5030), commands that only wait (#6045), and finally a real background command or Monitor
+  // (#7341). A message of yours on its way, streaming, or an answer being written is a turn again.
+  const streaming = Boolean(tr.streaming);
+  const backgroundState = backgroundTurn(session, subagents, { streaming, outgoing: outgoing > 0, awaiting });
+  const backgroundOnly = backgroundState !== null;
   const lastLive = working && !backgroundOnly && !tr.loading;
   // the main conversation's readiness: the card for what is missing, and the send button saying it (4.4)
   const gate = useReadinessGate(isMain);
@@ -1138,20 +1284,48 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const failedEntry = sendFailure?.chat === `${mid}/${sid}` ? outbox.find((e) => e.id === sendFailure.entry && e.state === "failed") : undefined;
   const failure = failedEntry ? sendFailure!.failure : null;
   // the hub's word on the last turn's model error, for its card (5.2 turn_error_code)
-  const turnFix = assistant ? turnErrorFix(session?.turn_error_code) : null;
+  const turnFix = useAssistantTurnFix(session, Boolean(assistant));
   // A subscription usage limit: its error card says when it resumes. The clock drops the wait once the grace is past.
   useNow(30_000, session?.turn_error_kind === "usage_limit");
   const limitLine = session ? usageLimitLabel(session) : undefined;
   // a line that comes out the same as last time keeps its object, so a push re-renders only the lines it changed
   // (lib/stable-lines.ts); the task index likewise, or every row reading the context would render again
   const lastLines = useRef<ChatLine[] | undefined>(undefined);
-  // the main conversation folds rounds it did not start from the user (docs/assistant/assistant.md "Background rounds")
-  const foldBackground = useStore((s) => s.assistant?.main_background_folded) !== false && isMain;
+  // the main conversation and the leader conversations fold rounds their user did not start: another conversation's
+  // relay, a scheduled patrol, a follow-up (docs/assistant/assistant.md "Background rounds", #6595). On a cold load the
+  // AssistantInfo has not arrived but the cached main id has: keep the main chat folded (the absent switch means on).
+  const foldBackground = useStore((s) =>
+    foldsBackgroundRounds(sid, s.assistant ?? (mainCache ? { main: mainCache.scope } : undefined)));
   const lines = useMemo(
     () => stabilizeLines(lastLines.current, chatLines(earlier.liveItems, { live: lastLive && !outgoing, background: foldBackground })),
     [earlier.liveItems, lastLive, outgoing, foldBackground],
   );
   lastLines.current = lines;
+  // a DayLine over the first line of each new calendar day (#8160); day-only keys keep them stable as pages and
+  // midnight arrivals land. Days the earlier stretches already open with a divider are not repeated here.
+  const dayTaken = useMemo(() => new Set(earlier.stretchDays), [earlier.stretchDays]);
+  const dayRows = useMemo(
+    () => withDayDividers(lines).filter((row) => {
+      const d = dayRowKey(row);
+      return d === undefined || !dayTaken.has(d);
+    }),
+    [lines, dayTaken],
+  );
+  // the permission mode changes the hub recorded (#10297), each among the rows at its time, read when the chat opens and
+  // when its mode or a waiting restart changes, nothing else; their code and words load with an Agent's chat. While older history is
+  // still to load (or sits in an earlier engine's stretch), a change from before the first loaded item waits for it.
+  const [modes, setModes] = useState<ModeChanges>();
+  const modeKey = `${session?.permission_mode}|${session?.bypass_pending}`;
+  useEffect(() => {
+    if (assistant) return;
+    const ctl = new AbortController();
+    void import("./mode-changes").then((kit) => kit.watchModeChanges(mid, sid, modeKey, ctl.signal, kit, setModes), () => {});
+    return () => ctl.abort();
+  }, [mid, sid, assistant, modeKey]);
+  const chatRows: ChatRowWithModes[] = useMemo(
+    () => (modes?.scope === `${mid}/${sid}` ? modes.kit.withModeChanges(dayRows, modes.changes, tr.hasMore || earlier.stretches.length > 0 ? earlier.liveItems : undefined) : dayRows),
+    [modes, mid, sid, dayRows, tr.hasMore, earlier.stretches.length, earlier.liveItems],
+  );
   // the last exchange while the chat is at work, even while a message of yours on its way draws it finished (live needs
   // !outgoing above): its words get no reply bar until the work is over (#5314, SegmentView `busy`)
   const busySegment = useMemo(() => (lastLive ? lines.findLast((line) => line.kind === "segment")?.id : undefined), [lastLive, lines]);
@@ -1265,6 +1439,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const expandFold = tr.expandFold;
   const jumpToCall = useCallback(
     async (call: string) => {
+      if (viewNow.current === "term") setView("chat");
       const scope = `${mid}/${sid}:`;
       const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
       const found = await seekCall(scope, call, items.current, expandFold, frame);
@@ -1286,7 +1461,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       landRow(row, -(sc.clientHeight - row.getBoundingClientRect().height) / 2);
       row.animate?.([{ backgroundColor: "var(--accent-tint)" }, { backgroundColor: "transparent" }], { duration: 1800, easing: "ease-out" });
     },
-    [mid, sid, follow, expandFold, landRow],
+    [mid, sid, follow, expandFold, landRow, setView],
   );
   const jump = useCallback((call: string) => void jumpToCall(call), [jumpToCall]);
   // A link to one of its subagents' conversations (#5030, lib/subagent-link.ts): that subagent's card in view, opened; a
@@ -1319,20 +1494,29 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const closeoutSegment = useMemo(() => {
     if (!closeoutShown) return undefined;
     const last = lines.findLast((line) => line.kind === "segment");
-    return last?.kind === "segment" ? last.seg.id : undefined;
+    return last?.kind === "segment" ? last.seg : undefined;
   }, [closeoutShown, lines]);
   // The child sessions folded under this one (#5120, a Codex subagent, an Agent a Paseo Agent created): each a card in
   // the exchange during which it started (lib/child-cards.ts). The placement is kept while nothing moves it, so a push
   // for a child redraws only its card, and a streamed item none of the exchanges.
   // read while the row says it has some, or a link to one waits (its parent's rollup may not be in yet)
   const linkedChild = linkedAgent ? childOfCall(linkedAgent) : undefined;
-  const kids = useChildSessions(mid, sid, Boolean(session?.children?.total) || Boolean(linkedChild));
-  // a lead's workers (#5180) are in its Team panel, not cards in its chat; the rest of what folds under it are child cards
-  const childRows = useMemo(() => (kids.rows.some(isWorker) ? kids.rows.filter((c) => !isWorker(c)) : kids.rows), [kids.rows]);
+  // a side's chat reads its own children among its parent's folded rows, while that parent has some besides its sides
+  const sideKids = useStore(() => {
+    const c = sideParent ? getSession(mid, sideParent)?.children : undefined;
+    return Boolean(c && c.total > (c.sides ?? 0));
+  });
+  const kids = useChildSessions(mid, sid, (sideParent ? sideKids : Boolean(session?.children?.total)) || Boolean(linkedChild), true, sideParent);
+  // a lead's workers (#5180) are in its Team panel, not cards in its chat, and so are a parent's side sessions in its Side
+  // sessions panel (#7944); the rest of what folds under it are child cards
+  const childRows = useMemo(() => (kids.rows.some((c) => isWorker(c) || isSide(c)) ? kids.rows.filter((c) => !isWorker(c) && !isSide(c)) : kids.rows), [kids.rows]);
   const workers = useMemo(() => (leads ? teamWorkers(kids.rows) : []), [leads, kids.rows]);
+  const sides = useMemo(() => (sidesHere ? sidesAmong(kids.rows) : []), [sidesHere, kids.rows]);
   // the worker the open Team panel shows: its cards are in its own conversation there, so the dock leaves them out (one
-  // request in one place on the page, DESIGN_SYSTEM 3.4); every other worker's wait in this dock, marked as theirs
+  // request in one place on the page, DESIGN_SYSTEM 3.4); every other worker's wait in this dock, marked as theirs. The
+  // side the open Side sessions panel shows, the same way (#7944)
   const teamShown = teamOpen ? shownWorker(workers, mid, sid, teamPanelOf(panel, mid, sid)?.worker)?.session_id : undefined;
+  const sideShown = sidesOpen ? shownSide(sides, mid, sid, sidesPanelOf(panel, mid, sid)?.side)?.session_id : undefined;
   const seenAt = useRef(new Map<string, string>());
   const lastPlaces = useRef<Map<string, ChildPlace[]> | undefined>(undefined);
   const places = useMemo(
@@ -1364,9 +1548,11 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     jump(childCall(linkedChild));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedChild, session, tr.loading, tr.loadingEarlier, tr.hasMore, detail.loading, kids.loaded, childRows, places, mid, sid, jump]);
+  // what runs its subagents: its own agent (a Paseo provider's subagent cards say "Grok", #8142)
+  const harness = session && !assistant ? sessionAgentName(session) : undefined;
   const ctx = useMemo<ChatContextValue>(
-    () => ({ tasks, subagents: assistant ? NO_SUBAGENTS : (subagents ?? NO_SUBAGENTS), scope: `${mid}/${sid}:`, jumpToCall: jump, workflowCalls: wfCalls, lineStyle, opening: openingId && openingOrigin ? { id: openingId, origin: openingOrigin } : undefined, closeoutSegment, children: places, embedded }),
-    [tasks, subagents, assistant, mid, sid, jump, wfCalls, lineStyle, openingId, openingOrigin, closeoutSegment, places, embedded],
+    () => ({ tasks, subagents: assistant ? NO_SUBAGENTS : (subagents ?? NO_SUBAGENTS), scope: `${mid}/${sid}:`, jumpToCall: jump, workflowCalls: wfCalls, lineStyle, harness, opening: openingId && openingOrigin ? { id: openingId, origin: openingOrigin } : undefined, closeoutSegment: closeoutSegment?.id, children: places, embedded }),
+    [tasks, subagents, assistant, mid, sid, jump, wfCalls, lineStyle, harness, openingId, openingOrigin, closeoutSegment, places, embedded],
   );
   // ── "Search in chat" (ChatSearch.tsx, Android ChatSearchState): where the reader was when it opened, going to a hit (the
   // rows that hold it open, search-reveal.ts), lit for HIT_MS, and "Back to where you were" ──
@@ -1430,24 +1616,29 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
       el.scrollIntoView({ block: tall ? "start" : "center", behavior: "auto" });
       land(el, el.getBoundingClientRect().top - sc.getBoundingClientRect().top);
       unlight();
-      void el.getBoundingClientRect(); // the same row picked again lights again
-      el.setAttribute("data-search-hit", "");
-      lit.current = { el, timer: window.setTimeout(unlight, HIT_MS) };
+      // the ring hugs what it marks: your bubble itself, not its row's padding (#6426)
+      const ring = (el.matches("[data-user-bubble]") && el.querySelector<HTMLElement>("[data-hit-target]")) || el;
+      void ring.getBoundingClientRect(); // the same row picked again lights again
+      ring.setAttribute("data-search-hit", "");
+      lit.current = { el: ring, timer: window.setTimeout(unlight, HIT_MS) };
     });
   }, [ctx.scope, follow, unlight, land]);
+  // the work the hub folded, fetched for the search while it is open (useFoldSearch, #6281): a hit in it opens its fold
+  // into the chat first, as "Jump to the step" does (jump.ts seekCall)
+  const folds = useFoldSearch(mid, sid, tr.history, earlier.liveItems, search.open);
+  const searchItems = useMemo(() => (folds.items.length ? [...earlier.liveItems, ...folds.items] : earlier.liveItems), [earlier.liveItems, folds.items]);
   const goTo = useCallback((hit: ChatSearchHit) => {
     setSearch((x) => ({ ...x, open: false }));
     setPicked(true);
-    seekItem(hit.itemId);
-  }, [seekItem]);
-  // a forward's card opened this chat at its original (#3899, lib/forward.ts jumpWhenOpen): brought into view once the
-  // transcript is in and holds it; one further back stays where the chat opens, as iOS does
-  useEffect(() => {
-    const item = peekJump(mid, sid);
-    if (!item || tr.loading) return;
-    takeJump(mid, sid);
-    if (earlier.liveItems.some((i) => i.id === item)) requestAnimationFrame(() => seekItem(item, true));
-  }, [mid, sid, tr.loading, earlier.liveItems, seekItem]);
+    const fold = earlier.liveItems.some((i) => i.id === hit.itemId) ? undefined : foldHolding(folds.fetched, hit.itemId);
+    if (!fold?.fold) return seekItem(hit.itemId);
+    openFoldRange(ctx.scope, fold.seq, fold.fold.through_seq); // its steps land in open groups
+    tr.expandFold(fold).then(
+      () => requestAnimationFrame(() => seekItem(hit.itemId)),
+      () => toast(t("chat-chatview.search_not_found")),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- tr.expandFold follows the chat, as seekItem does
+  }, [seekItem, earlier.liveItems, folds.fetched, ctx.scope]);
   const backToOrigin = useCallback(() => {
     const o = origin.current;
     origin.current = null;
@@ -1497,6 +1688,48 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     const key = SEARCH_NOTICE[outcome];
     return key ? t(key) : null;
   }, []);
+  // a message to open the chat at: a search hit's (`?at=`, #6283) or a forward card's original (#3899, lib/forward.ts
+  // jumpWhenOpen). Brought into view once the transcript is in and holds it; one further up is paged back for, as "Load
+  // earlier and keep searching" does (at most SEARCH_PAGES pages, the reader scrolling away or another landing stops
+  // it); not reached, the chat stays where it opened and says the message is further up.
+  useEffect(() => {
+    if (landAt) jumpWhenOpen(mid, sid, landAt);
+  }, [mid, sid, landAt]);
+  const msgLanding = useRef(0);
+  useEffect(() => {
+    const item = peekJump(mid, sid);
+    if (!item || tr.loading) return;
+    takeJump(mid, sid);
+    const run = ++msgLanding.current;
+    const holds = () => trNow.current.items.some((i) => i.id === item);
+    if (holds()) return void requestAnimationFrame(() => seekItem(item, true));
+    if (!trNow.current.hasMore) {
+      void (async () => {
+        // A folded assistant reply is not a raw item: resolve it, then open only the fold that holds it.
+        const whole = await fullItem(mid, sid, item);
+        if (run !== msgLanding.current) return;
+        const fold = trNow.current.items.find((f) => insideFold(whole, f));
+        if (!fold) return;
+        openFoldRange(ctx.scope, fold.seq, fold.fold!.through_seq);
+        await trNow.current.expandFold(fold);
+        if (run !== msgLanding.current) return;
+        requestAnimationFrame(() => seekItem(item));
+      })().catch(() => {});
+      return;
+    }
+    void (async () => {
+      // the chat may still be filling the screen with older pages: wait for that, then page back (again if it was busy)
+      for (let go = 0, until = performance.now() + LANDING_WAIT_MS; go < 3 && run === msgLanding.current && !holds(); go++) {
+        while ((trNow.current.loading || trNow.current.loadingEarlier) && performance.now() < until) await nextFrame();
+        await loadForSearch(() => {}, () => run !== msgLanding.current || holds());
+      }
+      if (run !== msgLanding.current) return;
+      if (holds()) requestAnimationFrame(() => seekItem(item));
+      else toast(t("chat-chatview.message_further_up"));
+    })().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a new landing is a new item asked for, not the items changing
+  }, [mid, sid, tr.loading, landAt, seekItem, loadForSearch]);
+  useEffect(() => () => void msgLanding.current++, [mid, sid]); // another chat ends a landing on its way
   const rounds = useMemo(() => segs.filter((x) => x.user).length, [segs]);
 
   // the newest plan of the chat (PlanCard.tsx planCardStep draws its card): while that card is out of view, a pill above the composer
@@ -1514,9 +1747,13 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const retried = retriedOn?.chat === `${mid}/${sid}` ? retriedOn.reason : undefined;
   const failureNote = Boolean(session && !assistant && showsFailureNote(session, { retried }));
   // a turn that failed on the refusal fallback's missing model (#2528): "Continue" would send it to the same model; the
-  // main conversation's setup gate would only open its missing step, as it does for the refused-send card's Send again
+  // main conversation's setup gate would only open its missing step, as it does for every send while it holds (`deliver`)
   const canRetry =
     lastLine?.kind === "apiError" && state !== "working" && !outgoing && sessionCan(session, "send") && session?.turn_error_code !== FALLBACK_UNAVAILABLE && !gate.blocked;
+  // An exhausted recovery chain (#7824): the last error card names the cause and reset time, and Retry stays offered
+  // even for a safeguards-class error the parser calls non-transient. The marker is session-level, so only the last
+  // API error line carries it; whether Retry is enabled at all still follows canRetry (idle and able to send).
+  const exhausted = lastLine?.kind === "apiError" ? recoveryExhausted(session) : null;
   // The model error the chat stopped on (cindy's ErrorBanner, #5313): its last line, over the composer with Retry and ✕,
   // and left out of the chat meanwhile. Not once it is dismissed (remembered in this browser), Retry was pressed on it
   // (gone at once, before "continue" reaches the transcript), something is on its way or being worked on, or the host's
@@ -1634,10 +1871,23 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   ) : null;
   // Persona's own chats too (#3654), and from the moment the message is in, not from the hub's next push
   const background = useMemo(() => backgroundLine(session), [session]);
-  const wait = useMemo(() => (outgoing || awaiting ? null : backgroundWaitLine(session)), [outgoing, awaiting, session]);
+  // Streaming makes the turn live again, but an Agent's existing wait / subagent bar stays as it was while the answer
+  // streams. Only the new command line is withheld there; in a quiet turn the four-kind order decides the bar.
+  const wait = streaming && !outgoing && !awaiting ? backgroundWaitLine(session) : backgroundState?.kind === "waiting" ? backgroundState.line : null;
+  const subtasks = streaming ? waitingOnSubagents(session, subagents) && !outgoing && !awaiting : backgroundState?.kind === "subtasks";
+  const command = backgroundState?.kind === "command" ? backgroundState.line : null;
   // ✓ Done only for a turn that finished: one waiting on you, stopped or cut off by an error keeps its last words
   const done = turnDone(state, session, lastLine, tr.items);
-  const running = session ? <RunningStatusBar mid={mid} sid={sid} working={state === "working" || awaiting} done={done} startedAt={runStart} clock={barClock.current} plain={assistant} step={step} background={background} wait={wait} subtasks={subtasks && !outgoing && !awaiting} /> : null;
+  // In a Persona conversation the message stream already carries the turn's state for its whole life — the sending /
+  // preparing feedback while the message is on its way, then the live work line ("Working…", spinner and clock) once the
+  // hub accepts it — so the dock never repeats the foreground turn (#6230). The dock bar stays only for work that outlives
+  // the turn (a background workflow, subagent, wait or working command: `backgroundOnly`, where the stream shows only
+  // quiet fold rows) and, unchanged, for Agent chats, whose dock keeps the full cindy status bar. Gating on the foreground/background
+  // phase (not on the live line being mounted) keeps the bar out even while a transcript loads or a state push is in flight.
+  // A Persona chat on either route — the Persona tab's prop, or on the generic /s route the session's own assistant
+  // flag — so the dock never repeats its foreground turn (#6230). Background work keeps the bar either way.
+  const dockBarShown = !(assistant || session?.assistant) || backgroundOnly;
+  const running = session && dockBarShown ? <RunningStatusBar mid={mid} sid={sid} working={state === "working" || awaiting} done={done} startedAt={runStart} clock={barClock.current} plain={assistant} step={step} background={!backgroundState || backgroundState.kind === "workflow" ? background : null} wait={wait} subtasks={subtasks} command={command} /> : null;
   // at the top of the composer's card, as cindy's pending queue (#5327); a phone on its side keeps it to one line beside
   // the run's status. The same element while nothing in it changes: the composer is memoized.
   const hasQueue = queued.length > 0;
@@ -1665,22 +1915,31 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const lastRole = lastItem?.role;
   const lastKind = lastItem?.kind;
   const faceLast = useMemo(() => (lastRole && lastKind ? { role: lastRole, kind: lastKind } : undefined), [lastRole, lastKind]);
-  // the main conversation's /clear (#5095, lib/main-clear.ts): Persona's other conversations take no commands
+  // the main conversation's /clear (#5095, lib/main-clear.ts) and every Persona conversation's /permissions (#6476)
   // /workflows opens this page's side panel: a chat drawn inside a panel (the Team panel's worker) does not offer it (#5421)
   const commands = useMemo(
-    () => (assistant ? (clears ? mainCommands() : []) : agentCommands(AGENT_COMMANDS, session).filter((c) => !(embedded && c.text === WORKFLOWS_COMMAND))),
+    () => (assistant ? [...(clears ? mainCommands() : []), ...(session ? [permissionsCommand()] : [])] : agentCommands(AGENT_COMMANDS, session).filter((c) => !(embedded && c.text === WORKFLOWS_COMMAND))),
     [assistant, clears, session, embedded],
   );
   // the permission picker after the + (#5324), where the mode can be switched: a Persona conversation whatever its state
-  // (the hub applies it, #2416), an agent with modes while it runs; Plan mode is the + panel's check row
+  // (the hub applies it, #2416), an agent with modes while it runs; Plan mode is the + panel's check row. An agent that
+  // lists its own modes (#8261) gets the picker with those two, and no Plan mode.
   const modesOn = Boolean(session) && (Boolean(assistant) || (hasModes(session) && stateOf(session!) !== "offline"));
-  const leading = useMemo(() => (session && modesOn ? <PermissionPicker session={session} assistant={assistant} /> : null), [session, modesOn, assistant]);
+  const listedOn = Boolean(session) && !assistant && Boolean(listedModesOf(session)) && stateOf(session!) !== "offline";
+  const leading = useMemo(() => (session && (modesOn || listedOn) ? <PermissionPicker session={session} assistant={assistant} /> : null), [session, modesOn, listedOn, assistant]);
   const planMode = usePlanMode(modesOn ? session : undefined, assistant);
   // the model pill: an Agent's (#5032), a Persona conversation's (#5033, its pick kept for the conversation)
   const trailing = useMemo(() => (session ? assistant ? <AssistantModelPill session={session} /> : <AgentModelPill session={session} /> : null), [session, assistant]);
 
   // the header's Team button (#5180): on a lead with workers, at every width (a phone has no other way to the panel); its dot
   // says a worker needs you while the panel is shut
+  const showConversationTasks = Boolean((assistant || inPage) && !embedded && !chrome && session?.space !== "health");
+  const conversationTasksOpen = panel?.kind === "conversation-tasks" && panel.mid === mid && panel.sid === sid;
+  const chatHeaderActions = useMemo(() => showConversationTasks ? <>
+    <IconButton icon="todo" label={t("sidepanel.conversation_tasks")} active={conversationTasksOpen}
+      onClick={() => togglePanel({ kind: "conversation-tasks", mid, sid, manager: skillManager })} />
+    {headerActions}
+  </> : headerActions, [showConversationTasks, conversationTasksOpen, mid, sid, skillManager, headerActions]);
   const teamCount = leads ? workerCount(session) : 0;
   const teamNeeds = workers.some((w) => stateOf(w) === "needs_you");
   const toggleTeam = useCallback(() => {
@@ -1689,18 +1948,25 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     openPanel({ kind: "team", mid, sid });
   }, [mid, sid]);
   const team = useMemo(() => (teamCount > 0 ? { open: teamOpen, needs: teamNeeds, onToggle: toggleTeam } : undefined), [teamCount, teamOpen, teamNeeds, toggleTeam]);
-  const elsewhere = (ix: Interaction) => Boolean(teamShown) && ix.session_id === teamShown;
+  // the header's Side sessions button (#7944): while it has sides, with their count and a dot while one needs you, both
+  // from the side rows held here (a side seen here shows at once), else the hub's rollup for them
+  const hubSide = sidesHere && session ? hubSides(session) : undefined;
+  const sideCount = kids.loaded ? sides.length : Math.max(sides.length, hubSide?.sides ?? 0);
+  const sideNeeds = sides.some((w) => stateOf(w) === "needs_you") || (!kids.loaded && (hubSide?.needs_you ?? 0) > 0);
+  const toggleSide = useCallback(() => toggleSides(mid, sid, Boolean(sidesPanelOf(getPanel(), mid, sid))), [mid, sid]);
+  const sideControl = useMemo(() => (sideCount > 0 ? { count: sideCount, open: sidesOpen, needs: sideNeeds, onToggle: toggleSide } : undefined), [sideCount, sidesOpen, sideNeeds, toggleSide]);
+  const elsewhere = (ix: Interaction) => (Boolean(teamShown) && ix.session_id === teamShown) || (Boolean(sideShown) && (ix.session_id === sideShown || ix.folded_side === sideShown));
   // a worker's own cards in its conversation (the Team panel, embedded) are its own there, not "From worker"
   const docked = useMemo(() => {
-    const mine = teamShown ? interactions.filter((ix) => !elsewhere(ix)) : interactions;
+    const mine = teamShown || sideShown ? interactions.filter((ix) => !elsewhere(ix)) : interactions;
     return embedded ? mine.map((ix) => (ix.session_id === sid && ix.folded_under ? asOwnCard(ix) : ix)) : mine;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [interactions, teamShown, embedded, sid]);
+  }, [interactions, teamShown, sideShown, embedded, sid]);
   const pendingCards = (
     <PendingCards
       interactions={focusedFirst(docked, focusedCard())}
-      answered={teamShown ? answered.filter((a) => !elsewhere(a.ix)) : answered}
-      delegated={teamShown ? delegated.filter((d) => !elsewhere(d.ix)) : delegated}
+      answered={teamShown || sideShown ? answered.filter((a) => !elsewhere(a.ix)) : answered}
+      delegated={teamShown || sideShown ? delegated.filter((d) => !elsewhere(d.ix)) : delegated}
       offerNext={inPage && !assistant ? { mid, sid } : undefined}
       narrow={compactDock}
       short={short}
@@ -1709,11 +1975,20 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
     />
   );
 
+  const overviewId = useId();
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const showOverview = !assistant && !embedded && Boolean(session);
+  const overview = useMemo(() => showOverview
+    ? { id: overviewId, open: overviewOpen, toggle: () => setOverviewOpen((open) => !open) }
+    : undefined, [overviewId, overviewOpen, showOverview]);
+
   const page = (
-    <div className="flex h-full min-w-0 flex-col">
+    <div className="@container/session flex h-full min-w-0 flex-col">
       {!embedded && <Header
         session={session}
+        overview={overview}
         title={title}
+        direction={directionName !== undefined && !isMain && !notFound}
         machineName={machineName}
         assistant={assistant}
         main={isMain}
@@ -1725,22 +2000,25 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
         topCenter={topCenter}
         view={switchable ? view : undefined}
         onView={switchable ? setView : undefined}
+        onTerminal={openTerminal}
         viewDot={view === "term" && (interactions.length > 0 || state === "needs_you")}
-        actions={headerActions}
+        termDot={terminalWaits(session, interactions, outbox)}
+        actions={chatHeaderActions}
         team={team}
+        sides={sideControl}
         panel={chrome}
       />}
       {isMain && !embedded && <MainRuntimeSlot sid={sid} />}
       {!embedded && banner}
-      {cameFrom && <Suspense fallback={null}><HandoffBack from={cameFrom} onDismiss={() => setCameFrom(undefined)} /></Suspense>}
+      {backPage && (cameFrom ? <Suspense fallback={null}><HandoffBack from={cameFrom} onDismiss={() => setCameFrom(null)} /></Suspense> : cameFrom === undefined ? <Suspense fallback={null}><InboxBack key={`${mid}/${sid}`} mid={mid} sid={sid} session={session} /></Suspense> : null)}
       {/* a known session keeps its chat: a failed background read is retried quietly (runtime-session.ts) */}
-      {archivedHere ? <ArchivedNotice session={archivedHere} /> : noDetails && <SessionDetailNotice error={detail.error} retry={retryDetail} />}
+      {archivedHere ? <ArchivedNotice session={archivedHere} /> : notFound ? <Suspense fallback={null}><LazyNotFoundNotice assistant={Boolean(assistant)} retry={retryDetail} /></Suspense> : noDetails && <SessionDetailNotice error={detail.error} retry={retryDetail} />}
 
-      {/* the page's middle: the chat and (once shown) the terminal stacked in one box; without a terminal to show it adds no box */}
-      <div className={switchable ? "relative min-h-0 flex-1" : "contents"}>
+      <div className="session-workspace flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <ViewLayer bare={!switchable} on={view === "chat"} from="start">
       {/* what a stopped agent said of its own work, above the transcript and not part of it (#3612) */}
-      {closeoutShown && session && <CloseoutCard key={`${mid}/${sid}`} session={session} />}
+      {closeoutShown && session && <CloseoutCard key={`${mid}/${sid}`} session={session} segment={closeoutSegment} expandFold={tr.expandFold} />}
       <div className="relative min-h-0 flex-1">
         {(tr.notLive || refreshFailed) && <NotLivePill error={refreshFailed} onReload={() => { tr.reload(); onRefresh?.(); }} lower={Boolean(picked && !search.open)} />}
         <div ref={scrollRef} onScroll={onScroll} data-chat-scroll className="relative h-full overflow-y-auto [overflow-anchor:none]">
@@ -1753,6 +2031,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
                 <p className="mt-0.5 leading-relaxed text-ink-2 [overflow-wrap:anywhere]">{session.start_error}</p>
               </div>
             ) : <div role="alert" className="rounded-control bg-inset px-3 py-2 text-[13px] text-red">{t("chat-chatview.start_failed", { error: session.start_error })}</div>)}
+            {session?.start_error_code === "shell_waiting" && <Suspense fallback={null}><ShellQuestion session={session} /></Suspense>}
             {starting && !tr.loading && !outgoing && <Loading label={t("chat-chatview.starting_agent")} />}
             {earlier.loadingEarlier && (
               <div className="flex justify-center py-2">
@@ -1762,7 +2041,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
             {/* also over a chat whose first page came back empty (#2450): it reads as loaded and empty, not as still loading;
                 not under a notice that the chat's details are missing */}
             {((!earlier.hasMore && !tr.loading && (tr.items.length > 0 || earlier.stretches.length > 0 || (!tr.error && !starting && !session?.start_error && !noDetails))) || opening) && <div className="text-center text-[11.5px] text-ink-3">{session?.cwd && !assistant ? t("chat-chatview.started_in", { path: shortPath(session.cwd) }) : t("chat-chatview.chat_start")}</div>}
-            {opening && <DayLine date={startOfDay(Date.now())} />}
+            {opening && !dayTaken.has(new Date().toLocaleDateString("sv")) && <DayLine date={startOfDay(Date.now())} />}
             {waitsFirst && !tr.items.length && (
               // a Codex opened with no first message (lib/codex-waiting.ts): it waits for one, from here or its terminal
               <p data-testid="codex-waiting" className="rounded-control bg-inset px-3 py-2 text-[13px] leading-relaxed text-ink-2">
@@ -1806,27 +2085,33 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
                         expandFold={tr.expandFold}
                         fix={d.line.id === lastLine?.id ? turnFix : undefined}
                         limit={d.line.kind === "apiError" && d.line.id === limitOn ? limitLine : undefined}
+                        exhausted={d.line.kind === "apiError" && d.line.id === lastLine?.id ? exhausted : undefined}
                         assistant={assistant}
                         offscreen={offscreen(d.line)}
                         busy={d.line.id === busySegment || undefined}
                       />
                     ),
                   ])
-                : lines.flatMap((line) => [...failedBefore(line.id), open?.line === line.id ? (
-                <OpenRecapLine key={line.id} open={open} onClose={dismissRecap} />
-              ) : line.id === bannerError?.id ? null : (
+                : chatRows.flatMap((row) => row.kind === "day" ? (
+                  <div key={row.id} data-day-divider={row.id}><DayLine date={row.date} /></div>
+                ) : row.kind === "mode" ? (
+                  modes && <modes.kit.ModeChangeDivider key={row.id} change={row.change} session={session} />
+                ) : [...failedBefore(row.line.id), open?.line === row.line.id ? (
+                <OpenRecapLine key={row.line.id} open={open} onClose={dismissRecap} />
+              ) : row.line.id === bannerError?.id ? null : (
                 <ChatLineView
-                  key={line.id}
-                  line={line}
+                  key={row.line.id}
+                  line={row.line}
                   // only a live line streams: the others keep their memo
                   mid={mid}
                   sid={sid}
-                  streaming={(line.kind === "segment" || line.kind === "supervision") && line.live ? tr.streaming || undefined : undefined}
+                  streaming={(row.line.kind === "segment" || row.line.kind === "supervision") && row.line.live ? tr.streaming || undefined : undefined}
                   expandFold={tr.expandFold}
-                  limit={line.kind === "apiError" && line.id === limitOn ? limitLine : undefined}
+                  limit={row.line.kind === "apiError" && row.line.id === limitOn ? limitLine : undefined}
+                  exhausted={row.line.kind === "apiError" && row.line.id === lastLine?.id ? exhausted : undefined}
                   assistant={assistant}
-                  offscreen={offscreen(line)}
-                  busy={line.id === busySegment || undefined}
+                  offscreen={offscreen(row.line)}
+                  busy={row.line.id === busySegment || undefined}
                 />
               )])}
               </CardConversation.Provider>
@@ -1838,7 +2123,12 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
               <div key={p.id} className="flex flex-col gap-3">
                 <UserBubble msg={p.msg} mid={mid} sid={sid} pending sendState="sending" />
               </div>
-            ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} /> }))]
+            ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} /> })),
+              ...keptUndelivered.map((m) => ({ at: Date.parse(m.at) || 0, el: (
+                <Suspense key={`undelivered:${m.id}`} fallback={<UserBubble msg={keptBubble(m)} mid={mid} sid={sid} sendState="failed" />}>
+                  <UndeliveredBubble mid={mid} sid={sid} m={m} />
+                </Suspense>
+              ) }))]
               .sort((a, b) => a.at - b.at)
               .map((x) => x.el)}
             {(shownPending.some((p) => p.waits) || (sendFeedback !== undefined ? Boolean(sendFeedback) : shownPending.length > 0 || outbox.some((e) => e.state === "sending") || (starting && outgoing > 0))) && (
@@ -1870,7 +2160,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
         {/* everything over the composer: it shrinks and scrolls before the composer does (the composer grew, and its
             cards, task questions and notes stood taller than the dock, drawn up over the chat or pushing it to nothing);
             the box clips what is in it, so its children keep a little room for their shadows (p-1; -m-1 gives it back) */}
-        <div ref={dockAbove} data-chat-dock-above data-scroll-box className="-m-1 flex min-h-0 shrink flex-col gap-2 overflow-y-auto overscroll-contain p-1 empty:hidden">
+        <div ref={dockAbove} data-chat-dock-above data-scroll-box hidden={Boolean(picker)} className="-m-1 flex min-h-0 shrink flex-col gap-2 overflow-y-auto overscroll-contain p-1 empty:hidden">
         {/* a phone on its side: the plan's pill, the run's status and the queue share one line. One wrapper either way
             (no box of its own otherwise), so the pill and a flyout pinned on it stay when the phone turns */}
         {(pills || running || (short && queue)) && (
@@ -1887,12 +2177,15 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
                 lists a row for each that closes the tray onto its card. */}
             {voiceState !== "live" && <AssistantActionBar key={sid} conversation={sid} ownAsks={interactions} />}
             {voiceState !== "live" && <RouteChip conversation={sid} />}
+            {/* items handed to this conversation that are still open: "Wrap up" asks it for the final write-back (#5932) */}
+            {voiceState !== "live" && isMain && <Suspense fallback={null}><LazyWrapUpChips conversation={sid} /></Suspense>}
           </>
         )}
         {pendingCards}
-        {!assistant && session?.model_fallback && <ModelFallbackCard session={session} headless={false} />}
+        {!assistant && session?.model_fallback && <Suspense fallback={null}><ModelFallbackCard session={session} headless={false} /></Suspense>}
         {assistant && session && <CompactionStrip session={session} />}
-        {failure ? <FailureCard failure={failure} onClose={() => setSendFailure(null)} onHelp={gate.help} onConfirm={gate.confirm} onRetry={failedEntry && !refusedNoRow && sessionCan(session, "send") && !gate.blocked ? () => void retryOutbox(mid, sid, failedEntry.id) : undefined} /> : <ReadinessCard gate={gate} />}
+        {/* the failed bubble above has the one Retry; the card says what to set up first */}
+        {failure ? <FailureCard failure={failure} onClose={() => setSendFailure(null)} onHelp={gate.help} onConfirm={gate.confirm} /> : <ReadinessCard gate={gate} />}
         <ChatOnlyNote gate={gate} />
         {gate.dialog}
         {session && !assistant && <AttentionNote session={session} />}
@@ -1922,6 +2215,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
             line={bannerError}
             assistant={assistant}
             limit={bannerError.id === limitOn ? limitLine : undefined}
+            exhausted={exhausted}
             fix={turnFix}
             onRetry={canRetry ? () => void retryError() : undefined}
             onEditLastMessage={onEditLastMessage}
@@ -1929,7 +2223,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
           />
         )}
         {/* the goal it works toward, right over the composer as cindy's goal indicator (#5421) */}
-        {session?.goal && !assistant && <GoalBar goal={session.goal} />}
+        {session?.goal && !assistant && <Suspense fallback={null}><GoalBar goal={session.goal} /></Suspense>}
         </div>
         {voiceEntry.dialog}
         {voiceState === "live" && voiceCall && (
@@ -1937,14 +2231,16 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
             <VoiceBar call={voiceCall} session={session} cards={interactions} label={voiceLabel} persona={persona.name} onStopAgent={interrupt} />
           </div>
         )}
+        {/* picking messages to forward (#3838): the bar in the composer's place, which stays with its draft */}
+        {picker && pickParts.Bar && <pickParts.Bar pick={picker} chat={forwardFrom} onEnd={endPick} />}
         {/* kept while a call is on (its draft, attachments and quotes stay), the bar in its place */}
-        <div ref={composerBox} className="shrink-0" hidden={voiceState === "live"}>
+        <div ref={composerBox} className="shrink-0" hidden={voiceState === "live" || Boolean(picker)}>
         {stoppedLine ? (
           <StoppedAgentLine mid={mid} sid={sid} onTerminal={openTerminal} />
         ) : (
         <Composer
           draftKey={draftKey}
-          placeholder={offlineLine ? offlineLine : waitsFirst ? t("chat-chatview.codex_first_placeholder") : refusedNoRow ? t(gone ? "chat-chatview.session_gone_placeholder" : "chat-chatview.connecting_placeholder") : viewOnlyRow(session) ? t("chat-chatview.view_only") : state === "working" || state === "needs_you" ? t("chat-chatview.queue_placeholder") : assistant ? t("chat-chatview.ask_placeholder", { name: persona.name }) : state === "offline" ? t("chat-chatview.resume_placeholder") : t("chat-chatview.agent_placeholder")}
+          placeholder={offlineLine ? offlineLine : waitsFirst ? t("chat-chatview.codex_first_placeholder") : refusedNoRow ? t(gone ? "chat-chatview.session_gone_placeholder" : "chat-chatview.connecting_placeholder") : viewOnlyRow(session) ? t("chat-chatview.view_only") : state === "working" || state === "needs_you" ? t("chat-chatview.queue_placeholder") : assistant ? askPlaceholder ?? t("chat-chatview.ask_placeholder", { name: persona.name }) : state === "offline" ? t("chat-chatview.resume_placeholder") : t("chat-chatview.agent_placeholder")}
           machineId={mid}
           uploadDest={session?.space === "health" ? "health" : undefined}
           working={state === "working" || awaiting}
@@ -1971,12 +2267,14 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
           top={short ? undefined : queue}
         />
         )}
-        {!stoppedLine && session && (composerSource(session, assistant).length > 0 || (!assistant && contextUsage(session) !== null)) && (
-          // where the chat comes from and its folder at the left (cindy's working-folder line, #5324), the context meter at the right
-          <div data-composer-usage className="flex min-w-0 items-center justify-between gap-3 px-2 pt-0.5">
-            <ComposerSource session={session} assistant={assistant} />
-            {!assistant && contextUsage(session) !== null && <ContextMeter session={session} />}
-          </div>
+        {!stoppedLine && session && (
+          assistant
+            ? sourceSubtitle(session) && <div data-composer-usage className="px-2 pt-0.5"><ComposerSource session={session} assistant /></div>
+            : (
+              <Suspense fallback={null}>
+                <AgentStatusLine key={draftKey} session={session} source={sourceSubtitle(session) ? <ComposerSource session={session} assistant /> : undefined} />
+              </Suspense>
+            )
         )}
         </div>
       </div>
@@ -1992,12 +2290,23 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
         </ViewLayer>
       )}
       </div>
+      {session && overview?.open && (
+        <PageBoundary page={`overview:${mid}/${sid}`}>
+          <Suspense fallback={<div className="p-3"><Loading /></div>}>
+            <SessionOverview id={overviewId} session={session} machineName={machineName} items={tr.items} tasks={tasks}
+              children={kids.rows} onJumpToCall={jump} />
+          </Suspense>
+        </PageBoundary>
+      )}
+      </div>
 
       <ChatSearch
         open={search.open}
         query={search.query}
         onQuery={(query) => setSearch((x) => ({ ...x, query }))}
-        items={earlier.liveItems}
+        items={searchItems}
+        foldsLoading={folds.loading}
+        foldsPartial={folds.partial}
         rounds={rounds}
         hasMore={earlier.liveHasMore}
         onLoadEarlier={loadForSearch}
@@ -2161,6 +2470,7 @@ function AttentionNote({ session }: { session: Session }) {
 // the model is the composer's pill, the permission mode the composer's picker; the rest is in ⋯ and Session info.
 export const Header = memo(function Header({
   session,
+  overview,
   title,
   machineName,
   assistant,
@@ -2173,17 +2483,25 @@ export const Header = memo(function Header({
   topCenter,
   view,
   onView,
+  onTerminal,
   viewDot,
+  termDot,
   actions,
   team,
+  sides,
   panel: chrome,
+  direction = false,
 }: {
   session?: Session;
+  overview?: { id: string; open: boolean; toggle: () => void };
   title: string;
   machineName: string;
   assistant?: boolean;
   /** The assistant's main conversation: no "Rename". */
   main?: boolean;
+  /** A leader conversation, its title its direction's name: no in-place rename of that title (it would rename the
+   *  conversation's own title, which the header does not show); ⋯ Rename does that, as the sidebar row's does. */
+  direction?: boolean;
   siblings: Session[];
   onToggleSidebar?: () => void;
   onInterrupt: () => void;
@@ -2195,20 +2513,28 @@ export const Header = memo(function Header({
   /** On an agent's page with a terminal to show: the view in the middle, and how to change it (the terminal button). */
   view?: SessionView;
   onView?: (view: SessionView) => void;
+  /** Shows the agent's terminal as its stopped line's Terminal does (in place, or its page's terminal view). */
+  onTerminal?: () => void;
   /** The conversation has something that wants an answer while the terminal is shown. */
   viewDot?: boolean;
+  /** The terminal waits on a dialog while the conversation is shown (lib/session-view.ts terminalWaits, #7343). */
+  termDot?: boolean;
   /** The page's own buttons, at the end of the right side (ChatView `headerActions`). */
   actions?: React.ReactNode;
   /** A lead with workers (#5180): its Team panel's button, whether the panel is open, and whether a worker needs you. */
   team?: { open: boolean; needs: boolean; onToggle: () => void };
+  /** A session with side sessions (#7944): how many, whether its Side sessions panel is open, whether one needs you. */
+  sides?: { count: number; open: boolean; needs: boolean; onToggle: () => void };
   panel?: PanelChrome;
 }) {
   const menu = useMenu();
+  // the ⋯ menu's Rename…, Rename space… and Delete… open dialogs from a chunk of their own: on its way once it opens (#10382)
+  useEffect(() => {
+    if (menu.anchor) preloadSessionDialogs();
+  }, [menu.anchor]);
   const tabs = useMenu();
   const panel = usePanel();
   const mutes = useStore((s) => s.mutes);
-  const [closing, setClosing] = useState(false);
-  const [archiveClosing, setArchiveClosing] = useState(false);
   const features = useStore((s) => s.features);
   // archived (the Archived page listed it, or it was archived here): the menu offers Restore instead of archive / delete
   const archived = useArchived(session?.machine_id ?? "", session?.session_id ?? "");
@@ -2231,13 +2557,28 @@ export const Header = memo(function Header({
   const [linkTodoOpen, setLinkTodoOpen] = useState(false);
   const [sharingOpen, setSharingOpen] = useState(false);
   const allowed = session ? sessionMenuActions(session) : [];
-  const attach = () => session && attachLive(session);
+  // Live link loads with the click (lib/attach-live.ts), off the first screen
+  const attach = () => session && import("../../lib/attach-live").then((m) => m.attachLive(session));
+  // Resume in terminal (#5521): a stopped Agent comes back in a terminal on its computer. The same action as its stopped
+  // line's Resume: the terminal shown as that line's Terminal shows it, then the Resume both share.
+  const machine = useStore((s) => s.machines.find((m) => m.id === session?.machine_id));
+  const resumeOffer = onTerminal ? terminalResume(session, machine) : "hidden";
+  const resumeHere = () => {
+    if (session && onTerminal) void resumeInTerminal(session.machine_id, session.session_id, onTerminal);
+  };
   // a task's or an Agent's side panel leaves the space's other agents out of ⋯
   const others = chrome ? [] : siblings.filter((s) => s.session_id !== session?.session_id);
   // the session's files and Git open in the side panel (docs/web/web.md "Side panel"); the assistant has none. Its terminal is
   // the page's other view, switched in place (view / onView)
   const here = (p: typeof panel, kind: string) => Boolean(p && p.kind === kind && "sid" in p && session && p.mid === session.machine_id && p.sid === session.session_id);
   const showTerminal = Boolean(view && onView);
+  // the side panel shows no terminal in place: its terminal button opens the agent's page in the terminal view, and the
+  // panel closes, its chat being that page now (#7343)
+  const jumpTerminal = !showTerminal && Boolean(onTerminal) && terminalJump(session, { inPanel: Boolean(chrome), assistant });
+  const openTerminalPage = () => {
+    onTerminal?.();
+    chrome?.onClose();
+  };
   const showFiles = Boolean(session && !assistant && session.cwd);
   const flipView = () => view && onView?.(otherView(view));
   const openFiles = () => session && togglePanel({ kind: "files", mid: session.machine_id, sid: session.session_id, cwd: session.cwd });
@@ -2247,14 +2588,22 @@ export const Header = memo(function Header({
   const openPreview = () => session && togglePanel({ kind: "preview", mid: session.machine_id, sid: session.session_id, cwd: session.cwd });
   const openReview = () => session && togglePanel({ kind: "review", mid: session.machine_id, sid: session.session_id, cwd: session.cwd });
   const reviews = useStore((s) => hubHas(s.features, REVIEW_FEATURE));
+  // the comparison this Agent is a run of (#8916, kept in this browser): its module and words load after the first screen,
+  // long before ⋯ opens; re-read with the header
+  const [compareOf, setCompareOf] = useState<null | ((s: Session) => { id: string; label: string } | undefined)>(null);
+  useEffect(() => {
+    if (assistant) return;
+    let live = true;
+    void import("../../lib/compare-runs").then((m) => { if (live) setCompareOf(() => m.compareMenu); }, () => {});
+    return () => { live = false; };
+  }, [assistant]);
+  const compare = session && compareOf ? compareOf(session) : undefined;
   const othersNeed = others.some((s) => stateOf(s) === "needs_you");
   // the Agent's background work (#5421): the button shows while there is some, the loop mark while a /loop drives it
-  const now = useNow(30_000, Boolean(session && !assistant && (session.loop || session.workflows?.length)));
-  const background = Boolean(session && !assistant && hasBackgroundWork(session, now));
+  const now = useNow(30_000, Boolean(session?.loop && !assistant));
   const running = session && !assistant ? backgroundCount(session) : 0;
-  const backgroundOpen = Boolean(session && backgroundPanelOf(panel, session.machine_id, session.session_id));
-  const openBackground = () => session && toggleBackgroundPanel(session.machine_id, session.session_id);
-  const canRename = Boolean(session && !main && !builtIn && sessionCan(session, "send") && (session.assistant || !session.source_kind));
+  // a runtime's session renames where its node says it can (capabilities.rename, #6294), as Close goes by capabilities.close
+  const canRename = Boolean(session && !main && !builtIn && sessionCanRename(session));
   const [editing, setEditing] = useState(false);
   const spaceRows: MenuItem[] = siblings
     .slice()
@@ -2268,6 +2617,7 @@ export const Header = memo(function Header({
     }));
   const { items: assistantItems, dialogs: assistantDialogs } = useAssistantMenu(assistant ? session : undefined);
   const feishu = externalLink(session);
+  const linkedTodo = session?.todo ?? session?.completed_todo;
 
   const own: MenuItem[] = session
     ? [
@@ -2275,21 +2625,22 @@ export const Header = memo(function Header({
         ...(others.length > 0 ? [spaceAgentsItem(others, () => tabs.openAt(menu.anchor))] : []),
         ...assistantItems,
         ...(!assistant && !main ? [{ key: "share", label: t("chat-chatview.share"), icon: "link" as const, onSelect: () => setSharingOpen(true) }] : []),
-        ...(session.todo
+        ...(linkedTodo
           ? [
               {
                 key: "todo-detail",
-                label: t("chat-chatview.todo_label", { title: session.todo.title }),
+                label: t(session.todo ? "chat-chatview.todo_label" : "chat-chatview.todo_completed_label", { title: linkedTodo.title }),
                 icon: "todo" as const,
-                onSelect: () => navigate(`/todos?id=${encodeURIComponent(session.todo!.id)}`),
+                onSelect: () => navigate(`/todos?id=${encodeURIComponent(linkedTodo.id)}`),
               },
+              ...(session.todo ? [
               {
                 key: "unlink-todo",
                 label: t("chat-chatview.unlink_todo"),
                 icon: "x" as const,
                 onSelect: async () => {
                   try {
-                    await unlinkAgentFromTodo(session.todo!.id, session.machine_id, session.session_id);
+                    await unlinkAgentFromTodo(linkedTodo.id, session.machine_id, session.session_id);
                     await refreshTodos();
                     await refresh();
                     toast(t("chat-chatview.todo_unlinked"), "ok");
@@ -2304,6 +2655,7 @@ export const Header = memo(function Header({
                 icon: "todo" as const,
                 onSelect: () => setLinkTodoOpen(true),
               },
+              ] : []),
             ]
           : !assistant
             ? [
@@ -2316,12 +2668,22 @@ export const Header = memo(function Header({
               ]
             : []),
         ...(allowed.includes("attach") ? [{ key: "attach", label: t("chat-chatview.attach"), icon: "link" as const, onSelect: () => void attach() }] : []),
+        // its Side sessions panel (#7944), as the header's button
+        ...(sides ? [{ key: "sides", label: t("chat-chatview.side_sessions_count", { count: sides.count }), icon: "sideSessions" as const, checked: sides.open, onSelect: sides.onToggle }] : []),
         ...(showTerminal ? [{ key: "terminal", label: t("chat-chatview.terminal"), icon: "terminal" as const, checked: view === "term", onSelect: flipView }] : []),
+        ...(jumpTerminal ? [{ key: "terminal", label: t("chat-chatview.terminal"), icon: "terminal" as const, onSelect: openTerminalPage }] : []),
+        ...(resumeOffer !== "hidden"
+          ? [{ key: "resume-terminal", label: t("chat-chatview.resume_in_terminal"), icon: "play" as const, disabled: resumeOffer === "no_engine", detail: resumeOffer === "no_engine" ? t("chat-chatview.resume_no_engine", { computer: machineName }) : undefined, onSelect: resumeHere }]
+          : []),
         ...(showFiles ? [{ key: "files", label: t("chat-chatview.files"), icon: "folder" as const, checked: here(panel, "files"), onSelect: openFiles }, { key: "git", label: "Git", icon: "git" as const, checked: here(panel, "git"), onSelect: openGit }, ...(reviews ? [{ key: "review", label: t("chat-chatview.review_changes"), icon: "pullRequest" as const, checked: here(panel, "review"), onSelect: openReview }] : [])] : []),
+        // a run of a comparison (#8916): back to its runs' page
+        ...(compare ? [{ key: "compare", label: compare.label, icon: "branch" as const, onSelect: () => navigate({ name: "compare", id: compare.id }) }] : []),
         ...(showFiles && previews ? [{ key: "preview", label: t("chat-chatview.preview"), icon: "web" as const, checked: here(panel, "preview"), onSelect: openPreview }] : []),
         ...(allowed.includes("stop") ? [{ key: "stop", label: t("chat-chatview.interrupt"), icon: "stop" as const, hint: "Esc", onSelect: onInterrupt }] : []),
         ...(feishu ? [{ key: "feishu", label: t("chat-chatview.open_in_lark"), icon: "external" as const, onSelect: () => openLink(feishu) }] : []),
         ...(onSearch ? [{ key: "search", label: t("chat-chatview.search_menu"), icon: "search" as const, onSelect: onSearch }] : []),
+        // the whole conversation as Markdown (#7375): its dialog is a chunk of its own
+        { key: "export", label: t("chat-chatview.export"), icon: "download", onSelect: () => import("./ExportDialog").then((m) => m.openExportDialog({ session, title, machineName, assistant: Boolean(assistant) }), (e: unknown) => toast(errorText(e), "error")) },
         { key: "info", label: t("chat-chatview.session_info"), icon: "info", onSelect: () => setDialog("info") },
         ...(canRename ? [{ key: "rename", label: t("chat-chatview.rename"), icon: "pencil" as const, onSelect: () => setDialog("rename") }] : []),
         ...(!assistant && session.space_id && !session.source_kind ? [{ key: "space", label: t("chat-chatview.rename_space"), icon: "folder" as const, onSelect: () => setDialog("space") }] : []),
@@ -2330,10 +2692,10 @@ export const Header = memo(function Header({
         { key: "sid", label: t("chat-chatview.copy_session_id"), icon: "copy", onSelect: () => copyText(session.session_id) },
         ...(session.cwd ? [{ key: "cwd", label: t("chat-chatview.copy_folder"), icon: "folder" as const, onSelect: () => copyText(session.cwd) }] : []),
         ...(allowed.includes("resume") ? [{ key: "resume", label: t("chat-chatview.copy_resume_command"), icon: "terminal" as const, onSelect: () => copyText(resumeCommand(session)) }] : []),
-        ...(!assistant && allowed.includes("close") ? [{ key: "close", label: t("chat-chatview.close_agent_menu"), icon: "x" as const, danger: true, onSelect: () => setClosing(true) }] : []),
+        // Archive and Close… as the row's menu has them (#7125); archived, Restore, and Close… while its agent is still open
         ...(archived
-          ? [{ key: "restore", label: t("chat-chatview.restore"), icon: "undo" as const, divider: true, onSelect: () => void restoreAgent(archived, appArchiveDeps) }]
-          : archiveItems(session, features, () => setArchiveClosing(true))),
+          ? [{ key: "restore", label: t("chat-chatview.restore"), icon: "undo" as const, divider: true, onSelect: () => void restoreAgent(archived, appArchiveDeps) }, ...closeItems({ ...session, archived: true }, features)]
+          : archiveCloseItems(session, features)),
         ...(!archived && deleteInsteadOfArchive(features) && sessionDeletable(session) ? [{ key: "delete", label: t("chat-chatview.delete_chat"), icon: "trash" as const, danger: true, onSelect: () => setDialog("delete") }] : []),
       ]
     : [];
@@ -2350,6 +2712,7 @@ export const Header = memo(function Header({
       </span>
     );
   const branch = !assistant ? session?.branch?.trim() : "";
+  const sideLabel = sides ? [t("chat-chatview.side_sessions_count", { count: sides.count }), sides.needs ? t("chat-chatview.side_sessions_needs_you") : ""].filter(Boolean).join(" · ") : "";
 
   return (
     <header className="@container flex h-14 shrink-0 items-center gap-2 border-b border-line bg-page/85 px-3 backdrop-blur-md sm:px-4">
@@ -2365,7 +2728,7 @@ export const Header = memo(function Header({
           <TitleEditor session={session} title={title} onDone={() => setEditing(false)} />
         ) : (
           <h1
-            onDoubleClick={canRename && !chrome?.title ? () => setEditing(true) : undefined}
+            onDoubleClick={canRename && !chrome?.title && !direction ? () => setEditing(true) : undefined}
             title={chrome?.title ? [chrome.title, chrome.sub].filter(Boolean).join(" · ") : title}
             data-chat-title
             className="min-w-0 cursor-default truncate text-[14px] font-medium text-ink select-none"
@@ -2384,20 +2747,23 @@ export const Header = memo(function Header({
       </div>
       {topCenter && <div className="flex min-w-0 flex-1 justify-center lg:hidden">{topCenter}</div>}
       <div className={headerSlot(Boolean(topCenter), "end")}>
-      {background && (
-        <span className="relative flex shrink-0">
-          <IconButton
-            icon="list"
-            label={running ? t("chat-chatview.background_running", { count: running }) : t("chat-chatview.background_tasks")}
-            onClick={openBackground}
-            active={backgroundOpen}
-          />
-          {running > 0 && !backgroundOpen && (
-            <span aria-hidden data-background-count className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-ink-2 tabular-nums shadow-[0_0_0_2px_var(--page)]">
-              {running}
-            </span>
+      {overview && (
+        <button
+          type="button"
+          data-session-overview-trigger
+          aria-label={t("chat-chatview.session_overview")}
+          aria-pressed={overview.open}
+          aria-description={running > 0 ? t("chat-chatview.background_running", { count: running }) : undefined}
+          aria-controls={overview.open ? overview.id : undefined}
+          title={t("chat-chatview.session_overview")}
+          onClick={overview.toggle}
+          className={cx("touch-hit relative flex size-7 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-hover hover:text-ink", overview.open ? "bg-hover text-ink" : "text-ink-3")}
+        >
+          <Icon name="list" size={15} />
+          {running > 0 && !overview.open && (
+            <span aria-hidden data-background-count className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-field px-1 text-[10px] font-semibold text-ink-2 tabular-nums shadow-[0_0_0_2px_var(--page)]">{running}</span>
           )}
-        </span>
+        </button>
       )}
       {team && (
         <span className="relative flex shrink-0">
@@ -2405,17 +2771,46 @@ export const Header = memo(function Header({
           {team.needs && !team.open && <span aria-hidden className="pointer-events-none absolute top-0.5 right-0.5 size-2 rounded-full bg-attention shadow-[0_0_0_2px_var(--page)]" />}
         </span>
       )}
+      {sides && (
+        // its side sessions (#7944): the mark and how many, on one line; the attention dot while one needs you
+        <span className="relative flex shrink-0">
+          <button
+            type="button"
+            aria-label={sideLabel}
+            title={sideLabel}
+            aria-expanded={sides.open}
+            data-side-sessions={sides.count}
+            onClick={sides.onToggle}
+            className={cx(
+              "touch-hit flex h-7 shrink-0 items-center gap-1 rounded-[8px] px-1.5 text-label leading-none font-medium whitespace-nowrap tabular-nums transition-[background-color,color,transform] duration-150 active:scale-[0.94]",
+              sides.open ? "bg-hover text-ink" : "text-ink-3 hover:bg-hover hover:text-ink",
+            )}
+          >
+            <Icon name="sideSessions" size={15} />
+            <span>{sides.count}</span>
+          </button>
+          {sides.needs && <span aria-hidden data-side-sessions-needs className="pointer-events-none absolute top-0.5 right-0.5 size-2 rounded-full bg-attention shadow-[0_0_0_2px_var(--page)]" />}
+        </span>
+      )}
       {showFiles && <IconButton icon="folder" label={t("chat-chatview.files")} onClick={openFiles} active={here(panel, "files") || here(panel, "git")} className="hidden sm:flex" />}
       {/* the terminal: one button to the other view at every width (cindy's terminal is one of its right sidebar's tabs) */}
       {view && onView && (
         <span className="relative flex shrink-0">
           <IconButton icon={view === "chat" ? "terminal" : "chat"} label={t(view === "chat" ? "chat-chatview.terminal" : "chat-chatview.chat")} onClick={flipView} />
-          {view === "term" && viewDot && <span aria-hidden className="pointer-events-none absolute top-0.5 right-0.5 size-1.5 rounded-full bg-attention" />}
+          {(view === "term" ? viewDot : termDot) && <span aria-hidden data-terminal-waits={view === "chat" || undefined} className="pointer-events-none absolute top-0.5 right-0.5 size-1.5 rounded-full bg-attention" />}
+        </span>
+      )}
+      {jumpTerminal && (
+        <span className="relative flex shrink-0">
+          <IconButton icon="terminal" label={t("chat-chatview.terminal")} onClick={openTerminalPage} />
+          {termDot && <span aria-hidden data-terminal-waits className="pointer-events-none absolute top-0.5 right-0.5 size-1.5 rounded-full bg-attention" />}
         </span>
       )}
       {/* wide screens have New chat at the top of the sidebar; a phone's sidebar is a drawer */}
       {assistant && !chrome && session?.space !== "health" && <IconButton icon="compose" label={t("chat-chatview.new_chat")} onClick={() => navigate({ name: "persona-new" })} className="lg:hidden" />}
       {!chrome && actions}
+      {!assistant && session && (session.agent === "codex" || session.source_kind === "codex_history" || session.source_kind === "codex_app_server") &&
+        <Suspense fallback={null}><TakeoverAction key={`${session.machine_id}:${session.session_id}`} session={session} /></Suspense>}
       {Boolean(topCenter) && more("end")}
       {chrome && <IconButton icon="x" label={t("sidepanel.close")} onClick={chrome.onClose} />}
       </div>
@@ -2427,11 +2822,10 @@ export const Header = memo(function Header({
           align={topCenter && mediaMatches(NARROW) ? "right" : "left"}
           width={360}
           header={session?.space_name ? t("chat-chatview.space_header", { name: session.space_name }) : undefined}
+          headerAsWritten
           items={spaceRows}
         />
       )}
-      {session && <CloseAgentDialog open={closing} onClose={() => setClosing(false)} onClosed={() => navigate({ name: "home" })} session={session} machineName={machineName} />}
-      {session && archiveClosing && <ArchiveCloseDialog open onClose={() => setArchiveClosing(false)} session={session} machineName={machineName} />}
       {session && <SessionInfoDialog open={dialog === "info"} onClose={() => setDialog(null)} session={session} machineName={machineName} />}
       {session && <RenameDialog open={dialog === "rename"} onClose={() => setDialog(null)} session={session} />}
       {session && <RenameSpaceDialog open={dialog === "space"} onClose={() => setDialog(null)} session={session} />}
@@ -2528,4 +2922,3 @@ function headerSlot(centered: boolean, side: "start" | "end"): string {
   if (!centered) return "contents";
   return cx(HEADER_SLOT, side === "start" ? HEADER_SLOT_START : HEADER_SLOT_END, "lg:contents");
 }
-

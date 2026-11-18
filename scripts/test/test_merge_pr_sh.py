@@ -4,7 +4,9 @@ Each test builds a throwaway clone (isolated HOME and Git config) whose origin i
 refs/heads/main and refs/pull/7/head, and puts a fake gh first on PATH. The fake serves `pr view` from a state file,
 answers `repo view` and `api`, and logs every call. Like GitHub with squash messages set to PR_TITLE / PR_BODY, it
 records `<title> (#7)` and the body as they are at merge time (`at_merge`: an edit saved after the last view) unless
-the merge passes --subject / --body-file. The real gh never runs.
+the merge passes --subject / --body-file. The real gh never runs. The clone carries this checkout's copies of the scripts
+merge-pr.sh runs: privacy_check.py and scripts/ci/changed_ratchets.py with the two ratchets it loads (#7977). Its main
+has no ratchet baselines unless a test commits them, so only that test's PRs are checked against them.
 """
 import importlib.util
 import json
@@ -24,6 +26,12 @@ _spec = importlib.util.spec_from_file_location("privacy_check", SCRIPTS / "priva
 _privacy_check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_privacy_check)
 CONFIG_ENV = set(_privacy_check.CONFIG_ENV)
+# The automated merge (docs/operations/pr-review-automation.md) takes the same lock.
+sys.path.insert(0, str(SCRIPTS / "operations"))
+import pr_watch_merge  # noqa: E402
+
+RATCHET_SCRIPTS = ("changed_ratchets.py", "sleep_ratchet.py", "web_font_ratchet.py")  # under scripts/ci
+GO_TEST = "server/internal/demo/demo_test.go"
 
 FAKE_GH = r'''
 import json, os, sys
@@ -76,6 +84,9 @@ class MergePrTests(unittest.TestCase):
         (self.repo / "scripts").mkdir()
         shutil.copy2(SCRIPTS / "privacy_check.py", self.repo / "scripts/privacy_check.py")
         shutil.copytree(SCRIPTS / "hooks", self.repo / "scripts/hooks")
+        (self.repo / "scripts/ci").mkdir()
+        for name in RATCHET_SCRIPTS:
+            shutil.copy2(SCRIPTS / "ci" / name, self.repo / "scripts/ci" / name)
         (self.repo / "config.example.json").write_text("{}\n")
         self.git("add", ".")
         self.git("commit", "-q", "-m", "Initial")
@@ -88,11 +99,14 @@ class MergePrTests(unittest.TestCase):
             self.fail(result.stdout + result.stderr)
         return result.stdout.strip()
 
-    def open_pr(self, message="Add notes", content="Public notes.\n"):
-        """A commit on top of main pushed as refs/pull/7/head; returns its sha."""
+    def open_pr(self, message="Add notes", content="Public notes.\n", files=None):
+        """A commit on top of main (notes.md, or files: {path: text}) pushed as refs/pull/7/head; returns its sha."""
         self.git("checkout", "-q", "-B", "feature", "main")
-        (self.repo / "notes.md").write_text(content)
-        self.git("add", "notes.md")
+        files = files or {"notes.md": content}
+        for path, text in files.items():
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text)
+        self.git("add", "--", *files)
         self.git("commit", "-q", "-m", message)
         self.git("push", "-q", "origin", "+HEAD:refs/pull/7/head")
         return self.git("rev-parse", "HEAD")
@@ -101,10 +115,10 @@ class MergePrTests(unittest.TestCase):
         return dict({"headRefOid": head, "headRefName": "fix/7-notes", "isCrossRepository": False,
                      "baseRefName": "main", "title": "fix: add notes", "body": "Adds notes.\n\nFixes #6"}, **fields)
 
-    def merge_pr(self, pr, at_merge=None, arg="7"):
+    def merge_pr(self, pr, at_merge=None, arg="7", extra_args=()):
         self.state.write_text(json.dumps({"pr": pr, "at_merge": at_merge}))
-        result = subprocess.run(["bash", str(self.repo / "scripts/hooks/merge-pr.sh"), arg], cwd=self.repo,
-                                env=self.env, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(["bash", str(self.repo / "scripts/hooks/merge-pr.sh")] + list(extra_args) + [arg],
+                                cwd=self.repo, env=self.env, capture_output=True, text=True, timeout=60)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
         return result, calls
 
@@ -122,7 +136,10 @@ class MergePrTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--repo") + 1], "example/persona")
         self.assertEqual(merge["subject"], "fix: add notes (#7)")
         self.assertEqual(merge["body"], "Adds notes.\n\nFixes #6")
-        self.assertEqual(merge["cwd"], "/")
+        # Git Bash's / is its install folder, as Windows Python sees it.
+        root = "/" if os.name != "nt" else os.path.normpath(
+            subprocess.run(["bash", "-c", "cd / && pwd -W"], capture_output=True, text=True).stdout.strip())
+        self.assertEqual(merge["cwd"], root)
         self.assertEqual(len([c for c in calls if c["argv"][:2] == ["pr", "view"]]), 1)  # one snapshot
         self.assertIn(["api", "-X", "DELETE", "repos/example/persona/git/refs/heads/fix/7-notes"],
                       [c["argv"] for c in calls])
@@ -147,6 +164,25 @@ class MergePrTests(unittest.TestCase):
                 self.assertIn("not merged", result.stderr)
                 self.assertEqual(self.merges(calls), [])
 
+    def test_a_ratchet_failure_the_merge_would_add_blocks_it(self):
+        """A fixed sleep the PR adds to a Go test stops the merge (changed_ratchets.py); marked sleep-ok, it merges."""
+        self.git("checkout", "-q", "main")
+        for name in ("sleep_baseline.json", "web_font_baseline.json"):
+            (self.repo / "scripts/ci" / name).write_text("{}\n")
+        self.git("add", "scripts/ci")
+        self.git("commit", "-q", "-m", "Baselines")
+        self.git("push", "-q", "origin", "main")
+        wait = "package demo\n\nfunc TestWait(t *testing.T) {\n\ttime.Sleep(time.Second)%s\n}\n"
+        result, calls = self.merge_pr(self.view(self.open_pr(files={GO_TEST: wait % ""})))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(GO_TEST + ": 1 time.Sleep call(s), baseline 0", result.stderr)
+        self.assertIn("not merged: fix the ratchet failures", result.stderr)
+        self.assertEqual(self.merges(calls), [])
+        self.log.unlink()
+        result, calls = self.merge_pr(self.view(self.open_pr(files={GO_TEST: wait % " // sleep-ok: the child exits"})))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.merges(calls)), 1)
+
     def test_a_moved_head_is_refused(self):
         self.open_pr()
         result, calls = self.merge_pr(self.view(self.git("rev-parse", "main")))
@@ -166,6 +202,55 @@ class MergePrTests(unittest.TestCase):
         result, calls = self.merge_pr(self.view(self.open_pr()))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(self.merges(calls)), 1)
+
+    def test_expected_head_and_base_are_required(self):
+        head = self.open_pr()
+        base = self.git("rev-parse", "main")
+        expected = ["--expect-head", head, "--expect-base", base]
+        result, calls = self.merge_pr(self.view(head), extra_args=expected)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.merges(calls)), 1)
+        for args in (["--expect-head", "f" * 40, "--expect-base", base],
+                     ["--expect-head", head, "--expect-base", "f" * 40]):
+            self.log.unlink(missing_ok=True)
+            result, calls = self.merge_pr(self.view(head), extra_args=args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(self.merges(calls), [])
+
+    def test_a_held_lock_makes_the_merge_wait(self):
+        """Another merge-pr.sh (flock, or msvcrt.locking on Windows) or pr_watch_merge holding the lock blocks this one."""
+        def raw_lock():
+            fd = os.open(self.repo / ".git/persona-pr-merge.lock", os.O_RDWR | os.O_CREAT, 0o600)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            return lambda: os.close(fd)
+
+        def watcher_lock():
+            return pr_watch_merge.merge_lock(str(self.repo)).close
+
+        for name, hold in (("merge-pr.sh", raw_lock), ("pr_watch_merge", watcher_lock)):
+            with self.subTest(name):
+                self.log.unlink(missing_ok=True)
+                self.state.write_text(json.dumps({"pr": self.view(self.open_pr()), "at_merge": None}))
+                release = hold()
+                try:
+                    proc = subprocess.Popen(["bash", str(self.repo / "scripts/hooks/merge-pr.sh"), "7"],
+                                            cwd=self.repo, env=self.env, stdout=subprocess.PIPE,
+                                            stderr=subprocess.PIPE, text=True)
+                    self.addCleanup(lambda p=proc: p.poll() is None and p.kill())
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        proc.wait(timeout=3)
+                    self.assertFalse(self.log.exists())  # gh has not run
+                finally:
+                    release()
+                out, err = proc.communicate(timeout=60)
+                self.assertEqual(proc.returncode, 0, out + err)
+                calls = [json.loads(line) for line in self.log.read_text().splitlines()]
+                self.assertEqual(len(self.merges(calls)), 1)
 
     def test_a_non_number_is_refused_before_gh_runs(self):
         result, calls = self.merge_pr(self.view("0" * 40), arg="7a")

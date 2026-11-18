@@ -1,0 +1,9 @@
+{
+  "takeover": "Take over",
+  "takeover_new": "Continue in a new session",
+  "takeover_title": "Take over Codex",
+  "takeover_confirm": "Take over",
+  "takeover_running_confirm": "This will end the turn currently running in the terminal.",
+  "reason_encrypted_context": "The encrypted conversation context cannot be resumed in this session. Continue in a new session instead.",
+  "reason_unavailable": "This conversation cannot be resumed in this session. Continue in a new session instead."
+}

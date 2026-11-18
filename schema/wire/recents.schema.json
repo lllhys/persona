@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "recents.schema.json",
+  "title": "Recent setups",
+  "description": "New Agent's recent setups (#2134), kept per device and hub, ids only (spec/fixtures/recents). The rules are in the fixtures; these are the shapes they read and write.",
+  "x-out": {
+    "ts": "web/src/lib/recents-wire.ts",
+    "swift": "apple/Packages/PersonaWire/Sources/PersonaWire/RecentsWire.swift"
+  },
+  "$defs": {
+    "RecentSetup": {
+      "description": "One setup that started an Agent from New Agent: the ids its fields held, never a message. `launcher` and `model` are \"\" for the configured defaults; `mode` and `effort` are \"\" unless the agent is Claude Code.",
+      "type": "object",
+      "required": [
+        "machine",
+        "cwd",
+        "launcher",
+        "model",
+        "agent_type",
+        "mode",
+        "effort",
+        "at"
+      ],
+      "properties": {
+        "machine": {
+          "type": "string",
+          "description": "The client's machine key: the machine id, \"group|id\" for another group of hubs."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "The folder picked (not the worktree a start made in it)."
+        },
+        "launcher": {
+          "type": "string",
+          "description": "\"\" follows the model configuration."
+        },
+        "model": {
+          "type": "string",
+          "description": "\"\" is the launcher's default model."
+        },
+        "agent_type": {
+          "type": "string",
+          "description": "claude, codex or another runtime."
+        },
+        "mode": {
+          "type": "string",
+          "description": "Claude Code's permission mode; \"\" for the launcher's own and for every other agent."
+        },
+        "effort": {
+          "type": "string",
+          "description": "Claude Code's thinking effort; \"\" as for mode."
+        },
+        "at": {
+          "type": "string",
+          "description": "RFC 3339, when it started."
+        }
+      }
+    }
+  }
+}

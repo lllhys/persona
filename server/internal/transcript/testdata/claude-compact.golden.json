@@ -191,7 +191,7 @@
     "effort": "xhigh",
     "turns": 0,
     "compactions": 1,
-    "context_tokens": 582634,
+    "context_tokens": 0,
     "output_tokens": 3035,
     "last_activity": "2026-01-01T00:01:17.369Z"
   }

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor
 struct ChatStoreTests {
@@ -49,6 +50,19 @@ struct ChatStoreTests {
         for _ in 0..<50 where s.rows.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
         s.merge(items, backlog: true, hasMore: false) // the hub's page holds what the cache had: no rebuild comes
         #expect(s.backlogBuilt)
+    }
+
+    @Test func everyOlderCacheFolderIsRemovedNotOnlyThePreviousOne() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let older = ["chats", "chats-v2", "chats-v11", "chats-v16"]
+        let others = [ChatCache.folder, "chat-images", "chats-vX", "state"]
+        for name in older + others {
+            try FileManager.default.createDirectory(at: base.appending(path: name), withIntermediateDirectories: true)
+        }
+        ChatCache.removeOlderFolders(in: base)
+        let left = try FileManager.default.contentsOfDirectory(atPath: base.path)
+        #expect(Set(left) == Set(others))
     }
 
     @Test func duplicateCachedIDsDoNotCrashWhenBacklogRepeatsThem() throws {
@@ -304,52 +318,95 @@ struct TurnTests {
         if case .assistant(let a) = t.answer { #expect(a.text == "the command finished") } else { Issue.record("answer") }
     }
 
-    @Test func backgroundWakeEndsOnTheNewestWords() {
+    /// #9140: a background task that wakes the idle agent starts an exchange of its own. The turn before it had ended,
+    /// so its last words stay its answer; the chat still ends on the newest words (#3783), now the woken exchange's.
+    @Test func aBackgroundWakeOpensItsOwnExchange() {
         var wake = item(4, .notice, role: "system", text: "Background command \"Release\" completed (exit code 0)")
         wake.wake = true
         let summary = "All four are done and pushed; here is what changed and how to try each of them on the phone."
 
-        // A full summary, then a short follow-up once the build is up: the follow-up is the answer (#3783: the
-        // longest used to be, and the follow-up went into the drawer); the summary is in the work before it.
+        // A full summary, then a short follow-up once the build is up: each is the answer of its own exchange.
         var items = [
             item(1, .text, role: "user", text: "go"), item(2, .toolUse, tool: "Bash", id: "a"),
             item(3, .text, text: summary),
             wake, item(5, .toolUse, tool: "Bash", id: "b"), item(6, .text, text: "build 42 is up"),
         ]
         var blocks = ChatBlock.build(ChatStore.buildRows(items))
-        #expect(blocks.count == 1) // one exchange, not split at the wake
-        guard case .turn(let a) = blocks[0] else { Issue.record("turn"); return }
-        if case .assistant(let i) = a.answer { #expect(i.text == "build 42 is up") } else { Issue.record("answer") }
-        #expect(a.wakes.map(\.id) == [wake.id])
-        #expect(a.tail.isEmpty) // nothing after the newest words
-        #expect(a.ordered.last?.id == "6#0")
-        #expect(a.process.contains { $0.id == "3#0" }) // the summary: in the work line
-        // Woken, at work, no new words yet: the pending continuation stays in the ordinary execution summary.
+        guard blocks.count == 2, case .turn(let a) = blocks[0], case .turn(let woken) = blocks[1] else { Issue.record("two turns \(blocks)"); return }
+        if case .assistant(let i) = a.answer { #expect(i.text == summary) } else { Issue.record("answer") }
+        #expect(a.wakes.isEmpty && a.ordered.map(\.id) == ["1#0", "tools-2#0", "3#0"])
+        #expect(woken.users.isEmpty && woken.wakes.map(\.id) == [wake.id])
+        if case .assistant(let i) = woken.answer { #expect(i.text == "build 42 is up") } else { Issue.record("answer") }
+        #expect(woken.ordered.first?.id == wake.id && woken.ordered.last?.id == "6#0")
+        #expect(!woken.process.contains { $0.id == "3#0" }) // the summary is no step of the woken work
+        // Woken, at work, no new words yet: the answer before the wake is untouched, the new work is the woken exchange's.
         blocks = ChatBlock.build(ChatStore.buildRows(Array(items.prefix(5))))
-        guard case .turn(let w) = blocks[0] else { Issue.record("turn"); return }
-        if case .assistant(let i) = w.answer { #expect(i.text == summary) } else { Issue.record("answer") }
-        #expect(w.hasPendingWake)
+        guard blocks.count == 2, case .turn(let before) = blocks[0], case .turn(let w) = blocks[1] else { Issue.record("two turns"); return }
+        if case .assistant(let i) = before.answer { #expect(i.text == summary) } else { Issue.record("answer") }
+        #expect(w.answer == nil && w.process.count == 2) // the wake, its tool
 
-        // "Waiting for it", then the summary after the wake: the summary is the answer, and every tool before it
-        // (the wake included) is one stretch of work.
+        // "Waiting for it", then the summary after the wake: the same split whichever words are longer.
         items = [
             item(1, .text, role: "user", text: "go"), item(2, .toolUse, tool: "Bash", id: "a"),
             item(3, .text, text: "waiting for the build"),
             wake, item(5, .toolUse, tool: "Bash", id: "b"), item(6, .text, text: summary),
         ]
         blocks = ChatBlock.build(ChatStore.buildRows(items))
-        guard case .turn(let b) = blocks[0], blocks.count == 1 else { Issue.record("turn"); return }
-        if case .assistant(let i) = b.answer { #expect(i.text == summary) } else { Issue.record("answer") }
-        #expect(b.tail.isEmpty && b.process.count == 4) // tool, interim words, wake, tool
+        guard blocks.count == 2, case .turn(let b0) = blocks[0], case .turn(let b1) = blocks[1] else { Issue.record("two turns"); return }
+        if case .assistant(let i) = b0.answer { #expect(i.text == "waiting for the build") } else { Issue.record("answer") }
+        if case .assistant(let i) = b1.answer { #expect(i.text == summary) } else { Issue.record("answer") }
+        #expect(b0.process.count == 1 && b1.process.count == 2) // its tool; the wake and its tool
 
         // Absorbed mid-turn (no wake): an ordinary turn, the last words are the answer.
         wake.wake = nil
         blocks = ChatBlock.build(ChatStore.buildRows(items.map { $0.seq == 4 ? wake : $0 }))
-        guard case .turn(let c) = blocks[0] else { Issue.record("turn"); return }
+        guard blocks.count == 1, case .turn(let c) = blocks[0] else { Issue.record("one turn"); return }
         #expect(c.wakes.isEmpty)
+        if case .assistant(let i) = c.answer { #expect(i.text == summary) } else { Issue.record("answer") }
     }
 
-    @Test func wakeAfterARecapStaysInItsExchange() {
+    /// The issue's timeline (#9140): a background check for A is still running when B is asked and answered in full;
+    /// then its notifications wake the agent three times. Four final texts lie between the two messages, and each is
+    /// the answer of its own exchange.
+    @Test func theAnswerToANewerQuestionSurvivesLaterWakes() {
+        func wake(_ seq: Int) -> Item {
+            var n = item(seq, .notice, role: "system", text: "Background command \"Timetable check\" completed (exit code 0)")
+            n.wake = true
+            return n
+        }
+        let packing = "Pack a rain jacket, two shirts and walking shoes."
+        let items = [
+            item(1, .text, role: "user", text: "Check which trains run on Saturday."), item(2, .toolUse, tool: "Bash", id: "a"),
+            item(3, .text, text: "The timetable check is running in the background."),
+            item(4, .text, role: "user", text: "What should I pack for two days?"), item(5, .text, text: packing),
+            wake(6), item(7, .toolUse, tool: "Bash", id: "b"), item(8, .text, text: "First result: the 08:10 runs on Saturday."),
+            wake(9), item(10, .text, text: "Second result: the 10:40 runs too."),
+            wake(11), item(12, .toolUse, tool: "Bash", id: "c"), item(13, .text, text: "All done: three trains run on Saturday."),
+            item(14, .text, role: "user", text: "Thanks. Book the 08:10."),
+        ]
+        let turns = ChatBlock.build(ChatStore.buildRows(items)).compactMap { if case .turn(let t) = $0 { t } else { nil } }
+        #expect(turns.map(\.id) == ["1#0", "4#0", "6#0", "9#0", "11#0", "14#0"])
+        #expect(turns.map { $0.answer?.id } == ["3#0", "5#0", "8#0", "10#0", "13#0", nil])
+        #expect(turns[1].process.isEmpty, "the answer to B is no step of any exchange's work")
+        // The lines: B's answer is a reply row of its own, each woken exchange opens with its notice.
+        let lines = ChatLines(openWork: []).build(ChatBlock.build(ChatStore.buildRows(items)), live: nil)
+        let drawn = lines.map { line -> String in
+            switch line.content {
+            case .row(.user): "user"
+            case .row(.assistant(let i)): "reply:" + i.id
+            case .row(.notice(let i)): "notice:" + i.id
+            case .work(let id, _, _, _, _): id
+            default: "other"
+            }
+        }
+        #expect(drawn == ["user", "w-1#0", "reply:3#0", "user", "reply:5#0", "notice:6#0", "w-6#0", "reply:8#0",
+                          "notice:9#0", "reply:10#0", "notice:11#0", "w-11#0", "reply:13#0", "user"])
+        for case .work(_, let steps, _, _, _) in lines.map(\.content) {
+            #expect(!steps.contains { if case .text(let i) = $0 { i.id == "5#0" } else { false } })
+        }
+    }
+
+    @Test func aWakeAfterARecapOpensItsExchangeAfterTheRecap() {
         var wake = item(4, .notice, role: "system", text: "Background command \"Release\" completed (exit code 0)")
         wake.wake = true
         let summary = "Agent tags and XML handling are done and pushed; the build is still packaging."
@@ -359,10 +416,13 @@ struct TurnTests {
             wake, item(5, .toolUse, tool: "Bash", id: "b"), item(6, .text, text: "build 42 is up"),
         ]
         let blocks = ChatBlock.build(ChatStore.buildRows(items))
-        #expect(blocks.count == 2) // the exchange (wake folded in), then the recap card where it was
-        guard case .turn(let t) = blocks[0], case .row(.recap) = blocks[1] else { Issue.record("shape \(blocks)"); return }
-        if case .assistant(let a) = t.answer { #expect(a.text == "build 42 is up") } else { Issue.record("answer") }
-        #expect(t.wakes.count == 1 && t.tail.isEmpty)
+        // the exchange with its answer, the recap card where it was, then the woken exchange
+        guard blocks.count == 3, case .turn(let t) = blocks[0], case .row(.recap) = blocks[1], case .turn(let woken) = blocks[2] else {
+            Issue.record("shape \(blocks)"); return
+        }
+        if case .assistant(let a) = t.answer { #expect(a.text == summary) } else { Issue.record("answer") }
+        if case .assistant(let a) = woken.answer { #expect(a.text == "build 42 is up") } else { Issue.record("answer") }
+        #expect(t.wakes.isEmpty && woken.wakes.count == 1)
     }
 
     @Test func catchUpNeverEndsTheHistory() {
@@ -577,9 +637,11 @@ struct TurnTests {
         let items = [item(1, .text, role: "user", text: "开始"), item(2, .text, text: "好的，在跑"), wake,
                      item(4, .text, text: "跑完了，结果如下：……"), msg, img, item(6, .text, text: "收到")]
         let blocks = ChatBlock.build(ChatStore.buildRows(items))
-        guard case .turn(let t) = blocks.last else { Issue.record("no turn"); return }
+        // the picture is with its message in the woken exchange, which took the message in
+        guard blocks.count == 2, case .turn(let t) = blocks.last else { Issue.record("no turn"); return }
+        #expect(t.id == wake.id && t.users.map(\.id) == ["m#0", "m#1"])
         #expect(t.ordered.contains { if case .image(let i) = $0 { i.id == "m#1" } else { false } })
-        #expect(!t.tail.contains { if case .image = $0 { true } else { false } })
+        #expect(!t.process.contains { if case .image = $0 { true } else { false } })
     }
 
     @Test func contextTagRoundTrips() {

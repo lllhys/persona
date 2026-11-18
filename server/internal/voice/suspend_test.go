@@ -26,7 +26,9 @@ import (
 
 // sessionsUp is a live service that keeps each session's frames apart, in the order the sessions began; with hand, its
 // model hands every line the user types over as a client delegation (dlg1, dlg2…). refuse says whether session n
-// (from 0) is refused: closed before it starts; drops (set before the call) whether it is closed as soon as it started.
+// (from 0) is refused: closed before it starts; drops (set before the call) whether it is closed as soon as it started;
+// slow (set before the call, slowStart) what session n's start waits for: it starts once that is closed (nil: at once).
+// It starts a realtime dialect's session too (its session.update), as an otherwise silent service.
 type sessionsUp struct {
 	*fakeUpstream
 	mu       sync.Mutex
@@ -34,6 +36,7 @@ type sessionsUp struct {
 	conns    []*websocket.Conn
 	ids      map[*websocket.Conn]int
 	drops    func(n int) bool
+	slow     func(n int) <-chan struct{}
 }
 
 func newSessionsUp(t *testing.T, hand bool, refuse func(n int) bool) *sessionsUp {
@@ -50,10 +53,15 @@ func newSessionsUp(t *testing.T, hand bool, refuse func(n int) bool) *sessionsUp
 		s.sessions[n] = append(s.sessions[n], f)
 		s.mu.Unlock()
 		switch f["type"] {
-		case "session.start":
+		case "session.start", "session.update":
 			if refuse != nil && refuse(n) {
 				_ = c.Close(websocket.StatusGoingAway, "not now")
 				return
+			}
+			if s.slow != nil {
+				if wait := s.slow(n); wait != nil {
+					<-wait
+				}
 			}
 			u.send(c, map[string]any{"type": "session.started", "session": map[string]any{}})
 			if s.drops != nil && s.drops(n) {
@@ -66,6 +74,22 @@ func newSessionsUp(t *testing.T, hand bool, refuse func(n int) bool) *sessionsUp
 		}
 	})
 	return s
+}
+
+// slowStart makes session n slow to start (set before the call): its start waits until release, which the test calls
+// once it has done what it does meanwhile, and which the test's end calls at the latest (a failed assertion leaves no
+// start waiting).
+func (s *sessionsUp) slowStart(t *testing.T, n int) (release func()) {
+	started := make(chan struct{})
+	release = sync.OnceFunc(func() { close(started) })
+	t.Cleanup(release)
+	s.slow = func(i int) <-chan struct{} {
+		if i == n {
+			return started
+		}
+		return nil
+	}
+	return release
 }
 
 // count is how many sessions began.
@@ -112,6 +136,13 @@ func (s *sessionsUp) audio(n int) (amps []int16, bytes []int) {
 		amps, bytes = append(amps, int16(uint16(b[0])|uint16(b[1])<<8)), append(bytes, len(b))
 	}
 	return amps, bytes
+}
+
+// conn is session n's socket, for the test to send its events on.
+func (s *sessionsUp) conn(n int) *websocket.Conn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conns[n]
 }
 
 // drop closes session n's socket, as a service that restarts does.
@@ -490,7 +521,7 @@ func TestFlushAfterTheWokenSessionDropped(t *testing.T) {
 	}
 
 	c.mu.Lock()
-	c.gate.told(time.Now()) // the reconnected session's snapshot has the agent's new words
+	c.gate.told(time.Now(), agentReconnect) // the reconnected session's snapshot has the agent's new words
 	at := c.gate.agent
 	c.mu.Unlock()
 	third := &recLink{left: -1}
@@ -718,12 +749,15 @@ func TestPauseDue(t *testing.T) {
 	if !may().pauseDue(now) {
 		t.Fatal("a quiet call whose conversation works does not pause")
 	}
+	// What still holds a pause off on hold (#9290): no session to pause, or a meeting call. Everything else does not.
+	hard := map[string]bool{"protocol 1": true, "paused": true, "reconnecting": true, "over": true, "a meeting call": true}
 	for what, set := range map[string]func(c *conversation){
 		"protocol 1":             func(c *conversation) { c.version = 1 },
 		"it does not work":       func(c *conversation) { c.sus.works = false },
 		"paused":                 func(c *conversation) { c.sus.state = linkPaused },
 		"reconnecting":           func(c *conversation) { c.ready, c.up = false, nil },
 		"over":                   func(c *conversation) { c.closed = true },
+		"a meeting call":         func(c *conversation) { c.meeting = &meetingCall{} },
 		"the model speaks":       func(c *conversation) { c.pace.playEnd = now.Add(time.Second) },
 		"the model spoke lately": func(c *conversation) { c.pace.playEnd = recent },
 		"the user's voice":       func(c *conversation) { c.pace.voice = recent },
@@ -741,6 +775,17 @@ func TestPauseDue(t *testing.T) {
 		if c.pauseDue(now) {
 			t.Errorf("%s: it pauses", what)
 		}
+		c = may()
+		set(c)
+		c.sus.onHold = true
+		if c.pauseDue(now) != !hard[what] {
+			t.Errorf("%s, on hold: it pauses %v", what, c.pauseDue(now))
+		}
+	}
+	idle := may()
+	idle.sus.works, idle.connectedAt, idle.sus.onHold = false, now, true
+	if !idle.pauseDue(now) {
+		t.Error("on hold: an idle call that just connected does not pause")
 	}
 }
 

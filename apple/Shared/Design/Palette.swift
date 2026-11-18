@@ -12,4 +12,8 @@ nonisolated enum Palette {
     static let recordingRed = Color(light: 0xFF3B30, dark: 0xFF453A)
     /// The same red dark enough for a white label on it (4.6:1): the recording Live Activity's Stop button.
     static let recordingButton = Color(light: 0xD70015, dark: 0xD70015)
+    /// Green: unread / awaiting a reply (`StatusPalette`), and the recording Live Activity's waveform while it records.
+    static let green = Color(light: 0x30A46C, dark: 0x4CC38A)
+    /// Purple (`Theme.Hue.purple`): the recording Live Activity's box around Persona's answer.
+    static let purple = Color(light: 0x7A5AF8, dark: 0x9D8BFF)
 }

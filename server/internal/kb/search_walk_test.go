@@ -14,7 +14,7 @@ import (
 // searchByWalk is Search as it was before it took the data dir's files from Find's walk: filepath.WalkDir over the
 // whole data dir on every call, every file read afresh. Search must still return what it returns, but for the files
 // under history/ (bookkeeping, never written as days by the store) and a data dir reached through a symlink, which
-// WalkDir did not enter.
+// WalkDir did not enter. A chat's messages/.zone it skips as Search does since #5991.
 func searchByWalk(e *Engine, query string, messages bool, limit int) []Hit {
 	match := matcher(query)
 	if match == nil {
@@ -26,7 +26,7 @@ func searchByWalk(e *Engine, query string, messages bool, limit int) []Hit {
 		if len(hits) >= limit {
 			return
 		}
-		raw, err := os.ReadFile(p)
+		raw, err := scanRead(p)
 		if err != nil || !hasAll(fold(string(raw)), ws) {
 			return
 		}
@@ -57,7 +57,7 @@ func searchByWalk(e *Engine, query string, messages bool, limit int) []Hit {
 			}
 		case strings.Contains(p, sep+"attachments"+sep):
 		case strings.Contains(p, sep+"messages"+sep):
-			if messages {
+			if messages && (rerr != nil || searchable(rel)) {
 				days = append(days, p)
 			}
 		case filepath.Base(p) == "segments.json":
@@ -132,6 +132,7 @@ func edgeEngine(t *testing.T) *Engine {
 		"README.md",
 		"notes.txt",
 		"chats/lark-a/summary.md", "chats/lark-a/log.md",
+		"chats/lark-a/.receipts.json", "chats/lark-a/.ingest.json", "chats/lark-a/messages/.zone",
 		"chats/lark-a/messages/2026-10-01.md", "chats/lark-a/messages/2026-10-02.md",
 		"chats/lark-b/messages/2026-10-01.md", "chats/lark-b/messages/2026-10-03.md",
 		"chats/lark-a/messages/notes.txt", "chats/lark-a/messages/sub/2026-10-04.md",
@@ -278,7 +279,9 @@ func filesByWalk(e *Engine) []string {
 					walk(p)
 				}
 			case strings.Contains(p, sep+"messages"+sep):
-				days = append(days, p)
+				if searchable(rel) {
+					days = append(days, p)
+				}
 			case d.Name() == "segments.json":
 			case !searchable(rel):
 			case strings.HasSuffix(p, ".md") || strings.HasSuffix(p, ".json"):

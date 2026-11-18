@@ -1,0 +1,314 @@
+package persona.feature.chat
+
+import android.graphics.Bitmap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import coil3.ImageLoader
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.json.JsonObject
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import persona.core.contracts.*
+import persona.core.contracts.api.*
+import persona.core.designsystem.*
+import persona.core.domain.tasks.*
+import java.io.File
+
+/**
+ * #4339 C13: the open plan card in Persona's conversation, as iOS's `FeedLine` draws it (Glass): the plan's tasks, where each
+ * would run, "Start these directly", Start, Edit and Don't start, then the dispatched line once the hub started it and
+ * "Not started · N tasks" once it was dismissed. Brief and Board keep their plans behind the trays. Native JVM captures of the
+ * real renderers, with synthetic data; the words in the app's three languages.
+ */
+@RunWith(AndroidJUnit4::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35], qualifiers = "en-w400dp-h1200dp-xhdpi")
+class PlanCardConversationTest {
+    @get:Rule val rule = createComposeRule()
+    private val session = SessionKey("computer", "main")
+    private fun at(n: Int) = "2026-11-12T10:00:${n.toString().padStart(2, '0')}Z"
+    private val notes = PlanTask("Write the release notes", prompt = "Draft them from this week's pull requests", machine = "mac",
+        cwd = "/w/shop", permission = "acceptEdits", why = "It only touches the docs folder")
+    private val crash = PlanTask("Look into the crash report", machine = "box", cwd = "/srv/app", model = "opus", readonly = true)
+    private val plan = TaskPlan("plan", "main", listOf(notes, crash), "open", at(3))
+    private val single = TaskPlan("single", "main", listOf(PlanTask("Tidy the changelog", machine = "mac", cwd = "/w/shop")), "open", at(4))
+    private val transcript = listOf(
+        Item("ask", 1, ts = at(0), role = "user", kind = "text", text = "Can you write the release notes and look into the crash?"),
+        Item("answer", 2, ts = at(1), role = "assistant", kind = "text", text = "I made a plan; start it when you are ready."),
+    )
+    private val feed = listOf(FeedItem("plan-feed", "main", at(3), "plan", "plan"))
+    private val machines = mapOf("mac" to "Work laptop", "box" to "Build server")
+
+    /** What the hub is asked, and how it answers: Start comes back started with its to-dos made, Don't start dismissed. */
+    private class Api(val plans: List<TaskPlan>) : TasksApi {
+        var started: Pair<String, Boolean>? = null
+        var dismissed: String? = null
+        var made = emptyList<Todo>()
+        override suspend fun todos() = made
+        override suspend fun feed(conversation: String, since: String?) = FeedResponse(emptyList(), plans.associateBy { it.id })
+        override suspend fun startPlan(id: String, remember: Boolean): TaskPlan {
+            started = id to remember
+            val p = plans.first { it.id == id }
+            made = p.tasks.mapIndexed { n, t -> Todo("todo-$n", t.title, origin = "main", planId = id, createdAt = "2026-11-12T10:00:30Z") }
+            return p.copy(state = "started", tasks = p.tasks.mapIndexed { n, t -> t.copy(todoId = "todo-$n") })
+        }
+        override suspend fun dismissPlan(id: String): TaskPlan { dismissed = id; return plans.first { it.id == id }.copy(state = "dismissed") }
+        override suspend fun retryTask(todoId: String): Todo = error("unused")
+        override suspend fun removeTask(todoId: String) = Unit
+        override suspend fun route(conversation: String, todoId: String, text: String): FeedItem = error("unused")
+        override suspend fun today(conversation: String): FeedItem = error("unused")
+        override suspend fun mainConversation(): String? = null
+        override suspend fun inboxReply(itemId: String, text: String, card: String?) = Unit
+    }
+
+    private class Connection : HubConnection {
+        override val state = MutableStateFlow(ConnectionState.WaitingForNetwork)
+        override val events = MutableSharedFlow<ServerEvent>()
+        override fun reconnect() = Unit
+        override fun send(message: JsonObject) = true
+    }
+
+    private lateinit var api: Api
+
+    /** [alone]: that plan's card by itself, given as the tray's sheet captured it, not the conversation's lines. */
+    private fun show(style: AppStyle, dark: MutableState<Boolean> = mutableStateOf(false), plans: List<TaskPlan> = listOf(plan),
+        items: List<FeedItem> = feed, alone: TaskPlan? = null) {
+        api = Api(plans)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val store = TasksStore(api, Connection(), scope)
+        store.load("main")
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            PersonaTheme(darkTheme = dark.value, reduceMotion = true, style = style) {
+                val context = LocalContext.current
+                val loader = remember { ImageLoader.Builder(context).build() }
+                DisposableEffect(loader) { onDispose { loader.shutdown(); scope.cancel() } }
+                val todos by store.todos.collectAsState()
+                val current by store.plans.collectAsState()
+                val host = AssistantTaskHost(store, "main", emptyList(), { machines[it] ?: it }, {}, { throw it }, {})
+                val original = ChatTimeline().lines(transcript, false, emptySet()).lines
+                val lines = AssistantTaskCards.lines(AssistantConversation.project(original, transcript).foreground, items, current, todos,
+                    inline = style == AppStyle.Glass)
+                CompositionLocalProvider(LocalAssistantTaskHost provides host, LocalHomeChrome provides HomeChrome(
+                    listOf(NavItem("assistant", "Assistant", persona.core.designsystem.icons.PhIcons.House)), "assistant", onSelect = {}, leading = {})) {
+                    Column(Modifier.fillMaxWidth().testTag("plan-shot").background(PersonaTheme.palette.background)
+                        .padding(Tokens.Space.l), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
+                        if (alone != null) PlanCard(alone, host)
+                        else lines.forEach { line -> key(line.contentKey) {
+                            ChatLineContent(line, session, loader, null, onToggle = {}, onFold = {}, folding = emptySet(),
+                                foldErrors = emptyMap(), onFullText = {}, style = ChatRenderStyle.Assistant)
+                        } }
+                    }
+                }
+            }
+        }
+        settle()
+    }
+
+    private fun settle() {
+        Snapshot.sendApplyNotifications()
+        repeat(4) { rule.mainClock.advanceTimeByFrame() }
+        rule.mainClock.advanceTimeBy(500)
+    }
+
+    private fun capture(name: String): Int {
+        val directory = File(System.getProperty("persona.shots") ?: "build/plan-card-shots").also { it.mkdirs() }
+        val bitmap = rule.onNodeWithTag("plan-shot").captureToImage().asAndroidBitmap()
+        File(directory, "$name.png").outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        return bitmap.getPixel(2, 2)
+    }
+
+    @Test fun glassDrawsTheOpenPlanAsIOSDoesLightAndDark() {
+        val dark = mutableStateOf(false)
+        show(AppStyle.Glass, dark)
+        val colors = mutableListOf<Int>()
+        for (night in listOf(false, true)) {
+            dark.value = night; settle()
+            // iOS `PlanCard.open`: what it does, then each task with where it would run and why
+            rule.onNodeWithTag("plan-heading").assertTextEquals("Split into 2 tasks, started like this")
+            rule.onNodeWithText("Write the release notes").assertIsDisplayed()
+            rule.onNodeWithText("Look into the crash report").assertIsDisplayed()
+            // the number disc only when there are several tasks
+            rule.onNodeWithText("1").assertIsDisplayed()
+            rule.onNodeWithText("2").assertIsDisplayed()
+            for (chip in listOf("Work laptop", "shop", "Default model", "Can edit files", "Build server", "app", "Opus", "Read-only requested"))
+                rule.onNodeWithText(chip).assertIsDisplayed()
+            rule.onNodeWithText("It only touches the docs folder").assertIsDisplayed()
+            // the choice, then the three actions in iOS's order
+            rule.onNodeWithTag("plan-directly").assertIsDisplayed().assertIsOff()
+            rule.onNodeWithText("Start directly here and in subfolders").assertIsDisplayed()
+            rule.onNodeWithTag("plan-start-plan").assertTextEquals("Start 2 tasks").assertIsEnabled()
+            rule.onNodeWithTag("plan-edit-plan").assertTextEquals("Edit")
+            rule.onNodeWithTag("plan-dismiss-plan").assertTextEquals("Don't start")
+            colors += capture("plan-glass-${if (night) "dark" else "light"}")
+        }
+        assertNotEquals("dark capture must differ from light", colors[0], colors[1])
+    }
+
+    @Test fun glassDrawsASingleTaskPlanWithoutNumbersAndAPlanThatWasNotStarted() {
+        val dismissed = TaskPlan("off", "main", listOf(PlanTask("Rename the old branches", machine = "mac", cwd = "/w/shop"),
+            PlanTask("Delete the stale tags", machine = "mac", cwd = "/w/shop")), "dismissed", at(2))
+        show(AppStyle.Glass, plans = listOf(single, dismissed), items = listOf(FeedItem("off-feed", "main", at(2), "plan", "off"),
+            FeedItem("single-feed", "main", at(4), "plan", "single")))
+        rule.onNodeWithTag("plan-heading").assertTextEquals("Start like this")
+        rule.onNodeWithTag("plan-start-single").assertTextEquals("Start")
+        // no number disc for one task
+        rule.onAllNodesWithText("1").assertCountEquals(0)
+        // iOS's `settled`: a cross and "Not started · N tasks", no buttons for it
+        rule.onNodeWithTag("plan-not-started").assertIsDisplayed()
+        rule.onNodeWithText("Not started · 2 tasks").assertIsDisplayed()
+        rule.onAllNodesWithTag("plan-start-off").assertCountEquals(0)
+        capture("plan-glass-single-and-not-started")
+    }
+
+    @Test fun startAsksTheHubOnceAndTheDispatchedLineTakesTheCardsPlace() {
+        show(AppStyle.Glass)
+        rule.onNodeWithTag("plan-start-plan").performClick(); settle()
+        assertEquals("plan" to false, api.started)
+        rule.onAllNodesWithTag("plan-card-plan").assertCountEquals(0)
+        rule.onNodeWithTag("assistant-dispatch-hint").assertIsDisplayed()
+        rule.onNodeWithText("Write the release notes").assertIsDisplayed()
+        rule.onNodeWithText("Look into the crash report").assertIsDisplayed()
+        capture("plan-glass-dispatched")
+    }
+
+    @Test fun aCardLeftOpenFollowsItsPlanOnceStartedInsteadOfOfferingStartAgain() {
+        // The tray's sheet keeps the plan it was opened with; the card reads the store's latest of it.
+        show(AppStyle.Glass, alone = plan)
+        rule.onNodeWithTag("plan-start-plan").performClick(); settle()
+        assertEquals("plan" to false, api.started)
+        rule.onAllNodesWithTag("plan-start-plan").assertCountEquals(0)
+        rule.onNodeWithText("✓ Started 2 tasks").assertIsDisplayed()
+    }
+
+    private val named = TaskPlan("named", "main", listOf(
+        PlanTask("Look at the raw id", machine = "mac", cwd = "/w/a", model = "claude-opus-4-8[1m]"),
+        PlanTask("Start on a launcher", machine = "mac", cwd = "/w/b", launcher = "claude-kimi"),
+        PlanTask("Start on the default", machine = "mac", cwd = "/w/c"),
+    ), "open", at(5))
+
+    private fun namesTheModels() {
+        rule.onNodeWithText("Opus 4.8").assertIsDisplayed()
+        rule.onNodeWithText("Claude Kimi").assertIsDisplayed()
+        rule.onNodeWithText("Default model").assertIsDisplayed()
+        // never the raw id on the card (DESIGN_SYSTEM.md 5.6); iOS writes it as it is
+        rule.onAllNodesWithText("claude-opus-4-8[1m]").assertCountEquals(0)
+        rule.onAllNodesWithText("claude-kimi").assertCountEquals(0)
+    }
+
+    @Test fun glassNamesAModelByItsShortNameAndTheEditFieldKeepsTheRawValue() {
+        show(AppStyle.Glass, plans = listOf(named), items = listOf(FeedItem("named-feed", "main", at(5), "plan", "named")))
+        namesTheModels()
+        // what the task starts with stays as it is: the field holds the raw id, which is what Start sends
+        rule.onNodeWithTag("plan-edit-named").performClick(); settle()
+        rule.onNode(hasText("claude-opus-4-8[1m]") and hasSetTextAction()).assertExists()
+    }
+
+    private fun aTraySheetsCardNamesTheModelsToo(style: AppStyle) {
+        show(style, plans = listOf(named), alone = named)
+        namesTheModels()
+    }
+
+    @Test fun briefsCardNamesTheModelsToo() = aTraySheetsCardNamesTheModelsToo(AppStyle.Brief)
+    @Test fun boardsCardNamesTheModelsToo() = aTraySheetsCardNamesTheModelsToo(AppStyle.Board)
+
+    @Test fun startTheseDirectlyGoesWithStart() {
+        show(AppStyle.Glass)
+        rule.onNodeWithTag("plan-directly").performClick(); settle()
+        rule.onNodeWithTag("plan-directly").assertIsOn()
+        rule.onNodeWithTag("plan-start-plan").performClick(); settle()
+        assertEquals("plan" to true, api.started)
+    }
+
+    @Test fun dontStartLeavesTheNotStartedLine() {
+        show(AppStyle.Glass)
+        rule.onNodeWithTag("plan-dismiss-plan").performClick(); settle()
+        assertEquals("plan", api.dismissed)
+        rule.onAllNodesWithTag("plan-card-plan").assertCountEquals(0)
+        rule.onNodeWithText("Not started · 2 tasks").assertIsDisplayed()
+    }
+
+    @Test fun editOpensTheEditSheetBeforeAnythingStarts() {
+        show(AppStyle.Glass)
+        rule.onNodeWithTag("plan-edit-plan").performClick(); settle()
+        rule.onNode(hasText("Edit plan")).assertExists()
+        assertNull(api.started)
+    }
+
+    private fun bounds(tag: String) = rule.onNodeWithTag(tag).getBoundsInRoot()
+
+    @Test fun theThreeActionsShareARowWhileStartsWholeLabelFits() {
+        show(AppStyle.Glass)
+        val start = bounds("plan-start-plan"); val edit = bounds("plan-edit-plan"); val dismiss = bounds("plan-dismiss-plan")
+        assertTrue("in iOS's order, side by side", start.right <= edit.left && edit.right <= dismiss.left)
+        assertEquals("one row", start.top.value, edit.top.value, 1f)
+        assertEquals("one row", start.top.value, dismiss.top.value, 1f)
+    }
+
+    @Config(qualifiers = "ja-w360dp-h1200dp-xhdpi")
+    @Test fun startHasARowOfItsOwnWhenItsLabelWouldBeCutBesideTheOthers() {
+        // At 14sp the three Japanese labels fit in a 400 dp card; 360 dp leaves too little room, so Start stacks instead of being cut.
+        show(AppStyle.Glass)
+        val start = bounds("plan-start-plan"); val edit = bounds("plan-edit-plan"); val dismiss = bounds("plan-dismiss-plan")
+        assertTrue("Start above the other two", edit.top >= start.bottom && dismiss.top >= start.bottom)
+        assertEquals("the other two share a row", edit.top.value, dismiss.top.value, 1f)
+        assertTrue("in order", edit.right <= dismiss.left)
+        assertEquals("Start is the card's whole width", (start.right - start.left).value, (dismiss.right - edit.left).value, 1f)
+        capture("plan-glass-ja-stacked")
+    }
+
+    @Config(qualifiers = "en-w320dp-h1200dp-xhdpi")
+    @Test fun aNarrowPhoneKeepsEveryLabelWhole() {
+        show(AppStyle.Glass)
+        val start = bounds("plan-start-plan"); val edit = bounds("plan-edit-plan"); val dismiss = bounds("plan-dismiss-plan")
+        // wherever they sit, none overlaps another and all stay inside the card
+        assertTrue("Start and Edit do not overlap", start.right <= edit.left || start.bottom <= edit.top)
+        assertTrue("Edit and Don't start do not overlap", edit.right <= dismiss.left || edit.bottom <= dismiss.top)
+        assertTrue(dismiss.right.value <= 320f)
+        capture("plan-glass-320")
+    }
+
+    private fun keepsThePlanBehindTheTrays(style: AppStyle) {
+        show(style)
+        rule.onAllNodesWithTag("plan-card-plan").assertCountEquals(0)
+        rule.onNodeWithText("Split into 2 tasks, started like this").assertDoesNotExist()
+        rule.onNodeWithText("Start 2 tasks").assertDoesNotExist()
+        // the conversation is its two messages alone
+        rule.onNodeWithText("I made a plan; start it when you are ready.").assertIsDisplayed()
+        capture("plan-${style.name.lowercase()}-light")
+    }
+
+    @Test fun briefKeepsThePlanBehindTheTrays() = keepsThePlanBehindTheTrays(AppStyle.Brief)
+    @Test fun boardKeepsThePlanBehindTheTrays() = keepsThePlanBehindTheTrays(AppStyle.Board)
+
+    private fun words(language: String, heading: String, start: String, edit: String, dismiss: String, directly: String) {
+        show(AppStyle.Glass)
+        rule.onNodeWithTag("plan-heading").assertTextEquals(heading)
+        rule.onNodeWithTag("plan-start-plan").assertTextEquals(start)
+        rule.onNodeWithTag("plan-edit-plan").assertTextEquals(edit)
+        rule.onNodeWithTag("plan-dismiss-plan").assertTextEquals(dismiss)
+        rule.onNodeWithText(directly).assertIsDisplayed()
+        capture("plan-glass-$language")
+    }
+
+    @Config(qualifiers = "zh-w400dp-h1200dp-xhdpi")
+    @Test fun simplifiedChinese() = words("zh", "拆成 2 件事，这样开", "开始 2 个任务", "改一下", "不开", "这些目录及子目录以后直接开")
+
+    @Config(qualifiers = "ja-w400dp-h1200dp-xhdpi")
+    @Test fun japanese() = words("ja", "2件に分けて、この内容で開始", "2件のタスクを開始", "編集", "開始しない", "今後このフォルダ以下はすぐに開始")
+}

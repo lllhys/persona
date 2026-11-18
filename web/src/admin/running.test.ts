@@ -17,6 +17,13 @@ describe("运行情况 (docs/extensions/extensions.md)", () => {
     expect(msText(60000)).toBe("60 s");
   });
 
+  it("moves a latency that would read 1000 ms to seconds (#8513)", () => {
+    expect(msText(999.4)).toBe("999 ms");
+    expect(msText(999.6)).toBe("1 s");
+    expect(msText(1000)).toBe("1 s");
+    expect(msText(9999.96)).toBe("10 s");
+  });
+
   it("colors a rate only with calls enough to mean it", () => {
     expect(rateTone(0.5, 2)).toBe("gray");
     expect(rateTone(0.005, 100)).toBe("gray");

@@ -94,6 +94,30 @@ class HttpHubManagersTest {
         }
     } }
 
+    /** Show in the switcher (#9055): `{"hide": …}` to the built-in's path; the roster carries the choice and whether it is in effect. */
+    @Test fun hidesTheBuiltInAndReadsTheChoice() { withHub { server, api ->
+        server.enqueue(MockResponse().setBody("""{"manager":{"id":"assistant","name":"助手","builtin":true,"hide":true,"hidden":true}}"""))
+        api.setHide("assistant", true)
+        server.takeRequest().let {
+            assertEquals("PATCH", it.method)
+            assertEquals("/api/v1/managers/assistant", it.path)
+            assertEquals("""{"hide":true}""", it.body.readUtf8())
+        }
+        server.enqueue(MockResponse().setBody("""{"manager":{"id":"assistant","name":"助手","builtin":true}}"""))
+        api.setHide("assistant", false)
+        assertEquals("""{"hide":false}""", server.takeRequest().body.readUtf8())
+        server.enqueue(MockResponse().setBody("""{"managers":[{"id":"m-2","default":true},
+            {"id":"assistant","builtin":true,"hide":true,"hidden":true}],"default":"m-2"}"""))
+        val roster = api.roster()
+        assertTrue(roster.managers[1].hide && roster.managers[1].hidden)
+        assertFalse(roster.managers[0].hide || roster.managers[0].hidden)
+        // In use (the default, or it owns a computer): the hub's refusal keeps its code.
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"the built-in assistant is in use","code":"builtin_in_use"}"""))
+        val refused = runCatching { api.setHide("assistant", true) }.exceptionOrNull() as HubFailure
+        assertEquals(409, refused.status)
+        assertEquals("builtin_in_use", refused.code)
+    } }
+
     @Test fun theHubsRefusalsKeepTheirCodes() { withHub { server, api ->
         server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"make another manager the default first","code":"default_manager"}"""))
         val refused = runCatching { api.delete("assistant") }.exceptionOrNull() as HubFailure

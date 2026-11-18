@@ -1,0 +1,4 @@
+{
+  "install": "Install “{name}” ({files} files) on {machine}? This adds instructions and resources for new conversations. Assistants using the same computer account share this skill. You can undo this installation for ten minutes if its files stay unchanged.",
+  "undo": "Undo the installation of “{name}” on {machine}? Its unchanged files will leave the skill list and be kept for recovery. Existing conversations may still have loaded it."
+}

@@ -85,7 +85,7 @@ func TestClaudeBackgroundSessionListedLive(t *testing.T) {
 		t.Errorf("exited background session = %+v", s)
 	}
 
-	for status, want := range map[string]string{"idle": proto.StatusIdle, "waiting": proto.StatusBlocked, "later": proto.StatusUnknown} {
+	for status, want := range map[string]string{"idle": proto.StatusIdle, "shell": proto.StatusIdle, "waiting": proto.StatusBlocked, "later": proto.StatusUnknown} {
 		bg(status)
 		if got := byID(listSessions(t, n))[sidB].Status; got != want {
 			t.Errorf("registry status %s: listed %s, want %s", status, got, want)

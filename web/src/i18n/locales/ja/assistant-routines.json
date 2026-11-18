@@ -25,6 +25,8 @@
   "row_label": "{title}、{rule}、{next}",
   "created_by_persona": "Personaが作成",
   "push_asked": "知らせるときだけ",
+  "inbox_worthy": "受信箱：見る価値があれば",
+  "inbox_every": "受信箱：毎回",
   "last_failed": "{text}：{error}",
   "turn_off": "「{title}」をオフ",
   "turn_on": "「{title}」をオン",

@@ -18,6 +18,7 @@ internal fun sessionWithDetail(row: Session, previous: Session?, info: SessionIn
     val held = previous?.takeIf { it.key == row.key }
     val read = complete?.takeIf { it.key == row.key }
     return row.copy(
+        awaitingFirstMessage = row.awaitingFirstMessage || (read?.awaitingFirstMessage ?: held?.awaitingFirstMessage) == true,
         pendingSwitch = if (read != null) read.pendingSwitch else held?.pendingSwitch,
         launcher = info?.launcher ?: held?.launcher,
         permissionMode = info?.permissionMode ?: held?.permissionMode,

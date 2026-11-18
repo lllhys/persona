@@ -36,8 +36,12 @@ class AgentArchivesFlowTest {
 
     @Test fun codexCanBeArchivedAndRestoredFromAgents() = archiveAndRestore("codex")
 
-    private fun archiveAndRestore(agent: String) {
-        val api = ArchiveFake()
+    /** #8143: a Paseo provider's agent (Grok's) archives and restores the same way, as the manager takes it and the web offers it. */
+    @Test fun aPaseoProvidersAgentCanBeArchivedAndRestoredFromAgents() = archiveAndRestore("paseo", ArchiveFake(listOf(
+        Session("computer", "paseo-agent-1", title = "Grok history", agent = "paseo", agentLabelHint = "Grok", launcher = "grok",
+            sourceKind = "runtime", spaceKind = "paseo", status = "offline", state = "offline", cwd = "/projects/albums"))))
+
+    private fun archiveAndRestore(agent: String, api: ArchiveFake = ArchiveFake()) {
         val session = api.source.single { it.agent == agent }
         val repository = object : SessionsRepository {
             override val sessions = MutableStateFlow(listOf(session))

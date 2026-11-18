@@ -4,6 +4,8 @@
     "team_id": "ABCDE12345",
     "push_relay": "https://persona.example.com/relay",
     "carplay_voice": false,
+    "homekit": false,
+    "siri_calls": false,
     "meta_wearables": { "enabled": false, "app_id": "", "client_token": "" }
   },
   "app_store": {

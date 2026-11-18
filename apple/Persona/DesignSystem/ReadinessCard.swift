@@ -37,6 +37,9 @@ struct ReadinessCard: View {
 
     private var color: Color { tone == .danger ? Theme.danger : Theme.caution }
 
+    /// The buttons and Details side by side, each on one line (docs/design/DESIGN_SYSTEM.md 1.2 rule 3).
+    private func buttonRow(spacing: CGFloat) -> HStackLayout { HStackLayout(spacing: spacing) }
+
     private var plain: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
@@ -57,6 +60,10 @@ struct ReadinessCard: View {
                         ThemedIcon(Theme.Icon.close).font(Theme.Font.label).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
+                    .padding(.horizontal, Theme.Space.l)
+                    .contentShape(.rect)
+                    .padding(.horizontal, -Theme.Space.l)
+                    .tapTargetOutset()
                     .accessibilityLabel(Text("Later [Readiness Card 9d2055]"))
                 }
             }
@@ -72,8 +79,9 @@ struct ReadinessCard: View {
 
     @ViewBuilder private var buttons: some View {
         let hasAny = action != nil || alt != nil || !details.isEmpty || busy
+        let row = buttonRow(spacing: Theme.Space.m)
         if hasAny {
-            HStack(spacing: Theme.Space.m) {
+            row {
                 if busy { ProgressView().controlSize(.small) }
                 if let actionTitle, let action {
                     Button {
@@ -137,8 +145,9 @@ struct ReadinessCard: View {
                             .buttonStyle(.plain)
                     }
                 }
+                let row = buttonRow(spacing: Theme.Space.s)
                 if action != nil || alt != nil || !details.isEmpty {
-                    HStack(spacing: Theme.Space.s) {
+                    row {
                         if let actionTitle, let action {
                             Button {
                                 Haptics.tap()

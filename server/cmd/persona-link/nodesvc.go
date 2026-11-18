@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/identity"
+	"github.com/nwverse/persona/server/internal/link"
 	"github.com/nwverse/persona/server/internal/update"
 
 	"encoding/json"
@@ -17,9 +19,9 @@ import (
 )
 
 // The resident node (`personad node --attach`, docs/server/server.md "Persistent node") is what the connector forwards to. Setting
-// it up here is packaging only, so that one command (Linux: `persona-link install`) or one app (the Mac menu bar app)
-// sets a computer up as the node service: it writes the same service scripts/deploy/node-launchd.sh does, and leaves one
-// that is already there as it is. What the node does stays in personad.
+// it up here is packaging only: `persona-link install` sets up a computer's node service alongside the connector on
+// every supported platform. It writes the same service scripts/deploy/node-launchd.sh does and leaves an existing one
+// as it is. What the node does stays in personad.
 
 const (
 	nodeUnitName = "personad-node.service" // systemd user unit (Linux), as scripts/deploy/node-launchd.sh names it
@@ -99,17 +101,17 @@ func nodeInstall(e *env, from string, fromAny ...bool) error {
 		return err
 	}
 	if e.goos == "windows" {
-		return errors.New(windowsNodeHint)
+		return link.NewTextError("link-cli.windows_node_hint", nil)
 	}
 	file := e.nodeServiceFile()
 	if file == "" {
-		return fmt.Errorf("%s 上还装不了常驻 node 的服务（#299）", e.goos)
+		return link.NewTextError("link-cli.node_service_unsupported", nil, i18n.Args{"goos": e.goos})
 	}
 	if fileExists(file) {
-		fmt.Fprintf(e.stdout, "常驻 node 的服务已经装了（%s），保持原样。\n", file)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.node_service_existing", i18n.Args{"path": file}))
 		if b, err := os.ReadFile(file); err == nil && e.serviceProgram(string(b)) == e.personadBin() &&
 			e.programOf(e.personaNodeBin()) == programPersonaNode && !e.hostsHubOrManager() {
-			fmt.Fprintf(e.stdout, "It runs personad. To have it run the device's own program (%s): persona-link node switch\n", e.personaNodeBin())
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_switch_hint", i18n.Args{"path": e.personaNodeBin()}))
 		}
 		return nil
 	}
@@ -117,10 +119,10 @@ func nodeInstall(e *env, from string, fromAny ...bool) error {
 	if len(fromAny) > 0 && fromAny[0] && from != "" {
 		// --node-bin: put in under the name of the program it says it is; one that does not say is not guessed at.
 		if fromProg = e.programOf(from); fromProg == "" {
-			return fmt.Errorf("%s does not say which program it is (node-update-check did not answer here): give personad or persona-node built for this computer", from)
+			return link.NewTextError("link-cli.node_program_unknown", nil, i18n.Args{"path": from})
 		}
 	} else if from != "" && update.ProgramOf(from) == programPersonaNode { // read from its build info: nothing is run
-		return fmt.Errorf("%s is persona-node, not personad: give it with --node-bin", from)
+		return link.NewTextError("link-cli.node_wrong_flag", nil, i18n.Args{"path": from})
 	}
 	if _, err := identity.PrepareHome(e.home); err != nil {
 		return err
@@ -128,25 +130,25 @@ func nodeInstall(e *env, from string, fromAny ...bool) error {
 	if from != "" && fromProg == programPersonaNode && !e.hostsHubOrManager() && e.programOf(e.personaNodeBin()) != programPersonaNode {
 		// The device's own program, under its own name, beside a personad this computer may have.
 		if err := copyExecutable(from, e.personaNodeBin()); err != nil {
-			return fmt.Errorf("放不进 %s：%w", e.personaNodeBin(), err)
+			return link.NewTextError("link-cli.binary_install_failed", err, i18n.Args{"path": e.personaNodeBin()})
 		}
-		fmt.Fprintf(e.stdout, "装好了 %s。\n", e.personaNodeBin())
+		fmt.Fprintln(e.stdout, terminalText("link-cli.binary_installed", i18n.Args{"path": e.personaNodeBin()}))
 	}
 	bin := e.nodeBin()
 	if !fileExists(bin) {
 		if from != "" && bin == e.personadBin() && fromProg == programPersonaNode {
 			if !e.hostsHubOrManager() {
-				return fmt.Errorf("%s does not run here", e.personaNodeBin())
+				return link.NewTextError("link-cli.node_program_not_runnable", nil, i18n.Args{"path": e.personaNodeBin()})
 			}
-			return fmt.Errorf("this computer runs a hub or a manager, whose node runs personad: %s is persona-node; install personad (the install command with --hub, or the manager's install command)", from)
+			return link.NewTextError("link-cli.node_hub_requires_personad", nil, i18n.Args{"path": from})
 		}
 		if from == "" {
-			return fmt.Errorf("没有 %s：先装 personad（安装脚本会一起装），或者用 --personad <路径> 指定", bin)
+			return link.NewTextError("link-cli.node_binary_required", nil, i18n.Args{"path": bin})
 		}
 		if err := copyExecutable(from, bin); err != nil {
-			return fmt.Errorf("放不进 %s：%w", bin, err)
+			return link.NewTextError("link-cli.binary_install_failed", err, i18n.Args{"path": bin})
 		}
-		fmt.Fprintf(e.stdout, "装好了 %s。\n", bin)
+		fmt.Fprintln(e.stdout, terminalText("link-cli.binary_installed", i18n.Args{"path": bin}))
 	}
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
@@ -154,14 +156,14 @@ func nodeInstall(e *env, from string, fromAny ...bool) error {
 	switch e.goos {
 	case "linux":
 		if why := e.systemdMissing(); why != "" {
-			return fmt.Errorf("没有 systemd 用户服务（%s）：nohup %s node --attach >> %s 2>&1 &", why, shellQuote(bin), shellQuote(e.nodeLog()))
+			return link.NewTextError("link-cli.node_no_systemd", nil, i18n.Args{"error": systemdReason(why), "binary": shellQuote(bin), "log": shellQuote(e.nodeLog())})
 		}
 		if err := os.WriteFile(file, []byte(nodeUnitFile(bin, e.nodeLog())), 0o644); err != nil {
 			return err
 		}
 		for _, step := range [][]string{{"daemon-reload"}, {"enable", "--now", e.residentUnitName()}} {
 			if out, err := e.systemctl(step...); err != nil {
-				return fmt.Errorf("systemctl --user %s 失败：%s", strings.Join(step, " "), orErr(out, err))
+				return link.NewTextError("link-cli.systemctl_step_failed", nil, i18n.Args{"step": strings.Join(step, " "), "error": orErr(out, err)})
 			}
 		}
 	case "darwin":
@@ -171,10 +173,10 @@ func nodeInstall(e *env, from string, fromAny ...bool) error {
 		domain := "gui/" + strconv.Itoa(e.uid)
 		_, _ = e.command("launchctl", "bootout", domain+"/"+e.residentLabel())
 		if out, err := e.command("launchctl", "bootstrap", domain, file); err != nil {
-			return fmt.Errorf("launchctl bootstrap 失败：%s", orErr(out, err))
+			return link.NewTextError("link-cli.launchctl_bootstrap_failed", nil, i18n.Args{"error": orErr(out, err)})
 		}
 	}
-	fmt.Fprintf(e.stdout, "装好了常驻 node 的服务（%s），已启动，日志在 %s。\n", file, e.nodeLog())
+	fmt.Fprintln(e.stdout, terminalText("link-cli.node_service_installed", i18n.Args{"path": file, "log": e.nodeLog()}))
 	return nil
 }
 
@@ -269,22 +271,26 @@ func nodeCmd(e *env, args []string) error {
 		}
 		switch {
 		case st.File == "":
-			fmt.Fprintf(e.stdout, "常驻 node：%s 上还没有服务可装（#299）\n", e.goos)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_status_unsupported", i18n.Args{"goos": e.goos}))
 		case !st.Installed && e.goos == "windows":
-			fmt.Fprintf(e.stdout, "常驻 node：不在计划任务「%s」里（persona-link install [--personad <personad.exe 的路径>]）\n", taskName)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_status_windows_missing", i18n.Args{"task": taskName}))
 		case !st.Installed:
-			fmt.Fprintf(e.stdout, "常驻 node：服务没装（persona-link node install）\n")
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_status_missing"))
 		default:
-			fmt.Fprintf(e.stdout, "常驻 node：服务装了（%s）%s\n", st.File, map[bool]string{true: " · " + st.Running, false: ""}[st.Running != ""])
+			running := ""
+			if st.Running != "" {
+				running = " · " + nodeRunningText(st.Running)
+			}
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_status_installed", i18n.Args{"path": st.File, "running": running}))
 			if st.Runs != "" {
-				fmt.Fprintf(e.stdout, "It runs %s\n", st.Runs)
+				fmt.Fprintln(e.stdout, terminalText("link-cli.node_status_runs", i18n.Args{"program": st.Runs}))
 			}
 			if st.SwitchPending {
-				fmt.Fprintln(e.stdout, "A node switch did not finish: persona-link run (within half a minute), or the next node install or switch, puts the old service back.")
+				fmt.Fprintln(e.stdout, terminalText("link-cli.node_switch_pending"))
 			}
 		}
 		if !st.HasBin {
-			fmt.Fprintf(e.stdout, "没有 %s\n", st.Bin)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.binary_missing", i18n.Args{"path": st.Bin}))
 		}
 		if st.Installed {
 			return nil
@@ -293,11 +299,11 @@ func nodeCmd(e *env, args []string) error {
 	case "uninstall":
 		return lockedNodeCommand(e, false, func() error {
 			if e.goos == "windows" {
-				return errors.New(windowsNodeHint)
+				return link.NewTextError("link-cli.windows_node_hint", nil)
 			}
 			file := e.nodeServiceFile()
 			if file == "" || !fileExists(file) {
-				fmt.Fprintln(e.stdout, "常驻 node 的服务没装。")
+				fmt.Fprintln(e.stdout, terminalText("link-cli.node_uninstall_missing"))
 				return nil
 			}
 			switch e.goos {
@@ -314,11 +320,22 @@ func nodeCmd(e *env, args []string) error {
 			if e.goos == "linux" {
 				_, _ = e.systemctl("daemon-reload")
 			}
-			fmt.Fprintf(e.stdout, "停掉并删掉了常驻 node 的服务（%s）；%s 留着。\n", file, e.nodeBin())
+			fmt.Fprintln(e.stdout, terminalText("link-cli.node_uninstalled", i18n.Args{"path": file, "binary": e.nodeBin()}))
 			return nil
 		})
 	}
 	return errUsage
+}
+
+// nodeRunningText localizes only the two values nodeStatus synthesizes. Service-manager output stays as reported.
+func nodeRunningText(running string) string {
+	switch running {
+	case "loaded":
+		return terminalText("link-cli.node_running_loaded")
+	case "not loaded":
+		return terminalText("link-cli.node_running_not_loaded")
+	}
+	return running
 }
 
 // copyExecutable puts a copy of src at dst (0755), whole or not at all.

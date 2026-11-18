@@ -28,6 +28,10 @@ type devicesWarm struct {
 type devicesWarmMachine struct {
 	Info     proto.NodeInfo  `json:"info"`
 	Sessions []proto.Session `json:"sessions"`
+	// Archived are the archived rows its manager told apart (Machine.archived, #6836), and ArchivedBy that manager:
+	// a session is found by id while the managers come back, as it was when they were in the list.
+	Archived   []proto.Session `json:"archived,omitempty"`
+	ArchivedBy string          `json:"archived_by,omitempty"`
 	// Until: a machine only still shown from an earlier hand-over keeps that one's deadline (quick restarts in a row
 	// do not keep it shown for ever); zero for one online.
 	Until time.Time `json:"until,omitzero"`
@@ -60,7 +64,8 @@ func (h *Hub) saveDevicesWarm(ctx context.Context) {
 				saved.EngineHosts[m.cfg.ID] = *m.engineHosts
 			}
 			if shown {
-				w := devicesWarmMachine{Info: m.info, Sessions: slices.Clone(m.sessions)}
+				w := devicesWarmMachine{Info: m.info, Sessions: slices.Clone(m.sessions), Archived: slices.Clone(m.archived),
+					ArchivedBy: m.archivedBy}
 				if !m.online {
 					w.Until = m.warmUntil
 				}

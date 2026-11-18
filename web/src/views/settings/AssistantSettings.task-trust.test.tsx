@@ -73,7 +73,7 @@ it("shows loading and an honest empty response, and refreshes without changing a
   expect(text()).not.toContain("No remembered rules were returned.");
   await answer(reads()[0], { kinds: [] });
   expect(text()).toContain("No remembered rules were returned.");
-  expect(text()).toContain("choose “Start these right away from now on” on a matching plan");
+  expect(text()).toContain("tick the line above Start on a matching plan");
   await click("Refresh rules");
   expect(button("Refresh rules").disabled).toBe(true);
   await answer(reads()[1], { kinds: [first, second] });

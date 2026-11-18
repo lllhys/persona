@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatLines, freshWords, humanizeTool, isLoopTick, mcpServerName, mergeItems, parseUserText, pickSubject, segments, openRecap, personaToolVerb, toolChip, toolDisplayName, toolLabel, formatDuration } from "./turns";
+import { chatLines, freshWords, humanizeTool, isLoopTick, mcpServerName, mergeItems, withoutFolded, parseUserText, pickSubject, segments, openRecap, personaToolVerb, toolChip, toolDisplayName, toolLabel, formatDuration } from "./turns";
 import type { Item } from "./types";
 
 const u = (seq: number, text: string, extra: Partial<Item> = {}): Item => ({ id: `u${seq}#0`, seq, role: "user", kind: "text", text, ...extra });
@@ -75,6 +75,27 @@ describe("mergeItems", () => {
     const next = mergeItems(have, [tool(3, "x"), res(4, "x")]);
     expect(next.map((i) => i.id)).toEqual(["u1#0", "t3#0", "r4#0", "a5#0"]);
   });
+
+  it("opens a narration-only fold and clears its text when a folded page arrives again", () => {
+    const f: Item = { id: "fold:a2#0", seq: 2, role: "assistant", kind: "fold", fold: { items: 3, tools: 0, thoughts: 0, through_seq: 4 } };
+    const have = mergeItems([], [u(1, "go"), f, a(5, "done")]);
+    const expanded = mergeItems(have, [a(2, "first"), a(3, "second"), a(4, "third")]);
+    expect(expanded.map((i) => i.id)).toEqual(["u1#0", "a2#0", "a3#0", "a4#0", "a5#0"]);
+
+    const refolded = mergeItems(withoutFolded(expanded, [f]), [f]);
+    expect(refolded.map((i) => i.id)).toEqual(["u1#0", "fold:a2#0", "a5#0"]);
+  });
+
+  it("uses numeric block bounds for narration on the same line as the final answer", () => {
+    const f: Item = { id: "fold:2#2", seq: 2, role: "assistant", kind: "fold", fold: { items: 2, tools: 0, thoughts: 0, through_seq: 2, through_id: "2#10" } };
+    const narration: Item = { id: "2#3", seq: 2, role: "assistant", kind: "text", text: "progress" };
+    const answer: Item = { id: "2#11", seq: 2, role: "assistant", kind: "text", text: "done" };
+    const expanded = mergeItems([f, answer], [narration]);
+    expect(expanded.map((i) => i.id)).toEqual(["2#3", "2#11"]);
+
+    const refolded = mergeItems(withoutFolded(expanded, [f]), [f]);
+    expect(refolded.map((i) => i.id)).toEqual(["fold:2#2", "2#11"]);
+  });
 });
 
 describe("parseUserText", () => {
@@ -118,6 +139,21 @@ describe("parseUserText", () => {
     const p = parseUserText('<persona-context kind="edit" title="Doc &amp; co" url="https://x">sel</persona-context>fix it');
     expect(p.text).toBe("fix it");
     expect(p.contexts).toEqual([{ kind: "edit", title: "Doc & co", url: "https://x", text: "sel" }]);
+  });
+
+  it("never renders the hub's interject note as an owner-bubble quote (#6595)", () => {
+    const interject =
+      '<persona-context kind="context" title="插话" url="">\n用户在你这一轮还没做完时发来下面这条消息。\n</persona-context>\n先停一下，帮我查个东西';
+    const p = parseUserText(interject);
+    expect(p.text).toBe("先停一下，帮我查个东西");
+    expect(p.contexts).toEqual([]);
+    // a normal picked context right beside it still parses
+    const mixed = `${interject}\n<persona-context kind="context" title="需求文档" url="https://x">摘要</persona-context>`;
+    const q = parseUserText(mixed);
+    expect(q.text).toBe("先停一下，帮我查个东西");
+    expect(q.contexts.map((c) => c.title)).toEqual(["需求文档"]);
+    // only the exact interject title is dropped; another context titled differently stays
+    expect(parseUserText('<persona-context kind="context" title="插话记录" url="">x</persona-context>问').contexts).toHaveLength(1);
   });
 
   it("pulls out persona-context tags, alongside older persona-context ones (#3182)", () => {
@@ -211,10 +247,54 @@ describe("chatLines", () => {
     expect(openRecap(mid, mid[1].kind === "recaps" ? mid[1].items[0] : undefined)).toBeUndefined();
   });
 
-  // #3783: after background tasks woke the agent, the newest words are the answer, at the bottom (the longest run's
-  // words used to be the answer)
-  const wakesOf = (l: ReturnType<typeof chatLines>[number] | undefined) => (l?.kind === "segment" ? l.wakes : undefined);
-  it("answers a woken exchange with its newest words", () => {
+  // #9140: a background task that wakes the idle agent starts an exchange of its own. The turn before it had ended, so
+  // its last words stay its answer; the chat still ends on the newest words (#3783), now the woken exchange's.
+  const answers = (ls: ReturnType<typeof chatLines>) => ls.flatMap((l) => (l.kind === "segment" && l.seg.answer ? [l.seg.answer.text] : []));
+  const seg = (l: ReturnType<typeof chatLines>[number] | undefined) => (l?.kind === "segment" ? l.seg : undefined);
+
+  it("keeps the answer to a newer question when a background task reports back after it (#9140)", () => {
+    // the issue's timeline: A's background check is still running, B is asked and answered, then three notifications
+    const items = [
+      u(1, "Check which trains run on Saturday."),
+      tool(2, "a"),
+      res(3, "a"),
+      a(4, "The timetable check is running in the background."),
+      u(5, "What should I pack for two days?"),
+      a(6, "Pack a rain jacket, two shirts and walking shoes."),
+      wake(7, "Timetable check"),
+      tool(8, "b"),
+      res(9, "b"),
+      a(10, "First result: the 08:10 runs on Saturday."),
+      wake(11, "Timetable check"),
+      a(12, "Second result: the 10:40 runs too."),
+      wake(13, "Timetable check"),
+      tool(14, "c"),
+      res(15, "c"),
+      a(16, "All done: three trains run on Saturday."),
+      u(17, "Thanks. Book the 08:10."),
+    ];
+    const ls = chatLines(items);
+    expect(kinds(ls)).toEqual(["segment", "segment", "notice", "segment", "notice", "segment", "notice", "segment", "segment"]);
+    // four final texts between the two messages: each is the answer of its own exchange
+    expect(answers(ls)).toEqual([
+      "The timetable check is running in the background.",
+      "Pack a rain jacket, two shirts and walking shoes.",
+      "First result: the 08:10 runs on Saturday.",
+      "Second result: the 10:40 runs too.",
+      "All done: three trains run on Saturday.",
+    ]);
+    // the answer to B is no step of any work summary
+    expect(ls.some((l) => seg(l)?.steps.some((s) => s.kind === "text" && s.item.text?.startsWith("Pack a rain jacket")))).toBe(false);
+    // each woken exchange opens with its notification and holds only its own work
+    expect(ls[2].kind === "notice" && ls[2].item.id).toBe("n7#0");
+    expect(seg(ls[3])?.user).toBeUndefined();
+    expect(seg(ls[3])?.steps.map((s) => s.id)).toEqual(["t8#0"]);
+    expect(seg(ls[5])?.steps).toEqual([]);
+    expect(seg(ls[7])?.steps.map((s) => s.id)).toEqual(["t14#0"]);
+    expect(seg(ls[1])?.steps).toEqual([]);
+  });
+
+  it("answers a woken exchange with its own words and leaves the exchange before it alone", () => {
     const items = [
       u(1, "run the tests in the background"),
       a(2, "started, I will tell you when it ends — this is the long one"),
@@ -224,11 +304,9 @@ describe("chatLines", () => {
       a(6, "all green"),
     ];
     const ls = chatLines(items);
-    expect(kinds(ls)).toEqual(["segment"]);
-    const seg = ls[0].kind === "segment" ? ls[0].seg : null;
-    expect(seg?.answer?.text).toBe("all green");
-    const w = wakesOf(ls[0]);
-    expect(w?.wakes).toHaveLength(1);
+    expect(kinds(ls)).toEqual(["segment", "notice", "segment"]);
+    expect(answers(ls)).toEqual(["started, I will tell you when it ends — this is the long one", "all green"]);
+    expect(seg(ls[2])?.steps.map((s) => s.id)).toEqual(["t4#0"]);
   });
 
   it("keeps a long-running agent's newest words at the bottom of a long history", () => {
@@ -239,36 +317,58 @@ describe("chatLines", () => {
       items.push(wake(seq++, `wait ${n}`), tool(seq++, `t${n}`), res(seq++, `t${n}`), a(seq++, `update ${n}`));
     }
     const ls = chatLines(items);
-    const last = ls[ls.length - 1];
-    expect(last.kind === "segment" && last.seg.answer?.text).toBe("update 7");
-    expect(wakesOf(last)?.wakes).toHaveLength(8);
-    // the long summary folds into the work above, as earlier words do
-    expect(last.kind === "segment" && last.seg.steps.some((s) => s.kind === "text" && s.item.text === long)).toBe(true);
+    expect(seg(ls[ls.length - 1])?.answer?.text).toBe("update 7");
+    // the summary stays the answer of the turn that wrote it, and every update the answer of its own
+    expect(answers(ls)).toEqual([long, ...Array.from({ length: 8 }, (_, n) => `update ${n}`)]);
+    expect(ls.filter((l) => l.kind === "notice")).toHaveLength(8);
   });
 
-  it("does not take a short reply to a wake away once it lands after streaming", () => {
-    const before = [u(1, "watch the deploy"), a(2, "watching it; a long explanation of what I will check. ".repeat(20)), wake(3, "deploy"), tool(4, "x"), res(5, "x")];
-    // streaming: the reply is not an item yet, the agent is at work on the wake
-    const live = chatLines(before, { live: true });
-    const working = live[live.length - 1];
-    expect(working.kind === "segment" && working.live).toBe(true);
-    // it lands: the short words are the answer on screen
-    const done = chatLines([...before, a(6, "deployed")]);
-    const last = done[done.length - 1];
-    expect(last.kind === "segment" && last.seg.answer?.text).toBe("deployed");
+  it("shows the work a wake started as live under its notice, before and after its first step", () => {
+    const before = [u(1, "watch the deploy"), a(2, "watching it"), wake(3, "deploy")];
+    // woken, nothing of the new work here yet: a live work row of its own, the answer before it untouched
+    const woken = chatLines(before, { live: true });
+    expect(kinds(woken)).toEqual(["segment", "notice", "segment"]);
+    expect(woken[0].kind === "segment" && woken[0].live).toBe(false);
+    expect(seg(woken[0])?.answer?.text).toBe("watching it");
+    expect(woken[2].kind === "segment" && woken[2].live).toBe(true);
+    expect(woken.some((line) => line.id === "live")).toBe(false);
+    // its row keeps its key as steps come and when its words land
+    const working = chatLines([...before, tool(4, "x"), res(5, "x")], { live: true });
+    expect(working[2].id).toBe(woken[2].id);
+    expect(seg(working[2])?.id).toBe(seg(woken[2])?.id);
+    const done = chatLines([...before, tool(4, "x"), res(5, "x"), a(6, "deployed")]);
+    expect(done[2].id).toBe(woken[2].id);
+    expect(answers(done)).toEqual(["watching it", "deployed"]);
   });
 
-  it("reopens the exchange a recap closed when a background task reports back", () => {
+  it("puts work a wake started after the recap that came before it", () => {
     const ls = chatLines([u(1, "go"), a(2, "started the build, waiting for it"), recap(3, "waiting for the build"), wake(4, "build"), a(5, "ok")]);
-    expect(kinds(ls)).toEqual(["segment", "recaps"]);
-    expect(ls[0].kind === "segment" && ls[0].seg.answer?.text).toBe("ok");
+    expect(kinds(ls)).toEqual(["segment", "recaps", "notice", "segment"]);
+    expect(answers(ls)).toEqual(["started the build, waiting for it", "ok"]);
   });
 
-  it("marks the original exchange live when a wake arrives after its recap", () => {
+  it("marks the woken exchange live when a wake arrives after a recap", () => {
     const ls = chatLines([u(1, "go"), a(2, "waiting"), recap(3, "context"), wake(4, "build"), tool(5, "x")], { live: true });
-    expect(kinds(ls)).toEqual(["segment", "recaps"]);
-    expect(ls[0].kind === "segment" && ls[0].live).toBe(true);
+    expect(kinds(ls)).toEqual(["segment", "recaps", "notice", "segment"]);
+    expect(ls[0].kind === "segment" && ls[0].live).toBe(false);
+    expect(ls[3].kind === "segment" && ls[3].live).toBe(true);
     expect(ls.some((line) => line.id === "live")).toBe(false);
+  });
+
+  it("starts an exchange at a subagent's report that woke the agent, drawn under its call", () => {
+    const launch: Item = { id: "t2#0", seq: 2, role: "assistant", kind: "tool_use", tool_use_id: "agent", tool_name: "Agent", tool_input: { description: "Review", run_in_background: true } };
+    const report: Item = { id: "r5#0", seq: 5, role: "user", kind: "tool_result", tool_use_id: "agent", text: "Review finished.", wake: true, task: { kind: "agent", status: "completed" } };
+    const ls = chatLines([u(1, "review it"), launch, { ...res(3, "agent"), text: "Async agent launched successfully" }, a(4, "The review is running."), report, a(6, "The review found nothing.")]);
+    // no notice line: the report belongs to the call that launched it
+    expect(kinds(ls)).toEqual(["segment", "segment"]);
+    expect(answers(ls)).toEqual(["The review is running.", "The review found nothing."]);
+  });
+
+  it("keeps a message typed while the woken agent works in the woken exchange", () => {
+    const ls = chatLines([u(1, "go"), a(2, "started"), wake(3, "build"), tool(4, "x"), res(5, "x"), u(6, "also check the logs", { queued: true }), a(7, "build is up, logs are clean")]);
+    expect(kinds(ls)).toEqual(["segment", "notice", "segment", "segment"]);
+    expect(answers(ls)).toEqual(["started", "build is up, logs are clean"]);
+    expect(seg(ls[3])?.user?.text).toBe("also check the logs");
   });
 
   it("opens work a wake started on its own with the wake notice", () => {
@@ -354,6 +454,8 @@ it("an unknown tool's subject is its most telling field", () => {
   expect(pickSubject({ title: "T", description: "D" })).toBe("D");
   expect(pickSubject({ path: "/a/b/Store.swift", query: "q" })).toBe("Store.swift");
   expect(pickSubject({ zeta: "z", alpha: " a ", n: 3 })).toBe("a");
+  expect(pickSubject({ zeta: "z", zz_persona_clipped: { note: "Omitted 8 array items" } })).toBe("z");
+  expect(pickSubject({ values: [["short", 42]], zz_persona_clipped: { note: "Omitted 8 array items" } })).toBe("");
   expect(pickSubject({ n: 3 })).toBe("");
 });
 

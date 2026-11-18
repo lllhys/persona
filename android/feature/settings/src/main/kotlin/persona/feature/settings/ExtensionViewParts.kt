@@ -57,7 +57,7 @@ internal object ExtensionIcons {
     fun of(name: String?): PhIcon = when (name) {
         "chart" -> PhIcons.ChartBar
         "gauge" -> PhIcons.Gauge
-        "list" -> PhIcons.ListChecks
+        "list" -> PhIcons.List
         "bell" -> PhIcons.BellSimple
         "doc" -> PhIcons.FileText
         "calendar" -> PhIcons.CalendarBlank
@@ -341,13 +341,17 @@ internal fun SidePane(sections: List<persona.core.contracts.api.ExtensionViewSec
                 trailing = { JIcon(if (open) PhIcons.CaretUp else PhIcons.CaretDown, null, size = Tokens.Space.l, tint = palette.ink3) },
                 onClick = { open = !open })
         }
-        if (open) sections.flatMap { it.items }.filter { handle.nativeItem != null || ExtensionViewText.drawable(it) }.forEach { item ->
-            val itemHandle = handle.forNode?.invoke(item.key.orEmpty()) ?: handle
-            val content: @Composable () -> Unit = {
-                if (item.type == "file_tree") CodeFileTree(item, state, itemHandle, Modifier.padding(top = Tokens.Space.s), onPicked = { open = false })
-                else StandaloneItem(item, state, itemHandle, first = false)
+        if (open) sections.forEach { section ->
+            // UI version 8: a side section's icon and link, which the bar's title leaves out
+            if (ExtensionColumns.head(section)) SectionHead(section, state, section.key?.let { handle.forNode?.invoke(it) } ?: handle)
+            section.items.filter { handle.nativeItem != null || ExtensionViewText.drawable(it) }.forEach { item ->
+                val itemHandle = handle.forNode?.invoke(item.key.orEmpty()) ?: handle
+                val content: @Composable () -> Unit = {
+                    if (item.type == "file_tree") CodeFileTree(item, state, itemHandle, Modifier.padding(top = Tokens.Space.s), onPicked = { open = false })
+                    else StandaloneItem(item, state, itemHandle, first = false)
+                }
+                if (handle.forNode != null) key(item.key) { content() } else content()
             }
-            if (handle.forNode != null) key(item.key) { content() } else content()
         }
     }
 }

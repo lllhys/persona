@@ -50,14 +50,16 @@ const DirectionTasks = memo(function DirectionTasks({ id, name, row, node, reg, 
   }, [all, node]);
   const tasks = todos.length;
   // leading, as every fold in the tree under it; small, so the row keeps #4610's width for its name, with a finger's
-  // 44 on a touch screen (touch-hit) from a wider box that keeps that area inside the sidebar
-  const chevron = "touch-hit relative z-20 -mr-1 flex size-4 shrink-0 items-center justify-center [@media(pointer:coarse)]:w-7";
+  // 44 on a touch screen (touch-hit) from a wider box that keeps that area inside the sidebar. The label says the
+  // action in words (#6214): a bare glyph alone read as a dead "fork" icon.
+  const chevron = "touch-hit relative z-20 -mr-1 flex size-4 shrink-0 items-center justify-center rounded-chip text-ink-3 transition-colors hover:bg-hover hover:text-ink-2 [@media(pointer:coarse)]:w-7";
+  const foldLabel = folded ? t("sidebar.direction_tasks_expand", { name }) : t("sidebar.direction_tasks_collapse", { name });
   return (
     <div data-direction={id}>
       <div className="flex items-center">
         {tasks > 0 ? (
-          <button type="button" aria-expanded={!folded} aria-label={t("sidebar.direction_tasks", { name })} title={t("sidebar.direction_tasks", { name })} onClick={toggle} className={cx(chevron, "rounded-chip text-ink-3 hover:text-ink-2")}>
-            <Icon name="chevron" size={9} stroke={2.4} className="opacity-60 transition-transform" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
+          <button type="button" aria-expanded={!folded} aria-label={foldLabel} title={foldLabel} onClick={toggle} className={chevron}>
+            <Icon name="chevron" size={10} stroke={2.4} className="transition-transform" style={{ ...sidebarFoldMotion(!folded), transform: folded ? "rotate(-90deg)" : "none" }} />
           </button>
         ) : (
           // nothing to open: the name stays in the column of the others
@@ -67,7 +69,7 @@ const DirectionTasks = memo(function DirectionTasks({ id, name, row, node, reg, 
       </div>
       {tasks > 0 && (
         <Collapse open={!folded} sidebarFold>
-          <div className="flex flex-col gap-px pl-3" inert={folded || undefined}>
+          <div className="flex flex-col gap-px sidebar-indent" inert={folded || undefined}>
             {todos.map((td) => (
               <TreeTodoRows key={td.key} td={td} machineLabel={machineLabel} noContext keyPrefix={`d:${id}:`} reg={reg} hover={hover} activeKey="" go={go} onNavigate={onNavigate} />
             ))}

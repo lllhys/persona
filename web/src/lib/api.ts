@@ -327,6 +327,11 @@ function businessFailureText(e: ApiError): string | undefined {
   if (e.code === "timeout") return t("lib-api.computer_timeout");
   // a stopped Agent takes no messages (#4754): Resume on its terminal page runs it again
   if (e.code === "agent_stopped") return t("lib-api.agent_stopped");
+  // a dialog has the Agent's terminal (#7343): the same refusal comes back until it is closed there, so say that rather
+  // than "try again later"
+  if (e.code === "dialog_open") return t("lib-api.dialog_open");
+  // nothing the hub can call directly is set up for the request (an Inbox draft): where to set one up
+  if (e.code === "model_unavailable") return t("lib-api.model_unavailable");
   return undefined;
 }
 

@@ -8,7 +8,7 @@
   "undo": "撤销",
   "unarchived": "已取消归档「{title}」",
   "undo_failed": "没能撤销：{error}",
-  "copy_id": "拷贝会话 ID",
+  "copy_id": "复制会话 ID",
   "end": "结束…",
   "end_confirm": "确认结束",
   "ended": "已结束对话，记录仍保留",
@@ -18,5 +18,10 @@
   "end_leader": "取消常驻",
   "leader_made": "已设为常驻「{title}」",
   "leader_ended": "已取消常驻「{title}」，它派出的任务不变",
-  "leader_failed": "没能改常驻：{error}"
+  "leader_failed": "没能改常驻：{error}",
+  "delete": "删除…",
+  "make_leader_confirm": "确认设为常驻",
+  "make_leader_confirm_detail": "这个对话会移到常驻区，不再出现在「最近」。",
+  "end_leader_confirm": "确认取消常驻",
+  "end_leader_confirm_detail": "对话会回到「最近」；还在办的任务交还主对话督办，不会关闭或删除。"
 }

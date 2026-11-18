@@ -347,7 +347,7 @@ func TestAllScopesOpenNoFullOnlyRoute(t *testing.T) {
 			path += "x"
 		}
 		ok, got := all.opens(pattern, path)
-		if want := scope != "-" && scope != extension.ScopeAgentsPermissionMode; ok != want {
+		if want := scope != "-" && extension.InEveryScope(scope); ok != want {
 			t.Errorf("%s (%s): opens %v (scope %q), want %v", pattern, path, ok, got, want)
 		}
 		n++

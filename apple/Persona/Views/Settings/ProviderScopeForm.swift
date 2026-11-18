@@ -50,6 +50,8 @@ nonisolated struct ProviderScopeForm: Equatable, Sendable {
     var ownService: OwnService? = nil
     /// Keys typed for single computers; never prefilled.
     var keys: [String: String] = [:]
+    /// Computers whose key field takes a secret provider's reference (docs/extensions/secret-providers.md "Launcher keys").
+    var keyRefs: [String: Bool] = [:]
     /// Computers whose stored key goes when saved.
     var remove: [String] = []
 
@@ -65,6 +67,7 @@ nonisolated struct ProviderScopeForm: Equatable, Sendable {
         work = share == .all ? ids : []
         delivery = Delivery(rawValue: v.delivery ?? "") ?? .onDemand
         ownService = OwnService(rawValue: v.ownService ?? "") ?? .skip
+        keyRefs = (v.machineKeyReferences ?? [:]).mapValues { _ in true }
     }
 
     /// What `own_service` comes to: the choice, else the hub's default for a new provider (use when it is assigned to
@@ -145,6 +148,7 @@ nonisolated struct ProviderScopeForm: Equatable, Sendable {
         var delivery: String?
         var ownService: String?
         var machineKeys: [String: String]?
+        var machineKeyReferences: [String: String]?
     }
 
     /// The scope's fields of POST / PUT /api/v1/launchers. A PUT (`old` has a share) sends a field only when it changed
@@ -169,14 +173,16 @@ nonisolated struct ProviderScopeForm: Equatable, Sendable {
             if delivery != .onDemand { f.delivery = delivery.rawValue }
             if ownService != nil, own != (assign || kind == "api" ? .use : .skip) { f.ownService = own.rawValue }
         }
-        var out: [String: String] = [:]
+        var out: [String: String] = [:], refs: [String: String] = [:]
         let allowed = keyMachines(all) + (old?.keyMachines ?? [])
         for (id, key) in keys {
             let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !k.isEmpty, allowed.contains(id) { out[id] = k }
+            guard !k.isEmpty, allowed.contains(id) else { continue }
+            if keyRefs[id] == true { refs[id] = k } else { out[id] = k }
         }
-        for id in remove where out[id] == nil { out[id] = "" }
+        for id in remove where out[id] == nil && refs[id] == nil { out[id] = "" }
         if !out.isEmpty { f.machineKeys = out }
+        if !refs.isEmpty { f.machineKeyReferences = refs }
         return f
     }
 
@@ -188,6 +194,7 @@ nonisolated struct ProviderScopeForm: Equatable, Sendable {
         input.delivery = f.delivery
         input.ownService = f.ownService
         input.machineKeys = f.machineKeys
+        input.machineKeyReferences = f.machineKeyReferences
     }
 
     // MARK: Words

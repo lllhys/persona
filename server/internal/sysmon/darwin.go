@@ -19,8 +19,12 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// ReadSystem: sw_vers and system_profiler run once (about half a second together), the rest is sysctl.
+// ReadSystem: sw_vers and sysctl, plus the model name, which is looked up once per process (macModel).
 func ReadSystem(ctx context.Context) proto.System {
+	return readSystem(ctx, macModel)
+}
+
+func readSystem(ctx context.Context, models *modelLookup) proto.System {
 	s := proto.System{OS: "darwin", Distro: "macos", Name: "macOS", Arch: runtime.GOARCH, Cores: runtime.NumCPU()}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -35,9 +39,7 @@ func ReadSystem(ctx context.Context) proto.System {
 	if rel, err := unix.Sysctl("kern.osrelease"); err == nil {
 		s.Kernel = "Darwin " + rel
 	}
-	if out, err := exec.CommandContext(ctx, "system_profiler", "SPHardwareDataType").Output(); err == nil {
-		s.Model = profilerModel(out)
-	}
+	s.Model = models.get(ctx)
 	if s.Model == "" {
 		s.Model, _ = unix.Sysctl("hw.model") // "Mac13,2"
 	}
@@ -49,6 +51,110 @@ func ReadSystem(ctx context.Context) proto.System {
 		s.BootTime = tv.Sec
 	}
 	return s
+}
+
+// macModel is this process's model name lookup: a resident node makes a new Node, and so reads the system again, for
+// every hub connection (#6028), and the hub's handshake waits for that read (node.info).
+var macModel = newModelLookup(runCommand)
+
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).Output()
+}
+
+const (
+	// modelWait is how long after a lookup starts ReadSystem waits for the model name; after it, the identifier
+	// stands in.
+	modelWait = time.Second
+	// modelRetry is how long after a lookup ended without a name the next read may start another: a system_profiler
+	// that failed or was cut off once (a machine still busy after login) is asked again on a later connection, but
+	// a Mac where it always fails runs it at most once per modelRetry, not on every connection.
+	modelRetry = 5 * time.Minute
+	// ioregTimeout and profilerTimeout bound the two commands. system_profiler can sit for over 10 s on its
+	// Activation Lock check (#6028), past the 10 s that once cut it off just before it answered.
+	ioregTimeout    = 5 * time.Second
+	profilerTimeout = time.Minute
+)
+
+// modelLookup finds the Mac's model name ("MacBook Pro", "Mac Studio") in the background, so no caller waits on
+// system_profiler past modelWait from the start of a lookup. A name, once found, is kept for the process; a lookup
+// that ends without one is tried again by a read modelRetry after it ended. Concurrent reads share the lookup in
+// flight.
+type modelLookup struct {
+	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+	mu   sync.Mutex
+	name string        // the name found; set once, never cleared
+	cur  *modelAttempt // the lookup in flight, or the last one, which ended without a name
+}
+
+// modelAttempt is one run of find.
+type modelAttempt struct {
+	until time.Time     // its start + modelWait
+	done  chan struct{} // closed when find returned
+	ended time.Time     // set under modelLookup.mu before done closes; zero while it runs
+}
+
+func newModelLookup(run func(ctx context.Context, name string, args ...string) ([]byte, error)) *modelLookup {
+	return &modelLookup{run: run}
+}
+
+// get returns the name once it is known. Otherwise it starts a lookup when none ran yet, or when the last one ended
+// without a name modelRetry ago or more, and waits for the current lookup until modelWait has passed since that
+// lookup started (or ctx ends); it then returns "", as it does when there is no name.
+func (l *modelLookup) get(ctx context.Context) string {
+	l.mu.Lock()
+	if l.name != "" {
+		defer l.mu.Unlock()
+		return l.name
+	}
+	a := l.cur
+	if a == nil || (!a.ended.IsZero() && time.Since(a.ended) >= modelRetry) {
+		a = &modelAttempt{until: time.Now().Add(modelWait), done: make(chan struct{})}
+		l.cur = a
+		go l.lookup(a)
+	}
+	l.mu.Unlock()
+
+	t := time.NewTimer(time.Until(a.until))
+	defer t.Stop()
+	select {
+	case <-a.done:
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.name
+}
+
+func (l *modelLookup) lookup(a *modelAttempt) {
+	name := l.find()
+	l.mu.Lock()
+	if name != "" {
+		l.name = name
+	}
+	a.ended = time.Now()
+	l.mu.Unlock()
+	close(a.done)
+}
+
+// find asks the IORegistry first: on Apple silicon its product entry has the name (about 20 ms). Intel Macs have no
+// such entry; system_profiler, which can take seconds, is left for them.
+func (l *modelLookup) find() string {
+	ctx, cancel := context.WithTimeout(context.Background(), ioregTimeout)
+	out, err := l.run(ctx, "ioreg", "-p", "IODeviceTree", "-rd1", "-n", "product")
+	cancel()
+	if err == nil {
+		if m := ioregModel(out); m != "" {
+			return m
+		}
+	}
+	ctx, cancel = context.WithTimeout(context.Background(), profilerTimeout)
+	defer cancel()
+	if out, err := l.run(ctx, "system_profiler", "SPHardwareDataType"); err == nil {
+		return profilerModel(out)
+	}
+	return ""
 }
 
 // darwinCollector keeps `iostat -n 0 -w 10` (CPU) and `vm_stat 10` (memory) running and takes their latest rows:
@@ -144,12 +250,23 @@ func (c *darwinCollector) Sample(now time.Time) proto.MetricSample {
 		s.NetRx, s.NetTx = netRates(c.net, cur)
 		c.net = cur
 	}
-	var st syscall.Statfs_t
-	// "/" is the sealed system snapshot (a few GB); what fills up is the data volume.
-	if syscall.Statfs("/System/Volumes/Data", &st) == nil || syscall.Statfs("/", &st) == nil {
-		s.DiskUsed, s.DiskTotal = diskUsage(st.Blocks, st.Bfree, st.Bavail, uint64(st.Bsize))
+	if v := Volumes(); len(v) > 0 {
+		s.DiskUsed, s.DiskTotal = v[0].Used, v[0].Total
 	}
 	return s
+}
+
+// Volumes is the data volume ("/" is the sealed system snapshot, a few GB; what fills up is the data volume), or "/"
+// when there is none.
+func Volumes() []proto.DiskVolume {
+	for _, m := range []string{"/System/Volumes/Data", "/"} {
+		var st syscall.Statfs_t
+		if syscall.Statfs(m, &st) == nil {
+			used, total := diskUsage(st.Blocks, st.Bfree, st.Bavail, uint64(st.Bsize))
+			return []proto.DiskVolume{{Mount: m, Used: used, Total: total}}
+		}
+	}
+	return nil
 }
 
 // ifStats is one RTM_IFINFO2 message of the route socket's interface list.

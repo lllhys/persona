@@ -4,6 +4,58 @@ import { clipInput, clipTo, MAX_INPUT, summaryOf } from '../index.js'
 
 const jsonBytes = (v) => Buffer.byteLength(JSON.stringify(v), 'utf8')
 
+function legacyMapStrings(value, f) {
+  if (typeof value === 'string') return f(value)
+  if (Array.isArray(value)) return value.map((v) => legacyMapStrings(v, f))
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, legacyMapStrings(v, f)]))
+  }
+  return value
+}
+
+function legacyClipIfShorter(s, n) {
+  const size = Buffer.byteLength(s, 'utf8')
+  if (size <= n) return s
+  const clipped = clipTo(s, n)
+  return size > n + 48 || jsonBytes(clipped) < jsonBytes(s) ? clipped : s
+}
+
+function legacyClipInput(input) {
+  const originalSize = jsonBytes(input)
+  if (originalSize <= MAX_INPUT) return input
+  const out = legacyMapStrings(input, (s) => clipTo(s, MAX_INPUT / 2))
+  const size = jsonBytes(out)
+  if (size <= MAX_INPUT) return out
+  let long = 0
+  let kept = 0
+  const rest = jsonBytes(legacyMapStrings(input, (s) => {
+    const bytes = Buffer.byteLength(s, 'utf8')
+    if (bytes <= 256) return s
+    long++
+    kept += Math.min(bytes, MAX_INPUT / 2)
+    return ''
+  }))
+  if (long === 0) return out
+  let share = Math.trunc((MAX_INPUT - rest) * kept / (size - rest) / long)
+  share = Math.min(Math.max(share - 48, 256), MAX_INPUT / 2)
+  return legacyMapStrings(input, (s) => legacyClipIfShorter(s, share))
+}
+
+test('clipInput leaves fitting first- and second-pass results byte-identical to the legacy implementation', () => {
+  const medium = 'Some notes on the plan. '.repeat(125)
+  const inputs = [
+    { file_path: 'a.go', edits: [{ old_string: 'a', new_string: 'x'.repeat(1_000_000) }] },
+    { page_id: 'p1', children: Array.from({ length: 40 }, () => ({ type: 'paragraph', text: medium })) },
+  ]
+  for (const input of inputs) {
+    const legacy = legacyClipInput(input)
+    assert.ok(jsonBytes(legacy) <= MAX_INPUT)
+    const out = clipInput(input)
+    assert.equal(JSON.stringify(out), JSON.stringify(legacy))
+    assert.equal(out.zz_persona_clipped, undefined)
+  }
+})
+
 test('clipInput clips a million-byte multi-edit string without changing the edits or source', () => {
   const input = { file_path: 'a.go', edits: [
     { old_string: 'a', new_string: 'x'.repeat(1_000_000) },
@@ -49,13 +101,19 @@ test('clipInput shares the budget across medium strings, accounting for JSON esc
   }
 })
 
-test('clipInput keeps short inputs, top-level non-objects, and many short values whole', () => {
+test('clipInput keeps short inputs and top-level non-objects unchanged, and bounds many short values', () => {
   for (const input of [null, undefined, true, 42, 'x'.repeat(50_000), ['x'.repeat(50_000)], { text: 'small' }]) {
     assert.equal(clipInput(input), input)
   }
   const input = { values: Array.from({ length: 4_000 }, () => ['short', 42, true, null]) }
+  const original = structuredClone(input)
   assert.ok(jsonBytes(input) > MAX_INPUT)
-  assert.deepEqual(clipInput(input), input, 'many short values still have no total bound')
+  const out = clipInput(input)
+  assert.ok(jsonBytes(out) <= MAX_INPUT)
+  assert.ok(out.values.length > 0 && out.values.length < input.values.length)
+  assert.deepEqual(out.values, input.values.slice(0, out.values.length))
+  assert.match(out.zz_persona_clipped.note, /^Omitted \d+ array items and 0 object fields\./)
+  assert.deepEqual(input, original)
 })
 
 test('clipInput only replaces a near-share string when its JSON is strictly shorter', () => {
@@ -67,6 +125,9 @@ test('clipInput only replaces a near-share string when its JSON is strictly shor
     const candidate = clipTo(text, 256)
     if (extra === 37) assert.equal(jsonBytes(candidate), jsonBytes(text))
     assert.ok(jsonBytes(out) <= jsonBytes(input))
+    assert.ok(jsonBytes(out) <= MAX_INPUT)
+    assert.ok(out.items.length > 0 && out.items.length < 200)
+    assert.equal(typeof out.zz_persona_clipped.note, 'string')
     for (const item of out.items) assert.equal(item.text, cut ? candidate : text)
   }
   for (const tail of ['\\'.repeat(30), '"'.repeat(30), '\u0000'.repeat(30), '<>&'.repeat(10), '\u2028\u2029'.repeat(5)]) {
@@ -76,6 +137,9 @@ test('clipInput only replaces a near-share string when its JSON is strictly shor
     const out = clipInput(input)
     const shouldCut = jsonBytes(candidate) < jsonBytes(text)
     assert.equal(shouldCut, ['\\', '"', '\u0000'].includes(tail[0]), 'use JSON.stringify escaping, not Go HTML escaping')
+    assert.ok(jsonBytes(out) <= MAX_INPUT)
+    assert.ok(out.items.length > 0 && out.items.length < 200)
+    assert.equal(typeof out.zz_persona_clipped.note, 'string')
     for (const item of out.items) assert.equal(item.text, shouldCut ? candidate : text)
   }
 })
@@ -110,6 +174,12 @@ test('summaryOf says what a call does, not just which tool', () => {
   assert.equal(summaryOf('Agent', { description: 'Find the flaky test', prompt: 'long…' }), 'Find the flaky test')
   assert.equal(summaryOf('mcp__lark__send', { chat_id: 'oc_1', message: 'hello there' }), 'hello there')
   assert.equal(summaryOf('mcp__x__create', { repo: 'a/b', count: 3 }), 'repo: a/b', 'any other text, with its name')
+  assert.equal(summaryOf('mcp__x__create', clipInput({ repo: 'a/b', values: Array.from({ length: 4000 }, () => ['short', 42, true, null]) })), 'repo: a/b',
+    'a real fallback argument stays ahead of the appended structural clip marker')
+  const clippedWithoutText = clipInput({ values: Array.from({ length: 4000 }, () => ['short', 42, true, null]) })
+  assert.equal(summaryOf('mcp__x__create', clippedWithoutText), 'mcp__x__create',
+    'an object marker cannot become the call summary when the input has no other top-level string')
+  assert.deepEqual(Object.keys(clippedWithoutText.zz_persona_clipped), ['note'])
   assert.equal(summaryOf('mcp__x__ping', { count: 3 }), 'mcp__x__ping', 'no text at all: the tool name')
   assert.equal(summaryOf('mcp__x__ping', { path: '  ', count: 3 }), 'mcp__x__ping', 'blank strings say nothing')
   assert.equal(summaryOf('t', null), 't')

@@ -1,11 +1,12 @@
 import { t } from "../i18n";
-import { api, enc, errorText, onCredentialChange } from "./api";
+import { api, ApiError, enc, errorText, onCredentialChange } from "./api";
 import { MANAGER_HEADER, onManagerChoice } from "./manager-choice";
 import type { OwnedWorkspaceTarget, ResolvedWorktreeAction } from "./worktree-actions";
 
 export interface WorktreeDeletionPreview {
-  workspace_id: string; kind: "orca"; host_id: "local"; instance_id: string;
+  workspace_id: string; kind: "orca" | "herdr" | "paseo"; host_id: "local"; instance_id: string;
   path: string; branch: string; dirty: number; folder: boolean; preview_token: string;
+  close_only?: boolean;
 }
 export interface WorktreeDeletionResult {
   workspace_id: string; removed: boolean; state: "removed" | "removing" | "unknown" | "present" | "pending";
@@ -26,7 +27,7 @@ export interface WorktreeMutationState {
 interface Dependencies {
   resolve: () => ResolvedWorktreeAction;
   current: () => boolean;
-  acknowledged: (action: "rename" | "delete") => void;
+  acknowledged: (action: "rename" | "delete" | "close") => void;
   post?: WorktreeActionPost;
 }
 
@@ -62,10 +63,10 @@ export class WorktreeMutation {
     this.set({ phase: "invalid", error: t("worktree-actions.invalidated") });
   };
   dispose = () => { this.cancel(); this.off.forEach((off) => off()); this.off = []; };
-  private admit(action: "rename" | "delete" | "reconcile") {
+  private admit(action: "rename" | "delete" | "close" | "reconcile") {
     if (this.state.phase === "invalid" || !this.deps.current()) return false;
     const context = this.deps.resolve();
-    if (!(action === "rename" ? context.canRename : action === "reconcile" ? context.canReconcile : context.canDelete)) {
+    if (!(action === "rename" ? context.canRename : action === "reconcile" ? context.canReconcile : action === "close" ? context.canClose : context.canDelete)) {
       this.set({ error: context.reason || t(context.hasChildren ? "worktree-actions.has_children" : "worktree-actions.protected") });
       return false;
     }
@@ -95,17 +96,18 @@ export class WorktreeMutation {
       if (attempt.current()) this.set({ phase: "idle", error: errorText(error) });
     }
   }
-  async preview(): Promise<void> {
-    if (this.state.dispatched || ["previewing", "removed"].includes(this.state.phase) || !this.admit("delete")) return;
+  async preview(closeOnly = false): Promise<void> {
+    if (this.state.dispatched || ["previewing", "removed"].includes(this.state.phase) || !this.admit(closeOnly ? "close" : "delete")) return;
     const attempt = this.begin();
     this.set({ phase: "previewing", error: "", preview: undefined });
     try {
       const info = await (this.deps.post || postWorktreeAction)<WorktreeDeletionPreview>(this.target, "delete", {
-        workspace_id: this.target.workspaceId, kind: "orca", preview: true,
+        workspace_id: this.target.workspaceId, kind: this.target.host, preview: true, ...(closeOnly ? { close_only: true } : {}),
       }, attempt.signal);
-      if (!attempt.current() || !this.admit("delete")) return;
-      if (info.workspace_id !== this.target.workspaceId || info.kind !== "orca" || info.host_id !== "local"
-        || !info.instance_id || !info.preview_token || info.path !== this.target.cwd || typeof info.branch !== "string"
+      if (!attempt.current() || !this.admit(closeOnly ? "close" : "delete")) return;
+      if (info.workspace_id !== this.target.workspaceId || info.kind !== this.target.host || info.host_id !== "local"
+        || info.kind === "orca" && !info.instance_id || Boolean(info.close_only) !== closeOnly || closeOnly && !info.folder
+        || !info.preview_token || info.path !== this.target.cwd || typeof info.branch !== "string"
         || typeof info.folder !== "boolean" || !Number.isSafeInteger(info.dirty) || info.dirty < 0) {
         throw new Error(t("worktree-actions.preview_invalid"));
       }
@@ -116,12 +118,13 @@ export class WorktreeMutation {
   }
   async remove(discardChanges: boolean, deleteBranch: boolean): Promise<void> {
     const info = this.state.preview;
-    if (this.state.phase !== "ready" || !info || this.state.dispatched || !this.admit("delete")) return;
+    if (this.state.phase !== "ready" || !info || this.state.dispatched || !this.admit(info.close_only ? "close" : "delete")) return;
     // Folder unregister never authorizes file or branch loss.
     if (!info.folder && info.dirty > 0 && !discardChanges) return;
     const attempt = this.begin();
     this.set({ phase: "deleting", error: "", dispatched: true });
-    await this.finish({ workspace_id: this.target.workspaceId, kind: "orca", preview_token: info.preview_token,
+    await this.finish({ workspace_id: this.target.workspaceId, kind: this.target.host, preview_token: info.preview_token,
+      ...(info.close_only ? { close_only: true } : {}),
       ...(!info.folder && info.dirty > 0 && discardChanges ? { force: true } : {}),
       ...(!info.folder && deleteBranch ? { delete_branch: true } : {}),
     }, attempt);
@@ -131,7 +134,9 @@ export class WorktreeMutation {
     if (!info || !this.state.dispatched || this.state.phase !== "uncertain" || !this.admit("reconcile")) return;
     const attempt = this.begin();
     this.set({ phase: "checking", error: "" });
-    await this.finish({ workspace_id: this.target.workspaceId, kind: "orca", preview_token: info.preview_token, reconcile: true }, attempt);
+    await this.finish({ workspace_id: this.target.workspaceId, kind: this.target.host, preview_token: info.preview_token, reconcile: true,
+      ...(info.close_only ? { close_only: true } : {}),
+    }, attempt);
   }
   private async finish(body: Record<string, unknown>, attempt: { signal: AbortSignal; current: () => boolean }) {
     try {
@@ -140,12 +145,17 @@ export class WorktreeMutation {
       if (result.workspace_id !== this.target.workspaceId) throw new Error(t("worktree-actions.preview_invalid"));
       if (result.removed === true && result.state === "removed") {
         this.set({ phase: "removed", result });
-        this.deps.acknowledged("delete");
+        this.deps.acknowledged(this.state.preview?.close_only ? "close" : "delete");
       } else {
         this.set({ phase: "uncertain", result, error: t("worktree-actions.unknown") });
       }
     } catch (error) {
-      if (attempt.current()) this.set({ phase: "uncertain", error: `${errorText(error)}\n${t("worktree-actions.unknown")}` });
+      if (!attempt.current()) return;
+      if (error instanceof ApiError && error.code === "worktree_herdr_children") {
+        this.set({ phase: "invalid", error: errorText(error) });
+        return;
+      }
+      this.set({ phase: "uncertain", error: `${errorText(error)}\n${t("worktree-actions.unknown")}` });
     }
   }
 }

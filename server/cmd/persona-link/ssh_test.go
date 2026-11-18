@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -239,6 +240,21 @@ func TestPairAndSSHCommands(t *testing.T) {
 	if err := json.Unmarshal(f.out.Bytes(), &testRep); err != nil || !testRep.OK || testRep.Target != "127.0.0.1:"+port {
 		t.Fatalf("ssh test json = %+v (%v)", testRep, err)
 	}
+	if want := "经 SSH 连上了 127.0.0.1:" + port + " 上的 hub。"; testRep.Message != want {
+		t.Fatalf("canonical SSH message = %q, want %q", testRep.Message, want)
+	}
+	successJSON := append([]byte(nil), f.out.Bytes()...)
+	for _, language := range []string{"en", "ja", "fr"} {
+		t.Setenv("PERSONA_LANG", language)
+		f.out.Reset()
+		if err := sshCmd(f.env, []string{"--test", "--json"}); err != nil {
+			t.Fatalf("sshCmd --test --json (%s): %v", language, err)
+		}
+		if !bytes.Equal(f.out.Bytes(), successJSON) {
+			t.Fatalf("%s changed machine JSON:\n%s\nwant:\n%s", language, f.out, successJSON)
+		}
+	}
+	t.Setenv("PERSONA_LANG", "zh-Hans")
 
 	// Failing `persona-link ssh --test --json` reports the failure code and exits 1.
 	t.Setenv("PERSONA_CMD_TEST_SSH_MODE", "host_key")

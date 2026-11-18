@@ -604,6 +604,52 @@ func TestQuickMetaAfterATerminalRewindDropsTheRewoundError(t *testing.T) {
 	}
 }
 
+func TestSessionListRewindKeepsVisibleFailureWhenHiddenTurnSucceeded(t *testing.T) {
+	const id = "0d000000-0000-4000-8000-000000009999"
+	const failure = "API Error: 529 A failed"
+	p := filepath.Join(t.TempDir(), id+".jsonl")
+	lines := []string{
+		`{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-01-01T12:00:00Z","message":{"role":"user","content":"A"}}`,
+		`{"type":"assistant","uuid":"e1","parentUuid":"u1","timestamp":"2026-01-01T12:00:01Z","isApiErrorMessage":true,"error":"server_error","message":{"id":"m-e1","model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: 529 A failed"}]}}`,
+		`{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"e1","timestamp":"2026-01-01T12:00:02Z","durationMs":10}`,
+		`{"type":"user","uuid":"u2","parentUuid":"d1","timestamp":"2026-01-01T12:01:00Z","message":{"role":"user","content":"B"}}`,
+		`{"type":"assistant","uuid":"a2","parentUuid":"u2","timestamp":"2026-01-01T12:01:01Z","message":{"id":"m-a2","model":"claude-opus-5-5","role":"assistant","content":[{"type":"text","text":"B succeeded"}]}}`,
+		`{"type":"system","subtype":"turn_duration","uuid":"d2","parentUuid":"a2","timestamp":"2026-01-01T12:01:02Z","durationMs":10}`,
+		`{"type":"system","subtype":"away_summary","uuid":"s1","parentUuid":"d1","timestamp":"2026-01-01T12:02:00Z","content":"recap"}`,
+	}
+	node := func() *Node {
+		sim := newClaudeSim(simPrompt{"A", noCode}, simPrompt{"B", noCode})
+		n := rewindNode(t, sim, "claude", proto.StatusDone)
+		n.agents = map[string]host.Agent{id: n.agents["s1"]}
+		n.paths, n.metas, n.bgScans = map[string]string{id: p}, map[string]quickMeta{}, map[string]*bgScan{}
+		n.files, n.watches = map[string]*transcript.File{}, map[string]*watch{}
+		return n
+	}
+	lastText := func(n *Node) string {
+		t.Helper()
+		for _, s := range n.sessionList(context.Background(), false) {
+			if s.SessionID == id {
+				return s.LastText
+			}
+		}
+		t.Fatal("no session row")
+		return ""
+	}
+	writeLines(t, p, lines)
+	if got := lastText(node()); got != failure {
+		t.Fatalf("LastText = %q after the successful turn was hidden, want visible failure %q", got, failure)
+	}
+
+	// A newer visible tool-only success still retires the old preview: no blanket !rewound behavior.
+	lines = append(lines,
+		`{"type":"assistant","uuid":"c1","parentUuid":"s1","timestamp":"2026-01-01T12:03:00Z","message":{"id":"m-c1","model":"claude-opus-5-5","role":"assistant","content":[{"type":"tool_use","id":"tool-c1","name":"Bash","input":{"command":"go test ./internal/assistant"}}]}}`,
+		`{"type":"system","subtype":"turn_duration","uuid":"d3","parentUuid":"c1","timestamp":"2026-01-01T12:03:01Z","durationMs":10}`)
+	writeLines(t, p, lines)
+	if got := lastText(node()); got != "" {
+		t.Fatalf("LastText = %q after a newer visible tool-only success, want the old preview retired", got)
+	}
+}
+
 // The quick read leaves lines over 8 KB unparsed; they still take their place in the tree. A prompt with an image (the
 // case #4966 was reported on: a 360 KB line) or a long paste is always one, and so is a big tool result in the middle of
 // the turn gone back over: without them the rewound turn was not found, or not hidden past the gap.

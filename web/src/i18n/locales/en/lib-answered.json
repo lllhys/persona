@@ -10,6 +10,8 @@
   "rejected": "Sent back",
   "rejected_feedback": "Sent back: {feedback}",
   "allowed": "Allowed",
+  "allowed_edited": "Allowed (edited)",
+  "denied_reason": "Denied: {reason}",
   "always_allowed": "Always allowed",
   "denied": "Denied",
   "handled": "Handled",

@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The same component renderer serves extension pages and assistant cards; only their control transport differs.
 @MainActor
@@ -30,6 +31,11 @@ protocol ExtensionViewControlling: AnyObject {
     func preview(_ name: String, _ value: String?)
     /// Sends a control's new value (after its confirm): shown at once, one request a control at a time.
     func change(_ control: ExtensionRowControl, to value: String) async -> ExtensionViewModel.Outcome
+    /// A picture the hub serves for this page (UI version 6's `src.path`), loaded with the device's credentials; a card
+    /// has none.
+    func picture(_ path: String, pixels: Int) async throws -> Data
+    /// A hub picture did not load (its token may have run out): the page is drawn again, signed anew.
+    func pictureFailed()
 }
 
 extension ExtensionViewControlling {
@@ -46,6 +52,10 @@ extension ExtensionViewControlling {
     var slowControls: Set<String> { [] }
     func preview(_ name: String, _ value: String?) {}
     func change(_ control: ExtensionRowControl, to value: String) async -> ExtensionViewModel.Outcome { .init() }
+    func picture(_ path: String, pixels: Int) async throws -> Data {
+        throw APIError(status: 0, message: String(localized: "Couldn't Load This Picture"))
+    }
+    func pictureFailed() {}
 }
 
 extension ExtensionViewModel: ExtensionViewControlling {}

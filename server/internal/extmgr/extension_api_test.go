@@ -170,7 +170,7 @@ func TestExtensionAPI(t *testing.T) {
 		}
 	}
 	if _, out := call(t, mux, "GET", "/api/v1/examplefeed/role", master, ""); out["role"] != "center" ||
-		fmt.Sprint(out["capabilities"]) != "[inbox_group]" {
+		fmt.Sprint(out["capabilities"]) != "[inbox_group inbox_group_state tool_images]" {
 		t.Fatalf("the hub's role and capabilities at initialize: %v", out)
 	}
 	// A send it declared a receipt for is kept by the hub, which relays it (hub/extensions_link.go): the report
@@ -213,7 +213,7 @@ func TestExtensionAPI(t *testing.T) {
 		t.Fatalf("an event of a type it did not declare went out: %v", b)
 	}
 
-	if md := h.extensions.extensionInstructions(); !strings.Contains(md, "The example feed is read with its skill.") {
+	if md := h.extensions.extensionInstructions(context.Background(), ""); !strings.Contains(md, "The example feed is read with its skill.") {
 		t.Fatalf("instructions: %q", md)
 	}
 	first := h.extensions.extensionSkillsFor("mac")

@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="phonetools_source_contacts">Contacts</string>
-    <string name="phonetools_source_contacts_detail">Search names, companies, phone numbers and emails</string>
+    <string name="phonetools_source_contacts_detail">Search and edit names, companies, phone numbers and emails. Each change needs your OK</string>
     <string name="phonetools_source_calendar">Calendar</string>
-    <string name="phonetools_source_calendar_detail">View events. New events need your OK each time</string>
+    <string name="phonetools_source_calendar_detail">View and edit events. Every change needs your OK</string>
     <string name="phonetools_source_location">Location</string>
     <string name="phonetools_source_location_detail">Only while in the foreground, without Google services</string>
     <string name="phonetools_source_health">Health</string>
@@ -51,6 +51,35 @@
     <string name="phonetools_calendar_location">Location: %1$s</string>
     <string name="phonetools_calendar_calendar">Calendar: %1$s</string>
     <string name="phonetools_calendar_notes">Notes: %1$s</string>
+    <!-- Calendar and contact write confirmations. -->
+    <string name="phonetools_not_set">Not set</string>
+    <string name="phonetools_untitled">(Untitled)</string>
+    <string name="phonetools_calendar_change">Change event “%1$s”</string>
+    <string name="phonetools_calendar_delete">Delete event “%1$s”</string>
+    <string name="phonetools_calendar_time_change">Time: %1$s → %2$s</string>
+    <string name="phonetools_calendar_title_change">Title: %1$s → %2$s</string>
+    <string name="phonetools_calendar_location_change">Location: %1$s → %2$s</string>
+    <string name="phonetools_calendar_notes_change">Notes: %1$s → %2$s</string>
+    <plurals name="phonetools_text_clipped">
+        <item quantity="one">%1$s… (%2$d character in total)</item>
+        <item quantity="other">%1$s… (%2$d characters in total)</item>
+    </plurals>
+    <string name="phonetools_calendar_all_day_on">Becomes an all-day event</string>
+    <string name="phonetools_calendar_all_day_off">No longer all-day</string>
+    <string name="phonetools_calendar_this_occurrence">Only this occurrence</string>
+    <string name="phonetools_calendar_future_occurrences">This and all future occurrences</string>
+    <string name="phonetools_contact_new">New contact “%1$s”</string>
+    <string name="phonetools_contact_change">Change contact “%1$s”</string>
+    <string name="phonetools_contact_field_change">%1$s: %2$s → %3$s</string>
+    <string name="phonetools_contact_field_value">%1$s: %2$s</string>
+    <string name="phonetools_contact_given_name">First name</string>
+    <string name="phonetools_contact_family_name">Last name</string>
+    <string name="phonetools_contact_company">Company</string>
+    <string name="phonetools_contact_job_title">Job title</string>
+    <string name="phonetools_contact_phones">Phone numbers</string>
+    <string name="phonetools_contact_emails">Emails</string>
+    <string name="phonetools_contact_phones_add">Add phone: %1$s</string>
+    <string name="phonetools_contact_emails_add">Add email: %1$s</string>
     <string name="phonetools_health_rationale_title">Health data</string>
     <string name="phonetools_health_rationale_how">How Persona uses your health data</string>
     <string name="phonetools_health_rationale_read">Only when you ask Claude a health question on your computer does Claude read the daily totals once through Persona: steps, distance, active energy, heart rate, resting heart rate, sleep time and weight.</string>

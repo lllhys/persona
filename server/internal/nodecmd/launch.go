@@ -12,7 +12,8 @@ import (
 )
 
 // LaunchNodeWait is how long `personad launch` waits for the local node to hand over a launcher's settings. The node
-// answers from memory, so a healthy one takes milliseconds; one that accepts the connection and never answers
+// answers from memory, so a healthy one takes milliseconds (a Codex provider's at most node's codexCatalogWait more,
+// while it looks for its gateway's model catalog); one that accepts the connection and never answers
 // (restarting, stuck, or a stale socket held by another process) would otherwise keep the pane blank forever (#4548).
 var LaunchNodeWait = 10 * time.Second
 

@@ -226,10 +226,11 @@ class ChatParityShotsTest {
         var forked = ""
         var rewound: Pair<String, RewindRestore>? = null
         var block by mutableStateOf<String?>(null)
+        var code by mutableStateOf(true)
         rule.setContent {
             PersonaTheme(reduceMotion = true) {
                 MessageMenuSheet(menu, writes = true, onQuote = {}, onEdit = {}, onContext = {}, onHandToPersona = null, onNotice = {},
-                    onFork = { forked = it }, rewind = RewindMenu(block) { target, restore -> rewound = target.id to restore })
+                    onFork = { forked = it }, rewind = RewindMenu(block, code) { target, restore -> rewound = target.id to restore })
             }
         }
         menu.open(MessageTarget("abc#2", "回复", user = false))
@@ -257,6 +258,17 @@ class ChatParityShotsTest {
         rule.onNodeWithText("只回退对话").performClick()
         rule.waitForIdle()
         assertEquals("u1" to RewindRestore.Conversation, rewound)
+        // Where the node puts no files back (a runtime's session, a Codex thread; #6294): the conversation only.
+        code = false
+        menu.open(MessageTarget("u2", "再跑一次", user = true))
+        rule.waitForIdle()
+        rule.onNodeWithText("回退到这里").performClick()
+        rule.waitForIdle()
+        val choices = sheet()
+        assertTrue(choices.toString(), "只回退对话" in choices && "回退代码和对话" !in choices)
+        rule.onNodeWithText("只回退对话").performClick()
+        rule.waitForIdle()
+        assertEquals("u2" to RewindRestore.Conversation, rewound)
     }
 
     private fun sheet(): List<String> {

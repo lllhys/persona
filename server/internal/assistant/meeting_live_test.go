@@ -276,7 +276,8 @@ func TestMeetingLiveHTTP(t *testing.T) {
 	m.upload(meetingRec, 3, nil)
 	wantCode(t, m.do("POST", livePath(meetingRec), "", `{"from":2,"segments":[]}`, http.StatusConflict), codeNotAttending)
 	off := m.do("GET", livePath(meetingRec), "", nil, http.StatusOK)
-	if len(off) != 5 || off["attendance"] != "off" || off["next"] != float64(2) || off["fed"] != float64(0) || off["asks"] == nil || off["revs"] == nil {
+	if len(off) != 7 || off["attendance"] != "off" || off["next"] != float64(2) || off["fed"] != float64(0) || off["asks"] == nil || off["revs"] == nil ||
+		off["topics"] == nil || off["highlights"] == nil {
 		t.Fatalf("off: %v", off)
 	}
 	// A bad body is 400 before 409 not_attending, in the contract's order.

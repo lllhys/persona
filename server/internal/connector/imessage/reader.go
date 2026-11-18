@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/connector"
+	"github.com/nwverse/persona/server/internal/textfmt"
 )
 
 // ID is the connector's id: the key in hub.json, the RPCs' "id".
@@ -204,10 +205,7 @@ func firstLine(s string, err error) string {
 	if s == "" {
 		s = err.Error()
 	}
-	if len(s) > 200 {
-		s = s[:200]
-	}
-	return s
+	return textfmt.Cut(s, 200)
 }
 
 // appleEpoch is 2001-01-01 UTC, where Messages counts its dates from: nanoseconds since macOS 10.13, seconds before.

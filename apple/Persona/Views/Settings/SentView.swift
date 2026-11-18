@@ -373,10 +373,7 @@ private struct SentDetailSheet: View {
             .macSheetDone { dismiss() }
             #else
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1)
-                        .accessibilityIdentifier("sent.detail.done")
-                }
+                SheetClose(id: "sent.detail.close") { dismiss() }
             }
             #endif
         }

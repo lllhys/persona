@@ -1,6 +1,7 @@
 package persona.core.domain.models
 
 import persona.core.contracts.AgentState
+import persona.core.contracts.PaseoAgent
 import persona.core.contracts.Session
 import persona.core.contracts.api.AgentLauncher
 import persona.core.contracts.api.AgentModel
@@ -64,19 +65,43 @@ object AgentModelPanel {
     /** The launcher the session runs on: its own, plain claude when it started without one. */
     fun launcher(s: Session): String = s.launcher?.takeIf(String::isNotEmpty) ?: "claude"
 
-    /** The engine a session runs, as the marks name it. */
+    /** The engine a session runs, as the marks name it: each of Paseo's other providers its own ([launcherEngine]). */
     fun engine(s: Session): String = when {
         s.isCodex -> "codex"
         s.isClaude -> "claude"
-        else -> engineId(s.agent)
+        else -> launcherEngine(s.launcher.orEmpty(), s.agent)
     }
 
     /** An agent name as an engine id: "" (an older hub) is Claude Code. */
     fun engineId(agent: String?): String = agent?.trim()?.lowercase()?.takeIf(String::isNotEmpty) ?: "claude"
 
-    /** Its model can be switched while it runs: Claude Code of the user's own, running and taking messages (the node types `/model`). */
-    fun canSwitchModel(s: Session): Boolean =
-        !s.assistant && !s.hasSource && s.isClaude && s.canSend && s.agentState != AgentState.Offline && s.isLive
+    /**
+     * The engine launcher [name] runs, from the agent it starts ([agent]): Paseo's catch-all [PaseoAgent] (every provider
+     * but Claude Code and Codex) is no engine of its own, so each of its providers is one, by its launcher's name (#8143).
+     * The marks and the panel's words then name that provider, never Paseo, and moving to another needs a new
+     * conversation, as moving to another engine does.
+     */
+    fun launcherEngine(name: String, agent: String?): String =
+        engineId(agent).let { kind -> if (kind == PaseoAgent && name.isNotEmpty()) name else kind }
+
+    /**
+     * What the pill and the panel call the engines that are a provider of their own ([launcherEngine]): the session's
+     * own by its agent's name (the provider's label, [Session.agentLabel]), the computer's other ones by their launcher's.
+     */
+    fun engineNames(s: Session, launchers: List<AgentLauncher>?): Map<String, String> = buildMap {
+        launchers.orEmpty().filter { engineId(it.agentType) == PaseoAgent && it.name.isNotEmpty() }.forEach { put(it.name, it.title) }
+        if (engineId(s.agent) == PaseoAgent && !s.launcher.isNullOrEmpty()) put(engine(s), s.agentLabel)
+    }
+
+    /**
+     * Its model can be switched while it runs and takes messages. The node's capabilities.model wins where it says (a
+     * runtime that takes a model through `POST …/modes`, #6294; the web's `canSwitchModel`); without it, Claude Code of
+     * the user's own (the node types `/model`).
+     */
+    fun canSwitchModel(s: Session): Boolean {
+        if (s.assistant || !s.canSend || s.agentState == AgentState.Offline || !s.isLive) return false
+        return s.capabilities?.model ?: (!s.hasSource && s.isClaude)
+    }
 
     /** What the pill and the panel can change now: its model, its effort. Neither: the pill is a label. */
     fun switches(s: Session): Pair<Boolean, Boolean> = canSwitchModel(s) to (s.isLive && (s.canChangeModes || s.canChangeEffortOnly))
@@ -84,8 +109,13 @@ object AgentModelPanel {
     /** Why the model can't be switched right now: the agent works or waits on the user (the node refuses then too). */
     fun busy(s: Session): PanelReason? = PanelReason.Busy.takeIf { s.agentState == AgentState.Working || s.agentState == AgentState.NeedsYou }
 
-    /** Whether [s] may move to another launcher of its engine: on a hub that does it, a Claude Code Agent whose model the app switches. */
-    fun switchesLauncher(s: Session, features: Set<String>): Boolean = LAUNCHER_SWITCH in features && engine(s) == "claude" && canSwitchModel(s)
+    /**
+     * Whether [s] may move to another launcher of its engine: on a hub that does it, a Claude Code Agent whose model the app
+     * switches. Not a session with a source: the node moves no runtime's session to another launcher; it only picks a model
+     * of its own.
+     */
+    fun switchesLauncher(s: Session, features: Set<String>): Boolean =
+        LAUNCHER_SWITCH in features && !s.hasSource && engine(s) == "claude" && canSwitchModel(s)
 
     /** The model a launcher runs given none ([AgentModel.isDefault]). */
     fun defaultModel(models: List<AgentModel>): AgentModel? = models.firstOrNull { it.isDefault }
@@ -132,7 +162,7 @@ object AgentModelPanel {
             val e = listFor(name)
             val mine = name == own
             val launcherEntry = all.firstOrNull { it.name == name }
-            val kind = if (mine) engine else engineId(e.list?.agent?.takeIf(String::isNotEmpty) ?: launcherEntry?.agentType)
+            val kind = if (mine) engine else launcherEngine(name, e.list?.agent?.takeIf(String::isNotEmpty) ?: launcherEntry?.agentType)
             val other = !mine && switching && kind == engine
             var models: List<PanelModel>? = null
             var loading = false

@@ -4,5 +4,6 @@
   "from_subagent": "From subagent · {agent}",
   "from_server": "From MCP server {server}",
   "from_server_source": "From MCP server {server} (configured in {source})",
-  "from_worker": "From worker · {agent}"
+  "from_worker": "From worker · {agent}",
+  "from_side": "From side session · {agent}"
 }

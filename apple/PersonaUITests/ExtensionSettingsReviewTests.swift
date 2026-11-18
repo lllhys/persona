@@ -181,8 +181,8 @@ final class ExtensionSettingsReviewTests: XCTestCase {
             shot(app, "older-hub-waiting", look: look)
             let update = app.buttons["market-confirm"]
             XCTAssertTrue(update.waitForExistence(timeout: 20), "\(look): no Update sheet:\n\(app.debugDescription)")
-            app.navigationBars.buttons["取消"].firstMatch.tap()
-            XCTAssertTrue(update.waitForNonExistence(timeout: 5), "\(look): Cancel did not close the sheet")
+            app.navigationBars.buttons["sheet-close"].firstMatch.tap()
+            XCTAssertTrue(update.waitForNonExistence(timeout: 5), "\(look): ✕ did not close the sheet")
             app.terminate()
         }
     }

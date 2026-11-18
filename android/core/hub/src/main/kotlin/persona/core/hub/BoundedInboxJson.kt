@@ -74,7 +74,8 @@ internal object BoundedInboxJson {
                 34 -> quoted = true
                 123, 91 -> { if (++depth > MaxDepth) tooLarge(); if (++tokens > MaxStructureTokens) tooLarge() }
                 125, 93 -> depth--
-                44, 58 -> if (++tokens > MaxStructureTokens) tooLarge()
+                // Commas and openings count each decoded entry once; a colon adds no entry.
+                44 -> if (++tokens > MaxStructureTokens) tooLarge()
             }
         }
     }

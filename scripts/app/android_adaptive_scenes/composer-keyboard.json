@@ -1,0 +1,121 @@
+{
+  "id": "composer-keyboard",
+  "manifestId": "composer-hardware-send",
+  "description": "Keep a multiline chat draft and its caret intact through ordinary Return, Shift Return, rotation and one Ctrl/Meta Return send per physical combination. Draft, caret and focus evidence come from the real-device input tests: the adaptive probe does not see the large-window composer's field, so this scene checks only that the process survives and the screenshots show the draft.",
+  "manualEvidence": {
+    "mockSendCount": "Read GET /mock/sent before and after each Ctrl/Meta Return; exactly one new session message is required. The existing runner does not query this endpoint.",
+    "expandedEditor": "Exercise Ctrl/Meta Return and Escape in LargeWindowComposerTest and ComposerHardwareTest; repeat on a hardware keyboard during integrated verification.",
+    "ime": "Use InputConnection.setComposingText or a real Chinese/Japanese IME; ASCII adb input text is not composition evidence.",
+    "meta": "If adb cannot inject META_LEFT, use instrumentation or a physical keyboard and record Meta as unverified until then."
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "session": "chat",
+      "conversationKind": "agent"
+    },
+    {
+      "step": "tap",
+      "resource-id": "chat-composer-field"
+    },
+    {
+      "step": "text",
+      "text": "first-line"
+    },
+    {
+      "step": "key",
+      "key": "ENTER"
+    },
+    {
+      "step": "text",
+      "text": "second-line"
+    },
+    {
+      "step": "key",
+      "keycombination": [
+        "SHIFT_LEFT",
+        "ENTER"
+      ]
+    },
+    {
+      "step": "text",
+      "text": "third-line"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "01-multiline",
+      "state": "multiline-draft"
+    },
+    {
+      "step": "rotate",
+      "orientation": "landscape"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    },
+    {
+      "step": "key",
+      "keycombination": [
+        "CTRL_LEFT",
+        "ENTER"
+      ]
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "02-ctrl-sent",
+      "state": "ctrl-return-sent"
+    },
+    {
+      "step": "tap",
+      "resource-id": "chat-composer-field"
+    },
+    {
+      "step": "text",
+      "text": "meta-send"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    },
+    {
+      "step": "key",
+      "keycombination": [
+        "META_LEFT",
+        "ENTER"
+      ]
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "pid": "unchanged"
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-meta-sent",
+      "state": "meta-return-sent"
+    }
+  ],
+  "requires": {
+    "fields": [
+      "pid"
+    ]
+  }
+}

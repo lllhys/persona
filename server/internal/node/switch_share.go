@@ -34,6 +34,8 @@ type switchShare struct {
 	// held: the records a switch wrote that its Node could no longer send its hub (its connection had ended), until a
 	// Node whose state has loaded takes them (to); delivering while drain gives them to it, one batch after another,
 	// so a record written meanwhile goes after the ones before it.
+	// restarts: the restarts in another permission mode waiting for a session's turn to end (mode_restart.go).
+	restarts   map[string]*modeRestart
 	held       map[string]sessionState
 	to         *Node
 	delivering bool

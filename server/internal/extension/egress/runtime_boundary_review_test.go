@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -54,6 +55,7 @@ func TestRuntimeBlockedResponseReleasesBrokerSlot(t *testing.T) {
 			p.Register("b", Rule{Hosts: []string{"api.example.com"}})
 			finished := make(chan struct{}, 1)
 			writing := make(chan struct{}, 1)
+			unblock := make(chan struct{})
 			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != RuntimeFetchPath {
 					http.NotFound(w, r)
@@ -62,7 +64,7 @@ func TestRuntimeBlockedResponseReleasesBrokerSlot(t *testing.T) {
 				defer func() { finished <- struct{}{} }()
 				ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 				defer cancel()
-				p.handler("a").ServeHTTP(&writeObserved{ResponseWriter: w, writing: writing}, r.WithContext(ctx))
+				p.handler("a").ServeHTTP(&writeObserved{ResponseWriter: w, writing: writing, unblock: unblock}, r.WithContext(ctx))
 			}))
 			defer broker.Close()
 			c, err := net.Dial("tcp", strings.TrimPrefix(broker.URL, "http://"))
@@ -89,7 +91,7 @@ func TestRuntimeBlockedResponseReleasesBrokerSlot(t *testing.T) {
 				select {
 				case <-finished:
 					t.Fatal("response completed before the stalled-writer cancellation fixture")
-				case <-time.After(100 * time.Millisecond):
+				default:
 				}
 				p.SetTargets("a", nil)
 			}
@@ -116,7 +118,9 @@ func TestRuntimeBlockedResponseReleasesBrokerSlot(t *testing.T) {
 // Keep ResponseController's socket deadlines visible through the observer.
 type writeObserved struct {
 	http.ResponseWriter
-	writing chan struct{}
+	writing     chan struct{}
+	unblock     chan struct{}
+	unblockOnce sync.Once
 }
 
 func (w *writeObserved) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -125,7 +129,17 @@ func (w *writeObserved) Write(b []byte) (int, error) {
 	case w.writing <- struct{}{}:
 	default:
 	}
+	<-w.unblock
 	return w.ResponseWriter.Write(b)
+}
+
+func (w *writeObserved) SetWriteDeadline(deadline time.Time) error {
+	expired := !deadline.IsZero() && !deadline.After(time.Now())
+	err := http.NewResponseController(w.ResponseWriter).SetWriteDeadline(deadline)
+	if expired {
+		w.unblockOnce.Do(func() { close(w.unblock) })
+	}
+	return err
 }
 
 func TestRuntimeCancelInterruptsPendingUpstreamCONNECT(t *testing.T) {

@@ -4,7 +4,7 @@
 // question shows as "What was just said (m:ss)", a photo forwarded into the room (phase 3: its image and its text, both
 // `photo-<id>`) is one entry, and the follow-up's first message holds the meeting's material in a context block before
 // the owner's words. Pure: no DOM, no requests.
-import type { KBDetail, MeetingRoom, RecordingAsk } from "./kb";
+import type { KBDetail, LiveLine, MeetingRoom, MeetingTopic, RecordingAsk } from "./kb";
 import { parseUserText } from "./turns";
 import type { Item } from "./types";
 
@@ -12,6 +12,9 @@ import type { Item } from "./types";
 export const MEETING_CONVERSATION_FEATURE = "meeting_conversation";
 /** The hub takes meeting photos (phase 3, "Phase 3: photos"); it comes only with `meeting_conversation`. */
 export const MEETING_PHOTOS_FEATURE = "meeting_photos";
+/** The hub gives the live view (phase 2, "Phase 2: live view"): `lines` and `topics` on `GET …/live`; it comes only with
+ *  `meeting_conversation`. */
+export const MEETING_LIVE_VIEW_FEATURE = "meeting_live_view";
 
 /** One live line of a batch or a heard question: its clock in the meeting (`m:ss`) and its words. */
 export interface MeetingLine {
@@ -20,8 +23,6 @@ export interface MeetingLine {
 }
 
 export type ThreadEntry =
-  /** The room's first message (the meeting header): Persona joined. */
-  | { kind: "joined"; id: string; ts?: string }
   /** A batch of live lines. */
   | { kind: "lines"; id: string; ts?: string; lines: MeetingLine[] }
   /** The end batch: the meeting ended (after the batch's last lines, when it had any). */
@@ -112,7 +113,9 @@ export function roomThread(items: Item[], recordingId: string, asks: RecordingAs
       const { text, contexts } = parseUserText(it.text ?? "");
       const block = contexts.find((c) => c.kind === "context");
       if ((it.client_msg_id ?? "").toLowerCase() === header || (sourced && block && isHeader(block.text))) {
-        out.push({ kind: "joined", id: it.id, ts: it.ts });
+        // The header shows nothing (#9411): a meeting begun with Persona as the note-taker had nobody join, and Persona
+        // invited in or taken out later is the phone's to know, so the web says neither.
+        continue;
       } else if (sourced && (ask || /^What was just said\b/.test(block?.title ?? ""))) {
         const at = byId.get(ask ?? "")?.at;
         const clock = /\(([\d:]+)\)\s*$/.exec(block?.title ?? "")?.[1] ?? (typeof at === "number" ? meetingClock(at) : "");
@@ -206,15 +209,15 @@ export function meetingRunning(meta: Record<string, unknown> | null | undefined,
 }
 
 /** Whether a recording has something to talk about (phase 6, "Phase 6: talk about this meeting"): text or minutes, as
- *  the hub's `409 no_material` counts them (its `chars`, else a line of its transcript, or its minutes). A trimmed
- *  recording has only its minutes. */
+ *  the hub's `409 no_material` counts them (its `chars`, else a line of its transcript that is not Persona's echo, or its
+ *  minutes). A trimmed recording has only its minutes. */
 export function hasMaterial(detail: Pick<KBDetail, "kind" | "meta" | "segments" | "minutes"> | null | undefined): boolean {
   if (detail?.kind !== "recordings") return false;
   if (detail.minutes) return true;
   const meta = detail.meta;
   if (typeof meta?.trimmed_at === "string" && meta.trimmed_at) return false;
   if (typeof meta?.chars === "number" && meta.chars > 0) return true;
-  return (detail.segments ?? []).some((s) => typeof s?.text === "string" && s.text.trim() !== "");
+  return (detail.segments ?? []).some((s) => s?.echo !== true && typeof s?.text === "string" && s.text.trim() !== "");
 }
 
 /** Whether a recording's detail offers **Talk about this meeting** (phase 6): a recording with something to talk about
@@ -235,4 +238,73 @@ export function newerParts(changed: unknown, revs: unknown, known: Record<string
     if (typeof rev !== "number" || !(part in known) || rev > known[part]) out.push(part);
   }
   return out;
+}
+
+/** How many of the newest live lines the detail keeps (the transcript below has the rest). */
+export const LIVE_KEEP = 200;
+
+/** Where the next read of live lines starts (`?from=`): the reader's own next position, but never more than `keep`
+ *  lines behind the live log's length (`revs.lines`), so a long meeting is never read from its first line. */
+export function linesFrom(next: number | undefined, length: number, keep = LIVE_KEEP): number {
+  return Math.max(next ?? 0, length - keep, 0);
+}
+
+/** Live lines read so far and the new ones, by position, the newest `keep`. */
+export function mergeLiveLines(have: readonly LiveLine[], add: readonly LiveLine[], keep = LIVE_KEEP): LiveLine[] {
+  if (!add.length) return have as LiveLine[];
+  const byN = new Map<number, LiveLine>();
+  for (const l of have) byN.set(l.n, l);
+  for (const l of add) byN.set(l.n, l);
+  const out = [...byN.values()].sort((a, b) => a.n - b.n);
+  return out.length > keep ? out.slice(out.length - keep) : out;
+}
+
+/** `lines` of `GET …/live` read defensively, by position: entries without a whole `n` of 0 or more or without words are
+ *  left out, a position given twice counts once. */
+export function liveLines(v: unknown): LiveLine[] {
+  if (!Array.isArray(v)) return [];
+  const byN = new Map<number, LiveLine>();
+  for (const x of v as Record<string, unknown>[]) {
+    if (!x || typeof x !== "object" || !Number.isInteger(x.n) || (x.n as number) < 0 || typeof x.text !== "string" || !x.text.trim()) continue;
+    const sec = (k: "start" | "end") => (typeof x[k] === "number" && Number.isFinite(x[k]) ? Math.max(0, x[k] as number) : 0);
+    const source = text(x.source);
+    byN.set(x.n as number, { n: x.n as number, start: sec("start"), end: sec("end"), text: x.text.trim(), ...(source ? { source } : {}) });
+  }
+  return [...byN.values()].sort((a, b) => a.n - b.n);
+}
+
+/** The position after the last one `lines` of `GET …/live` gave (placeholder positions without words included), 0 for
+ *  none: where the next read of new lines starts. */
+export function liveLinesEnd(v: unknown): number {
+  let end = 0;
+  if (Array.isArray(v)) for (const x of v as Record<string, unknown>[]) if (x && Number.isInteger(x.n) && (x.n as number) >= 0) end = Math.max(end, (x.n as number) + 1);
+  return end;
+}
+
+/** `topics` of `GET …/live` read defensively, in the room's order: entries without a title are left out, an unknown
+ *  state reads as `open`, and a second `current` as `open` too. */
+export function meetingTopics(v: unknown): MeetingTopic[] {
+  if (!Array.isArray(v)) return [];
+  const out: MeetingTopic[] = [];
+  let current = false;
+  for (const x of v as Record<string, unknown>[]) {
+    const title = x && typeof x === "object" ? text(x.title)?.trim() : undefined;
+    if (!title) continue;
+    const given = text(x.state)?.trim().toLowerCase();
+    let state: MeetingTopic["state"] = given === "done" || given === "current" ? given : "open";
+    if (state === "current" && current) state = "open";
+    if (state === "current") current = true;
+    const note = text(x.note)?.trim();
+    out.push({
+      title, state,
+      ...(typeof x.at === "number" && Number.isFinite(x.at) ? { at: Math.max(0, x.at) } : {}),
+      ...(note ? { note } : {}),
+    });
+  }
+  return out;
+}
+
+/** A string value, or nothing. */
+function text(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
 }

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_paste_note_at">%1$s（%2$s）</string>
+    <string name="settings_paste_note_line">%1$d 行目</string>
+    <string name="settings_paste_note_unrecognized">読み込めるプロバイダー設定を認識できませんでした</string>
+    <string name="settings_paste_note_invalid_json">JSON を解析できませんでした</string>
+    <string name="settings_paste_note_unused">この部分は使用されませんでした</string>
+    <string name="settings_paste_note_not_claude">このコマンドは Claude Code を実行しません</string>
+    <string name="settings_paste_note_no_gateway">ゲートウェイアドレスが見つかりません</string>
+    <string name="settings_paste_note_url_shell">シェル展開が必要なアドレスは保存されません</string>
+    <string name="settings_paste_note_url_user">ユーザー名またはパスワードを含むアドレスは読み込みません</string>
+    <string name="settings_paste_note_url_query">クエリまたはフラグメントを含むアドレスは読み込みません</string>
+    <string name="settings_paste_note_key_shell">シェル展開が必要なキーは含めません。保存前に入力してください</string>
+    <string name="settings_paste_note_no_key">使用できるキーがありません。保存前に入力してください</string>
+    <string name="settings_paste_note_key_helper">キーはヘルパーコマンドで生成されます。保存前に入力してください</string>
+    <string name="settings_paste_note_args_left_out">機密値を含む可能性のあるコマンド引数は含めませんでした</string>
+    <string name="settings_paste_note_header_unreadable">認識できないヘッダーは含めませんでした</string>
+    <string name="settings_paste_note_curl_option">この curl オプションは使用されませんでした</string>
+    <string name="settings_paste_note_curl_path">この curl パスを完全なゲートウェイアドレスとして使用します</string>
+    <string name="settings_paste_note_cindy_kind">この cindy プロバイダー種別は読み込めません</string>
+    <string name="settings_paste_note_cindy_auth">このログイン方式には対応していません。保存前にキーを確認してください</string>
+    <string name="settings_paste_note_cindy_auth_none">設定にキーがありません。保存前に入力してください</string>
+    <string name="settings_paste_note_cindy_endpoint">この cindy エンドポイントは使用されませんでした</string>
+    <string name="settings_paste_note_cindy_request_path">cindy のカスタムリクエストパスは使用せず、標準パスを使用します</string>
+    <string name="settings_paste_note_too_many">最初の 50 件のプロバイダードラフトのみを使用します</string>
+    <string name="settings_paste_note_link_invalid">プロバイダー読み込みリンクが無効です</string>
+    <string name="settings_paste_note_link_version">このプロバイダー読み込みリンクのバージョンには対応していません</string>
+    <string name="settings_paste_note_link_too_long">プロバイダー読み込みリンクが長すぎます</string>
+    <string name="settings_paste_note_link_field">プロバイダー読み込みリンクに無効なフィールドがあります</string>
+    <string name="settings_paste_reason_credential">認証情報</string>
+    <string name="settings_paste_reason_shell">シェル展開</string>
+    <string name="settings_paste_reason_computer">コンピューター</string>
+    <string name="settings_paste_reason_limit">件数制限</string>
+    <string name="settings_paste_reason_protocol">プロトコル</string>
+    <string name="settings_paste_reason_unsupported">未対応</string>
+    <string name="settings_paste_reason_unsafe">安全でない値</string>
+    <string name="settings_paste_reason_other">未使用</string>
+    <string name="settings_paste_env_bring">引き継ぐ環境変数：%1$s</string>
+    <string name="settings_paste_env_skip">引き継がない環境変数（%1$s）：%2$s</string>
+    <string name="settings_paste_headers_bring">引き継ぐヘッダー：%1$s</string>
+    <string name="settings_paste_headers_skip">引き継がないヘッダー（%1$s）：%2$s</string>
+    <string name="settings_paste_other_ways">既存の設定から始める</string>
+    <string name="settings_paste_title">設定を貼り付け</string>
+    <string name="settings_paste_entry_detail">shell alias、exports、settings.json、curl、cindy プロバイダーを使用</string>
+    <string name="settings_paste_found">コンピューターで見つかったもの</string>
+    <string name="settings_paste_label">設定内容</string>
+    <string name="settings_paste_hint">内容を確認して保存するまで、何も保存されません。</string>
+    <string name="settings_paste_placeholder">export ANTHROPIC_BASE_URL=https://…\nexport ANTHROPIC_AUTH_TOKEN=…</string>
+    <string name="settings_paste_continue">続ける</string>
+    <string name="settings_paste_reading">設定を読み込んでいます…</string>
+    <string name="settings_paste_read_failed">貼り付けた設定を読み込めません：%1$s</string>
+    <string name="settings_paste_format_shell">Shell alias と環境変数</string>
+    <string name="settings_paste_format_settings">Claude Code settings.json</string>
+    <string name="settings_paste_format_curl">curl リクエスト</string>
+    <string name="settings_paste_format_cindy">cindy プロバイダー</string>
+    <string name="settings_paste_format_link">プロバイダー読み込みリンク</string>
+    <string name="settings_paste_nothing">このテキストからプロバイダーが見つかりませんでした。</string>
+    <plurals name="settings_paste_several">
+        <item quantity="other">%1$d 件のプロバイダーが見つかりました。1 件を選択してください。</item>
+    </plurals>
+    <plurals name="settings_paste_models_count">
+        <item quantity="other">%1$d 件のモデル</item>
+    </plurals>
+    <string name="settings_paste_action_label">このアドレスの操作を選択</string>
+    <string name="settings_paste_merge">%1$s にモデルを追加</string>
+    <string name="settings_paste_merge_hint">同じキーです。まだないモデルのみを追加します。</string>
+    <string name="settings_paste_key">%1$s のキーのみを置き換え</string>
+    <string name="settings_paste_key_hint">別のキーです。アドレス、モデル、その他の設定は変更しません。</string>
+    <string name="settings_paste_new">新しいプロバイダーとして追加</string>
+    <string name="settings_paste_new_hint">入力済みのフォームを確認してから保存します。</string>
+    <string name="settings_paste_alias_import_intro">このコンピューター上の alias %1$s のみを読み込みます。</string>
+</resources>

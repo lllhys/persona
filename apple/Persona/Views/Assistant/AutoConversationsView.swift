@@ -28,6 +28,8 @@ struct AutoConversationsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var filter: Filter
+    /// The chat whose Pin / Unpin confirmation is open (#6214): the menu asks before the hub call.
+    @State private var leaderConfirm: Session?
     private let taskChats = AssistantTaskChatsStore.shared
     var open: (SessionKey) -> Void
 
@@ -65,8 +67,10 @@ struct AutoConversationsView: View {
             .macSheetDone { dismiss() }
             #else
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1)
+                // ✕ at the leading corner, the page's own menu at the trailing one (#9653).
+                SheetClose { dismiss() }
+                if let on = model.assistantConfig?.recentTaskChats {
+                    ToolbarItem(placement: .primaryAction) { recentMenu(on) }
                 }
             }
             #endif
@@ -74,6 +78,21 @@ struct AutoConversationsView: View {
         #if os(macOS)
         .macSheet()
         #endif
+    }
+
+    /// The sidebar's Show Scheduled Task Chats (#8324) at the top left, opposite Done: the same setting as Assistant
+    /// Profile's, a check in a menu that applies at once. Only with a hub that keeps the setting.
+    private func recentMenu(_ on: Bool) -> some View {
+        Menu {
+            Section(AssistantProfileView.recentHeading) {
+                Toggle(AssistantProfileView.recentTitle, isOn: Binding(get: { on }, set: { v in Task { await model.setRecentTaskChats(v) } }))
+                    .accessibilityIdentifier("auto-recent-task-chats")
+            }
+        } label: {
+            ThemedIcon(Theme.Icon.more)
+        }
+        .accessibilityLabel(String(localized: "Display Options"))
+        .accessibilityIdentifier("auto-display-options")
     }
 
     private static func list(_ filter: Filter, all: [Session], mine: [Session], groups: [AutoConversations.Group]) -> [Session] {
@@ -154,9 +173,10 @@ struct AutoConversationsView: View {
         .contextMenu {
             if !builtIn {
                 // A direction is the hub's, for every device (#4331): a long press makes a conversation one, or ends it.
+                // It asks a second time first (#6214).
                 let lead = model.assistantLeaders.contains(s.sessionID)
                 Button {
-                    Task { await model.setDirectionLead(s.sessionID, !lead) }
+                    leaderConfirm = s
                 } label: {
                     lead ? Label("Unpin [Assistant Sidebar b7c40e]", systemImage: Theme.Icon.unpin)
                         : Label("Pin [Assistant Sidebar 6d1f2a]", systemImage: Theme.Icon.pin)
@@ -164,6 +184,27 @@ struct AutoConversationsView: View {
                 Button { Task { await model.archiveConversation(s.key, true) } } label: {
                     Label("Archive", systemImage: Theme.Icon.archive)
                 }
+            }
+        }
+        .confirmationDialog(
+            leaderConfirm.map { session in
+                model.assistantLeaders.contains(session.sessionID)
+                    ? String(localized: "Unpin Confirmation Title [Leader Actions 6214]")
+                    : String(localized: "Pin Confirmation Title [Leader Actions 6214]")
+            } ?? "",
+            isPresented: Binding(get: { leaderConfirm != nil }, set: { if !$0 { leaderConfirm = nil } }),
+            titleVisibility: .visible, presenting: leaderConfirm) { session in
+            let lead = model.assistantLeaders.contains(session.sessionID)
+            Button(lead ? String(localized: "Unpin [Assistant Sidebar b7c40e]")
+                       : String(localized: "Pin [Assistant Sidebar 6d1f2a]")) {
+                Task { await model.setDirectionLead(session.sessionID, !lead) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { session in
+            if model.assistantLeaders.contains(session.sessionID) {
+                Text(String(localized: "Unpin Confirmation Message \(title) [Leader Actions 6214]"))
+            } else {
+                Text(String(localized: "Pin Confirmation Message [Leader Actions 6214]"))
             }
         }
     }

@@ -62,7 +62,7 @@ func TestAcceptStoreFailureIsNotAccepted(t *testing.T) {
 	}
 
 	failPut(errors.New("database unavailable"))
-	if ok, err := e.s.acceptTry(ctx, "todo_v1", ""); ok || !errors.Is(err, errAcceptStore) {
+	if ok, err := e.s.acceptTry(ctx, "todo_v1", ""); ok.taken || !errors.Is(err, errAcceptStore) {
 		t.Fatalf("acceptTry with the save failing = %v, %v; want errAcceptStore", ok, err)
 	}
 	notAccepted("acceptTry")
@@ -102,7 +102,7 @@ func TestAcceptStoreFailureIsNotAccepted(t *testing.T) {
 	st.mu.Lock()
 	st.failSetting = errors.New("database unavailable")
 	st.mu.Unlock()
-	if ok, err := r.s.acceptTryFromBrief(ctx, "todo_v1", asked); ok || !errors.Is(err, errAcceptStore) {
+	if ok, err := r.s.acceptTryFromBrief(ctx, "todo_v1", asked); ok.taken || !errors.Is(err, errAcceptStore) {
 		t.Fatalf("acceptTryFromBrief with the asks unreadable = %v, %v; want errAcceptStore", ok, err)
 	}
 	if code := route(r.s); code != http.StatusServiceUnavailable {

@@ -6,18 +6,12 @@ package node
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/jpeg"
 	_ "image/png" // cua-driver's screenshots
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +22,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/lazyre"
+	"github.com/nwverse/persona/server/internal/node/nodekit"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -89,6 +84,9 @@ func computerStatus(ctx context.Context) proto.Computer {
 	}
 	c.ScreenSharing = screenSharing(ctx)
 	c.Displays = screenDisplays(ctx, c.ScreenSharing)
+	c.ScreenVideo = screenVideoStatus(ctx) // #3954: nil until advertiseScreenVideo
+	c.ScreenInput = screenInputStatus(ctx) // #7775: nil without Persona Input
+	c.PhoneScreen = phoneScreenStatus(ctx) // #9314: nil without a Persona Input that has it
 	c.Ready, c.Note = computerReady(c)
 	c.Backend = "cua"
 	c.Job = currentJob()
@@ -205,11 +203,18 @@ func computerReady(c proto.Computer) (bool, string) {
 }
 
 // computerTools are the Cua Driver tools the hub may call: reading, and run_script / run_steps, which act through the
-// daemon's own checks. Not its settings, updates, extensions or clipboard.
+// daemon's own checks; start_session starts the call's own label again after it ended (#7590, the hub's
+// computer_session.go says when). Not its settings, updates, extensions or clipboard.
 var computerTools = map[string]bool{
 	"get_desktop_state": true, "get_accessibility_tree": true, "get_window_state": true, "list_apps": true, "list_windows": true,
-	"run_script": true, "run_steps": true,
+	"run_script": true, "run_steps": true, "start_session": true,
 }
+
+// nodeSessions are the labels the node reads the screen under for itself (cua_gate.go). Cua Driver ends a named
+// session after 5 minutes without a call, and then refuses every call under it ("session has ended") until
+// start_session; no one stops these from the screen (they only read: no cursor, no bar), so one that ended is started
+// again and the call retried once (#7590).
+var nodeSessions = map[string]bool{"persona-gate": true}
 
 // openPath opens an app (startCua); a test's stand-in records what it was asked.
 var openPath = "/usr/bin/open"
@@ -252,6 +257,12 @@ func computerCall(ctx context.Context, params json.RawMessage) (*proto.ComputerR
 	if args == nil { // "args": null: Unmarshal set the map to nil, and writing the session label to it would panic
 		args = map[string]any{}
 	}
+	if p.Tool == "start_session" { // the call's own label, nothing else: no other's, no cursor or capture settings
+		if p.Session == "" {
+			return nil, errors.New("computer.call: start_session needs the call's session label")
+		}
+		args = map[string]any{}
+	}
 	if _, ok := args["session"]; !ok && p.Session != "" {
 		args["session"] = p.Session
 	}
@@ -260,6 +271,22 @@ func computerCall(ctx context.Context, params json.RawMessage) (*proto.ComputerR
 	if out, _ := cuaRun(ctx, bin, "status"); !cuaDaemonRunning(out) {
 		startCua(ctx, bin)
 	}
+	res, err := cuaInvoke(ctx, bin, p.Tool, input)
+	if err != nil && nodeSessions[p.Session] && cuaEnded(err) {
+		start, _ := json.Marshal(map[string]any{"session": p.Session})
+		if _, serr := cuaInvoke(ctx, bin, "start_session", start); serr == nil {
+			res, err = cuaInvoke(ctx, bin, p.Tool, input)
+		}
+	}
+	return res, err
+}
+
+// cuaEnded: Cua Driver refused a call because its session had ended.
+func cuaEnded(err error) bool { return strings.Contains(err.Error(), "session has ended") }
+
+// cuaInvoke runs `cua-driver call tool` with input on stdin: its JSON, or what it said on failure as
+// "cua-driver <tool>: …" (the hub tells Cua Driver's own answers by that), and the screenshot it wrote.
+func cuaInvoke(ctx context.Context, bin, tool string, input []byte) (*proto.ComputerResult, error) {
 	dir, err := os.MkdirTemp("", "persona-computer-")
 	if err != nil {
 		return nil, err
@@ -269,7 +296,7 @@ func computerCall(ctx context.Context, params json.RawMessage) (*proto.ComputerR
 	cctx, cancel := context.WithTimeout(ctx, computerCallTimeout)
 	defer cancel()
 	// The input on stdin: no length limit, and not in the process list for anyone to read.
-	cmd := exec.CommandContext(cctx, bin, "call", "--screenshot-out-file", shot, p.Tool)
+	cmd := exec.CommandContext(cctx, bin, "call", "--screenshot-out-file", shot, tool)
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
@@ -287,7 +314,7 @@ func computerCall(ctx context.Context, params json.RawMessage) (*proto.ComputerR
 		if cctx.Err() != nil {
 			msg = "超时（" + computerCallTimeout.String() + "）"
 		}
-		return nil, fmt.Errorf("cua-driver %s: %s", p.Tool, firstLine(msg))
+		return nil, fmt.Errorf("cua-driver %s: %s", tool, firstLine(msg))
 	default:
 		res.Text = string(out)
 	}
@@ -317,26 +344,5 @@ func startCua(ctx context.Context, bin string) {
 	}
 }
 
-// screenshotImage is the screenshot cua-driver wrote, as a JPEG when that is smaller (a window's transparent corners
-// on white): a desktop's PNG runs to megabytes.
-func screenshotImage(path string) *proto.Image {
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return nil
-	}
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return &proto.Image{Mime: http.DetectContentType(data), Data: base64.StdEncoding.EncodeToString(data)}
-	}
-	b := img.Bounds()
-	// The bytes' own type: a screenshot may come as a JPEG (the iPhone bridge's), not only a PNG.
-	out := &proto.Image{Mime: http.DetectContentType(data), Data: base64.StdEncoding.EncodeToString(data), Width: b.Dx(), Height: b.Dy()}
-	flat := image.NewRGBA(b)
-	draw.Draw(flat, b, &image.Uniform{C: color.White}, image.Point{}, draw.Src)
-	draw.Draw(flat, b, img, b.Min, draw.Over)
-	var j bytes.Buffer
-	if jpeg.Encode(&j, flat, &jpeg.Options{Quality: 85}) == nil && j.Len() < len(data) {
-		out.Mime, out.Data = "image/jpeg", base64.StdEncoding.EncodeToString(j.Bytes())
-	}
-	return out
-}
+// screenshotImage lives in nodekit, shared with the subpackages.
+var screenshotImage = nodekit.ScreenshotImage

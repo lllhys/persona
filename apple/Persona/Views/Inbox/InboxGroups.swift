@@ -1,7 +1,7 @@
 import Foundation
 
 /// Groups inside the inbox's sections (docs/assistant/inbox.md "Grouping and selection", #2059): Needs You, FYI and Collapsed by source or by
-/// time (the switch at the top, kept on this device), Done always by when it was done. The same rules as the web's
+/// time (the section bar's grouping menu, kept on this device), Done always by when it was done. The same rules as the web's
 /// lib/inbox-groups.ts. Pure: tests give `now` and the calendar.
 nonisolated enum InboxGroups {
     enum Grouping: String { case source, time }
@@ -133,6 +133,10 @@ nonisolated enum InboxGroups {
             return (d, calendar.date(byAdding: .day, value: 1, to: d))
         }
     }
+
+    /// Whether a day of the hub's counts ("YYYY-MM-DD") is one `dayCounts` places in a group: the section bar offers Done
+    /// for the hub's counts only when Done can list them (#9053).
+    static func isDay(_ day: String, calendar: Calendar = .current) -> Bool { Self.day(of: "d:" + day, calendar: calendar) != nil }
 
     /// Done's group counts from the hub's per-day counts ("YYYY-MM-DD" in this device's zone; GET /api/v1/inbox/done/days,
     /// #2967): each day's count goes to the group its day falls in. Just Now is part of Today and all in the list: `just`

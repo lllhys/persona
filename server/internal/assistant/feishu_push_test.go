@@ -21,7 +21,7 @@ func feishuPushHub(t *testing.T, fail error) (s *Service, entered, release chan 
 	})
 	entered = make(chan struct{}, 1)
 	release = make(chan struct{})
-	f.answerApp(AppFeishu, FeishuPost, func(json.RawMessage) (any, error) {
+	f.answerAppBlocking(AppFeishu, FeishuPost, func(json.RawMessage) (any, error) {
 		entered <- struct{}{}
 		<-release
 		if fail != nil {

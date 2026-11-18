@@ -96,7 +96,7 @@ final class ProviderWizardUITests: XCTestCase {
         XCTAssertTrue(el("import.result").waitForExistence(timeout: 10), "no result:\n\(app.debugDescription)")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "新增 1 个")).firstMatch.exists, "\(app.debugDescription)")
         shot("6-import-done")
-        app.buttons["import.done"].tap()
+        app.buttons["wizard.done"].tap()
         XCTAssertTrue(app.staticTexts["cc_kimi"].waitForExistence(timeout: 10), "cc_kimi is not in the list")
     }
 

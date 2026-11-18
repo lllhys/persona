@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- New Agent's attachments (#2321): iOS NewAgentAttachments / NewChatView words. Photos, Files, Take photo and the upload states are the composer's (feature/chat). -->
+<resources>
+    <string name="agents_attach_add">画像またはファイルを追加</string>
+    <string name="agents_attach_launcher_hold">%1$s には添付ファイルを付けられません</string>
+    <string name="agents_attach_launcher_refusal">このランチャーは最初のメッセージに添付ファイルを付けられません。別のランチャーを選ぶか、テキストで開始してからセッションで添付ファイルを送ってください。</string>
+    <string name="agents_attach_uploading_hold">ファイルのアップロードが終わるのを待っています</string>
+    <string name="agents_attach_moved">「%1$s」にアップロードしたファイルは外しました。このコンピュータに送るには、もう一度追加してください。</string>
+    <string name="agents_attach_remove">%1$sを削除</string>
+    <string name="agents_attach_upload_failed">「%1$s」を送信できませんでした：%2$s</string>
+    <string name="agents_attach_photo_limit">一度に4枚まで</string>
+</resources>

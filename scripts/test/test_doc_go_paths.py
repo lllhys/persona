@@ -45,7 +45,7 @@ def missing_package_go_paths(doc, names):
     for number, line in enumerate(doc.read_text(errors="ignore").splitlines(), 1):
         if "github.com/" in line:  # a path inside another project, quoted with its source
             continue
-        found += [f"{doc.relative_to(ROOT)}:{number}: {path}" for path in package_go_paths(line, names)
+        found += [f"{doc.relative_to(ROOT).as_posix()}:{number}: {path}" for path in package_go_paths(line, names)
                   if not (ROOT / "server/internal" / path).is_file()]
     return found
 

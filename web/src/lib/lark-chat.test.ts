@@ -152,6 +152,15 @@ describe("媒体", () => {
     expect(chatImages(msgs, (u) => u && `${u}?t`)).toEqual([{ id: "1#0", src: "/api/v1/lark/media/a?t" }, { id: "3#0", src: "/api/v1/lark/media/c?t" }]);
   });
 
+  it("file sizes move to the next unit at the boundary (#8503)", () => {
+    expect(fileSize(1048000)).toBe("1023 KB");
+    expect(fileSize(1048575)).toBe("1.0 MB");
+    expect(fileSize(1048500)).toBe("1.0 MB");
+    expect(fileSize(1073689000)).toBe("1023.9 MB");
+    expect(fileSize(1073741000)).toBe("1.0 GB");
+    expect(fileSize(1073741823)).toBe("1.0 GB");
+  });
+
   it("文件大小和时长", () => {
     expect(fileSize("245760")).toBe("240 KB");
     expect(fileSize(3 * 1024 * 1024)).toBe("3.0 MB");

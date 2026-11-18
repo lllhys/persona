@@ -3,5 +3,6 @@
   "no_quota": "The model is out of quota",
   "unconfigured": "No triage model is set up",
   "slow": "The model is too slow",
-  "failed": "The model failed"
+  "failed": "The model failed",
+  "draft_withheld": "No draft: it kept repeating private notes word for word. Write this reply yourself"
 }

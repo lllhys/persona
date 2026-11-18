@@ -33,10 +33,16 @@ struct CarPlayMicPermission: MicPermission {
     /// Starts (or restarts) the car's call on the assistant's main conversation. Returns a Chinese sentence when it
     /// cannot start; nil once `VoiceCalls` owns the call (it may still end itself with `VoiceEnd`).
     static func start() async -> String? {
+        // A call to Persona on the phone goes on (#9290 follow-up: nothing ends it by itself); the car says it is there,
+        // and plays it when the car is its audio.
+        if let onPhone = onPhoneCall() { return onPhone }
         if let reason = CarPlayMicGate.blockReason() { return reason }
         do {
             let (key, extensionID) = try await resolve()
-            await VoiceCalls.shared.start(key, extensionID: extensionID, surface: .carPlay, deps: deps(group: key.group))
+            // Not under Persona's urgent call (#9290): its audio is the system's.
+            if let refused = await VoiceCalls.shared.start(key, extensionID: extensionID, surface: .carPlay, deps: deps(group: key.group)) {
+                return refused.title
+            }
             if let call = VoiceCalls.shared.current, call.surface == .carPlay, case .ended(let end) = call.phase {
                 return CarPlayVoiceScreen.endedHeadline(for: end)
             }
@@ -50,14 +56,21 @@ struct CarPlayMicPermission: MicPermission {
 
     /// Continue on an ended car call, or a fresh start when there is none.
     static func resume() async -> String? {
+        if let onPhone = onPhoneCall() { return onPhone }
         if let call = VoiceCalls.shared.current, call.surface == .carPlay, call.phase.isEnded {
-            await VoiceCalls.shared.resume(call.key)
+            if let refused = await VoiceCalls.shared.resume(call.key) { return refused.title }
             if let call = VoiceCalls.shared.current, call.surface == .carPlay, case .ended(let end) = call.phase {
                 return CarPlayVoiceScreen.endedHeadline(for: end)
             }
             return nil
         }
         return await start()
+    }
+
+    /// What the car says while a call to Persona is on the phone, or nil when there is none: the car's voice chat would
+    /// end that call, so it does not start.
+    static func onPhoneCall() -> String? {
+        PersonaCalls.shared.liveOwnerCallName.map { String(localized: "You're on a call with \($0) on the phone") }
     }
 
     static func endFromUser() {
@@ -95,10 +108,10 @@ struct CarPlayMicPermission: MicPermission {
     private static func resolve() async throws -> (SessionKey, String) {
         let api: APIClient
         let key: SessionKey
-        if let existing = AppModel.shared.assistantCurrent ?? AppModel.shared.assistantMain,
-           let client = AppModel.shared.api(existing.group) {
+        if let main = AppModel.shared.assistantMain,
+           let client = AppModel.shared.api(main.group) {
             api = client
-            key = existing
+            key = main
         } else {
             do {
                 api = try IntentSupport.client()
@@ -106,8 +119,8 @@ struct CarPlayMicPermission: MicPermission {
                 throw CarPlayVoiceStartError.noHub
             }
             let st = try await api.assistant()
-            guard let main = st.main, !main.isEmpty else { throw CarPlayVoiceStartError.noMain }
-            key = SessionKey(group: api.group, machineID: st.machineID, sessionID: main)
+            guard let confirmed = st.mainKey(group: api.group) else { throw CarPlayVoiceStartError.noMain }
+            key = confirmed
         }
         let list = try await api.pluginList()
         guard let voice = VoiceAvailability.pick(list.plugins) else { throw CarPlayVoiceStartError.noExtension }

@@ -1,7 +1,6 @@
 // A session's context usage (#2430): how much of the model's window the latest reply used, read by the node off the
 // transcript (Session.context_tokens / context_window, omitted while unknown) and shown as a second line in the sidebar's
-// agent rows and as a thin bar in the session header. Two settings, both kept by this browser and off by default
-// (Settings › Appearance): "Show agent details" turns the extra line and the header bar on, "Show context as used" flips remaining → used.
+// agent rows and as a thin bar below the composer. "Show agent details" turns on the sidebar line for this browser.
 import { useSyncExternalStore } from "react";
 import { t } from "../i18n";
 import type { MenuItem } from "../ui/menu-model";
@@ -11,7 +10,7 @@ import type { Session } from "./types";
 
 /** At or past this share of the window used, the numbers turn to the warning colour (orange). */
 export const CONTEXT_WARN_USED = 80;
-/** At or past this share used (10% or less left), they turn to the danger colour (red) instead. */
+/** At or past this share used (10% or less left), the context is nearly full. */
 export const CONTEXT_DANGER_USED = 90;
 
 /** How full the window is: nothing to say, close to the limit, or about to run out. */
@@ -35,11 +34,6 @@ export function contextUsage(s: Pick<Session, "context_tokens" | "context_window
   return { used, left: 100 - used, tokens, window };
 }
 
-/** The number the bar and rows show: what is used or what is left, per the setting. */
-export function contextShown(u: ContextUsage, asUsed: boolean): number {
-  return asUsed ? u.used : u.left;
-}
-
 export function contextTier(u: ContextUsage): ContextTier {
   return u.used >= CONTEXT_DANGER_USED ? "danger" : u.used >= CONTEXT_WARN_USED ? "warn" : "ok";
 }
@@ -49,14 +43,9 @@ export function contextWarn(u: ContextUsage): boolean {
   return contextTier(u) !== "ok";
 }
 
-/** "61%" — the short text of a row or the header. */
-export function contextLabel(u: ContextUsage, asUsed: boolean): string {
-  return `${contextShown(u, asUsed)}%`;
-}
-
-/** The session header's label, which says what the share is (#3668): "61% context left" or "39% context used". */
-export function contextHeaderLabel(u: ContextUsage, asUsed: boolean): string {
-  return asUsed ? t("context.header_used", { percent: u.used }) : t("context.header_left", { percent: u.left });
+/** The composer and sidebar use the same short label for the used share. */
+export function contextLabel(u: ContextUsage): string {
+  return t("context.label", { percent: u.used });
 }
 
 /** What happens when the window fills, and what to do once it is close (#3668): the header's tooltip under the share. */
@@ -66,17 +55,17 @@ export function contextHint(u: ContextUsage): string {
 
 /** The header's popover (#4054), the tooltip's words for a screen without hover: the share with the token count beside
  *  it, then what happens when the window fills (and, once close, what to do). */
-export function contextNotes(u: ContextUsage, asUsed: boolean): MenuItem[] {
+export function contextNotes(u: ContextUsage): MenuItem[] {
   const none = () => {};
   return [
-    { key: "share", note: true, label: contextTooltip(u, asUsed), hint: t("context.tokens", { used: formatTokens(u.tokens), window: formatTokens(u.window) }), onSelect: none },
+    { key: "share", note: true, label: contextTooltip(u), hint: t("context.tokens", { used: formatTokens(u.tokens), window: formatTokens(u.window) }), onSelect: none },
     { key: "hint", note: true, label: contextHint(u), onSelect: none },
   ];
 }
 
-/** The tooltip: "61% of context left" or "39% used". */
-export function contextTooltip(u: ContextUsage, asUsed: boolean): string {
-  return asUsed ? t("context.used", { percent: u.used }) : t("context.left", { percent: u.left });
+/** The explanation in the popover, tooltip and accessible names. */
+export function contextTooltip(u: ContextUsage): string {
+  return t("context.summary", { used: u.used, left: u.left });
 }
 
 /** The model as a row has room for it: "claude-opus-5-5" → "opus 5.5", "claude-sonnet-4-5-20250929" → "sonnet 4.5",
@@ -96,7 +85,7 @@ export interface DetailPart {
   text: string;
   /** The context share at the warning colour (orange; also set with `danger`). */
   warn?: boolean;
-  /** The context share at the danger colour (red): 10% or less left. */
+  /** The context share in the danger tier: 10% or less left. */
   danger?: boolean;
   title?: string;
 }
@@ -104,12 +93,12 @@ export interface DetailPart {
 /** The second line of an agent's sidebar row: model · context share · how long ago it moved · folder, most useful
  *  first — the row clips what does not fit at its end, and the folder is mostly the group's own name already. A piece
  *  the session has no value for is left out, so the line is empty (and not drawn) for a session that says nothing yet. */
-export function rowDetail(s: Session, asUsed: boolean, now = Date.now()): DetailPart[] {
+export function rowDetail(s: Session, now = Date.now()): DetailPart[] {
   const parts: DetailPart[] = [];
   const model = modelShort(s.model);
   if (model) parts.push({ text: model, title: s.model });
   const u = contextUsage(s);
-  if (u) parts.push({ text: contextLabel(u, asUsed), warn: contextWarn(u), danger: contextTier(u) === "danger", title: contextTooltip(u, asUsed) });
+  if (u) parts.push({ text: contextLabel(u), warn: contextWarn(u), danger: contextTier(u) === "danger", title: contextTooltip(u) });
   const age = s.updated_at ? ago(s.updated_at, now) : "";
   if (age) parts.push({ text: age });
   const folder = baseName(s.cwd);
@@ -117,7 +106,7 @@ export function rowDetail(s: Session, asUsed: boolean, now = Date.now()): Detail
   return parts;
 }
 
-// ── the two settings (this browser only) ──
+// ── sidebar details preference (this browser only) ──
 
 const listeners = new Set<() => void>();
 
@@ -151,12 +140,7 @@ function flag(key: string) {
 }
 
 const details = flag("agent.details");
-const asUsed = flag("agent.contextUsed");
 
-/** Settings › Appearance › "Show agent details": the sidebar rows' second line and the session header's model + context bar. */
+/** Settings › Appearance › "Show agent details": the sidebar rows' second line. */
 export const setAgentDetails = details.set;
 export const useAgentDetails = details.use;
-
-/** Settings › Appearance › "Show context as used": the context shown as what is used instead of what is left (rows and header). */
-export const setContextAsUsed = asUsed.set;
-export const useContextAsUsed = asUsed.use;

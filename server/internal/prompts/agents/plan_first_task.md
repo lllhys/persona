@@ -1,0 +1,1 @@
+Before you change anything, write a short plan: the steps you will take and how you will check each one. Work through them in order, and before you finish, check every acceptance criterion yourself and fix what does not hold.

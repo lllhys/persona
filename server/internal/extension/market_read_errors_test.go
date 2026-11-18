@@ -147,3 +147,25 @@ func TestMarketReadErrorsAreTranslated(t *testing.T) {
 		}
 	}
 }
+
+func TestOversizedCatalogErrorIsTranslated(t *testing.T) {
+	entries := make([]any, IndexExtensionsMost+1)
+	for i := range entries {
+		entries[i] = map[string]any{}
+	}
+	raw, err := json.Marshal(map[string]any{
+		"market_version": 1,
+		"name":           "Oversized",
+		"extensions":     entries,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = ParseIndex(raw)
+	if err == nil {
+		t.Fatal("ParseIndex accepted 501 extensions")
+	}
+	if got, want := i18n.MarketText(i18n.En, err.Error()), "The catalog lists more than 500 extensions."; got != want {
+		t.Fatalf("MarketText() = %q, want %q (error %q)", got, want, err)
+	}
+}

@@ -125,14 +125,14 @@ func TestAssistantCompactionRPCAndSpare(t *testing.T) {
 				t.Fatalf("stored scope %v", st.IsMain)
 			}
 			n.spare = p
-			if main && n.adoptSpare(p.cwd, p.launcher, modelExecution{}) != nil {
+			if main && n.adoptSpare(p.cwd, p.launcher, modelExecution{ConfigDir: p.model.ConfigDir}) != nil { // only the scope differs
 				t.Fatal("a main process was adopted for an ordinary conversation")
 			}
 		})
 	}
 }
 
-func TestAssistantCompactionSettingsAndSDK(t *testing.T) {
+func TestAssistantCompactionSettings(t *testing.T) {
 	n := assistantNode(t)
 	n.dir = t.TempDir()
 	settings := filepath.Join(t.TempDir(), "settings.json")
@@ -164,15 +164,6 @@ func TestAssistantCompactionSettingsAndSDK(t *testing.T) {
 		if overrides[name] != "off" {
 			t.Errorf("development skill %s is not hidden: %v", name, s["skillOverrides"])
 		}
-	}
-	start := sdkStart{settings: path, mcp: map[string]any{}, compaction: &c, env: map[string]string{"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "200000", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000"}}
-	opts, err := start.options("claude")
-	if err != nil {
-		t.Fatal(err)
-	}
-	env = opts["settings"].(map[string]any)["env"].(map[string]any)
-	if env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "400000" || env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "1000000" {
-		t.Fatalf("SDK clamped policy back down: %v", env)
 	}
 	if mode, err := os.Stat(path); err != nil || mode.Mode().Perm() != 0o600 {
 		t.Fatalf("settings permissions: %v %v", mode, err)
@@ -212,19 +203,20 @@ func TestAssistantCodexCapacity(t *testing.T) {
 // the declared window, else the default until Claude Code reports one (TestAssistantIdleCompactFromWindow).
 func TestAssistantShellLauncherCompaction(t *testing.T) {
 	for _, tt := range []struct {
-		name, rc  string
-		auto, max string // what claude sees, "" for unset
-		idle      int
+		name, rc   string
+		auto, max  string // what claude sees, "" for unset
+		idle       int
+		toolSearch string // ENABLE_TOOL_SEARCH as claude sees it (toolSearchFor, #10365)
 	}{
-		{"declares window and capacity", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; command claude "$@"; }`, "200000", "1000000", 150000},
-		{"declared 200K backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=200000; command claude "$@"; }`, "", "200000", 150000},
-		{"small backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=128000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=128000; command claude "$@"; }`, "128000", "128000", 96000},
-		{"declares a 1M window", `function testproxy { export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000; command claude "$@"; }`, "1000000", "", 750000},
-		{"gateway function declaring nothing", `function testproxy { ( export ANTHROPIC_BASE_URL=http://127.0.0.1:9; command claude --model opus "$@" ) }`, "", "", 150000},
+		{"declares window and capacity", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1000000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000; command claude "$@"; }`, "200000", "1000000", 150000, "true"},
+		{"declared 200K backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=200000; command claude "$@"; }`, "", "200000", 150000, "true"},
+		{"small backend", `function testproxy { export CLAUDE_CODE_MAX_CONTEXT_TOKENS=128000 CLAUDE_CODE_AUTO_COMPACT_WINDOW=128000; command claude "$@"; }`, "128000", "128000", 96000, "true"},
+		{"declares a 1M window", `function testproxy { export CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000; command claude "$@"; }`, "1000000", "", 750000, "true"},
+		{"gateway function declaring nothing", `function testproxy { ( export ANTHROPIC_BASE_URL=http://127.0.0.1:9; command claude --model opus "$@" ) }`, "", "", 150000, "false"},
 	} {
 		for _, main := range []bool{true, false} {
 			t.Run(tt.name+"/main="+strconv.FormatBool(main), func(t *testing.T) {
-				fakeClaudeHome(t, "env > \"$HOME/claude-env\"\nread line\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
+				fakeClaudeHome(t, "env > \"$HOME/claude-env.part\"\nmv \"$HOME/claude-env.part\" \"$HOME/claude-env\"\nread line\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
 				for _, k := range []string{"CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"} {
 					t.Setenv(k, "")
 					os.Unsetenv(k)
@@ -269,8 +261,65 @@ func TestAssistantShellLauncherCompaction(t *testing.T) {
 						t.Fatalf("claude saw %s=%q, want %q (the launcher's own)", k, got, want)
 					}
 				}
+				// Tool search on Anthropic's own API, also for a conversation that ran without it (#7317); off behind
+				// a gateway, where true would lift Claude Code's own rule and send deferred tools it may refuse (#10365).
+				if got := envValue(lines, "ENABLE_TOOL_SEARCH"); got != tt.toolSearch {
+					t.Fatalf("claude saw ENABLE_TOOL_SEARCH=%q, want %q", got, tt.toolSearch)
+				}
 			})
 		}
+	}
+}
+
+// A launcher that writes its --settings to a temporary file for each start and removes it when claude exits: the
+// probe sees a path that is gone by the time the start reads it. The conversation still starts, on Persona's
+// settings, and claude gets the launcher's own file from the launcher as before. A launcher file that is there but
+// does not read still stops the start.
+func TestAssistantLauncherTemporarySettings(t *testing.T) {
+	fakeClaudeHome(t, "printf '%s\\n' \"$@\" > \"$HOME/claude-args.part\"\nmv \"$HOME/claude-args.part\" \"$HOME/claude-args\"\nread line\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
+	home := os.Getenv("HOME")
+	rc := `function testtemp { local f; f=$(mktemp "$HOME/launcher-XXXXXX"); printf '%s' '{"env":{"LAUNCHER":"yes"}}' > "$f"; ( trap 'rm -f -- "$f"' EXIT; command claude "$@" --settings "$f" ) }`
+	if err := os.WriteFile(filepath.Join(home, ".zshrc"), []byte(rc+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := codexTestNode(t)
+	n.dir = t.TempDir()
+	withFakeHub(t, n)
+	p, err := n.spawnClaude("11111111-2222-3333-4444-555555555555", t.TempDir(), "testtemp", false, false, modelExecution{Model: "opus", IsMain: true})
+	if err != nil {
+		t.Fatalf("a launcher whose --settings is a temporary file stopped the start: %v", err)
+	}
+	defer n.stopAssistant(p.id)
+	var seen []byte
+	waitFor(t, "claude to write its arguments", func() bool {
+		seen, _ = os.ReadFile(filepath.Join(home, "claude-args"))
+		return len(seen) > 0
+	})
+	if last := settingsArg(strings.Split(strings.TrimSpace(string(seen)), "\n")); !strings.HasPrefix(filepath.Base(last), "launcher-") {
+		t.Fatalf("claude's last --settings is %q, not the launcher's own file: %q", last, seen)
+	}
+
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(settings, []byte(`{"env":{"KEEP":"yes"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path, err := n.assistantCompactionSettings("test-id", n.home, settings, assistantCompaction{ownSettings: filepath.Join(t.TempDir(), "gone.json")})
+	if err != nil {
+		t.Fatalf("a launcher settings file that is gone: %v", err)
+	}
+	s, err := readLauncherSettings(path, n.home, n.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env, _ := s["env"].(map[string]any); env["KEEP"] != "yes" || env["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] != "1" {
+		t.Fatalf("Persona's settings without the launcher's: %v", s)
+	}
+	broken := filepath.Join(t.TempDir(), "broken.json")
+	if err := os.WriteFile(broken, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.assistantCompactionSettings("test-id", n.home, settings, assistantCompaction{ownSettings: broken}); err == nil {
+		t.Fatal("a launcher settings file that does not read was ignored")
 	}
 }
 
@@ -360,19 +409,20 @@ func TestAssistantIdleCompactFromWindow(t *testing.T) {
 	}
 }
 
-func TestAssistantSDKCompactionStart(t *testing.T) {
-	f := sdkTest(t)
+// A managed launcher's start carries its declared window, for the main conversation too, and its model's 1M as the
+// context window.
+func TestAssistantCompactionStartOnAManagedLauncher(t *testing.T) {
+	f := cliTest(t)
+	f.fakeLaunch(t)
 	f.n.setManaged([]proto.ManagedLauncher{{Name: "gw", Model: "big", CompactWindow: 200000, Models: []proto.ProviderModel{{ID: "big", ContextWindow: 1000000}}}})
-	execution := sdkExec(proto.AssistantRuntimeAgentSDK)
+	execution := cliExec()
 	execution.IsMain = true
 	id, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "gw", "hello", nil, "", "", execution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := f.start(t)
-	env := opts["settings"].(map[string]any)["env"].(map[string]any)
-	// The launcher's declared 200000, for the main conversation too; its model's 1M as the context window.
-	if env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "200000" || env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "1000000" || f.proc(id).compactIdleAt != 150000 {
-		t.Fatalf("SDK start: %v, idle %d", env, f.proc(id).compactIdleAt)
+	p := f.proc(id)
+	if envValue(p.cmd.Env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW") != "200000" || envValue(p.cmd.Env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS") != "1000000" || p.compactIdleAt != 150000 {
+		t.Fatalf("start env %v, idle %d", p.cmd.Env, p.compactIdleAt)
 	}
 }

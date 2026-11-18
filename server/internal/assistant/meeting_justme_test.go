@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -18,8 +19,23 @@ func TestJustMeMarkHoldsThroughBackgroundWork(t *testing.T) {
 	ft.f.mu.Lock()
 	ft.f.hello.Notify = assistantwire.NotifyTimings{DoneDelayMS: 3_600_000, LongTurnMS: 60_000}
 	ft.f.mu.Unlock()
-	now := time.Now()
-	ft.s.justMe.now = func() time.Time { return now }
+	var clock struct {
+		sync.RWMutex
+		at time.Time
+	}
+	clock.at = time.Now()
+	now := func() time.Time {
+		clock.RLock()
+		defer clock.RUnlock()
+		return clock.at
+	}
+	advance := func(d time.Duration) {
+		clock.Lock()
+		clock.at = clock.at.Add(d)
+		clock.Unlock()
+	}
+	// A turn's end is read asynchronously: advancing the fixture must not race with justMe.clock.
+	ft.s.justMe.now = now
 	const key = "mac/s1"
 	check := func() { // the delayed check of the latest end
 		t.Helper()
@@ -33,7 +49,7 @@ func TestJustMeMarkHoldsThroughBackgroundWork(t *testing.T) {
 		ft.s.notifyFinishedNow("mac", "s1", tr.gen, ft.s.notifyTimings())
 	}
 	work := proto.Session{SessionID: "s1", Title: "Main", Cwd: "/code/app", Agent: "claude", Assistant: true, Status: proto.StatusWorking,
-		PaneID: "p1", UpdatedAt: now}
+		PaneID: "p1", UpdatedAt: now()}
 	ft.s.justMeSent("mac", "s1")
 	ft.sessions("mac", work)
 	stopped := work
@@ -41,7 +57,7 @@ func TestJustMeMarkHoldsThroughBackgroundWork(t *testing.T) {
 	stopped.Background = []proto.BackgroundTask{{ID: "b1", Kind: "agent"}}
 	ft.sessions("mac", stopped)
 	check() // held: its work runs
-	now = now.Add(10 * time.Minute)
+	advance(10 * time.Minute)
 	woken := work
 	woken.WokeByTask = true
 	ft.sessions("mac", woken)
@@ -58,7 +74,7 @@ func TestJustMeMarkHoldsThroughBackgroundWork(t *testing.T) {
 	if !ft.s.turnsBook().startOf(key).IsZero() {
 		t.Fatal("the Just me turn stays tracked: the next turn would take its start and its hold")
 	}
-	now = now.Add(time.Minute)
+	advance(time.Minute)
 	ft.sessions("mac", work) // the owner's next message
 	if ft.s.justMeNow("mac", "s1") {
 		t.Fatal("the next ordinary turn is still marked")

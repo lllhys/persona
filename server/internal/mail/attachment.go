@@ -100,7 +100,30 @@ func hasParam(value, key string) bool {
 	return false
 }
 
-func (s *Service) attachment(ctx context.Context, accountID string, uid uint32, mailbox, id string) (*os.File, Attachment, error) {
+// cappedSpool stores at most left bytes but consumes the full stream. Hashing and MIME parsing therefore see
+// all the data, so identity checks and the IMAP connection remain correct even when the saved file is too large.
+type cappedSpool struct {
+	file io.Writer
+	left int64
+}
+
+func (w *cappedSpool) Write(p []byte) (int, error) {
+	keep := min(int64(len(p)), w.left)
+	if keep > 0 {
+		n, err := w.file.Write(p[:int(keep)])
+		w.left -= int64(n)
+		if err != nil {
+			return n, err
+		}
+		if n != int(keep) {
+			return n, io.ErrShortWrite
+		}
+	}
+	return len(p), nil
+}
+
+// spoolLimit < 0 leaves the HTTP download unbounded; bounded saves still scan and hash all decoded bytes.
+func (s *Service) attachment(ctx context.Context, accountID string, uid uint32, mailbox, id string, spoolLimit int64) (*os.File, Attachment, error) {
 	a, err := s.account(accountID)
 	if err != nil {
 		return nil, Attachment{}, err
@@ -159,7 +182,11 @@ func (s *Service) attachment(ctx context.Context, accountID string, uid uint32, 
 					if count != index {
 						continue
 					}
-					metadata, err = attachmentMetadata(header, part.Body, count, file)
+					var dst io.Writer = file
+					if spoolLimit >= 0 {
+						dst = &cappedSpool{file: file, left: spoolLimit}
+					}
+					metadata, err = attachmentMetadata(header, part.Body, count, dst)
 					if err != nil {
 						return err
 					}
@@ -206,7 +233,11 @@ func (s *Service) FetchAttachment(ctx context.Context, accountID string, uid uin
 	if uid == 0 {
 		return Attachment{}, nil, fmt.Errorf("invalid uid")
 	}
-	file, metadata, err := s.attachment(ctx, accountID, uid, mailbox, id)
+	spoolLimit := max
+	if spoolLimit < 0 {
+		spoolLimit = 0
+	}
+	file, metadata, err := s.attachment(ctx, accountID, uid, mailbox, id, spoolLimit)
 	if err != nil {
 		return Attachment{}, nil, err
 	}
@@ -231,7 +262,7 @@ func (s *Service) handleAttachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid uid"))
 		return
 	}
-	file, metadata, err := s.attachment(r.Context(), r.PathValue("aid"), uint32(uid), r.URL.Query().Get("mailbox"), r.PathValue("attachment"))
+	file, metadata, err := s.attachment(r.Context(), r.PathValue("aid"), uint32(uid), r.URL.Query().Get("mailbox"), r.PathValue("attachment"), -1)
 	if err != nil {
 		s.fail(w, err)
 		return

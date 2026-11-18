@@ -137,6 +137,105 @@ func TestLiveActivityPassesItsAPS(t *testing.T) {
 	}
 }
 
+func registerVoIP(t *testing.T, h http.Handler) string {
+	code, out := call(h, "/relay/v1/register", "", map[string]string{"apns_token": devTok, "env": "sandbox", "topic": topic + ".voip"})
+	if code != 200 {
+		t.Fatalf("register voip: %d %v", code, out)
+	}
+	return out["grant"].(string)
+}
+
+// TestVoIPCarriesOnlyTheSealedPayload: an urgent call's push has no aps (PushKit hands it to the app, which names the
+// call from the sealed payload), goes out at priority 10 on the ".voip" topic, and expires within a minute.
+func TestVoIPCarriesOnlyTheSealedPayload(t *testing.T) {
+	s, f, h := newTest(t)
+	now := time.Unix(1_800_000_000, 0)
+	s.now = func() time.Time { return now }
+	g := registerVoIP(t, h)
+	if code, out := call(h, "/relay/v1/push", g, PushRequest{Type: "voip", Priority: "5", Sealed: sealed, CollapseID: "c0ffee"}); code != 200 {
+		t.Fatalf("push: %d %v", code, out)
+	}
+	r := f.got[0]
+	if r.Token != devTok || r.Topic != topic+".voip" || r.PushType != "voip" || r.Priority != "10" || r.CollapseID != "c0ffee" {
+		t.Fatalf("request %+v", r)
+	}
+	if r.Expiration != now.Unix()+30 {
+		t.Fatalf("expiration %d, want now+30", r.Expiration-now.Unix())
+	}
+	var p map[string]any
+	_ = json.Unmarshal(r.Body, &p)
+	if p["e"] != sealed || len(p) != 1 {
+		t.Fatalf("payload %s", r.Body)
+	}
+	for ttl, want := range map[int]int64{5: 5, 60: 60, 600: 60} {
+		if code, _ := call(h, "/relay/v1/push", g, PushRequest{Type: "voip", Sealed: sealed, TTL: ttl}); code != 200 {
+			t.Fatalf("ttl %d: %d", ttl, code)
+		}
+		if got := f.got[len(f.got)-1].Expiration - now.Unix(); got != want {
+			t.Errorf("ttl %d: expires in %d s, want %d", ttl, got, want)
+		}
+	}
+}
+
+// TestVoIPGrantsDoNotMix: a VoIP grant carries only voip pushes and an ordinary grant none, and only the served
+// bundle's ".voip" topic registers.
+func TestVoIPGrantsDoNotMix(t *testing.T) {
+	_, f, h := newTest(t)
+	voip, plain := registerVoIP(t, h), register(t, h)
+	for name, c := range map[string]struct {
+		grant string
+		req   PushRequest
+	}{
+		"alert on voip":      {voip, PushRequest{Type: "alert", Sealed: sealed}},
+		"background on voip": {voip, PushRequest{Type: "background", Sealed: sealed}},
+		"la on voip":         {voip, PushRequest{Type: "liveactivity", Token: "abcdef0123456789abcdef0123456789", APS: map[string]any{"event": "update", "content-state": map[string]any{}}}},
+		"voip on alert":      {plain, PushRequest{Type: "voip", Sealed: sealed}},
+		"voip plaintext":     {voip, PushRequest{Type: "voip", Sealed: "aGVsbG8="}},
+	} {
+		if code, _ := call(h, "/relay/v1/push", c.grant, c.req); code != 400 {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+	for _, tp := range []string{"other.app.voip", topic + ".voip.voip", topic + ".VOIP"} {
+		if code, _ := call(h, "/relay/v1/register", "", map[string]string{"apns_token": devTok, "env": "sandbox", "topic": tp}); code != 403 {
+			t.Errorf("register %s: %d", tp, code)
+		}
+	}
+	if len(f.got) != 0 {
+		t.Fatalf("sent %d", len(f.got))
+	}
+}
+
+// TestVoIPRateLimit: a device's calls have their own small budget, apart from its notifications.
+func TestVoIPRateLimit(t *testing.T) {
+	s, _, h := newTest(t)
+	now := time.Unix(1_800_000_000, 0)
+	s.now = func() time.Time { return now }
+	g := registerVoIP(t, h)
+	ok := 0
+	for range voipBurst + 4 {
+		if code, _ := call(h, "/relay/v1/push", g, PushRequest{Type: "voip", Sealed: sealed}); code == 200 {
+			ok++
+		}
+	}
+	if ok != voipBurst {
+		t.Fatalf("burst let %d calls through, want %d", ok, voipBurst)
+	}
+	now = now.Add(5 * time.Minute)
+	if code, _ := call(h, "/relay/v1/push", g, PushRequest{Type: "voip", Sealed: sealed}); code != 200 {
+		t.Fatalf("after five minutes: %d", code)
+	}
+}
+
+func TestHealthListsPushTypes(t *testing.T) {
+	_, _, h := newTest(t)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/relay/v1/health", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"voip"`) {
+		t.Fatalf("health: %d %s", w.Code, w.Body)
+	}
+}
+
 func TestRefusesWithoutAValidGrant(t *testing.T) {
 	s, f, h := newTest(t)
 	g := register(t, h)

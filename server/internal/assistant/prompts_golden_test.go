@@ -74,6 +74,13 @@ func TestGoldenRelay(t *testing.T) {
 		Tool: "conversation_send", Text: "示例消息：把结果整理一下", Hop: 2}))
 }
 
+func TestGoldenRelayQuote(t *testing.T) {
+	golden(t, "relay.quote", relayText(relayMsg{From: "b2e4d6f8-0000-4000-8000-000000000001", FromTitle: "Persona",
+		Tool: "conversation_send", Text: "示例消息：这件交给你", Hop: 1, Quote: &BriefRequest{Text: "示例原话：周五前把导出修好",
+			At: time.Date(2026, 11, 17, 4, 52, 0, 0, time.UTC), Conversation: "b2e4d6f8-0000-4000-8000-000000000001", MessageID: "msg-1",
+			Via: []string{"b2e4d6f8-0000-4000-8000-000000000001", "b2e4d6f8-0000-4000-8000-000000000003"}}}))
+}
+
 func TestGoldenTaskPrompt(t *testing.T) {
 	loc, _ := time.LoadLocation("Asia/Shanghai") // passed in: the output doesn't depend on the machine's zone
 	due := time.Date(2026, 10, 31, 1, 0, 0, 0, time.UTC)
@@ -88,7 +95,6 @@ func TestGoldenTaskPrompt(t *testing.T) {
 		{"once_late", Task{Title: "看 CI", Prompt: "看看 CI 跑完没有", Repeat: repeatOnce}, 25 * time.Minute, false, true, false},
 		{"once_untitled", Task{Prompt: "提醒我喝水", Repeat: repeatOnce}, time.Minute, false, true, false},
 		{"interval_late", Task{Prompt: "巡检各台电脑上的 Agent，有卡住的告诉我", Repeat: repeatInterval, EveryMinutes: 120}, 3 * time.Hour, false, false, false},
-		{"interval_leader_open", Task{Title: "巡检", Prompt: "巡检", Repeat: repeatInterval, EveryMinutes: 180, cadenceEvery: leaderOpenEveryMinutes}, 0, false, false, false},
 		{"interval_manual", Task{Title: "巡检", Prompt: "巡检", Repeat: repeatInterval, EveryMinutes: 30}, 3 * time.Hour, true, true, false},
 		{"daily_kb", Task{Title: "早报", Prompt: "给我今天的早报", Repeat: repeatDaily}, 2 * time.Hour, false, true, false},
 		{"daily_nokb", Task{Title: "早报", Prompt: "给我今天的早报", Repeat: repeatDaily}, 0, false, false, false},
@@ -97,6 +103,8 @@ func TestGoldenTaskPrompt(t *testing.T) {
 		{"interval_continued_late", Task{Title: "巡检", Prompt: "巡检", Repeat: repeatInterval, EveryMinutes: 30}, 3 * time.Hour, false, true, true},
 		// A task that pushes only what the run sends (#2396): the run is told so above its prompt.
 		{"interval_push_asked", Task{Title: "新邮件", Prompt: "看看邮箱有没有新邮件，有就告诉我", Repeat: repeatInterval, EveryMinutes: 5, Push: pushAsked}, 0, false, false, false},
+		{"interval_inbox_worthy", Task{Title: "价格监控", Prompt: "看看我关注的商品有没有降价", Repeat: repeatInterval, EveryMinutes: 30, Push: pushAsked, Inbox: inboxWorthy}, 0, false, false, false},
+		{"daily_inbox_every", Task{Title: "早报", Prompt: "给我今天的早报", Repeat: repeatDaily, Time: "09:00", Inbox: inboxEvery}, 0, false, false, false},
 		{"daily_continued_push_asked", Task{Title: "日报", Prompt: "有要紧的事才告诉我", Repeat: repeatDaily, Push: pushAsked}, 0, false, true, true},
 	} {
 		golden(t, "task_prompt."+c.name, taskPrompt(c.task, due, due.Add(c.late), loc, c.manual, c.kb, c.continued))
@@ -189,6 +197,9 @@ func TestGoldenTodoThreadReply(t *testing.T) {
 	golden(t, "todo_thread_reply.unrecorded", prompts.RenderTodoThreadReply(prompts.TodoThreadReply{Title: "天气 App 发 1.3 版", Text: "先发安卓，iOS 等审核过了再说"}))
 	in := prompts.BotMessage{Persona: true, Owner: "示例用户", Text: "先发安卓"}
 	golden(t, "bot_message.private", prompts.RenderBotMessage(in))
+	in.Todo = &prompts.BotTodo{ID: "todo_0123456789abcdef", Title: "天气 App 发版", Notes: "先发安卓。\n链接：https://example.com/release"}
+	golden(t, "bot_message.todo_reminder", prompts.RenderBotMessage(in))
+	in.Todo = nil
 	in.Topic = true
 	golden(t, "bot_message.topic", prompts.RenderBotMessage(in))
 }

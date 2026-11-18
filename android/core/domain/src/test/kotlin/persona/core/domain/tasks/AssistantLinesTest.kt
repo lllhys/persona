@@ -65,6 +65,36 @@ class AssistantLinesTest {
         assertEquals(listOf("u1", "wt-1", "quick-use-mcp__persona__phone_reminders_create", "a1"), (out.filterNot { it.startsWith("day-") }).zhAny())
     }
 
+    @Test fun quickResultKeepsAnAndroidCalendarEventsFields() {
+        val call = call("phone_calendar_create_event", """{"id":"E1","title":"Dentist","start":"2026-11-13T15:30:00Z","end":"2026-11-13T16:00:00Z","calendar":"Personal"}""")
+        val result = QuickResult.of(call)
+        assertNotNull(result)
+        assertEquals(false, result!!.reminder)
+        assertEquals("use-phone_calendar_create_event", result.callId)
+        assertEquals("Dentist", result.title)
+        assertEquals("2026-11-13T15:30:00Z", result.time)
+        assertEquals("Personal", result.place)
+        // The id is not a number, so it is not an event this phone's calendar can be asked to delete.
+        assertNull(result.itemId)
+    }
+
+    @Test fun quickResultKeepsTheCreatedItemsIdForUndo() {
+        // The phone's calendar ids are numbers: only those name something Undo can take back (iOS QuickResult.itemID).
+        assertEquals(42L, QuickResult.of(call("phone_calendar_create_event", """{"id":"42","title":"Dentist"}"""))!!.itemId)
+        // A result with no id says nothing, so it draws no card at all, as on iOS.
+        for (raw in listOf("""{"title":"Dentist"}""", """{"id":"","title":"Dentist"}""", """{"id":"  "}""",
+            """{"id":null,"title":"Dentist"}""", """{"id":0,"title":"Dentist"}""")) {
+            assertNull(raw, QuickResult.of(call("phone_calendar_create_event", raw)))
+        }
+        // An id that is not a positive number (an iPhone's event or reminder) still draws the card, without Undo.
+        for (raw in listOf("""{"id":"E1","title":"Dentist"}""", """{"id":"0","title":"Dentist"}""",
+            """{"id":"-3","title":"Dentist"}""", """{"id":"1.5","title":"Dentist"}""")) {
+            val result = QuickResult.of(call("phone_calendar_create_event", raw))
+            assertNotNull(raw, result)
+            assertNull(raw, result!!.itemId)
+        }
+    }
+
     @Test fun aTasksStateFollowsItsAgents() {
         val todo = Todo("t", "t")
         assertEquals(TaskState.NotStarted, TaskState.of(todo, emptyList()))

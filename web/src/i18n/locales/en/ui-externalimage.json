@@ -1,0 +1,4 @@
+{
+  "image_load": "Load image from {host}",
+  "image_retry": "Retry image from {host}"
+}

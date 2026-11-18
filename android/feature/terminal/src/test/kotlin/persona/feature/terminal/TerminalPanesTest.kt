@@ -52,12 +52,12 @@ class TerminalPanesTest {
         val shell = tree[0].tabs[1].panes[0]
         assertEquals(SessionKey("desk~g2", "pane:w1:p2"), shell.key)
         assertNull(shell.state)
-        assertEquals("zsh", shell.title)
-        assertEquals("~/persona", shell.detail)
+        assertEquals("", shell.title)
+        assertEquals("zsh · ~/persona", shell.detail)
         // An older node without `terminal`: the address is the pane id; a shell with no title goes by its folder.
         val notes = tree[1].tabs.single().panes.single()
         assertEquals(SessionKey("desk~g2", "pane:w2:p1"), notes.key)
-        assertEquals("notes", notes.title)
+        assertEquals("", notes.title)
         assertEquals("~/notes", notes.detail)
         assertTrue(notes.key.isPaneAddress && !agent.key.isPaneAddress)
     }
@@ -65,7 +65,7 @@ class TerminalPanesTest {
     @Test fun aPanesTitleIsItsPlace() {
         val tree = terminalTree("desk", response, emptyList())
         val persona = tree[0]
-        assertEquals("persona › shell › zsh", paneTrail(persona, persona.tabs[1], persona.tabs[1].panes[0], "Terminal"))
+        assertEquals("persona › shell › Terminal", paneTrail(persona, persona.tabs[1], persona.tabs[1].panes[0], "Terminal"))
         val notes = tree[1]
         assertEquals("notes", paneTrail(notes, notes.tabs[0], notes.tabs[0].panes[0].copy(title = ""), "notes"))
     }
@@ -99,6 +99,13 @@ class TerminalPanesTest {
         assertNotEquals(openingKey("desk", tree[0]), openingKey("desk", tree[3]))
     }
 
+    @Test fun aHomeTerminalUsesTheFirstHostThatCanOpenOne() {
+        val hosts = PanesResponse(listOf(PaneHost("orca"), PaneHost("herdr", newTab = true), PaneHost("other", newTab = true)))
+        assertEquals("herdr", homeShellHost(hosts))
+        assertNull(homeShellHost(PanesResponse(listOf(PaneHost("herdr")))))
+        assertNull(homeShellHost(null))
+    }
+
     @Test fun newTabAsksForTheWorkspaceAndOpensTheReturnedPane() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
@@ -112,12 +119,37 @@ class TerminalPanesTest {
             assertEquals(listOf("desk"), panes.reads)
             val space = model.state.value.machines.first { it.machine.id == "desk" }.spaces.first()
             model.newTab("desk", space); runCurrent()
-            assertEquals(listOf(Triple("desk", "w1", "herdr")), panes.opened)
+            assertEquals(listOf(NewTabCall("desk", "w1", "herdr", null)), panes.opened)
             assertEquals(TerminalPanesEvent.Open("desk", "pane:w1:p4", "persona"), events.single())
             assertNull(model.state.value.opening)
             panes.fail = true
             model.newTab("desk", space); runCurrent()
             assertEquals(TerminalPanesEvent.NewTabFailed("opening a terminal needs a full device"), events.last())
+            collect.cancel()
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun newTerminalOpensHomeOnceAndReportsFailure() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val panes = FakePanes()
+            val gate = CompletableDeferred<Unit>()
+            panes.gate = gate
+            val model = TerminalPanesViewModel(panes, FakeSessions(listOf(Machine("desk", "Desk", online = true))))
+            val events = mutableListOf<TerminalPanesEvent>()
+            val collect = launch { model.events.toList(events) }
+            model.newTerminal("desk", "herdr"); runCurrent()
+            assertEquals(listOf(NewTabCall("desk", "", "herdr", "~")), panes.opened)
+            assertNotNull(model.state.value.opening)
+            model.newTerminal("desk", "herdr"); runCurrent()
+            assertEquals(1, panes.opened.size)
+            gate.complete(Unit); runCurrent()
+            assertEquals(TerminalPanesEvent.Open("desk", "pane:w1:p4", ""), events.single())
+            assertNull(model.state.value.opening)
+            panes.fail = true
+            model.newTerminal("desk", "herdr"); runCurrent()
+            assertEquals(TerminalPanesEvent.NewTabFailed("opening a terminal needs a full device"), events.last())
+            assertNull(model.state.value.opening)
             collect.cancel()
         } finally { Dispatchers.resetMain() }
     }
@@ -139,18 +171,22 @@ class TerminalPanesTest {
         } finally { Dispatchers.resetMain() }
     }
 
+    private data class NewTabCall(val machineId: String, val workspaceId: String, val kind: String?, val cwd: String?)
+
     private class FakePanes : TerminalPanes {
         override val available = MutableStateFlow(true)
         val reads = mutableListOf<String>()
-        val opened = mutableListOf<Triple<String, String, String?>>()
+        val opened = mutableListOf<NewTabCall>()
         var fail = false
+        var gate: CompletableDeferred<Unit>? = null
         override suspend fun panes(machineId: String): PanesResponse {
             reads += machineId
             return PanesResponse(listOf(PaneHost("herdr", newTab = true, workspaces = listOf(PaneSpace("w1", "persona")))))
         }
-        override suspend fun newTab(machineId: String, workspaceId: String, kind: String?): NewPaneTab {
+        override suspend fun newTab(machineId: String, workspaceId: String, kind: String?, cwd: String?): NewPaneTab {
+            opened += NewTabCall(machineId, workspaceId, kind, cwd)
+            gate?.await()
             if (fail) throw IllegalStateException("opening a terminal needs a full device")
-            opened += Triple(machineId, workspaceId, kind)
             return NewPaneTab("w1:p4", "pane:w1:p4", "w1:t4")
         }
     }

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/bus"
 	"github.com/nwverse/persona/server/internal/db"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/link"
 	"github.com/nwverse/persona/server/internal/managerconf"
 	"github.com/nwverse/persona/server/internal/netaddr"
@@ -31,9 +33,10 @@ import (
 // JoinOptions are `personad manager join`'s.
 type JoinOptions struct {
 	Hub, Code   string
-	Dir         string // "" → assistant.DefaultManagerDir(id)
-	DatabaseURL string // "" → its own Postgres in Docker, made by install (Docker must be there: checked first)
-	Fingerprint string // the hub's TLS pin, for an https hub with its own certificate
+	Lang        i18n.Lang // "" → the terminal's language
+	Dir         string    // "" → assistant.DefaultManagerDir(id)
+	DatabaseURL string    // "" → its own Postgres in Docker, made by install (Docker must be there: checked first)
+	Fingerprint string    // the hub's TLS pin, for an https hub with its own certificate
 	// CheckDocker says why Docker can't make its database (nil: it can); nil checks this machine.
 	CheckDocker func(ctx context.Context) error
 	// Warn gets what the user should know beyond the join itself (a database container left unused); nil: nobody.
@@ -60,7 +63,15 @@ type joinReply struct {
 // Join trades the install code for the manager's token and writes manager.json; it returns the directory. What it
 // can check before the code is spent (that there will be a database: Docker to make it, or --database-url) it checks
 // first: a code works once.
+func (o JoinOptions) language() i18n.Lang {
+	if o.Lang != "" {
+		return o.Lang.Or(i18n.En)
+	}
+	return i18n.Terminal()
+}
+
 func Join(ctx context.Context, o JoinOptions) (string, *assistant.ManagerConfig, error) {
+	l := o.language()
 	hub, code, err := joinAddress(ctx, o)
 	if err != nil {
 		return "", nil, err
@@ -75,7 +86,9 @@ func Join(ctx context.Context, o JoinOptions) (string, *assistant.ManagerConfig,
 	} else if !hasDatabase(o.Dir) { // joined again into its directory (after a revoke): its database is there
 		check := o.CheckDocker
 		if check == nil {
-			check = newEnv(io.Discard).dockerProblem
+			checkEnv := newEnv(io.Discard)
+			checkEnv.lang = l
+			check = checkEnv.dockerProblem
 		}
 		if err := check(ctx); err != nil {
 			return "", nil, err // before the code is spent: it works once
@@ -104,8 +117,7 @@ func Join(ctx context.Context, o JoinOptions) (string, *assistant.ManagerConfig,
 		c.DatabaseURL, c.DatabaseContainer = old.DatabaseURL, old.DatabaseContainer
 	} else if err == nil && old.DatabaseContainer != "" && o.Warn != nil {
 		// Another database given now: the container install made is not used any more (nor removed).
-		fmt.Fprintf(o.Warn, "它原来的数据库容器 %s（数据卷 %s）不再用了，留着没删：不要了就 docker rm -f %s && docker volume rm %s\n",
-			old.DatabaseContainer, dbVolume(c.ID), old.DatabaseContainer, dbVolume(c.ID))
+		fmt.Fprint(o.Warn, i18n.T(l, "manager-cli.join_old_database_unused", i18n.Args{"container": old.DatabaseContainer, "volume": dbVolume(c.ID)}))
 	}
 	dir, err = filepath.Abs(dir)
 	if err != nil {
@@ -116,7 +128,7 @@ func Join(ctx context.Context, o JoinOptions) (string, *assistant.ManagerConfig,
 		warn = os.Stderr
 	}
 	if err := assistant.WriteManagerConfigTo(dir, c, warn); err != nil {
-		return "", nil, fmt.Errorf("写不了 %s：%w（token 已经换出来了：在 App 里再拿一个安装码重来）", filepath.Join(dir, assistant.ManagerFile), err)
+		return "", nil, withTerminalCause(i18n.T(l, "manager-cli.join_config_write_failed", i18n.Args{"path": filepath.Join(dir, assistant.ManagerFile), "error": err}), err)
 	}
 	return dir, &c, nil
 }
@@ -124,13 +136,14 @@ func Join(ctx context.Context, o JoinOptions) (string, *assistant.ManagerConfig,
 // joinAddress checks a join's hub address and code before anything is asked of the hub: an http(s) address, a code,
 // and no plaintext http over the public internet unless allowed (the token would cross it in the clear).
 func joinAddress(ctx context.Context, o JoinOptions) (hub, code string, err error) {
+	l := o.language()
 	hub = strings.TrimRight(strings.TrimSpace(o.Hub), "/")
 	if !strings.HasPrefix(hub, "http://") && !strings.HasPrefix(hub, "https://") {
-		return "", "", fmt.Errorf("hub 地址 %q 要写成 http(s)://主机:端口", o.Hub)
+		return "", "", errors.New(i18n.T(l, "manager-cli.join_hub_address_invalid", i18n.Args{"address": strconv.Quote(o.Hub)}))
 	}
 	code = strings.TrimSpace(o.Code)
 	if code == "" {
-		return "", "", errors.New("没有安装码：在 App 的「设置 › 助手 › 新建」里拿一个")
+		return "", "", errors.New(i18n.T(l, "manager-cli.join_code_missing"))
 	}
 	if u, err := url.Parse(hub); err == nil && u.Scheme == "http" && !o.AllowPlaintext {
 		public := o.PublicHost
@@ -138,7 +151,7 @@ func joinAddress(ctx context.Context, o JoinOptions) (hub, code string, err erro
 			public = publicHost
 		}
 		if public(ctx, u.Hostname()) {
-			return "", "", ConfigError{fmt.Errorf("hub 地址 %s 是公网上的明文 http：换来的 token 会明文经过公网。用 hub 的 https 地址（TLS 端口），确实要明文就加 --allow-plaintext", hub)}
+			return "", "", ConfigError{errors.New(i18n.T(l, "manager-cli.join_plaintext_public", i18n.Args{"hub": hub}))}
 		}
 	}
 	return hub, code, nil
@@ -147,6 +160,7 @@ func joinAddress(ctx context.Context, o JoinOptions) (hub, code string, err erro
 // redeem trades code at hub (POST /api/v1/bus/join) for its manager's id and token, once.
 func redeem(ctx context.Context, o JoinOptions, hub, code string) (joinReply, error) {
 	var j joinReply
+	l := o.language()
 	client := o.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
@@ -165,9 +179,10 @@ func redeem(ctx context.Context, o JoinOptions, hub, code string) (joinReply, er
 		return j, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept-Language", string(l))
 	resp, err := client.Do(req)
 	if err != nil {
-		return j, fmt.Errorf("连不上 hub %s：%w", hub, err)
+		return j, withTerminalCause(i18n.T(l, "manager-cli.join_hub_unreachable", i18n.Args{"hub": hub, "error": err}), err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
@@ -176,7 +191,7 @@ func redeem(ctx context.Context, o JoinOptions, hub, code string) (joinReply, er
 	case http.StatusUnauthorized:
 		// Trying again with the same code cannot help: a configuration error (manager join exits 2; manager run
 		// --join waits for manager.json instead, as a container would be restarted on any exit).
-		return j, ConfigError{errors.New("hub 不认这个安装码：它不对、过期了（10 分钟）或者已经用过；在 App 里给这个助手重新拿一个")}
+		return j, ConfigError{errors.New(i18n.T(l, "manager-cli.join_code_refused"))}
 	case http.StatusForbidden:
 		var e struct {
 			Code  string `json:"code"`
@@ -188,28 +203,28 @@ func redeem(ctx context.Context, o JoinOptions, hub, code string) (joinReply, er
 		if e.Code == "tls_required" {
 			// The hub refused a plaintext join from the public internet, and voided the code that crossed it: the
 			// same command can never work.
-			return j, ConfigError{fmt.Errorf("hub 不接受经公网明文换码，这个安装码也作废了：在 App 里重新拿一个，用 hub 的 https 地址（TLS 端口）")}
+			return j, ConfigError{errors.New(i18n.T(l, "manager-cli.join_tls_required"))}
 		}
 		// Some other refusal (a proxy's, say): nothing says the same command can't work later.
 		if e.Error != "" {
-			return j, fmt.Errorf("hub 拒绝了换码（HTTP 403）：%s", firstLine(e.Error))
+			return j, errors.New(i18n.T(l, "manager-cli.join_http_forbidden", i18n.Args{"error": firstLine(e.Error)}))
 		}
-		return j, fmt.Errorf("hub 拒绝了换码（HTTP 403）：%s", firstLine(string(raw)))
+		return j, errors.New(i18n.T(l, "manager-cli.join_http_forbidden", i18n.Args{"error": firstLine(string(raw))}))
 	case http.StatusConflict: // a code of the other kind of join, or the built-in manager not a service here: not spent
 		var e struct {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &e)
-		return j, ConfigError{fmt.Errorf("the hub did not trade the code, which is still good (HTTP 409): %s", firstLine(e.Error))}
+		return j, ConfigError{errors.New(i18n.T(l, "manager-cli.join_code_conflict", i18n.Args{"error": firstLine(e.Error)}))}
 	case http.StatusTooManyRequests:
-		return j, errors.New("试错太多次，hub 暂时不接受这台电脑换码：过几分钟再试")
+		return j, errors.New(i18n.T(l, "manager-cli.join_rate_limited"))
 	case http.StatusNotFound, http.StatusMethodNotAllowed:
-		return j, fmt.Errorf("hub %s 还不支持管理者（HTTP %d）：先升级 hub", hub, resp.StatusCode)
+		return j, errors.New(i18n.T(l, "manager-cli.join_hub_too_old", i18n.Args{"hub": hub, "status": resp.StatusCode}))
 	default:
-		return j, fmt.Errorf("hub 没换成（HTTP %d）：%s", resp.StatusCode, firstLine(string(raw)))
+		return j, errors.New(i18n.T(l, "manager-cli.join_http_error", i18n.Args{"status": resp.StatusCode, "error": firstLine(string(raw))}))
 	}
 	if err := json.Unmarshal(raw, &j); err != nil || j.ID == "" || j.Token == "" {
-		return j, errors.New("hub 的回答不对：没有 id 或 token")
+		return j, errors.New(i18n.T(l, "manager-cli.join_bad_reply"))
 	}
 	return j, nil
 }
@@ -269,11 +284,11 @@ func cmdJoin(ctx context.Context, e *env, args []string) error {
 	fs := flag.NewFlagSet("manager join", flag.ContinueOnError)
 	fs.SetOutput(e.stdout)
 	builtin := fs.Bool("builtin", false, "the built-in manager's code (persona-hub manager-code): bind its own service to the hub")
-	dir := fs.String("dir", "", "管理者的目录（默认 ~/.persona/managers/<id>）")
-	dbURL := fs.String("database-url", "", "它的 Postgres 库（默认 install 时在 Docker 里给它建一个）")
-	fp := fs.String("fingerprint", "", "hub 的 TLS 指纹（https 地址用 hub 自己的证书时）")
-	plain := fs.Bool("allow-plaintext", false, "允许公网上的明文 http hub 地址（token 会明文经过公网）")
-	install := fs.Bool("install", false, "换好以后接着装成常驻服务（manager install）")
+	dir := fs.String("dir", "", i18n.T(e.l(), "manager-cli.flag_join_dir"))
+	dbURL := fs.String("database-url", "", i18n.T(e.l(), "manager-cli.flag_join_database_url"))
+	fp := fs.String("fingerprint", "", i18n.T(e.l(), "manager-cli.flag_join_fingerprint"))
+	plain := fs.Bool("allow-plaintext", false, i18n.T(e.l(), "manager-cli.flag_join_allow_plaintext"))
+	install := fs.Bool("install", false, i18n.T(e.l(), "manager-cli.flag_join_install"))
 	pos, err := parseInterleaved(fs, args)
 	if err != nil {
 		return err
@@ -293,7 +308,7 @@ func cmdJoin(ctx context.Context, e *env, args []string) error {
 		if *install { // what can stop the install is checked before the code is spent
 			return e.installBuiltin(ctx, dataDir(), j)
 		}
-		b, err := JoinBuiltin(ctx, JoinOptions{Hub: j.hub, Code: j.code, Fingerprint: j.fingerprint, AllowPlaintext: j.plaintext}, dataDir())
+		b, err := JoinBuiltin(ctx, JoinOptions{Hub: j.hub, Code: j.code, Lang: e.l(), Fingerprint: j.fingerprint, AllowPlaintext: j.plaintext}, dataDir())
 		if err != nil {
 			return err
 		}
@@ -302,21 +317,20 @@ func cmdJoin(ctx context.Context, e *env, args []string) error {
 			"PERSONA_ASSISTANT_DEPLOY=service yourself).\n", e.self(), e.self())
 		return nil
 	}
-	d, c, err := Join(ctx, JoinOptions{Hub: pos[0], Code: pos[1], Dir: *dir, DatabaseURL: *dbURL, Fingerprint: *fp,
+	d, c, err := Join(ctx, JoinOptions{Hub: pos[0], Code: pos[1], Lang: e.l(), Dir: *dir, DatabaseURL: *dbURL, Fingerprint: *fp,
 		CheckDocker: e.dockerProblem, Warn: e.stdout, AllowPlaintext: *plain})
 	if err != nil {
 		return err
 	}
-	where := "它自己的 Postgres，install 时在 Docker 里建（容器 " + dbContainer(c.ID) + "）"
+	where := i18n.T(e.l(), "manager-cli.join_database_own", i18n.Args{"container": dbContainer(c.ID)})
 	if c.DatabaseContainer == "" && c.DatabaseURL != "" {
-		where = db.DatabaseName(c.DatabaseURL) + "（--database-url 给的，没有就建）"
+		where = i18n.T(e.l(), "manager-cli.join_database_given", i18n.Args{"database": db.DatabaseName(c.DatabaseURL)})
 	}
-	fmt.Fprintf(e.stdout, "加入了 hub：这台是管理者「%s」（%s）。\n  目录：%s\n  数据库：%s\n", c.Name, c.ID, d, where)
+	fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.join_succeeded", i18n.Args{"name": c.Name, "id": c.ID, "directory": d, "database": where}))
 	if *install {
 		return cmdInstall(ctx, e, []string{"--dir", d})
 	}
-	fmt.Fprintf(e.stdout, "下一步：%s manager install --dir %s（装成常驻服务），或者在前台 %s manager run --dir %s\n",
-		e.self(), shellQuote(d), e.self(), shellQuote(d))
+	fmt.Fprint(e.stdout, i18n.T(e.l(), "manager-cli.join_next", i18n.Args{"program": e.self(), "directory": shellQuote(d)}))
 	return nil
 }
 

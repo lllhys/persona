@@ -8,6 +8,8 @@ vi.hoisted(() => {
 });
 import { connect, reset, savePins } from "../lib/store";
 import { cycleGrouping } from "../lib/sidebar-api";
+import { SESSIONS_AGENTS_ONLY_FEATURE, runtimeAgents, runtimeSessions } from "../lib/runtime-list";
+import { filterAgentList, getAgentListFilters, resetAgentListFilters } from "../lib/agent-list-filters";
 import type { AgentPins } from "../lib/pins";
 import type { Session } from "../lib/types";
 import { Sidebar } from "./Sidebar";
@@ -26,28 +28,47 @@ class FakeSocket {
   push(msg: Record<string, unknown>) { this.onmessage?.({ data: JSON.stringify(msg) }); }
 }
 const row = (id: string): Session => ({ machine_id: "computer", session_id: id, title: id, cwd: "/code/demo", status: "working", state: "working", updated_at: "2026-01-01T00:00:00Z", space_id: "project", space_name: "Demo project" });
-const first = row("First page agent"), tail = row("Beyond first page");
+const first = { ...row("First page agent"), cwd: "/home/demo/.persona/health-bin" }, tail = row("Beyond first page");
+const assistant: Session = { ...row("Persona conversation"), assistant: true, state: "needs_you" };
+const health: Session = { ...row("Health conversation"), space: "health", state: "needs_you" };
+const healthDir = { ...health, session_id: "health-dir", title: "Legacy private directory", space: undefined, cwd: "/home/demo/.persona/health/notes" };
+const managerHealthDir = { ...health, session_id: "manager-health-dir", title: "Legacy manager private directory", space: undefined, cwd: "C:\\Users\\demo\\.jarvis\\health-m-0b0b0b\\notes" };
 const emptyPins: AgentPins = { sessions: [], spaces: [] };
 const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } }));
 let host: HTMLDivElement, root: Root;
 const flush = async () => { for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); }); };
 const grouping = () => host.querySelector('[role="radiogroup"][aria-label="Agent 分组"]');
+const chosen = () => grouping()?.querySelector('[aria-checked="true"]')?.textContent;
+const pagedList = () => host.querySelector("[data-paged-sessions]");
+const completeReads = (fetch: ReturnType<typeof vi.fn>) => fetch.mock.calls.filter(([url]) => (url as string).endsWith("/api/v1/sessions") || (url as string).includes("summary=0"));
 
-async function render(paged: boolean, pins = emptyPins, saved?: string) {
+async function render(paged: boolean, pins = emptyPins, saved?: string, agentsOnly = paged) {
   if (saved) localStorage.setItem("persona.agentGrouping", saved);
+  let moved = false;
+  const movedRow = { ...first, assistant: true };
   const fetch = vi.fn((input: string) => {
     const url = new URL(input, "http://hub.example.com");
     if (url.pathname.endsWith("/sessions") && !url.pathname.includes("/agents/")) {
-      if (url.searchParams.has("counts")) return json({ total: 2, state: { working: 2 }, machine: { computer: 2 }, group: {}, project: {}, revision: "r1" });
+      const q = url.searchParams;
+      const scoped = q.get("agents_only") === "1";
+      const firstPage = scoped ? [first] : [first, assistant, health, healthDir, managerHealthDir];
+      const total = firstPage.length + 1 - (scoped && moved ? 1 : 0);
+      if (q.has("counts")) return json({ total, state: scoped ? { working: total } : { working: 2, needs_you: total - 2 }, machine: { computer: total }, group: {}, project: {}, revision: moved ? "r2" : "r1" });
+      if (q.has("since")) return json({
+        sessions: moved && !scoped ? [movedRow] : [],
+        remove: moved && scoped ? [JSON.stringify([first.machine_id, first.session_id])] : [],
+        has_more: false,
+        revision: moved ? "r2" : "r1",
+        total,
+      });
       // The complete fallback's pages (#3759): every row, in two frozen pages; the bounded list's summary pages.
       if (url.searchParams.get("summary") === "0" && !url.searchParams.has("session_id")) {
-        if (url.searchParams.has("since")) return json({ sessions: [], remove: [], has_more: false, revision: "r1", total: 2 });
         return url.searchParams.get("cursor") === "next"
-          ? json({ sessions: [tail], remove: [], has_more: false, revision: "r1", total: 2 })
-          : json({ sessions: [first], remove: [], has_more: true, next_cursor: "next", revision: "r1", total: 2 });
+          ? json({ sessions: [tail], remove: [], has_more: false, revision: "r1", total })
+          : json({ sessions: firstPage, remove: [], has_more: true, next_cursor: "next", revision: "r1", total });
       }
-      if (url.search) return json({ sessions: [first], remove: [], has_more: true, next_cursor: "next", revision: "r1", total: 2 });
-      return json({ sessions: [first, tail] });
+      if (url.search) return json({ sessions: firstPage, remove: [], has_more: true, next_cursor: "next", revision: "r1", total });
+      return json({ sessions: [...firstPage, tail] });
     }
     if (url.pathname.endsWith("/pins")) return json(pins);
     if (url.pathname.endsWith("/machines")) return json({ machines: [{ id: "computer", name: "Demo computer", online: true }] });
@@ -59,12 +80,12 @@ async function render(paged: boolean, pins = emptyPins, saved?: string) {
     connect();
     const socket = FakeSocket.all.at(-1)!;
     socket.open();
-    socket.push({ type: "hello", features: paged ? ["sessions_list", "sessions_lookup"] : [] });
+    socket.push({ type: "hello", features: paged ? ["sessions_list", "sessions_lookup", "sessions_todo", ...(agentsOnly ? [SESSIONS_AGENTS_ONLY_FEATURE] : [])] : [] });
   });
   await flush();
   act(() => root.render(<Sidebar route={{ name: "home" }} onSearch={() => {}} onNewAgent={() => {}} />));
   await flush();
-  return fetch;
+  return { fetch, moveToAssistant: () => { moved = true; FakeSocket.all.at(-1)!.push({ type: "sessions_list", revision: "r2" }); } };
 }
 
 beforeEach(() => {
@@ -76,7 +97,7 @@ beforeEach(() => {
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
 afterEach(() => {
-  act(() => root.unmount()); host.remove(); reset(); vi.unstubAllGlobals();
+  act(() => root.unmount()); host.remove(); reset(); resetAgentListFilters(); vi.unstubAllGlobals();
 });
 
 for (const paged of [false, true]) {
@@ -93,39 +114,93 @@ for (const paged of [false, true]) {
       expect(grouping()).not.toBeNull();
       expect(host.textContent).toContain(tail.title);
     });
-    it.each(["machine", "space", "repo", "state", "todo"])("honors saved %s grouping", async (saved) => {
-      await render(paged, emptyPins, saved);
-      expect(grouping()).not.toBeNull();
-      expect(grouping()!.querySelector('[aria-checked="true"]')).not.toBeNull();
-      expect(host.textContent).toContain(tail.title);
+    it.each(["machine", "space", "repo", "state", "todo"])("honors saved %s grouping under the same bar", async (saved) => {
+      const { fetch } = await render(paged, emptyPins, saved);
+      expect(chosen()).toBe({ todo: "待办", machine: "机器", repo: "仓库", space: "项目", state: "状态" }[saved]);
       expect(localStorage.getItem("persona.agentGrouping")).toBe(saved);
+      // every grouping but By repository is paged where the hub pages (#6662)
+      const complete = !paged || saved === "repo";
+      expect(Boolean(pagedList())).toBe(!complete);
+      expect(completeReads(fetch).length > 0).toBe(complete);
+      if (complete) expect(host.textContent).toContain(tail.title);
     });
-    it("uses paging only when supported and no pins or grouping were chosen", async () => {
-      const fetch = await render(paged);
-      expect(Boolean(grouping())).toBe(!paged);
-      const completeReads = fetch.mock.calls.filter(([url]) => url.endsWith("/api/v1/sessions"));
-      expect(completeReads.length > 0).toBe(!paged);
+    it("opens on By to-do, paged where the hub pages, with the same bar either way", async () => {
+      const { fetch } = await render(paged);
+      expect(chosen()).toBe("待办");
+      expect(Boolean(pagedList())).toBe(paged);
+      expect(completeReads(fetch).length > 0).toBe(!paged);
     });
   });
 }
 
-it("reacts to pins saved while the paged list is mounted, then releases the fallback", async () => {
+it("reacts to pins saved while the paged list is mounted, then releases the fallback, the bar unchanged", async () => {
   await render(true);
-  expect(grouping()).toBeNull();
+  expect(pagedList()).not.toBeNull();
+  expect(chosen()).toBe("待办");
   await act(async () => savePins({ sessions: ["computer/Beyond first page"], spaces: [] }));
   await flush();
-  expect(grouping()).not.toBeNull();
+  expect(pagedList()).toBeNull();
+  expect(chosen()).toBe("待办");
   expect(host.textContent).toContain(tail.title);
   await act(async () => savePins(emptyPins));
   await flush();
-  expect(grouping()).toBeNull();
+  expect(pagedList()).not.toBeNull();
+  expect(chosen()).toBe("待办");
 });
 
 it("honors the grouping shortcut while the paged list is mounted", async () => {
   await render(true);
   act(() => { cycleGrouping(); });
   await flush();
-  expect(grouping()).not.toBeNull();
   expect(localStorage.getItem("persona.agentGrouping")).toBe("machine");
+  expect(chosen()).toBe("机器");
+  expect(pagedList()).not.toBeNull();
+});
+
+it("has no search field of its own: ⌘K's words are the paged list's search, a chip whose × takes them off (#6589)", async () => {
+  const { fetch } = await render(true);
+  expect(pagedList()).not.toBeNull();
+  expect(host.querySelector("[data-sidebar-agents] input")).toBeNull();
+  act(() => filterAgentList("review"));
+  await flush();
+  // the hub reads them as its text search, the matches listed flat
+  expect(fetch.mock.calls.some(([url]) => new URL(url as string, "http://hub.example.com").searchParams.get("q") === "review")).toBe(true);
+  const chip = host.querySelector('[data-sidebar-agents] [data-chip="query"]')!;
+  expect(chip.textContent).toContain("review");
+  await act(async () => chip.querySelector<HTMLButtonElement>("button[aria-label]")!.click());
+  await flush();
+  expect(getAgentListFilters().query).toBe("");
+  expect(host.querySelector('[data-chip="query"]')).toBeNull();
+});
+
+it("scopes sidebar pages, counts and deltas while keeping the shared session list complete", async () => {
+  const { fetch, moveToAssistant } = await render(true);
+  expect(runtimeAgents.getSnapshot().rows.map((s) => s.title)).toEqual([first.title]);
+  expect(runtimeAgents.getSnapshot().total).toBe(2);
+  expect(runtimeAgents.getSnapshot().counts?.state).toEqual({ working: 2 });
+  expect(runtimeSessions.getSnapshot().rows).toContainEqual(assistant);
+  expect(runtimeSessions.getSnapshot().rows).toContainEqual(health);
+
+  await act(async () => moveToAssistant());
+  await flush();
+  const requests = fetch.mock.calls.map(([input]) => new URL(input, "http://hub.example.com").searchParams);
+  const scoped = requests.filter((q) => q.get("agents_only") === "1");
+  expect(scoped.some((q) => q.get("since") === "r1")).toBe(true);
+  expect(scoped.some((q) => q.get("counts") === "1")).toBe(true);
+  expect(runtimeAgents.getSnapshot().rows).not.toContainEqual(first);
+  expect(runtimeAgents.getSnapshot().total).toBe(1);
+  expect(runtimeAgents.getSnapshot().counts?.state).toEqual({ working: 1 });
+  expect(runtimeSessions.getSnapshot().rows).toContainEqual({ ...first, assistant: true });
+});
+
+it("uses the complete Agents list when the hub supports paging without the Agents filter", async () => {
+  const { fetch } = await render(true, emptyPins, undefined, false);
+  expect(grouping()).not.toBeNull();
   expect(host.textContent).toContain(tail.title);
+  expect(host.textContent).toContain(first.title);
+  expect(host.textContent).not.toContain(assistant.title);
+  expect(host.textContent).not.toContain(health.title);
+  expect(host.textContent).not.toContain(healthDir.title);
+  expect(host.textContent).not.toContain(managerHealthDir.title);
+  expect(fetch.mock.calls.some(([input]) => input.includes("agents_only"))).toBe(false);
 });

@@ -15,13 +15,13 @@ import (
 
 // newQuietService is newTaskService with the main conversation conv1 (idle, on machine server), a short notice
 // delay and supervision messages (supervise_digest.go) that come at once and often.
-func newQuietService(t *testing.T) (*Service, *fakeHub) {
+func newQuietService(t testing.TB) (*Service, *fakeHub) {
 	t.Helper()
 	return newQuietServiceOn(t, nil)
 }
 
 // newQuietServiceOn is newQuietService with st as its database (nil: none).
-func newQuietServiceOn(t *testing.T, st Store) (*Service, *fakeHub) {
+func newQuietServiceOn(t testing.TB, st Store) (*Service, *fakeHub) {
 	t.Helper()
 	old := quietNoticeDelay
 	quietNoticeDelay = 30 * time.Millisecond
@@ -98,7 +98,7 @@ func TestQuietTaskTellsTheMainConversation(t *testing.T) {
 	agentTurn(s, f, proto.StatusDone, "修好了，提了 https://github.com/o/r/pull/901", 0)
 	waitFor(t, "the notice", func() bool { return len(f.notices()) == 1 })
 	n := f.notices()[0]
-	for _, want := range []string{"📋 督办", "任务「修登录崩溃」（" + todo.ID + "）：hub 判断做完了，等你验收（修好了）；在 box", "修好了，提了 https://github.com/o/r/pull/901", "不是用户发的"} {
+	for _, want := range []string{"📋 督办", "任务「修登录崩溃」（" + todo.ID + "，signal=review）：hub 判断做完了，等你验收（修好了）；在 box", "修好了，提了 https://github.com/o/r/pull/901", "不是用户发的"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("notice lacks %q:\n%s", want, n)
 		}
@@ -290,15 +290,18 @@ func TestAgentStartFromTheMainConversation(t *testing.T) {
 
 func TestGoldenTaskNotice(t *testing.T) {
 	for _, c := range []struct {
-		name string
-		n    quietNotice
+		name      string
+		n         quietNotice
+		retryWith string
 	}{
-		{"done", quietNotice{todo: Todo{Title: "修登录崩溃"}, machine: "box", state: "done", text: "修好了，PR：https://github.com/o/r/pull/1"}},
-		{"needs", quietNotice{todo: Todo{Title: "修登录崩溃"}, machine: "box", state: "needs", ask: "- 用哪个分支？（选项：main / dev）"}},
-		{"interrupted_after_needs", quietNotice{todo: Todo{Title: "整理材料"}, state: "interrupted", earlier: []string{"等过用户"}, text: "API Error: 529 overloaded"}},
-		{"failed", quietNotice{todo: Todo{Title: "整理材料"}, machine: "box", state: "failed", text: "box 现在离线"}},
+		{"done", quietNotice{todo: Todo{Title: "修登录崩溃"}, machine: "box", state: "done", text: "修好了，PR：https://github.com/o/r/pull/1"}, ""},
+		{"needs", quietNotice{todo: Todo{Title: "修登录崩溃"}, machine: "box", state: "needs", ask: "- 用哪个分支？（选项：main / dev）"}, ""},
+		{"interrupted_after_needs", quietNotice{todo: Todo{Title: "整理材料"}, state: "interrupted", earlier: []string{"等过用户"}, text: "API Error: 529 overloaded"}, ""},
+		{"failed", quietNotice{todo: Todo{Title: "整理材料"}, machine: "box", state: "failed", text: "box 现在离线"}, ""},
+		// its launcher could not start there (#10365): the card's other launcher is named
+		{"failed_retry_with", quietNotice{todo: Todo{Title: "整理材料"}, machine: "box", state: "failed", text: "box 上新开的终端运行不了「work」"}, "claude"},
 	} {
-		golden(t, "task_notice."+c.name, renderNotice(&c.n, false))
+		golden(t, "task_notice."+c.name, renderNotice(&c.n, false, c.retryWith))
 	}
 }
 
@@ -377,8 +380,8 @@ func TestStartWithReportTasks(t *testing.T) {
 }
 
 func TestGoldenTaskNoticeReporting(t *testing.T) {
-	golden(t, "task_notice.reporting_done", renderNotice(&quietNotice{todo: Todo{Title: "提 MR"}, machine: "box", state: "done", text: "MR：https://example.com/mr/7"}, true))
-	golden(t, "task_notice.reporting_needs", renderNotice(&quietNotice{todo: Todo{Title: "提 MR"}, machine: "box", state: "needs", ask: "- 合到哪个分支？"}, true))
+	golden(t, "task_notice.reporting_done", renderNotice(&quietNotice{todo: Todo{Title: "提 MR"}, machine: "box", state: "done", text: "MR：https://example.com/mr/7"}, true, ""))
+	golden(t, "task_notice.reporting_needs", renderNotice(&quietNotice{todo: Todo{Title: "提 MR"}, machine: "box", state: "needs", ask: "- 合到哪个分支？"}, true, ""))
 }
 
 // A needs notice already queued behind its conversation's turn is dropped when the user deals with the card
@@ -547,7 +550,7 @@ func TestQueuedDoneNoticeSurvivesAnsweredCard(t *testing.T) {
 	idleLark.Status = proto.StatusIdle
 	f.setSessions("server", idle1, idleLark)
 	s.drainRelays("server", []proto.Session{idleLark})
-	waitFor(t, "the done notice to go out", func() bool { return f.sentTo("lark1") == 1 })
+	waitFor(t, "the done notice to go out", func() bool { return f.sentTo("lark1") == 1 && s.queuedFor("lark1") == 0 })
 	if q := s.queuedFor("lark1"); q != 0 {
 		t.Fatalf("%d notice(s) still queued", q)
 	}

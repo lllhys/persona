@@ -41,9 +41,6 @@
  "apple/Persona/Views/Settings/SavedPlacesView.swift": {
   "PlaceSuggestions": 1
  },
- "apple/Persona/Views/Settings/SettingsView.swift": {
-  "IPhoneConsentModel": 1
- },
  "apple/Persona/Views/Shell/ShellView.swift": {
   "ShellState": 1
  },

@@ -35,6 +35,7 @@ func TestClientHelloKeepsAppVersion(t *testing.T) {
 	// The main token has no credential: nothing kept.
 	h.onClientHello(&client{out: make(chan []byte, 16), role: roleFull, hub: h},
 		[]byte(`{"platform":"macos-app","version":"1.3.0+40"}`))
+	waitHelloWrites(t, h)
 
 	list := h.clientAppList(context.Background())
 	if len(list) != 3 {
@@ -64,10 +65,12 @@ func TestClientHelloKeepsAppVersion(t *testing.T) {
 	// An unchanged hello within the hour writes nothing; a new build does.
 	puts := store.puts
 	h.onClientHello(phone, []byte(`{"platform":"ios-app","version":"1.4.0+52","os":{"name":"iOS","version":"26.1"}}`))
+	waitHelloWrites(t, h)
 	if store.puts != puts {
 		t.Fatal("an unchanged report must not be saved again")
 	}
 	h.onClientHello(phone, []byte(`{"platform":"ios-app","version":"1.4.1+53","os":{"name":"iOS","version":"26.1"}}`))
+	waitHelloWrites(t, h)
 	if store.puts != puts+1 {
 		t.Fatal("a new build must be saved")
 	}
@@ -132,6 +135,7 @@ func TestClientAppVersionInAssistantContext(t *testing.T) {
 	h := snapshotHub(t, false)
 	phone := &client{out: make(chan []byte, 16), role: roleFull, hub: h, device: "dev_phone"}
 	h.onClientHello(phone, []byte(`{"type":"client_hello","platform":"ios-app","version":"1.4.0+52","os":{"name":"iOS","version":"26.1"}}`))
+	waitHelloWrites(t, h)
 	raw, _ := json.Marshal(map[string]string{"session_id": "side-session"})
 	res, err := nodeAsks(context.Background(), h.byID["server"], "assistant.context", raw)
 	if err != nil {
@@ -139,5 +143,23 @@ func TestClientAppVersionInAssistantContext(t *testing.T) {
 	}
 	if text := contextOf(t, res); !strings.Contains(text, "iPhone App 1.4.0 (build 52)（iOS 26.1）") {
 		t.Fatalf("the context does not name the iPhone app's version:\n%s", text)
+	}
+}
+
+// A HarmonyOS build reports the installed bundle, with the same durable device and simulator semantics.
+func TestHarmonyAppVersionSurvivesReconnect(t *testing.T) {
+	store := &settingsStore{vals: map[string][]byte{}}
+	h := newTestHub(t)
+	h.store = store
+	phone := &client{out: make(chan []byte, 16), role: roleFull, hub: h, device: "dev_harmony"}
+	h.onClientHello(phone, []byte(`{"platform":"harmony","version":"1.0.0","build":"1000000","os":{"name":"HarmonyOS","version":"7.0"}}`))
+	h.noteClientAppSimulator(phone, true)
+	h.onClientHello(phone, []byte(`{"platform":"harmony","version":"1.0.1","build":"1000001","os":{"name":"HarmonyOS","version":"7.0"}}`))
+	waitHelloWrites(t, h)
+	again := newTestHub(t)
+	again.store = store
+	list := again.clientAppList(context.Background())
+	if len(list) != 1 || list[0].Platform != "harmony" || list[0].Version != "1.0.1" || list[0].Build != "1000001" || list[0].OS != "HarmonyOS 7.0" || !list[0].Simulator {
+		t.Fatalf("HarmonyOS app metadata after reconnect: %+v", list)
 	}
 }

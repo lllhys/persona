@@ -1,0 +1,97 @@
+{
+  "now": 1000,
+  "metrics": [
+    {
+      "machine_id": "critical",
+      "online": true,
+      "latest": {
+        "t": 1000,
+        "cpu": 95,
+        "mem_used": 95,
+        "mem_total": 100,
+        "disk_used": 95,
+        "disk_total": 100
+      }
+    },
+    {
+      "machine_id": "warning",
+      "online": true,
+      "latest": {
+        "t": 1000,
+        "cpu": 80
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "machine_id": "needs-you",
+      "session_id": "waiting-1",
+      "title": "Waiting agent 1",
+      "state": "needs_you",
+      "status": "blocked"
+    },
+    {
+      "machine_id": "needs-you",
+      "session_id": "waiting-2",
+      "title": "Waiting agent 2",
+      "state": "needs_you",
+      "status": "blocked"
+    },
+    {
+      "machine_id": "needs-you",
+      "session_id": "waiting-3",
+      "title": "Waiting agent 3",
+      "state": "needs_you",
+      "status": "blocked"
+    },
+    {
+      "machine_id": "needs-you",
+      "session_id": "waiting-4",
+      "title": "Waiting agent 4",
+      "state": "needs_you",
+      "status": "blocked"
+    },
+    {
+      "machine_id": "needs-you",
+      "session_id": "waiting-5",
+      "title": "Waiting agent 5",
+      "state": "needs_you",
+      "status": "blocked"
+    },
+    {
+      "machine_id": "needs-you",
+      "session_id": "waiting-6",
+      "title": "Waiting agent 6",
+      "state": "needs_you",
+      "status": "blocked"
+    },
+    {
+      "machine_id": "normal",
+      "session_id": "working",
+      "title": "Working agent",
+      "state": "working",
+      "status": "working"
+    },
+    {
+      "machine_id": "normal",
+      "session_id": "unread",
+      "title": "Unread agent",
+      "state": "unread",
+      "status": "done"
+    }
+  ],
+  "expectedOrder": [
+    "pending",
+    "offline",
+    "critical",
+    "warning",
+    "needs-you",
+    "mismatch",
+    "normal"
+  ],
+  "differentCardHeights": {
+    "criticalAlertRows": 3,
+    "warningAlertRows": 1
+  },
+  "agentsPreviewCount": 5
+}

@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 @MainActor enum ChatUserNavigation {
     /// The initial navigator shows the latest 50 genuine inputs, not 50 transcript items or model turns.

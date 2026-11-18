@@ -1,3 +1,6 @@
+import com.android.build.api.variant.HasUnitTestBuilder
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+
 plugins {
     id("persona.android.application")
     id("persona.compose")
@@ -16,6 +19,24 @@ val googleOAuthScheme = providers.gradleProperty("personaGoogleOAuthScheme")
     .orNull?.takeIf { it.isNotBlank() }
     ?: System.getenv("PERSONA_GOOGLE_OAUTH_SCHEME")?.takeIf { it.isNotBlank() }
     ?: "persona.oauth.unset"
+
+// "No hub yet?" on the welcome page opens this public page (publish.getting_started_url in the build config, passed by
+// scripts/app/android.sh). https only: anything else leaves the link out, and "unset" is the manifest's no-value marker.
+val gettingStartedUrl = (providers.gradleProperty("personaGettingStartedUrl").orNull?.takeIf { it.isNotBlank() }
+    ?: System.getenv("PERSONA_GETTING_STARTED_URL")?.takeIf { it.isNotBlank() })
+    ?.trim()?.takeIf { it.startsWith("https://") && it.none(Char::isWhitespace) }
+    ?: "unset"
+
+// The commit the About page shows. Only an explicit, public input counts (docs/android/android.md "Build commit"):
+// -PpersonaBuildCommit, then PERSONA_BUILD_COMMIT; with neither, the build says "unknown". It never asks git, and a value
+// that is not a commit fails the build rather than put a branch name or a path in the APK.
+val buildCommit = (providers.gradleProperty("personaBuildCommit").orNull?.takeIf { it.isNotEmpty() }
+    ?: providers.environmentVariable("PERSONA_BUILD_COMMIT").orNull?.takeIf { it.isNotEmpty() }
+    ?: "unknown").also {
+    require(it == "unknown" || Regex("[0-9a-fA-F]{7,64}").matches(it)) {
+        "Invalid build commit: use 7 to 64 hex digits, or unknown"
+    }
+}.lowercase()
 
 // The same language resources drive the contracts, packaged translations, and Android 13's per-app picker.
 val languageFiles = rootProject.fileTree("i18n") { include("*.properties") }
@@ -39,13 +60,28 @@ val generateLocaleConfig by tasks.registering(GenerateLocaleConfig::class) {
     languages.from(languageFiles)
     outputDirectory.set(layout.buildDirectory.dir("generated/languages/res"))
 }
-androidComponents.onVariants { variant ->
-    variant.sources.res?.addGeneratedSourceDirectory(generateLocaleConfig, GenerateLocaleConfig::outputDirectory)
+androidComponents {
+    beforeVariants { variant ->
+        if (variant is HasUnitTestBuilder && variant.name == "release") {
+            variant.javaClass.getMethod("setEnableUnitTest", Boolean::class.javaPrimitiveType).invoke(variant, true)
+        }
+    }
+    onVariants { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(generateLocaleConfig, GenerateLocaleConfig::outputDirectory)
+    }
 }
 
 android {
     namespace = "persona.android"
+    buildFeatures { buildConfig = true }
     testOptions { unitTests { isIncludeAndroidResources = true } }
+    testOptions.unitTests.all { test ->
+        // Robolectric under JDK 21 needs the same raw FileDescriptor access as the library modules.
+        test.jvmArgs(
+            "--add-opens=java.base/java.io=ALL-UNNAMED",
+            "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED",
+        )
+    }
     lint {
         baseline = file("lint-baseline.xml")
     }
@@ -53,6 +89,8 @@ android {
     androidResources {
         localeFilters += languageTags.map { it.substringBefore('-') }
     }
+    // Generated resources (the build commit below) need resValues on; the default is not the same in every AGP version.
+    buildFeatures { resValues = true }
     defaultConfig {
         applicationId = appId
         versionCode = providers.gradleProperty("personaVersionCode").orElse("1").get().toInt().also {
@@ -61,6 +99,8 @@ android {
         versionName = providers.gradleProperty("personaVersionName").orElse("0.1").get()
         manifestPlaceholders["appLabel"] = appLabel
         manifestPlaceholders["googleOAuthScheme"] = googleOAuthScheme
+        manifestPlaceholders["gettingStartedUrl"] = gettingStartedUrl
+        resValue("string", "persona_build_commit", buildCommit)
     }
     buildTypes {
         release {
@@ -77,6 +117,8 @@ dependencies {
     implementation(project(":core:contracts"))
     implementation(project(":core:domain"))
     implementation(project(":core:terminal"))
+    // Phase 1 packages the binding only; production continuity remains native and no core is created on launch.
+    implementation(project(":core:rustcore-android"))
     implementation(project(":core:navigation"))
     implementation(project(":core:hub"))
     implementation(project(":core:data"))
@@ -104,7 +146,11 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation(libs.compose.preview)
+    implementation(libs.coil.compose)
     debugImplementation(libs.compose.tooling)
+    debugImplementation(project(":core:rustcore"))
+    debugImplementation(project(path = ":core:rustcore", configuration = "shadowRuntimeElements"))
+    debugImplementation(project(path = ":core:domain", configuration = "shadowRuntimeElements"))
 
     implementation(libs.androidx.work)
     implementation(libs.androidx.core)
@@ -125,4 +171,20 @@ dependencies {
     testImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.test.ext:junit:1.3.0")
+}
+
+// Only DEBUG can link the separately compiled answer observer. Release never evaluates a shadow/native dependency.
+val answerFriend = configurations.create("answerFriend")
+dependencies {
+    add("answerFriend", project(":core:domain"))
+    add("answerFriend", project(path = ":core:domain", configuration = "shadowRuntimeElements"))
+    add("answerFriend", project(":core:rustcore"))
+    add("answerFriend", project(path = ":core:rustcore", configuration = "shadowRuntimeElements"))
+}
+tasks.matching { it.name == "compileDebugKotlin" || it.name == "compileDebugUnitTestKotlin" }.configureEach {
+    val compile = this as KotlinJvmCompile
+    compile.dependsOn(":core:domain:domainShadowJar")
+    compile.compilerOptions.freeCompilerArgs.add(provider {
+        "-Xfriend-paths=" + answerFriend.joinToString(",") { jar -> jar.absolutePath }
+    })
 }

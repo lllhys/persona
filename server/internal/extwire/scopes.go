@@ -27,11 +27,16 @@ var RouteScopes = map[string]string{
 	"GET /api/v1/inbox/policies":                         ScopeInboxRead,
 	"POST /api/v1/inbox/done":                            ScopeInboxWrite,
 	"POST /api/v1/inbox/bulk":                            ScopeInboxWrite,
+	"POST /api/v1/inbox/merge":                           ScopeInboxWrite,
+	"POST /api/v1/inbox/merge/undo":                      ScopeInboxWrite,
+	"POST /api/v1/inbox/todo":                            ScopeInboxWrite,
+	"POST /api/v1/inbox/todo/undo":                       ScopeInboxWrite,
 	"POST /api/v1/inbox/{id}/done":                       ScopeInboxWrite,
 	"POST /api/v1/inbox/{id}/draft":                      ScopeInboxWrite,
 	"POST /api/v1/inbox/{id}/reply":                      ScopeInboxWrite,
 	"POST /api/v1/inbox/{id}/suggestion":                 ScopeInboxWrite,
 	"POST /api/v1/inbox/{id}/handoff":                    ScopeInboxWrite,
+	"POST /api/v1/inbox/{id}/task-link/recheck":          ScopeInboxWrite,
 	"POST /api/v1/inbox/{id}/doc/status":                 ScopeInboxWrite,
 	"PUT /api/v1/inbox/{id}/parent":                      ScopeInboxWrite,
 	"PUT /api/v1/inbox/{id}/folder":                      ScopeInboxWrite,
@@ -45,6 +50,11 @@ var RouteScopes = map[string]string{
 	"DELETE /api/v1/inbox/policies/{id}":                 ScopeInboxWrite,
 	"POST /api/v1/inbox/refresh":                         ScopeInboxWrite,
 	"GET /api/v1/assistant/leaders":                      ScopeLeadersRead,
+	"GET /api/v1/assistant/dispatch-policy":              ScopeAssistantDispatchPolicy,
+	"PUT /api/v1/assistant/dispatch-policy":              ScopeAssistantDispatchPolicy,
+	"GET /api/v1/assistant/worker-presets":               ScopeAssistantStartDefaults,
+	"GET /api/v1/assistant/start-defaults":               ScopeAssistantStartDefaults,
+	"PUT /api/v1/assistant/start-defaults":               ScopeAssistantStartDefaults,
 	"GET /api/v1/sessions/archived":                      ScopeAgentsRead,
 	"GET /api/v1/sessions":                               ScopeAgentsRead,
 	"GET /api/v1/sessions/{mid}/{sid}/info":              ScopeAgentsRead,
@@ -60,7 +70,10 @@ var RouteScopes = map[string]string{
 	"GET /api/v1/agents/sessions/{id}/messages":          ScopeAgentsRead,
 	"GET /api/v1/agents/sessions/{id}/avatar":            ScopeAgentsRead,
 	"GET /api/v1/workspaces":                             ScopeAgentsRead,
+	"GET /api/v1/saved-agent-searches":                   ScopeAgentsRead,
 	"GET /api/v1/workspace-board":                        ScopeAgentsRead,
+	"GET /api/v1/workspace-board/activity":               ScopeAgentsRead,
+	"GET /api/v1/workspace-board/activity/{revision}":    ScopeAgentsRead,
 	"POST /api/v1/sessions":                              ScopeAgentsControl,
 	"POST /api/v1/sessions/{mid}/{sid}/messages":         ScopeAgentsControl,
 	"POST /api/v1/sessions/{mid}/{sid}/interrupt":        ScopeAgentsControl,
@@ -79,6 +92,9 @@ var RouteScopes = map[string]string{
 	"GET /api/v1/machines/{id}/usage":                    ScopeMachinesRead,
 	"GET /api/v1/machines/{mid}/stat":                    ScopeMachinesRead,
 	"POST /api/v1/notify":                                ScopeNotify,
+	"GET /api/v1/push/intercepts":                        ScopeNotify, // read-only: pushes ln mode held back, including an extension's own
+	"GET /api/v1/push/ln-mode":                           ScopeNotify, // read-only: the switch state; the PUT stays full credentials only
+	"GET /api/v1/push/stats/daily":                       ScopeNotify, // read-only: delivered/held counts per day, an extension sees its own manager only
 	"GET /api/v1/assistant":                              ScopeAssistantAsk,
 	"GET /api/v1/assistant/capabilities":                 ScopeAssistantAsk,
 	"POST /api/v1/assistant/conversations":               ScopeAssistantAsk,
@@ -86,17 +102,22 @@ var RouteScopes = map[string]string{
 	"POST /api/v1/assistant/conversations/{id}/stop":     ScopeAssistantAsk, // /agent's /stop (#3308)
 	"GET /api/v1/assistant/reporters":                    ScopeAssistantAsk,
 	// The todos (the assistant's, relayed): reading them, adding, editing and attaching agents and spaces, and writing
-	// outcome decisions (an extension writes no other source). Deleting a todo, superseding decisions, the done check and
-	// a retry stay with full credentials.
-	"GET /api/v1/todos":                                 ScopeTodosRead,
-	"GET /api/v1/todos/{id}/decisions":                  ScopeTodosRead,
-	"POST /api/v1/todos":                                ScopeTodosWrite,
-	"PATCH /api/v1/todos/{id}":                          ScopeTodosWrite,
-	"POST /api/v1/todos/{id}/decisions":                 ScopeTodosWrite,
-	"PUT /api/v1/todos/{id}/agents/{mid}/{sid}":         ScopeTodosWrite,
-	"DELETE /api/v1/todos/{id}/agents/{mid}/{sid}":      ScopeTodosWrite,
-	"PUT /api/v1/todos/{id}/spaces/{mid}/{space...}":    ScopeTodosWrite,
-	"DELETE /api/v1/todos/{id}/spaces/{mid}/{space...}": ScopeTodosWrite,
+	// outcome decisions (an extension writes no other source). Deleting a todo, superseding decisions, the done check, a
+	// retry and the owner's own marks (seen, restored, Someday) stay with full credentials.
+	"GET /api/v1/todos/{id}/repositories":                 ScopeTodosRead,
+	"PUT /api/v1/todos/{id}/repositories":                 ScopeTodosWrite,
+	"PUT /api/v1/todos/{id}/repositories/{repo_id}/links": ScopeTodosWrite,
+	"GET /api/v1/todos":                                   ScopeTodosRead,
+	"GET /api/v1/todos/places":                            ScopeTodosRead,
+	"GET /api/v1/todos/{id}":                              ScopeTodosRead,
+	"GET /api/v1/todos/{id}/decisions":                    ScopeTodosRead,
+	"POST /api/v1/todos":                                  ScopeTodosWrite,
+	"PATCH /api/v1/todos/{id}":                            ScopeTodosWrite,
+	"POST /api/v1/todos/{id}/decisions":                   ScopeTodosWrite,
+	"PUT /api/v1/todos/{id}/agents/{mid}/{sid}":           ScopeTodosWrite,
+	"DELETE /api/v1/todos/{id}/agents/{mid}/{sid}":        ScopeTodosWrite,
+	"PUT /api/v1/todos/{id}/spaces/{mid}/{space...}":      ScopeTodosWrite,
+	"DELETE /api/v1/todos/{id}/spaces/{mid}/{space...}":   ScopeTodosWrite,
 	// Another extension's own HTTP: the scope names which (ExtensionCallScope).
 	"/api/v1/extensions/{id}/": ScopeCallPrefix,
 }

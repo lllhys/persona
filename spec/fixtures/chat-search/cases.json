@@ -1,0 +1,360 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "name": "user_words",
+   "description": "The user's own words: searched as a message and indexed.",
+   "item": {
+    "id": "u1#0",
+    "seq": 1,
+    "role": "user",
+    "kind": "text",
+    "text": "我想去青石巷 BlueLane 看看"
+   },
+   "fields": [
+    [
+     "text",
+     "我想去青石巷 BlueLane 看看"
+    ]
+   ],
+   "index": "我想去青石巷 BlueLane 看看"
+  },
+  {
+   "name": "quoted_context",
+   "description": "A quoted selection travels in a persona-context tag: the chat shows it as a chip that opens, so search in chat finds its title and text as Quoted; the index keeps only the user's own words.",
+   "item": {
+    "id": "u2#0",
+    "seq": 2,
+    "role": "user",
+    "kind": "text",
+    "text": "帮我看看路线\n<persona-context kind=\"selection\" title=\"摘录\">隐藏摘录 HiddenCtx</persona-context>"
+   },
+   "fields": [
+    [
+     "text",
+     "帮我看看路线"
+    ],
+    [
+     "quoted",
+     "摘录\n隐藏摘录 HiddenCtx"
+    ]
+   ],
+   "index": "帮我看看路线"
+  },
+  {
+   "name": "card_reply",
+   "description": "An answer sent from a card ends with the hub's persona-action tag, which the chat never shows: neither searched nor in a snippet.",
+   "item": {
+    "id": "u3#0",
+    "seq": 3,
+    "role": "user",
+    "kind": "text",
+    "text": "选 B：步行\n<persona-action view=\"msg-a/0\" action=\"choose-b\">{\"values\":{\"code\":\"ActionSecret\"}}</persona-action>"
+   },
+   "fields": [
+    [
+     "text",
+     "选 B：步行"
+    ]
+   ],
+   "index": "选 B：步行"
+  },
+  {
+   "name": "html_card_reply",
+   "description": "An HTML card's answer carries {\"html\":true,\"values\":{}} in the same tag: hidden the same way.",
+   "item": {
+    "id": "u4#0",
+    "seq": 4,
+    "role": "user",
+    "kind": "text",
+    "text": "Open the map\n<persona-action view=\"msg-b/0\" action=\"map\">{\"html\":true,\"values\":{}}</persona-action>"
+   },
+   "fields": [
+    [
+     "text",
+     "Open the map"
+    ]
+   ],
+   "index": "Open the map"
+  },
+  {
+   "name": "view_errors",
+   "description": "The node's persona-view-errors feedback is never shown.",
+   "item": {
+    "id": "u5#0",
+    "seq": 5,
+    "role": "user",
+    "kind": "text",
+    "text": "<persona-view-errors>\n- card 0: bad json ViewErr\n</persona-view-errors>\n还有一件事"
+   },
+   "fields": [
+    [
+     "text",
+     "还有一件事"
+    ]
+   ],
+   "index": "还有一件事"
+  },
+  {
+   "name": "attached_images",
+   "description": "Photos sent with a message show as thumbnails; their paths and [Image #n] markers are not words.",
+   "item": {
+    "id": "u6#0",
+    "seq": 6,
+    "role": "user",
+    "kind": "text",
+    "text": "[Image #1] 这是哪里\n<attached_images>\n~/Pictures/beach.jpg\n</attached_images>"
+   },
+   "fields": [
+    [
+     "text",
+     "这是哪里"
+    ]
+   ],
+   "index": "这是哪里"
+  },
+  {
+   "name": "file_card",
+   "description": "A file sent with a message shows as a card with its name: search in chat finds the name; the index keeps only the words.",
+   "item": {
+    "id": "u7#0",
+    "seq": 7,
+    "role": "user",
+    "kind": "text",
+    "text": "<persona-file path=\"~/notes/route.md\" name=\"route.md\" />帮我读一下"
+   },
+   "fields": [
+    [
+     "text",
+     "帮我读一下"
+    ],
+    [
+     "text",
+     "route.md"
+    ]
+   ],
+   "index": "帮我读一下"
+  },
+  {
+   "name": "pasted_content",
+   "description": "Pasted text shows as itself, without its wrapper.",
+   "item": {
+    "id": "u8#0",
+    "seq": 8,
+    "role": "user",
+    "kind": "text",
+    "text": "<pasted_content>长文本 PastedWord</pasted_content>"
+   },
+   "fields": [
+    [
+     "text",
+     "长文本 PastedWord"
+    ]
+   ],
+   "index": "长文本 PastedWord"
+  },
+  {
+   "name": "injected_supervision",
+   "description": "A message Persona injected for the model shows as one line: that line is searched, as a system event, never its words for the model; not indexed (not the user's words).",
+   "item": {
+    "id": "u9#0",
+    "seq": 9,
+    "role": "user",
+    "kind": "text",
+    "text": "InjectedRaw 注入原文：检查示例任务的结果。\n<persona-supervision level=\"triage\" />",
+    "injected": {
+     "kind": "system",
+     "state": "supervise",
+     "level": "triage",
+     "line": "示例任务验收"
+    }
+   },
+   "fields": [
+    [
+     "event",
+     "示例任务验收"
+    ]
+   ],
+   "index": null
+  },
+  {
+   "name": "injected_followup_detail",
+   "description": "A scheduled task's run shows its line and what the task asks (detail): both searched.",
+   "item": {
+    "id": "u10#0",
+    "seq": 10,
+    "role": "user",
+    "kind": "text",
+    "text": "⏰ 定时任务「早报」到点了 RawFollowup",
+    "injected": {
+     "kind": "followup",
+     "state": "daily",
+     "title": "早报",
+     "line": "定时任务：早报",
+     "detail": "每天早上整理新闻"
+    }
+   },
+   "fields": [
+    [
+     "event",
+     "定时任务：早报\n每天早上整理新闻"
+    ]
+   ],
+   "index": null
+  },
+  {
+   "name": "assistant_reply",
+   "description": "The assistant's reply: searched as a message and indexed.",
+   "item": {
+    "id": "a11#0",
+    "seq": 11,
+    "role": "assistant",
+    "kind": "text",
+    "text": "LastReplyWord 末句词：路线已发你。"
+   },
+   "fields": [
+    [
+     "text",
+     "LastReplyWord 末句词：路线已发你。"
+    ]
+   ],
+   "index": "LastReplyWord 末句词：路线已发你。"
+  },
+  {
+   "name": "assistant_markdown",
+   "description": "A reply's Markdown as the chat shows it (#7072): search in chat matches the reply as it is, but the index keeps its words without the markup (emphasis, code spans, links, headings, lists and task boxes, quotes, tables, rules, code fences), so a snippet never shows a marker; code keeps what is inside it.",
+   "item": {
+    "id": "a9#0",
+    "seq": 9,
+    "role": "assistant",
+    "kind": "text",
+    "text": "## 今天的安排\n1. **照片同步脚本**（Mac Studio）的计划写好了，等你*批准*。\n- [x] 补齐 `NetworkClient` 的测试，见 [PR 页面](https://example.com/pr/42) 和 <https://example.com/notes>\n> 引用：__重要__ 的事\n\n| 项目 | 状态 |\n| --- | :---: |\n| 发布 | ~~周四~~ 周五 |\n\n---\n```swift\nlet x = 1 // **不动**\n```\n2 * 3 * 4 = 24，snake_case_name 和 \\*星号\\* 保持原样，``代码里的 ` 反引号``。"
+   },
+   "fields": [
+    [
+     "text",
+     "## 今天的安排\n1. **照片同步脚本**（Mac Studio）的计划写好了，等你*批准*。\n- [x] 补齐 `NetworkClient` 的测试，见 [PR 页面](https://example.com/pr/42) 和 <https://example.com/notes>\n> 引用：__重要__ 的事\n\n| 项目 | 状态 |\n| --- | :---: |\n| 发布 | ~~周四~~ 周五 |\n\n---\n```swift\nlet x = 1 // **不动**\n```\n2 * 3 * 4 = 24，snake_case_name 和 \\*星号\\* 保持原样，``代码里的 ` 反引号``。"
+    ]
+   ],
+   "index": "今天的安排\n照片同步脚本（Mac Studio）的计划写好了，等你批准。\n补齐 NetworkClient 的测试，见 PR 页面 和 https://example.com/notes\n引用：重要 的事\n\n项目 状态\n发布 周四 周五\n\nlet x = 1 // **不动**\n2 * 3 * 4 = 24，snake_case_name 和 *星号* 保持原样，代码里的 ` 反引号。"
+  },
+  {
+   "name": "assistant_markdown_strong",
+   "description": "A reply's bold as the chat shows it (#7195): `**` goes when the bold holds code, wraps a numbered title, spans two lines or has no partner; `2 ** 3` and `a**b` read as expressions and stay, as does code. Search in chat matches the reply as it is.",
+   "item": {
+    "id": "a10#0",
+    "seq": 10,
+    "role": "assistant",
+    "kind": "text",
+    "text": "结论：**先跑 `go vet` 再提交**，然后合并。\n**`--dry-run`** 只打印，**1. 准备 `config.json`**\n**这一句\n跨了两行**，只有开头的 **没有结尾\n2 ** 3 = 8，a**b 保持原样，用 `**kwargs`。"
+   },
+   "fields": [
+    [
+     "text",
+     "结论：**先跑 `go vet` 再提交**，然后合并。\n**`--dry-run`** 只打印，**1. 准备 `config.json`**\n**这一句\n跨了两行**，只有开头的 **没有结尾\n2 ** 3 = 8，a**b 保持原样，用 `**kwargs`。"
+    ]
+   ],
+   "index": "结论：先跑 go vet 再提交，然后合并。\n--dry-run 只打印，1. 准备 config.json\n这一句\n跨了两行，只有开头的 没有结尾\n2 ** 3 = 8，a**b 保持原样，用 **kwargs。"
+  },
+  {
+   "name": "assistant_card",
+   "description": "A reply with a card: the card counts as its fallback text (sdk/go/wire AssistantCardText), never its JSON.",
+   "item": {
+    "id": "a12#0",
+    "seq": 12,
+    "role": "assistant",
+    "kind": "text",
+    "text": "看看这个：\n```persona-view\n{\"fallback\":\"三条路线对比\",\"title\":\"路线\"}\n```\n就这些。"
+   },
+   "fields": [
+    [
+     "text",
+     "看看这个：\n三条路线对比\n就这些。"
+    ]
+   ],
+   "index": "看看这个：\n三条路线对比\n就这些。"
+  },
+  {
+   "name": "thinking",
+   "description": "A thought opens to be read: searched as thinking, not indexed.",
+   "item": {
+    "id": "a13#0",
+    "seq": 13,
+    "role": "assistant",
+    "kind": "thinking",
+    "text": "ThinkWord 思考词：先读一下路线文件。"
+   },
+   "fields": [
+    [
+     "thinking",
+     "ThinkWord 思考词：先读一下路线文件。"
+    ]
+   ],
+   "index": null
+  },
+  {
+   "name": "tool_call",
+   "description": "A tool call: its name and the strings in its input (not the keys); not indexed.",
+   "item": {
+    "id": "a14#0",
+    "seq": 14,
+    "role": "assistant",
+    "kind": "tool_use",
+    "tool_use_id": "toolu_1",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "~/notes/route.md",
+     "limit": 20
+    }
+   },
+   "fields": [
+    [
+     "tool_name",
+     "Read"
+    ],
+    [
+     "tool_input",
+     "~/notes/route.md"
+    ]
+   ],
+   "index": null
+  },
+  {
+   "name": "tool_result",
+   "description": "A tool's output: searched, not indexed.",
+   "item": {
+    "id": "r15#0",
+    "seq": 15,
+    "role": "user",
+    "kind": "tool_result",
+    "tool_use_id": "toolu_1",
+    "text": "SilverKey 银钥匙 在第二个抽屉。"
+   },
+   "fields": [
+    [
+     "tool_output",
+     "SilverKey 银钥匙 在第二个抽屉。"
+    ]
+   ],
+   "index": null
+  },
+  {
+   "name": "notice",
+   "description": "A notice in the chat: a system event, not indexed.",
+   "item": {
+    "id": "n16#0",
+    "seq": 16,
+    "role": "system",
+    "kind": "notice",
+    "text": "上下文已压缩"
+   },
+   "fields": [
+    [
+     "event",
+     "上下文已压缩"
+    ]
+   ],
+   "index": null
+  }
+ ]
+}

@@ -302,20 +302,21 @@ func TestLauncherPickerDefault(t *testing.T) {
 	if err := s.saveModelRecord(ctx, "agent.new", 0, ModelBinding{Provider: "launcher.gw", Model: "m1", Effort: "high"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.saveModelRecord(ctx, "assistant", 0, ModelBinding{Runtime: proto.AssistantRuntimeAgentSDK}); err != nil {
+	// The main chat's record as an older hub stored it, on the Agent SDK: its default names no runtime.
+	if err := s.store().PutSetting(ctx, modelRecordKey("assistant"), json.RawMessage(`{"revision":1,"binding":{"runtime":"agentsdk"}}`)); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.launcherDefault(ctx, "agent.new"); !reflect.DeepEqual(got, map[string]any{"provider": "gw", "model": "m1", "effort": "high"}) {
 		t.Fatalf("agent.new: %+v", got)
 	}
-	if got := s.launcherDefault(ctx, "assistant"); got["runtime"] != "agentsdk" || got["provider"] != "claude" {
+	if got := s.launcherDefault(ctx, "assistant"); got["provider"] != "claude" || got["runtime"] != nil {
 		t.Fatalf("assistant: %+v", got)
 	}
 	if got := s.launcherDefault(ctx, "kb"); got != nil {
 		t.Fatalf("an API use has no launcher default: %+v", got)
 	}
 	r := httptest.NewRequest("GET", "/api/v1/machines/m1/launchers?purpose=assistant", nil)
-	if got := s.pickerDefault(ctx, r); got["runtime"] != "agentsdk" {
+	if got := s.pickerDefault(ctx, r); got["provider"] != "claude" {
 		t.Fatalf("?purpose= ignored: %+v", got)
 	}
 }

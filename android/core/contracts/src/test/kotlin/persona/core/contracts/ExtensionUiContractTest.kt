@@ -66,6 +66,27 @@ class ExtensionUiContractTest {
         assertTrue(view.sections.flatMap { it.items }.map { it.type }.containsAll(listOf("markdown", "table", "empty", "loading", "row")))
     }
 
+    // UI version 8 (#9158): the schema's dashboard and section head examples read with every key of every section, and of
+    // its link, in a field of the app's types.
+    @Test fun theSchemasVersionEightExamplesRead() {
+        val strict = Json { ignoreUnknownKeys = false }
+        listOf("View.v8-today.json", "View.v8-section-header.json").forEach { name ->
+            val raw = JsonCodec.parseToJsonElement(java.io.File(System.getProperty("persona.repo.root"), "schema/extension/examples/$name").readText())
+            raw.jsonObject.getValue("sections").jsonArray.forEach {
+                strict.decodeFromJsonElement(persona.core.contracts.api.ExtensionViewSection.serializer(), it)
+            }
+        }
+        val header = JsonCodec.decodeFromJsonElement(persona.core.contracts.api.ExtensionView.serializer(),
+            JsonCodec.parseToJsonElement(java.io.File(System.getProperty("persona.repo.root"), "schema/extension/examples/View.v8-section-header.json").readText()))
+        val section = header.sections.single()
+        assertEquals("today", section.key)
+        assertEquals("chart", section.icon)
+        assertEquals("History", section.link!!.title)
+        assertEquals(mapOf("range" to "month"), section.link!!.action.values)
+        assertNull(section.span)
+        assertNull(section.columns)
+    }
+
     // The new routes answer extension / extension_name / extensions, the old ones plugin / plugin_name / plugins.
     @Test fun bothKeysDecode() {
         val json = Json(JsonCodec) {}

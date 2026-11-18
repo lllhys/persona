@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +23,22 @@ type fakeCodexBus struct {
 	opened atomic.Bool // the App was asked to open `later`: from then on it owns it too
 	later  string
 	turns  chan map[string]any
-	asked  chan bool // the client answered the bus's discovery question
+	stops  chan map[string]any // interrupt requests the owning window took
+	asked  chan bool           // the client answered the bus's discovery question
+
+	// The owning window's thread settings (codex_desktop_effort.go): the updates it took, the effort it reads back,
+	// and how it answers an update (an error, not applied, applied but read back unchanged).
+	settings   chan map[string]any
+	mu         sync.Mutex
+	effort     *string
+	refuse     string
+	notApplied bool
+	unchanged  bool
+}
+
+// holds: the window owns the request's thread.
+func (b *fakeCodexBus) holds(params map[string]any) bool {
+	return params["conversationId"] == b.owned || b.opened.Load() && params["conversationId"] == b.later
 }
 
 func startFakeCodexBus(t *testing.T, owned string) (home string, bus *fakeCodexBus) {
@@ -34,7 +50,8 @@ func startFakeCodexBus(t *testing.T, owned string) (home string, bus *fakeCodexB
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
-	bus = &fakeCodexBus{owned: owned, turns: make(chan map[string]any, 1), asked: make(chan bool, 1)}
+	bus = &fakeCodexBus{owned: owned, turns: make(chan map[string]any, 1), stops: make(chan map[string]any, 1), asked: make(chan bool, 1),
+		settings: make(chan map[string]any, 4)}
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -86,7 +103,10 @@ func (b *fakeCodexBus) serve(conn net.Conn) {
 		}
 		switch {
 		case m["type"] == "client-discovery-response":
-			b.asked <- true
+			select { // one is enough to tell; a later connection's must not hold the bus
+			case b.asked <- true:
+			default:
+			}
 		case method == "initialize":
 			ok(map[string]any{"clientId": "persona"})
 			busWrite(conn, map[string]any{"type": "client-discovery-request", "requestId": "q1", "request": map[string]any{"method": "ide-context"}})
@@ -95,6 +115,27 @@ func (b *fakeCodexBus) serve(conn net.Conn) {
 		case method == "thread-follower-start-turn" && version == 2 && m["targetClientId"] == "window" && (params["conversationId"] == b.owned || b.opened.Load() && params["conversationId"] == b.later):
 			b.turns <- params
 			ok(map[string]any{"result": map[string]any{"turn": map[string]any{"id": "turn-1", "status": "inProgress"}}})
+		case method == "thread-follower-interrupt-turn" && version == 4 && m["targetClientId"] == "window" && params["conversationId"] == b.owned:
+			b.stops <- params
+			ok(map[string]any{"interruptedTurnId": "turn-1", "ok": true})
+		case method == "thread-follower-update-thread-settings" && version == 2 && m["targetClientId"] == "window" && b.holds(params):
+			b.settings <- params
+			b.mu.Lock()
+			refuse, applied := b.refuse, !b.notApplied
+			if e, _ := params["threadSettings"].(map[string]any)["effort"].(string); refuse == "" && applied && !b.unchanged {
+				b.effort = &e
+			}
+			b.mu.Unlock()
+			if refuse != "" {
+				busWrite(conn, map[string]any{"type": "response", "requestId": id, "resultType": "error", "error": refuse})
+				continue
+			}
+			ok(map[string]any{"applied": applied})
+		case method == "thread-follower-read-model-settings" && version == 1 && m["targetClientId"] == "window" && b.holds(params):
+			b.mu.Lock()
+			e := b.effort
+			b.mu.Unlock()
+			ok(map[string]any{"settings": map[string]any{"model": "gpt-x", "reasoningEffort": e, "modelProvider": "openai"}})
 		default:
 			fail()
 		}
@@ -288,5 +329,90 @@ func TestFileFollowsAMovedTranscript(t *testing.T) {
 	n.paths[id] = b
 	if g, _ := n.file(id); g != f || g.Where() != b {
 		t.Fatalf("still reading %s", f.Where())
+	}
+}
+
+// A turn running in a thread the App owns stops from the phone in the owning window, as with the App's stop button.
+func TestInterruptCodexDesktopStopsTheTurnInTheOwningWindow(t *testing.T) {
+	home, bus := startFakeCodexBus(t, "thread-a")
+	n := &Node{dir: t.TempDir()}
+	if err := n.interruptCodexDesktop(context.Background(), codexSource{home: home, thread: "thread-a"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-bus.stops:
+		if p["conversationId"] != "thread-a" || p["mode"] != "user-stop" {
+			t.Fatalf("interrupt request = %v", p)
+		}
+	default:
+		t.Fatal("no interrupt reached the owning window")
+	}
+}
+
+// A thread no App window has loaded runs no turn there: refused, and not opened in the App to be stopped.
+func TestInterruptCodexDesktopRefusesAThreadTheAppHasNotLoaded(t *testing.T) {
+	home, bus := startFakeCodexBus(t, "thread-a")
+	defer func(f func(string) error) { openCodexThread = f }(openCodexThread)
+	openCodexThread = func(thread string) error { t.Errorf("opened %s in the App", thread); return nil }
+	n := &Node{dir: t.TempDir()}
+	err := n.interruptCodexDesktop(context.Background(), codexSource{home: home, thread: "thread-b"})
+	if code, _ := refusalOf(t, err); code != "codex_read_only" {
+		t.Fatalf("refusal = %s (%v)", code, err)
+	}
+	select {
+	case p := <-bus.stops:
+		t.Fatalf("interrupted %v", p)
+	default:
+	}
+}
+
+// Only a chat of the App whose turn runs can be interrupted from the phone; its subagents stop with it.
+func TestCodexDesktopChatInterruptsWhileItsTurnRuns(t *testing.T) {
+	home := t.TempDir()
+	os.WriteFile(filepath.Join(home, ".codex-global-state.json"), []byte(`{"projectless-thread-ids":["t-run","t-sub","t-done"]}`), 0o600)
+	running := filepath.Join(home, "running.jsonl")
+	os.WriteFile(running, []byte(`{"type":"event_msg","payload":{"type":"task_started"}}`+"\n"), 0o600)
+	done := filepath.Join(home, "done.jsonl")
+	os.WriteFile(done, []byte(`{"type":"event_msg","payload":{"type":"task_started"}}`+"\n"+`{"type":"event_msg","payload":{"type":"task_complete"}}`+"\n"), 0o600)
+	n := &Node{home: home}
+	place := func(thread, path string, subagent bool) proto.Session {
+		s := proto.Session{SessionID: thread, UpdatedAt: time.Now(), Capabilities: &proto.SessionCapabilities{Send: !subagent}}
+		n.placeCodexDesktop(&s, codexSource{home: home, thread: thread, path: path}, thread, subagent)
+		return s
+	}
+	if s := place("t-run", running, false); s.Status != proto.StatusWorking || !s.Capabilities.Interrupt {
+		t.Fatalf("running chat: %s, interrupt %v", s.Status, s.Capabilities.Interrupt)
+	}
+	if s := place("t-sub", running, true); s.Capabilities.Interrupt {
+		t.Fatal("a running subagent is interruptible on its own")
+	}
+	if s := place("t-done", done, false); s.Capabilities.Interrupt {
+		t.Fatalf("a finished chat (%s) is interruptible", s.Status)
+	}
+}
+
+// session.interrupt for a chat of the App goes to the App, as a message does.
+func TestInterruptCodexSendsAnAppChatsStopToTheApp(t *testing.T) {
+	home, bus := startFakeCodexBus(t, appChat)
+	if err := os.WriteFile(filepath.Join(home, ".codex-global-state.json"), []byte(`{"projectless-thread-ids":["`+appChat+`"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "rollout.jsonl")
+	meta := `{"type":"session_meta","payload":{"id":"` + appChat + `","originator":"Codex Desktop","source":"vscode"}}` + "\n"
+	if err := os.WriteFile(path, []byte(meta+`{"type":"event_msg","payload":{"type":"task_started"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	n := remoteTestNode(t)
+	id := n.registerCodex(home, appChat, path)
+	if err := n.interruptCodex(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-bus.stops:
+		if p["conversationId"] != appChat {
+			t.Fatalf("stopped %v", p["conversationId"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no interrupt reached the App")
 	}
 }

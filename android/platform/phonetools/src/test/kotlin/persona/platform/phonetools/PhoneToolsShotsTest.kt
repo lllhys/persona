@@ -80,7 +80,7 @@ class PhoneToolsShotsTest {
     private fun shots(language: String, title: String, granted: String, confirmTitle: String, allow: String) {
         val app = ApplicationProvider.getApplicationContext<Application>()
         // A mix of states: contacts allowed, location only approximate, calendar read only, the rest not asked yet.
-        Shadows.shadowOf(app).grantPermissions(Manifest.permission.READ_CONTACTS, Manifest.permission.ACCESS_COARSE_LOCATION,
+        Shadows.shadowOf(app).grantPermissions(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS, Manifest.permission.ACCESS_COARSE_LOCATION,
             Manifest.permission.READ_CALENDAR)
         val connection = Proxy.newProxyInstance(HubConnection::class.java.classLoader, arrayOf(HubConnection::class.java)) { _, method, _ ->
             when (method.name) {

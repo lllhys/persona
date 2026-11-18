@@ -12,6 +12,7 @@
     <string name="chat_rewind_confirm_code">确认回退代码</string>
     <string name="chat_rewind_confirm_code_note">这条消息之后改过的文件也会还原。</string>
     <string name="chat_rewind_block_claude_only">仅 Claude</string>
+    <string name="chat_rewind_block_unsupported">不支持回退</string>
     <string name="chat_rewind_block_working">工作中</string>
     <string name="chat_rewind_block_needs_you">待回答</string>
     <string name="chat_rewind_block_offline">未运行</string>

@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 data class DeviceSettingsUiState(
     val devices: PairedDevices? = null,
     val preferences: DeviceNotificationPreferences? = null,
+    /** The hub's low-distraction switch (#8157), for every device; null until read and on a hub without it. */
+    val lowDistraction: Boolean? = null,
     val busy: Boolean = false,
     val message: SettingsUiText? = null,
     val needsCleanup: Boolean = false,
@@ -30,6 +32,27 @@ class DeviceSettingsState(private val api: DeviceSettings?, private val unpair: 
 
     suspend fun loadPreferences() = perform(R.string.settings_notify_prefs_load_failed) {
         mutable.value = mutable.value.copy(preferences = requireNotNull(api).preferences())
+    }
+
+    /** Reads the hub's low-distraction switch; a hub without it, or one that does not answer, shows no row. */
+    suspend fun loadLowDistraction() {
+        val on = try { api?.lowDistraction() } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
+        mutable.value = mutable.value.copy(lowDistraction = on)
+    }
+
+    /** Shown at once; the hub's answer then stands, and a refusal puts the switch back and says so. */
+    suspend fun saveLowDistraction(on: Boolean) {
+        val previous = mutable.value.lowDistraction
+        if (mutable.value.busy || previous == null || previous == on) return
+        perform(R.string.settings_notify_low_distraction_save_failed) {
+            mutable.value = mutable.value.copy(lowDistraction = on)
+            try {
+                mutable.value = mutable.value.copy(lowDistraction = requireNotNull(api).saveLowDistraction(on))
+            } catch (error: Exception) {
+                mutable.value = mutable.value.copy(lowDistraction = previous)
+                throw error
+            }
+        }
     }
 
     suspend fun savePreferences(next: DeviceNotificationPreferences) {

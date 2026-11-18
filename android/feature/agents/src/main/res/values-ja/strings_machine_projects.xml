@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- コンピュータのプロジェクト画面（iOS MachineSpacesView、#4338 A11）。スペース画面のコンピュータから開く -->
+    <string name="agents_projects_details">マシンの詳細</string>
+    <string name="agents_projects_working">作業中</string>
+    <string name="agents_projects_idle">アイドル</string>
+    <plurals name="agents_projects_count">
+        <item quantity="other">%1$d件のプロジェクト</item>
+    </plurals>
+    <string name="agents_projects_summary">%1$s · %2$s</string>
+    <string name="agents_projects_empty_title">実行中のエージェントはありません</string>
+    <string name="agents_projects_empty_offline">このマシンは現在オフラインです。</string>
+    <string name="agents_projects_empty_hint">このマシンのherdrでClaude、Codex、TRAEXを起動すると、ここに表示されます。</string>
+</resources>

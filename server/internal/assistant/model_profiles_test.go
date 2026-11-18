@@ -63,7 +63,7 @@ func TestModelProfilesSeedAndCaptureCurrentConfiguration(t *testing.T) {
 		FableModel: "test-fable", Effort: "high", BaseURL: "https://example.invalid", Args: []string{"test-argument"}}, KeySealed: sealed}
 	putLaunchers(t, s, l)
 	for id, binding := range map[string]ModelBinding{
-		"assistant":      {Provider: "launcher.current", Model: "test-chat", Runtime: proto.AssistantRuntimeAgentSDK},
+		"assistant":      {Provider: "launcher.current", Model: "test-chat", ConfigDir: assistantConfigDirLegacy},
 		"agent.new":      {Provider: "launcher.current", Model: "test-agents"},
 		"agent.delegate": {Model: "test-delegate"},
 	} {
@@ -80,7 +80,7 @@ func TestModelProfilesSeedAndCaptureCurrentConfiguration(t *testing.T) {
 		t.Fatalf("seeding: %+v", v)
 	}
 	for _, p := range v.Profiles {
-		if p.Purposes["assistant"].Model != "test-chat" || p.Purposes["assistant"].Runtime != "" ||
+		if p.Purposes["assistant"].Model != "test-chat" || p.Purposes["assistant"].ConfigDir != "" ||
 			p.Purposes["agent.delegate"].Model != "test-delegate" || len(p.Changes) != 0 {
 			t.Fatalf("template is not the current model-only configuration: %+v", p)
 		}
@@ -114,7 +114,7 @@ func TestModelProfilesSeedAndCaptureCurrentConfiguration(t *testing.T) {
 
 	// Capture changes only the selected profile, retaining its existing tier definitions.
 	if err := st.PutSetting(ctx, modelRecordKey("assistant"), modelRecord{Revision: 4,
-		Binding: ModelBinding{Provider: "launcher.current", Model: "test-later", Runtime: proto.AssistantRuntimeAgentSDK}}); err != nil {
+		Binding: ModelBinding{Provider: "launcher.current", Model: "test-later", ConfigDir: assistantConfigDirLegacy}}); err != nil {
 		t.Fatal(err)
 	}
 	customTiers := map[string]ModelTier{"custom": {Launcher: "current", Model: "test-custom"}}
@@ -138,7 +138,7 @@ func TestModelProfilesSeedAndCaptureCurrentConfiguration(t *testing.T) {
 	}
 }
 
-func TestModelProfileSwitchRollbackPreservesSecretsAndRuntime(t *testing.T) {
+func TestModelProfileSwitchRollbackPreservesSecretsAndNewConversationProfile(t *testing.T) {
 	s, f, st := modelService(t)
 	ctx := context.Background()
 	sealed, err := s.sealKey("test-key")
@@ -160,7 +160,7 @@ func TestModelProfileSwitchRollbackPreservesSecretsAndRuntime(t *testing.T) {
 		Models: []proto.ProviderModel{{ID: "test-original"}}}, KeySealed: sealed, HeadersSealed: headers, EnvSealed: env,
 		Preset: "test-preset", DisplayName: "Current gateway", Created: time.Now().UTC()}
 	putLaunchers(t, s, l)
-	original := modelRecord{Revision: 7, Binding: ModelBinding{Provider: "launcher.gw", Model: "test-chat", Runtime: proto.AssistantRuntimeAgentSDK}}
+	original := modelRecord{Revision: 7, Binding: ModelBinding{Provider: "launcher.gw", Model: "test-chat", ConfigDir: assistantConfigDirLegacy}}
 	if err := st.PutSetting(ctx, modelRecordKey("assistant"), original); err != nil {
 		t.Fatal(err)
 	}
@@ -177,8 +177,8 @@ func TestModelProfileSwitchRollbackPreservesSecretsAndRuntime(t *testing.T) {
 		t.Fatalf("changes: %+v", sw)
 	}
 	r, err := s.modelRecord(ctx, "assistant")
-	if err != nil || r.Revision != 8 || r.Binding != (ModelBinding{Model: "test-selected", Runtime: proto.AssistantRuntimeAgentSDK}) {
-		t.Fatalf("switch lost model-only inheritance or runtime: %+v %v", r, err)
+	if err != nil || r.Revision != 8 || r.Binding != (ModelBinding{Model: "test-selected", ConfigDir: assistantConfigDirLegacy}) {
+		t.Fatalf("switch lost model-only inheritance or the new conversations' profile: %+v %v", r, err)
 	}
 	got := s.storedLaunchers(ctx)[0]
 	want := l
@@ -218,8 +218,8 @@ func TestModelProfileSwitchRollbackPreservesSecretsAndRuntime(t *testing.T) {
 	}
 	f.mu.Unlock()
 
-	// Runtime and credentials edited after the switch must survive rollback and redo.
-	r.Binding.Runtime = ""
+	// The new conversations' profile and credentials edited after the switch must survive rollback and redo.
+	r.Binding.ConfigDir = ""
 	if err := st.PutSetting(ctx, modelRecordKey("assistant"), r); err != nil {
 		t.Fatal(err)
 	}
@@ -234,11 +234,11 @@ func TestModelProfileSwitchRollbackPreservesSecretsAndRuntime(t *testing.T) {
 			t.Fatal(err)
 		}
 		r, err = s.modelRecord(ctx, "assistant")
-		if err != nil || r.Binding.Runtime != "" {
-			t.Fatalf("rollback restored obsolete runtime: %+v %v", r, err)
+		if err != nil || r.Binding.ConfigDir != "" {
+			t.Fatalf("rollback restored an obsolete profile for new conversations: %+v %v", r, err)
 		}
 		wantBinding, wantModel := original.Binding, l.Model
-		wantBinding.Runtime = ""
+		wantBinding.ConfigDir = ""
 		if redo {
 			wantBinding, wantModel = ModelBinding{Model: "test-selected"}, "test-economy"
 		}
@@ -276,10 +276,9 @@ func TestModelProfilesInheritedOverridesAndValidation(t *testing.T) {
 		{"inherited model", ModelBinding{Model: "test-selected"}, "responses", false},
 		{"inherited effort", ModelBinding{Effort: "high"}, "responses", false},
 		{"messages effort", ModelBinding{Effort: "high"}, "messages", false},
-		{"chat effort", ModelBinding{Effort: "high"}, "chat", true},
+		{"chat effort", ModelBinding{Effort: "high"}, "chat", false},
 		{"missing provider", ModelBinding{Provider: "launcher.missing", Model: "test-selected"}, "responses", true},
 		{"bad effort", ModelBinding{Effort: "invalid"}, "responses", true},
-		{"runtime", ModelBinding{Runtime: proto.AssistantRuntimeAgentSDK}, "responses", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			s, f, st := modelService(t)
@@ -540,7 +539,7 @@ func TestModelProfileAtomicMemoryStoreAndDownStore(t *testing.T) {
 func TestModelProfileRollbackNoOpPreservesPreviousAndCaches(t *testing.T) {
 	s, f, st := modelService(t)
 	ctx := context.Background()
-	binding := ModelBinding{Model: "test-current", Runtime: proto.AssistantRuntimeAgentSDK}
+	binding := ModelBinding{Model: "test-current", ConfigDir: assistantConfigDirLegacy}
 	if err := st.PutSetting(ctx, modelRecordKey("assistant"), modelRecord{Revision: 4, Binding: binding}); err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +615,7 @@ func TestModelProfileUnrelatedDefaultsStayIntact(t *testing.T) {
 	ctx := context.Background()
 	f.hello.Models.AI = ai.Config{API: "responses", BaseURL: "https://example.invalid", APIKey: "test-key", Model: "test-default"}
 	for id, b := range map[string]ModelBinding{
-		"assistant":      {Provider: "launcher.claude", Model: "test-current-sol", Runtime: proto.AssistantRuntimeAgentSDK},
+		"assistant":      {Provider: "launcher.claude", Model: "test-current-sol", ConfigDir: assistantConfigDirLegacy},
 		"agent.new":      {Provider: "launcher.claude", Model: "test-new-sol"},
 		"agent.delegate": {Model: "test-delegate"},
 	} {
@@ -693,13 +692,13 @@ func countRecordReads(s *Service, st *downStore) *recordReadStore {
 }
 
 // storeManyProfiles stores a record for every category and n profiles that each name every category: the even ones
-// as the records are (the main chat's runtime aside), the odd ones with other kb and agent.delegate choices. It
-// returns the Changes each profile's view shows.
+// as the records are (the main chat's profile for new conversations aside), the odd ones with other kb and
+// agent.delegate choices. It returns the Changes each profile's view shows.
 func storeManyProfiles(tb testing.TB, st *downStore, n int) [][]string {
 	tb.Helper()
 	ctx := context.Background()
 	records := map[string]ModelBinding{
-		"assistant":      {Provider: "launcher.current", Model: "test-chat", Runtime: proto.AssistantRuntimeAgentSDK},
+		"assistant":      {Provider: "launcher.current", Model: "test-chat", ConfigDir: assistantConfigDirLegacy},
 		"agent.new":      {Provider: "launcher.current", Model: "test-agents"},
 		"kb":             {Model: "test-kb"},
 		"inbox.triage":   {Effort: "high"},

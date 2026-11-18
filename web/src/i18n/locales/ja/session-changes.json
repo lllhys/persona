@@ -1,0 +1,16 @@
+{
+  "title": "変更",
+  "exchange": "このやり取り",
+  "session": "セッション全体",
+  "open_file": "ファイルを開く",
+  "review_git": "Git でレビュー",
+  "scope_label": "変更の範囲",
+  "files_label": "編集されたファイル",
+  "new_changes_one": "{count} 件の新しい変更",
+  "new_changes_other": "{count} 件の新しい変更",
+  "loading_history": "以前の変更を読み込み中…",
+  "loading_fold": "このファイルの編集を読み込み中…",
+  "fold_failed": "編集を最後まで読み込めませんでした。",
+  "retry": "再試行",
+  "empty": "この範囲にはまだ編集がありません"
+}

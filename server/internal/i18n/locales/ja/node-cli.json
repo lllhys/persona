@@ -1,0 +1,8 @@
+{
+  "unknown_subcommand": "nodeのサブコマンド{command}が認識できません。使用できるのは--stdio、--attach、tailcat、doctor、reset-uidです（{program} node -hで使用方法を確認）",
+  "extra_args": "node {subcommand}は引数を取りません。余分な引数：{arguments}（{program} node -hで使用方法を確認）",
+  "tailcat_subcommand_required": "node tailcatにはinitまたはaddrを指定してください（{program} node -hで使用方法を確認）",
+  "tailcat_init_extra_args": "node tailcat initで使用できるのは--hubと--derp-map-urlのみです。余分な引数：{arguments}（{program} node -hで使用方法を確認）",
+  "unknown_tailcat_subcommand": "node tailcatのサブコマンド{command}が認識できません。使用できるのはinit、addrです（{program} node -hで使用方法を確認）",
+  "reset_uid": "新しいマシンuidに変更しました。このコンピューター上の常駐ノードを再起動してください（scripts/deploy/node-launchd.sh installでも再起動できます）。ハブは次回接続時に新しいuidを使用します。"
+}

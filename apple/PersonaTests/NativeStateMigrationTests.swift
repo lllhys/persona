@@ -190,6 +190,9 @@ import UserNotifications
         #expect(!CompatibleAskAssistantIntent.isDiscoverable)
         #expect(!CompatibleAssistantStatusIntent.isDiscoverable)
         #expect(CompatibleAskAssistantIntent(question: "fixture question").question == "fixture question")
+        #expect(OpenPersonaAssistantIntent.persistentIdentifier == "Open" + LegacyNames.capitalizedProduct + "AssistantIntent")
+        #expect(OpenPersonaAgentsIntent.persistentIdentifier == "Open" + LegacyNames.capitalizedProduct + "AgentsIntent")
+        #expect(OpenPersonaDictationIntent.persistentIdentifier == "OpenPersonaDictationIntent")
     }
 
     @Test(arguments: [false, true])

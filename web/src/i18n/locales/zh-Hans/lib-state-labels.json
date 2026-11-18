@@ -8,6 +8,7 @@
   "waiting": "待唤醒",
   "bg_waiting": "后台等待中",
   "awaits_reply": "待你回复",
+  "just_finished": "刚做完待看",
   "done": "已完成",
   "interrupted": "中断了",
   "follow_up": "待跟进",
@@ -23,5 +24,6 @@
   "mark_all_seen_count": "全部标为已看（{count}）",
   "direction_working": "在做",
   "direction_needs_you": "等你",
-  "direction_stuck": "卡住"
+  "direction_stuck": "卡住",
+  "direction_planned": "未开始"
 }

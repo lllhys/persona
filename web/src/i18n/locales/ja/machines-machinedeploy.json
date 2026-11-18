@@ -1,4 +1,5 @@
 {
   "failed": "デプロイに失敗しました：{error}",
-  "requesting": "リクエスト中"
+  "requesting": "リクエスト中",
+  "details": "詳細"
 }

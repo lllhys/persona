@@ -28,15 +28,20 @@ var toolLabels = map[string]string{
 	"delegate_task":    "交给对话",
 }
 
-// toolDecls declares the named tools, in toolNames' order (delegate_task last).
-func toolDecls(names []string) []toolDecl {
+// toolDecls declares the named tools, in toolNames' order (delegate_task last). meeting: a meeting call's, whose
+// delegate_task is described as asking the meeting conversation (mcp/voice/meeting_delegate_task: none of the bound
+// call's marks, which a meeting call does not read, meeting.go).
+func toolDecls(names []string, meeting bool) []toolDecl {
 	out := make([]toolDecl, 0, len(names))
 	for _, n := range append(slices.Clone(toolNames), "delegate_task") {
 		if !slices.Contains(names, n) {
 			continue
 		}
 		t := prompts.Tool(n)
-		out = append(out, toolDecl{Type: "function", Name: t.Name, Description: t.Description, Parameters: t.InputSchema})
+		if meeting && n == "delegate_task" {
+			t = prompts.Tool("meeting_delegate_task")
+		}
+		out = append(out, toolDecl{Type: "function", Name: n, Description: t.Description, Parameters: t.InputSchema})
 	}
 	return out
 }

@@ -1,0 +1,3 @@
+{
+  "device_unreachable": "ハブからgithub.comに接続できず、GitHubにログインできませんでした。ハブのネットワーク接続を確認してください。プロキシが必要な場合は、manager.jsonのgithub.proxyを設定してから再試行してください。"
+}

@@ -52,7 +52,7 @@ export function Devices() {
               {t("admin-pages-devices.empty_detail")}
             </EmptyState>
           ) : (
-            data.map((d) => <DeviceRow key={d.id} d={d} onRevoked={() => set(data.filter((x) => x.id !== d.id))} />)
+            data.map((d) => <DeviceRow key={d.id} d={d} onRevoked={() => set((cur) => cur?.filter((x) => x.id !== d.id))} />)
           )}
         </Card>
       )}

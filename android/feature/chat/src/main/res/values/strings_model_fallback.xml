@@ -24,4 +24,17 @@
     <string name="chat_model_fallback_refusal_category">Category: %1$s</string>
     <string name="chat_model_fallback_refusal_explanation">Explanation: %1$s</string>
     <string name="chat_model_fallback_refusal_text">Refusal text</string>
+
+    <!-- A recovery the node drove on its own (#7824): why it left the configured model, in plain words. -->
+    <string name="chat_model_fallback_cause_safeguards_refusal">the model refused</string>
+    <string name="chat_model_fallback_cause_quota_exhausted">quota exhausted</string>
+    <string name="chat_model_fallback_cause_rate_limited">rate limited</string>
+    <string name="chat_model_fallback_cause_server_error">service error</string>
+    <string name="chat_model_fallback_cause_model_unavailable">model unavailable</string>
+    <string name="chat_model_fallback_switched_cause">Switched to %1$s (%2$s)</string>
+    <string name="chat_model_fallback_recovery_returning">%1$s is available again; your next message switches back</string>
+    <!-- Every model of the recovery chain failed: the failure card's cause, its recovery time and the models tried. -->
+    <string name="chat_model_fallback_recovery_cause">Cause: %1$s</string>
+    <string name="chat_model_fallback_recovery_reset">Available again at %1$s</string>
+    <string name="chat_model_fallback_recovery_tried">Models tried: %1$s</string>
 </resources>

@@ -1,4 +1,5 @@
 {
+  "bad_readonly_mode": "只读任务保护必须是 sandbox 或 prompt。",
   "launcher_agent": "{launcher} 跑的是 {agent}，助手只能用启动 Claude Code、Codex 或能当助手的 runtime 的启动器",
   "manager_required": "请先选择助手，再修改设置。",
   "other_manager": "请求指定了另一位助手，请重新读取目标助手的设置后再试。",

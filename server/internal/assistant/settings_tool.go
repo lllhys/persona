@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	approvalops "github.com/nwverse/persona/server/internal/approval"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/kb"
 	"github.com/nwverse/persona/server/internal/prompts"
@@ -27,6 +28,8 @@ type ownSetting struct {
 	Setting
 	get func(ctx context.Context) (string, error)
 	set func(ctx context.Context, v json.RawMessage) (*ownChange, error)
+	// change is a setting's other actions (a list's add and remove: tasks.trust), in place of set.
+	change func(ctx context.Context, action string, v json.RawMessage) (*ownChange, error)
 }
 
 // ownChange is a change waiting for the phone: what the card says and how it is made (none: nothing to change).
@@ -34,6 +37,10 @@ type ownChange struct {
 	summary  string                   // for the assistant: the change made nothing to do
 	cardText func(l i18n.Lang) string // what the card says, in the user's language
 	apply    func(ctx context.Context) (string, error)
+	// applyChecksProposal marks an apply that re-reads current state and
+	// atomically checks the exact card revision itself. Rebuilding such an
+	// operation would move its revision baseline forward and hide a conflict.
+	applyChecksProposal bool
 }
 
 // card is what the approval card says in l.
@@ -69,6 +76,14 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.startRequestedTasks(ctx)), nil },
 			set: s.setStartRequestedTasks},
+		{Setting: Setting{Key: readonlyModeKey, Title: "Read-only task protection", Actions: getSet,
+			About: "sandbox (the default) keeps current runtime protection: Codex uses a read-only sandbox, while Claude uses " +
+				"bypassPermissions and a first-message read-only instruction. prompt keeps the instruction without forcing plan " +
+				"mode or a read-only sandbox; normal launcher permissions still apply. Instructions are not a security boundary. " +
+				"Applies to new task starts and retries, not running agents. Switch back to sandbox to restore the default",
+			Value: "sandbox or prompt"},
+			get: func(ctx context.Context) (string, error) { return readonlyModeOf(s.settings(ctx)), nil },
+			set: s.setReadonlyMode},
 		{Setting: Setting{Key: "assistant.task_workspace_preference", Title: "Task workspace preference", Actions: getSet,
 			About: "prefer-existing (default): reuse the task directory if free; prefer-new: isolate writable Git tasks. Read-only defaults to none, busy directories to new; explicit task workspace wins. Paths come from the machine engine",
 			Value: "prefer-existing or prefer-new"},
@@ -107,6 +122,25 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.mainBackgroundFolded(ctx)), nil },
 			set: s.setMainBackgroundFolded},
+		{Setting: Setting{Key: "assistant.main_compact_window", Title: "Main chat compaction window", Actions: getSet,
+			About: "400000 (the default): the main conversation is compacted at about this many tokens (and sent /compact when " +
+				"idle at 75% of it) instead of its model's whole window, when it runs on a launcher Persona manages that declares " +
+				"a larger one; fewer tokens re-read every turn and rewritten after a long pause, while early details stay in the " +
+				"task ledger and the old conversation. 0: the launcher's window, as for every other conversation and Agent. " +
+				"Applies from the main conversation's next message while it is idle",
+			Value: "0, or a whole number of tokens, 100000–10000000"},
+			get: func(ctx context.Context) (string, error) {
+				return fmt.Sprint(mainCompactWindowOf(s.settings(ctx))), nil
+			},
+			set: s.setMainCompactWindow},
+		{Setting: Setting{Key: "assistant.recent_task_chats", Title: "Show scheduled task chats in Recent", Actions: getSet,
+			About: "off (the default): the sidebar's Recent in the apps leaves out the chats a scheduled task or the background " +
+				"supervisor started (they stay in All chats and under Scheduled Tasks); on: Recent lists them by last activity with " +
+				"the user's other chats, within its usual count. One value for all of the user's devices. Display only: what runs " +
+				"is unchanged",
+			Value: "true or false"},
+			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.recentTaskChats(ctx)), nil },
+			set: s.setRecentTaskChats},
 		{Setting: Setting{Key: "assistant.meeting_attendance_default", Title: "Persona in recorded meetings", Actions: getSet,
 			About: "the role a meeting recording on the phone pre-selects (the user can still change it when it starts): off (the " +
 				"default) only records and makes minutes afterwards; listener follows the meeting in a session and answers questions " +
@@ -114,6 +148,9 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "off, listener or participant"},
 			get: func(ctx context.Context) (string, error) { return s.meetingAttendanceDefault(ctx), nil },
 			set: s.setMeetingAttendanceDefault},
+		{Setting: Setting{Key: "assistant.meeting_transcription_default", Title: i18n.T(i18n.Default, "assistant-settings_tool.title_meeting_transcription_default"), Actions: getSet,
+			About: prompts.RenderMeetingTranscriptionSetting(), Value: "device or hub"},
+			get: s.getMeetingTranscriptionDefault, set: s.setMeetingTranscriptionDefault},
 		{Setting: Setting{Key: "assistant.done_needs_delivery", Title: "上线并实测才算做完", Actions: getSet,
 			About: "off (the default): a task_plan task closes when its work is judged done; on: only once it is live and checked " +
 				"(or has nothing to ship): stopped at a PR, merged or off by default it stays open with where it is held, its agent is told " +
@@ -137,6 +174,14 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "the whole list of leader conversation ids (conversations_list), [] for none"},
 			get: s.getLeaders,
 			set: s.setLeaders},
+		{Setting: Setting{Key: "assistant.briefing_waits", Title: "Briefing wait rows", Actions: getSet,
+			About: "thresholds for the deterministic per-direction wait rows in morning/evening facts. Defaults come from the existing " +
+				"supervision floors: stalled_minutes=20 (superviseStallMin), silent_minutes=120 (superviseSilentMin), " +
+				"orphan_minutes=10 (orphanOfflineAfter), card_minutes=3 (superviseNeedsAfter); max_rows=15 bounds only non-owner " +
+				"rows per direction, and every owner-wait row is kept. These values do not change supervision notifications",
+			Value: "the whole object {stalled_minutes, silent_minutes, orphan_minutes, card_minutes, max_rows}; minutes 1–10080, max_rows 1–100; null restores the defaults"},
+			get: s.getBriefingWaits,
+			set: s.setBriefingWaits},
 		{Setting: Setting{Key: "assistant.interject_background", Title: "Move running work to the background when I interject", Actions: getSet,
 			About: "off (the default): a message the user sends while a Claude conversation is still answering waits until the command " +
 				"or subagent running in the foreground ends; on: that work moves to the background (it goes on and reports when done) " +
@@ -147,6 +192,15 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.interjectBackground(ctx)), nil },
 			set: s.setInterjectBackground},
+		{Setting: Setting{Key: "assistant.load_all_tools", Title: "Load every Persona tool up front", Actions: getSet,
+			About: "off (the default): only the Persona tools conversations use often are sent in full with every request; the " +
+				"others are listed by name and loaded with ToolSearch when needed, which keeps every request smaller. on: every " +
+				"Persona tool is sent in full with every request, as before. Applies at once: running conversations are sent their " +
+				"new tool list and new ones start with it (a conversation on a computer whose Persona is older than tool refresh " +
+				"keeps its tools until its process restarts)",
+			Value: "true or false"},
+			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.loadAllTools(ctx)), nil },
+			set: s.setLoadAllTools},
 		{Setting: Setting{Key: "assistant.agent_tasks", Title: "Every Agent Persona starts is a supervised task", Actions: getSet,
 			About: "off (the default): only tasks the main conversation or a leader hands out are supervised; an agent started from an " +
 				"app or by agent_start from another conversation is on no task. on: every agent Persona starts gets a quiet to-do (no " +
@@ -158,6 +212,17 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.agentTasks(ctx)), nil },
 			set: s.setAgentTasks},
+		{Setting: Setting{Key: "assistant.close_ended_terminals", Title: "Close an Agent's terminal when it ends", Actions: getSet,
+			About: "off (the default): an Agent's terminal tab stays open after it stops, with the shell it ran in, until the user " +
+				"closes it. on: when an Agent Persona started ends, Persona closes the tab it opened for it, the way Archive and " +
+				"close does: when its task is done or cancelled (an idle Agent), and when it quits by itself or is told to (/exit). " +
+				"Never closed: a busy Agent (working, waiting for an answer, background work, subagents or workflows running, a " +
+				"/loop, queued messages, a server it runs), one the user stopped with Stop or that was stopped for being idle, and " +
+				"terminals Persona did not open. The conversation is kept and can be resumed in a new tab. Applies from the next " +
+				"Agent that ends",
+			Value: "true or false"},
+			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.closeEndedTerminals(ctx)), nil },
+			set: s.setCloseEndedTerminals},
 		{Setting: Setting{Key: "assistant.inbox_signals", Title: "Tell a task's supervisor about new Inbox messages on it", Actions: getSet,
 			About: "off (the default): an Inbox message the AI twin's judge links to a task only reaches the twin's handling chat " +
 				"(and a message card once it drafts a reply). on: new messages from other people linked to a supervised task also " +
@@ -178,6 +243,19 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: "true or false"},
 			get: func(ctx context.Context) (string, error) { return fmt.Sprint(s.mainSupervisesOwnTasks(ctx)), nil },
 			set: s.setMainSupervisesOwnTasks},
+		{Setting: Setting{Key: "assistant.background_supervisor_keeps_context", Title: "The background supervisor keeps every round in context", Actions: getSet,
+			About: "off (the default): each round of the background supervisor starts from its first turn, in the same conversation: " +
+				"it reads its start brief and that round's supervision message, with only the tools supervision uses; what " +
+				"earlier rounds settled is on the tasks (brief, scope changes, decisions, the last review). on: from the next " +
+				"round, one long conversation again that keeps each later round in context, with all of the assistant's tools, " +
+				"as before (rounds already run from the first " +
+				"turn stay on their own branches, out of that context). Applies from the next round (one already running " +
+				"finishes as it is)",
+			Value: "true or false"},
+			get: func(ctx context.Context) (string, error) {
+				return fmt.Sprint(backgroundKeepsContext(s.settings(ctx))), nil
+			},
+			set: s.setBackgroundSupervisorKeepsContext},
 		{Setting: Setting{Key: "assistant.launcher", Title: "Persona 的启动器", Actions: getSet,
 			About: "which launcher (model) new Persona conversations start with by default",
 			Value: "a launcher name from this setting's get"},
@@ -190,6 +268,19 @@ func (s *Service) ownSettings() []ownSetting {
 			Value: modelTiersValue},
 			get: s.getModelTiers,
 			set: s.setModelTiers},
+		{Setting: Setting{Key: admissionSettingsKey, Title: "Execution Agent admission gate", Actions: getSet,
+			About: "the lines an execution Agent's start is checked against on every computer: enabled, load_per_core, min_memory_bytes, " +
+				"max_claude_procs (and the hub machine's own hub_* lines, per-machine overrides), and the per-direction cap. " +
+				"direction_cap_by_direction keys are a supervisor conversation id or a direction's displayed name and win over " +
+				"direction_cap_by_project, which wins over direction_cap and the code default. launcher_groups (none by default) caps " +
+				"running tasks across launchers that share one budget, on every computer: each {name, launchers (exact launcher names), " +
+				"cap}, a launcher in one group at most; a task held by a full group stays queued until it has room. " +
+				"Get first and send the whole object",
+			Value: "the full AdmissionSettings JSON object from get; a nil pointer keeps the code default, every set line must be positive"},
+			get: s.getAdmission,
+			set: s.setAdmission},
+		s.trustSetting(),
+		s.urgentRulesSetting(), // urgent_call_rules.go
 	}
 }
 
@@ -257,14 +348,18 @@ var settingCardWait = 15 * time.Minute
 
 // ownSettingAction reads one of the assistant's settings, or changes it once the user approves on the phone.
 func (s *Service) ownSettingAction(ctx context.Context, call ToolCall, o ownSetting, action string, value json.RawMessage) (string, error) {
-	switch action {
-	case "get":
+	var change *ownChange
+	var err error
+	switch {
+	case action == "get":
 		return o.get(ctx)
-	case "set":
+	case action == "set" && o.set != nil:
+		change, err = o.set(ctx, value)
+	case action != "set" && o.change != nil && slices.Contains(o.Actions, action):
+		change, err = o.change(ctx, action, value)
 	default:
 		return "", fmt.Errorf("%s does not take %q (it takes %s)", o.Key, action, strings.Join(o.Actions, ", "))
 	}
-	change, err := o.set(ctx, value)
 	if err != nil {
 		return "", err
 	}
@@ -278,19 +373,41 @@ func (s *Service) ownSettingAction(ctx context.Context, call ToolCall, o ownSett
 	}
 	shown, _ := json.Marshal(map[string]string{"setting": title, "action": action})
 	now := time.Now().UTC()
-	r, err := s.ask(ctx, proto.Interaction{ID: "ix_" + randomHex(6), MachineID: call.MachineID, SessionID: call.SessionID,
-		Kind: proto.IxPermission, ToolName: "persona_settings", Summary: change.card(l), ToolInput: shown, SessionTitle: "Persona",
-		CreatedAt: now, ExpiresAt: now.Add(settingCardWait)})
-	if err != nil {
-		return "", err
-	}
-	switch { // only the user's own answer counts: an expired card, or one answered for them, is no decline (#3722)
-	case r.UserAllowed():
-		return change.apply(ctx)
-	case r.UserDenied():
-		return "The user declined the change: nothing changed.", nil
-	}
-	return prompts.RenderSettingUnanswered(), nil
+	proposal := change.card(l)
+	outcome, err := s.waitPreparedCard(ctx, proto.Interaction{ID: "ix_" + randomHex(6), MachineID: call.MachineID, SessionID: call.SessionID,
+		Kind: proto.IxPermission, ToolName: "persona_settings", Summary: proposal, ToolInput: shown, SessionTitle: "Persona",
+		CreatedAt: now, ExpiresAt: now.Add(settingCardWait)}, approvalops.Operation{
+		Replacement: call.MachineID + "\x00" + call.SessionID + "\x00setting\x00" + o.Key,
+		Denied:      "The user declined the change: nothing changed.",
+		Unanswered:  prompts.RenderSettingUnanswered(),
+		Apply: func(ctx context.Context, _ proto.Resolution) (string, error) {
+			if change.applyChecksProposal {
+				// This apply already re-reads and compares the approved revision
+				// under its state lock; do not rebase it onto a newer revision.
+				return change.apply(ctx)
+			}
+			// Rebuild from current state: only the exact visible proposal the owner
+			// approved may execute, and the freshly validated operation is used.
+			var fresh *ownChange
+			var err error
+			switch {
+			case action == "set" && o.set != nil:
+				fresh, err = o.set(ctx, value)
+			case action != "set" && o.change != nil && slices.Contains(o.Actions, action):
+				fresh, err = o.change(ctx, action, value)
+			default:
+				return "", approvalops.ErrStale
+			}
+			if err != nil {
+				return "", err
+			}
+			if fresh == nil || fresh.apply == nil || fresh.card(l) != proposal {
+				return "", approvalops.ErrStale
+			}
+			return fresh.apply(ctx)
+		},
+	})
+	return outcome.Text, err
 }
 
 func orNone(s string) string {
@@ -303,13 +420,18 @@ func orNone(s string) string {
 // settingTitles are the settings' titles for the card the user approves on, in this file's namespace (Title stays
 // what the assistant reads).
 var settingTitles = map[string]string{standingAuthorizationsKey: "title_standing_authorizations", "assistant.notes": "title_notes", "assistant.main_tasks_quiet": "title_main_tasks_quiet",
+	readonlyModeKey:                       "title_readonly_mode",
 	"assistant.task_workspace_preference": "title_task_workspace_preference",
 	"assistant.start_requested_tasks":     "title_start_requested_tasks", "assistant.launcher": "title_launcher",
 	"assistant.recording_days": "title_recording_days", "assistant.done_needs_delivery": "title_done_needs_delivery",
-	"assistant.review_sample_percent": "title_review_sample_percent", "assistant.leaders": "title_leaders",
-	"assistant.interject_background": "title_interject_background", "assistant.agent_tasks": "title_agent_tasks", "assistant.inbox_signals": "title_inbox_signals", "assistant.main_supervises_own_tasks": "title_main_supervises_own_tasks", "model_profiles.tiers": "title_model_tiers",
-	"assistant.meeting_attendance_default": "title_meeting_attendance_default", "assistant.minutes_days": "title_minutes_days",
-	"assistant.kb_topics": "title_kb_topics", "assistant.main_background_folded": "title_main_background_folded"}
+	"assistant.review_sample_percent": "title_review_sample_percent", "assistant.leaders": "title_leaders", "assistant.briefing_waits": "title_briefing_waits", "assistant.background_supervisor_keeps_context": "title_background_supervisor_keeps_context",
+	"assistant.interject_background": "title_interject_background", "assistant.agent_tasks": "title_agent_tasks", "assistant.close_ended_terminals": "title_close_ended_terminals", "assistant.inbox_signals": "title_inbox_signals", "assistant.main_supervises_own_tasks": "title_main_supervises_own_tasks", "model_profiles.tiers": "title_model_tiers",
+	"assistant.load_all_tools":                "title_load_all_tools",
+	"assistant.meeting_transcription_default": "title_meeting_transcription_default",
+	"assistant.meeting_attendance_default":    "title_meeting_attendance_default", "assistant.minutes_days": "title_minutes_days",
+	"assistant.kb_topics": "title_kb_topics", "assistant.main_background_folded": "title_main_background_folded",
+	"assistant.main_compact_window": "title_main_compact_window",
+	"assistant.recent_task_chats":   "title_recent_task_chats", admissionSettingsKey: "title_admission", trustSetting: "title_task_trust"}
 
 // clipped is a value as the card shows it, in l.
 func clipped(l i18n.Lang, s string) string {
@@ -416,6 +538,13 @@ func (s *Service) setMainBackgroundFolded(ctx context.Context, v json.RawMessage
 		return i18n.T(l, "assistant-settings_tool.change_main_background_folded", i18n.Args{"before": before, "after": after})
 	}, func(v *Settings) **bool { return &v.MainBackgroundFolded },
 		"assistant.main_background_folded is %v; the apps redraw the main conversation with it.")
+}
+
+func (s *Service) setRecentTaskChats(ctx context.Context, v json.RawMessage) (*ownChange, error) {
+	return s.setBoolSetting(ctx, v, s.recentTaskChats, "assistant.recent_task_chats is unchanged", func(l i18n.Lang, before, after string) string {
+		return i18n.T(l, "assistant-settings_tool.change_recent_task_chats", i18n.Args{"before": before, "after": after})
+	}, func(v *Settings) **bool { return &v.RecentTaskChats },
+		"assistant.recent_task_chats is %v; the apps' sidebar Recent follows it on every device.")
 }
 
 func (s *Service) setKBTopics(ctx context.Context, v json.RawMessage) (*ownChange, error) {
@@ -569,6 +698,13 @@ func (s *Service) setAgentTasks(ctx context.Context, v json.RawMessage) (*ownCha
 		"assistant.agent_tasks is %v from the next start, turn end and report on (to-dos made before keep what they have).")
 }
 
+func (s *Service) setCloseEndedTerminals(ctx context.Context, v json.RawMessage) (*ownChange, error) {
+	return s.setBoolSetting(ctx, v, s.closeEndedTerminals, "assistant.close_ended_terminals is unchanged", func(l i18n.Lang, before, after string) string {
+		return i18n.T(l, "assistant-settings_tool.change_close_ended_terminals", i18n.Args{"before": before, "after": after})
+	}, func(v *Settings) **bool { return &v.CloseEndedTerminals },
+		"assistant.close_ended_terminals is %v for Agents that end from now on (terminals already left open stay).")
+}
+
 func (s *Service) setInboxSignals(ctx context.Context, v json.RawMessage) (*ownChange, error) {
 	return s.setBoolSetting(ctx, v, s.inboxSignalsOn, "assistant.inbox_signals is unchanged", func(l i18n.Lang, before, after string) string {
 		return i18n.T(l, "assistant-settings_tool.change_inbox_signals", i18n.Args{"before": before, "after": after})
@@ -582,6 +718,15 @@ func (s *Service) setMainSupervisesOwnTasks(ctx context.Context, v json.RawMessa
 	}, func(v *Settings) **bool { return &v.MainSupervisesOwnTasks },
 		"assistant.main_supervises_own_tasks is %v for the signals raised from now on (open tasks keep running; what the "+
 			"background supervisor was already sent it finishes).")
+}
+
+func (s *Service) setBackgroundSupervisorKeepsContext(ctx context.Context, v json.RawMessage) (*ownChange, error) {
+	return s.setBoolSetting(ctx, v, func(ctx context.Context) bool { return backgroundKeepsContext(s.settings(ctx)) },
+		"assistant.background_supervisor_keeps_context is unchanged", func(l i18n.Lang, before, after string) string {
+			return i18n.T(l, "assistant-settings_tool.change_background_supervisor_keeps_context", i18n.Args{"before": before, "after": after})
+		}, func(v *Settings) **bool { return &v.BackgroundSupervisorKeepsContext },
+		"assistant.background_supervisor_keeps_context is %v from the background supervisor's next round (one running now "+
+			"finishes as it is).")
 }
 
 // launchers are the launchers of the assistant's machine, as the apps list them.
@@ -624,6 +769,9 @@ func (s *Service) setLauncher(ctx context.Context, v json.RawMessage) (*ownChang
 		return nil, errors.New("value must be a launcher name")
 	}
 	name = strings.TrimSpace(name)
+	if proto.IsExternalLauncher(name) {
+		return nil, i18n.Err("external-adapter.purpose_unsupported")
+	}
 	before := s.launcherNow(ctx)
 	ls, err := s.launchers(ctx)
 	if err != nil {

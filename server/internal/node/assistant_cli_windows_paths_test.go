@@ -61,7 +61,8 @@ func icScript(t *testing.T, args []string) string {
 	if i < 0 || i+2 >= len(args) || args[i+2] != "persona" {
 		t.Fatalf("not a -ic launch: %q", args)
 	}
-	return args[i+1]
+	prefix := "echo " + assistantShellReady + "; "
+	return strings.TrimPrefix(args[i+1], prefix)
 }
 
 func TestAssistantCLICommandWindowsPathsUseForwardSlashes(t *testing.T) {
@@ -81,7 +82,7 @@ func TestAssistantCLICommandWindowsPathsUseForwardSlashes(t *testing.T) {
 			} else {
 				n = windowsScriptNode(t, c.bin)
 			}
-			cmd := n.assistantCLICommand("bash", c.launcher, n.dir, []string{"-p"}, []string{"CLAUDE_CONFIG_DIR=" + c.profile})
+			cmd := n.assistantCLICommand("bash", c.launcher, n.dir, false, []string{"-p"}, []string{"CLAUDE_CONFIG_DIR=" + c.profile})
 			script, ok := strings.CutSuffix(icScript(t, cmd.Args), ` "$@"`)
 			if !ok {
 				t.Fatalf("no \"$@\": %q", cmd.Args)
@@ -107,7 +108,7 @@ func TestCodexAssistantCommandWindowsPathsUseForwardSlashes(t *testing.T) {
 	checkScriptWords(t, launcher, slashed(bin), "launch", "box")
 }
 
-// The model list runs a managed Codex launcher, or plain claude with claude_start_dir, the same way.
+// The model list runs a managed Codex launcher's app-server (#8797), or plain claude with claude_start_dir, the same way.
 func TestAgentModelsCommandWindowsPathsUseForwardSlashes(t *testing.T) {
 	const bin = `C:\Program Files\Persona\personad.exe`
 	n := windowsScriptNode(t, bin, "box")
@@ -119,7 +120,7 @@ func TestAgentModelsCommandWindowsPathsUseForwardSlashes(t *testing.T) {
 	if !ok {
 		t.Fatalf("not codexShell: %q", cmd.Args)
 	}
-	checkScriptWords(t, launcher, slashed(bin), "launch", "box")
+	checkScriptWords(t, launcher, slashed(bin), "launch", "box", "app-server")
 
 	start := `C:\Users\Example User\.claude-work`
 	n.claudeStartDir.Store(&start)
@@ -142,9 +143,9 @@ func TestScriptPathsUnchangedOffWindows(t *testing.T) {
 	const profile, bin = `/home/a\b/O'profile`, `/opt/a\b/personad`
 	n := &Node{bin: bin, home: t.TempDir(), dir: t.TempDir(), logger: log.New(io.Discard, "", 0)}
 	n.managed.byID = map[string]proto.ManagedLauncher{"work": {Name: "work"}}
-	cmd := n.assistantCLICommand("/bin/sh", "work", n.dir, nil, []string{"CLAUDE_CONFIG_DIR=" + profile})
-	if want := "CLAUDE_CONFIG_DIR=" + shellQuote(profile) + " " + shellQuote(bin) + ` launch work "$@"`; cmd.Args[2] != want {
-		t.Fatalf("got %q, want %q", cmd.Args[2], want)
+	cmd := n.assistantCLICommand("/bin/sh", "work", n.dir, false, nil, []string{"CLAUDE_CONFIG_DIR=" + profile})
+	if got, want := icScript(t, cmd.Args), "CLAUDE_CONFIG_DIR="+shellQuote(profile)+" "+shellQuote(bin)+` launch work "$@"`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 	if got, want := n.codexAssistantCommand("/bin/sh", "work", nil).Args[2], codexShell(shellQuote(bin)+" launch work"); got != want {
 		t.Fatalf("codex: got %q, want %q", got, want)

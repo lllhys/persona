@@ -82,6 +82,38 @@ func TestRuntimeAnswersForASessionItDoesNotList(t *testing.T) {
 	}
 }
 
+// A runtime that refuses to read a session it does not list because reading it would start the agent (not_loaded:
+// an agent Paseo let go, #8132) has that session all the same: the calls go to it, and the refusal reaches the hub as
+// it is, nothing read.
+func TestRuntimeRefusingToLoadASessionStillOwnsIt(t *testing.T) {
+	n, _ := runtimeNode(t)
+	host := dialRuntime(t, n, dshHello())
+	const stored = "cccccccc-1111-4222-8333-444455556666"
+	host.mu.Lock()
+	host.answer = func(method string, params json.RawMessage) (any, error) {
+		if method == "session.items" {
+			return nil, &rpc.Error{Message: "reading it would start the agent", Code: proto.CodeNotLoaded}
+		}
+		return map[string]any{"ok": true}, nil
+	}
+	host.mu.Unlock()
+
+	if _, err := nodeCall(t, n, "session.send", map[string]any{"session_id": stored, "text": "go on", "client_msg_id": "m-7"}); err != nil {
+		t.Fatalf("send to a session its runtime would have to start: %v", err)
+	}
+	if len(host.got("session.send")) != 1 {
+		t.Fatal("not sent through the runtime")
+	}
+	_, err := nodeCall(t, n, "session.items", map[string]any{"session_id": stored, "turns": 1})
+	var re *rpc.Error
+	if !errors.As(err, &re) || re.Code != proto.CodeNotLoaded {
+		t.Fatalf("a read of it: %v", err)
+	}
+	if got := len(host.got("session.items")); got != 2 {
+		t.Fatalf("items asked %d times: once to find the owner, once for the read", got)
+	}
+}
+
 // A session of a runtime that has gone (DSH closed) is refused with a reason, not resumed in herdr.
 func TestRuntimeAwaySessionIsRefusedNotResumed(t *testing.T) {
 	n, _ := runtimeNode(t)

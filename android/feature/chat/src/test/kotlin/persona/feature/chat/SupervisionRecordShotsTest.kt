@@ -28,7 +28,7 @@ import persona.core.domain.tasks.*
 import java.io.File
 
 /**
- * #4339 C13: on Glass a quiet supervision round is one "Supervision record" line in Persona's conversation that opens to
+ * #4339 C13: on Glass a quiet supervision round is one "Handled in the background" line in Persona's conversation that opens to
  * the round (iOS `SupervisionRecordLine`), and Persona's work line is the Agent chat's ("Tools 2"); Brief and Board keep
  * the round in the background record and the "Checked N places" line. Native JVM captures with synthetic data.
  */
@@ -105,15 +105,15 @@ class SupervisionRecordShotsTest {
         for (night in listOf(false, true)) {
             dark.value = night; settle()
             val mode = if (night) "dark" else "light"
-            rule.onNodeWithText("Supervision record").assertIsDisplayed()
+            rule.onNodeWithText("Handled in the background").assertIsDisplayed()
             rule.onNodeWithText("Nothing needs the owner right now.").assertDoesNotExist()
             rule.onNodeWithText("Checked", substring = true).assertDoesNotExist()
             rule.onNodeWithText("Tools 2", substring = true).assertIsDisplayed()
             colors += capture("supervision-glass-$mode")
-            rule.onNodeWithText("Supervision record").performClick(); settle()
+            rule.onNodeWithText("Handled in the background").performClick(); settle()
             rule.onNodeWithText("Nothing needs the owner right now.").assertIsDisplayed()
             capture("supervision-glass-open-$mode")
-            rule.onNodeWithText("Supervision record").performClick(); settle()
+            rule.onNodeWithText("Handled in the background").performClick(); settle()
             rule.onNodeWithText("Nothing needs the owner right now.").assertDoesNotExist()
         }
         assertNotEquals("dark capture must differ from light", colors[0], colors[1])
@@ -121,7 +121,7 @@ class SupervisionRecordShotsTest {
 
     private fun keepsTheRoundBehind(style: AppStyle) {
         show(style, mutableStateOf(false)); settle()
-        rule.onNodeWithText("Supervision record").assertDoesNotExist()
+        rule.onNodeWithText("Handled in the background").assertDoesNotExist()
         rule.onNodeWithText("Nothing needs the owner right now.").assertDoesNotExist()
         rule.onNodeWithText("Checked 2 places").assertIsDisplayed()
         capture("supervision-${style.name.lowercase()}-light")

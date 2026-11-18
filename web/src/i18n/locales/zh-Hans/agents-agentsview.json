@@ -22,5 +22,6 @@
   "reacted": "回应了",
   "no_detail": "没有更多细节",
   "composer_placeholder": "发消息给这个 Agent（Enter 发送，Shift+Enter 换行）",
-  "send": "发送"
+  "send": "发送",
+  "restore": "恢复"
 }

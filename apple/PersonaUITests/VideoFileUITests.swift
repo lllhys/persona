@@ -27,7 +27,7 @@ final class VideoFileUITests: XCTestCase {
             shot.name = "video-preview-\(UITestStyle.name)-\(appearance)-\(pass)"
             shot.lifetime = .keepAlways
             add(shot)
-            app.buttons["完成"].firstMatch.tap()
+            app.buttons.matching(NSPredicate(format: "identifier IN %@ OR label == %@", ["file-close", "sheet-close"], "完成")).firstMatch.tap()
             XCTAssertTrue(player.waitForNonExistence(timeout: 5), "关闭后播放器仍在页面上")
         }
     }

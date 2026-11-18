@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -70,5 +71,24 @@ func TestFoldTaskSnapshotsPreserveCrossRunSources(t *testing.T) {
 	snapshot := folded[2].Fold.Tasks[0]
 	if snapshot.SourceItemID != use.ID || snapshot.Entries[0].Subject != nil || *snapshot.Entries[0].Status != "completed" {
 		t.Fatalf("partial update/source lost: %+v", snapshot)
+	}
+}
+
+func TestFoldTaskSnapshotsAcceptStructuralClipMarker(t *testing.T) {
+	todos := make([]any, 2000)
+	for i := range todos {
+		todos[i] = map[string]any{"content": "Do the work", "activeForm": "Doing the work", "status": "pending"}
+	}
+	raw, _ := json.Marshal(map[string]any{"todos": todos})
+	use := proto.Item{ID: "use#0", Seq: 1, Kind: proto.KindToolUse, ToolUseID: "call", ToolName: "TodoWrite", ToolInput: clipJSON(raw)}
+	result := proto.Item{ID: "result#0", Seq: 2, Kind: proto.KindToolResult, ToolUseID: "call", Text: "OK"}
+	snapshots := foldTaskSnapshots([]proto.Item{use, result}, map[string]proto.Item{"call": use})
+	if len(snapshots) != 1 || len(snapshots[0].Entries) == 0 || len(snapshots[0].Entries) == len(todos) {
+		t.Fatalf("structurally clipped to-do snapshots = %+v", snapshots)
+	}
+	for i, entry := range snapshots[0].Entries {
+		if entry.Subject == nil || *entry.Subject != "Do the work" || entry.ID != "todo:"+strconv.Itoa(i) {
+			t.Fatalf("retained to-do %d changed: %+v", i, entry)
+		}
 	}
 }

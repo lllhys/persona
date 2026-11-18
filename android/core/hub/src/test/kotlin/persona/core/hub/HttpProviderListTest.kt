@@ -59,6 +59,18 @@ class HttpProviderListTest {
         assertEquals("401", api2.check.error)
     }
 
+    @Test fun oneAliasIsScopedOnBothPreviewAndImport() = withHub { server, api ->
+        server.enqueue(MockResponse().setBody("""{"machine":"mac","providers":[{"name":"cc work","aliases":["cc work"]}]}"""))
+        api.importPreview("mac", "cc work")
+        assertEquals("/api/v1/launchers/import?machine=mac&alias=cc%20work", server.takeRequest().path)
+        server.enqueue(MockResponse().setBody("""{"created":["cc-work"],"updated":[]}"""))
+        api.import("mac", listOf("cc work"), "cc work")
+        val request = server.takeRequest()
+        val body = JsonCodec.parseToJsonElement(request.body.readUtf8()).jsonObject
+        assertEquals("cc work", body["alias"]!!.jsonPrimitive.content)
+        assertEquals(listOf("cc work"), body["providers"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
     @Test fun importsWhatIsTicked() = withHub { server, api ->
         server.enqueue(MockResponse().setBody("""{"machine":"mac","providers":[{"name":"proxy","base_url":"https://p.example.com","model":"m",
             "has_key":true,"aliases":["cc_a","cc_b"]},{"name":"team","existing":"team","aliases":[]}]}"""))

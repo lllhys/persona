@@ -49,7 +49,8 @@ func TestSaveMailAttachment(t *testing.T) {
 	fetch := fetchReturning("statement 2026-10.pdf", []byte("%PDF"), &calls)
 
 	res := saveMailAttachment(context.Background(), root, saveArgs("bills/2026-10"), fetch)
-	want := filepath.Join(root, "bills", "2026-10", "statement 2026-10.pdf")
+	saved := resolved(t, root) // the paths it reports are under the resolved root (writeAttachment, #9138)
+	want := filepath.Join(saved, "bills", "2026-10", "statement 2026-10.pdf")
 	if res.IsError || !strings.Contains(resultOf(res), want) {
 		t.Fatalf("save: %+v (want %s)", res, want)
 	}
@@ -62,7 +63,7 @@ func TestSaveMailAttachment(t *testing.T) {
 
 	for i, name := range []string{"statement 2026-10 (2).pdf", "statement 2026-10 (3).pdf"} {
 		res = saveMailAttachment(context.Background(), root, saveArgs("bills/2026-10/"), fetch)
-		path := filepath.Join(root, "bills", "2026-10", name)
+		path := filepath.Join(saved, "bills", "2026-10", name)
 		if res.IsError || !strings.Contains(resultOf(res), path) {
 			t.Fatalf("save %d: %+v", i+2, res)
 		}
@@ -80,7 +81,7 @@ func TestSaveMailAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	res = saveMailAttachment(context.Background(), root, saveArgs(""), fetchReturning("kept.pdf", []byte("%PDF"), &calls))
-	if res.IsError || !strings.Contains(resultOf(res), filepath.Join(root, "kept (2).pdf")) {
+	if res.IsError || !strings.Contains(resultOf(res), filepath.Join(saved, "kept (2).pdf")) {
 		t.Fatalf("no dir: %+v", res)
 	}
 	if b, _ := os.ReadFile(other); string(b) != "mine" {
@@ -175,7 +176,7 @@ func TestSaveMailAttachmentCleansSenderFilename(t *testing.T) {
 	root := t.TempDir()
 	calls := 0
 	res := saveMailAttachment(context.Background(), root, saveArgs("x"), fetchReturning("../../../escape.sh", []byte("x"), &calls))
-	if res.IsError || !strings.Contains(resultOf(res), filepath.Join(root, "x", "escape.sh")) {
+	if res.IsError || !strings.Contains(resultOf(res), filepath.Join(resolved(t, root), "x", "escape.sh")) { // #9138
 		t.Fatalf("traversal in the file name: %+v", res)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(root), "escape.sh")); !os.IsNotExist(err) {

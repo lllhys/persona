@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import Observation
 import UniformTypeIdentifiers
+import PersonaWire
 
 // Settings › Appearance › Avatar › New from Photo (#2405, docs/apple/persona.md "Uploading an image"): the user picks an
 // image, crops it square (a circle shows what the avatar keeps), names it, and the hub makes a package of it
@@ -89,7 +90,7 @@ nonisolated enum AvatarImage {
     }
 
     /// Reads an image file the user picked (the Mac's open panel, the Files app), within its security scope.
-    static func read(_ url: URL) throws -> Data {
+    static func readPickedFile(_ url: URL) throws -> Data {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > fileLimit {

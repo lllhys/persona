@@ -82,19 +82,19 @@ func TestEchoTiesSendsInOrder(t *testing.T) {
 		assistantLine("a1", t0.Add(3*time.Second), "好的"),
 		userLine("mine2", t0.Add(4*time.Second), "继续"),
 	)
-	from, ok := l.waitingFrom("s")
+	from, ok := l.waitingFrom("s", echoInTranscript)
 	if !ok || from != 1 {
 		t.Fatalf("waiting from %d %v", from, ok)
 	}
-	found := l.match("s", items[1:])
+	found := l.match("s", echoInTranscript, items[1:])
 	if len(found) != 2 || found[0].Line != "mine1" || found[1].Line != "mine2" {
 		t.Fatalf("found %+v", found)
 	}
-	sameTags(t, l.tag("s", items), map[string]string{"mine1#0": "A", "mine2#0": "B"})
-	if _, ok := l.waitingFrom("s"); ok {
+	sameTags(t, l.tag("s", echoInTranscript, items), map[string]string{"mine1#0": "A", "mine2#0": "B"})
+	if _, ok := l.waitingFrom("s", echoInTranscript); ok {
 		t.Fatal("nothing should be expected any more")
 	}
-	if got := l.tag("other", items); len(tagsOf(got)) != 0 {
+	if got := l.tag("other", echoInTranscript, items); len(tagsOf(got)) != 0 {
 		t.Fatalf("another session's items tagged: %v", tagsOf(got))
 	}
 }
@@ -110,12 +110,12 @@ func TestEchoTagsEveryItemOfTheLine(t *testing.T) {
 	if len(items) < 2 {
 		t.Fatalf("want words and a picture, got %+v", items)
 	}
-	l.match("s", items)
+	l.match("s", echoInTranscript, items)
 	want := map[string]string{}
 	for _, it := range items {
 		want[it.ID] = "P"
 	}
-	sameTags(t, l.tag("s", items), want)
+	sameTags(t, l.tag("s", echoInTranscript, items), want)
 }
 
 // Input typed while the agent works comes back as a queued_command attachment: that is the copy too.
@@ -127,8 +127,8 @@ func TestEchoTiesAQueuedMessage(t *testing.T) {
 		assistantLine("a0", t0.Add(-time.Second), "正在改"),
 		queuedLine("q1", t0.Add(30*time.Second), "顺便把测试也跑一下"),
 	)
-	l.match("s", items)
-	got := l.tag("s", items)
+	l.match("s", echoInTranscript, items)
+	got := l.tag("s", echoInTranscript, items)
 	sameTags(t, got, map[string]string{"q1#0": "Q"})
 	if !got[1].Queued {
 		t.Fatalf("not the queued item: %+v", got[1])
@@ -145,11 +145,11 @@ func TestEchoTiesCompactToItsNotice(t *testing.T) {
 	if len(items) != 1 || items[0].Kind != proto.KindNotice {
 		t.Fatalf("want a notice, got %+v", items)
 	}
-	l.match("s", items)
-	sameTags(t, l.tag("s", items), map[string]string{"c1#0": "C"})
+	l.match("s", echoInTranscript, items)
+	sameTags(t, l.tag("s", echoInTranscript, items), map[string]string{"c1#0": "C"})
 
 	l.expect(echoRecord{SessionID: "s", ClientMsgID: "gone", Text: "/clear", SentAt: t0.Add(-echoWithin - time.Minute)})
-	if from, ok := l.waitingFrom("s"); ok {
+	if from, ok := l.waitingFrom("s", echoInTranscript); ok {
 		t.Fatalf("an expired send is still looked for from %d", from)
 	}
 }
@@ -182,7 +182,7 @@ func TestEchoFits(t *testing.T) {
 	for _, c := range cases {
 		var l echoLog
 		l.expect(echoRecord{SessionID: "s", ClientMsgID: "x", Text: c.sent, SentAt: t0})
-		found := l.match("s", echoItems(t, userLine("u", c.at, c.line)))
+		found := l.match("s", echoInTranscript, echoItems(t, userLine("u", c.at, c.line)))
 		if got := len(found) == 1; got != c.want {
 			t.Errorf("%s: tied %v, want %v", c.name, got, c.want)
 		}
@@ -195,10 +195,10 @@ func TestEchoScansEachLineOnce(t *testing.T) {
 	var l echoLog
 	l.expect(echoRecord{SessionID: "s", ClientMsgID: "x", Text: "第三条消息的内容在这里", SentAt: t0})
 	first := echoItems(t, userLine("u1", t0, "别的"), userLine("u2", t0, "也是别的"))
-	if found := l.match("s", first); len(found) != 0 {
+	if found := l.match("s", echoInTranscript, first); len(found) != 0 {
 		t.Fatalf("found %+v", found)
 	}
-	if from, _ := l.waitingFrom("s"); from != 2 {
+	if from, _ := l.waitingFrom("s", echoInTranscript); from != 2 {
 		t.Fatalf("waiting from %d, want 2", from)
 	}
 }
@@ -335,8 +335,8 @@ func TestEchoTiesACodexMessage(t *testing.T) {
 		`{"timestamp":"`+at+`","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"um1","content":[{"type":"text","text":"这张截图里的按钮为什么换行了"},{"type":"local_image","path":"/tmp/a.jpg"}]}}}`,
 		`{"timestamp":"`+at+`","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"um2","content":[{"type":"local_image","path":"/tmp/b.jpg"}]}}}`,
 	)
-	l.match("s", items)
-	sameTags(t, l.tag("s", items), map[string]string{"um1#0": "X", "um2#0": "Y"})
+	l.match("s", echoInTranscript, items)
+	sameTags(t, l.tag("s", echoInTranscript, items), map[string]string{"um1#0": "X", "um2#0": "Y"})
 }
 
 // A runtime that put the client_msg_id on its own item is taken at its word: that line is the record's, and no other
@@ -350,11 +350,71 @@ func TestEchoKeepsARuntimesOwnTie(t *testing.T) {
 		{ID: "r1", Seq: 1, Role: "user", Kind: proto.KindText, Text: "继续", ClientMsgID: "B"},
 		{ID: "r2", Seq: 2, Role: "user", Kind: proto.KindText, Text: "继续"},
 	}
-	found := l.match("s", items)
+	found := l.match("s", echoInTranscript, items)
 	if len(found) != 2 {
 		t.Fatalf("found %+v", found)
 	}
-	sameTags(t, l.tag("s", items), map[string]string{"r1": "B", "r2": "A"})
+	sameTags(t, l.tag("s", echoInTranscript, items), map[string]string{"r1": "B", "r2": "A"})
+}
+
+// A record sent or found while a runtime's session read its runtime's own items is looked for again in the transcript
+// those stood in for (#8358), from the start: the runtime's seqs (40, 41) count further than the transcript's. Found
+// there, it stays: a batch of the runtime's own matched after that does not take it back.
+func TestEchoFollowsTheSessionToItsTranscript(t *testing.T) {
+	t0 := time.Now()
+	var l echoLog
+	l.expect(echoRecord{SessionID: "s", ClientMsgID: "A", Text: "run the tests please", SentAt: t0, AfterSeq: 40, In: echoInRuntime})
+	l.expect(echoRecord{SessionID: "s", ClientMsgID: "B", Text: "and then deploy", SentAt: t0.Add(time.Second), AfterSeq: 41, In: echoInRuntime})
+	own := []proto.Item{{ID: "41#0", Seq: 41, Role: "user", Kind: proto.KindText, Text: "run the tests please", ClientMsgID: "A"}}
+	if found := l.match("s", echoInRuntime, own); len(found) != 1 || found[0].Line != "41" {
+		t.Fatalf("found among the runtime's items: %+v", found)
+	}
+	items := echoItems(t,
+		userLine("u1", t0.Add(time.Second), "run the tests please"),
+		assistantLine("a1", t0.Add(2*time.Second), "running them"),
+		userLine("u2", t0.Add(3*time.Second), "and then deploy"),
+	)
+	if from, ok := l.waitingFrom("s", echoInTranscript); !ok || from != 0 {
+		t.Fatalf("waiting in the transcript from %d %v", from, ok)
+	}
+	if found := l.match("s", echoInTranscript, items); len(found) != 2 {
+		t.Fatalf("found in the transcript: %+v", found)
+	}
+	want := map[string]string{"u1#0": "A", "u2#0": "B"}
+	sameTags(t, l.tag("s", echoInTranscript, items), want)
+	l.match("s", echoInRuntime, own)
+	sameTags(t, l.tag("s", echoInTranscript, items), want)
+	if _, ok := l.waitingFrom("s", echoInTranscript); ok {
+		t.Fatal("still expected in the transcript")
+	}
+}
+
+// Records a hub hands back from a node before #8358 say nothing of where they count: their lines are tagged wherever
+// the session's items come from, as then, and none of them moves. A record still expected is found where its words
+// are, and counts there from then on.
+func TestEchoKeepsRecordsFromBefore(t *testing.T) {
+	t0 := time.Now()
+	var l echoLog
+	for _, r := range []echoRecord{
+		{SessionID: "s", ClientMsgID: "R", Text: "run the tests please", SentAt: t0, Line: "41"}, // among a runtime's items
+		{SessionID: "s", ClientMsgID: "T", Text: "and then deploy", SentAt: t0.Add(time.Second), Line: "u2"},
+		{SessionID: "s", ClientMsgID: "W", Text: "thanks", SentAt: t0.Add(2 * time.Second), AfterSeq: 2},
+	} {
+		l.expect(r)
+	}
+	own := []proto.Item{{ID: "41#0", Seq: 41, Role: "user", Kind: proto.KindText, Text: "run the tests please"}}
+	items := echoItems(t,
+		userLine("u1", t0.Add(time.Second), "run the tests please"),
+		userLine("u2", t0.Add(2*time.Second), "and then deploy"),
+		userLine("u3", t0.Add(3*time.Second), "thanks"),
+	)
+	if found := l.match("s", echoInTranscript, items); len(found) != 1 || found[0].ClientMsgID != "W" || found[0].In != echoInTranscript {
+		t.Fatalf("found in the transcript: %+v", found)
+	}
+	sameTags(t, l.tag("s", echoInTranscript, items), map[string]string{"u2#0": "T", "u3#0": "W"})
+	l.match("s", echoInRuntime, own)
+	sameTags(t, l.tag("s", echoInRuntime, own), map[string]string{"41#0": "R"})
+	sameTags(t, l.tag("s", echoInTranscript, items), map[string]string{"u2#0": "T", "u3#0": "W"})
 }
 
 // A watch pushes the line Claude writes as soon as it takes a message, before the send has returned: that push must
@@ -407,14 +467,14 @@ func TestEchoTagsThePushOfALineWrittenWhileTyping(t *testing.T) {
 // A send that surely did not reach the pane leaves no record: a later line with the same words is not tied to it.
 func TestEchoForgetsASendThatFailed(t *testing.T) {
 	n := &Node{}
-	err := n.sendEchoed(sidA, "m-x", "继续", 0, 0, func() error { return fmt.Errorf("pane gone") })
+	err := n.sendEchoed(sidA, "m-x", "继续", 0, echoAfter{}, func() error { return fmt.Errorf("pane gone") })
 	if err == nil {
 		t.Fatal("the send's error was lost")
 	}
 	if _, ok := n.echoes.record(sidA, "m-x"); ok {
 		t.Fatal("a failed send is still expected")
 	}
-	if err := n.sendEchoed(sidA, "m-y", "继续", 0, 0, func() error { return nil }); err != nil {
+	if err := n.sendEchoed(sidA, "m-y", "继续", 0, echoAfter{}, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := n.echoes.record(sidA, "m-y"); !ok {

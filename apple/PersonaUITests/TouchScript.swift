@@ -107,6 +107,54 @@ enum TouchScript {
         var log: String { lock.lock(); defer { lock.unlock() }; return lines.joined(separator: "\n") }
     }
 
+    /// Two fingers down at `a[0]` and `b[0]`, through the rest of their points `step` seconds apart, then up: a gesture
+    /// XCUITest has no call for (#6196: a scroll whose fingers drift apart). Points are the screen's, in portrait.
+    /// Played through the device's event synthesizer as `tapWhenGlideBegins` plays its tap; returns once it has played.
+    static func twoFingers(_ a: [CGPoint], _ b: [CGPoint], step: Double = 0.016) throws {
+        guard let pathClass = NSClassFromString("XCPointerEventPath"),
+              let recordClass = NSClassFromString("XCSynthesizedEventRecord"),
+              let synthesizer = (XCUIDevice.shared as NSObject).value(forKey: "eventSynthesizer") as? NSObject,
+              synthesizer.responds(to: Job.play), a.count == b.count, a.count > 1
+        else { throw XCTSkip("this Xcode has no XCTest event record to play touches with") }
+        let record = try make(recordClass, "initWithName:interfaceOrientation:") { imp, sel, raw in
+            typealias Init = @convention(c) (UnsafeMutableRawPointer, Selector, NSString, Int) -> UnsafeMutableRawPointer?
+            return unsafeBitCast(imp, to: Init.self)(raw, sel, "two fingers" as NSString, 1) // portrait
+        }
+        typealias Move = @convention(c) (NSObject, Selector, CGPoint, Double) -> Void
+        typealias Lift = @convention(c) (NSObject, Selector, Double) -> Void
+        let move = NSSelectorFromString("moveToPoint:atOffset:"), lift = NSSelectorFromString("liftUpAtOffset:")
+        for points in [a, b] {
+            let finger = try make(pathClass, "initForTouchAtPoint:offset:") { imp, sel, raw in
+                typealias Init = @convention(c) (UnsafeMutableRawPointer, Selector, CGPoint, Double) -> UnsafeMutableRawPointer?
+                return unsafeBitCast(imp, to: Init.self)(raw, sel, points[0], 0)
+            }
+            for (i, p) in points.enumerated().dropFirst() {
+                unsafeBitCast(finger.method(for: move), to: Move.self)(finger, move, p, Double(i) * step)
+            }
+            unsafeBitCast(finger.method(for: lift), to: Lift.self)(finger, lift, Double(points.count) * step)
+            record.perform(NSSelectorFromString("addPointerEventPath:"), with: finger)
+        }
+        let played = XCTestExpectation(description: "two fingers played")
+        let outcome = Outcome()
+        typealias Synthesize = @convention(c) (NSObject, Selector, NSObject, @escaping @convention(block) (Bool, NSError?) -> Void) -> Void
+        unsafeBitCast(synthesizer.method(for: Job.play), to: Synthesize.self)(synthesizer, Job.play, record) { _, error in
+            outcome.set(error)
+            played.fulfill()
+        }
+        guard XCTWaiter().wait(for: [played], timeout: 10 + Double(a.count) * step) == .completed else {
+            throw NSError(domain: "TouchScript", code: 3, userInfo: [NSLocalizedDescriptionKey: "the two fingers were never played"])
+        }
+        if let error = outcome.error { throw error }
+    }
+
+    /// What the synthesizer answered, from its thread.
+    private final class Outcome: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failure: Error?
+        func set(_ e: Error?) { lock.lock(); failure = e; lock.unlock() }
+        var error: Error? { lock.lock(); defer { lock.unlock() }; return failure }
+    }
+
     /// `alloc` and an `init…` through the runtime, keeping ARC's counts: `alloc` hands over +1, the initializer takes it
     /// and hands back +1.
     private static func make(_ cls: AnyClass, _ initializer: String,

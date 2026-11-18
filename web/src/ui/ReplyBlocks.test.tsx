@@ -50,6 +50,23 @@ describe("reply blocks (#2984)", () => {
     expect(linked.hasAttribute("data-linked")).toBe(false);
   });
 
+  it("leaves room where inline code meets a CJK letter, none beside a space or CJK punctuation (#9477)", async () => {
+    await draw("用`pnpm`装依赖，提交是 `3854bdc`，写成`设置`。见[`docs`](https://example.com)里\n\n**注意**`HOME`要指向 v`x1`\n\n```\n用`x`装\n```");
+    const sides = (text: string) => {
+      const code = [...host.querySelectorAll("code")].find((c) => c.textContent === text)!;
+      const gap = code.getAttribute("data-gap") ?? "";
+      return [gap.includes("s"), gap.includes("e")];
+    };
+    expect(sides("pnpm")).toEqual([true, true]);
+    expect(sides("3854bdc")).toEqual([false, false]);
+    expect(sides("设置")).toEqual([true, false]);
+    // only plain words beside it count: code alone in a link, or after bold words, gets none on that side
+    expect(sides("docs")).toEqual([false, false]);
+    expect(sides("HOME")).toEqual([false, true]);
+    expect(sides("x1")).toEqual([false, false]); // a Latin letter: no room added
+    expect(host.querySelector("pre code")!.hasAttribute("data-gap")).toBe(false);
+  });
+
   it("a quote has its mark; a long one folds, opens on a click and folds again", async () => {
     // jsdom lays nothing out: the quote's words say they are tall
     const tall = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);

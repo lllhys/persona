@@ -18,6 +18,9 @@
   "last_seen": "最后在线：{when}",
   "no_agents": "没有运行中的 Agent",
   "agents_offline": "机器离线，连上后显示它的 Agent",
+  "agents_loading": "正在读取 Agent…",
+  "agents_failed": "没能读到 Agent",
+  "agents_failed_detail": "没能读到这台电脑的 Agent，稍后会再试。",
   "engine": "引擎",
   "monitoring": "监控",
   "range": "时间范围",
@@ -61,5 +64,7 @@
   "rename_hint": "所有 App 和这台电脑的 Persona Link 都会显示这个名字；留空就用 id，id 不变。",
   "renamed": "已改名为「{name}」",
   "screen": "查看屏幕",
-  "screen_hint": "打开这台 Mac 的实时屏幕（屏幕共享）"
+  "screen_hint": "打开这台 Mac 的实时屏幕（屏幕共享）",
+  "files": "文件",
+  "files_hint": "从个人文件夹开始浏览这台电脑的文件"
 }

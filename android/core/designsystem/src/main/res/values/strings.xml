@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- English is the fallback for every language the app does not have (docs/protocol/i18n.md); values-zh and values-ja hold the same keys. -->
 <resources>
+    <string name="designsystem_more">More</string>
     <!-- Agent states (docs/protocol/i18n.md glossary) -->
     <string name="designsystem_status_needs_you">Needs you</string>
     <string name="designsystem_status_working">Working</string>
@@ -43,6 +44,7 @@
     <string name="designsystem_collapsed">Collapsed</string>
     <string name="designsystem_retry">Retry</string>
     <string name="designsystem_back">Back</string>
+    <string name="designsystem_sidebar">Sidebar</string>
     <string name="designsystem_cancel">Cancel</string>
     <string name="designsystem_close">Close</string>
     <string name="designsystem_done">Done</string>
@@ -156,7 +158,7 @@
     <string name="designsystem_row_style_two_lines">Two lines</string>
     <string name="designsystem_row_style_cards">State cards</string>
     <string name="designsystem_row_style_list">Compact list</string>
-    <string name="designsystem_row_style_avatar_summary">The agent\'s avatar, its title and time, a line of what it last said, and where it runs.</string>
+    <string name="designsystem_row_style_avatar_summary">The agent\'s avatar, its title and time, two lines of what it last said, and where it runs.</string>
     <string name="designsystem_row_style_two_lines_summary">Two lines per agent: its title and time, then one line of what it last said.</string>
     <string name="designsystem_row_style_cards_summary">A card per agent, its state\'s color down the side; the one waiting for you is tinted.</string>
     <string name="designsystem_row_style_list_summary">One line per agent: its state, title and time.</string>
@@ -176,6 +178,9 @@
     <string name="designsystem_show_fewer">Collapse</string>
     <string name="designsystem_count_waiting_background">%1$d waiting in the background</string>
     <string name="designsystem_machine_monitor">Machine monitor</string>
+    <!-- A computer's projects page (iOS MachineSpacesView, #4338 A11): the capsule that opens it, and a project's pin -->
+    <string name="designsystem_machine_projects">All projects on %1$s</string>
+    <string name="designsystem_project_pinned">Pinned</string>
     <string name="designsystem_details">Details</string>
     <string name="designsystem_space">space</string>
     <string name="designsystem_repository">Repository</string>
@@ -221,6 +226,7 @@
     <string name="designsystem_series_separator">"; "</string>
     <!-- Chat parts: plans, work rows, the send button -->
     <string name="designsystem_plan_spoken">Plan, step %1$d of %2$d, %3$s</string>
+    <string name="designsystem_count_spoken">%1$s, %2$d</string>
     <string name="designsystem_plan_all_done">All done</string>
     <string name="designsystem_plan_step">Step %1$d/%2$d</string>
     <string name="designsystem_plan_item_done">Done</string>
@@ -325,6 +331,10 @@
     <string name="designsystem_queue_actions">Queued message actions</string>
     <string name="designsystem_queue_item">Item %1$d: %2$s</string>
     <string name="designsystem_queue_item_note">Item %1$d: %2$s. %3$s</string>
+    <plurals name="designsystem_queue_photos">
+        <item quantity="one">%1$d image</item>
+        <item quantity="other">%1$d images</item>
+    </plurals>
     <string name="designsystem_draft_ready">Persona drafted a reply</string>
     <!-- Connection details (the title's sheet while the hub is out of reach) -->
     <string name="designsystem_connection_online">Connected to the hub</string>
@@ -426,4 +436,15 @@
     <string name="designsystem_stepper_plus">Increase</string>
     <string name="designsystem_copy_too_large">Text too large to copy; use Share instead</string>
     <string name="designsystem_copied">Copied</string>
+    <string name="designsystem_shortcuts_title">Keyboard shortcuts</string>
+    <string name="designsystem_shortcuts_send">Send message</string>
+    <string name="designsystem_shortcuts_send_keys">Ctrl or ⌘ + Return</string>
+    <string name="designsystem_shortcuts_newline">New line</string>
+    <string name="designsystem_shortcuts_newline_keys">Return or Shift + Return</string>
+    <string name="designsystem_shortcuts_close">Close the top layer</string>
+    <string name="designsystem_shortcuts_close_keys">Esc</string>
+    <string name="designsystem_shortcuts_help">Show keyboard shortcuts</string>
+    <string name="designsystem_shortcuts_help_keys">Ctrl + /</string>
+    <string name="designsystem_shortcuts_terminal">Terminal has priority</string>
+    <string name="designsystem_shortcuts_terminal_keys">Esc, Tab, Shift + Tab, Ctrl + C, arrow keys</string>
 </resources>

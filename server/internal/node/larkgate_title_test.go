@@ -19,10 +19,10 @@ func TestWholeCommandCardNamesOnlyWhatTheCommandShows(t *testing.T) {
 		lark                bool // the card says it writes as the user on a service
 	}{
 		{"admin script through a variable", admin, "Bash", false},
-		{"variable command name", "CMD=./tools/example.sh; $CMD POST /api/v2/items/example", "Bash", false},
+		{"variable command name", "CMD=$SCRIPT_PATH; $CMD POST /api/v2/items/example", "Bash", false},
 		{"lark-cli write in a loop", "for value in one; do lark-cli im +messages-send --text hello; done", "飞书", true},
-		{"lark-cli through a variable", "L=lark-cli; $L im +messages-send --text hello", "飞书", true},
-		{"lark-cli path through a variable", "L=/usr/local/bin/lark-cli; $L im +messages-send --text hello", "飞书", true},
+		{"lark-cli through a variable", "L=lark-cli; $L im +messages-send --text hello; git status", "飞书", true},
+		{"lark-cli path through a variable", "L=/usr/local/bin/lark-cli; $L im +messages-send --text hello; git status", "飞书", true},
 		{"gate write through a variable path", "for value in one; do ex POST $route; done", "示例", true},
 		{"gate call it cannot read", "for value in one; do ex events list; done", "示例", true},
 		{"gate read beside a variable command", "ex GET /health; $ADMIN POST /api/items", "示例", true},

@@ -34,6 +34,8 @@ internal data class AgentOperationsSnapshot(
     val spaces: Map<String, AgentSpaceEdit> = emptyMap(),
     val uncertain: Set<String> = emptySet(),
     val busy: Boolean = false,
+    /** Which tap wrote these pins or mutes. A page built before the tap carries an older one (#9600). */
+    val tapEpoch: Int = 0,
 ) {
     fun project(source: List<Session>): List<Session> = source.mapNotNull { session ->
         val edit = sessions[session.key]
@@ -72,7 +74,14 @@ internal class AgentOperationsState(private val api: AgentOperations, private va
         cache?.block()
     } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
 
-    suspend fun preference(pin: Boolean, space: Boolean, key: String, spaceKey: String? = null) = mutex.withLock {
+    suspend fun preference(
+        pin: Boolean, space: Boolean, key: String, spaceKey: String? = null,
+        /**
+         * Runs immediately before the optimistic write and before a failed save is put back
+         * (`PinsStore.swift:131`, `:139`, `:163`). Returns the tap generation stamped on that write.
+         */
+        onWrite: () -> Int = { 0 },
+    ) = mutex.withLock {
         // Fetch before replacing the document so unrelated remote entries survive.
         val current = if (pin) api.pins() else api.mutes()
         val next = when {
@@ -81,11 +90,13 @@ internal class AgentOperationsState(private val api: AgentOperations, private va
             else -> current.domain().toggleMute(key, spaceKey)
         }.operation()
         val before = if (pin) mutable.value.copy(pins = current) else mutable.value.copy(mutes = current)
-        mutable.value = if (pin) before.copy(pins = next, busy = true) else before.copy(mutes = next, busy = true)
+        val epoch = onWrite()
+        mutable.value = if (pin) before.copy(pins = next, busy = true, tapEpoch = epoch) else before.copy(mutes = next, busy = true, tapEpoch = epoch)
         try {
             if (pin) api.savePins(next) else api.saveMutes(next)
         } catch (e: Exception) {
-            mutable.value = before
+            val back = onWrite()
+            mutable.value = before.copy(tapEpoch = back)
             throw e
         } finally { mutable.value = mutable.value.copy(busy = false) }
     }

@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -67,6 +69,48 @@ func TestProviderTestWithoutAuthSendsBothHeaders(t *testing.T) {
 	}
 	if body["max_tokens"] != float64(1) || body["model"] != "glm-5.3" || !strings.Contains(jsonText(body["messages"]), "ping") {
 		t.Fatalf("body: %v", body)
+	}
+}
+
+func TestProviderProbesUserAgent(t *testing.T) {
+	_, mux := launcherTestService(t)
+	for _, operation := range []struct {
+		name, route, method, path, response string
+	}{
+		{"test", "/api/v1/launchers/test", http.MethodPost, "/v1/messages", `{"type":"message","content":[]}`},
+		{"discover", "/api/v1/launchers/discover", http.MethodGet, "/v1/models", `{"data":[{"id":"m"}]}`},
+	} {
+		for _, header := range []struct {
+			name, value, want string
+		}{
+			{"default", "", modelhttp.UserAgent()},
+			{"custom", "uSeR-aGeNt: custom-client/1", "custom-client/1"},
+		} {
+			t.Run(operation.name+"/"+header.name, func(t *testing.T) {
+				var sawPrimary atomic.Bool
+				gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != operation.method || r.UserAgent() != header.want {
+						t.Errorf("request: %s %s User-Agent %q, want method %s and User-Agent %q", r.Method, r.URL.Path, r.UserAgent(), operation.method, header.want)
+					}
+					if r.URL.Path == operation.path {
+						sawPrimary.Store(true)
+					}
+					_, _ = w.Write([]byte(operation.response))
+				}))
+				defer gw.Close()
+				body, err := json.Marshal(map[string]string{"base_url": gw.URL, "model": "m", "headers": header.value})
+				if err != nil {
+					t.Fatal(err)
+				}
+				out := probeResult(t, mux, operation.route, string(body))
+				if out["error"] != nil || (operation.name == "test" && out["ok"] != true) {
+					t.Fatalf("probe failed: %v", out)
+				}
+				if !sawPrimary.Load() {
+					t.Fatalf("did not request %s", operation.path)
+				}
+			})
+		}
 	}
 }
 

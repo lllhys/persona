@@ -1,0 +1,19 @@
+{
+  "title": "每台电脑能做什么",
+  "col_computer": "电脑",
+  "col_system": "系统",
+  "col_resources": "核心与内存",
+  "col_engines": "引擎",
+  "col_runtimes": "Agent 运行时",
+  "col_tools": "工具",
+  "col_reach": "连接方式",
+  "online": "在线",
+  "offline": "离线",
+  "pending": "等待确认",
+  "not_connected": "还没连上",
+  "cores_other": "{count} 核",
+  "disk_free": "磁盘剩余 {size}",
+  "list_separator": "、",
+  "none": "无",
+  "loading": "正在读取…"
+}

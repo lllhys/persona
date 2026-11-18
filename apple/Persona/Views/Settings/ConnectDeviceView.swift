@@ -165,7 +165,7 @@ struct ConnectDeviceSheet: View {
             .navigationTitle("Connect New Device")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() }.lineLimit(1) }
+                SheetClose { dismiss() }
             }
         }
         .presentationDetents([.large])

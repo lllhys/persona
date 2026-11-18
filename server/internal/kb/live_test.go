@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +38,7 @@ func TestRecordingAttendanceFields(t *testing.T) {
 		{"off", RecordingMeeting, "off", &SessionRef{MachineID: "mac-1", SessionID: "s1"}, AttendanceOff, "", nil},
 		{"none", RecordingMeeting, "", nil, AttendanceOff, "", nil},
 		{"unknown role", RecordingMeeting, "speaker", nil, AttendanceOff, AttendanceUnknownRole, nil},
+		{"notes: a room's only (#8851)", RecordingMeeting, "notes", nil, AttendanceOff, AttendanceUnknownRole, nil},
 		{"a note", RecordingNote, "listener", nil, AttendanceOff, AttendanceNotMeeting, nil},
 		{"kind omitted", "", "participant", nil, AttendanceOff, AttendanceNotMeeting, nil},
 		{"one id", RecordingMeeting, "listener", &SessionRef{MachineID: "mac-1"}, AttendanceOff, AttendanceBadSession, nil},
@@ -602,5 +605,225 @@ func TestLiveConcurrent(t *testing.T) {
 	<-stop
 	if _, err := os.Stat(e.Store.Path(KindRecording, recID)); !os.IsNotExist(err) {
 		t.Fatalf("the live log brought a deleted recording back: %v", err)
+	}
+}
+
+// The topics (#3862 phase 2): CleanTopics takes a list within the limits (titles and notes on one line, states in
+// lower case) and refuses one over a limit saying which; TopicsSet replaces them, moves their revision and topics_at
+// only when they change, and MeetingChanged hears of PartTopics, as it hears of PartLines on every stored append.
+func TestTopicsSet(t *testing.T) {
+	at := 61.0
+	clean, err := CleanTopics([]LiveTopic{{Title: " Export\n cap ", State: " Done ", At: &at, Note: "kept\tat 4 MB"},
+		{Title: strings.Repeat("字", MaxTopicTitle), State: TopicCurrent, Note: strings.Repeat("a", MaxTopicNote)}})
+	if err != nil || clean[0].Title != "Export cap" || clean[0].State != TopicDone || clean[0].Note != "kept at 4 MB" || *clean[0].At != 61 {
+		t.Fatalf("clean %+v %v", clean, err)
+	}
+	if none, err := CleanTopics([]LiveTopic{}); err != nil || none != nil {
+		t.Fatalf("none %+v %v", none, err)
+	}
+	twenty := make([]LiveTopic, MaxTopics)
+	for i := range twenty {
+		twenty[i] = LiveTopic{Title: fmt.Sprint(i), State: TopicOpen}
+	}
+	if _, err := CleanTopics(twenty); err != nil {
+		t.Fatalf("20 topics: %v", err)
+	}
+	neg, nan := -1.0, math.NaN()
+	for name, c := range map[string]struct {
+		topics []LiveTopic
+		want   string
+	}{
+		"21":          {append(slices.Clone(twenty), LiveTopic{Title: "x", State: TopicOpen}), "21 topics, over the 20"},
+		"title":       {[]LiveTopic{{Title: strings.Repeat("字", MaxTopicTitle+1), State: TopicOpen}}, "topic 1's title is 81 characters, over the 80"},
+		"note":        {[]LiveTopic{{Title: "a", State: TopicOpen}, {Title: "b", State: TopicOpen, Note: strings.Repeat("a", MaxTopicNote+1)}}, "topic 2's note is 201 characters"},
+		"empty title": {[]LiveTopic{{Title: " \n ", State: TopicOpen}}, "topic 1 has no title"},
+		"state":       {[]LiveTopic{{Title: "a", State: "next"}}, `state is "next"`},
+		"two current": {[]LiveTopic{{Title: "a", State: TopicCurrent}, {Title: "b", State: "Current"}}, "2 topics are current"},
+		"negative at": {[]LiveTopic{{Title: "a", State: TopicOpen, At: &neg}}, "topic 1's at"},
+		"NaN at":      {[]LiveTopic{{Title: "a", State: TopicOpen, At: &nan}}, "topic 1's at"},
+	} {
+		if _, err := CleanTopics(c.topics); !errors.Is(err, ErrBadTopics) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	e := goldenEngine(t, nil)
+	var heard [][]string
+	e.MeetingChanged = func(_ string, parts []string) { heard = append(heard, parts) }
+	now := time.Date(2026, 11, 10, 14, 0, 0, 0, goldenZone)
+	if _, err := e.TopicsSet(recID, clean, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no recording: %v", err)
+	}
+	putRecording(t, e, recID, attendedUpload(1, now, AttendanceParticipant), now)
+	if _, _, err := e.LiveAppend(recID, 0, []LiveSegment{{Start: 1, End: 2, Text: "a line"}}); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := e.TopicsSet(recID, clean, now); err != nil || !changed {
+		t.Fatalf("set: %v %v", changed, err)
+	}
+	if changed, err := e.TopicsSet(recID, clean, now.Add(time.Minute)); err != nil || changed {
+		t.Fatalf("the same again: %v %v", changed, err)
+	}
+	if _, err := e.TopicsSet(recID, append(clean, clean[1]), now); !errors.Is(err, ErrBadTopics) {
+		t.Fatalf("over a limit: %v", err)
+	}
+	l, _, _ := e.LiveRead(recID)
+	if len(l.Topics) != 2 || l.TopicsRev != 1 || !l.TopicsAt.Equal(now) {
+		t.Fatalf("after the same list again %+v", l)
+	}
+	if changed, err := e.TopicsSet(recID, nil, now.Add(time.Hour)); err != nil || !changed {
+		t.Fatalf("cleared: %v %v", changed, err)
+	}
+	if l, _, _ = e.LiveRead(recID); l.Topics != nil || l.TopicsRev != 2 || !l.TopicsAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("cleared %+v", l)
+	}
+	if want := [][]string{{PartLines}, {PartTopics}, {PartTopics}}; fmt.Sprint(heard) != fmt.Sprint(want) {
+		t.Fatalf("heard %v, want %v", heard, want)
+	}
+}
+
+// meeting_highlights_set (docs/assistant/meeting-minutes.md "Phase 2b: highlights"): CleanHighlights puts each text on
+// one line and each said_at as HH:MM, and refuses what breaks a limit, naming it, in the contract's order;
+// HighlightsSet resolves each minute against the live log in the batches' zone (the earliest start and the latest end
+// of the minute's lines, placeholders never counted; a minute the clock shows twice is its first occurrence), sorts
+// them by at (one minute's in the order given), changes nothing for the same resolved list and refuses a minute with no
+// line; a kept minute that gained a line is a change; only [] clears them. Their revision goes up with each change.
+func TestHighlightsSet(t *testing.T) {
+	clean, err := CleanHighlights([]HighlightSaid{{Text: " Keep\n the\tcap ", SaidAt: " [9:05] "}, {Text: strings.Repeat("字", MaxHighlightText), SaidAt: "[ 23:59 ]"}})
+	if err != nil || len(clean) != 2 || clean[0] != (HighlightSaid{Text: "Keep the cap", SaidAt: "09:05"}) || clean[1].SaidAt != "23:59" {
+		t.Fatalf("clean %+v %v", clean, err)
+	}
+	if none, err := CleanHighlights([]HighlightSaid{}); err != nil || none != nil {
+		t.Fatalf("none %+v %v", none, err)
+	}
+	four := make([]HighlightSaid, MaxHighlights)
+	for i := range four {
+		four[i] = HighlightSaid{Text: fmt.Sprint("point ", i), SaidAt: "0:00"}
+	}
+	if _, err := CleanHighlights(four); err != nil {
+		t.Fatalf("4 highlights: %v", err)
+	}
+	for name, c := range map[string]struct {
+		said []HighlightSaid
+		want string
+	}{
+		"5":                    {append(slices.Clone(four), HighlightSaid{Text: "x", SaidAt: "0:00"}), "invalid highlights: 5 highlights, over the 4 the meeting may have"},
+		"5, one malformed":     {append([]HighlightSaid{{Malformed: true}}, four...), "5 highlights, over the 4"},
+		"malformed":            {[]HighlightSaid{{Text: "a", SaidAt: "0:00"}, {Malformed: true}}, "highlight 2 is not an object with a string text and a string said_at"},
+		"no text":              {[]HighlightSaid{{Text: " \n ", SaidAt: "x"}}, "highlight 1 has no text"},
+		"long":                 {[]HighlightSaid{{Text: "a", SaidAt: "0:00"}, {Text: strings.Repeat("字", MaxHighlightText+1), SaidAt: "0:00"}}, "highlight 2's text is 81 characters, over the 80 a highlight may have"},
+		"an offset":            {[]HighlightSaid{{Text: "a", SaidAt: "1:02:03"}}, `highlight 1's said_at is "1:02:03", not the H:MM or HH:MM of a batch line`},
+		"hour 24":              {[]HighlightSaid{{Text: "a", SaidAt: "24:00"}}, `said_at is "24:00"`},
+		"minute 60":            {[]HighlightSaid{{Text: "a", SaidAt: "9:60"}}, `said_at is "9:60"`},
+		"three digits":         {[]HighlightSaid{{Text: "a", SaidAt: "009:05"}}, `said_at is "009:05"`},
+		"no minutes":           {[]HighlightSaid{{Text: "a", SaidAt: "9"}}, `said_at is "9"`},
+		"empty":                {[]HighlightSaid{{Text: "a", SaidAt: ""}}, `said_at is ""`},
+		"the text before time": {[]HighlightSaid{{Text: "", SaidAt: "25:99"}}, "highlight 1 has no text"},
+	} {
+		if _, err := CleanHighlights(c.said); !errors.Is(err, ErrBadHighlights) || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	e := goldenEngine(t, nil)
+	var heard [][]string
+	e.MeetingChanged = func(_ string, parts []string) { heard = append(heard, parts) }
+	now := time.Date(2026, 11, 10, 14, 0, 0, 0, goldenZone) // 06:00 in UTC
+	said := func(pairs ...string) []HighlightSaid {
+		var out []HighlightSaid
+		for i := 0; i < len(pairs); i += 2 {
+			out = append(out, HighlightSaid{Text: pairs[i], SaidAt: pairs[i+1]})
+		}
+		return out
+	}
+	if _, err := e.HighlightsSet(recID, said("a", "14:00"), goldenZone, now); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("no recording: %v", err)
+	}
+	putRecording(t, e, recID, attendedUpload(1, now, AttendanceParticipant), now)
+	if _, _, err := e.LiveAppend(recID, 0, []LiveSegment{
+		{Start: 1, End: 4, Text: "Ada: the cap stays."}, {Start: 0.5, End: 90, Text: ""}, {Start: 30, End: 50, Text: "Bo: for this release."},
+		{Start: 59.9, End: 61, Text: "Ada: agreed."}, {Start: 60, End: 62, Text: "Bo: next, hiring."}, {Start: 125, End: 128, Text: "Ada: who owns it?"},
+		{Start: 185, End: 186, Text: ""},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// In UTC, single-digit hours and brackets: sorted by at, the minute's first start and last end.
+	if changed, err := e.HighlightsSet(recID, said("Who owns hiring is open.", "[6:02]", "The cap stays\nfor this release.", " 06:00 ", "Hiring is next.", "6:01"),
+		time.UTC, now); err != nil || !changed {
+		t.Fatalf("set: %v %v", changed, err)
+	}
+	want := []LiveHighlight{{Text: "The cap stays for this release.", At: 1, End: 61}, {Text: "Hiring is next.", At: 60, End: 62}, {Text: "Who owns hiring is open.", At: 125, End: 128}}
+	l, _, _ := e.LiveRead(recID)
+	if !slices.Equal(l.Highlights, want) || l.HighlightsRev != 1 || !l.HighlightsAt.Equal(now) {
+		t.Fatalf("set %+v", l)
+	}
+	// The same list in the zone the recording's batches would be written in is the same resolved list: nothing changes.
+	if changed, err := e.HighlightsSet(recID, said("Hiring is next.", "14:01", "The cap stays for this release.", "14:00", "Who owns hiring is open.", "14:02"),
+		goldenZone, now.Add(time.Minute)); err != nil || changed {
+		t.Fatalf("the same again: %v %v", changed, err)
+	}
+	// A minute with no line (a placeholder's, one not said), or an over-limit list: refused, nothing changes.
+	for _, bad := range [][]HighlightSaid{said("a", "6:00", "b", "6:03"), said("a", "6:30"), append(said("a", "6:00"), four...)} {
+		if _, err := e.HighlightsSet(recID, bad, time.UTC, now.Add(time.Hour)); !errors.Is(err, ErrBadHighlights) {
+			t.Fatalf("%v: %v", bad, err)
+		}
+	}
+	if _, err := e.HighlightsSet(recID, said("a", "6:00", "b", "6:03"), time.UTC, now); err == nil ||
+		err.Error() != "invalid highlights: highlight 2's said_at 06:03 is not the minute of any line of the meeting so far" {
+		t.Fatalf("a minute with no line: %v", err)
+	}
+	if l, _, _ = e.LiveRead(recID); !slices.Equal(l.Highlights, want) || l.HighlightsRev != 1 || !l.HighlightsAt.Equal(now) {
+		t.Fatalf("after refused lists %+v", l)
+	}
+	// One minute's highlights keep the order given.
+	if changed, err := e.HighlightsSet(recID, said("Bo asks who hires.", "6:01", "Hiring is next.", "6:01", "The cap stays.", "6:00"), time.UTC, now); err != nil || !changed {
+		t.Fatalf("one minute twice: %v %v", changed, err)
+	}
+	if l, _, _ = e.LiveRead(recID); fmt.Sprint(l.Highlights) != "[{The cap stays. 1 61} {Bo asks who hires. 60 62} {Hiring is next. 60 62}]" || l.HighlightsRev != 2 {
+		t.Fatalf("one minute twice %+v", l.Highlights)
+	}
+	// A kept minute that gained a line has a later end: the same list is a change.
+	if _, _, err := e.LiveAppend(recID, 7, []LiveSegment{{Start: 58, End: 65, Text: "Bo: yes."}}); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := e.HighlightsSet(recID, said("Bo asks who hires.", "6:01", "Hiring is next.", "6:01", "The cap stays.", "6:00"), time.UTC, now); err != nil || !changed {
+		t.Fatalf("a grown minute: %v %v", changed, err)
+	}
+	if l, _, _ = e.LiveRead(recID); l.Highlights[0] != (LiveHighlight{Text: "The cap stays.", At: 1, End: 65}) || l.HighlightsRev != 3 {
+		t.Fatalf("a grown minute %+v", l)
+	}
+	// Only [] clears them; [] again changes nothing.
+	if changed, err := e.HighlightsSet(recID, []HighlightSaid{}, time.UTC, now.Add(time.Hour)); err != nil || !changed {
+		t.Fatalf("cleared: %v %v", changed, err)
+	}
+	if l, _, _ = e.LiveRead(recID); l.Highlights != nil || l.HighlightsRev != 4 || !l.HighlightsAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("cleared %+v", l)
+	}
+	if changed, err := e.HighlightsSet(recID, nil, time.UTC, now); err != nil || changed {
+		t.Fatalf("cleared again: %v %v", changed, err)
+	}
+	if want := [][]string{{PartLines}, {PartHighlights}, {PartHighlights}, {PartLines}, {PartHighlights}, {PartHighlights}}; fmt.Sprint(heard) != fmt.Sprint(want) {
+		t.Fatalf("heard %v, want %v", heard, want)
+	}
+
+	// When the clock goes back an hour, a minute it shows twice is its first occurrence.
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e = goldenEngine(t, nil)
+	start := time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC) // 01:30 EDT; at 06:00 UTC the clock goes back to 01:00 EST
+	putRecording(t, e, recID, attendedUpload(1, start, AttendanceParticipant), start)
+	if _, _, err := e.LiveAppend(recID, 0, []LiveSegment{{Start: 10, End: 20, Text: "first"}, {Start: 3610, End: 3620, Text: "an hour later"}}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := e.Store.Recording(recID); LiveClock(*r, 3610, ny) != "01:30" {
+		t.Fatalf("not a minute shown twice: %s", LiveClock(*r, 3610, ny))
+	}
+	if _, err := e.HighlightsSet(recID, said("The first.", "1:30"), ny, start); err != nil {
+		t.Fatal(err)
+	}
+	if l, _, _ = e.LiveRead(recID); !slices.Equal(l.Highlights, []LiveHighlight{{Text: "The first.", At: 10, End: 20}}) {
+		t.Fatalf("a minute shown twice %+v", l.Highlights)
 	}
 }

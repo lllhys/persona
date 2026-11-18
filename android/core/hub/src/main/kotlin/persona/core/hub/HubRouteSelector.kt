@@ -145,7 +145,7 @@ class HubRouteSelector internal constructor(
         if (centerEndpoints.isEmpty()) {
             val started = List(candidates.size) { CompletableDeferred<Unit>() }
             val failed = List(candidates.size) { CompletableDeferred<Unit>() }
-            val results = Channel<Result<HubRoute>>(Channel.UNLIMITED)
+            val results = Channel<Pair<Endpoint, Result<HubRoute>>>(Channel.UNLIMITED)
             val probes = candidates.mapIndexed { index, endpoint ->
                 launch {
                     if (index > 0) {
@@ -166,22 +166,17 @@ class HubRouteSelector internal constructor(
                     if (result.isFailure) failed[index].complete(Unit)
                     onProbeMeasured(endpoint, (clockMillis() - begin).coerceAtLeast(0), result)
                     onProbe(endpoint, result)
-                    results.send(result)
+                    results.send(endpoint to result)
                 }
             }
             try {
-                val failures = mutableListOf<HubFailure>()
+                val failures = mutableListOf<Pair<Endpoint, HubFailure>>()
                 repeat(candidates.size) {
-                    val result = results.receive()
+                    val (endpoint, result) = results.receive()
                     result.getOrNull()?.let { winner -> return@coroutineScope winner }
-                    failures += HubFailure.from(result.exceptionOrNull()!!)
+                    failures += endpoint to HubFailure.from(result.exceptionOrNull()!!)
                 }
-                // A pinned endpoint's mismatch says the most; a proxied address's certificate (#2622) only when no pinned one did.
-                throw failures.firstOrNull { it.kind == HubError.CertificateMismatch && it.code != PROXY_CERTIFICATE }
-                    ?: failures.firstOrNull { it.kind == HubError.HubMismatch }
-                    ?: failures.firstOrNull { it.kind == HubError.AccessRejected || it.kind == HubError.AccessRequired }
-                    ?: failures.firstOrNull { it.code == PROXY_CERTIFICATE }
-                    ?: failures.first()
+                throw worst(failures) ?: HubFailure(HubError.Unreachable)
             } finally {
                 probes.forEach { it.cancel() }
                 results.close()
@@ -211,7 +206,7 @@ class HubRouteSelector internal constructor(
             }
 
             try {
-                val failures = mutableListOf<HubFailure>()
+                val failures = mutableListOf<Pair<Endpoint, HubFailure>>()
                 var completedCount = 0
                 while (completedCount < candidates.size) {
                     val outcome = channel.receive()
@@ -236,7 +231,7 @@ class HubRouteSelector internal constructor(
                             }
                         }
                     } else {
-                        failures += HubFailure.from(result.exceptionOrNull()!!)
+                        failures += endpoint to HubFailure.from(result.exceptionOrNull()!!)
                         if (isCenter) {
                             centersLeft--
                             if (centersLeft == 0 && memberWinner != null) {
@@ -246,12 +241,7 @@ class HubRouteSelector internal constructor(
                     }
                 }
                 memberWinner?.let { return@coroutineScope it }
-                throw failures.firstOrNull { it.kind == HubError.CertificateMismatch && it.code != PROXY_CERTIFICATE }
-                    ?: failures.firstOrNull { it.kind == HubError.HubMismatch }
-                    ?: failures.firstOrNull { it.kind == HubError.AccessRejected || it.kind == HubError.AccessRequired }
-                    ?: failures.firstOrNull { it.code == PROXY_CERTIFICATE }
-                    ?: failures.firstOrNull()
-                    ?: HubFailure(HubError.Unreachable)
+                throw worst(failures) ?: HubFailure(HubError.Unreachable)
             } finally {
                 graceJob?.cancel()
                 probes.forEach { it.cancel() }
@@ -263,5 +253,34 @@ class HubRouteSelector internal constructor(
     companion object {
         /** How long a candidate has on its own before the next one starts; a configured value, not measured. */
         const val STEP_MILLIS = 1000L
+
+        /**
+         * The failure that says the most about why no candidate passed: a pinned endpoint's mismatch, then another hub
+         * answering, then Access, then a proxied address's certificate (#2622), else the first in probe order.
+         *
+         * A private address (LAN IPv4, ULA, link-local, `.local`) only names the hub on the network it was seen on. On
+         * any other network, at work or on a hotspot, the same address can be a different device, and its certificate
+         * or hub id says nothing about the hub. A mismatch there counts as that route being unreachable, retried like
+         * any network error, unless only private addresses were tried: then nothing else could say more.
+         */
+        internal fun worst(failures: List<Pair<Endpoint, HubFailure>>): HubFailure? {
+            if (failures.isEmpty()) return null
+            val onlyPrivate = failures.all { (endpoint, _) -> endpoint.isPrivate() }
+            val ranked = failures.map { (endpoint, failure) ->
+                if (onlyPrivate || !endpoint.isPrivate() || failure.code == PROXY_CERTIFICATE ||
+                    (failure.kind != HubError.CertificateMismatch && failure.kind != HubError.HubMismatch)) failure
+                else HubFailure(HubError.Unreachable, code = PRIVATE_ADDRESS_MISMATCH, detail = endpoint.url, cause = failure)
+            }
+            return ranked.firstOrNull { it.kind == HubError.CertificateMismatch && it.code != PROXY_CERTIFICATE }
+                ?: ranked.firstOrNull { it.kind == HubError.HubMismatch }
+                ?: ranked.firstOrNull { it.kind == HubError.AccessRejected || it.kind == HubError.AccessRequired }
+                ?: ranked.firstOrNull { it.code == PROXY_CERTIFICATE }
+                ?: ranked.first()
+        }
+
+        private fun Endpoint.isPrivate() = kind == "lan" || endpointKind(url) == "lan"
     }
 }
+
+/** A private address answered with another certificate or hub: likely a different device on this network. */
+const val PRIVATE_ADDRESS_MISMATCH = "private_address_mismatch"

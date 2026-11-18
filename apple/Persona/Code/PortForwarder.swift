@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import PersonaWire
 
 /// A machine's port on the phone's loopback (docs/operations/ports.md「Forwarding」), the way Moshi forwards a dev server: the app
 /// listens on 127.0.0.1 and ::1 at the same port number when it is free (another one when not), and each connection

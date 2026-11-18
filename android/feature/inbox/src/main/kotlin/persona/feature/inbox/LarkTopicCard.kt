@@ -53,7 +53,7 @@ internal object LarkTopicReplies {
 @Composable
 internal fun topicLine(m: LarkMessage): String {
     val text = m.parts.filterIsInstance<LarkPart.Text>().joinToString(" ") { it.text.replace('\n', ' ') }.trim()
-    if (text.isNotEmpty()) return LocalLarkMessageDisplay.current.summary(text)
+    if (text.isNotEmpty()) return text
     return when (val part = m.parts.firstOrNull()) {
         is LarkPart.Image, is LarkPart.Sticker -> stringResource(R.string.inbox_lark_topic_image)
         is LarkPart.File -> stringResource(R.string.inbox_lark_topic_file, part.name)
@@ -83,8 +83,7 @@ internal fun LarkTopicCard(
     onPlayVideo: ((String) -> Unit)? = null,
     onAddPin: ((LarkMessage) -> Unit)? = null,
 ) {
-    val display = LocalLarkMessageDisplay.current
-    val m = remember(original, display) { original.shown(display) }
+    val m = original
     val palette = PersonaTheme.palette
     val react = onReact.takeUnless { m.recalled }
     val picker = onOpenReactionPicker.takeUnless { m.recalled }
@@ -112,7 +111,7 @@ internal fun LarkTopicCard(
                 TopicFold(Modifier.combinedClickable(onClick = { if (canOpen) onThread() }, onLongClick = { menu = true })) {
                     Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
                         m.quote?.let { quote ->
-                            JNotice(if (quote.recalled) stringResource(R.string.inbox_lark_recalled) else display.summary(quote.text), title = quote.sender)
+                            JNotice(if (quote.recalled) stringResource(R.string.inbox_lark_recalled) else quote.text, title = quote.sender)
                         }
                         m.parts.forEach { part ->
                             LarkPartContent(part = if (m.recalled && part is LarkPart.Card) part.copy(messageId = null) else part,

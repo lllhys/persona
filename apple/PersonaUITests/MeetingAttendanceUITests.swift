@@ -181,9 +181,13 @@ final class MeetingAttendanceUITests: XCTestCase {
     /// Taking part with the hub's realtime voice (#5004; needs the mock with MOCK_VOICE=1): the answer goes to the voice
     /// extension's `speak` with the model of `plugin.voice` and the voice picked in Settings, and plays in that voice. When
     /// the extension refuses, the phone's on-device voice says it; an older extension without `speak` is never asked.
+    /// Speaking and Stop Speaking show only while an answer plays, and each wait here polls about once a second, so the
+    /// first answer is long and Stop Speaking ends it (#9225: a 3-second one could end before the button was read).
     @MainActor func testTakingPartTheAnswerIsSaidInTheRealtimeVoice() throws {
         let hub = try mockHub()
-        try voiceMock(hub, speak: "ok")
+        let seconds = try speakSeconds(hub)
+        addTeardownBlock { _ = try? Data(contentsOf: URL(string: hub + "/mock/voice2?speak=ok&speak_seconds=\(seconds)")!) }
+        try voiceMock(hub, speak: "ok", seconds: 30)
         try attendance(hub, on: true)
         // The voice picked in Settings › Extensions › the voice extension.
         var app = launch(hub, ["-tab", "settings", "-openExtension", "voice"])
@@ -205,8 +209,11 @@ final class MeetingAttendanceUITests: XCTestCase {
         XCTAssertEqual(asked["model"] as? String, "voice-deep", "the model of plugin.voice")
         let realtime = app.descendants(matching: .any)["meeting-speaking-realtime"].firstMatch
         XCTAssertTrue(realtime.waitForExistence(timeout: 15), "not said in the realtime voice:\n\(app.debugDescription)")
-        XCTAssertTrue(app.buttons["meeting-stop-speaking"].exists, "Stop Speaking while it plays")
+        let stop = app.buttons["meeting-stop-speaking"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5), "Stop Speaking while it plays:\n\(app.debugDescription)")
         try shot(app, "answered-realtime")
+        stop.tap()
+        XCTAssertTrue(waitFor(10) { !realtime.exists }, "Stop Speaking ends the answer")
 
         // The extension refuses (its service is down): the phone's own voice says the next answer.
         try voiceMock(hub, speak: "fail")
@@ -225,7 +232,6 @@ final class MeetingAttendanceUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["meeting-speaking-device"].firstMatch.waitForExistence(timeout: 15),
                       "the on-device voice did not say it:\n\(app.debugDescription)")
         XCTAssertEqual(try speaks(hub).count, older, "an extension without speak is never asked")
-        try voiceMock(hub, speak: "ok")
     }
 
     /// The answers so far with the newest being said (a made-up meeting, for the screenshot of it).
@@ -316,12 +322,20 @@ final class MeetingAttendanceUITests: XCTestCase {
         XCTAssertTrue(answer.waitForExistence(timeout: 25), app.debugDescription)
     }
 
-    /// The mock's voice extension (MOCK_VOICE): how its `speak` answers from now on (`ok`, `fail`, `slow`, `off`).
-    private func voiceMock(_ hub: String, speak mode: String) throws {
-        guard let data = try? Data(contentsOf: URL(string: hub + "/mock/voice2?speak=" + mode)!),
+    /// The mock's voice extension (MOCK_VOICE): how its `speak` answers from now on (`ok`, `fail`, `slow`, `off`) and, given
+    /// `seconds`, how long the audio it streams for an answer is.
+    private func voiceMock(_ hub: String, speak mode: String, seconds: Double? = nil) throws {
+        let query = "?speak=" + mode + (seconds.map { "&speak_seconds=\($0)" } ?? "")
+        guard let data = try? Data(contentsOf: URL(string: hub + "/mock/voice2" + query)!),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any], json["speak_mode"] as? String == mode else {
             throw XCTSkip("needs scripts/mock/mock_hub.py with MOCK_VOICE=1")
         }
+    }
+
+    /// How long the audio the mock's voice extension streams for an answer is now (`GET /mock/voice2` `speak_seconds`).
+    private func speakSeconds(_ hub: String) throws -> Double {
+        let data = try Data(contentsOf: URL(string: hub + "/mock/voice2")!)
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["speak_seconds"] as? Double ?? 3
     }
 
     /// What the app asked the mock's voice extension to say (`GET /mock/voice2` `speaks`), oldest first.

@@ -26,6 +26,16 @@ type PlanInfo struct {
 	At      time.Time `json:"at"`
 }
 
+// StartGoalMax is the longest goal a session.start carries (Claude Code 2.1.325 takes a /goal condition of at most 4000
+// characters; the rest of the margin is for older versions).
+const StartGoalMax = 2000
+
+// CodeStartGoalUnsupported: a session.start's goal (a Claude Code /goal typed after the first message is in,
+// docs/integrations/agent-goal.md "A goal set at the start") cannot be had there: a node too old for it, an agent
+// other than Claude Code, a resume, or a host that cannot type and read a screen. Nothing started; the caller may
+// start again without the goal.
+const CodeStartGoalUnsupported = "start_goal_unsupported"
+
 // A goal's statuses (Codex's thread_goals.status; Claude Code's goals are only active or complete).
 const (
 	GoalActive        = "active"

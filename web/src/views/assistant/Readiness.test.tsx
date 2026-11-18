@@ -150,6 +150,29 @@ describe("the main conversation's readiness", () => {
     expect(host.textContent).not.toContain("今天我有哪些会");
   });
 
+  it("shows how to sign in the CLI, not the desktop app, for a signed-out Claude Code (#9366)", async () => {
+    readiness = {
+      ...setup,
+      next: "model",
+      machine: { id: "m1", name: "小林的 MacBook" },
+      steps: [
+        { id: "computer", state: "ok", machine: "m1" },
+        { id: "claude", state: "ok" },
+        { id: "model", state: "problem", code: "not_logged_in", machine: "m1", launcher: "claude", title: "Claude Code 命令行还没登录",
+          detail: "主对话用的是 Claude Code 命令行，Claude 桌面版登录了也不算。", action: { id: "connect_model" }, alt_actions: [{ id: "login_claude" }] },
+        { id: "first_message", state: "problem", code: "not_logged_in" },
+      ],
+    };
+    await render();
+    expect(host.querySelector('[data-testid="readiness-card"]')?.textContent).toContain("Claude 桌面版登录了也不算");
+    const how = [...host.querySelectorAll("button")].find((b) => b.textContent === actionLabel("login_claude"));
+    expect(how).toBeTruthy();
+    act(() => how!.click());
+    const dialog = document.body.querySelector('[role="dialog"]')?.textContent ?? "";
+    expect(dialog).toContain("Persona 用的是 小林的 MacBook 上的 Claude Code 命令行，Claude 桌面版登录了也不算");
+    expect(dialog).toContain("claude auth login");
+  });
+
   it("points the model help at a waiting computer, not at adding another", async () => {
     readiness = {
       ...setup,

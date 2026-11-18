@@ -36,16 +36,19 @@ final class IPadLayoutTests: XCTestCase {
             let window = app.windows.firstMatch.frame
             // Native: the window is the screen, not a phone-sized box in the middle.
             XCTAssertGreaterThan(window.width, 700, "\(name): window \(window)")
-            // The list column is wider than the system's narrow sidebar, and the detail column keeps most of the rest.
-            let search = app.searchFields.firstMatch
-            XCTAssertTrue(search.waitForExistence(timeout: 5))
-            XCTAssertGreaterThanOrEqual(search.frame.maxX, 330, "\(name): sidebar too narrow (\(search.frame))")
-            XCTAssertGreaterThan(empty.frame.minX, search.frame.maxX, "\(name): the detail column is beside the list")
+            // The column (the Agents tab's part of the one sidebar, #4206) is wider than the system's narrow sidebar, and
+            // the detail column keeps most of the rest.
+            let column = app.descendants(matching: .any)["unified-sidebar"].firstMatch
+            XCTAssertTrue(column.waitForExistence(timeout: 5), "\(name): no column:\n\(app.debugDescription)")
+            XCTAssertGreaterThanOrEqual(column.frame.maxX, 330, "\(name): sidebar too narrow (\(column.frame))")
+            XCTAssertGreaterThan(empty.frame.minX, column.frame.maxX - 1, "\(name): the detail column is beside the list")
             shot("agents-\(name)")
-            // A chat opens beside the list.
-            app.buttons.matching(identifier: "agents.row").firstMatch.tap()
+            // A chat opens beside the list (the rows below the Needs You cards: scrolled to, the list builds them lazily).
+            let row = app.buttons.matching(identifier: "agents.row").firstMatch
+            for _ in 0..<8 where !(row.exists && row.isHittable) { column.swipeUp(velocity: .slow) }
+            row.tap()
             XCTAssertTrue(empty.waitForNonExistence(timeout: 10), "\(name): the chat did not open in the detail column")
-            XCTAssertTrue(search.exists, "\(name): the list went away when the chat opened")
+            XCTAssertTrue(column.exists, "\(name): the list went away when the chat opened")
             shot("chat-\(name)")
             // TEST_RUNNER_PERSONA_HOLD=<seconds>: stay on each page so `simctl io screenshot` can take it (XCUITest's own
             // screenshot comes out turned in landscape).
@@ -71,13 +74,13 @@ final class IPadLayoutTests: XCTestCase {
         func card(_ name: String) -> XCUIElement { app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name + "、")).firstMatch }
         let nas = card("NAS"), server = card("服务器")
         XCTAssertTrue(server.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(app.searchFields.firstMatch.exists, "the Agents list stays in its column")
+        XCTAssertTrue(app.descendants(matching: .any)["unified-sidebar"].firstMatch.exists, "the Agents list stays in its column")
         XCTAssertEqual(nas.frame.minY, server.frame.minY, accuracy: 2, "the first two cards side by side")
         XCTAssertLessThan(nas.frame.minX, server.frame.minX, "the offline NAS first")
         shot("machines")
         server.tap()
         XCTAssertTrue(app.descendants(matching: .any)["metric-range"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(app.searchFields.firstMatch.exists, "still split")
+        XCTAssertTrue(app.descendants(matching: .any)["unified-sidebar"].firstMatch.exists, "still split")
         sleep(1)
         shot("machine")
     }
@@ -107,7 +110,8 @@ final class IPadLayoutTests: XCTestCase {
             let right = app.windows.firstMatch.frame.width - 40
             XCTAssertTrue(near(color(right, 2), color(right, 400)), "\(style): the strip above the detail changed")
             // Close the column: what is at the top there is the detail's color again, as below it.
-            let toggle = app.buttons.matching(NSPredicate(format: "label IN %@", ["隐藏边栏", "Hide Sidebar", "边栏", "Sidebar"])).firstMatch
+            // The column's own Hide Sidebar since the finger's slide (#4206), where the system's was.
+            let toggle = app.buttons.matching(NSPredicate(format: "identifier IN %@ OR label IN %@", ["sidebar-fold-column", "split-hide-list"], ["隐藏边栏", "Hide Sidebar", "边栏", "Sidebar"])).firstMatch
             XCTAssertTrue(toggle.exists, "no sidebar button:\n\(app.debugDescription)")
             toggle.tap()
             sleep(1)

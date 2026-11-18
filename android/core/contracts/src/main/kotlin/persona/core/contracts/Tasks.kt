@@ -46,6 +46,8 @@ data class TaskPlan(
     @WireEnum("open", "started", "dismissed", "unknown")
     val state: String = "unknown",
     @WireTime @SerialName("created_at") val createdAt: String? = null,
+    /** The rule an open plan suggests after three Starts of its kind (#4929): the hub fills it in on every read; null otherwise. */
+    val suggestion: RuleSuggestion? = null,
 )
 
 /** A message card's reply that went out: when, and what it said. */
@@ -152,6 +154,8 @@ data class Todo(
     @SerialName("done_by") val doneBy: String? = null,
     @SerialName("done_reason") val doneReason: String? = null,
     @WireTime @SerialName("reopened_at") val reopenedAt: String? = null,
+    /** When the owner last looked at it in Just finished: Got it, or opening it (#5707); one seen since it got there is Done. */
+    @WireTime @SerialName("seen_at") val seenAt: String? = null,
     /** Why the task's agent did not start (#1077): the hub ended the todo with it; "Retry" clears it (#1396). */
     @SerialName("start_error") val startError: String? = null,
     /** Opened from the main conversation while "Notify main-chat tasks only in the main chat" was on (#1731): not in the to-dos badge. */
@@ -178,6 +182,9 @@ data class Todo(
     val priority: String? = null,
     /** The owner's current acceptance round; always submit its captured askedAt. */
     val ask: TodoAsk? = null,
+    /** An open task whose latest review waits on the owner: that review's time, and the owner's Don't handle for exactly
+     *  that review (web #4874, docs/protocol/protocol.md `GET /api/v1/todos`); null otherwise and from an older hub. */
+    @SerialName("decision_review") val decisionReview: DecisionReview? = null,
     @SerialName("pr_url") val prUrl: String? = null,
     @WireTime @SerialName("cancelled_at") val cancelledAt: String? = null,
     /** The manager it belongs to, as the merged list stamps it (docs/assistant/managers.md "Ownership"); null: the default manager's. */
@@ -185,6 +192,8 @@ data class Todo(
     /** Nobody is working on it (#3618): every agent of this open to-do is gone and nothing brings one back; null otherwise
      *  and from an older hub. */
     val orphaned: TodoOrphaned? = null,
+    /** Empty for an ordinary to-do or task; "concern" for one of the owner's concerns. Unknown values stay ordinary. */
+    val kind: String = "",
 ) {
     val isDone: Boolean get() = doneAt != null
     val activeAgents get() = agents.filter { it.releasedAt == null }
@@ -240,8 +249,18 @@ data class TodoOrphaned(val reason: String? = null, @WireTime val since: String?
  * owner can answer") also carries what is to be decided ([question]), why only the owner can ([whyOwner]), its
  * [options] with the recommended one first, where the task came from and stands in one line ([background]), what waiting
  * costs, whether the recommendation is taken at [deadline] ([default] "taken") or never ("never"), the fixed answers the
- * hub takes ([responses]) and the one already given while it still waits ([response]). All absent from an older hub.
+ * hub takes ([responses]) and the one already given while it still waits ([response]). A decision that can wait is held
+ * for the next briefing, with nothing pushed for it, while [forBriefing] (#4930, "Decisions that can wait"); one the owner
+ * gave the same go-ahead for three times carries the rule it suggests ([suggestion], #4929). All absent from an older hub.
  */
+/** A task's review decision as the hub tracks it (#4874): [reviewAt] is the latest review's `at`, [dismissalId] set while
+ *  the owner chose Don't handle for that review; a new review restores it. */
+@Serializable
+data class DecisionReview(
+    @WireTime @SerialName("review_at") val reviewAt: String? = null,
+    @SerialName("dismissal_id") val dismissalId: String? = null,
+)
+
 @Serializable
 data class TodoAsk(
     val outcome: String? = null,
@@ -257,6 +276,8 @@ data class TodoAsk(
     val default: String? = null,
     val responses: List<String>? = null,
     val response: String? = null,
+    @SerialName("for_briefing") val forBriefing: Boolean = false,
+    val suggestion: RuleSuggestion? = null,
 )
 
 /** One option of a decision: its [label], which is the answer, and what choosing it leads to. */
@@ -325,6 +346,8 @@ data class Supervision(
     val round: Int = 0,
     val reviews: List<TaskReview> = emptyList(),
     @WireTime @SerialName("updated_at") val updatedAt: String? = null,
+    /** When the task entered `pending_review`; null in every other state, and from an older hub. */
+    @WireTime @SerialName("pending_since") val pendingSince: String? = null,
     /** The agent's explicit report; missing counts never imply a percentage. */
     val progress: TaskProgress? = null,
 )

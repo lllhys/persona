@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The permission mode at the end of the Agents header's second row (#3719): how each mode is drawn, which agents show
 /// one, what can be picked, and which switches ask first.
@@ -26,6 +27,20 @@ struct HeaderModeTests {
     @Test func anUnknownModeIsNeverDrawnAsAskFirst() {
         #expect(SessionModes.headerLook(nil) == .init(symbol: Theme.Icon.permissions, tone: .unknown))
         #expect(SessionModes.headerLook("dontAsk") == .init(symbol: Theme.Icon.permissions, tone: .unknown))
+    }
+
+    /// The mode menus' title and the mode buttons' accessibility label (#5596): the mode when the agent reported one, else
+    /// just "Permission Mode", as the capsule says it, never "Permission Mode: Unknown".
+    @Test func anUnknownModeIsNamedWithoutAValue() throws {
+        let plain = String(localized: "Permission Mode")
+        #expect(SessionModes.modeHeading(nil) == plain)
+        #expect(SessionModes.modeHeading("") == plain)
+        #expect(!SessionModes.modeHeading(nil).contains(SessionModes.unknown))
+        let ask = try #require(SessionModes.mode("default"))
+        #expect(SessionModes.modeHeading("default") == String(localized: "Permission Mode: \(ask.title)"))
+        #expect(SessionModes.modeHeading("default") != plain && SessionModes.modeHeading("default").contains(ask.title))
+        // A mode this app does not list (a newer Claude Code's, a Codex policy) is named as it came.
+        #expect(SessionModes.modeHeading("dontAsk") == String(localized: "Permission Mode: \("dontAsk")"))
     }
 
     @Test func claudeShowsItsModeEvenBeforeItReportsOne() throws {

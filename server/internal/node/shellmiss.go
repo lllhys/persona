@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/nwverse/persona/server/internal/host"
 	"github.com/nwverse/persona/server/internal/lazyre"
@@ -78,14 +79,82 @@ var shellMissLines = []struct {
 var shellMissWords = []string{"not found", "No such file", "no such file", "ermission denied", "Unknown command",
 	"bad interpreter", "not executable"}
 
-// mayHaveShellMiss: the screen has a word of a shell's not-found line.
+// mayHaveShellMiss: the screen has a word of a shell's not-found line, or a line a shell prefixed with its name, which
+// is how a not-found line in another language starts (localShellMiss).
 func mayHaveShellMiss(screen string) bool {
 	for _, w := range shellMissWords {
 		if strings.Contains(screen, w) {
 			return true
 		}
 	}
+	for _, l := range strings.Split(screen, "\n") {
+		if prefix, _, ok := cutShellPrefix(l); ok && shellPrefix(prefix) != "" {
+			return true
+		}
+	}
 	return false
+}
+
+// cutShellPrefix splits a line at its first colon, ASCII or full-width: the prefix a shell puts before its own lines.
+func cutShellPrefix(line string) (prefix, rest string, ok bool) {
+	line = strings.TrimSpace(line)
+	i := strings.IndexAny(line, ":：")
+	if i <= 0 {
+		return "", "", false
+	}
+	_, size := utf8.DecodeRuneInString(line[i:])
+	return line[:i], line[i+size:], true
+}
+
+// shellPrefix is the shell a line's prefix names ("bash", "-bash", "/bin/bash", "zsh"), "" when it names none.
+func shellPrefix(prefix string) string {
+	shell := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(prefix), "-"), ".exe")
+	if strings.ContainsAny(prefix, " \t") || !shellProgram(shell) && shell != "mksh" {
+		return ""
+	}
+	return shell
+}
+
+// localShellMiss reads line as a shell's not-found line in another language, for a command known names (the start's
+// own: its program, claude, the start file). bash translates its messages with gettext and glibc its errors, so the
+// same line reads "bash: 行 1: cc: 未找到命令" (zh_CN), "bash: Zeile 1: cc: Kommando nicht gefunden" (de),
+// "bash: ligne 1 : exec: cc : non trouvé" (fr) or "bash: /opt/p/personad: 没有那个文件或目录": no table of wordings
+// can keep up, so the line is read by its shape. It starts with a shell's name or the start file, then colon-separated
+// parts (ASCII or full-width), one of which is a known command and another the shell's words. A line of Claude's output
+// quoting one does not start with a shell's name. The kind cannot be read from the words: a path is taken as not there.
+func localShellMiss(line string, known func(string) bool, startFile string) (shellMiss, bool) {
+	line = strings.TrimSpace(line)
+	if len(line) > 512 {
+		return shellMiss{}, false
+	}
+	prefix, rest, ok := cutShellPrefix(line)
+	if !ok {
+		return shellMiss{}, false
+	}
+	shell := shellPrefix(prefix)
+	if shell == "" && (startFile == "" || prefix != startFile) {
+		return shellMiss{}, false
+	}
+	parts := strings.FieldsFunc(rest, func(r rune) bool { return r == ':' || r == '：' })
+	word, others := "", 0
+	for _, part := range parts {
+		part = strings.Trim(strings.TrimSpace(part), "'\"‘’“”「」")
+		switch {
+		case part == "":
+		case word == "" && known(part):
+			word = part
+		default:
+			others++
+		}
+	}
+	if word == "" || others == 0 {
+		return shellMiss{}, false
+	}
+	kind := missNotFound
+	if strings.Contains(word, "/") {
+		kind = missNoSuchFile
+	}
+	return shellMiss{Word: word, Kind: kind, Shell: shell, Line: line}, true
 }
 
 // parseShellMiss reads line as a shell's not-found line: the whole line must be one (a line of Claude's output that
@@ -128,8 +197,9 @@ var fishTrace = lazyre.New(`^\s*(?:in function '[^']*' with arguments '|with par
 
 // shellMisses are the not-found lines of screen after its first line holding anchor (the session id the start typed):
 // what came before it, an adopted pane's older scrollback, is not this start's. fish's backtrace holds the anchor too
-// but is no echo of the command: it does not move the last one.
-func shellMisses(screen, anchor string) []shellMissAt {
+// but is no echo of the command: it does not move the last one. A line in another language counts when it names a
+// command known has (localShellMiss); known nil reads English lines only.
+func shellMisses(screen, anchor string, known func(string) bool, startFile string) []shellMissAt {
 	if anchor == "" {
 		return nil
 	}
@@ -155,6 +225,10 @@ func shellMisses(screen, anchor string) []shellMissAt {
 		}
 		if m, ok := parseShellMiss(lines[i]); ok {
 			out = append(out, shellMissAt{m, i > last})
+		} else if known != nil {
+			if m, ok := localShellMiss(lines[i], known, startFile); ok {
+				out = append(out, shellMissAt{m, i > last})
+			}
 		}
 	}
 	return out
@@ -173,6 +247,9 @@ type startProbe struct {
 	// startFile is the start file the typed line sources ("" when the command was typed out), firstWord the typed
 	// line's first word: the shell answering for either one did not take the line itself (rejects, #2570).
 	startFile, firstWord string
+	// acceptBypass: the start asked Claude for bypass itself (--permission-mode bypassPermissions, or a plan that goes on
+	// in bypass), the user's choice in Persona, so waitReady accepts Claude Code's Bypass Permissions confirmation.
+	acceptBypass bool
 }
 
 // typed has the probe know the line a start typed (typedStart): the start file it sources and its first word.
@@ -208,6 +285,18 @@ func (p *startProbe) rejects(m shellMissAt) bool {
 	return p.firstWord != "" && m.Word != "" && len(m.Word) < len(p.firstWord) && strings.HasSuffix(p.firstWord, m.Word)
 }
 
+// knows: word is a command the start's own line runs, which only that line's not-found line names in another language:
+// the start's program, claude, the start file, or a tail of the typed line's first word (rejects).
+func (p *startProbe) knows(word string) bool {
+	switch {
+	case word == p.program, filepath.Base(word) == "claude":
+		return true
+	case p.startFile != "" && word == p.startFile:
+		return true
+	}
+	return p.firstWord != "" && len(word) < len(p.firstWord) && strings.HasSuffix(p.firstWord, word)
+}
+
 // shellParseErrors are a shell's lines for a typed line it could not parse (zsh, bash, fish), and shellContinuation the
 // prompt of one that waits for a quote to close (zsh's quote> / dquote>): what is left of a start line whose head was
 // eaten.
@@ -218,12 +307,25 @@ var (
 		lazyre.New(`^fish: Unexpected end of string, quotes are not balanced$`),
 	}
 	shellContinuation = lazyre.New(`^(?:[a-z]+ )*(?:quote|dquote|bquote)>\s*$`)
+	// PowerShell 5.1 prints CategoryInfo ... ParserError; PowerShell 7 starts with ParserError and prints
+	// Unexpected token details. An unterminated string likewise carries ParserError / TerminatorExpectedAtEndOfString.
+	powerShellParseError = lazyre.New(`^(?:ParserError:|.*:\s*ParserError:|.*\bUnexpected token\b)`)
 )
 
-// mayBeRejected: the screen has a word of a shell's parse error or ends on a continuation prompt.
+// mayBeRejected: the screen has a word of a POSIX shell's parse error or ends on a continuation prompt.
 func mayBeRejected(screen string) bool {
 	return strings.Contains(screen, "parse error") || strings.Contains(screen, "syntax error") ||
 		strings.Contains(screen, "quotes are not balanced") || shellContinuation.MatchString(lastLine(screen))
+}
+
+// mayBeRejected adds PowerShell's words only for a start that actually typed the PowerShell handoff. In particular,
+// JavaScript's ordinary "Unexpected token" output cannot cause an extra full-screen read for a POSIX start.
+func (p *startProbe) mayBeRejected(screen string) bool {
+	if mayBeRejected(screen) {
+		return true
+	}
+	return p != nil && p.firstWord == "&" &&
+		(strings.Contains(screen, "ParserError") || strings.Contains(screen, "Unexpected token"))
 }
 
 // rejectedLine is the line of screen saying the shell did not take the start's typed line as it was: a parse error
@@ -233,21 +335,32 @@ func (p *startProbe) rejectedLine(screen string) string {
 		return ""
 	}
 	lines := strings.Split(strings.ReplaceAll(screen, "\r\n", "\n"), "\n")
-	last := -1
+	first, last := -1, -1
 	for i, l := range lines {
 		if strings.Contains(l, p.anchor) && !fishTrace.MatchString(l) {
+			if first < 0 {
+				first = i
+			}
 			last = i
 		}
 	}
 	if last < 0 {
 		return ""
 	}
-	for _, l := range lines[last+1:] {
+	from := last + 1
+	if p.firstWord == "&" {
+		// PowerShell repeats the typed command inside its parser-error block, so its error can precede the last anchor.
+		from = first + 1
+	}
+	for _, l := range lines[from:] {
 		l = strings.TrimSpace(l)
 		for _, re := range shellParseErrors {
 			if re.MatchString(l) {
 				return l
 			}
+		}
+		if p.firstWord == "&" && powerShellParseError.MatchString(l) {
+			return l
 		}
 	}
 	if l := lastLine(screen); shellContinuation.MatchString(l) {
@@ -293,7 +406,7 @@ func (n *Node) launcherListed(ctx context.Context, name string) bool {
 // line after the command, for the timeout to name. shellBack says the tab's shell is back in front (or that the host
 // cannot tell): a missing claude ends the start only then, since a launcher may go on after its first try.
 func (p *startProbe) verdict(screen string, shellBack func() bool) (refused error, other string) {
-	for _, m := range shellMisses(screen, p.anchor) {
+	for _, m := range shellMisses(screen, p.anchor, p.knows, p.startFile) {
 		switch {
 		case p.rejects(m):
 			return &startLineRejected{line: m.Line}, ""

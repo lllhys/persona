@@ -14,7 +14,7 @@ struct InboxActionBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            if let s = item.summary, !s.isEmpty {
+            if let s = item.lineSummary, !s.isEmpty {
                 (Text(Image(systemName: Theme.Icon.ai)).foregroundStyle(Theme.ai) + Text(" " + s))
                     .font(Theme.Font.secondary)
                     .lineLimit(3)
@@ -33,7 +33,9 @@ struct InboxActionBar: View {
                         openURL(url)
                     }
                 }
-                action(String(localized: "Hand to AI"), symbol: Theme.Icon.handToAI, prominent: false, perform: handOff)
+                if !item.isAssistantRow { // the row already is the assistant's own chat
+                    action(String(localized: "Hand to AI"), symbol: Theme.Icon.handToAI, prominent: false, perform: handOff)
+                }
             }
         }
         .padding(.horizontal, Theme.Space.l)
@@ -145,7 +147,7 @@ struct InboxDraftSheet: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                SheetClose { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { Task { await send() } } label: {
                         Text("Send").lineLimit(1)
@@ -267,6 +269,10 @@ struct InboxHandOffSheet: View {
     @State private var lastTarget: InboxHandOffModel.Target?
     /// That was an Agent that has ended: the main chat stands in, and the section says so.
     @State private var lastGone = false
+    /// New Agent… (#5933): New Agent's page, prefilled with the item and the instructions.
+    @State private var newAgent: InboxHandOffModel.NewAgentPrefill?
+    /// The Agent that page started, handled once the page has gone (`finishNewAgent`).
+    @State private var startedAgent: (key: SessionKey, prefill: InboxHandOffModel.NewAgentPrefill)?
 
     init(item: InboxItem) {
         self.item = item
@@ -319,17 +325,18 @@ struct InboxHandOffSheet: View {
                     }
                 }
                 Section {
-                    Picker("Hand To", selection: $handOff.target) {
+                    Picker("Hand To", selection: pick) {
                         HStack(spacing: Theme.Space.s) {
                             Label("Persona (Main Chat)", systemImage: Theme.Icon.persona).lineLimit(1)
                             lastTimeMark(.main)
                         }
-                        .tag(InboxHandOffModel.Target.main)
+                        .tag(Optional(InboxHandOffModel.Target.main))
                         HStack(spacing: Theme.Space.s) {
                             Label("Persona (New Chat)", systemImage: Theme.Icon.ai).lineLimit(1)
                             lastTimeMark(.newChat)
                         }
-                        .tag(InboxHandOffModel.Target.newChat)
+                        .tag(Optional(InboxHandOffModel.Target.newChat))
+                        newAgentRow.tag(InboxHandOffModel.Target?.none)
                         ForEach(agents) { s in
                             HStack(spacing: Theme.Space.s) {
                                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
@@ -338,7 +345,7 @@ struct InboxHandOffSheet: View {
                                 }
                                 lastTimeMark(.agent(s.key))
                             }
-                            .tag(InboxHandOffModel.Target.agent(s.key))
+                            .tag(Optional(InboxHandOffModel.Target.agent(s.key)))
                         }
                     }
                     .pickerStyle(.inline)
@@ -363,10 +370,36 @@ struct InboxHandOffSheet: View {
                 lastTarget = r.lastTime ? r.target : nil
                 lastGone = r.gone
             }
+            .sheet(item: $newAgent, onDismiss: finishNewAgent) { p in
+                NewChatView(initialPrompt: p.prompt, contextBlock: p.contextBlock, forwarded: [p.card], forwardedIcon: Theme.Icon.inbox,
+                            nameHint: p.nameHint, onlyGroup: p.group, onFirstMessage: { s, message in
+                    handOff.newAgentFirstMessage(message, for: s.key)
+                }) { s in
+                    startedAgent = (s.key, p)
+                    newAgent = nil
+                }
+                #if os(macOS)
+                .macSheet()
+                #endif
+            }
+            #if DEBUG
+            // `-showHandOffNewAgent YES`: New Agent… picked (screenshots). `-showHandOffNewAgent <machine>/<session>`: then,
+            // a few seconds later, that listed session taken as the one New Agent started, so the Mac's close-then-open runs
+            // through the real sheets without the screen (`-macSnapshot`).
+            .task {
+                guard let picked = UserDefaults.standard.string(forKey: "showHandOffNewAgent") else { return }
+                openNewAgent()
+                guard let key = SessionKey(path: picked) else { return }
+                try? await Task.sleep(for: .seconds(4))
+                guard let p = newAgent else { return }
+                startedAgent = (key, p)
+                newAgent = nil
+            }
+            #endif
             .navigationTitle("Hand to AI")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                SheetClose { dismiss() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button { Task { await send() } } label: {
                         if handOff.sending { ProgressView() } else { Text("Send").lineLimit(1) }
@@ -375,6 +408,7 @@ struct InboxHandOffSheet: View {
                 }
             }
         }
+        .onDisappear { handOff.closed() }
     }
 
     private func send() async {
@@ -382,7 +416,66 @@ struct InboxHandOffSheet: View {
         guard await handOff.send(ask: ask.isEmpty ? Self.presets[0] : ask) else { return }
         if let key = InboxHandOffMemory.key(item) { memory.remember(key, target: handOff.target) }
         Haptics.success()
+        #if os(macOS)
+        // The sheet closes first and `onDisappear` opens where it went: opening first left the sheet up for good (#5921).
+        handOff.openWhenClosed()
+        #else
+        handOff.open() // the tab changes under the sheet as it slides away
+        #endif
+        dismiss()
+    }
+
+    /// The picker's choice. New Agent… (nil) is never the choice: it opens New Agent's page and leaves the choice as it was.
+    private var pick: Binding<InboxHandOffModel.Target?> {
+        Binding(get: { handOff.target }, set: { picked in
+            if let picked { handOff.target = picked } else { openNewAgent() }
+        })
+    }
+
+    /// New Agent… (#5933), first of the Agents, there even with none running.
+    private var newAgentRow: some View {
+        HStack(spacing: Theme.Space.s) {
+            Label {
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    Text("New Agent…").lineLimit(1)
+                    Text("Pick a computer, folder and model").font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+                }
+            } icon: { ThemedIcon(Theme.Icon.add) }
+            if handOff.preparing {
+                Spacer()
+                ProgressView()
+            }
+        }
+        .accessibilityIdentifier("handoff-new-agent")
+    }
+
+    /// New Agent's page over this sheet, with the item and the instructions (the first ask when empty). Nothing is sent
+    /// before Start there; Cancel comes back here with everything as it was.
+    private func openNewAgent() {
+        guard !handOff.sending else { return }
+        let ask = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task { newAgent = await handOff.newAgent(ask: ask.isEmpty ? Self.presets[0] : ask, group: model.hubGroup) }
+    }
+
+    /// New Agent's page has gone: when it started an Agent, carry on from there. This sheet closes only once that one is
+    /// down, one sheet at a time, as the Mac needs (a sheet left up while the window moved stayed stuck, #5921).
+    private func finishNewAgent() {
+        guard let s = startedAgent else { return }
+        startedAgent = nil
+        started(s.key, prefill: s.prefill)
+    }
+
+    /// The Agent New Agent's page started: this source remembers it (not New Agent…), the item is filed when asked, and
+    /// the Agent opens.
+    private func started(_ key: SessionKey, prefill: InboxHandOffModel.NewAgentPrefill) {
+        memory.rememberStarted(item, agent: key)
+        handOff.started(key, markDone: prefill.markDone)
+        Haptics.success()
+        #if os(macOS)
+        handOff.openWhenClosed() // as `send()`: the Agent opens once this sheet has closed (#5921)
+        #else
         handOff.open()
+        #endif
         dismiss()
     }
 

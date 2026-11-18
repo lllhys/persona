@@ -59,7 +59,8 @@ class AssistantDetailsShotsTest {
     private class Hub(val main: SessionKey) : AssistantRepository, MessageSender, MainConversationSender {
         override val assistant = MutableStateFlow(AssistantSnapshot(mainSession = main, conversations = listOf(
             Session(machineId = "mac", sessionId = "main", title = "Main chat", assistant = true),
-            Session(machineId = "mac", sessionId = "side", title = "Trip plan", assistant = true, status = "working"),
+            Session(machineId = "mac", sessionId = "side", title = "Trip plan", assistant = true, status = "working",
+                launcher = "claude", model = "anthropic/claude-opus-4-5"),
         )))
         override val outbox = MutableStateFlow(emptyList<OutboxMessage>())
         var gate = CompletableDeferred<Unit>()
@@ -127,6 +128,8 @@ class AssistantDetailsShotsTest {
             rule.onNodeWithText("chat:side").assertExists()
             rule.onNodeWithText("Persona").performClick()
             capture("$name-1-menu", dialog = true)
+            // iOS's heading names the conversation and what it runs on, in every style
+            rule.onNodeWithText("Trip plan · claude · Opus 4.5").assertExists()
             rule.onNodeWithText("Copy info").assertExists()
             rule.onNodeWithText("Copy directory").performClick(); rule.waitForIdle()
 

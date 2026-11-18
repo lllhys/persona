@@ -26,9 +26,7 @@ struct GlassesCaptureSheet: View {
             .navigationTitle("Glasses Photo")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }.lineLimit(1)
-                }
+                SheetClose { dismiss() }
             }
             .task(id: glasses.registered) {
                 guard glasses.registered else {

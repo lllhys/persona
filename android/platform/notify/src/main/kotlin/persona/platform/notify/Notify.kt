@@ -98,6 +98,7 @@ internal interface NotifyDependencies {
     fun actionJournal(): NotificationActionJournal
     fun journal(): ExitJournal
     fun runtime(): NotificationRuntime
+    fun extensionNotifications(): ExtensionNotificationEnvironment
 }
 
 @Singleton

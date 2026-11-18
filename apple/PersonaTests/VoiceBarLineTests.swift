@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The voice bar's words and buttons (docs/assistant/voice.md 6.2, 1.3; 6.10「VoiceBarLine 的各种相位」): what the bound
 /// conversation does, what needs the user, why an instruction did not go and what can be done, and the first line's
@@ -25,10 +26,10 @@ struct VoiceBarLineTests {
     }
 
     private static func line(_ runs: [VoiceRun] = [], session: Session? = session(), cards: [Interaction] = [], link: VoiceLink = .live,
-                             muted: Bool = false, asking: String? = nil, notice: VoiceFailure? = nil,
+                             muted: Bool = false, held: Bool = false, asking: String? = nil, notice: VoiceFailure? = nil,
                              dismissed: Set<String> = [], resendable: Set<String> = []) -> VoiceBarLine {
-        VoiceBarLine.make(phase: .live(.listening), link: link, runs: runs, session: session, cards: cards, muted: muted, asking: asking,
-                          notice: notice, label: "Claude", dismissed: dismissed, resendable: resendable)
+        VoiceBarLine.make(phase: .live(.listening), link: link, runs: runs, session: session, cards: cards, muted: muted, held: held,
+                          asking: asking, notice: notice, label: "Claude", dismissed: dismissed, resendable: resendable)
     }
 
     @Test func nothingGoingOnSaysWhereWordsGo() {
@@ -111,12 +112,36 @@ struct VoiceBarLineTests {
     }
 
     @Test func refusalsThatCannotGoAgainOnlyGoAway() {
-        for code in ["unprompted", "on_screen", "empty", "open_elsewhere", "engine_missing", "runtime_away"] {
+        for code in ["on_screen", "empty", "open_elsewhere", "engine_missing", "runtime_away"] {
             let l = Self.line([Self.run(.refused, code: code)], resendable: ["voice-1"])
             #expect(l.kind == .notSent && l.actions == [.dismiss(run: "voice-1")], "\(code)")
         }
         let other = Self.line([Self.run(.refused, code: "conflict")], resendable: ["voice-1"])
         #expect(other.actions == [.resend(run: "voice-1"), .dismiss(run: "voice-1")])
+    }
+
+    /// #5904: what the user-speech gate held back says no fresh request was heard, never that someone else said it, quotes
+    /// what was held back (Send Anyway confirms words the user can see), and offers Send Anyway while the connection up
+    /// now knows the run and keeps it (`canResend`: `speech_gate`).
+    @Test func anUnpromptedRefusalCanBeSentAnyway() {
+        let refused = Self.run(.refused, code: "unprompted")
+        let known = Self.line([refused], resendable: ["voice-1"])
+        #expect(known.kind == .notSent)
+        #expect(known.actions.map(\.name) == ["anyway", "dismiss"])
+        #expect(known.actions.first?.id == "anyway-voice-1")
+        #expect(known.text == "刚才没听到你要做这件事，所以没发出去：『修登录页』")
+        #expect(!known.text.contains("不是你说的"), "not worded as if someone else said it")
+        let unknown = Self.line([refused])
+        #expect(unknown.actions.map(\.name) == ["dismiss"], "not after a reconnect, nor from an extension that does not keep it")
+        #expect(unknown.text == known.text)
+    }
+
+    /// #5904 review: nothing to quote is nothing to send anyway (the extension keeps no run without a task), even
+    /// when the caller says it can go.
+    @Test func anUnpromptedRefusalWithoutATaskOnlyGoesAway() {
+        let l = Self.line([Self.run(.refused, code: "unprompted", task: "")], resendable: ["voice-1"])
+        #expect(l.kind == .notSent && l.actions == [.dismiss(run: "voice-1")])
+        #expect(l.text == "刚才没听到你要做这件事，所以没发出去")
     }
 
     @Test func unknownAndFailedAreNeverSentAgainByThemselves() {
@@ -131,6 +156,22 @@ struct VoiceBarLineTests {
         #expect(Self.line([refused, Self.run(.folded, id: "voice-2")]).kind == .notSent, "a folded run says nothing of its own")
     }
 
+    /// A call to Persona on hold (#9290; the hub's `hold` pauses the voice's link too): never Speak to Resume, Just Speak,
+    /// the muted line or Just Say Your Answer, since nothing said goes until it is off hold. Stop Claude still works, and
+    /// what did not go or an offline computer still says so.
+    @Test func onHoldTheLineSaysSoInsteadOfAskingToSpeak() {
+        let ready = Self.line()
+        for l in [Self.line(held: true), Self.line(link: .paused, held: true), Self.line(muted: true, held: true),
+                  Self.line(cards: [Self.card("question")], held: true, asking: "ix1")] {
+            #expect(l.kind == .held && l.actions.isEmpty && l.text != ready.text && !l.text.isEmpty)
+        }
+        let working = Self.line([Self.run(.working)], session: Self.working, link: .paused, held: true)
+        #expect(working.kind == .held && working.actions == [.stopAgent])
+        #expect(Self.line([Self.run(.refused, code: "empty")], held: true).kind == .notSent)
+        #expect(Self.line(held: true, notice: VoiceFailure(code: .machineOffline, message: "x", fatal: false)).kind == .offline)
+        #expect(VoiceBarLine.Kind.held.announced, "the voice stops: VoiceOver hears it")
+    }
+
     @Test func announcedKinds() {
         #expect(VoiceBarLine.Kind.needsTap.announced && VoiceBarLine.Kind.paused.announced && VoiceBarLine.Kind.notSent.announced)
         #expect(!VoiceBarLine.Kind.working.announced && !VoiceBarLine.Kind.ready.announced)
@@ -139,8 +180,9 @@ struct VoiceBarLineTests {
     // MARK: The first line
 
     @Test func statusBesideTheOrb() {
-        func status(_ phase: VoicePhase, link: VoiceLink = .live, muted: Bool = false, working: Bool = false, tool: String? = nil) -> VoiceBarStatus {
-            VoiceBarStatus.make(phase: phase, link: link, muted: muted, working: working, tool: tool)
+        func status(_ phase: VoicePhase, link: VoiceLink = .live, muted: Bool = false, working: Bool = false, tool: String? = nil,
+                    held: Bool = false) -> VoiceBarStatus {
+            VoiceBarStatus.make(phase: phase, link: link, muted: muted, working: working, tool: tool, held: held)
         }
         #expect(status(.connecting) == VoiceBarStatus(text: "正在连接…", orb: .connecting))
         #expect(status(.reconnecting(attempt: 2)).orb == .connecting)
@@ -153,6 +195,12 @@ struct VoiceBarLineTests {
         #expect(status(.live(.speaking), link: .waking).orb == .connecting)
         #expect(status(.live(.listening), tool: "查日程").text == "正在查日程…")
         #expect(status(.ended(.lost)).orb == .ended)
+        // A call to Persona on hold says so, as its call screen does, whatever the link or the mute.
+        let onHold = VoiceBarStatus(text: "通话保持中", orb: .paused)
+        #expect(status(.live(.listening), link: .paused, held: true) == onHold)
+        #expect(status(.live(.listening), muted: true, held: true) == onHold)
+        #expect(status(.reconnecting(attempt: 1), held: true) == onHold)
+        #expect(status(.ended(.user), held: true).orb == .ended)
     }
 }
 

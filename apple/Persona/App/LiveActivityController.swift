@@ -108,6 +108,11 @@ final class LiveActivityController {
         }
         let step = Self.step(state, running: hasActivity, active: UIApplication.shared.applicationState == .active)
         if step == .endSoon {
+            // The last request went (answered here or on a computer, or gone): off the activity now, with its buttons,
+            // as the hub's push does while the app is away. The minute below still runs.
+            if let content = runningContent, Self.clearsNow(content.state, to: state) {
+                updateRunning(ActivityContent(state: state, staleDate: content.staleDate, relevanceScore: Self.relevance(state)))
+            }
             // Agents flicker between turns: end only when nothing came back for a minute (the hub does the same).
             guard endTask == nil else { return }
             endTask = Task { [weak self] in
@@ -143,6 +148,14 @@ final class LiveActivityController {
         if state.showsNothing { return running ? .endSoon : .nothing }
         if running { return .update }
         return active && state.phase != .none && state.phase != .done ? .start : .nothing
+    }
+
+    /// Whether an activity showing `shown` is cleared at once when the fleet leaves it nothing to show (`state`, an
+    /// `.endSoon`): only when it still shows something needing the user. Anything else (the last agent done and seen,
+    /// the assistant done) stays the minute until the end, as the hub pushes nothing for it either (liveactivity.go
+    /// `flush`, #8636).
+    nonisolated static func clearsNow(_ shown: FleetState, to state: FleetState) -> Bool {
+        state.showsNothing && (shown.needsYou > 0 || shown.items.contains(where: \.needsYou))
     }
 
     /// Takes a settled request off the activity at once (the hub's update follows).
@@ -288,13 +301,14 @@ final class LiveActivityController {
 
 #if DEBUG
 extension LiveActivityController {
-    /// `-showFleetSample needsYou|working|background|done|thinking|assistant|offline` (`-fleetDetails YES` for names on the lock screen,
+    /// `-showFleetSample needsYou|working|background|done|thinking|assistant|offline|cleared` (`-fleetDetails YES` for names on the lock screen,
     /// `-fleetIsland b`, `c` or `custom:assistant,load` for the island's sides, `-showFleetCount 12` for that many in
     /// each kind there is; `-openPersona nwverse` for the persona): starts the activity with made-up agents, no
     /// hub needed, for screenshots. `thinking` is only the assistant answering (beside one finished agent);
     /// `assistant` is the assistant alone, nothing to count (the minimal island then shows the persona); `background`
     /// leads with two agents whose workflows run on in the background (#3437: their lines, bars and workflows' clocks);
-    /// `offline` is the working sample made stale once it shows.
+    /// `offline` is the working sample made stale once it shows; `cleared` is a lone request answered elsewhere two
+    /// seconds after it shows (the fleet then empty, the minute before the end, #8636).
     func showSample(_ phase: String, details: Bool, island spec: String?, count: Int = 0) {
         UserDefaults.standard.set(details, forKey: Self.detailsKey)
         var island = IslandPrefs()
@@ -334,6 +348,7 @@ extension LiveActivityController {
             state.unread = state.unread > 0 ? count : 0
         }
         state.assistant = phase != "done"
+        if phase == "cleared" { state = FleetState(phase: .needsYou, needsYou: 1, items: [ask]) }
         if phase == "offline" { state = FleetState(phase: .working, working: 3, unread: 1, items: [work, done], workingSince: now - 754) }
         state.stats = .init(tpm: 12000, tokens: 42_000_000, requests: 1200,
                             loads: [.init(id: "studio", name: "Studio", percent: 35), .init(id: "macbook", name: "MacBook", percent: 70)])
@@ -356,6 +371,12 @@ extension LiveActivityController {
                 return
             }
             apply(state)
+            if phase == "cleared" {
+                try? await Task.sleep(for: .seconds(2))
+                var empty = FleetState()
+                empty.stats = state.stats
+                apply(empty)
+            }
         }
     }
 }

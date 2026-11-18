@@ -105,13 +105,14 @@ describe("useTranscript older pages", () => {
     render("A");
     const fold: Item = { ...item("f", 3), kind: "fold", fold: { through_seq: 8 } } as Item;
     await answer(["/m/A/items?", "turns=2"], { items: [fold, item("a10", 10)], to_seq: 10 });
-    let pending!: Promise<void>;
+    let pending!: Promise<unknown>;
     act(() => void (pending = shown.expandFold(fold)));
     render("B");
     await answer(["/m/B/items?", "turns=2"], { items: [item("b50", 50)], to_seq: 50 });
     await answer(["/m/A/items?", "from_seq=3"], { items: [item("a4", 4)] });
     await act(async () => pending);
 
+    expect(await pending).toBe(false);
     expect(ids()).toEqual(["b50"]);
   });
 
@@ -130,5 +131,25 @@ describe("useTranscript older pages", () => {
     // the next ask goes out once the first is in
     act(() => void shown.loadEarlier());
     expect(calls.filter((c) => c.url.includes("before_seq=5"))).toHaveLength(1);
+  });
+
+  it("reports a fold read cut off by the page cap as incomplete", async () => {
+    render("A");
+    const fold: Item = { ...item("f", 3), kind: "fold", fold: { through_seq: 100 } } as Item;
+    await answer(["/m/A/items?", "turns=2"], { items: [fold], to_seq: 3 });
+    let pending!: Promise<unknown>;
+    act(() => void (pending = shown.expandFold(fold)));
+    for (let n = 0; n < 20; n++) await answer(["from_seq=", "through_seq=100"], { items: [item(`a${n + 4}`, n + 4)], more: true });
+    expect(await pending).toBe(false);
+  });
+
+  it("reports a fold read that reaches the end as complete", async () => {
+    render("A");
+    const fold: Item = { ...item("f", 3), kind: "fold", fold: { through_seq: 4 } } as Item;
+    await answer(["/m/A/items?", "turns=2"], { items: [fold], to_seq: 3 });
+    let pending!: Promise<unknown>;
+    act(() => void (pending = shown.expandFold(fold)));
+    await answer(["from_seq=3", "through_seq=4"], { items: [item("a4", 4)], more: false });
+    expect(await pending).toBe(true);
   });
 });

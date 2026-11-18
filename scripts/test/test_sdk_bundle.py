@@ -128,5 +128,15 @@ class SDKBundle(unittest.TestCase):
                     self.assertTrue(os.path.isfile(os.path.join(dest, "sdk/go/ext/ext.go")))
 
 
+    def test_sync_refuses_an_unknown_selector_without_touching_the_destination(self):
+        for selected in ("golang", "go,ts"):
+            with self.subTest(selected=selected), tempfile.TemporaryDirectory() as dest:
+                r = subprocess.run(["sh", os.path.join(ROOT, "scripts", "gen", "sync-sdk.sh"), dest, selected],
+                                   capture_output=True, text=True, timeout=30)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("usage: scripts/gen/sync-sdk.sh", r.stderr)
+                self.assertEqual(os.listdir(dest), [])
+
+
 if __name__ == "__main__":
     unittest.main()

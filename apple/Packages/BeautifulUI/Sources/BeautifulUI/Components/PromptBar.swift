@@ -169,6 +169,10 @@ public struct PromptBar: View {
         public var onStop: (() -> Void)?
         /// Replaces the bar's own listening toggle; the host sets `model.isListening`.
         public var onDictation: (() -> Void)?
+        /// Direct model action instead of opening the catalog menu (the main assistant conversation's model sheet).
+        public var modelAction: (() -> Void)?
+        /// The effective model shown on that action button.
+        public var modelActionTitle: String?
         /// A picked attach source (`kind == .attach`).
         public var onAttachSource: ((PromptSource) -> Void)?
         /// Return true when the host handled the pick; otherwise the bar types the source's `insert`.
@@ -381,7 +385,7 @@ public struct PromptBar: View {
                     plusButton
                     if options.showsMentionButton { triggerButton("@", label: theme.strings.mention, kind: .mention) }
                     if options.showsCommandButton { triggerButton("/", label: theme.strings.commands, kind: .command) }
-                    if !models.isEmpty { modelButton }
+                    if !models.isEmpty || options.modelAction != nil { modelButton }
                     Spacer(minLength: 0)
                     if options.showsDictation { micButton }
                     sendOrStopButton
@@ -391,7 +395,7 @@ public struct PromptBar: View {
             HStack(alignment: .bottom, spacing: 4) {
                 plusButton
                 input
-                if !models.isEmpty { modelButton }
+                if !models.isEmpty || options.modelAction != nil { modelButton }
                 if options.showsDictation { micButton }
                 sendOrStopButton
             }
@@ -464,11 +468,17 @@ public struct PromptBar: View {
 
     private var modelButton: some View {
         Button {
-            model.isSourceMenuOpen = false
-            model.isModelMenuOpen.toggle()
+            if let action = options.modelAction {
+                model.isSourceMenuOpen = false
+                model.isModelMenuOpen = false
+                action()
+            } else {
+                model.isSourceMenuOpen = false
+                model.isModelMenuOpen.toggle()
+            }
         } label: {
             HStack(spacing: 4) {
-                Text(currentModel?.name ?? "Model")
+                Text(options.modelActionTitle ?? currentModel?.name ?? "Model")
                     .buiFont(BUITextStyle(size: 12, weight: .medium))
                     .foregroundStyle(theme.colors.ink2)
                     .lineLimit(1)
@@ -479,11 +489,11 @@ public struct PromptBar: View {
             .frame(height: size)
             .contentShape(controlShape)
         }
-        .buttonStyle(ControlButtonStyle(shape: controlShape, active: model.isModelMenuOpen))
+        .buttonStyle(ControlButtonStyle(shape: controlShape, active: options.modelAction == nil && model.isModelMenuOpen))
         .fixedSize()
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { modelButtonWidth = $0 }
         .accessibilityLabel(theme.strings.chooseModel)
-        .accessibilityValue(currentModel?.name ?? "")
+        .accessibilityValue(options.modelActionTitle ?? currentModel?.name ?? "")
     }
 
     private var micButton: some View {

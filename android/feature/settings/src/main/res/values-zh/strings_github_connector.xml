@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings › Connectors › GitHub: where the sign-in comes from, and which GitHub events reach the Inbox. Same words as iOS. -->
+<resources>
+    <string name="settings_gh_sign_in_from">从哪里登录</string>
+    <string name="settings_gh_sign_in_from_footer">选一台电脑就用它上面 gh 的登录；设备码登录不依赖任何电脑。换一个就是退出上一个。</string>
+    <string name="settings_gh_checking">正在看各台电脑上的 gh 登录…</string>
+    <string name="settings_gh_device_code">设备码登录</string>
+    <string name="settings_gh_device_code_subtitle">不用电脑：在 GitHub 上输入验证码授权</string>
+    <string name="settings_gh_device_footer">设备码登录的授权加密存在 hub 上；改用电脑上的 gh 登录时会忘掉。</string>
+    <string name="settings_gh_signed_in_as">gh 已登录 · %1$s</string>
+    <string name="settings_gh_signed_in">gh 已登录</string>
+    <string name="settings_gh_signed_in_missing">%1$s · 少 %2$s 权限</string>
+    <string name="settings_gh_not_signed_in">gh 没有登录</string>
+    <string name="settings_gh_no_gh">没装 gh</string>
+    <string name="settings_gh_too_old">personad 太旧，读不了 gh 的登录</string>
+    <string name="settings_gh_offline">离线</string>
+    <string name="settings_gh_read_error">读不了 gh 的登录：%1$s</string>
+    <string name="settings_gh_read_failed">读不了 gh 的登录</string>
+    <string name="settings_gh_missing_header">权限不够</string>
+    <string name="settings_gh_missing_device">设备码登录少了 %1$s 权限：先换成别的登录方式，再用设备码重新登录一次。</string>
+    <string name="settings_gh_missing_machine">%1$s 的 gh 少了 %2$s 权限：在那台电脑上运行 gh auth refresh -s %3$s，或者改用设备码登录。</string>
+    <string name="settings_gh_this_computer">这台电脑</string>
+    <string name="settings_gh_mode_off">关闭</string>
+    <string name="settings_gh_mode_default_branch">只看默认分支</string>
+    <string name="settings_gh_mode_mine">加上我的 PR</string>
+    <string name="settings_gh_mode_all">全部</string>
+    <string name="settings_gh_ci_failures">CI 失败</string>
+    <string name="settings_gh_mute_hint">静音仓库：owner/name</string>
+    <string name="settings_gh_add">添加</string>
+    <string name="settings_gh_inbox">收件箱</string>
+    <string name="settings_gh_ci_off">CI 失败不进收件箱。</string>
+    <string name="settings_gh_ci_default_branch">只有默认分支的 CI 失败进收件箱，算「需要你」。</string>
+    <string name="settings_gh_ci_all">所有分支的 CI 失败都算「需要你」。</string>
+    <string name="settings_gh_ci_mine">默认分支和你自己开着的 PR 的 CI 失败算「需要你」，其他分支的算「知悉即可」。</string>
+    <string name="settings_gh_inbox_failures">同一个分支的失败合成一件，重跑也算同一件；后来跑成功、分支删了或 PR 合了就自动处理掉。自动分支（%1$s）不提醒。</string>
+    <string name="settings_gh_inbox_mentions">真人的 @、请你 review、要求修改算「需要你」，机器人发的算「知悉即可」。静音的仓库什么都不进收件箱，已有的也会处理掉。</string>
+    <string name="settings_gh_couldnt_save">没存上：%1$s</string>
+    <string name="settings_gh_list_separator">、</string>
+    <string name="settings_gh_unmute">取消静音</string>
+</resources>

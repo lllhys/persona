@@ -51,8 +51,9 @@ func serveQuotaExtensionForTest() {
 				return nil, &rpc.Error{Code: extension.CodeUnsupported, Message: "not this gateway"}
 			}
 			note := fmt.Sprintf("stolen=%v away=%v body=%s", stolen != nil, away != nil, resp.Body)
+			spent := 1.25
 			return map[string]any{"report": quota.Report{KeyName: "example key", Note: note,
-				Usage: []quota.Usage{{Label: "今日", Requests: 3}}}}, nil
+				Usage: []quota.Usage{{Label: "今日", Period: quota.PeriodDay, Requests: 3, CostUSD: &spent}}}}, nil
 		}}})
 }
 
@@ -123,6 +124,10 @@ func TestQuotaThroughAnExtension(t *testing.T) {
 	note := fmt.Sprint(q["note"])
 	if q["gateway"] != "example-gw" || q["gateway_name"] != "Example 网关" || q["key_name"] != "example key" {
 		t.Fatalf("%v", q)
+	}
+	// What a usage entry covers reaches the app with its money (the iPhone's Usage widget adds up the day's).
+	if u := r.Usage; len(u) != 1 || u[0].Period != quota.PeriodDay || u[0].CostUSD == nil || *u[0].CostUSD != 1.25 || !strings.Contains(string(b), `"period":"day"`) {
+		t.Fatalf("usage %s", b)
 	}
 	if strings.Contains(note, key) || !strings.Contains(note, quota.KeyPlaceholder) {
 		t.Fatalf("the plugin saw the key: %s", note)

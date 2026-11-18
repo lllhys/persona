@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 // MARK: - Failures
 
@@ -143,16 +144,24 @@ nonisolated enum ToolArgs {
 /// ISO 8601 in the phone's local timezone, the format every tool documents.
 nonisolated enum ToolDate {
     static func string(_ date: Date) -> String {
+        string(date, timeZone: .current)
+    }
+
+    static func string(_ date: Date, timeZone: TimeZone) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        formatter.timeZone = .current
+        formatter.timeZone = timeZone
         return formatter.string(from: date)
     }
 
     static func day(_ date: Date) -> String {
+        day(date, timeZone: .current)
+    }
+
+    static func day(_ date: Date, timeZone: TimeZone) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = .current
+        formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
     }
@@ -171,6 +180,24 @@ nonisolated enum ToolDate {
             if let date = formatter.date(from: text) { return date }
         }
         throw ToolFailure(.invalidArgument, "cannot read the time \"\(raw)\"; use ISO 8601 such as 2026-10-24T14:00:00+08:00")
+    }
+
+    /// An explicit ISO 8601 offset stays with the request on an approval card. Without one, the phone's zone applies.
+    static func timeZone(in raw: String?) -> TimeZone? {
+        guard let raw else { return nil }
+        let text = raw.trimmingCharacters(in: .whitespaces)
+        guard let separator = text.firstIndex(where: { $0 == "T" || $0 == " " }) else { return nil }
+        let time = text[text.index(after: separator)...]
+        if time.last == "Z" || time.last == "z" { return TimeZone(secondsFromGMT: 0) }
+        guard let sign = time.lastIndex(where: { $0 == "+" || $0 == "-" }) else { return nil }
+        let offset = time[time.index(after: sign)...]
+        guard offset.allSatisfy({ $0.isNumber || $0 == ":" }), offset.filter({ $0 == ":" }).count <= 1 else { return nil }
+        let parts = offset.split(separator: ":", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count), let hour = Int(parts[0]), hour >= 0, hour <= 18 else { return nil }
+        let minute = parts.count == 2 ? Int(parts[1]) : 0
+        guard let minute, (0...59).contains(minute), hour < 18 || minute == 0 else { return nil }
+        let seconds = (hour * 60 + minute) * 60
+        return TimeZone(secondsFromGMT: time[sign] == "-" ? -seconds : seconds)
     }
 }
 

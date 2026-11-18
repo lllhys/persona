@@ -20,9 +20,9 @@ func (pv *Preview) In(l i18n.Lang) *Preview {
 		out.Manifest = &m
 	}
 	if pv.Manifest != nil {
-		out.Permissions = ExplainIn(l, pv.Manifest)
+		out.Permissions = ExplainWith(l, pv.Manifest, pv.config)
 		if pv.previous != nil {
-			out.AddedPermissions = AddedIn(l, pv.previous, pv.Manifest)
+			out.AddedPermissions = AddedWith(l, pv.previous, pv.Manifest, pv.config)
 		}
 	}
 	if pv.RenameFrom != "" && pv.Manifest != nil {

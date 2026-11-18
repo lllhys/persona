@@ -22,10 +22,12 @@ enum class LayoutDensity(
     val radiusScale: Float,
     /** Minimum row and button heights ([row]); text and icons still fit, the extra air around them goes. */
     val rowScale: Float,
+    /** Chat bubbles' corners ([bubbleCorner]): Compact squares them off more than other radii, a big round bubble reads loose. */
+    val bubbleScale: Float,
     @StringRes val labelRes: Int,
 ) {
-    Standard("standard", 1f, 1f, 1f, 1f, R.string.designsystem_density_standard),
-    Compact("compact", 0.5f, 0.625f, 0.6f, 0.8f, R.string.designsystem_density_compact);
+    Standard("standard", 1f, 1f, 1f, 1f, 1f, R.string.designsystem_density_standard),
+    Compact("compact", 0.5f, 0.625f, 0.6f, 0.8f, 0.3f, R.string.designsystem_density_compact);
 
     val label: String @Composable get() = stringResource(labelRes)
 
@@ -45,12 +47,15 @@ enum class LayoutDensity(
             internal set
         var rowScale by mutableFloatStateOf(Default.rowScale)
             internal set
+        var bubbleScale by mutableFloatStateOf(Default.bubbleScale)
+            internal set
 
         internal fun apply(density: LayoutDensity) {
             spaceScale = density.scale
             pageScale = density.pageScale
             radiusScale = density.radiusScale
             rowScale = density.rowScale
+            bubbleScale = density.bubbleScale
         }
     }
 }
@@ -63,3 +68,6 @@ val Dp.row: Dp get() = this * LayoutDensity.rowScale
 
 /** A corner radius (`RoundedCornerShape(12.dp.corner)`) that Compact rounds less by [LayoutDensity.radiusScale]. */
 val Dp.corner: Dp get() = this * LayoutDensity.radiusScale
+
+/** A chat bubble's corner radius, which Compact rounds less by [LayoutDensity.bubbleScale]. */
+val Dp.bubbleCorner: Dp get() = this * LayoutDensity.bubbleScale

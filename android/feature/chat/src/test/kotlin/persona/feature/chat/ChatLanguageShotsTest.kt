@@ -335,7 +335,7 @@ class ChatLanguageShotsTest {
                             style = ChatRenderStyle(compactToolSummary = true))
                         feedItems.forEach { AssistantExtraLine(AssistantExtra.Feed(it), host) }
                         AssistantTrays(host, remember { AssistantTrayState() }, host.pending, emptyList(), emptyList(),
-                            AssistantTrayTokens.maximumHeight, busy = false, enabled = true, onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
+                            { AssistantTrayTokens.maximumHeight }, busy = false, enabled = true, onApprove = {}, onReview = {}, onSend = {}, onSchedule = {})
                     }
                     "status" -> {
                         val recovery = remember { ChatStatusRecovery(resources, null, scope) {} }

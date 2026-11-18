@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import Persona
@@ -106,6 +107,58 @@ struct CarPlayVoiceScreenTests {
         #expect(CarPlayTalk.decide(connected: true, foreground: false) == .notOnScreen)
         #expect(CarPlayTalk.decide(connected: false, foreground: false) == .notConnected)
         #expect(CarPlayTalk.decide(connected: false, foreground: true) == .notConnected)
+    }
+
+    /// Only with no car connected is Talk to Persona a call on the phone (#9290); with CarPlay connected and Persona not on
+    /// its screen Siri still says to open it there (a call would need the phone unlocked while driving).
+    @Test func onlyNoCarCallsOnThePhone() {
+        #expect(CarPlayTalk.notConnected.callsOnThePhone)
+        #expect(!CarPlayTalk.notOnScreen.callsOnThePhone)
+        #expect(!CarPlayTalk.start.callsOnThePhone)
+        #expect(CarPlayTalk.decide(connected: false, foreground: true).callsOnThePhone)
+    }
+
+    /// A car without Persona's scene is a car (#9290): Persona has a CarPlay scene only once it was opened on the car's
+    /// screen since it launched (and only with its entitlement), so the audio route going to the car is enough for
+    /// "open Persona there", never a call on the phone. Persona's own scene still decides `.start`.
+    @Test func aCarWithoutPersonasSceneIsStillACar() {
+        #expect(CarPlayTalk.decide(connected: false, foreground: false, carOnRoute: true) == .notOnScreen)
+        #expect(!CarPlayTalk.decide(connected: false, foreground: false, carOnRoute: true).callsOnThePhone)
+        #expect(CarPlayTalk.decide(connected: false, foreground: true, carOnRoute: true) == .notOnScreen)
+        #expect(CarPlayTalk.decide(connected: true, foreground: true, carOnRoute: true) == .start)
+        #expect(CarPlayTalk.decide(connected: true, foreground: false, carOnRoute: true) == .notOnScreen)
+        #expect(CarPlayTalk.decide(connected: false, foreground: false, carOnRoute: false) == .notConnected)
+    }
+
+    /// Siri launching Persona cold while the car shows Maps: no scene of Persona's has connected in this process (the
+    /// presence as the app starts), the phone's sound goes to the car. `talkNow`, which Talk to Persona asks, says to
+    /// open Persona there; only with no car on the route is it a call on the phone. With Persona's scene there the route
+    /// is not asked.
+    @MainActor @Test func siriColdLaunchedInACarDoesNotCallOnThePhone() async {
+        let saved = (CarPlayVoicePresence.isConnected, CarPlayVoicePresence.isForeground)
+        defer { (CarPlayVoicePresence.isConnected, CarPlayVoicePresence.isForeground) = saved }
+        (CarPlayVoicePresence.isConnected, CarPlayVoicePresence.isForeground) = (false, false)
+        let inACar = await CarPlayVoicePresence.talkNow(car: { true })
+        #expect(inACar == .notOnScreen)
+        #expect(!inACar.callsOnThePhone)
+        let noCar = await CarPlayVoicePresence.talkNow(car: { false })
+        #expect(noCar == .notConnected)
+        #expect(noCar.callsOnThePhone)
+        (CarPlayVoicePresence.isConnected, CarPlayVoicePresence.isForeground) = (true, true)
+        let onScreen = await CarPlayVoicePresence.talkNow(car: {
+            Issue.record("the route asked with Persona's scene there")
+            return false
+        })
+        #expect(onScreen == .start)
+    }
+
+    /// CarPlay's output is the car; Bluetooth hands-free (a car without CarPlay), the earpiece or nothing is not.
+    @Test func onlyCarPlaysOutputIsACar() {
+        #expect(CarPlayVoicePresence.isCar([.carAudio]))
+        #expect(CarPlayVoicePresence.isCar([.builtInSpeaker, .carAudio]))
+        #expect(!CarPlayVoicePresence.isCar([.bluetoothHFP]))
+        #expect(!CarPlayVoicePresence.isCar([.builtInReceiver]))
+        #expect(!CarPlayVoicePresence.isCar([]))
     }
 
     @Test func siriSaysSomethingDifferentForEachCase() {

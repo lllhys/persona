@@ -12,6 +12,8 @@ import shlex
 
 # Compatibility spellings live here rather than in deployment callers.
 LEGACY_PREFIX = "JARVIS_"
+# Retained operation identity for mixed-version native transport fixtures.
+LEGACY_OP_HEADER = "X-Jarvis-Op-Id"
 HOME_KEYS = ("PERSONA_HOME", LEGACY_PREFIX + "HOME")
 SERVICE_NAMES = {
     "hub": ("personad", "jarvisd"),
@@ -27,6 +29,10 @@ BINARY_NAMES = {"hub": ("personad", "jarvisd"), "node": ("personad", "jarvisd"),
                 "link": ("persona-link", "jarvis-link")}
 DATABASE_NAMES = ("persona-postgres", "jarvis-postgres")
 DATABASE_VOLUMES = ("persona-pgdata", "jarvis-pgdata")
+
+# Markup retained in older conversation transcripts, including screenshot mocks.
+CONTEXT_TAG_PATTERN = r"(?:persona|jarvis)-context"
+FILE_TAG_PATTERN = r"(?:persona|jarvis)-file"
 
 
 def env_value(name, environment=None):

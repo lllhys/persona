@@ -4,6 +4,7 @@
   "unknown": "North star: today's numbers could not be read; they are unknown.",
   "not_recorded": "unknown (not recorded yet)",
   "count": "{n} ({ask} questions · {cards} cards to act on · {notify} notifications · {auth} authorization cards)",
+  "count_calls": "{n} ({ask} questions · {cards} cards to act on · {notify} notifications · {auth} authorization cards · {calls} urgent calls)",
   "partial": ", partly unknown: recording began after the day started",
   "no_attempts": "no starts or resumes yet",
   "rate": "{rate} ({ok} of {n} starts and resumes worked)",

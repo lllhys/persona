@@ -42,6 +42,9 @@ class HttpHubManagers internal constructor(
 
     override suspend fun makeDefault(id: String): HubManager = manager(call(path(id), "PATCH", buildJsonObject { put("default", true) }))
 
+    // What it answers is not read: the roster says whether the choice is in effect (`hidden`).
+    override suspend fun setHide(id: String, hide: Boolean) { call(path(id), "PATCH", buildJsonObject { put("hide", hide) }) }
+
     override suspend fun delete(id: String) { call(path(id), "DELETE") }
 
     /** `{manager}`: the manager as it is now. */

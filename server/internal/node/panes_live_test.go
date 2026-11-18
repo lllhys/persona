@@ -44,7 +44,7 @@ func TestLivePanes(t *testing.T) {
 		t.Fatal("a herdr with workspaces and shells is expected")
 	}
 
-	res, err := n.newShell(ctx, host.Herdr, h.Workspaces[0].ID)
+	res, err := n.newShell(ctx, host.Herdr, h.Workspaces[0].ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

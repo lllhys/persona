@@ -17,8 +17,11 @@ runtime errors. Shell launchers, managed launchers and older runtimes keep their
 - **The check leaves nothing behind** (#2959): it runs with `--no-session-persistence` (Codex: `--ephemeral`), and removes the empty projects directory Claude Code keeps for its temp directory even so; a CLI without the flag is retried without it. A check a hundred times a day used to leave that many transcripts, filling the 80 newest offline sessions the session list keeps and pushing the user's Agents out of it. The list also skips the check's transcripts on its own — its temp directory is gone, which is what tells them from the user's own work in a directory with a similar name (an older node's name included) — and only sessions it lists count toward the 80: one in a blocked directory or a wordless probe no longer takes a slot.
 - **Interactive-readiness pre-check for Claude** (#2018): before spending that request, the node reads `hasCompletedOnboarding` from Claude Code's global config (`.claude.json`, located by Claude Code's own rule, including a `CLAUDE_CONFIG_DIR` the login shell exports).
   A headless `claude -p` probe answers even while the first-run setup is unfinished, but an interactive start then stops on the first-run screens (style picker, sign-in) and ends with a generic readiness timeout; the check therefore fails at once with an error that names the unfinished setup, without spending a request. A missing config file means Claude Code has never run there and counts as unfinished; an unreadable or malformed config is not a verdict and the real probe runs anyway. An interactive start that still reaches its readiness timeout gets the same explanation appended when the flag says the setup is unfinished.
+- It reuses "Test availability" (`docs/integrations/launchers.md`): the node's `launchers.check` runs `claude -p … --max-turns 1` / `codex exec` once in an empty directory, with a 150-second timeout, spending a few tokens.
 - When: it looks every 5 minutes (`healthTick`); on computers that are online (`Reachable`), any launcher last checked longer ago than the interval (default 30 minutes) is rerun.
-  When a computer goes from offline to online, all its launchers are checked right away. Launchers on one computer run one after another (no burst of claude processes); computers run in parallel.
+  When a computer goes from offline to online, all its launchers are checked right away. Launchers on one computer run one after another (no burst of claude processes); computers run in parallel, 12 seconds apart.
+  Every computer runs the same probe prompt, and a model gateway can pin the same prompt to one upstream account: without the gap a round sent all computers' identical requests at once and the account served them behind one another until each timed out (2026-11-13). The gap also lets the later computers find the cache the first one wrote.
+- A check that times out is asked once more right away, and only a second timeout in a row is recorded (`probeLauncherWithRetry`). A gateway can leave a single request without a first token while the same upstream account answers its other requests in seconds (2026-11-14: one shared account left a few percent of its requests silent for 90 seconds and longer); one such request used to mark a working launcher `failing` until the next round, half an hour later. Other errors (a 401, a model the gateway refuses) are recorded at once.
 - What is checked: launchers this computer can start (`machineLaunchers`: those from ~/.zshrc minus hidden ones, plus Persona-managed ones; `kind: api` launchers do not run on a computer and are not checked).
   Runtime launchers (DSH and others, whose `source` is not `zshrc` / `persona`) are not checked.
 - A failed Agent start is recorded too: when `agent_start`, a task plan starting an Agent (`startTaskAgent`) or a repair Agent's start gets an error from `session.start`, it is recorded as a failure (source `start`),
@@ -29,17 +32,78 @@ runtime errors. Shell launchers, managed launchers and older runtimes keep their
   The App's own starts count as well (#1642, `launcher_health_starts.go`): the hub tells the manager how a start it waited for went (`session.start_ended`: a failure, or a start the node ran before answering that worked),
   and a "New Agent" answered at once (`async`) is followed in the machine's session list, from `starting` to started or to `start_error` (counted once while the node lists it: the starts counted are kept with the records, so one is not counted again after the manager restarts; the failure's `updated_at` is the node's clock and is not compared with the record's).
   A start whose outcome the hub does not know (the computer offline, the call timed out) and a request the node refused before running anything are not recorded.
-- **On-demand recheck before a reroute** (#2018): a start aimed at a machine whose launcher has a failing record probes that machine once on the spot before moving elsewhere.
+  A timed-out call is one whose own context ran out or was cancelled (`context.DeadlineExceeded` / `context.Canceled`, or an uncoded relayed error with exactly those words, `startWaitEnded`, #6324): a node link stuck for the whole `taskStartTimeout` says nothing of the launcher, so it is only logged. A node's own timeout text (`session.start: context deadline exceeded`) still counts as `timeout`.
+  An unanswered task start is reconciled before it fails (#6540): the hub snapshots the machine's session list before `session.start`, and when the answer never comes back (`startResultUnknown`) it lists again for up to `taskStartAdoptWait` (30 s, polling every `taskStartAdoptPoll`). A manager-started Claude start carries its own `session_id` (a v4 UUID the hub generated), and the reconciliation first matches that exact id on the machine's list — only the session that start created can carry it, so a session the owner started by hand, or another workspace-none task's session in the same directory, can never be misadopted (#6908). Only when the node is too old to honor `session_id` does the hub fall back to the heuristic (`adoptStartedSession`): a session absent from the snapshot, hub-started, with the same launcher and directory and a fresh sign of life, that no open to-do has linked yet (`todos.activeBySession`), newest wins. The open-to-do exclusion applies in every fallback, so a task can never steal another task's Agent; its remaining limit is two unanswered starts in one directory on a node that ignored `session_id`, where one could adopt the other's session (a mislabeled card, never a duplicate Agent). If the pre-start list could not be read, the machine stops answering, the to-do book cannot be read, or no matching session appears, the start fails as before and stays on its machine: an unknown result never triggers a retry or a flexible-task reroute.
+- **On-demand recheck before a reroute** (#2018): a start aimed at a machine whose launcher has a failing record probes that machine once on the spot before moving elsewhere, and a fixed-machine task probes it the same way before refusing (`launcherUnusableNow`, #6324).
   If the probe passes (the launcher was fixed after the record, for example a CLI installed or a PATH corrected), the record is cleared to `ok` at once and the start stays on the asked machine.
   If it fails again, or the machine cannot answer, the usual reroute applies. Concurrent starts for the same machine × launcher wait for one probe (single flight), and a probe is not repeated
   within 30 seconds (`healthRecheckThrottle`), so a burst of starts does not turn into a burst of probes. This also covers the case where periodic checks are off: no manual button is needed.
-  Two records are never rechecked this way: `usage_limit` (a probe spends a request the subscription would refuse while a reset is pending; records whose reset time is unknown leave to the periodic round, which re-probes them after its interval) and `not_in_terminal` (the probe's login shell runs the launcher, so it cannot
-  reproduce the terminal's failure; only a real successful start clears it).
-- An Agent's own usage limit is recorded too (#1710, source `session`): when a turn ends on the subscription's usage limit (`docs/assistant/agent-work.md` "Usage limits") with a reset still ahead,
-  and the session names its launcher, that launcher on that computer is marked `usage_limit` until the reset. Nothing runs for it: no check (it would spend a request to be refused) and no repair.
+  A `usage_limit` is also rechecked (#9386), whether its reset is known or not: quota can recover before `resets_at`, so a passing probe clears it early. Fresh limit evidence waits 30 seconds before any on-demand probe; subsequent attempts share the same throttle. A failed probe still refuses a fixed-machine start without launching an Agent.
+  The record keeps what is known of the limit per model family and changes only by the rules in "Usage-limit record rules" below.
+  A probe for a family limit requests that family; an older node or runtime that ignores the model answers with another family and clears nothing. A probe's result counts as current only against the version of the record it read, compared under the record's lock. Admission rereads the published record rather than trusting the raw probe answer.
+  `not_in_terminal` is not rechecked this way: the probe's login shell cannot reproduce the terminal's failure; only a real successful start clears it.
+- An Agent's own usage limit is recorded too (#1710, source `session`): when a turn ends on the subscription's usage limit (`docs/assistant/agent-work.md` "Usage limits")
+  and the session names its launcher, that launcher on that computer is marked `usage_limit`: until the reset when it is known and still ahead; with no reset known, the families the limit names are limited with an unknown reset for at most 6 hours after the turn (#9646, "Usage-limit record rules" below). Nothing runs for it: no check (it would spend a request to be refused) and no repair.
   The main chat's conversations count as well (they run the computer's launcher under the same sign-in). Each turn a background task wakes meets the same limit again; it is recorded once.
 - Stored in the settings key `launchers.health` (Postgres), one entry per computer × launcher: success / failure, error text (redacted, truncated), error category,
   check time, consecutive failure count, repair log, state. It survives hub restarts.
+
+## Usage-limit record rules
+
+A `usage_limit` record (#9386) keeps what is known of the subscription's limit per model family, and changes only by these rules (`recordHealth`, `foldLimit`, `launcherLimitTurnSettled`). A limit is **in force** while the record refuses starts (`unusable`).
+
+**Each family's state.** Families are `opus`, `sonnet`, `haiku`, as the limit's words name them ("You've hit your Opus limit").
+
+| State | Stored as | Effect |
+| --- | --- | --- |
+| Limited, reset known and ahead | in `limit_models`; `limit_resets[f]` = t > now | Holds until t, unless a probe of that family passes first |
+| Limited, reset unknown | in `limit_models`; no `limit_resets[f]` | Holds until a probe of that family passes, or the record's evidence is 6 hours old (below) |
+| Limited, reset known and past | in `limit_models`; `limit_resets[f]` ≤ now | Over as far as the record's reset goes. A new failure naming it is a new limit: the old reset is dropped first |
+| A limit that names no family | `limit_models` empty; `resets_at` known or not | Any model's answer clears it |
+
+**The record.** `resets_at` is the latest of the families' resets, and unknown while any family's reset is unknown; with no family, it is the limit's own reset. A limit with a known `resets_at` holds until then; with an unknown one, until 6 hours (`healthStale`) after the latest evidence, and in any case until each family's known reset still ahead (`familyResetAhead`): a family whose reset is unknown makes `resets_at` unknown but never shortens another family's limit. The latest evidence is `checked_at`, which an Agent's turn whose reset is unknown sets to the turn's own time, not to when the hub read it (events below). Either way an on-demand probe can clear it early, at most once per 30 seconds (`healthRecheckThrottle`) after the latest evidence. A probe asks for the first limited family.
+
+**Events.** "Fold" is the merge in the next table.
+
+| Event | Limit in force | What changes | rev, check time |
+| --- | --- | --- | --- |
+| A usage-limit failure: probe (current), start, an Agent's turn with a reset ahead | no | The record becomes this limit: the families named, each with the failure's reset when known; no family: `resets_at` is the failure's reset | advance, now |
+| A usage-limit failure: probe (current), start | yes | Fold; error text, source and failure count updated (a fresh refusal is new evidence even when the fold changes nothing) | advance, now |
+| A usage-limit failure: an Agent's turn with a reset ahead | yes | Fold; when the fold changes nothing, **nothing**. This is the dedupe: the turn is judged by the families it names, not by unrelated families | advance and now only on a change |
+| A usage-limit failure: an Agent's turn whose reset is unknown (or further than `healthLimitMax`, taken as misread), less than 6 hours old | no | The record becomes this limit: the families named, each with an unknown reset; no family: no `resets_at` | advance; check time: the turn's time |
+| The same | yes | Fold with an unknown reset; when the fold changes nothing, **nothing** (the same dedupe), unless the record's evidence is 6 hours old (only another family's known reset holds it): then the turn renews it | advance on a change or renewal; check time: the later of the record's and the turn's |
+| An Agent's turn on a usage limit whose reset is past, or with no reset known and 6 hours old or older | any | Not recorded: the limit it met is over, or its evidence is stale | none |
+| A usage-limit failure: probe that read an older version | yes | Fold only (error text and check time kept) | advance on a change; check time kept |
+| The same | no | Dropped | none |
+| A pass: probe (current) or the apps' Test | yes | Removes the families the answering model belongs to, with their resets; for a limit that names no family, everything. Nothing left: the record is `ok`. Covering no limited family: nothing | advance, now (on a change) |
+| A pass: probe that read an older version | any | Dropped | none |
+| Any other failure (timeout, auth, terminal) | yes | Nothing: it never reached the quota | none |
+| Any other current result | no | The general rules (the record is replaced) | advance, now |
+
+**Fold** (a failure naming families F with reset R, R possibly unknown, into the limit in force).
+
+| Case | Result |
+| --- | --- |
+| F names families | Each f in F is added. If f's known reset has passed, it is dropped. With R known, f's reset becomes the later of its own and R. With R unknown, f keeps its known reset, or stays unknown. Families not in F are untouched. |
+| F names families; the limit in force names none | As above, the old limit's known reset applies to F as a floor when R is known. With R unknown, F's resets are unknown |
+| F empty ("usage limit reached"); the limit names families | Families unchanged. With R known, every known family reset becomes the later of its own and R. Unknown resets stay unknown |
+| F empty; the limit names none | `resets_at` becomes the later of the two. An unknown one becomes R; an unknown R changes nothing |
+
+Nothing is ever taken away by a failure. "No new information" means the fold changes neither the families, nor any family's reset, nor `resets_at`. It is compared as read (`limitModels`, `limitResets`), so loading an older format counts as no change.
+
+**An Agent's turn with no known reset** (#9646). The turn is the same evidence a failed probe would be: a real request the subscription refused. So it is folded the same way, with an unknown reset, and ages by the same rule as every failure without a reset: 6 hours (`healthStale`), counted from the turn's time (`updated_at` of its session, the time its words are read against; never later than now). A turn the hub reads only later, a transcript an Agent is woken on long after it stopped, has that much less to say of the quota now, and one 6 hours old or older says nothing.
+- No shorter fixed window: nothing says when a limit with no reset ends, and a family's limit can last days (a weekly one), so a short window would let through starts the limit refuses again. Holding the record costs little: any start probes it from 30 seconds after the evidence (on-demand recheck above), and a pass of the family clears it.
+- A turn that repeats a limit in force changes nothing (no rev, no check time), so an Agent a background task keeps waking neither extends the limit nor holds off the next probe. After the limit ends (its 6 hours, or a pass), the next such turn is a new limit, as for a turn with a known reset.
+- The record keeps one evidence time for all its families: an older turn never moves it back, and a pass that leaves a family moves it forward (as every pass does). When it goes stale, a family whose known reset is still ahead holds until that reset (`familyResetAhead`), so a Sonnet turn with no reset cannot end an Opus weekly limit after 6 hours. While only such a reset holds the record, a new turn with no reset is fresh evidence its families need, and renews the check time (once: the next repeat finds it fresh).
+
+**Versions.** `rev` is a counter in the hub's memory. Every `recordHealth` write that changes a record advances it: every write in the events table marked "advance". It is not stored, so a restart starts again at 0, and probes in flight end with the process. A probe keeps the record it read. Its result is current only when both the check time and `rev` still match; otherwise it is an "older version" row. Deleting a record (a launcher's setup changed) is caught by the check time. `setHealthState` changes only records that are not usage limits.
+
+**Stored fields and older formats.**
+- Stored: `kind`, `error`, `checked_at`, `source`, `resets_at`, `limit_models`, `limit_resets`. `rev` is not stored.
+- `main` before this change (9489ee4c81 and earlier) wrote neither `limit_models` nor `limit_resets`. When read, the families come from the error's words, each with `resets_at` as its reset.
+- One rule reads it: no `limit_resets` and a known `resets_at` give every family that reset. In the current format the combination never arises with families: `resets_at` is known only when every family's reset is, and those are in `limit_resets`.
+- This PR's first commit (a6d5d78dfb) wrote `limit_models` without `limit_resets`. It was never merged to `main` nor deployed; the same rule happens to read it.
+- Of that draft format, a record with several families and one shared `resets_at` would read as every family resetting then. That gives a reset to a family whose reset was unknown. As the format never reached `main`, it is not handled.
 
 ## Error categories (`classifyLauncherError`)
 
@@ -50,7 +114,7 @@ runtime errors. Shell launchers, managed launchers and older runtimes keep their
 | `model_route` | `Bare Claude model name`, `cannot be routed`, `no account match`, model does not exist / not supported | Repair Agent (reconfigure the gateway's model) |
 | `auth` | 401 / 403, `invalid … api key`, `authentication_error`, `Not logged in`, expired token | Repair Agent (reconfigure the gateway's key) |
 | `cli_outdated` | `unknown option`, asks to upgrade / version too old / no longer supported | First the node upgrades itself (`claude update`); if that fails, a repair Agent |
-| `timeout` | `context deadline exceeded`, no answer within 90 seconds | Counts only after two in a row; handed to a repair Agent |
+| `timeout` | `context deadline exceeded`, no answer within 150 seconds (twice: a timed-out check is asked again at once) | Counts only after two in a row; handed to a repair Agent |
 | `other` | Everything else | Same: repaired only after two in a row |
 | `not_in_terminal` | A start's new terminal tab could not run the launcher or its claude (`launcher_missing` / `claude_missing` with `where: "terminal"`, #1642, `docs/integrations/launchers.md` "The terminal's shell is another environment") | None: `blocked` at once, the reason says to define the launcher where the terminal's shell reads it or add it as a model provider |
 
@@ -69,10 +133,10 @@ A `not_in_terminal` record and a usage limit before its known reset stay; a chan
 
 A **usage limit** (`usage_limit`) is `failing`, never `repairing` or `blocked`: the request got through to the subscription, so a block left by an earlier error is lifted and no repair round takes it.
 Its reset (`resets_at`) is read off the words when they name a time zone (`resets 4:20pm (Area/City)`), or comes from the Agent's own record of the limit (source `session`); Codex's "try again at 3:05 PM" names none.
-With a reset, the launcher is unavailable exactly until then (not bounded by the 6 hours; a reset more than 8 days off is taken as misread, as if there were none), and available again from that moment.
+With a reset, the launcher is unavailable until then unless a passing check proves quota recovered earlier (not bounded by the 6 hours; a reset more than 8 days off is taken as misread, as if there were none), and available again from that moment. A successful `session.start` alone does not prove the subscription can answer a model request and does not clear this record.
 The periodic rounds spend no check on it before the reset (it would be refused too), nor does a forced check of all launchers; the first round from a minute after the reset checks it whatever the interval, and a passing check clears it.
 A check asked for by hand of that launcher (`POST /api/v1/launchers/health/check?machine=&launcher=`, or the apps' Test availability) still runs.
-Without a reset it follows the usual rules: unavailable for 6 hours, checked at the interval. Until the reset it counts in the main chat's readiness as a rate limit that passes by itself (`rate_limited`), and not at all after it.
+Without a reset it follows the usual rules: unavailable for 6 hours (an Agent's turn: 6 hours from the turn), checked at the interval; a family of it whose reset is known holds until that reset ("Usage-limit record rules"). Until the reset it counts in the main chat's readiness as a rate limit that passes by itself (`rate_limited`), and not at all after it.
 
 - `agents_list`: gets an extra "unavailable launchers" section at the end, one line each: computer / launcher / state / category / error; a usage limit adds `resets_at=<RFC 3339>, in …`.
 - The launcher list for creating an Agent and the main chat's menu (`GET /api/v1/machines/{mid}/launchers`) leave out a launcher whose latest check failed, and carry `health` (`{state, error, kind, checked_at, resets_at?}`) on the ones they keep — a `not_in_terminal` entry stays and is grayed out ("In the App" below).
@@ -80,7 +144,7 @@ Without a reset it follows the usual rules: unavailable for 6 hours, checked at 
   and the "reason" in the answer / card says it switched and why (for a usage limit with a reset: `is at its subscription usage limit on <machine> (resets_at=…, in …)`); if no healthy one is found, start as originally planned and warn in the answer that the latest check failed. A task plan switches once when the card is produced and checks again when it actually starts.
   Flexible task plans verify the mapped directory with `fs.stat` on each candidate before changing the task, including during preview and retry. Only a confirmed directory qualifies; a missing path, file, unreadable response or unreachable node is skipped while other candidates are considered. If none qualifies after a failed start, the task keeps its original machine, directory and error; it does not retry that failure on the same machine. A passing follow-up probe clears health but does not by itself retry a failed start.
   Healthy first: last check passed > never checked; never checked is not treated as broken.
-- `task_plan` defaults to `machine_policy: "fixed"`, also for saved plans without the field. Preview, start and retry retain that machine and its directory. A known unusable launcher fails on that target without starting elsewhere; normal health recovery (a passing check, including Test availability on that computer) permits a later retry there. A terminal-shell `not_in_terminal` refusal can only be cleared by a real terminal start, so an explicit task retry rechecks that shell on the same computer; it still runs the normal native authentication and startup gates. Set `machine_policy: "flexible"` only for portable work that may move. A card edit that changes the machine pins the new target unless it explicitly chooses flexible placement.
+- `task_plan` defaults to `machine_policy: "fixed"`, also for saved plans without the field. Preview, start and retry retain that machine and its directory. A known unusable launcher fails on that target without starting elsewhere, after the same on-the-spot probe a reroute runs (a passing probe starts it there); normal health recovery (a passing check, including Test availability on that computer) permits a later retry there. A terminal-shell `not_in_terminal` refusal can only be cleared by a real terminal start, so an explicit task retry rechecks that shell on the same computer; it still runs the normal native authentication and startup gates. Set `machine_policy: "flexible"` only for portable work that may move. A card edit that changes the machine pins the new target unless it explicitly chooses flexible placement.
 - The tool answers `Queued` while asynchronous dispatch is pending. This is not proof of an Agent start: errors appear on the same task and its failure receipt. A missing or foreign session in a start response is rejected; a `starting` session is not recorded as a successful launcher check.
 
 ## A launcher the computer doesn't have (#2640)
@@ -96,6 +160,7 @@ Every new Agent is now held to what its target computer can start before anythin
   `agent_start` puts the same line on its confirmation and in its answer (`Note: …`).
 - **A launcher the caller named** that the computer lacks: refused before any tab opens, naming the ones the computer has: `task_plan` fails that task, `agent_start` starts nothing (before the user is asked to confirm), New Agent gets a 400. A plan card moved to such a computer fails that task at dispatch the same way.
 - **A list that can't be read** (computer offline, a 10-second timeout, an older node) counts as having the launcher, as `launcherAvailable` always has: nothing is refused or swapped on a guess.
+- **A computer whose start goes to Paseo** (#8140, `docs/integrations/paseo.md` "A launcher Paseo does not have"): Paseo runs only its own providers, so what the computer has is Paseo's list for that host (the node's `launchers.list {host}` answers `host_runtime`), without the managed launchers and plain `claude`, and the rule above changes for it: a launcher the caller named or a default gave that Paseo does not have runs on Paseo's provider of the same kind of agent (its built-in one of that kind first, else the first), the task's `why`, the card, `agent_start`'s confirmation and answer and New Agent's `launcher_note` saying so; the model goes with it only when that provider offers it. With none of that kind it is refused, naming Paseo's providers. What Paseo itself ran in place of what was asked (the session's answer's `instead`: a stand-in, its default model, a lower effort) is said the same way afterwards, and the start's health is recorded under the launcher that ran. Paseo's own refusal (`launcher_kind_missing`) is the request's: it does not count against the launcher.
 - The swap comes before the fixed-policy health check, which then concerns the launcher that will actually run; a flexible task's move to another computer (above) is unchanged and the check runs where it lands.
 
 ## Automatic repair
@@ -128,7 +193,7 @@ set `default` if you want it to wait for your approval at every step. Member hub
 
 ## API for the board
 
-- `GET /api/v1/launchers/health?state=blocked&machine=`: all records (or filtered by state or computer), `{records: [{machine, launcher, state, kind, error, checked_at, source, fails, repair?, blocked_reason?, resets_at?}]}`.
+- `GET /api/v1/launchers/health?state=blocked&machine=`: all records (or filtered by state or computer), `{records: [{machine, launcher, state, kind, error, checked_at, source, fails, missing_fails?, repair?, blocked_reason?, resets_at?, limit_models?, limit_resets?}]}`.
 - `POST /api/v1/launchers/health/check?machine=&launcher=`: check right now (without parameters, all online computers), returns this run's results.
 - A state change broadcasts a `launcher_health` event (`{type, record}`, only to connected clients, not a push).
   The "decisions / blocked / progress" board reads `state=blocked` records, or subscribes to this event, to list what is blocked.
@@ -165,6 +230,52 @@ asked for it) and uses it only on the detour path (`healthDetour`, the chokepoin
 - This first cut never reorders machines or blocks a start: one launcher maps to one provider, so every machine offering it sees the same
   provider-level capacity, and two different providers are not equivalent (an explicit model configuration is never silently changed,
   `docs/assistant/model-config.md`). Deferring starts until recovery, per-machine gateway attribution and the App/Lark entries are later work.
+
+## Execution-agent admission gate
+
+The hub machine once ran 40+ claude processes at load 160 and timed out, so starting an execution Agent is now gated on the target computer's
+reported resources (`server/internal/assistant/admission.go`, #6608). The gate runs on the two execution-Agent start paths only — a task plan's
+`startTaskAgent` and the `agent_start` tool — both of which use `session.start`. The assistant's own conversations (main, leaders, scheduled) start
+through `assistant.send` and never pass it.
+
+The data is the manager's retained 10-second node sample (`machines` monitoring, `docs/server/machines.md`): available memory
+(`MemTotal − MemUsed`), load1, the system's core count, and the node-reported `claude_procs` count (Linux only; nil skips the process condition).
+A start is refused when any line is hit: free memory below the threshold, the claude process count at its cap, load1 above cores × the multiplier,
+or the task's direction already at its running-Agent cap. Thresholds live in the `assistant.admission` setting with code defaults (hub machine 2.5
+GiB free / 20 processes, other machines 2 GiB, load multiplier 4, direction cap 3 with a per-project override map); machine-specific lines are keyed
+by machine id, never hard-coded. A managed machine whose sample is missing, stale (older than 30 s) or lacks a load reading is refused (unknown
+load denies); a computer the resource layer does not retain is skipped, and a hub without a devices manager leaves the gate inert.
+
+A refused `machine_policy=fixed` task stays put and gets the reason plus the least-loaded reachable alternative. A `flexible` task is moved to that
+alternative when its launcher runs there and its directory exists (the same `fs.stat` and reroute-trail rules as the launcher detour); no alternative means refusal. The
+direction cap refuses either policy, since moving machines does not free a direction slot. The check and the slot reservation happen in one critical section
+(`claimIfAllowed`), so concurrent admits cannot both take the last slot; a task's claim is held from the decision until its agent is linked into the todo or the start
+fails for good (an `agent_start` tool call has no todo, so its claim ends with the call), covering both the RPC race and the 10-second metrics/ledger gap. Other
+`session.start` callers (dispatch, self-heal, successor Agents, Feishu cards) are intentionally not wired in this first cut.
+
+A plan task the gate refuses is not failed: it waits in the admission queue (`server/internal/assistant/task_queue.go`), its card reads waiting
+with the reason, and the hub retries it every 90 seconds. The queue record is stored in the plan, so a hub restart resumes the wait. After 10
+refusals or 30 minutes the start fails with the last reason; a refused `agent_start` tool call is answered at once, since a tool call cannot wait.
+
+**Launcher groups** (#9674) cap tasks across launchers that draw on one shared resource, such as one subscription account pool behind several
+Claude Code compatible launchers, while other launchers stay free. Off by default: without `launcher_groups` no launcher line applies. Each
+group names its launchers exactly (an agent kind cannot tell a pooled launcher from a compatible one that is not) and one cap; a launcher
+belongs to at most one group:
+
+```json
+{"launcher_groups": [{"name": "shared-pool", "launchers": ["launcher-a", "launcher-b"], "cap": 4}]}
+```
+
+- **What counts**: open tasks of any direction, on every computer, whose linked execution Agent is working a turn on one of the group's
+  launchers (the session's launcher in the fleet's latest snapshot), plus starts admitted and not linked yet. A task counts once however many
+  agents it links, and a parked task, one waiting for the owner or one held short of live is left out, as for the direction cap. Tasks on
+  other launchers, the assistant's own conversations and Agents started directly with `agent_start` are not counted.
+- **When full**: a plan task on a group launcher waits in the admission queue with "Launcher group … already has N tasks running, at its limit
+  of M", with no attempt or time limit, and starts on a later retry once a task of the group stops working. The group is checked before the
+  machine lines, so a flexible task is not moved and no other computer is recommended. If another line refuses it later, that line's 10
+  attempts and 30 minutes count from then. `agent_start` on a group launcher is refused at once with the same reason.
+- **Change it** like the other lines: `persona_settings` reads and sets `assistant.admission` with the phone approval card; the next start
+  uses the new groups.
 
 ## Not done
 

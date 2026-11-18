@@ -1,5 +1,6 @@
 import PersonaSSH
 import SwiftUI
+import PersonaWire
 
 /// Settings › hub › SSH Tunnel (docs/operations/network.md「Connecting to hub through SSH」): one paired hub's tunnel, with what it is doing now.
 struct HubSSHTunnelPage: View {

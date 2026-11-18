@@ -141,6 +141,19 @@ class AgentCreationModelTest {
             }
             server.enqueue(MockResponse().setResponseCode(409).setBody("""{"error":"a live agent is in it","code":"worktree_in_use"}"""))
             assertEquals("worktree_in_use", (runCatching { service.removeWorktree("mac", "/wt/x", false, false) }.exceptionOrNull() as HubFailure).code)
+            server.takeRequest()
+            // The engine the agent opens in or ran in, which makes and removes its worktree, goes as the kind.
+            server.enqueue(MockResponse().setBody("""{"worktree":true,"ours":false,"path":"/wt/x","dirty":0,"unmerged":0}"""))
+            service.worktreeStatus("mac", "/wt/x", "paseo")
+            assertEquals(buildJsonObject { put("cwd", "/wt/x"); put("kind", "paseo") }, JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()))
+            // Paseo makes it as a workspace of its own, which the start goes into (#8856)
+            server.enqueue(MockResponse().setBody("""{"path":"/p/persona-fix","branch":"persona/fix","root":"/code","workspace_id":"ws-made"}"""))
+            assertEquals(WorktreeAdded("/p/persona-fix", "persona/fix", "/code", "ws-made"), service.addWorktree("mac", "/code", "Fix it", "", "paseo"))
+            assertEquals(buildJsonObject { put("cwd", "/code"); put("name_hint", "Fix it"); put("kind", "paseo") },
+                JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()))
+            server.enqueue(MockResponse().setBody("""{"removed":true,"branch_deleted":false}"""))
+            service.removeWorktree("mac", "/p/persona-fix", deleteBranch = false, force = false, kind = "paseo")
+            assertEquals(buildJsonObject { put("path", "/p/persona-fix"); put("kind", "paseo") }, JsonCodec.parseToJsonElement(server.takeRequest().body.readUtf8()))
         }
     }
 }

@@ -2,6 +2,7 @@ package assistantwire
 
 import (
 	"github.com/nwverse/persona/server/internal/connectorwire"
+	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/kbwire"
 )
 
@@ -142,14 +143,22 @@ type KBKick struct {
 	Scope     string `json:"scope,omitempty"`
 }
 
+// KBRemoteFolder identifies a user-configured, read-in-place knowledge source.
+type KBRemoteFolder struct {
+	Name    string `json:"name"`
+	Machine string `json:"machine"`
+	devicewire.KnowledgeFolder
+}
+
 // KBSettings is the knowledge base's settings the manager goes by: its manager.json's kb section, laid over the hub's
 // hello (an older hub still sends its hub.json's). Its ai is the models' (HubModels.KBAI).
 type KBSettings struct {
-	ReadOnly       bool     `json:"read_only,omitempty"`       // serve local archives without collection, models or writes
-	Off            bool     `json:"off,omitempty"`             // kb.enabled false: no knowledge base at all
-	TextDays       int      `json:"text_days,omitempty"`       // 0: 365
-	AttachmentDays int      `json:"attachment_days,omitempty"` // 0: 30
-	ExtraDirs      []string `json:"extra_dirs,omitempty"`      // as written; "~/" is the assistant's home
+	ReadOnly       bool             `json:"read_only,omitempty"`       // serve local archives without collection, models or writes
+	Off            bool             `json:"off,omitempty"`             // kb.enabled false: no knowledge base at all
+	TextDays       int              `json:"text_days,omitempty"`       // 0: 365
+	AttachmentDays int              `json:"attachment_days,omitempty"` // 0: 30
+	ExtraDirs      []string         `json:"extra_dirs,omitempty"`      // as written; "~/" is the assistant's home
+	RemoteFolders  []KBRemoteFolder `json:"remote_folders,omitempty"`
 	// AttachmentDaysBySource: attachment_days for the chats of one source (kb.attachment_days_by_source); the sources
 	// not in it, and non-positive values, keep attachment_days.
 	AttachmentDaysBySource map[string]int `json:"attachment_days_by_source,omitempty"`

@@ -443,3 +443,30 @@ func TestLinkTodoAgentOfDoneTask(t *testing.T) {
 		t.Fatalf("expected ErrTodoNotFound for a missing todo, got %v", err)
 	}
 }
+
+// ReleaseTodoAgent lets go of a link without dismissing it (#6427): the agent stays in the todo's history, and a
+// link already let go keeps its time.
+func TestReleaseTodoAgentKeepsTheLink(t *testing.T) {
+	d, ctx := open(t), context.Background()
+	now := time.Now().Truncate(time.Millisecond)
+	if err := d.CreateTodo(ctx, TodoRow{ID: "tr1", Title: "Todo", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.LinkTodoAgent(ctx, "tr1", "macbook", "s1", "Agent 1", "/cwd", "claude", "", now); err != nil {
+		t.Fatal(err)
+	}
+	at := now.Add(time.Minute)
+	if err := d.ReleaseTodoAgent(ctx, "tr1", "macbook", "s1", at); err != nil {
+		t.Fatalf("ReleaseTodoAgent: %v", err)
+	}
+	if err := d.ReleaseTodoAgent(ctx, "tr1", "macbook", "s1", at.Add(time.Hour)); err != nil {
+		t.Fatalf("ReleaseTodoAgent again: %v", err)
+	}
+	agents, err := d.ListAllTodoAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].ReleasedAt == nil || !agents[0].ReleasedAt.Equal(at) || agents[0].DismissedAt != nil {
+		t.Fatalf("the released link: %+v", agents)
+	}
+}

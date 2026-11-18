@@ -14,7 +14,9 @@ import (
 // tell apart, from the item's structured fields (a task note's kind and status) or from the node's exact Chinese
 // wording, into the reader's language (docs/protocol/i18n.md). zh-Hans, and anything the hub does not recognize (an older or
 // newer node's wording), go out as the node wrote them. The items the assistant and the channels read are not touched:
-// they match some of these lines (assistant/done.go's interrupted marker).
+// they match some of these lines (assistant/done.go's interrupted marker). The runtime bridges' own words in the items
+// they give (transcript.Runtime*: Paseo's, opencode's and pi's failures, exit codes, cancelled calls) are rewritten the
+// same way.
 //
 // Kept in Chinese because the apps parse them: the compaction divider lines, the API error prefix
 // (the API error card), the truncation marker (cut text) and the /compact echo.
@@ -66,13 +68,19 @@ func localizedItem(l i18n.Lang, it proto.Item) (proto.Item, bool) {
 		set(&it.Text, taskNoteText(l, it.Task, it.Text))
 	case it.Kind == proto.KindNotice:
 		set(&it.Text, noticeText(l, it.Text))
+	case it.Kind == proto.KindText && it.Role == "user" && it.From == transcript.PersonaPeer && it.Text == transcript.StoppedFromPhone:
+		set(&it.Text, tt(l, "stopped_from_phone"))
 	case it.Kind == proto.KindText && it.Role == "user" && it.From != "":
 		set(&it.From, fromName(l, it.From))
 		set(&it.Text, teammateText(l, it.Text))
+	case it.Kind == proto.KindText && it.Role == "assistant" && it.CodexHeartbeatQuiet:
+		set(&it.Text, tt(l, "codex_heartbeat_quiet"))
 	case it.Kind == proto.KindText && it.Role == "assistant" && strings.Contains(it.Text, codexNewChatLink):
 		set(&it.Text, strings.ReplaceAll(it.Text, codexNewChatLink, "["+tt(l, "open_new_chat")+"](persona://session/"))
 	case it.Kind == proto.KindToolResult && strings.Contains(it.Text, loadedToolPrefix):
 		set(&it.Text, loadedTools(l, it.Text))
+	case it.Kind == proto.KindToolResult:
+		set(&it.Text, runtimeResultText(l, it.Text))
 	}
 	return it, changed
 }
@@ -108,6 +116,8 @@ func noticeText(l i18n.Lang, s string) string {
 	switch {
 	case s == transcript.InterruptedNotice:
 		return tt(l, "interrupted")
+	case s == transcript.OmpStoppedNotice:
+		return tt(l, "omp_stopped")
 	case s == loopFired:
 		return tt(l, "loop_fired")
 	case strings.HasPrefix(s, loopFired+"："):
@@ -116,8 +126,34 @@ func noticeText(l i18n.Lang, s string) string {
 		return tt(l, "codex_extension", i18n.Args{"kind": strings.TrimSuffix(strings.TrimPrefix(s, codexExtension), codexRecordNote)})
 	case strings.HasPrefix(s, codexEvent) && strings.HasSuffix(s, codexRecordNote):
 		return tt(l, "codex_event", i18n.Args{"type": strings.TrimSuffix(strings.TrimPrefix(s, codexEvent), codexRecordNote)})
+	case s == transcript.RuntimeError:
+		return tt(l, "runtime_error")
+	case strings.HasPrefix(s, transcript.RuntimeErrorLead):
+		return tt(l, "runtime_error_cause", i18n.Args{"error": strings.TrimPrefix(s, transcript.RuntimeErrorLead)})
+	case s == transcript.PaseoScheduleNotice:
+		return tt(l, "schedule_fired")
+	case strings.HasPrefix(s, transcript.PaseoScheduleNotice+"："):
+		return tt(l, "schedule_fired_what", i18n.Args{"what": strings.TrimPrefix(s, transcript.PaseoScheduleNotice+"：")})
 	}
 	return s
+}
+
+// runtimeResultText is a tool result in l when a runtime bridge wrote words of its own into it (transcript.Runtime*):
+// a cancelled call's, and a failed command's exit code after its output; the output itself stays as it is.
+func runtimeResultText(l i18n.Lang, s string) string {
+	if s == transcript.RuntimeCanceled {
+		return tt(l, "runtime_canceled")
+	}
+	rest, ok := strings.CutSuffix(s, transcript.RuntimeExitTail)
+	i := strings.LastIndex(rest, transcript.RuntimeExitHead)
+	if !ok || i < 0 {
+		return s
+	}
+	code := rest[i+len(transcript.RuntimeExitHead):]
+	if _, err := strconv.Atoi(code); err != nil {
+		return s
+	}
+	return rest[:i] + tt(l, "runtime_exit_code", i18n.Args{"code": code})
 }
 
 // taskNoteHead is the key of a task note's heading (transcript/tasknote.go noteText), "" for a task of another kind.
@@ -180,6 +216,10 @@ func taskNoteHead(n *proto.TaskNote) (key string, args i18n.Args) {
 // taskNoteText is a task note's line in l: its heading rewritten from the note's kind and status when text is what the
 // node wrote for them (the "background command finished · <title>" heading), what follows the heading (the title, a Monitor's event) kept.
 func taskNoteText(l i18n.Lang, n *proto.TaskNote, text string) string {
+	// A Paseo child waiting for a permission (transcript/paseo.go): its words, not a subagent's wait for its own work.
+	if n.Kind == "agent" && n.Status == "waiting" && (text == transcript.PaseoPermissionNotice || strings.HasPrefix(text, transcript.PaseoPermissionNotice+" · ")) {
+		return tt(l, "agent_permission") + strings.TrimPrefix(text, transcript.PaseoPermissionNotice)
+	}
 	key, args := taskNoteHead(n)
 	if key == "" {
 		if text == "后台任务有更新" {

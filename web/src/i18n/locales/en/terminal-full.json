@@ -24,6 +24,7 @@
   "files": "Files",
   "keybar_hide": "Hide key bar",
   "keybar_show": "Show key bar",
+  "settings": "Terminal settings",
   "reconnect": "Reconnect",
   "opening": "Opening the full view",
   "back_to_pane": "Back to single pane",

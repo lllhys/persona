@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The hub's stage on a todo (#2776): one of Plan / Build / Review / Merge / Deploy / Verified, read tolerantly (a hub from before
 /// the field, or one sending a name this build does not know, draws no bar at all), and the PR it named (#2768).
@@ -14,6 +15,18 @@ struct TodoStageTests {
         #expect(TodoStage.allCases.map(\.label) == ["方案", "开发", "审查", "合入", "部署", "已验证"])
         #expect(TodoStage.allCases.map(\.stepNumber) == [1, 2, 3, 4, 5, 6])
         #expect(TodoStage.stepCount == 6)
+    }
+
+    /// At the accessibility text sizes the bar names only the current step, in a line under the dots, and VoiceOver
+    /// reads every dot in full: its name, its place, and done / current / still ahead (#5892). A no-break space before
+    /// the "·" keeps it at the end of the first line when the line wraps, so the second never starts with it.
+    @Test func atTheAccessibilitySizesTheLineNamesTheCurrentStepAndEveryDotSaysItAll() {
+        #expect(TodoStageBar.summary(.develop) == "第 2 步，共 6 步\u{00A0}· 开发") // i18n-ignore: the app's zh-Hans words
+        #expect(TodoStageBar.summary(.verify) == "第 6 步，共 6 步\u{00A0}· 已验证") // i18n-ignore
+        #expect(TodoStageBar.dotLabel(.plan, current: .develop) == "方案，第 1 步，共 6 步，已完成") // i18n-ignore
+        #expect(TodoStageBar.dotLabel(.develop, current: .develop) == "开发，第 2 步，共 6 步，当前步骤") // i18n-ignore
+        #expect(TodoStageBar.dotLabel(.review, current: .develop) == "审查，第 3 步，共 6 步，还没到") // i18n-ignore
+        #expect(TodoStageBar.dotLabel(.verify, current: .verify) == "已验证，第 6 步，共 6 步，当前步骤") // i18n-ignore
     }
 
     @Test func aStageTheHubNamesIsReadAndAnythingElseIsNone() {

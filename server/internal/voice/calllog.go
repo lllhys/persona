@@ -64,8 +64,11 @@ func (c *conversation) ending(reason string) {
 }
 
 // callLines are what the call's last line counts of the conversation's own: the user's lines (captions and typed) and
-// the model's that had words, and how often its upstream paused.
-type callLines struct{ user, model, pauses int }
+// the model's that had words, how often its upstream paused, and how often the app put it on hold.
+type callLines struct {
+	user, model, pauses, holds int
+	meeting                    string // a meeting call's Talk spans and audio (meetingCall.meetingLog)
+}
 
 // summary is the call's last line, after "conversation closed".
 func (c *conversation) summary(n callLines) string {
@@ -88,9 +91,14 @@ func (c *conversation) summary(n callLines) string {
 	if !l.opened.IsZero() {
 		took = time.Since(l.opened).Round(time.Second)
 	}
+	holds := ""
+	if n.holds > 0 {
+		holds = fmt.Sprintf(", holds %d", n.holds)
+	}
 	return fmt.Sprintf("after %v (%s): user lines %d (typed %d), model lines %d, delegations %d, function calls %d, runs %d%s, "+
-		"observed turns %d, cards asked %d, reconnects %d, pauses %d, nudges %d", took, firstNonEmpty(l.reason, "ended"), n.user,
-		l.typed, n.model, l.delegations, l.calls, len(l.runs), byState, l.observed, l.cards, l.reconnects, n.pauses, l.nudges)
+		"observed turns %d, cards asked %d, reconnects %d, pauses %d, nudges %d%s%s", took, firstNonEmpty(l.reason, "ended"), n.user,
+		l.typed, n.model, l.delegations, l.calls, len(l.runs), byState, l.observed, l.cards, l.reconnects, n.pauses, l.nudges,
+		holds, n.meeting)
 }
 
 // errorRunes is the most of the service's own words on an error of a live session that the log keeps.
@@ -211,7 +219,7 @@ func (b *boundTarget) logName() string {
 func (c *conversation) logStart(s *startFrame, p *Provider) {
 	c.mu.Lock()
 	lines, runs := len(c.history), len(c.resume)
-	resumed, echoes, modelID, voice := c.resumed, c.gate.echoes, c.modelID, c.voice
+	resumed, echoes, gateOff, modelID, voice := c.resumed, c.gate.echoes, c.gate.off, c.modelID, c.voice
 	c.mu.Unlock()
 	protocol := fmt.Sprintf("protocol %d", c.version)
 	if c.asked > c.version {
@@ -225,11 +233,29 @@ func (c *conversation) logStart(s *startFrame, p *Provider) {
 	if c.lang != "" {
 		more = append(more, "language "+string(c.lang))
 	}
-	if echoes {
+	if echoes && c.meeting == nil { // a meeting call says it below
 		more = append(more, "no echo cancellation")
+	}
+	switch {
+	case gateOff:
+		more = append(more, "speech gate off")
+	case s.SpeechGate != nil && !*s.SpeechGate && c.meeting != nil:
+		more = append(more, "speech gate off asked: not for a meeting call")
+	case s.SpeechGate != nil && !*s.SpeechGate:
+		more = append(more, "speech gate off asked: not for another extension's call")
 	}
 	if resumed {
 		more = append(more, fmt.Sprintf("picked up again with %d lines and %d runs", lines, runs))
+	}
+	if c.meeting != nil {
+		echo := "not said"
+		if s.EchoCancellation != nil {
+			echo = map[bool]string{true: "on", false: "off"}[*s.EchoCancellation]
+		}
+		more = append(more, fmt.Sprintf("meeting call for recording %s (echo cancellation %s)", c.meeting.recording, echo))
+	}
+	if s.Surface == surfaceCall { // only the one value: the log never says what an app wrote there (it is shared)
+		more = append(more, "surface call")
 	}
 	extra := ""
 	if len(more) > 0 {

@@ -31,8 +31,8 @@ func (h *Hub) startDevices(ctx context.Context) {
 	if err := h.loadMachineOwners(ctx); err != nil {
 		h.logf("devices: ownership unavailable; dedicated local machines stay unassigned: %v", err)
 	}
-	_ = h.loadMachinesKept(ctx) // and the machines their managers keep out of hub.json (machines_kept.go)
-	h.loadMachineEntries(ctx)   // what each manager last reported of them (machine_entries.go)
+	_ = h.loadMachinesKept(ctx)   // and the machines their managers keep out of hub.json (machines_kept.go)
+	_ = h.loadMachineEntries(ctx) // what each manager last reported of them (machine_entries.go)
 	var saved devicesWarm
 	if h.store != nil {
 		if ok, err := h.store.TakeSetting(ctx, devicesWarmKey, &saved); err != nil || !ok || time.Since(saved.SavedAt) > devicesWarmStale {
@@ -47,18 +47,16 @@ func (h *Hub) startDevices(ctx context.Context) {
 		if h.byID[mc.ID] != nil {
 			continue
 		}
-		m := newMachine(h, mc)
-		m.managed, m.peer = true, &busNode{h: h, id: mc.ID, done: make(chan struct{})}
-		m.owner = h.entryOwner(mc.ID)
-		if e, ok := h.reportedEntryOf(m.owner, mc.ID); ok { // as its manager last reported it, until it reports again
-			m.info, m.lastSeen = e.Info, e.LastSeen
-		}
+		m := h.newManagedMachine(mc)
 		m.engine = saved.Engines[mc.ID]
 		if c, ok := saved.EngineHosts[mc.ID]; ok {
 			m.engineHosts = &c
 		}
 		if w, ok := saved.Machines[mc.ID]; ok && (w.Until.IsZero() || w.Until.After(time.Now())) {
 			m.info, m.sessions, m.warmUntil = w.Info, w.Sessions, until
+			if len(w.Archived) > 0 {
+				m.archived, m.archivedAt, m.archivedBy = w.Archived, archivedIndex(w.Archived), w.ArchivedBy
+			}
 			if !w.Until.IsZero() && w.Until.Before(until) {
 				m.warmUntil = w.Until
 			}
@@ -70,6 +68,7 @@ func (h *Hub) startDevices(ctx context.Context) {
 	h.fleet.mu.Unlock()
 	d.mu.Lock()
 	d.warmUntil = until
+	d.fleetReady = true
 	d.mu.Unlock()
 	if n > 0 {
 		h.logf("warm start: %d machines shown as before while the manager reconnects them", n)
@@ -77,10 +76,81 @@ func (h *Hub) startDevices(ctx context.Context) {
 	time.AfterFunc(devicesWarmGrace, h.devicesWarmEnded)
 }
 
-// markUnknownLocked shows m's sessions that are not offline as unknown, in a copy of its list: the kept list is never
-// changed in place (Machine.sessions). m.mu is held.
+// newManagedMachine is a machine the hub lists while its manager has not reported it yet, with what that manager last
+// reported of it.
+func (h *Hub) newManagedMachine(mc MachineConfig) *Machine {
+	m := newMachine(h, mc)
+	m.managed, m.peer = true, &busNode{h: h, id: mc.ID, done: make(chan struct{})}
+	m.owner = h.entryOwner(mc.ID)
+	if e, ok := h.reportedEntryOf(m.owner, mc.ID); ok {
+		m.info, m.lastSeen = e.Info, e.LastSeen
+	}
+	return m
+}
+
+// retryMachineAssignments reads what startDevices could not. The move locks make a recovered read and its handover one
+// move against the managers' moves and removals. False leaves the trust loop retrying at trustRetryEvery.
+func (h *Hub) retryMachineAssignments(ctx context.Context) bool {
+	d := &h.devices
+	d.mu.Lock()
+	ownersRead, keptRead := d.assignRead, d.keptRead
+	d.mu.Unlock()
+	if ownersRead && keptRead {
+		return true
+	}
+	h.moving.managers.RLock()
+	defer h.moving.managers.RUnlock()
+	d.moving.Lock()
+	defer d.moving.Unlock()
+	ownersRead = h.readOwnersMoving(ctx) == nil
+	if !keptRead {
+		d.mu.Lock()
+		keptRead = d.keptRead // another operation may have read it while this one waited for the lock
+		d.mu.Unlock()
+		if !keptRead {
+			if err := h.loadMachinesKept(ctx); err != nil {
+				return false
+			}
+			keptRead = true
+		}
+	}
+	return ownersRead && keptRead
+}
+
+// reconcileKeptMachines lists the machines whose kept records were unread at start. It runs only when those records
+// are first recovered: a manager's later report that drops one must not have it put back by the retry loop.
+func (h *Hub) reconcileKeptMachines() {
+	known := h.knownEntries()
+	added := false
+	h.fleet.mu.Lock()
+	for _, mc := range known {
+		if h.cfgEntry(mc.ID) != nil || h.byID[mc.ID] != nil {
+			continue
+		}
+		m := h.newManagedMachine(mc)
+		h.machines = append(h.machines, m)
+		h.byID[mc.ID] = m
+		added = true
+	}
+	h.fleet.mu.Unlock()
+	if added {
+		h.broadcastMachines()
+	}
+}
+
+// markUnknownLocked shows m's sessions that are not offline as unknown, its archived rows told apart (archived) as
+// well, as when they were in its list, in copies: the kept lists are never changed in place (Machine.sessions). m.mu
+// is held.
 func (m *Machine) markUnknownLocked() {
-	list := slices.Clone(m.sessions)
+	m.sessions = markedUnknown(m.sessions)
+	if len(m.archived) > 0 {
+		m.archived = markedUnknown(m.archived) // the same rows in the same order: archivedAt still holds
+	}
+}
+
+// markedUnknown is a copy of list with the sessions that are not offline shown as unknown.
+func markedUnknown(list []proto.Session) []proto.Session {
+	list = slices.Clone(list)
 	for i := range list {
 		if list[i].Status != proto.StatusOffline {
 			list[i].Status = proto.StatusUnknown
@@ -89,7 +159,7 @@ func (m *Machine) markUnknownLocked() {
 			}
 		}
 	}
-	m.sessions = list
+	return list
 }
 
 // devicesUp: the manager that carries the machines is connected and has reported them.
@@ -318,7 +388,7 @@ func (h *Hub) applyDeviceStatesFrom(owner string, st devicewire.States) {
 			h.sessionsChanged(c.m)
 		}
 		if c.began {
-			go h.fsWatchReconnected(c.m) // the web panels' open folders (#2439)
+			h.fsWatchReconnected(c.m) // queues the web panels' open folders; never calls the node here (#2439)
 		}
 	}
 }

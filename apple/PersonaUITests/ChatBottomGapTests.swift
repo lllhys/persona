@@ -46,7 +46,7 @@ final class ChatBottomGapTests: XCTestCase {
             gaps.append(("\(scheme) with queued messages", try gap(app, shot: "\(scheme)-queued")))
             app.terminate()
 
-            // Terminated while it uploads: the path never lands in the draft, which later runs would keep.
+            // Terminated while it uploads: nothing of the file stays in the draft, which later runs would keep.
             app = launch(blog, scheme, ["-openUploadDemo", "季度报告.pdf"])
             XCTAssertTrue(app.buttons["取消上传 季度报告.pdf"].waitForExistence(timeout: 20), "no upload bar")
             _ = composer(app)

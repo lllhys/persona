@@ -226,11 +226,12 @@ func codexDraft(raw, plain []string, i int, noColor bool) string {
 		end--
 	} else if end > i+2 {
 		last := strings.TrimSpace(plain[end-1])
-		if (strings.HasPrefix(last, "? for shortcuts") || strings.HasPrefix(last, "← for agents · ? for shortcuts")) &&
-			codexStatusRE.MatchString(plain[end-2]) {
+		if strings.HasPrefix(last, "? for shortcuts") || strings.HasPrefix(last, "← for agents · ? for shortcuts") {
 			// Match the status/path and shortcut footer together at the bottom, not model names or hint text
-			// inside a multiline draft. Real text above this pair remains protected from remote input.
-			end -= 2
+			// inside a multiline draft. Real text above the footer remains protected from remote input.
+			if s := codexStatusStart(plain, i, end-1); s >= 0 {
+				end = s
+			}
 		}
 	}
 	for k := i; k < end; k++ {
@@ -256,6 +257,35 @@ func codexDraft(raw, plain []string, i int, noColor bool) string {
 		return ""
 	}
 	return draft
+}
+
+// codexStatusWrapRows is how many rows a status row may take once the pane wraps it (model · path · thread title ·
+// profile on a narrow pane).
+const codexStatusWrapRows = 4
+
+// codexStatusStart is the first row of the status row that ends right above hint, or -1. A status row wider than
+// the pane wraps onto indented rows, so it is matched with those rows joined back, which also covers a wrap that
+// falls before the path. Rows at or above the › row at i are never part of it. The status row starts with the model
+// and its separator, so a row that starts with a separator (a continuation) or has none cannot start it: a draft
+// line such as "some text" above "· /work/example" stays a draft.
+func codexStatusStart(plain []string, i, hint int) int {
+	for k := hint - 1; k > i && k >= hint-codexStatusWrapRows; k-- {
+		t := strings.TrimSpace(plain[k])
+		if t == "" || !strings.HasPrefix(plain[k], "  ") {
+			return -1
+		}
+		if strings.HasPrefix(t, "·") || !strings.Contains(t, " ·") {
+			continue
+		}
+		joined := plain[k]
+		for _, l := range plain[k+1 : hint] {
+			joined += " " + strings.TrimSpace(l)
+		}
+		if codexStatusRE.MatchString(joined) {
+			return k
+		}
+	}
+	return -1
 }
 
 // undimmed is a colored row's text without its dim runs.
@@ -418,4 +448,43 @@ func codexQuestion(plain []string) *CodexQuestionDialog {
 		return nil
 	}
 	return q
+}
+
+// codexFirstOptionRE is a Codex picker's first option, under the cursor or not ("› 1. Switch to …", "  1. Keep …").
+var codexFirstOptionRE = lazyre.New(`^\s*(?:[❯›>]\s*)?1\.\s+\S`)
+
+// CodexDialogHead is the first line of the dialog at the bottom of a Codex screen (View CodexDialog: a picker such as
+// "Approaching rate limits", which lists its options under a paragraph of its own): the first line of that paragraph,
+// "" when none shows. DialogHead reads Claude Code's dialogs, framed by rules Codex does not draw, and so would give a
+// line of the conversation above it.
+func CodexDialogHead(screen string) string {
+	if ReadCodex(screen).View != CodexDialog {
+		return ""
+	}
+	lines := strings.Split(strings.ReplaceAll(screen, "\r", ""), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(strings.ReplaceAll(Plain(lines[i]), " ", " "), " ")
+	}
+	opt := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if codexFirstOptionRE.MatchString(lines[i]) {
+			opt = i
+			break
+		}
+	}
+	i := opt - 1
+	for i >= 0 && strings.TrimSpace(lines[i]) == "" {
+		i--
+	}
+	if opt < 0 || i < 0 {
+		return ""
+	}
+	for i > 0 && strings.TrimSpace(lines[i-1]) != "" {
+		i--
+	}
+	// the dialog's own text is indented; a row at the edge is the conversation's ("• Ran …"): no paragraph of its own
+	if l := lines[i]; l[0] != ' ' {
+		return ""
+	}
+	return strings.TrimSpace(lines[i])
 }

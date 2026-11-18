@@ -187,8 +187,10 @@
       "type": "string",
       "enum": [
         "items",
-        "snapshot"
-      ]
+        "snapshot",
+        "things"
+      ],
+      "description": "items: new items, each kept once; snapshot: the answer as one state, kept when it changes; things: the answer lists Inbox rows ready-made (ConnectorInboxThing), kept and handed to the Inbox as they are."
     },
     "ConnectorSubscriptionGroup": {
       "type": "string",
@@ -243,9 +245,34 @@
         "due_date": {
           "type": "string",
           "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$"
+        },
+        "sender_id": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$",
+          "description": "The sender's stable id; without it the sender tag is the lowercased display name."
+        },
+        "chat": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$",
+          "description": "The conversation's stable id: the row gets a chat tag."
+        },
+        "chat_name": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$",
+          "description": "The conversation's name, the chat tag's name."
+        },
+        "seen": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$",
+          "description": "Whether the item was already seen in the source: true, a non-zero number, or true, 1, yes, read or seen in any case. The Inbox row is read when its newest item is; seen only ever turns on."
+        },
+        "reply_to": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$",
+          "description": "Where a reply goes and who sees it, in a line for people. With it, an item with an id can be replied to through the connector's inbox reply, with its thread (else its id) and its id as last."
         }
       },
-      "description": "Paths relative to one item. Only $, .field and [index] are supported; no expressions or recursive descent."
+      "description": "Paths relative to one item. Only $, .field and [index] are supported; no expressions or recursive descent. sender_id, chat and chat_name name who and where for mutes and policies (the Inbox row's sender and chat tags), seen its read state, and reply_to where a reply goes; none of them is part of an item's content."
     },
     "ConnectorSubscriptionRecipe": {
       "type": "object",
@@ -257,6 +284,22 @@
           "type": "string"
         },
         "args": {},
+        "cursor_arg": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next_cursor_path": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$"
+        },
+        "page_arg": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next_page_path": {
+          "type": "string",
+          "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$"
+        },
         "items_path": {
           "type": "string",
           "pattern": "^\\$(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*$"
@@ -277,7 +320,7 @@
         "kind",
         "group_by"
       ],
-      "description": "A pull recipe, not a schedule. args is an object (default {}); strings may contain {{since}} or {{since_date}}. items_path defaults to $; fields are relative to one item. Text results require snapshot mode. Runtime argument/schema and mapped-value validation belongs to the subscription runner."
+      "description": "A pull recipe, not a schedule. In things mode the rows bring their own threads and kinds: group_by is thread, kind is a row's when it has none, and fields and pagination are not used. args is an object (default {}); strings may contain {{since}} or {{since_date}}. cursor_arg and next_cursor_path opt into cursor pagination; page_arg and optional next_page_path opt into page pagination (without next_page_path, a full requested page continues). items_path defaults to $; fields are relative to one item. Text results require snapshot mode. Runtime argument/schema and mapped-value validation belongs to the subscription runner."
     },
     "ConnectorErrorCode": {
       "description": "error.code a program answers or gets besides the base ErrorCode: rate_limited (tools.call / actions.do, and the hub's answer to too many sent.record; data {retry_after} in seconds, fractional allowed), why credentials.gh_token has no token, and what recall answers: not_recallable (nothing was sent: the program cannot take that message back) and recall_unknown (the request may have taken effect). not_signed_in, offline and rate_limited also say that recall could not act now. not_read_only refuses a catalog.call outside the current read-only catalog.",
@@ -398,7 +441,11 @@
         "name": {"type": "string"},
         "description": {"type": "string"},
         "input_schema": {"description": "A JSON Schema with type object."},
-        "shell": {"type": "array", "items": {"type": "string"}, "description": "Words that run the tool in a shell instead (a gated command's); runtimes refuse them in an assistant conversation."}
+        "shell": {"type": "array", "items": {"type": "string"}, "description": "Words that run the tool in a shell instead (a gated command's); runtimes refuse them in an assistant conversation."},
+        "defer_loading": {
+          "type": "boolean",
+          "description": "Set by Persona itself on an assistant conversation's tool list: a rarely used tool is sent by name only and loaded with tool search when needed (#7317). A connector does not need to send it; the manager sets it on every list whatever a connector sent."
+        }
       },
       "required": ["name", "description", "input_schema"]
     },
@@ -424,8 +471,19 @@
       "type": "object",
       "properties": {
         "text": {"type": "string"},
+        "images": {"type": "array", "items": {"$ref": "#/$defs/ConnectorToolImage"}, "description": "tools.call only (actions.do and catalog.call ignore it): pictures for the model after the text, on a hub whose initialize lists the capability tool_images (an older hub ignores them; the text must stand on its own). At most 16, each a whole JPEG, PNG or WebP of at most 1 MiB and 2000 pixels a side, together at most 4 MiB and 8 million pixels; the hub leaves out any over a limit and says so after the text."},
         "message_ref": {"type": "string", "description": "actions.do only (tools.call ignores it): the id, on the other side, of the message the write made, when the service gave one (a comment's id, a mail's Message-ID, a chat message's id). The hub trims it and keeps it as the sent-as-user ledger row's message_ref; one longer than 200 characters is dropped (the row has none), not cut. Leave it out when there is none."}
       }
+    },
+    "ConnectorToolImage": {
+      "description": "One picture of a tools.call answer (ConnectorCallResult.images).",
+      "type": "object",
+      "properties": {
+        "mime": {"type": "string", "description": "image/jpeg, image/png or image/webp: a hint, the hub reads the type from the bytes."},
+        "data": {"type": "string", "description": "The bytes, base64 (standard, with padding)."},
+        "caption": {"type": "string", "description": "One short line for the model and for people, shown before the picture (a time in a video, a picture's place in a post); the hub keeps the first 200 characters of its first line."}
+      },
+      "required": ["data"]
     },
     "ConnectorAction": {
       "description": "A write as the card names it: visible says who will see it.",

@@ -59,6 +59,14 @@ extension APIClient {
     }
 }
 
+extension SubscriptionCounts {
+    /// `manager`'s subscription summary, read through `api` naming it (nil: the default's, naming none); nil when it can't
+    /// be read now (the row keeps what it had).
+    static func summary(_ api: APIClient, manager: String?) async -> [SubscriptionSummaryLine]? {
+        try? await api.manager(manager).subscriptionSummary()
+    }
+}
+
 /// Bumped by each `subscription` event (AppModel), so the entry rows read the summary again.
 @MainActor @Observable final class SubscriptionsRefresh {
     static let shared = SubscriptionsRefresh()
@@ -71,11 +79,13 @@ struct SubscriptionsEntrySection: View {
     var counts: SubscriptionCounts?
     /// The pages' first state (`SubscriptionsUI.state`).
     var state: String?
+    /// Whose subscriptions the pages are: the page's own manager, as its requests name it (nil: the current assistant's).
+    var manager: String? = nil
 
     var body: some View {
         if let counts {
             Section {
-                NavigationLink(value: SettingsPage.subscriptions(state: state)) {
+                NavigationLink(value: SettingsPage.subscriptions(state: state, manager: manager)) {
                     Label {
                         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                             Text("Subscriptions [Source Subscriptions Entry]").lineLimit(1)
@@ -93,27 +103,29 @@ struct SubscriptionsEntrySection: View {
 
 extension View {
     /// Reads the counts for an entry row on this page: once the hub shows subscriptions, and again (a second after the last of a
-    /// burst) whenever one changes. Another manager's page passes `enabled: false`: subscriptions are the default manager's.
-    func subscriptionCounts(_ counts: Binding<SubscriptionCounts?>, enabled: Bool = true,
+    /// burst) whenever one changes. `manager`: whose page it is, as its requests name it (nil: the default's); each
+    /// assistant's manager keeps its own subscriptions, and the hub sends the summary to the one named.
+    func subscriptionCounts(_ counts: Binding<SubscriptionCounts?>, manager: String?,
                             where pick: @escaping (SubscriptionSummaryLine) -> Bool) -> some View {
-        modifier(SubscriptionCountsLoader(counts: counts, enabled: enabled, pick: pick))
+        modifier(SubscriptionCountsLoader(counts: counts, manager: manager, pick: pick))
     }
 }
 
 private struct SubscriptionCountsLoader: ViewModifier {
     @Environment(AppModel.self) private var app
     @Binding var counts: SubscriptionCounts?
-    var enabled: Bool
+    var manager: String?
     var pick: (SubscriptionSummaryLine) -> Bool
 
-    private struct Key: Equatable { var shown: Bool; var revision: Int }
+    private struct Key: Equatable { var shown: Bool; var manager: String?; var revision: Int }
 
     func body(content: Content) -> some View {
-        let shown = enabled && app.hubFeatures.contains(SubscriptionsUI.feature)
-        content.task(id: Key(shown: shown, revision: SubscriptionsRefresh.shared.revision)) {
+        let shown = app.hubFeatures.contains(SubscriptionsUI.feature)
+        content.task(id: Key(shown: shown, manager: manager, revision: SubscriptionsRefresh.shared.revision)) {
             guard shown else { counts = nil; return }
             if SubscriptionsRefresh.shared.revision > 0 { try? await Task.sleep(for: .seconds(1)) }
-            guard !Task.isCancelled, let api = app.api, let lines = try? await api.subscriptionSummary() else { return }
+            // The lines are read off the main actor; the row's pick runs here, on them.
+            guard !Task.isCancelled, let api = app.api, let lines = await SubscriptionCounts.summary(api, manager: manager) else { return }
             counts = SubscriptionCounts.of(lines, where: pick) // a failed read keeps what the row had
         }
     }
@@ -131,9 +143,7 @@ struct SubscriptionsSheet: View {
                               title: app.hubFeatures.contains(SubscriptionsUI.sourcesFeature) ? String(localized: "Inbox Sources")
                                   : String(localized: "Subscriptions [Source Subscriptions]"))
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button { dismiss() } label: { Text("Done [Extension System Presentation c0b3fb]").lineLimit(1) }
-                    }
+                    SheetClose { dismiss() }
                 }
         }
         .onChange(of: app.assistantReveal) { dismiss() }

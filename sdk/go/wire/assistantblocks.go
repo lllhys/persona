@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -71,9 +72,23 @@ type AssistantViewBlock struct {
 // AssistantViewBlocks recognizes standalone CommonMark fences, including tildes and longer outer fences.
 // Fences inside another code block are examples, not executable cards. Invalid persona-view blocks still count.
 func AssistantViewBlocks(text string) []AssistantViewBlock {
+	blocks := FencedBlocks(text, "persona-view", "persona-card")
+	index := 0
+	for i := range blocks {
+		if blocks[i].Language == "persona-view" {
+			blocks[i].Index = index
+			index++
+		}
+	}
+	return blocks
+}
+
+// FencedBlocks is text's standalone fenced code blocks in one of languages (lowercase), by AssistantViewBlocks' rules,
+// each with Index -1; an unclosed last one runs to the end of text and is not Complete.
+func FencedBlocks(text string, languages ...string) []AssistantViewBlock {
 	var blocks []AssistantViewBlock
 	var char byte
-	length, start, content, index := 0, 0, 0, 0
+	length, start, content := 0, 0, 0
 	language := ""
 	position := 0
 	for position < len(text) {
@@ -91,24 +106,15 @@ func AssistantViewBlocks(text string) []AssistantViewBlock {
 				char, length, language, start, content = c, n, info, position, position+len(line)
 			}
 		} else if ok && c == char && n >= length && info == "" {
-			if language == "persona-view" || language == "persona-card" {
-				ordinal := -1
-				if language == "persona-view" {
-					ordinal = index
-					index++
-				}
-				blocks = append(blocks, AssistantViewBlock{Index: ordinal, Start: start, End: position + len(line), Language: language, Raw: json.RawMessage(text[content:position]), Complete: true})
+			if slices.Contains(languages, language) {
+				blocks = append(blocks, AssistantViewBlock{Index: -1, Start: start, End: position + len(line), Language: language, Raw: json.RawMessage(text[content:position]), Complete: true})
 			}
 			char = 0
 		}
 		position += len(line)
 	}
-	if char != 0 && (language == "persona-view" || language == "persona-card") {
-		ordinal := -1
-		if language == "persona-view" {
-			ordinal = index
-		}
-		blocks = append(blocks, AssistantViewBlock{Index: ordinal, Start: start, End: len(text), Language: language, Raw: json.RawMessage(text[content:]), Complete: false})
+	if char != 0 && slices.Contains(languages, language) {
+		blocks = append(blocks, AssistantViewBlock{Index: -1, Start: start, End: len(text), Language: language, Raw: json.RawMessage(text[content:]), Complete: false})
 	}
 	return blocks
 }

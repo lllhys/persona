@@ -35,9 +35,18 @@ type Item struct {
 	// BackgroundWaiting: a working row that only waits on background commands (#6045). It stays in State's count
 	// (older apps call it working) and is counted apart in Counts.BackgroundWaiting too.
 	BackgroundWaiting bool
-	// Fold is the item's place in the session hierarchy (#5120); nil for an item folded under none that shows its own
-	// State and BackgroundWaiting, as every item without children does. It sits behind a pointer to keep Item in its
-	// allocation size class: an adapter builds a whole batch as one []Item, as the hub does on every pass.
+	// JustFinished: a seen row whose done turn nobody had looked at, while it is new (proto.WorkState.JustFinished,
+	// #9751). It stays in State's count (older apps call it seen) and is counted apart in Counts.JustFinished too.
+	JustFinished bool
+	// Private: a row a reader with Options.NoPrivate is never shown, in its rows, totals or counts (a health-space
+	// conversation, which an extension's token does not see).
+	Private bool
+	// Assistant marks a Persona conversation, excluded from the Agents list and active Agent aggregate.
+	Assistant bool
+	// Fold is the item's optional per-row metadata: its place in the session hierarchy (#5120) and its open to-do
+	// (#6662). Nil for an item with neither, which shows its own State and BackgroundWaiting. It sits behind a pointer
+	// to keep Item in its allocation size class: an adapter builds a whole batch as one []Item, as the hub does on every
+	// pass.
 	Fold       *Fold
 	UpdatedAt  time.Time
 	SearchText string
@@ -45,16 +54,21 @@ type Item struct {
 	Full       any
 }
 
-// Fold is how an Item folds. Root is the session id (as parent_session_id names it, not the composite ID) of the item
-// on the same Machine this one is folded under (a child session under its topmost listed ancestor), only when that
-// item is in the same batch; State is the state the item shows with the items folded under it ("" for its own);
-// BackgroundWaiting is Item.BackgroundWaiting for Options.Roots: none of the items folded under it works or needs the
-// user either. Options.Roots leaves out the items with a Root and filters and counts the others by their folded state;
-// Options.Under selects the items folded under one. Like the rest of an Item it is immutable once handed to Replace:
-// copies of the item share it.
+// Fold is how an Item folds and the open to-do it is on. Root is the session id (as parent_session_id names it, not the
+// composite ID) of the item on the same Machine this one is folded under (a child session under its topmost listed
+// ancestor), only when that item is in the same batch; State is the state the item shows with the items folded under it
+// ("" for its own); BackgroundWaiting is Item.BackgroundWaiting for Options.Roots: none of the items folded under it
+// works or needs the user either. Todo is the id of the open to-do the row is on ("" for none): what Options.Todo
+// selects and Counts.Todo counts. The adapter knows which to-dos are open; the index only compares ids. Options.Roots
+// leaves out the items with a Root and filters and counts the others by their folded state; Options.Under selects the
+// items folded under one. SearchAs is the ID of the item (Root's) a search with Options.Roots returns a hit in this
+// item as, and SearchSession the session id the hit names it by (SearchHit.HitSessionID): the adapter sets both on a
+// side session folded under Root (#7944), whose chat is reached from Root's. Like the rest of an Item it is immutable
+// once handed to Replace: copies of the item share it.
 type Fold struct {
-	Root, State       string
-	BackgroundWaiting bool
+	Root, State, Todo       string
+	SearchAs, SearchSession string
+	BackgroundWaiting       bool
 }
 
 // root is the session v is folded under ("" for none).
@@ -65,11 +79,24 @@ func (v *Item) root() string {
 	return v.Fold.Root
 }
 
+// todo is the open to-do v is on ("" for none).
+func (v *Item) todo() string {
+	if v.Fold == nil {
+		return ""
+	}
+	return v.Fold.Todo
+}
+
 // Options selects a filtered full list or an incremental change list. Limit zero
 // means the default. Cursor binds the filters, Summary, and Since, but not Limit.
 // ID is an adapter-supplied exact composite identity, not a public query key;
 // it selects at most one row and cannot be combined with Cursor or Since.
 type Options struct {
+	// Search is the runtime palette's opt-in grammar. Context is captured only on
+	// the first page; AllowedMachines is an adapter-owned authorization boundary.
+	Search                                                                             string
+	SearchContext                                                                      *SearchContext
+	AllowedMachines                                                                    []string
 	Limit                                                                              int
 	ID, Cursor, Since, State, Machine, Project, Group, Source, Provider, Q, PaneSource string
 	// Manager selects the rows of the batches replaced with that owner (ReplaceOwned); like the other filters, a
@@ -83,34 +110,77 @@ type Options struct {
 	Roots   bool
 	Under   string
 	Summary bool
+	// NoPrivate leaves the Private items out of the rows, the totals and every count; like Manager it is the adapter's
+	// to set (who asks), not a key Parse reads, and it binds a cursor as the other filters do.
+	NoPrivate bool
+	// AgentsOnly excludes assistant and health-space conversations from the filtered view.
+	AgentsOnly bool
+	// Places (place=["<machine>","<project>"], repeatable) selects the items at any of these machine and project
+	// pairs: one project's directories across computers. Spaces (space=["<machine>","<group>"]) does the same by
+	// machine and group. An empty key selects the items of that machine without the attribute. Each combines with
+	// the other filters and binds a cursor as they do, whatever order its pairs come in. At most maxPlaces each,
+	// every pair with a machine.
+	Places []Place
+	Spaces []Place
+	// Todo (todo=<id>) selects the items on that to-do; TodoNone (todo=none) the items on none. Both bind a cursor as
+	// the other filters do (#6662).
+	Todo string
+	// Waiting (waiting=1) selects the items that only wait in the background (BackgroundWaiting, by their folded state
+	// with Roots), waiting=0 the others: with state=working, the sidebar's "Waiting in the background" and "Working"
+	// quick filters. ExcludePaneSource (exclude_pane_source=<origin>) leaves out the items of that origin (the
+	// sidebar's hidden botmux sessions). Both bind a cursor as the other filters do (#6662).
+	Waiting           string
+	ExcludePaneSource string
+	// JustFinished (just_finished=1) selects the Just finished items (Item.JustFinished, by their folded state with
+	// Roots: idle), just_finished=0 the others: with state=idle, the web's Just finished and Seen sections (#9751). It
+	// binds a cursor as the other filters do.
+	JustFinished string
 }
+
+// TodoNone is the todo value that selects the items on no to-do: no to-do id is spelled so ("todo_<hex>").
+const TodoNone = "none"
 
 // Page contains transport values rather than adapter-specific session types.
 // Total is the filtered membership at Revision, not the number of delta events.
 // Sessions and Remove together consume Limit slots in an incremental page.
 type Page struct {
-	Sessions   []any    `json:"sessions"`
-	Remove     []string `json:"remove"`
-	HasMore    bool     `json:"has_more"`
-	NextCursor string   `json:"next_cursor,omitempty"`
-	Revision   string   `json:"revision"`
-	Total      int      `json:"total"`
+	SearchHits map[string]SearchHit `json:"search_hits,omitempty"`
+	Sessions   []any                `json:"sessions"`
+	Remove     []string             `json:"remove"`
+	HasMore    bool                 `json:"has_more"`
+	NextCursor string               `json:"next_cursor,omitempty"`
+	Revision   string               `json:"revision"`
+	Total      int                  `json:"total"`
 }
 
 // Counts describes the complete filtered membership, ignoring page size.
 // Empty attribute values are counted under the empty string key. PaneSource
 // is omitted for adapters that do not supply an origin attribute.
 type Counts struct {
-	Total      int            `json:"total"`
-	Machine    map[string]int `json:"machine"`
-	Project    map[string]int `json:"project"`
-	Group      map[string]int `json:"group"`
-	State      map[string]int `json:"state"`
-	PaneSource map[string]int `json:"pane_source,omitempty"`
+	Total   int            `json:"total"`
+	Machine map[string]int `json:"machine"`
+	// ActiveAgentsByMachine is populated for roots counts, including an empty map for a known zero.
+	ActiveAgentsByMachine map[string]int `json:"active_agents_by_machine,omitzero"`
+	Project               map[string]int `json:"project"`
+	Group                 map[string]int `json:"group"`
+	State                 map[string]int `json:"state"`
+	PaneSource            map[string]int `json:"pane_source,omitempty"`
+	// Todo counts the items by Fold.Todo, "" for the items on no to-do (#6662).
+	Todo map[string]int `json:"todo"`
 	// BackgroundWaiting: how many of State["working"] only wait in the background (#6045): a client that shows them
 	// apart takes them out of its Working count.
-	BackgroundWaiting int    `json:"background_waiting,omitempty"`
-	Revision          string `json:"revision"`
+	BackgroundWaiting int `json:"background_waiting,omitempty"`
+	// JustFinished: how many of State["idle"] are Just finished (#9751): a client that shows them apart takes them out
+	// of its Seen count.
+	JustFinished int    `json:"just_finished,omitempty"`
+	Revision     string `json:"revision"`
+}
+
+// PageWithCounts is a page with its view's current counts (with_counts=1): what a separate ?counts=1 read with the
+// same filters returns, ignoring since, cursor and limit (#4858; the personal Agents too, #6496).
+type PageWithCounts struct {
+	Page
+	Counts Counts `json:"counts"`
 }
 
 // Error lets adapters map invalid_query to HTTP 400 and cursor_expired or
@@ -125,8 +195,9 @@ func (e *Error) Error() string { return e.Code + ": " + e.message }
 func failure(code, message string) error { return &Error{Code: code, message: message} }
 
 type record struct {
-	item   Item
-	search string
+	searchDocument *searchRecord // lazy immutable projection; Item remains in its allocation class
+	item           Item
+	search         string
 	// owner is the manager its batch was replaced with (ReplaceOwned), "" for none: what filters.Manager selects by.
 	// It is the batch's, not an Item attribute, so the items an adapter builds for every update stay the size they were.
 	owner string
@@ -139,11 +210,14 @@ type journalEntry struct {
 }
 
 type filters struct {
-	ID, State, Machine, Project, Group, Source, Provider, Q, PaneSource, Manager, Under string
-	Roots                                                                               bool
+	ID, State, Machine, Project, Group, Source, Provider, Q, PaneSource, Manager, Under, Todo, Waiting, ExcludePaneSource, JustFinished string
+	// Places and Spaces are Options' as placesKey spells them: filters stay comparable.
+	Places, Spaces               string
+	Roots, NoPrivate, AgentsOnly bool
 }
 
 type binding struct {
+	Search, AllowedMachines string
 	filters
 	Summary bool
 	Since   string
@@ -161,9 +235,11 @@ type event struct {
 }
 
 type result struct {
-	events  []event
-	counts  Counts
-	ordered bool // counts-only views must not be mistaken for an empty ordered list
+	searchHits  map[string]rankedHit
+	searchTerms []string // the terms a page's evidence is built for
+	events      []event
+	counts      Counts
+	ordered     bool // counts-only views must not be mistaken for an empty ordered list
 }
 
 type cacheEntry struct {
@@ -196,7 +272,10 @@ type Index struct {
 	cacheClock     uint64
 	snapshots      map[string]*snapshot
 	snapshotOrder  []string
-	now            func() time.Time // optional clock used by package tests
+	// undecoded counts the current records without a search document: a search with none to decode lists none
+	// (decodeSearchDocuments).
+	undecoded int
+	now       func() time.Time // optional clock used by package tests
 }
 
 func randomToken() string {
@@ -217,7 +296,7 @@ func (i *Index) initialize() {
 	i.sources = make(map[string]map[string]*record)
 	i.cache = make(map[cacheKey]*cacheEntry)
 	i.snapshots = make(map[string]*snapshot)
-	i.counts = emptyCounts(i.revisionToken())
+	i.counts = emptyCounts(i.revisionToken(), false)
 	if i.now == nil {
 		i.now = time.Now
 	}
@@ -283,9 +362,13 @@ func (i *Index) ReplaceOwned(source, owner string, items []Item) {
 	for id, c := range changes {
 		if c.before != nil {
 			addCount(&i.counts, c.before.item, false, -1)
+			if c.before.searchDocument == nil {
+				i.undecoded--
+			}
 		}
 		if c.after != nil {
 			addCount(&i.counts, c.after.item, false, 1)
+			i.undecoded++ // a new record: its document is decoded by the first search that reads it
 		}
 		if c.after == nil {
 			delete(i.items, id)

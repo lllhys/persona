@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// The agent's plan (TodoWrite) as the chat shows it (#5602, the web's `PlanCard` / `PlanPanel` / `PlanPill`, after
 /// Claude Desktop): its line in the work says which step of how many it is on and that step, over a thin bar of how far
@@ -103,7 +104,7 @@ struct PlanSheet: View {
             .background(Theme.pageBackground)
             .navigationTitle(String(localized: "Plan [Plan Sheet]"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } }
+            .toolbar { SheetClose { dismiss() } }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)

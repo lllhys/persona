@@ -77,6 +77,7 @@ internal fun TaskDecisionAnswers(todo: Todo, ask: TodoAsk, host: AssistantTaskHo
             ask.background?.takeIf(String::isNotBlank)?.let {
                 Text(it, Modifier.testTag("decision-background"), style = type.caption, color = palette.ink2, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            if (ask.forBriefing) ForBriefingMark()
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Space.xs)) {
                 options.forEachIndexed { index, option ->
                     Column(Modifier.testTag("decision-leads-$index")) {

@@ -323,8 +323,9 @@ function itemManager(path: string): string | undefined {
 
 const CONVERSATION = /^\/assistant\/conversations\/[^/?]+/;
 // The routes that are the current assistant's as a whole: its page, conversations, scheduled tasks and memory
-// (`/assistant…`), and its knowledge base with the recordings it keeps there.
-const CURRENT = /^\/(?:assistant|kb|kb-search|recordings)(?=$|[/?])/;
+// (`/assistant…`), its knowledge base with the recordings it keeps there, and its computers' token history (the
+// new-chat page's calendar, #9506; the island's `/usage` stays the default's).
+const CURRENT = /^\/(?:assistant|kb|kb-search|recordings|usage\/days|usage\/hours)(?=$|[/?])/;
 
 /** The header value for a request to path (under /api/v1), or undefined.
  *  - One conversation's routes name its manager when a page listed it, else none: the hub then sends them to the

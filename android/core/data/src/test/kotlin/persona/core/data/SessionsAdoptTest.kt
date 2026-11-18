@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.*
@@ -20,6 +21,21 @@ import org.junit.rules.TemporaryFolder
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionsAdoptTest {
     @get:Rule val temporary = TemporaryFolder()
+
+    @Test fun waitingAndReturnedThreadMetadataStayAvailableOutsideTheFilteredWindow() = runTest {
+        val transport = Transport().apply { paged = true }
+        val repository = HubSessionsRepository(transport, Connection(), backgroundScope)
+        repository.setListFilter(SessionListFilter(state = "working"))
+        val waiting = Session("computer", "waiting", agent = "codex", status = "idle", paneId = "pane", awaitingFirstMessage = true)
+        val thread = waiting.copy(sessionId = "thread", awaitingFirstMessage = false)
+        repository.adopt(waiting)
+        repository.adoptThread(waiting.key, thread)
+        advanceTimeBy(100); runCurrent()
+        assertTrue(repository.sessions.value.isEmpty())
+        assertEquals(0, repository.listStatus.value.total)
+        assertEquals(listOf(waiting, thread), repository.adoptedSessions.value)
+        assertEquals(thread, repository.startedThreads.value[waiting.key])
+    }
 
     @Test fun adoptedSessionsAreListedOnceAndKeptThroughARefreshInFlight() = runTest {
         val directory = temporary.newFolder()
@@ -45,6 +61,19 @@ class SessionsAdoptTest {
         assertEquals(listOf("working"), ListSnapshotStore(directory).restore<List<Session>>("sessions")?.map { it.status })
     }
 
+    @Test fun aNormalSendAnswerCannotAdoptAnotherSession() = runTest {
+        val original = Session("computer", "normal", agent = "codex", status = "idle")
+        val transport = Transport().apply { list = listOf(original) }
+        val repository = HubSessionsRepository(transport, Connection(), backgroundScope)
+        repository.refresh()
+        repository.adoptThread(original.key, original.copy(sessionId = "different"))
+        assertEquals(listOf(original), repository.sessions.value)
+        assertTrue(repository.adoptedSessions.value.isEmpty())
+        assertTrue(repository.startedThreads.value.isEmpty())
+        repository.adoptThread(SessionKey("computer", "unknown"), original.copy(sessionId = "unknown-answer"))
+        assertTrue(repository.adoptedSessions.value.isEmpty())
+    }
+
     @Test fun anAppliedMachineReplacesItsEntryUntilTheNextList() = runTest {
         val transport = Transport().apply { machineList = listOf(Machine("a", engine = "herdr"), Machine("b")) }
         val repository = HubSessionsRepository(transport, Connection(), backgroundScope)
@@ -67,6 +96,12 @@ class SessionsAdoptTest {
     }
 
     private class Transport : ChatTransport {
+        var paged = false
+        override suspend fun sessionPage(filter: SessionListFilter, cursor: String?, since: String?): SessionListPage {
+            if (!paged) throw SessionListsUnsupported()
+            return SessionListPage(revision = "revision")
+        }
+        override suspend fun sessionCounts(filter: SessionListFilter) = SessionListCounts()
         var list = emptyList<Session>()
         var machineList = emptyList<Machine>()
         var listFetch: (suspend () -> List<Session>)? = null

@@ -7,10 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Pending = { method: string; json?: unknown; resolve: (v: unknown) => void; reject: (e: unknown) => void };
 const pending: Pending[] = [];
+// The hub-wide low-distraction switch at the end of the page reads its own route (#8157, LowDistractionSettings.test.tsx):
+// kept apart, so pending is this device's prefs as before.
+const lnMode: Pending[] = [];
 vi.mock("../../lib/api", async (original) => ({
   ...(await original<typeof import("../../lib/api")>()),
-  api: (_path: string, init?: { method?: string; json?: unknown }) =>
-    new Promise((resolve, reject) => pending.push({ method: init?.method ?? "GET", json: init?.json, resolve, reject })),
+  api: (path: string, init?: { method?: string; json?: unknown }) =>
+    new Promise((resolve, reject) => (path === "/push/ln-mode" ? lnMode : pending).push({ method: init?.method ?? "GET", json: init?.json, resolve, reject })),
   enc: encodeURIComponent,
   errorText: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
@@ -25,6 +28,7 @@ let host: HTMLDivElement;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   pending.length = 0;
+  lnMode.length = 0;
   toast.mockClear();
   localStorage.clear();
   host = document.createElement("div");
@@ -191,5 +195,24 @@ describe("设置 › 通知", () => {
       await act(async () => named("弹出系统通知")!.click());
       expect(always().getAttribute("aria-checked")).toBe("true");
     });
+  });
+});
+
+describe("Settings › Notifications › Low-distraction mode (#8157)", () => {
+  it("comes last, after the note that the rest is this browser's, once the hub answers", async () => {
+    await render();
+    expect(named("低打扰模式")).toBeUndefined();
+    await act(async () => lnMode[0].resolve({ enabled: true }));
+    expect(named("低打扰模式")?.getAttribute("aria-checked")).toBe("true");
+    const text = host.textContent ?? "";
+    expect(text.indexOf("这些设置跟着这个浏览器走")).toBeGreaterThan(-1);
+    expect(text.indexOf("对你所有的设备生效")).toBeGreaterThan(text.indexOf("这些设置跟着这个浏览器走"));
+  });
+
+  it("has no switch on a hub without it, and says to update the hub", async () => {
+    await render();
+    await act(async () => lnMode[0].reject(Object.assign(new Error("not found"), { status: 404 })));
+    expect(named("低打扰模式")).toBeUndefined();
+    expect(host.textContent).toContain("这台 hub 还不支持低打扰模式，更新 hub 后可以在这里开启");
   });
 });

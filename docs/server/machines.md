@@ -7,8 +7,8 @@ Each computer's OS, current load and curves for the past 24 hours. The node coll
 | Collection (parsing /proc, vm_stat, iostat, sw_vers, Win32 responses, etc.) | `server/internal/sysmon/` (`sysmon.go`, `winparse.go` pure parsing; `linux.go` / `darwin.go` / `windows.go` read the OS) |
 | Node sending | `server/internal/node/metrics.go` |
 | Manager storage, downsampling, cleanup, API (hub forwards `devicewire.MetricsRoutes`) | `server/internal/devices/metrics.go`, `server/internal/db/metrics.go`, migration `0051_machine_metrics.sql` |
-| Token usage: node metering, manager storage, API (see "Token usage" below) | `server/internal/node/usage.go`, `server/internal/devices/usage.go`, `server/internal/db/usage.go`, migration `manager/0421_machine_usage.sql` |
-| App | `apple/Persona/Views/Machines/` (`MachinesView`, `MachineDetailView`, `MetricCharts`, `OSBadge`), model `apple/Shared/MachineMetrics.swift` |
+| Token usage: node metering, manager storage, API (see "Token usage" below) | `server/internal/tokenuse/`, `server/internal/node/usage.go`, `server/internal/node/usage_adapters.go`, `server/internal/devices/usage.go`, `server/internal/db/usage.go`, migration `manager/0421_machine_usage.sql` |
+| App | `apple/Persona/Views/Machines/` (`MachinesView`, `MachineDetailView`, `MetricCharts`, `OSBadge`), model `apple/Packages/PersonaWire/Sources/PersonaWire/MachineMetrics.swift` |
 | Inspect local samples / overhead | `personad sysmon [n]`: prints system info and n+1 samples (one every 10 seconds, n ≤ 8640, one day); final line gives actual sample count, collection duration and personad CPU (Ctrl-C stops immediately) |
 
 ## Who connects to computers
@@ -114,7 +114,7 @@ Computers belong to the manager, and so does everything they send: the hub's exi
 
 - Keep manager-provided session lists per machine (`fleet.sessions`, machine `sessions`), pending interactions (`fleet.interaction` / `fleet.interaction_resolved`, replaced in full by `fleet.interactions` after each handshake), and Live Activity content (`fleet.live`). App `GET /api/v1/sessions`, `GET /api/v1/interactions`, connection snapshots and pushed events use these; while manager is absent, use the last copy.
 - Deliver pushes: manager decides content (`notify.request`, `kind` `assistant` / `done` / `input` / `reply` / `decide`); hub selects devices according to their settings, localizes to device language, sends through APNs / relay, sends `notify` to `ws_notify` Apps, and informs extensions (`agent.finished`, `agent.needs_you`). Live Activity delivery cadence (per-device intervals, start/end) also belongs to hub; content is computed by manager.
-- Forward App answer, history, seen and monitoring routes to manager (`http.request`): `POST /api/v1/interactions/{id}/resolve` (hub first checks answer-only devices), `GET /api/v1/interactions/history` (hub supplies `X-Persona-Elicitation` for App MCP-form support), `POST /api/v1/sessions/{mid}/{sid}/seen`, `GET /api/v1/metrics`, `GET /api/v1/machines/{id}/metrics`, `GET /api/v1/usage`.
+- Forward App answer, history, seen and monitoring routes to manager (`http.request`): `POST /api/v1/interactions/{id}/resolve` (hub first checks answer-only devices), `GET /api/v1/interactions/history` (hub supplies `X-Persona-Elicitation` for App MCP-form support), `POST /api/v1/sessions/{mid}/{sid}/seen`, `GET /api/v1/metrics`, `GET /api/v1/machines/{id}/metrics`, `GET /api/v1/usage`, `GET /api/v1/usage/days`, `GET /api/v1/usage/hours`.
 - Tell manager about Apps: an MCP-form-capable App connected, or a phone registered to be pushed MCP forms (`fleet.clients`), WebSocket `seen` (`fleet.seen`), mute changes (`fleet.mutes`).
 - Run what still belongs to hub for manager: phone tools (`app.call phone`: list tools, run on connected phones, silent push wake-up when needed). Connector / Cua / ego tools, extension descriptions for write-action cards, lark-cli settings and owner actions for channel card answers belong to manager extensions (`internal/extmgr`, queried directly in-process and cancelled when node stops waiting; `docs/extensions/extensions.md`, "Who owns what").
 
@@ -134,7 +134,7 @@ includes it in reported `Machine.system`, and the hub sends it to Apps.
 | --- | --- | --- | --- |
 | `distro` / `like` / `name` / `version` | `ID` / `ID_LIKE` / `PRETTY_NAME` / `VERSION_ID` from `/etc/os-release` (fallback `/usr/lib/os-release`) | `macos`, ProductName + ProductVersion and BuildVersion from `sw_vers` | `windows`, ProductName + DisplayVersion from registry `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion` ("Windows 11 Home 25H2"; Windows 11's ProductName still says Windows 10, corrected when CurrentBuild ≥ 22000); `build` is CurrentBuild.UBR |
 | `kernel` | `/proc/sys/kernel/osrelease` | `Darwin ` + `kern.osrelease` | `NT ` + version from `RtlGetVersion` (`NT 10.0.26200`) |
-| `model` | DMI `sys_vendor` + `product_name` (strips placeholders such as "To be filled by O.E.M.") | Model Name from `system_profiler SPHardwareDataType` (only this line; same output contains serial number), fallback `hw.model` | SystemManufacturer + SystemProductName from registry `HARDWARE\DESCRIPTION\System\BIOS` (same placeholder removal) |
+| `model` | DMI `sys_vendor` + `product_name` (strips placeholders such as "To be filled by O.E.M.") | `product-name` from `ioreg -p IODeviceTree -rd1 -n product` (Apple silicon, without its parenthesised size and year, as system_profiler words it), else Model Name from `system_profiler SPHardwareDataType` (Intel); only that line of either is read, since both outputs hold serial numbers. Looked up in the background and kept for the process once found: `node.info` waits at most a second for it and otherwise sends `hw.model`, and later connections get the name (#6028); a lookup that ends without a name is tried again by a connection at least five minutes later | SystemManufacturer + SystemProductName from registry `HARDWARE\DESCRIPTION\System\BIOS` (same placeholder removal) |
 | `cpu` | First `model name` in `/proc/cpuinfo` (`Hardware` / `Model` on ARM boards) | `machdep.cpu.brand_string` | ProcessorNameString from registry `CentralProcessor\0` |
 | `cores` / `memory` / `boot_time` | `runtime.NumCPU`, `MemTotal`, `btime` in `/proc/stat` | `runtime.NumCPU`, `hw.memsize`, `kern.boottime` | `runtime.NumCPU`, total physical memory from `GlobalMemoryStatusEx`, now minus milliseconds since boot |
 
@@ -149,6 +149,7 @@ The first sample lacks CPU and network rates (need two readings); fields are omi
 
 | Metric | Linux | macOS | Windows |
 | --- | --- | --- | --- |
+| Claude processes (`claude_procs`) | The node user's running claude command lines in the cached `/proc` walk (native binary and node/bun running a claude script, every config directory); omitted off Linux, so the hub skips its process cap rather than reading zero | Omitted | Omitted |
 | CPU | Difference of `/proc/stat` readings: busy = total − idle − iowait (I/O wait is idle, like top id + wa; guest is already in user, not counted again); same per-core calculation, latest sample only (not stored) | Resident `iostat -n 0 -w 10`, latest line's 100 − id (past 10-second average; first line is since-boot average, discarded) | Difference of `GetSystemTimes`: busy = kernel + user − idle (kernel includes idle, DPC and interrupts); per-core via `NtQuerySystemInformation(SystemProcessorPerformanceInformation)`, latest sample only; no per-core above 64 logical processors (processor groups) |
 | Load | First column of `/proc/loadavg` | `sysctl vm.loadavg` (binary struct loadavg) | None (Windows has no load average), omitted |
 | Memory | Used = MemTotal − MemAvailable (page cache available, like `free` available); old kernels without MemAvailable use free + buffers + cached. In a container (the v2 `memory.max` / v1 `memory.limit_in_bytes` under `/sys/fs/cgroup` has a limit below MemTotal) the total is that limit and used = usage − inactive_file (like `docker stats` and `kubectl top`): without lxcfs, `/proc/meminfo` in a container is the host's; the system info's memory uses the same limit | Resident `vm_stat 10`: used = anonymous pages − purgeable + wired + compressor size, matching Activity Monitor **Memory Used** (App Memory + Wired Memory + Compressed); file cache available | `GlobalMemoryStatusEx`: used = total − available (standby-list file cache is available, like Linux MemAvailable) |
@@ -219,24 +220,85 @@ Measured row data is 116 bytes (`pg_column_size`), roughly 200 bytes including h
 
 How many tokens each machine runs, for the Machines page's cards and charts (the Dynamic Island's totals come from the same data, `docs/apple/live-activity.md` ("Usage")).
 
-- **Metering** (`node/usage.go`): every 10 seconds the node reads what its transcripts gained (Claude Code main and subagent transcripts in every config directory, the rollouts of Codex and compatible Codex forks)
-  and sums the replies per minute, model and **launcher**: the launcher Persona started the session with (`sessionState.Launcher`, looked up by the transcript's session or thread id;
-  a subagent's transcript is its session's). A session typed in a terminal has no launcher (`""`, shown as "Other"). The node keeps 26 hours and reports changed minutes as `usage`
+- **Metering** (`node/usage.go`): every 10 seconds the node reads what its agents' records gained. An adapter per agent (`node/usage_adapters.go`, #9923) says which files hold its usage,
+  which session a file belongs to and which parser reads it: Claude Code's main and subagent transcripts in every config directory, and the agents of its workflow runs
+  (`<session>/subagents/workflows/<run>/agent-*.jsonl`, which it missed until #9255); the rollouts of Codex (every Codex home: the default and the registered ones) and of the compatible traex CLI, each segment of a
+  continued thread (the session list follows a thread's newest), and for a backfill reaching further back than two weeks every rollout on disk, archived ones too (#10002); the sessions of pi and omp
+  (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent` and `~/.omp/agent`: `sessions/<cwd>/<time>_<id>.jsonl`, #9992). opencode keeps its steps in a SQLite database (`$PERSONA_OPENCODE_DB`,
+  else `$XDG_DATA_HOME/opencode/opencode.db`, default `~/.local/share/opencode/opencode.db`): its adapter queries it with the system `sqlite3` (`node/usage_opencode.go`), the rows added
+  since the last read and the unfinished ones again, nothing while the database has not changed; without `sqlite3` (a Linux machine often has none) opencode is not metered.
+  Cursor's CLI and Antigravity keep no token counts the node can read and check: they are not metered. A runtime with no record of its own is not metered either. The parsers (`server/internal/tokenuse`)
+  are the same ones the usage on a chat's replies and the subagent summaries read (`docs/protocol/protocol.md`, "Token usage on items"), so a request counts the same everywhere
+  and sums the replies per minute, model, **agent** (its adapter's, `proto.Session.Agent`'s names, #9984) and **launcher**: the launcher Persona started the session with (`sessionState.Launcher`, looked up by the transcript's session or thread id;
+  a subagent's or workflow agent's transcript is its session's). A session typed in a terminal has no launcher (`""`, shown as "Other"). The node keeps 26 hours and reports changed minutes as `usage`
   (`"launchers": true` says its buckets name the launcher; an older node's do not, and the apps grey out the launcher filter for it).
 - **Counted once**: a reply is counted once in the window even when it is in several files. A fork (Claude Code's `--fork-session`, Codex's fork) copies the history it starts from,
   timestamps included, into the new file; the meter remembers every reply it counted (Claude Code's message id, Codex's timestamp and running total) for the window.
   Measured on the transcripts of two machines over three days (2026-11-06): no reply was in two files and none repeated out of order in one file, so today's numbers do not change; the rule covers forks.
-- **What a reply counts**: Claude Code's `usage` (input not from the cache, cache creation as cache write, cache read, output); `<synthetic>` replies are skipped. Codex's `last_token_usage`:
-  its input includes the cached part, which is counted as cache read (input minus cached as input); Codex has no cache write (always 0); reasoning tokens are in its output.
+- **What a reply counts**: Claude Code's `usage` (input not from the cache, cache creation as cache write, cache read, output), once a request at the most its lines say (Claude Code up to 2.1.306
+  wrote the output so far on each content block); Claude Code's own replies for a failed request (`<synthetic>`, `isApiErrorMessage`) and usage of all zeros are skipped. Codex's `last_token_usage`:
+  its input includes what was read from the cache and what was written to it (`cached_input_tokens`, `cache_write_input_tokens`), counted as cache read and cache write and taken out of input,
+  as Codex itself does for its fresh input (OpenAI's models write none: 0); reasoning tokens are in its output. pi's and omp's usage is already in the four kinds (an assistant
+  message's `usage` with its `model`; pi's `usage` entries, omp's `model_usage` entries and pi's compaction and branch summaries count too, a summary under the session's latest model;
+  omp's `orchestration` tokens are added to their kinds); a fork copies their entries as they are, so the entry's id and time name a request. An opencode step counts once it finished
+  (`data.time.completed`; a compaction once completed or failed), its `reasoning` added to its output, which leaves it out. Reasoning is output for every agent.
   Cache hit rate = cache read / (input + cache write + cache read).
 - **Storage** (`devices/usage.go`, `db/usage.go`): the manager keeps the last 26 hours in memory (the island, the cards) and writes every notification to `machine_usage` in order, from one goroutine.
   Each node reports on a 10-second tick of its own, so while another machine has written in the last 25 seconds, the notifications that come within 5 seconds of one go in one transaction with it (`db.PutUsages`, in order; if Postgres rejects one, each goes under a savepoint of its own); a single busy machine's are written at once.
   A bucket is its minute's whole total, so a later one replaces it; a node's whole window (`full`, after it connects) first deletes the machine's minute rows of that window, so what the node
   counts now is the record (an older node's rows without a launcher do not stay next to the new ones). Each minute the minute rows older than 27 hours are summed into one row per 10 minutes
-  (`step = 600`) and rows older than 7 days and an hour are deleted. About 1 to 3 rows a machine and minute (one per model and launcher in use), 10,000 to 30,000 rows a machine for the week.
-- **Ranges**: 1 hour by minute (60 points), 24 hours by 10 minutes (144), 7 days by hour (168). A point is the step's sums (the apps divide by `step / 60` for "per minute").
+  (`step = 600`), the 10-minute rows older than 7 days and an hour into one row per hour (`step = 3600`, `db.RollupUsageHours`), and rows older than 53 weeks and a day are deleted.
+  About 1 to 3 rows a machine and minute (one per model, launcher and agent in use), 10,000 to 30,000 rows a machine for the week, then 24 to 72 a machine and day for the year (about 9,000 to 27,000).
+  Rows keep their agent through the rollups (`machine_usage.agent`, migration `manager/0551_usage_by_agent.sql`); rows stored before agents were kept apart, and an older node's, have `''`.
+- **Ranges**: 1 hour by minute (60 points), 24 hours by 10 minutes (144), 7 days by hour (168). A point is the step's sums; for "per minute" the apps divide by the step's minutes, the step under way by the part of it that had passed when the report came (at least a minute, `web/src/lib/usage-rate.ts` `stepMinutes`, PersonaWire `MachineUsageSeries.minutes(at:)`; #9205).
   A step with no monitoring sample and nothing counted is a break (`gap`), as in the monitoring charts; a machine that never sent monitoring samples has no breaks.
 - **Card** (`GET /api/v1/metrics`'s `usage` per machine, from memory): today's sums, all tokens per minute now (over the last two to three minutes) and the last 60 minutes by minute.
+
+### Token usage history
+
+The calendar of tokens a day on the assistant's home and its page's last week by the hour (`devices/usage_history.go`): every machine's usage summed, every kind of token (cache reads included),
+so a day's number is the same sum as today's tokens on the Machines page.
+
+- **Days** (`GET /api/v1/usage/days?days=N`, 1 to 371, default 140): each of the last N days in the user's zone (`Options.Location`), midnight to midnight, oldest first; the last is today.
+- **Hours** (`GET /api/v1/usage/hours?days=N`, 1 to 7, default 7): each hour on the clock from the first day's midnight to the hour under way, with its day and hour on the clock
+  (a day the clocks change has 23 or 25; the hour that comes twice is there twice), each machine's share of them, largest first (a machine no longer here has no name), each agent's share
+  (`agents`, #9984; `''` for the rows stored before agents were kept apart: they leave the week a week after the update, and a node's first whole window after it re-sends its last 26 hours by agent), and their total.
+- **Sums** (`db.UsageSpans`): Go works out the day or hour starts in the zone and Postgres sums the rows into them (`width_bucket` over the starts), every machine's together or each machine's or agent's apart,
+  through the `machine_usage_ts` index. A row counts in the span its start is in: the minute and 10-minute rows of the last week fall exactly, while the hour rows split a day at the hour
+  in a zone whose clock is not a whole hour from UTC.
+- Without Postgres (`stored: false`) both come from the buckets in memory, the last 26 hours.
+
+### Backfill
+
+The history starts the day the manager began keeping it; the days before are only in the transcripts on each computer. Once a computer (#9484, `node/usage_backfill.go`,
+`devices/usage_backfill.go`), its node reads them and sends the hours:
+
+- **When**: three minutes after the node connects (its sessions' state loaded, as the live meter's launchers need), it asks `usage.backfill.status`. The manager answers
+  `done`, or the range: from where the history begins (53 weeks back) or the hour after the last one it stored, to the hour the node's live window (26 hours) starts in.
+  Without Postgres it answers `done`. An older manager does not know it, and the node does nothing.
+- **What**: the live meter's rules (a reply counted once across files, `<synthetic>` skipped, the same four kinds) over every transcript changed since the range began,
+  each read from about the range's start (`startOffset`), summed by the hour, model and launcher. Only those numbers go to the manager: no text, no file names or paths.
+  A year of reply ids is kept as 64-bit hashes. What is on disk is the limit: Claude Code deletes transcripts after 30 days unless `cleanupPeriodDays` says otherwise; Codex keeps its rollouts.
+- **A week at a time** (#9562): the node reads one week, oldest first, sends its hours and only then reads the next. A computer with many gigabytes of
+  transcripts takes longer than the time between two hub restarts (several an hour), and a scan that kept everything to the end started over on every
+  connection and never finished. Now each week is stored as it is read, so a cut scan goes on from the next week, and the node keeps nothing. A fork's
+  copy of a reply has its timestamp, so it is in the same week and still counted once. A file is read from about the week's start (`startOffset`; files
+  under 256 KB from their start) and stops once 50 lines in a row are past the week, so the weeks together read about one pass of the transcripts.
+  The weeks start at the earliest transcript's first line, not 53 weeks back, and a week reads only the files that changed after it began and whose
+  first line is before its end (#9616: a computer with recent transcripts only spent its first hour on empty weeks, looking for each week's start in every
+  large file). Each file's first line is read once a run (64 KB); those reads and the searches for a week's start count against the rate as well.
+- **Gently**: the reads are limited to 4 MB a second for all transcripts together, at most 256 KB at a time, and the scan ends with the connection.
+- **Stored once** (`db.PutUsageBackfill`, table `usage_backfill`): the node sends each week's hours oldest first, whole hours a request (about 2,000 buckets), the week's last request saying it is read through its last hour. The manager stores an hour
+  (as hour rows, `step = 3600`) only when the machine had no row in it before the request, so the live meter's count of an hour always stays; in the same transaction it records
+  the last hour sent and, with the last request, when the scan finished. A scan cut off (a restart, a dropped connection) asks again on the next connection and reads from the
+  hour after the last stored; a request sent twice adds nothing. Once finished, the node is not asked again.
+- **By agent** (#9984): the node names the agents it reads and the manager keeps a record per agent (`usage_backfill.agent`). Claude Code's is the machine's first
+  record (`''`): done stays done. Every other agent has its own, so an agent whose adapter a node gains later has its history read (only its files) from the history's start,
+  and its hours are stored beside the others: an hour is stored for an agent only when the machine had none of that agent's usage in it, nor, for an agent metered before
+  agents were kept apart (Claude Code, Codex, traex), usage stored then (`''`, which may hold theirs). Codex and traex got records of their own with #10002: the first
+  backfill listed only the rollouts written in the last two weeks, so their older history is read again, and fills the hours that held none of it. A request names the
+  agents it read; only their buckets are stored and only their records move on. An older node names none (the first record, as before); an older manager answers its one
+  range, which the node then reads for every agent.
 
 ## Gaps
 
@@ -300,7 +362,7 @@ Follow dataviz rules:
 - **States**: an older hub (404) says to deploy a newer one; a range or filter with no usage says so in the chart (with **Clear Filters**).
 - **Colors** (`UsageColor`, `apple/Shared/Design`): input blue, output orange, cache write violet, cache read teal, light and dark steps of the categorical palette, validated in the stacking order
   (adjacent pairs ΔE ≥ 24.7 light / 17.3 dark for color-blind readers). Light teal is under 3:1 on a light card, so the legend always writes the numbers.
-- **Numbers** use `TokenFormat` (`apple/Shared/TokenUsage.swift`): K / M / B, three significant digits, no trailing zeros, under 1,000 as is, a rounding to 1,000 moves up a unit (999,500 → 1M). The web uses the same rules.
+- **Numbers** use `TokenFormat` (`apple/Packages/PersonaWire/Sources/PersonaWire/TokenUsage.swift`): K / M / B, three significant digits, no trailing zeros, under 1,000 as is, a rounding to 1,000 moves up a unit (999,500 → 1M). The web uses the same rules.
 - **Web** (`web/src/views/machines/UsageSection.tsx`, `web/src/lib/tokens.ts`): the same section on a machine's page, before Monitoring (the engine and the self-check moved after it),
   with the chart and the numbers on the left and **By Model** / **By Launcher** on the right on a wide screen; hovering a chart or ← → on it holds a moment in both, Esc lets go.
   The Machines list has **Today's tokens** across the top and a **Tokens** cell on each card, and uses up to three columns on a wide screen (it used to stop at 1000px).
@@ -311,9 +373,10 @@ Follow dataviz rules:
 
 The web Machines page has **What this computer can do** (modeled on Moshi's Doctor page), presenting `personad node doctor` results (`docs/integrations/claude-integration.md`, "Self-check") by feature, not a string of check names.
 iOS / Mac machine detail (#3018, `apple/Persona/Views/Machines/NodeHealthSection.swift`, grouping in `NodeHealthModel.swift`'s `NodeHealth`) places it after Engine. Grouping, states and copy match web; changing one requires updating the other.
-The native Mac app is frozen ([mac.md](../apple/mac.md)): it shows this section through the shared iOS view and gets no Mac-only changes for it.
+The retired native Mac app showed this section through the shared iOS view and received no Mac-only changes for it ([mac.md](../archive/apple/mac.md)).
 
 - **Fetch**: hub routes `GET /api/v1/machines/{mid}/doctor` (read-only) and `POST …/doctor/fix` (rewrite Persona-generated files, recheck and return a new report) are **`full` devices only** (reports contain paths and user hook commands; fix writes files). Node RPC: `node.doctor` (read-only unless `{"fix":true}`), `node.doctor.fix` (`node/doctor_rpc.go`); checks run in node with CLI `RunDoctor`, same `DoctorReport` JSON. Hub GET never passes `fix` to node.
+- **Report language**: current clients send `Accept-Language`, which the hub forwards as the RPC's optional `locale`; a new node then words `detail`, `hint` and human `items` in the page's language without changing the report shape or grouping fields. A header-less request and the assistant's direct readiness call keep canonical zh-Hans. A new node with an old hub therefore keeps today's report, and an old node with a new hub ignores `locale` and has its Chinese report relayed unchanged. The command's human text instead uses `i18n.Terminal`; its `--json` always retains canonical zh-Hans bytes.
 - **Group by feature** (`FEATURES` in `web/src/lib/node-health.ts`): phone approval cards (`node.sock`, claude / assistant settings and hooks, `command-paths`), state and notifications (`node.sock`, `command-paths`), terminal and engine (`herdr`), MCP tools (`node.sock`, `mcp.json`, `command-paths`), skills (`agent-plugin`, `claude-version`), runtime integrations (`runtime.sock`).
   Each feature takes its worst check: any `fail` → **Has issues**, any `warn` → **Partly available**, all normal → **Ready**. Terminal/engine and runtime integration are optional: warn-only means **Not enabled** (in **Not set up: …**, not counted as needing attention),
   except when this computer uses herdr (including herdr + Herdr App, and no selection defaults to herdr), unreachable herdr means **Has issues**. Unmapped extra checks reported by node go to **Other checks** if abnormal, never hidden.
@@ -327,6 +390,67 @@ The native Mac app is frozen ([mac.md](../apple/mac.md)): it shows this section 
 - Mock-hub screenshots: `MOCK_DOCTOR=healthy|stale|broken|mixed|old|error|slow`, `MOCK_DOCTOR_OLD=<machine id,…>` (`scripts/mock/mock_hub.py`).
 - Tests: `node/doctor_rpc_test.go` (temporary directories; no writes without fix, fix only generated files and never user settings.json, check names match web grouping), `hub/node_doctor_test.go` (permissions), `web/src/lib/node-health.test.ts` (grouping, summary, fixing, old node, connection classification), `apple/PersonaTests/NodeHealthTests.swift` (same grouping table, decoding, old node / hub, model check/fix).
 
+## Diagnosis and cleanup (#8037)
+
+An alert on a machine card says what is wrong; the sheet it opens also says why and offers the action that fixes it. For memory, CPU and disk the "why" comes from the computer
+itself: the manager routes `GET /api/v1/machines/{mid}/diagnosis` and `POST /api/v1/machines/{mid}/cleanup` (`devices/diagnosis.go`, `full` devices only) call the node's
+`machine.diagnose` and `machine.cleanup` (`node/machdiag/`, capability `machine_diagnose`). The wire is in [protocol.md](../protocol/protocol.md) ("Data types").
+
+The diagnosis is a description, not a tunnel: it answers a fixed, bounded question, and nothing in a request names a path or a command. Sections and cache ids are closed
+lists (`proto.DiagnoseSections`, `proto.CacheIDs`); the manager refuses anything else with 400 before the node is asked, and the node checks again.
+
+| Section | What is read | Bounds |
+| --- | --- | --- |
+| `processes` | Linux: `/proc/<pid>/stat` of every process (name, CPU ticks, resident pages), read twice half a second apart for CPU; no process started. macOS: one `ps -axo pid=,rss=,pcpu=,comm=` (only the executable's last path element is kept). Grouped by executable name, tagged `agent` (claude, codex, opencode, pi, gemini), `engine` (the engines and tmux), `persona` (personad, persona-node, persona-link) or `other`; node processes cannot be attributed by name and stay `other` | The 15 largest groups by memory plus the 5 busiest by CPU. Names only: never arguments, command lines or environment, which may hold secrets |
+| `disk` | The volumes the metrics add up (`sysmon.Volumes`), the folders directly in the home directory and the cache catalog, sized by allocated blocks | One filesystem (a mount under a folder is skipped), symbolic links never followed, hard links counted once, 4 walks at a time, 20 s in all: what is cut short is marked `partial`. At most 12 folders; paths leave the node as `~/…` |
+| `tools` | The tool catalog, each found with `exec.LookPath` on the node's PATH and asked its version | 2 s a tool, 6 at a time, 8 s in all; the result is kept for 10 minutes. On macOS the `/usr/bin` stand-ins (`git`, `python3`, `swift`, `xcodebuild`, `java`) run only when the developer tools (`xcode-select -p`) or a Java runtime (`java_home`) exist, since running one otherwise opens an install dialog |
+
+Windows answers `tools` only; the processes and disk sections are left out, and the web says the computer cannot show them.
+
+**Cleanup** accepts ids from the cache catalog only. For each the node resolves the folder itself, every time, and empties it only when all of these hold: it is inside the
+home directory and not the home directory itself; it is a real folder, reached through no symbolic link (its real path is the home directory's real path joined with the
+same relative path); and no process of its toolchain runs (`in_use`; when processes cannot be read, every cache counts as in use). It removes the folder's contents and keeps
+the folder; a link inside is removed as a link. Go's module cache is read-only on purpose, so a folder that refuses is made writable by its owner and tried again.
+A cache that is not there or is empty is `missing`. What it freed is measured with `statfs` on the home volume before and after, never below 0. The built-in cleaner never touches
+container data, projects, sessions or anything outside the catalog; deeper cleanup belongs to a storage extension (`machine_section`).
+
+| Cache id | Linux | macOS | In use while running |
+| --- | --- | --- | --- |
+| `go-build` | `$GOCACHE`, else `~/.cache/go-build` | `$GOCACHE`, else `~/Library/Caches/go-build` | go, gopls, compile |
+| `go-mod` | `$GOMODCACHE`, else `$GOPATH/pkg/mod`, else `~/go/pkg/mod` | same | go, gopls |
+| `npm-cache` | `$npm_config_cache/_cacache`, else `~/.npm/_cacache` (not npm's logs or npx's installs) | same | npm, npx, node |
+| `pip-cache` | `$PIP_CACHE_DIR`, else `~/.cache/pip` | `$PIP_CACHE_DIR`, else `~/Library/Caches/pip` | pip, python (any version) |
+| `uv-cache` | `$UV_CACHE_DIR`, else `~/.cache/uv` | same | uv, uvx |
+| `yarn-cache` | `$YARN_CACHE_FOLDER`, else `~/.cache/yarn` | `$YARN_CACHE_FOLDER`, else `~/Library/Caches/Yarn` | yarn |
+| `homebrew-cache` | `$HOMEBREW_CACHE`, else `~/.cache/Homebrew` | `$HOMEBREW_CACHE`, else `~/Library/Caches/Homebrew` | brew |
+| `xcode-derived-data` | none | `~/Library/Developer/Xcode/DerivedData` | xcodebuild, Xcode, XCBBuildService, SWBBuildService |
+| `gradle-cache` | `$GRADLE_USER_HOME/caches`, else `~/.gradle/caches` | same | gradle, java |
+| `cargo-registry` | `$CARGO_HOME/registry`, else `~/.cargo/registry` | same | cargo, rustc, rust-analyzer |
+
+`~/.cache` is `$XDG_CACHE_HOME` when that is set. The variables are the node process's own; one that points outside the home directory takes its cache out of the catalog.
+pnpm's store is left out: its files are hard-linked into projects, so emptying it frees little.
+
+| Tool id | Command (first found) | Tool id | Command (first found) |
+| --- | --- | --- | --- |
+| `xcode` | `xcodebuild -version` (macOS only; a failure means no Xcode) | `gh` | `gh --version` |
+| `docker` | `docker --version` (the client: the daemon is not asked) | `brew` | `brew --version` |
+| `podman` | `podman --version` | `bun` | `bun --version` |
+| `go` | `go version` | `pnpm` | `pnpm --version` |
+| `node` | `node --version` | `uv` | `uv --version` |
+| `python` | `python3 --version`, `python --version` | `tmux` | `tmux -V` |
+| `rust` | `rustc --version` | `claude` | `claude --version` |
+| `java` | `java -version` | `codex` | `codex --version` |
+| `swift` | `swift --version` | `opencode` | `opencode --version` |
+| `git` | `git --version` | `gemini` | `gemini --version` |
+
+The manager waits 30 s for a diagnosis and 120 s for a cleanup. Errors are `{error, code}` with `error` in the reader's language (`devices-diagnosis`): unknown machine 404 `not_found`,
+a bad section or id 400 `bad_request`, offline 503 `machine_offline`, a node without the capability 409 `node_outdated`, out of time 504 `deadline`, anything else 502 `diagnosis_failed`
+(the node's own words are logged, not shown). A hub from before these routes answers 404 without a code, which the web reads as "update the hub".
+
+Tests: `node/machdiag` (stat and ps fixtures, grouping and the top-N union, the walker's links, hard links, other filesystems and deadline, the catalog per OS and its variables,
+in-use matching, the cleanup's guard rails on temporary home directories, the tool probe with fake commands), `node/diagnose_rpc_test.go` (dispatch),
+`devices/diagnosis_test.go` (pass-through, capability, offline, bad input, roles, node errors), `hub/diagnosis_routes_test.go` (answer-only devices and extension tokens).
+
 ## Renaming a computer
 
 A computer's name is its hub.json `name`; its id never changes. It can be renamed from the admin page, the web app's machine details (and, once PR 2 lands, the iOS / Mac / Android ones), the computer's
@@ -336,7 +460,7 @@ when only the name changed (`sameConfig` ignores it) and tells the link (`endpoi
 
 ## API
 
-See `docs/protocol/protocol.md`: `GET /api/v1/metrics` (Machines), `GET /api/v1/machines/{id}/metrics?range=1h|6h|24h` (detail), `GET /api/v1/machines/{id}/usage?range=1h|24h|7d` (token usage),
+See `docs/protocol/protocol.md`: `GET /api/v1/metrics` (Machines), `GET /api/v1/machines/{id}/metrics?range=1h|6h|24h` (detail), `GET /api/v1/machines/{id}/usage?range=1h|24h|7d` (token usage), `GET /api/v1/usage/days` and `GET /api/v1/usage/hours` (token usage history),
 node → manager `metrics` event, `system` in `node.info` / `Machine`; hub forwards these routes unchanged to manager (`devicewire.MetricsRoutes`, `503 assistant_offline` if absent).
 
 ## Tests

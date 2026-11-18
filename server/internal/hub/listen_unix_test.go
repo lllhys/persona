@@ -61,7 +61,9 @@ func listenHelpers() {
 		res.Edge = edgeOff(update.Build{Version: "test"}) == ""
 		res.Err = errText(Serve(context.Background(), update.Build{Version: "test"}))
 	case "exec":
-		inheritedListeners()
+		// A hub's updater execs only after Run, Serve or RunSlot claimed what the process was handed; taking only
+		// the listeners here handed the rest on to the child.
+		claimInherited()
 		res.Err = errText(execKeepingListeners(filepath.Join(os.TempDir(), "persona-no-such-program"), []string{"x"}, os.Environ()))
 	case "none":
 	default:
@@ -84,7 +86,8 @@ func listenHelpers() {
 // TestPassedSocketsReachNoChild: whatever a hub does first, the socket systemd passed it and socket activation's
 // variables reach no process it starts. Run (the hub without its edge: runHub could start the manager before it
 // listened, and the manager then took the port on to every node, extension and agent), Serve (with and without the
-// edge) and a failed exec of a new binary all leave the socket close-on-exec; the control shows the check sees a leak.
+// edge) and a failed exec of a new binary all leave the socket close-on-exec, and whatever else the hub was handed;
+// the control shows the check sees both leaks.
 func TestPassedSocketsReachNoChild(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -96,6 +99,19 @@ func TestPassedSocketsReachNoChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
+	// Descriptor 4: what a parent leaves inheritable besides. On macOS the test process can hold one at any moment
+	// (#7489): Go makes a connection it accepts there close-on-exec only after accept returns, without the fork lock,
+	// and the system resolver's socket never is. Every case but the control must stop it as well.
+	other, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	stray, err := other.(*net.TCPListener).File()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stray.Close()
 	// A hub.json it cannot read: Run and Serve stop there, and nothing before it starts a process. Under /tmp: the
 	// edge stays off where the path to its sockets is too long (edgeOff), as under macOS's temporary directory.
 	home, err := os.MkdirTemp("/tmp", "phub")
@@ -117,7 +133,9 @@ func TestPassedSocketsReachNoChild(t *testing.T) {
 		}
 		base = append(base, kv)
 	}
-	base = append(base, "HOME="+home, "LISTEN_FDS=1", "LISTEN_FDNAMES=personad.socket")
+	// These helpers test socket activation, not the resolver. The pure Go resolver keeps a cold system lookup from
+	// making their descriptor assertions depend on osproc's deliberately fail-soft warm-up deadline.
+	base = append(base, "HOME="+home, "LISTEN_FDS=1", "LISTEN_FDNAMES=personad.socket", "GODEBUG=netdns=go")
 
 	for _, c := range []struct {
 		name, mode string
@@ -137,7 +155,7 @@ func TestPassedSocketsReachNoChild(t *testing.T) {
 			}
 			cmd := exec.Command(os.Args[0], "-test.run=^$")
 			cmd.Env = append(append(slices.Clone(base), listenHelperEnv+"="+c.mode), c.env...)
-			cmd.ExtraFiles = []*os.File{f} // descriptor 3, inheritable, as systemd passes it
+			cmd.ExtraFiles = []*os.File{f, stray} // descriptor 3, inheritable, as systemd passes it; and 4
 			cmd.Stderr = os.Stderr
 			out, err := cmd.Output()
 			if err != nil {
@@ -154,8 +172,8 @@ func TestPassedSocketsReachNoChild(t *testing.T) {
 				t.Fatalf("no result in %q", out)
 			}
 			if c.mode == "none" {
-				if !slices.Contains(res.Child.Sockets(), 3) || len(res.Child.ListenEnv) == 0 {
-					t.Fatalf("the control's child got %+v; want the socket at 3 and LISTEN_*: the check would see no leak", res.Child)
+				if s := res.Child.Sockets(); !slices.Contains(s, 3) || !slices.Contains(s, 4) || len(res.Child.ListenEnv) == 0 {
+					t.Fatalf("the control's child got %+v; want the sockets at 3 and 4 and LISTEN_*: the check would see no leak", res.Child)
 				}
 				return
 			}

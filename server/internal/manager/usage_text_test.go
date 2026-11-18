@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/nwverse/persona/server/internal/clitext"
+	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/update"
 )
 
@@ -23,7 +24,7 @@ func TestUsageNamesCommandsThatExist(t *testing.T) {
 	t.Cleanup(func() { os.Args[0] = arg0 })
 	for _, prog := range []string{"persona-manager", "personad"} {
 		os.Args[0] = "/opt/persona/bin/" + prog
-		words := strings.Fields(clitext.Named(Usage))
+		words := strings.Fields(clitext.Named(Usage(i18n.ZhHans)))
 		for i := 0; i+1 < len(words); i++ {
 			next := strings.Trim(words[i+1], "()[];,")
 			switch strings.Trim(words[i], "()[];,") {

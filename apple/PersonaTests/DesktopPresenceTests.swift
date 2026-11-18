@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// 「Mac 上的 Persona 已登录」(docs/protocol/protocol.md「WebSocket `/api/v1/ws`」): the hub says which desktops are connected; a phone may
 /// choose Phone Muted while one is.
@@ -116,7 +117,7 @@ struct DesktopPresenceTests {
     }
 
     #if os(iOS)
-    /// The iPhone is the phone: it registers its tools (the Mac registers as a desktop, PersonaMacTests).
+    /// The iPhone is the phone: it registers its tools (a desktop registers as a desktop, covered by hub/web protocol tests).
     @Test func thePhoneRegistersAsThePhone() {
         let m = AppModel.registration(deviceName: "iPhone", tools: [], simulator: false)
         #expect(m["type"] as? String == "register_phone")

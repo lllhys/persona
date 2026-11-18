@@ -45,6 +45,15 @@
     <string name="notify_resume">恢复</string>
     <string name="notify_public_title">Persona 有新消息</string>
     <string name="notify_question_more_options">等 %1$d 个</string>
+    <string name="notify_extension_action_done_title">扩展操作已完成</string>
+    <string name="notify_extension_action_failed_title">扩展操作未完成</string>
+    <string name="notify_extension_action_expired_title">通知已过期</string>
+    <string name="notify_extension_action_unavailable">没连上 hub，请重新连接后在扩展页重试。</string>
+    <string name="notify_extension_action_page_expired">这个扩展页面已不可用，请打开扩展后重试。</string>
+    <string name="notify_extension_action_wrong_scope">找不到原 hub 或助手，请重新连接后在扩展页重试。</string>
+    <string name="notify_extension_action_failed_detail">扩展没有完成这次操作，请打开扩展页核对后重试。</string>
+    <string name="notify_extension_action_unconfirmed">请打开扩展页核对结果，不要再次执行操作。</string>
+    <string name="notify_extension_action_expired_detail">通知已过期，请在扩展页重试。</string>
     <plurals name="notify_question_more">
         <item quantity="other">还有 %1$d 个问题</item>
     </plurals>

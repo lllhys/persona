@@ -58,6 +58,13 @@ func (s *Service) conversationsRequest(ctx context.Context, method string, param
 		}
 		out, err := s.extensionMessages(ctx, p)
 		return out, true, err
+	case assistantwire.MethodAssistantMemory:
+		var p assistantwire.AssistantMemoryParams
+		if err := strictParams(method, params, &p); err != nil {
+			return nil, true, err
+		}
+		out, err := s.extensionMemory(ctx, p)
+		return out, true, err
 	}
 	return nil, false, nil
 }
@@ -104,7 +111,7 @@ func (s *Service) ownConversations(ctx context.Context, archived bool) ([]proto.
 	}
 	var out []proto.Session
 	for _, c := range all {
-		if !c.Assistant || spaceOf(c) != "" || c.Archived && !archived || s.isGuest(ctx, c.MachineID, c.SessionID) {
+		if !c.Assistant || c.IsDeleted() || spaceOf(c) != "" || c.Archived && !archived || s.isGuest(ctx, c.MachineID, c.SessionID) {
 			continue
 		}
 		out = append(out, c)
@@ -191,6 +198,11 @@ func ownTitle(c proto.Session) string {
 func (s *Service) extensionMessages(ctx context.Context, p assistantwire.AssistantMessagesParams) (assistantwire.AssistantMessagesResult, error) {
 	m := assistantwire.MethodAssistantMessages
 	out := assistantwire.AssistantMessagesResult{Messages: []assistantwire.AssistantMessage{}}
+	if row, ok, err := s.deletedConversation(ctx, s.settings(ctx).MachineID, p.ID); err != nil {
+		return out, err
+	} else if ok && row.Space == "" {
+		return out, s.conversationAvailable(ctx, row.Machine, row.ID)
+	}
 	if strings.TrimSpace(p.ID) == "" {
 		return out, conversationsInvalid(m, "id is required")
 	}

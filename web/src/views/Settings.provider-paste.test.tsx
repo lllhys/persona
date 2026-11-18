@@ -4,7 +4,7 @@
 // the wizard to editing it with what the paste brought (dropped again when the wizard closes).
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EditDraft, FoundAlias } from "../lib/provider-paste";
 
 vi.hoisted(() => {
@@ -34,6 +34,7 @@ const toasts = vi.hoisted(() => [] as string[]);
 vi.mock("../ui/atoms", async (original) => ({ ...(await original<typeof import("../ui/atoms")>()), toast: (text: string) => void toasts.push(text) }));
 
 import { t } from "../i18n";
+import { loadPages } from "../lib/lazy-page";
 import { Settings } from "./Settings";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,6 +45,7 @@ const wizard = () => seen.wizard as WizardProps;
 const importer = () => seen.import as ImportProps;
 const DRAFT: EditDraft = { step: "models", models: [{ id: "example-5-air" }] };
 
+beforeAll(() => loadPages());
 beforeEach(async () => {
   toasts.length = 0;
   LIST.fail = "";
@@ -54,11 +56,15 @@ beforeEach(async () => {
     { name: "cc_relay", source: "zshrc", base_url: "https://relay.example.org", machines: ["laptop"] },
     { name: "cc_plain", source: "zshrc", machines: ["laptop"] },
   ];
-  history.replaceState(null, "", "/settings?tab=models");
+  seen.wizard = seen.import = null;
+  // opened once and closed: the wizard mounts on its first open and stays mounted (Settings.tsx, lazyOverlay)
+  history.replaceState(null, "", "/settings?tab=models&add=1");
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
   await act(async () => root.render(<Settings onToggleSidebar={() => {}} />));
+  await flush();
+  act(() => wizard().onClose());
   await flush();
 });
 afterEach(() => {

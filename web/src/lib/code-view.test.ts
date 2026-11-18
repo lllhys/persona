@@ -62,6 +62,7 @@ describe("高亮", () => {
   it("picks a grammar from the language or the path", () => {
     expect(languageOf("Go")).toBe("go");
     expect(languageOf(undefined, "src/a.tsx")).toBe("typescript");
+    expect(languageOf(undefined, "src/app.ts")).toBe("typescript"); // a .ts the hub sent as text (#7974)
     expect(languageOf(undefined, "Makefile")).toBe("makefile");
     expect(languageOf(undefined, "x.unknown")).toBe("");
   });
@@ -85,8 +86,9 @@ describe("高亮", () => {
   });
 });
 
-it("wants a wide page for split views, code and diffs", () => {
+it("wants a wide page for split and columns views, code and diffs", () => {
   expect(wideView({ layout: "split", sections: [] })).toBe(true);
+  expect(wideView({ layout: "columns", sections: [] })).toBe(true);
   expect(wideView({ sections: [{ items: [{ type: "diff" }] }] })).toBe(true);
   expect(wideView({ sections: [{ items: [{ type: "row" }] }] })).toBe(false);
 });

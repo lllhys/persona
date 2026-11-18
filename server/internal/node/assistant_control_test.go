@@ -15,28 +15,28 @@ import (
 	"github.com/nwverse/persona/server/internal/rpc"
 )
 
-func sdkControlFile(t *testing.T, f *sdkFixture, name, contents string) {
+func controlFile(t *testing.T, f *cliFixture, name, contents string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(f.dir, name), []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func sdkControlStart(t *testing.T) (*sdkFixture, string) {
+func controlStart(t *testing.T) (*cliFixture, string) {
 	t.Helper()
-	f := sdkTest(t)
-	id, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "hello", nil, "default", "medium", sdkExec(proto.AssistantRuntimeAgentSDK))
+	f := cliTest(t)
+	id, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "hello", nil, "default", "medium", cliExec())
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.idle(t, id)
-	sdkControlTranscript(t, f, id)
+	controlTranscript(t, f, id)
 	return f, id
 }
 
-func sdkControlTranscript(t *testing.T, f *sdkFixture, id string) {
+func controlTranscript(t *testing.T, f *cliFixture, id string) {
 	t.Helper()
-	// The bridge fake emits events without writing Claude's transcript. Give session listing the same
+	// The fake claude emits events without writing a transcript. Give session listing the same
 	// transcript presence it has in production; saved settings must override even old transcript metadata.
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
@@ -47,7 +47,7 @@ func sdkControlTranscript(t *testing.T, f *sdkFixture, id string) {
 	f.n.mu.Unlock()
 }
 
-func checkSDKControlState(t *testing.T, f *sdkFixture, id, mode, effort string) {
+func checkControlState(t *testing.T, f *cliFixture, id, mode, effort string) {
 	t.Helper()
 	if s := f.session(t, id); s.PermissionMode != mode || s.Effort != effort {
 		t.Fatalf("shown settings: mode %q effort %q, want %q %q", s.PermissionMode, s.Effort, mode, effort)
@@ -76,7 +76,7 @@ func checkControlRefusal(t *testing.T, err error, reason string) {
 }
 
 // A refused field remains the last acknowledged value in the process, session list, and restart state.
-func TestAssistantSDKControlRefusal(t *testing.T) {
+func TestAssistantControlRefusal(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode, effort, errorFile, reason string
 	}{
@@ -85,12 +85,12 @@ func TestAssistantSDKControlRefusal(t *testing.T) {
 		{"auto effort", "", "auto", "control-effort-error.json", "This model does not support the requested effort"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f, id := sdkControlStart(t)
+			f, id := controlStart(t)
 			reason, _ := json.Marshal(tc.reason)
-			sdkControlFile(t, f, tc.errorFile, string(reason))
+			controlFile(t, f, tc.errorFile, string(reason))
 			_, err := nodeCall(t, f.n, "session.modes", map[string]any{"session_id": id, "permission_mode": tc.mode, "effort": tc.effort})
 			checkControlRefusal(t, err, tc.reason)
-			checkSDKControlState(t, f, id, "default", "medium")
+			checkControlState(t, f, id, "default", "medium")
 			if tc.effort == "auto" && !strings.Contains(f.file("stdin.jsonl"), `"effortLevel":null`) {
 				t.Fatal("auto did not clear the session effort")
 			}
@@ -107,27 +107,27 @@ func TestAssistantSDKControlRefusal(t *testing.T) {
 			if effort == "" {
 				effort = "medium"
 			}
-			checkSDKControlState(t, f, id, mode, effort)
+			checkControlState(t, f, id, mode, effort)
 		})
 	}
 }
 
-func TestAssistantSDKControlPartialSuccess(t *testing.T) {
-	f, id := sdkControlStart(t)
-	sdkControlFile(t, f, "control-effort-error.json", `"Invalid effort level"`)
+func TestAssistantControlPartialSuccess(t *testing.T) {
+	f, id := controlStart(t)
+	controlFile(t, f, "control-effort-error.json", `"Invalid effort level"`)
 	err := f.n.setModes(context.Background(), id, "plan", "high")
 	checkControlRefusal(t, err, "Invalid effort level")
-	checkSDKControlState(t, f, id, "plan", "medium")
+	checkControlState(t, f, id, "plan", "medium")
 }
 
 // An unrelated success is not an ACK, and a pending request is not an applied setting.
-func TestAssistantSDKControlWaitsForMatchingResponse(t *testing.T) {
-	f, id := sdkControlStart(t)
-	sdkControlFile(t, f, "control-hold", "")
-	sdkControlFile(t, f, "control-extra.jsonl", `{"type":"control_response","response":{"subtype":"success","request_id":"unrelated"}}`+"\n")
+func TestAssistantControlWaitsForMatchingResponse(t *testing.T) {
+	f, id := controlStart(t)
+	controlFile(t, f, "control-hold", "")
+	controlFile(t, f, "control-extra.jsonl", `{"type":"control_response","response":{"subtype":"success","request_id":"unrelated"}}`+"\n")
 	done := make(chan error, 1)
 	go func() { done <- f.n.setModes(context.Background(), id, "plan", "") }()
-	sdkWait(t, "the held control request", func() bool { return f.file("control-waiting") != "" })
+	cliWait(t, "the held control request", func() bool { return f.file("control-waiting") != "" })
 	select {
 	case err := <-done:
 		t.Fatalf("returned before the matching response: %v", err)
@@ -150,19 +150,19 @@ func TestAssistantSDKControlWaitsForMatchingResponse(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("matching response did not complete the request")
 	}
-	checkSDKControlState(t, f, id, "plan", "medium")
+	checkControlState(t, f, id, "plan", "medium")
 }
 
-func TestAssistantSDKControlExit(t *testing.T) {
-	f, id := sdkControlStart(t)
+func TestAssistantControlExit(t *testing.T) {
+	f, id := controlStart(t)
 	p := f.proc(id)
-	sdkControlFile(t, f, "control-exit", "")
+	controlFile(t, f, "control-exit", "")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := f.n.setModes(ctx, id, "plan", "")
 	checkControlRefusal(t, err, "")
 	if ctx.Err() != nil {
-		t.Fatal("waited for the caller's deadline after the bridge exited")
+		t.Fatal("waited for the caller's deadline after claude exited")
 	}
 	if st, _ := f.n.state.get(id); st.AppMode != "default" {
 		t.Fatalf("mode after exit: %q", st.AppMode)
@@ -174,15 +174,15 @@ func TestAssistantSDKControlExit(t *testing.T) {
 	}
 }
 
-func TestAssistantSDKControlCancellationStopsProcess(t *testing.T) {
-	f, id := sdkControlStart(t)
+func TestAssistantControlCancellationStopsProcess(t *testing.T) {
+	f, id := controlStart(t)
 	p := f.proc(id)
-	sdkControlFile(t, f, "control-hold", "")
+	controlFile(t, f, "control-hold", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- f.n.setModes(ctx, id, "", "high") }()
-	sdkWait(t, "the held control request", func() bool { return f.file("control-waiting") != "" })
+	cliWait(t, "the held control request", func() bool { return f.file("control-waiting") != "" })
 	cancel()
 	select {
 	case err := <-done:
@@ -205,16 +205,16 @@ func TestAssistantSDKControlCancellationStopsProcess(t *testing.T) {
 	}
 }
 
-func TestAssistantSDKControlPendingModeThenBypass(t *testing.T) {
-	f, id := sdkControlStart(t)
+func TestAssistantControlPendingModeThenBypass(t *testing.T) {
+	f, id := controlStart(t)
 	p := f.proc(id)
 	p.mu.Lock()
 	p.busy = true // A restart must wait until this turn ends.
 	p.mu.Unlock()
-	sdkControlFile(t, f, "control-hold", "")
+	controlFile(t, f, "control-hold", "")
 	planDone := make(chan error, 1)
 	go func() { planDone <- f.n.setModes(context.Background(), id, "plan", "") }()
-	sdkWait(t, "the held plan request", func() bool { return f.file("control-waiting") != "" })
+	cliWait(t, "the held plan request", func() bool { return f.file("control-waiting") != "" })
 	bypassDone := make(chan error, 1)
 	go func() { bypassDone <- f.n.setModes(context.Background(), id, proto.ModeBypass, "") }()
 	select {
@@ -254,12 +254,12 @@ func TestAssistantSDKControlPendingModeThenBypass(t *testing.T) {
 	}
 }
 
-func TestAssistantSDKControlStartupRefusal(t *testing.T) {
+func TestAssistantControlStartupRefusal(t *testing.T) {
 	for _, field := range []string{"mode", "effort"} {
 		t.Run(field, func(t *testing.T) {
-			f := sdkTest(t)
-			sdkControlFile(t, f, "control-"+field+"-error.json", `"Setting refused"`)
-			_, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "hello", nil, "acceptEdits", "high", sdkExec(proto.AssistantRuntimeAgentSDK))
+			f := cliTest(t)
+			controlFile(t, f, "control-"+field+"-error.json", `"Setting refused"`)
+			_, err := f.n.assistantSend(context.Background(), "", t.TempDir(), "claude", "hello", nil, "acceptEdits", "high", cliExec())
 			checkControlRefusal(t, err, "Setting refused")
 			if strings.Contains(f.file("stdin.jsonl"), `"type":"user"`) {
 				t.Fatal("sent a user message after refusing its settings")
@@ -273,26 +273,26 @@ func TestAssistantSDKControlStartupRefusal(t *testing.T) {
 			if id == "" {
 				t.Fatal("the process disappeared after an explicit refusal")
 			}
-			sdkControlTranscript(t, f, id)
+			controlTranscript(t, f, id)
 			mode := "acceptEdits"
 			if field == "mode" {
 				mode = "default"
 			}
-			checkSDKControlState(t, f, id, mode, "auto")
+			checkControlState(t, f, id, mode, "auto")
 		})
 	}
 }
 
 // A failed first start restores shown state, but a genuine missing-command retry must still carry the request.
 func TestAssistantControlStartRetryKeepsRequestedSettings(t *testing.T) {
-	f := sdkTest(t)
+	f := cliTest(t)
 	shortStartRetries(t, 10*time.Millisecond)
-	script := `if [ ! -e "$SDK_FAKE_DIR/retry-ready" ]; then
-  : > "$SDK_FAKE_DIR/retry-ready"
+	script := `if [ ! -e "$CLI_FAKE_DIR/retry-ready" ]; then
+  : > "$CLI_FAKE_DIR/retry-ready"
   echo 'zsh: command not found: claude' >&2
   exit 127
 fi
-` + strings.TrimPrefix(fakeSDKBridge, "IFS= read -r start\n")
+` + fakeCLI
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "bin", "claude"), []byte("#!/bin/sh\n"+script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -301,8 +301,8 @@ fi
 		t.Fatalf("retry with settings: %v", err)
 	}
 	f.idle(t, id)
-	sdkControlTranscript(t, f, id)
-	checkSDKControlState(t, f, id, "acceptEdits", "high")
+	controlTranscript(t, f, id)
+	checkControlState(t, f, id, "acceptEdits", "high")
 	if input := f.file("stdin.jsonl"); !strings.Contains(input, `"mode":"acceptEdits"`) || !strings.Contains(input, `"effortLevel":"high"`) {
 		t.Fatalf("retry dropped requested settings: %s", input)
 	}
@@ -379,7 +379,7 @@ func TestAssistantControlCancellationWhileStdinBlocked(t *testing.T) {
 func controlRequestIDs(t *testing.T, sink *lineSink, count int) []string {
 	t.Helper()
 	var ids []string
-	sdkWait(t, "control request writes", func() bool {
+	cliWait(t, "control request writes", func() bool {
 		ids = nil
 		for _, line := range strings.Split(strings.TrimSpace(sink.String()), "\n") {
 			var req struct {

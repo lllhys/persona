@@ -9,6 +9,7 @@ import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
@@ -244,6 +245,103 @@ class AssistantTraysShotsTest {
             assertNotEquals("Light and dark captures must differ", corners[0], corners[1])
         }
         assertTrue(fixture.approvals.isEmpty()); assertTrue(fixture.sends.isEmpty())
+    }
+
+    /**
+     * Background work the hub reports without saying what it is reads "Working (Background)", iOS's words, and work that only
+     * waits in the background is a clock instead of the spinner, a task's row and an agent opened by hand alike (#4339 C18):
+     * Glass draws the clock in the background-waiting tone, Brief and Board in the row's own color. Light and dark.
+     */
+    @Test fun workReportedAloneSaysWorkingBackgroundAndWorkThatOnlyWaitsIsAClockInItsTone() {
+        val at = Instant.now().minusSeconds(2 * 3_600).toString()
+        val reported = running.copy(sessionId = "reported", title = "Background checks", plan = null, activity = null, backgroundWorking = true)
+        val sleeping = running.copy(sessionId = "sleeping", title = "Wait for the deploy", plan = null, activity = null,
+            backgroundWorking = true, backgroundWaiting = true)
+        val hand = manual.copy(title = "Watch the logs", activity = null, lastText = "Following the deploy log",
+            backgroundWorking = true, backgroundWaiting = true)
+        val fixture = Fixture().apply {
+            requests.value = emptyList(); drafts.value = emptyList()
+            returnedTodos = listOf(reported, sleeping).mapIndexed { i, agent -> Todo("bg-$i", agent.title, origin = "main", createdAt = at, updatedAt = at,
+                agents = listOf(TodoAgent(agent.machineId, agent.sessionId))) }
+            sessionRows.value = listOf(Session(main.machineId, main.sessionId, title = "Persona", assistant = true, state = "idle", status = "idle"),
+                reported, sleeping, hand)
+            tasks.reloadTodos()
+        }
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        var shownPalette: PersonaPalette? = null
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            val configuration = Configuration(LocalConfiguration.current).apply {
+                uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                    if (dark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+            }
+            CompositionLocalProvider(LocalConfiguration provides configuration) {
+                PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) {
+                    shownPalette = PersonaTheme.palette
+                    Column(Modifier.fillMaxSize().background(PersonaTheme.palette.background).testTag("assistant-page-shot")) {
+                        ChatScreen(main, fixture.chats, fixture.sender, fixture.interactions, fixture.sessions, {},
+                            chrome = ChatChromeBindings(tasks = fixture.tasks, inboxTrays = fixture.inbox, inboxScope = "fixture", onOpenSession = { fixture.opened += it }),
+                            renderStyle = ChatRenderStyle.Assistant, embedded = true, showTopBar = false)
+                    }
+                }
+            }
+        }
+        settle()
+        rule.waitUntil(10_000) { rule.onAllNodesWithTag("assistant-tray-bar").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithTag("assistant-entry-running").performClick(); settle()
+        fun inRow(tag: String, mark: String) = hasTestTag(mark) and hasAnyAncestor(hasTestTag(tag))
+        for (s in AppStyle.entries) for (d in listOf(false, true)) {
+            style = s; dark = d; settle()
+            val name = "${s.name.lowercase()}-${if (d) "dark" else "light"}"
+            // reported alone: the spinner and iOS's words
+            rule.onNodeWithText("Working (Background)").assertIsDisplayed()
+            rule.onAllNodes(inRow("assistant-progress-todo:bg-0", "assistant-work-spinner"), useUnmergedTree = true).assertCountEquals(1)
+            rule.onAllNodes(inRow("assistant-progress-todo:bg-0", "assistant-wait-clock"), useUnmergedTree = true).assertCountEquals(0)
+            // only waiting: a clock, in a task's row and in an agent's, with no spinner and "Waiting" for "Working"
+            rule.onAllNodes(inRow("assistant-progress-todo:bg-1", "assistant-wait-clock"), useUnmergedTree = true).assertCountEquals(1)
+            rule.onAllNodes(inRow("assistant-progress-todo:bg-1", "assistant-work-spinner"), useUnmergedTree = true).assertCountEquals(0)
+            rule.onAllNodes(inRow("assistant-agent-manual", "assistant-wait-clock"), useUnmergedTree = true).assertCountEquals(1)
+            rule.onAllNodes(inRow("assistant-agent-manual", "assistant-work-spinner"), useUnmergedTree = true).assertCountEquals(0)
+            rule.onNodeWithTag("assistant-progress-todo:bg-1").assert(hasText("Waiting"))
+            rule.onNodeWithTag("assistant-agent-manual").assert(hasText("Waiting"))
+            rule.onNodeWithTag("assistant-progress-todo:bg-0").assert(hasText("Working"))
+            shot("waiting-background-$name")
+            // the clock's own pixels: the background-waiting tone on Glass; elsewhere the row's color (its palette's tone is Working's)
+            val palette = checkNotNull(shownPalette)
+            val clock = rule.onNode(inRow("assistant-progress-todo:bg-1", "assistant-wait-clock"), useUnmergedTree = true).captureToImage().asAndroidBitmap()
+            val ink = inkOf(clock)
+            val behind = androidx.compose.ui.graphics.Color(clock.getPixel(0, 0))
+            val tone = palette.backgroundWaiting.dot.compositeOver(behind)
+            val close = listOf(ink.red - tone.red, ink.green - tone.green, ink.blue - tone.blue).all { kotlin.math.abs(it) < 0.12f }
+            // (Brief's and Board's own tone for Working is as dark as their ink: only Glass can be told by its pixels)
+            if (s == AppStyle.Glass) assertTrue("$name: the clock is in the background-waiting tone", close)
+        }
+    }
+
+    /** The pixel of [bitmap] that differs most from its corner: where the thin glyph is fully covered. */
+    private fun inkOf(bitmap: Bitmap): androidx.compose.ui.graphics.Color {
+        val behind = bitmap.getPixel(0, 0)
+        fun gap(p: Int) = kotlin.math.abs(android.graphics.Color.red(p) - android.graphics.Color.red(behind)) +
+            kotlin.math.abs(android.graphics.Color.green(p) - android.graphics.Color.green(behind)) +
+            kotlin.math.abs(android.graphics.Color.blue(p) - android.graphics.Color.blue(behind))
+        var best = behind
+        for (x in 0 until bitmap.width) for (y in 0 until bitmap.height) bitmap.getPixel(x, y).let { if (gap(it) > gap(best)) best = it }
+        return androidx.compose.ui.graphics.Color(best)
+    }
+
+    @Test fun theWaitingClockIsInTheTonePaletteOnGlassAndTheRowsColorElsewhere() {
+        var style by mutableStateOf(AppStyle.Glass)
+        var dark by mutableStateOf(false)
+        var palette: PersonaPalette? = null
+        rule.setContent { PersonaTheme(darkTheme = dark, reduceMotion = true, style = style) { palette = PersonaTheme.palette } }
+        val content = androidx.compose.ui.graphics.Color(0xFF123456)
+        for (d in listOf(false, true)) for (s in AppStyle.entries) {
+            style = s; dark = d; rule.waitForIdle()
+            val colors = checkNotNull(palette)
+            if (s == AppStyle.Glass) assertEquals(colors.backgroundWaiting.dot, trayWaitTint(true, colors, content))
+            else assertEquals(content, trayWaitTint(false, colors, content))
+        }
     }
 
     @Test fun allStylesAndAppearancesRenderActualAssistantPageAndMutuallyExclusiveTrays() {

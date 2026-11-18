@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 #endif
 import WebKit
+import PersonaWire
 
 // Links open inside the app, Telegram-style (CLAUDE.md): a sheet that rises to 60%, drags up to full screen and down
 // to close, with the chat behind it still usable. Feishu docs open in the native reader and company-feed links as the
@@ -33,8 +34,9 @@ nonisolated struct ContextRef: Identifiable, Hashable, Sendable, Codable {
 
     var host: String { URL(string: url)?.host ?? url }
 
-    /// The extra attributes in the order they are written: a forward's metadata first, then any others by name.
-    static let extraOrder = ["role", "author", "chat", "project", "machine", "time"]
+    /// The extra attributes in the order they are written: a forward's metadata and a workspace's location first, then
+    /// any others by name.
+    static let extraOrder = ["role", "author", "chat", "project", "machine", "cwd", "branch", "time"]
 
     var xml: String {
         func esc(_ s: String) -> String {
@@ -55,6 +57,10 @@ nonisolated struct ContextRef: Identifiable, Hashable, Sendable, Codable {
 
     /// The attributes that have fields of their own; the rest go to `extra`.
     private static let ownAttributes: Set<String> = ["kind", "title", "url", "msg", "part"]
+
+    /// The hub's mid-turn interject note title (server/internal/prompts/assistant/interject.md, pinned by
+    /// assistant_interject_test.go): model instructions in a context block, never a quote the owner picked (#6595).
+    static let interjectTitle = "插话" // i18n-ignore: canonical hub prompt title
 
     /// The contexts in a message and the message without them.
     private static let memo = TextMemo<(refs: [ContextRef], rest: String)>()
@@ -77,6 +83,8 @@ nonisolated struct ContextRef: Identifiable, Hashable, Sendable, Codable {
             }
             // Provenance and protected-user sentinels are transport metadata, never selectable context cards.
             guard a["kind"] != "message-source" else { continue }
+            // The hub's interject note is instructions for the model, not an owner-bubble quote (#6595).
+            guard (a["kind"] ?? "context") != "context" || a["title"] != interjectTitle else { continue }
             let extra = a.filter { !Self.ownAttributes.contains($0.key) }
             refs.append(ContextRef(kind: a["kind"] ?? "context", title: a["title"] ?? "", url: a["url"] ?? "",
                                    text: ns.substring(with: m.range(at: 2)), msg: a["msg"] ?? "", part: a["part"],
@@ -99,6 +107,7 @@ nonisolated struct ContextRef: Identifiable, Hashable, Sendable, Codable {
         case "instructions": Theme.Icon.info
         case "doc": Theme.Icon.document
         case "edit": Theme.Icon.ai
+        case "workspace": Theme.Icon.folder
         case ForwardMessage.kind: Theme.Icon.forwardMessage
         default: Theme.Icon.quote
         }
@@ -208,6 +217,10 @@ struct LinkSheet: View {
 
     private var header: some View {
         HStack(spacing: Theme.Space.m) {
+            // The way out first, as on every presented page (#9653); the page's own actions after the title.
+            Button { dismiss() } label: { ThemedIcon(Theme.Icon.close).sheetBarLabel() }
+                .accessibilityLabel("Close")
+                .accessibilityIdentifier("link-close")
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                 Text(title.isEmpty ? (isFeishuDoc ? String(localized: "Lark Doc") : feishuRoute != nil ? String(localized: "Moments") : (target.forwarded != nil ? nil : target.url.host) ?? String(localized: "Web Pages")) : title)
                     .font(Theme.Font.secondaryStrong).lineLimit(1)
@@ -219,6 +232,11 @@ struct LinkSheet: View {
                         }
                         .font(Theme.Font.label)
                         .foregroundStyle(Theme.accent)
+                        // A caption line hit like a row, the header keeping its height (#6577), and over the title above
+                        // it too: the header has only `Space.s` under it, and the page below takes its own taps.
+                        .padding(.top, Theme.Space.l)
+                        .tapTargetOutset()
+                        .padding(.top, -Theme.Space.l)
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint(String(localized: "Lists this session's dev servers"))
@@ -242,9 +260,6 @@ struct LinkSheet: View {
                 Button { UIPasteboard.general.url = target.url; Haptics.success() } label: { Label("Copy Link", systemImage: Theme.Icon.link) }
                 if target.forwarded == nil { browserItems } // the phone's loopback means nothing to another app
             } label: { ThemedIcon(Theme.Icon.moreMenu) }
-            Button { dismiss() } label: { ThemedIcon(Theme.Icon.clear).symbolRenderingMode(.hierarchical) }
-                .accessibilityLabel("Close")
-                .accessibilityIdentifier("link-close")
         }
         .font(Theme.Font.title)
         .padding(.horizontal, Theme.Space.l)
@@ -295,11 +310,12 @@ struct LinkSheet: View {
 // MARK: - Web views
 
 /// WKWebViews kept warm: the links of the latest answers load in the background, so opening one shows a finished
-/// page. All share the default (on-disk) website data store, so assets and logins carry over.
+/// page. A link the user opens loads in the default (on-disk) website data store, so its assets and logins carry over.
+/// A preloaded one loads in an in-memory store instead, seeded with the default store's cookies so signed-in sites
+/// still preload signed in: preloads of pages nobody opened had filled WebKit's disk cache (760 MB on one phone, #8352).
 /// On iPhone, iPad and Vision Pro a view serves one opening of its link: once a sheet has shown it, the pool lets it go
 /// (`release`, from `PooledWebView`), so a later tap on the link starts on the link's own page with no back/forward
-/// history, not where the last opening was left (#4074). The Mac's panel (frozen, apple/Mac/Link) still reuses its views:
-/// its Open in Separate Window moves the view on screen, page and history, into the window.
+/// history, not where the last opening was left (#4074).
 @MainActor
 final class WebViewPool {
     static let shared = WebViewPool()
@@ -309,6 +325,15 @@ final class WebViewPool {
     private let config: WKWebViewConfiguration = {
         let c = WKWebViewConfiguration()
         c.websiteDataStore = .default()
+        #if os(iOS) || os(visionOS)
+        c.allowsInlineMediaPlayback = true
+        #endif
+        return c
+    }()
+    /// Preloads' store: in memory only, gone with the process.
+    private let preloadConfig: WKWebViewConfiguration = {
+        let c = WKWebViewConfiguration()
+        c.websiteDataStore = .nonPersistent()
         #if os(iOS) || os(visionOS)
         c.allowsInlineMediaPlayback = true
         #endif
@@ -325,12 +350,20 @@ final class WebViewPool {
             if Self.isLoopback(url), !v.isLoading { v.load(Self.request(url)) }
             return v
         }
-        let v = SelectableWebView(frame: .zero, configuration: config)
+        return make(url, configuration: config)
+    }
+
+    private func make(_ url: URL, configuration: WKWebViewConfiguration) -> SelectableWebView {
+        let key = url.absoluteString
+        let v = SelectableWebView(frame: .zero, configuration: configuration)
         #if os(iOS) || os(visionOS)
         v.scrollView.showsVerticalScrollIndicator = false
         v.scrollView.showsHorizontalScrollIndicator = false
         #endif
         v.allowsBackForwardNavigationGestures = true
+        #if os(iOS)
+        CallMediaGuard.shared.register(v) // a page's media stays still while a system call is live
+        #endif
         v.load(Self.request(url))
         views[key] = v
         touch(key)
@@ -347,6 +380,9 @@ final class WebViewPool {
     func release(_ v: WKWebView, for url: URL) {
         let key = url.absoluteString
         guard views[key] === v else { return }
+        // A sign-in done on a preloaded page is kept: its cookies go to the default store.
+        let store = v.configuration.websiteDataStore
+        if store === preloadConfig.websiteDataStore { Task { await Self.copyCookies(from: store, to: .default()) } }
         views[key] = nil
         order.removeAll { $0 == key }
         if !Self.isLoopback(url) { _ = view(for: url) }
@@ -371,7 +407,17 @@ final class WebViewPool {
     /// Starts loading links that may be opened soon (not the ones a native Feishu view opens).
     func preload(_ urls: [URL]) {
         let lark = AppModel.shared.larkFeatures
-        for u in urls.prefix(3) where views[u.absoluteString] == nil && FeishuLinks.route(u, lark: lark) == nil { _ = view(for: u) }
+        let wanted = urls.prefix(3).filter { views[$0.absoluteString] == nil && FeishuLinks.route($0, lark: lark) == nil }
+        guard !wanted.isEmpty else { return }
+        Task {
+            await Self.copyCookies(from: .default(), to: preloadConfig.websiteDataStore)
+            for u in wanted where views[u.absoluteString] == nil { _ = make(u, configuration: preloadConfig) }
+        }
+    }
+
+    /// Every cookie of one store set in another (an existing cookie of the same name, domain and path is replaced).
+    private static func copyCookies(from: WKWebsiteDataStore, to: WKWebsiteDataStore) async {
+        for c in await from.httpCookieStore.allCookies() { await to.httpCookieStore.setCookie(c) }
     }
 
     private func touch(_ key: String) {
@@ -628,7 +674,7 @@ struct PickTextSheet: View {
             }
             .navigationTitle("Select Text [Link Sheet 409a5a]")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } }
+            .toolbar { SheetClose { dismiss() } }
         }
         .presentationDetents([.medium, .large])
     }

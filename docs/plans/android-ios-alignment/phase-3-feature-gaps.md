@@ -16,19 +16,19 @@ What people do on an iPhone they can also do on Android, most-used first. Whatev
 
 **F3. Editing files and reviewing code in a session.** iOS uploads into a folder (replace or keep both), renames, moves and trashes with Undo, and has a review page: pick the scope (uncommitted, branch or commit), select lines, comment, then send the review or add it to the composer; comment blocks show as cards in messages. Android's files pages are read-only and it has no review page. Requirement: both, as on iOS.
 
-**F4. Main chat cards.** iOS shows the questions the assistant answered for you, with the answer and a way to change it; HTML cards; and Undo on quick results (an event or reminder made on this phone). Android shows a "by assistant" line, every HTML card's fallback, and quick results without Undo. Requirement: all three.
+**F4. Main chat cards.** iOS shows the questions the assistant answered for you, with the answer and a way to change it; HTML cards; and Undo on quick results (an event or reminder made on this phone). Android shows a "by assistant" line, every HTML card's fallback, and quick results with Undo on the calendar events this phone made (#9340; reminders keep none, there is no reminders store to delete from). Requirement: all three.
 
 **F5. Lark replies.** iOS sends @ mentions, images and files, and shows topic groups as one card per topic (#576, #511). Android sends text and threaded replies. Requirement: as on iOS.
 
 **F6. To-dos.** iOS edits the due date, the reminder and the priority in the detail, shows the stage bar, and dictates notes. Android edits the title and notes only. Requirement: as on iOS.
 
-**F7. Agents list.** iOS groups By Repository, By Project, By To-do, By Status, By Machine, By App and Recently Used; Android has By repository, By computer and space, By status and By to-do; its By computer and space has iOS's By Project shape, so the [Agents page](agents-page.md) (A5) renames it. iOS also has git and worktree actions (pull, push, fetch, new worktree, rename, cleanup when an Agent closes) and Orca workspaces. Requirement: the missing groupings (By Machine, By App, Recently Used), the actions and workspaces. How the shared groupings look is the Agents page's.
+**F7. Agents list.** iOS groups By Repository, By Project, By To-do, By Status, By Machine, By App and Recently Used; Android has By repository, By project, By status, By to-do, By Machine (#9319), By App and Recently Used (#9199); its By computer and space has iOS's By Project shape, so the [Agents page](agents-page.md) (A5) renames it. iOS also has git and worktree actions (pull, push, fetch, new worktree, rename, cleanup when an Agent closes) and Orca workspaces. Requirement: the actions and workspaces (flat By Machine done in #9319). How the shared groupings look is the Agents page's.
 
 **F8. Voice.** On iOS the composer turns into a voice bar tied to the current chat. Android opens a separate page whose work always goes to the main chat. Requirement: the voice bar; the page stays for captions.
 
 **F9. Larger areas, each decided in its own issue.** Health; meeting recording (Android shows the minutes in Knowledge but can't record); and the Machines extras (live view, usage chart, clipboard, computer use). The archived-chats browser moved to [chats](chats.md) (C12), with the rest of the conversation history.
 
-**F10. Settings Android lacks.** Saved Places; Knowledge Selection; meeting settings (with recording); Claude Code Live Replies; GitHub connector sign-in and Inbox settings; offering the clipboard when you come back to the app; the in-app tunnel page; Appearance (text size, which is open question 6, layout, glow while replying); workout reports; source subscriptions (#2041). The Live Activity, Dynamic Island, Watch sync and background push are platform features, not gaps.
+**F10. Settings Android lacks.** Meeting settings (with recording); Claude Code Live Replies; offering the clipboard when you come back to the app; the in-app tunnel page; Appearance (text size, which is open question 6, layout, glow while replying); workout reports; source subscriptions (#2041). Saved Places is complete (#9293) in Settings › Assistant › Saved Places. Knowledge Selection is complete (#2217) in Settings › Knowledge Selection and is no longer an outstanding gap. GitHub connector sign-in and Inbox settings is complete (#9307) on Settings › Connectors › GitHub and is no longer an outstanding gap. The Live Activity, Dynamic Island, Watch sync and background push are platform features, not gaps.
 
 Related: #506 (marking up photos before sending, recording context in the composer), #1581 (password cards).
 
@@ -57,7 +57,7 @@ Each gets an iOS issue: answering questions and terminal choices from notificati
 | F1 | `apple/Persona/Views/Interactions/PermissionInputForm.swift` | resolve with `values` | model ready, Allow blocked | core/domain, feature/chat | S |
 | F2 | `apple/Persona/Views/NewChat/NewChatView.swift` and its folder | sessions, launchers, worktree, workspaces, files | none of the five | feature/agents, core/contracts, core/hub | L, five PRs |
 | F3 | `apple/Persona/Views/Session/FolderEdits.swift`, `apple/Persona/Views/Session/ReviewPage.swift` | files edits, git review | read-only files and git | feature/files, core/domain, feature/chat | M + L |
-| F4 | `apple/Persona/Views/Interactions/DelegateViews.swift` and others | interaction history, reanswer, HTML actions | text line, HTML off, no Undo | feature/assistant, feature/chat, feature/settings | M |
+| F4 | `apple/Persona/Views/Interactions/DelegateViews.swift` and others | interaction history, reanswer, HTML actions | text line, HTML off, calendar Undo done | feature/assistant, feature/chat, feature/settings | M |
 | F5 | `apple/Persona/Views/Inbox/Lark/LarkComposer.swift` and its folder | Lark members, images, files, topics | text only | feature/inbox | M to L |
 | F6 | `apple/Persona/Views/Todos/TodoDetailView.swift` | `PATCH /api/v1/todos/{id}` | title and notes only | core/hub, feature/chat | M |
 | F7 | `apple/Persona/Views/Chats/NodeActions.swift` and the grouping code | worktree, git, workspaces | four groupings | core/domain, feature/agents | M to L |
@@ -87,7 +87,7 @@ Each gets an iOS issue: answering questions and terminal choices from notificati
 
 - Answered for you: a store for `GET /api/v1/interactions/history`, `POST /api/v1/interactions/{id}/reanswer` and the `interaction_reanswered` event, then the card and the change sheet, reusing `DecisionOption`.
 - HTML cards (S): the sandbox and bridge exist in `android/feature/settings/src/main/kotlin/persona/feature/settings/AssistantHtml.kt` but stay switched off until the security check in `docs/assistant/assistant-views.md` passes on a real phone. Run the check, then switch them on.
-- Undo on quick results (S): iOS undoes on the phone only; there is no hub endpoint. Keep the item id in `QuickResult`, add a delete to the calendar tools, and show Undo only for items this phone made. Whether the result says which phone made it needs checking; if not, the hub adds that field.
+- Undo on quick results (S): done for calendar events (#9340). iOS undoes on the phone only; there is no hub endpoint. `QuickResult` keeps the created item's numeric id, `CalendarTools.remove` deletes it through the same provider path without a second confirmation (the user is undoing the assistant's own write), `TasksStore.quickResultUndos` remembers the undone ids for the app's run, and the card reads Undone and dims as on iOS. Reminder cards keep no Undo: Android has no reminders store, so `phone_reminders_create` is never declared there. A tool result does not say which phone made the item, so Undo is offered for any numeric id: an iPhone's item has none and shows no button, while another Android phone's numeric id is only found out when the delete finds no such event (the chat's toast says "Couldn't undo"); a field naming the phone would be the hub's change if that ever matters.
 
 ### F5. Lark replies (M to L)
 
@@ -104,7 +104,7 @@ Each gets an iOS issue: answering questions and terminal choices from notificati
 
 ### F7. Agents list (M to L)
 
-- Groupings (S each): By App (from `agent_surface` and `agent_name`, which Android already parses), Recently Used and the flat By Machine, in `android/core/domain/src/main/kotlin/persona/core/domain/sort/AgentList.kt`.
+- Groupings (S each): By App and Recently Used done (#9199: `AgentAppGroups`, `AgentGrouping.App` / `Recent`); flat By Machine done (#9319: `AgentGrouping.Machine` in `selectable` / `fromPreference`, projection in `AgentList.kt`).
 - Node actions (M): git pull, push and fetch, split pane, close tab, run an Agent in a pane, new and renamed worktrees, and cleanup when an Agent closes, as a service plus dialogs next to the existing Agent operation dialogs.
 - Workspaces (M): the same catalog as F2.
 
@@ -128,11 +128,11 @@ Each gets an iOS issue: answering questions and terminal choices from notificati
 
 | Setting | Size |
 | --- | --- |
-| Saved Places | S |
-| Knowledge Selection | M |
+| Saved Places | S — done (#9293); Settings › Assistant › Saved Places |
+| Knowledge Selection | M — done (#2217); Settings › Knowledge Selection |
 | Meeting settings | with recording |
 | Claude Code Live Replies | S |
-| GitHub connector sign-in and Inbox settings | S to M |
+| GitHub connector sign-in and Inbox settings | S to M — done (#9307); Settings › Connectors › GitHub |
 | Clipboard offer on return | S |
 | In-app tunnel page | M |
 | Appearance: layout, glow while replying (text size is question 6) | S each |

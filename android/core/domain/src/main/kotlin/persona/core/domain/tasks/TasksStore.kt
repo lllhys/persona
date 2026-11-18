@@ -26,6 +26,8 @@ import persona.core.contracts.FeedItem
 import persona.core.contracts.FeedResponse
 import persona.core.contracts.Session
 import persona.core.contracts.PlanTask
+import persona.core.contracts.RuleSuggestion
+import persona.core.contracts.RuleSuggestionMade
 import persona.core.contracts.TaskPlan
 import persona.core.contracts.TaskPlanEvent
 import persona.core.contracts.Todo
@@ -37,6 +39,7 @@ import persona.core.contracts.draftPlaceholder
 import persona.core.contracts.api.AssistantManagerChoice
 import persona.core.contracts.api.ConnectionState
 import persona.core.contracts.api.HubConnection
+import persona.core.contracts.api.PhoneQuickResults
 import persona.core.contracts.api.RequestManager
 import persona.core.contracts.api.hubCodedFailure
 import persona.core.contracts.api.TasksApi
@@ -51,6 +54,34 @@ import persona.core.domain.views.AssistantViewStore
 enum class BriefOutcome { Taken, Completed, MarkedHandled, AlreadyHandled, HubTooOld }
 fun briefAcceptOutcomeKey(todoId: String, askedAt: String) = "accept:$todoId:$askedAt"
 fun briefLaterOutcomeKey(questionId: String) = "later:$questionId"
+
+/**
+ * What became of a card's suggested rule answered from here (#4929, docs/assistant/unified-entry.md "A rule after the same
+ * answer three times").
+ */
+sealed interface RuleOutcome {
+    /** Always was taken: what it stored ([RuleSuggestionMade.creates]; "" with the setting to turn on instead). */
+    data class Made(val made: RuleSuggestionMade) : RuleOutcome
+
+    /** Not now: the line goes, and the hub leaves it out for 30 days. */
+    data object NotNow : RuleOutcome
+
+    /** The answers do not earn it any more, or it was answered elsewhere (404): the line goes, nothing was made. */
+    data object Gone : RuleOutcome
+}
+
+/** The [suggestion] a card carried when it was answered from here, and what became of it. */
+data class RuleAnswer(val suggestion: RuleSuggestion, val outcome: RuleOutcome)
+
+/**
+ * The key a to-do's decision keeps its suggested rule under: the decision's own round ([askedAt]), so what was answered
+ * on one decision is not drawn under the to-do's next one.
+ */
+fun todoRuleCard(todoId: String, askedAt: String) = "todo:$todoId:$askedAt"
+
+/** The [TasksStore.busy] keys of a card's suggested rule: Always and Not now, one of them at a time. */
+fun ruleAlwaysKey(card: String) = "rule-always:$card"
+fun ruleNotNowKey(card: String) = "rule-not-now:$card"
 
 interface TodoCache {
     suspend fun read(): List<Todo>?
@@ -67,9 +98,17 @@ class TasksStore(
     private val scope: CoroutineScope,
     private val cache: TodoCache? = null,
     private val clock: Clock = Clock.systemDefaultZone(),
+    /** The phone's own delete for Undo on a calendar quick result; null: the cards offer no Undo. */
+    private val quickResults: PhoneQuickResults? = null,
 ) : TodoDecisionsSource {
+    /** Created calendar event id → its Undo state, for as long as this store lives (iOS `TasksStore.undone`). */
+    private val _quickResultUndos = MutableStateFlow<Map<Long, QuickResultUndo>>(emptyMap())
+    val quickResultUndos: StateFlow<Map<Long, QuickResultUndo>> = _quickResultUndos.asStateFlow()
+    private val quickResultLock = Any()
     private val _todos = MutableStateFlow<List<Todo>>(emptyList())
     val todos: StateFlow<List<Todo>> = _todos.asStateFlow()
+    /** The connected hub's declared capabilities; seen controls are absent without `todo_seen`. */
+    val features: StateFlow<Set<String>>? = api.features
     /** Guards [answered] with the list: the cached list never replaces one the hub has given. */
     private val todosLock = Any()
     /** The hub's last answer (a list, or an older hub's 404 as none); null until it answers, while the cache shows. */
@@ -82,6 +121,42 @@ class TasksStore(
     private val agentLookup = TaskAgentLookup(api, scope)
     val agentSessions = agentLookup.sessions
     val agentLookupFailures = agentLookup.failures
+
+    /**
+     * Undo is offered for what this phone can take back: its own calendar events. A reminder is not one (Android has no
+     * reminders store, so `phone_reminders_create` runs on an iPhone), and neither is a card whose result named no event.
+     */
+    fun canUndoQuickResult(result: QuickResult): Boolean = quickResults != null && !result.reminder && result.itemId != null
+
+    fun quickResultUndo(result: QuickResult): QuickResultUndo =
+        result.itemId?.let { _quickResultUndos.value[it] } ?: QuickResultUndo.Added
+
+    /**
+     * Undo on a quick result (iOS `TasksStore.undo(_:)`): the event comes off the phone, with no second permission prompt
+     * because the user is undoing the assistant's own write. The card turns Undone as soon as the local delete returned;
+     * on failure it stays Added and this is false, so the chat can say so.
+     */
+    suspend fun undoQuickResult(result: QuickResult): Boolean {
+        if (!canUndoQuickResult(result)) return false
+        val id = result.itemId ?: return false
+        val remove = quickResults ?: return false
+        // One delete per card: a second tap while it runs, or after it, changes nothing.
+        synchronized(quickResultLock) {
+            if ((_quickResultUndos.value[id] ?: QuickResultUndo.Added) != QuickResultUndo.Added) return false
+            _quickResultUndos.update { it + (id to QuickResultUndo.Undoing) }
+        }
+        try {
+            remove.removeCalendarEvent(id)
+        } catch (cancelled: CancellationException) {
+            _quickResultUndos.update { it - id }
+            throw cancelled
+        } catch (_: Exception) {
+            _quickResultUndos.update { it - id }
+            return false
+        }
+        _quickResultUndos.update { it + (id to QuickResultUndo.Undone) }
+        return true
+    }
 
     /** Called by the visible conversation; exact lookups never change the Agents list window. */
     fun watchAgents(keys: Set<persona.core.contracts.SessionKey>) = agentLookup.watch(keys)
@@ -109,6 +184,14 @@ class TasksStore(
     val busy = MutableStateFlow<Set<String>>(emptySet())
     private val _briefOutcomes = MutableStateFlow<Map<String, BriefOutcome>>(emptyMap())
     val briefOutcomes = _briefOutcomes.asStateFlow()
+    private val _ruleAnswers = MutableStateFlow<Map<String, RuleAnswer>>(emptyMap())
+    /**
+     * Card → the answer given here to the suggested rule it carried. Kept by the card, never by the suggestion's id: the
+     * hub's ids name a kind and a scope, so the same id comes back on a later card (and, for the delegate, on another
+     * manager's), and that card is to be answered on its own. What Always made stays for the card although the hub sends
+     * it again without its suggestion; Not now and a stale suggestion last until the hub does ([ruleSettled]).
+     */
+    val ruleAnswers: StateFlow<Map<String, RuleAnswer>> = _ruleAnswers.asStateFlow()
     /** Message card ids put off with "Later"; another draft for the same inbox item remains visible. */
     val later = MutableStateFlow<Set<String>>(emptySet())
     /** Conversation → when the Today card was last asked for, and the day of the card the hub gave (null while asking). */
@@ -116,6 +199,16 @@ class TasksStore(
     /** This hub's assistant cards (docs/assistant/assistant-views.md): live cards, answers and registered reply blocks. */
     val cards = AssistantViewStore()
     val cardActions = AssistantCardActions(api, cards, reload = { load(it, whole = true) })
+
+    private val _lnModeEnabled = MutableStateFlow(false)
+    val lnModeEnabled: StateFlow<Boolean> = _lnModeEnabled.asStateFlow()
+    private val _heldPushes = MutableStateFlow(HeldPushGroups())
+    val heldPushes: StateFlow<HeldPushGroups> = _heldPushes.asStateFlow()
+    private val _heldPushesLoading = MutableStateFlow(false)
+    val heldPushesLoading: StateFlow<Boolean> = _heldPushesLoading.asStateFlow()
+    private val _heldPushesFailed = MutableStateFlow(false)
+    val heldPushesFailed: StateFlow<Boolean> = _heldPushesFailed.asStateFlow()
+    private val heldPushesRevision = java.util.concurrent.atomic.AtomicLong(0L)
 
     init {
         if (cache != null) scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -139,7 +232,52 @@ class TasksStore(
             }
         }
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            connection.state.collect { if (it == ConnectionState.Online) { reloadTodos(); agentLookup.refresh(); loaded.value.forEach(::load) } }
+            connection.state.collect {
+                if (it == ConnectionState.Online) {
+                    reloadTodos()
+                    agentLookup.refresh()
+                    loaded.value.forEach(::load)
+                    refreshPushIntercepts()
+                } else {
+                    heldPushesRevision.incrementAndGet()
+                    _heldPushesLoading.value = false
+                }
+            }
+        }
+    }
+
+    /** Refresh only while the main Assistant page is visible or a hub reconnects; older responses cannot land late. */
+    fun refreshPushIntercepts() {
+        scope.launch {
+            val ticket = heldPushesRevision.incrementAndGet()
+            _heldPushesLoading.value = true
+            try {
+                val mode = api.lnMode()
+                if (ticket != heldPushesRevision.get()) return@launch
+                _lnModeEnabled.value = mode.enabled
+                if (!mode.enabled) {
+                    _heldPushes.value = HeldPushGroups()
+                    _heldPushesFailed.value = false
+                    return@launch
+                }
+                val response = api.pushIntercepts()
+                if (ticket != heldPushesRevision.get()) return@launch
+                val groups = heldPushGroups(response.intercepts, clock)
+                if (groups != _heldPushes.value) _heldPushes.value = groups
+                _heldPushesFailed.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (ticket != heldPushesRevision.get()) return@launch
+                _heldPushesFailed.value = true
+                val status = error::class.java.methods.firstOrNull { it.name == "getStatus" }?.invoke(error) as? Int
+                if (status == 404 || error.message?.contains("404") == true) {
+                    _lnModeEnabled.value = false
+                    _heldPushes.value = HeldPushGroups()
+                }
+            } finally {
+                if (ticket == heldPushesRevision.get()) _heldPushesLoading.value = false
+            }
         }
     }
 
@@ -162,7 +300,10 @@ class TasksStore(
                         }
                         finishedTasks.keys.retainAll(shown.map { it.id }.toSet())
                         answered = shown
-                        if (shown != _todos.value) _todos.value = shown
+                        // The list first, then the flag, in this block: a card must not see "the list is in" while it
+                        // still holds the previous one and call a just-dispatched task gone (#5110).
+                        _todos.value = shown
+                        todosReady.value = true
                     }
                     dropStaleRoutes()
                     remember()
@@ -172,7 +313,11 @@ class TasksStore(
                     val status = error::class.java.methods.firstOrNull { it.name == "getStatus" }?.invoke(error) as? Int
                     if (status == 404 || error.message?.contains("404") == true) {
                         _todosSupported.value = false
-                        synchronized(todosLock) { answered = emptyList(); _todos.value = emptyList() }
+                        synchronized(todosLock) {
+                            answered = emptyList()
+                            _todos.value = emptyList()
+                            todosReady.value = true
+                        }
                         remember()
                     }
                     // Failed reads retain the last confirmed binding; a reconnect or open retries the read.
@@ -196,8 +341,8 @@ class TasksStore(
         }
     }
 
-    suspend fun createTodo(title: String, notes: String = ""): Todo {
-        val created = api.createTodo(title, notes)
+    suspend fun createTodo(title: String, notes: String = "", due: TodoDue? = null): Todo {
+        val created = api.createTodo(title, notes, due)
         reloadTodos()
         return created
     }
@@ -212,6 +357,22 @@ class TasksStore(
             updated
         } catch (t: Throwable) {
             _todos.value = before
+            throw t
+        }
+    }
+
+    /** Got it / Undo (#5707): only seen_at changes, at once; [after] keeps a slow phone's mark after the finish it saw. */
+    suspend fun setTodoSeen(id: String, seen: Boolean, after: Long = 0): Todo {
+        val before = _todos.value.firstOrNull { it.id == id } ?: error("no to-do $id")
+        val seenAt = if (seen) Instant.ofEpochMilli(maxOf(clock.millis(), after)).toString() else null
+        val moved = before.copy(seenAt = seenAt)
+        _todos.update { list -> list.map { if (it.id == id) moved else it } }
+        return try {
+            val updated = api.setTodoSeen(id, seen)
+            _todos.update { list -> list.map { if (it.id == updated.id && it == moved) updated else it } }
+            updated
+        } catch (t: Throwable) {
+            _todos.update { list -> list.map { if (it.id == id && it == moved) before else it } }
             throw t
         }
     }
@@ -280,6 +441,12 @@ class TasksStore(
         api.unlinkTodoAgent(todoId, machineId, sessionId)
         reloadTodos()
     }
+
+    /**
+     * A read of the to-dos has answered: until then a missing to-do is still on its way, not gone (#5110).
+     * A hub switch builds a new [TasksStore] (`AppServices`), so this starts false again with that hub.
+     */
+    val todosReady = MutableStateFlow(false)
 
     /** A read of the to-dos has answered: until then nothing tells whether the hub knows projects. */
     @Volatile private var todosLoaded = false
@@ -402,7 +569,7 @@ class TasksStore(
 
     /** What [conversation]'s dock shows after its tasks (iOS `DockAgent.shown`); see [dockAgents]. */
     fun agentsOf(conversation: String, sessions: List<Session>): List<Session> =
-        dockAgents(conversation, mainConversation.value, sessions, _todos.value)
+        dockAgents(conversation, mainConversation.value, sessions, _todos.value, "sessions_hierarchy" in features?.value.orEmpty())
 
     /**
      * The hub counts the day in the assistant's time zone, which need not be the phone's (#5194): the card is asked
@@ -594,6 +761,60 @@ class TasksStore(
         }
     }
 
+    /**
+     * "Always" on the suggested rule [card] carries: the hub counts the answers again and makes the rule only if they
+     * still earn it. What it made is kept for the card ([ruleAnswers]); a suggestion that is gone (404) only loses its
+     * line. Any other refusal (403 without the full-access role, 409 when the standing authorizations changed meanwhile,
+     * 503) goes to [onError] and leaves the line to answer again.
+     */
+    fun ruleAlways(card: String, suggestion: RuleSuggestion, onError: (Throwable) -> Unit, manager: String? = null) {
+        if (!ruleAnswerable(card, suggestion)) return
+        act(ruleAlwaysKey(card), onError) {
+            try {
+                val made = withManager(manager) { api.ruleAlways(suggestion.id) }
+                _ruleAnswers.update { it + (card to RuleAnswer(suggestion, RuleOutcome.Made(made))) }
+            } catch (error: Throwable) {
+                if (!ruleSuggestionGone(card, suggestion, error)) throw error
+            }
+            reloadTodos()
+        }
+    }
+
+    /** "Not now" on the suggested rule [card] carries: its line goes at once. */
+    fun ruleNotNow(card: String, suggestion: RuleSuggestion, onError: (Throwable) -> Unit, manager: String? = null) {
+        if (!ruleAnswerable(card, suggestion)) return
+        act(ruleNotNowKey(card), onError) {
+            try {
+                withManager(manager) { api.ruleNotNow(suggestion.id) }
+                _ruleAnswers.update { it + (card to RuleAnswer(suggestion, RuleOutcome.NotNow)) }
+            } catch (error: Throwable) {
+                if (!ruleSuggestionGone(card, suggestion, error)) throw error
+            }
+            reloadTodos()
+        }
+    }
+
+    /**
+     * The hub sent [card] without a suggestion: a line put away here (Not now, stale) is settled, and a suggestion the
+     * card earns later, under the same id, is drawn again. What Always made stays.
+     */
+    fun ruleSettled(card: String) {
+        _ruleAnswers.update { answers -> if (answers[card]?.outcome is RuleOutcome.Made) answers else answers - card }
+    }
+
+    /** Still to answer on [card], with neither of its two actions on the way. */
+    private fun ruleAnswerable(card: String, suggestion: RuleSuggestion): Boolean {
+        if (suggestion.id.isBlank() || _ruleAnswers.value[card]?.suggestion?.id == suggestion.id) return false
+        return ruleAlwaysKey(card) !in busy.value && ruleNotNowKey(card) !in busy.value
+    }
+
+    /** A stale suggestion (404) is cleared, not an error to show; cancellation and every other failure are the caller's. */
+    private fun ruleSuggestionGone(card: String, suggestion: RuleSuggestion, error: Throwable): Boolean {
+        if (error is CancellationException || hubCodedFailure(error)?.status != 404) return false
+        _ruleAnswers.update { it + (card to RuleAnswer(suggestion, RuleOutcome.Gone)) }
+        return true
+    }
+
     /** 409 / 404 are terminal answers, not a retry that could repeat a completed action. */
     private fun briefActionTerminal(key: String, error: Throwable): Boolean {
         val outcome = when (hubCodedFailure(error)?.status) {
@@ -609,7 +830,7 @@ class TasksStore(
     fun finishTaskNow(todo: Todo, onError: (Throwable) -> Unit, onChanged: () -> Unit) {
         val ask = todo.ask?.takeIf { it.outcome == "decide" } ?: return
         if (todo.isDone || todo.cancelledAt != null) return
-        finishDecision(todo.id, ask.askedAt, expectedAsk = ask, manager = null, onError = onError, onChanged = onChanged)
+        finishDecision(todo.id, ask.askedAt, expectedAsk = ask, manager = todo.manager, onError = onError, onChanged = onChanged)
     }
 
     /** Both direct-completion entries share the current-round fence and the confirmed local merge. */
@@ -669,12 +890,19 @@ class TasksStore(
         routes.update { if (todoId == null) it - conversation else it + (conversation to todoId) }
     }
 
-    /** Sends text straight to the task the conversation is routed to; false when there is none or its to-do is gone. */
-    fun sendRouted(conversation: String, text: String, onError: (Throwable) -> Unit): Boolean {
+    /**
+     * Sends text straight to the task the conversation is routed to; false when there is none or its to-do is gone.
+     * The route is consumed only by the hub's accepting response. A failure or cancellation leaves it ready to retry.
+     */
+    suspend fun sendRouted(conversation: String, text: String): Boolean {
         val todoId = routes.value[conversation] ?: return false
-        setRoute(conversation, null)
-        if (_todos.value.none { it.id == todoId }) return false // the hub would refuse it (409): Persona gets it instead
-        scope.launch { runCatching { api.route(conversation, todoId, text) }.onSuccess { received(listOf(it)) }.onFailure(onError) }
+        if (_todos.value.none { it.id == todoId }) {
+            setRoute(conversation, null)
+            return false // the hub would refuse it (409): Persona gets it instead
+        }
+        val routed = api.route(conversation, todoId, text)
+        received(listOf(routed))
+        routes.update { current -> if (current[conversation] == todoId) current - conversation else current }
         return true
     }
 

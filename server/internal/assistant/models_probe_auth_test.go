@@ -71,7 +71,8 @@ func (g *authGateway) requests() []string {
 	return out
 }
 
-// An explicit method sends that header alone, to test and discover alike.
+// An explicit method sends that header alone, to test and discover alike (the model list's two pages and the
+// capability report after them).
 func TestProbeExplicitAuthSendsOneHeader(t *testing.T) {
 	_, mux := launcherTestService(t)
 	g := newAuthGateway(t, true, true)
@@ -81,7 +82,7 @@ func TestProbeExplicitAuthSendsOneHeader(t *testing.T) {
 			t.Fatalf("test %s: %v sent %v", auth, out, sent)
 		}
 		out = probeResult(t, mux, "/api/v1/launchers/discover", `{"base_url":"`+g.URL+`","api_key":"`+fakeKey+`","auth":"`+auth+`"}`)
-		if sent := g.requests(); out["error"] != nil || !slices.Equal(sent, []string{auth, auth}) || out["auth"] != nil {
+		if sent := g.requests(); out["error"] != nil || !slices.Equal(sent, []string{auth, auth, auth}) || out["auth"] != nil {
 			t.Fatalf("discover %s: %v sent %v", auth, out, sent)
 		}
 	}
@@ -183,7 +184,7 @@ func TestProbeByNameUsesTheStoredMethod(t *testing.T) {
 			t.Fatalf("%s (stored %q): %v sent %v, launch sets %s", l.Name, l.Auth, out, sent, launch)
 		}
 		out = probeResult(t, mux, "/api/v1/launchers/discover", `{"name":"`+l.Name+`"}`)
-		if sent := g.requests(); out["error"] != nil || !slices.Equal(sent, []string{launch, launch}) {
+		if sent := g.requests(); out["error"] != nil || !slices.Equal(sent, []string{launch, launch, launch}) {
 			t.Fatalf("%s discover: %v sent %v", l.Name, out, sent)
 		}
 		other := probeAuthBearer
@@ -308,16 +309,16 @@ func TestProbeUnknownAuth(t *testing.T) {
 	}
 }
 
-// Discover settles auto on the first page and sends only that header for the next ones. It names no method: a model
-// list may answer without looking at the key, so only the test says what a launch needs.
+// Discover settles auto on the first page and sends only that header for the next ones and the capability report. It
+// names no method: a model list may answer without looking at the key, so only the test says what a launch needs.
 func TestProbeDiscoverAutoResolvesOnTheFirstPage(t *testing.T) {
 	_, mux := launcherTestService(t)
 	for name, c := range map[string]struct {
 		bearer, apiKey bool
 		sent           []string
 	}{
-		"x-api-key": {false, true, []string{probeAuthBearer, probeAuthAPIKey, probeAuthAPIKey}},
-		"both":      {true, true, []string{probeAuthBearer, probeAuthBearer}},
+		"x-api-key": {false, true, []string{probeAuthBearer, probeAuthAPIKey, probeAuthAPIKey, probeAuthAPIKey}},
+		"both":      {true, true, []string{probeAuthBearer, probeAuthBearer, probeAuthBearer}},
 	} {
 		g := newAuthGateway(t, c.bearer, c.apiKey)
 		out := probeResult(t, mux, "/api/v1/launchers/discover", `{"base_url":"`+g.URL+`","api_key":"`+fakeKey+`","auth":"auto"}`)

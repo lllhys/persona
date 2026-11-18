@@ -20,6 +20,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/nwverse/persona/server/internal/assistantskills"
 	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/proto"
 	"github.com/nwverse/persona/server/internal/transcript"
@@ -28,7 +29,7 @@ import (
 var errCodexNoOwner = errors.New("没有可共享的 app-server 运行入口")
 
 type remoteThread struct {
-	id, publicID, title, cwd, status, turn, parent, partial string
+	id, publicID, title, cwd, path, status, turn, parent, partial string
 	// ended is the last turn turn/completed ended: a snapshot read before it (join, activeTurn, the metadata read)
 	// does not bring it back, and its completion arriving again is not another end (#5598).
 	ended string
@@ -386,6 +387,7 @@ func (c *codexRemote) refresh() error {
 		path := rolloutPath(c.spec.Home, raw)
 		public := c.n.registerCodex(c.spec.Home, raw, path)
 		t.id, t.publicID, t.title, t.cwd = raw, public, firstNonEmpty(d.Name, d.Preview), d.Cwd
+		t.path = d.Path
 		if d.Model != "" { // an app-server that reports a thread's settings (older ones do not: keep what join said)
 			t.model, t.effort = d.Model, d.Effort
 		}
@@ -394,7 +396,8 @@ func (c *codexRemote) refresh() error {
 			t.parent = "parent-managed"
 		}
 		if t.parent != "" && validID(t.parent) {
-			t.parent = c.n.registerCodex(c.spec.Home, t.parent, "")
+			// Keep the raw thread ID: decorateCodexSession maps ancestry to public IDs once.
+			c.n.registerCodex(c.spec.Home, t.parent, "")
 		}
 		if t.files == nil {
 			t.files = map[string][]string{}
@@ -425,6 +428,7 @@ func (c *codexRemote) refresh() error {
 			t.failure, t.failureKind, t.ended = old.failure, old.failureKind, old.ended
 			t.serviceTier, t.serviceTierRevision = old.serviceTier, old.serviceTierRevision
 			t.model, t.effort = old.model, old.effort // an effort just set (codex_effort.go) over a read from before it
+			t.path = old.path
 			next[raw] = t
 		}
 	}
@@ -541,6 +545,9 @@ func (c *codexRemote) join(ctx context.Context, id string, remember bool) error 
 			current.serviceTierRevision++
 		}
 		current.revision++
+		if reply.Thread.Path != "" {
+			current.path = reply.Thread.Path
+		}
 		if m := firstNonEmpty(reply.Model, reply.Thread.Model); m != "" {
 			current.model, current.effort = m, firstNonEmpty(reply.Effort, reply.Thread.Effort)
 		}
@@ -572,6 +579,10 @@ func (n *Node) attachCodex(ctx context.Context, id string) error {
 }
 
 func (n *Node) sendCodex(ctx context.Context, id, text string, images []proto.Image) error {
+	selected, err := n.sessionSelectedSkills(ctx, id, text)
+	if err != nil {
+		return err
+	}
 	c, t, err := n.codexOwner(id)
 	if errors.Is(err, errCodexNoOwner) {
 		if src, ok := n.codexSource(id); ok && codexDesktopChat(src) {
@@ -584,20 +595,33 @@ func (n *Node) sendCodex(ctx context.Context, id, text string, images []proto.Im
 	if err = c.join(ctx, id, true); err != nil {
 		return refusal("codex_read_only", err.Error(), nil)
 	}
+	if len(selected) > 0 {
+		selected, err = n.sessionSelectedSkills(ctx, id, text)
+		if err != nil {
+			return err
+		}
+	}
 	paths, err := n.saveImages(images)
 	if err != nil {
 		return refusal("bad_image", err.Error(), nil)
 	}
 	input := []map[string]any{}
+	for _, skill := range selected {
+		input = append(input, map[string]any{"type": "skill", "name": skill.Name, "path": skill.Path})
+	}
 	if text != "" {
 		input = append(input, map[string]any{"type": "text", "text": text, "text_elements": []any{}})
 	}
 	for _, p := range paths {
 		input = append(input, map[string]any{"type": "localImage", "path": p})
 	}
+	previous := c
 	c, t, err = n.codexOwner(id)
 	if err != nil {
 		return refusal("codex_read_only", err.Error(), nil)
+	}
+	if len(selected) > 0 && c != previous {
+		return skillSelectionError(assistantskills.ErrReference)
 	}
 	params := map[string]any{"threadId": t.id, "input": input}
 	method := "turn/start"
@@ -687,8 +711,16 @@ func (c *codexRemote) activeTurn(ctx context.Context, thread string) string {
 func (n *Node) interruptCodex(ctx context.Context, id string) error {
 	defer n.typing.lock(id)()
 	c, t, err := n.codexOwner(id)
+	if errors.Is(err, errCodexNoOwner) {
+		if src, ok := n.codexSource(id); ok && codexDesktopChat(src) {
+			return n.interruptCodexDesktop(ctx, src)
+		}
+	}
 	if err != nil {
 		return refusal("codex_read_only", err.Error(), nil)
+	}
+	if t.turn == "" && t.parent == "" {
+		t.turn = c.activeTurn(ctx, t.id) // a turn already running when Persona joined (codex_daemon.go)
 	}
 	if t.turn == "" || t.parent != "" {
 		return refusal("codex_read_only", "没有可停止的已观察轮次", nil)
@@ -755,6 +787,11 @@ func (c *codexRemote) message(m codexMessage) {
 	emit := false
 	refresh := false
 	switch m.Method {
+	case "thread/reverted":
+		invalidateCodexPaginated(c.spec.Home)
+		t.partial, t.failure, t.failureKind = "", "", ""
+		t.buffer = nil
+		emit, refresh = true, true
 	case "turn/started":
 		t.turn = ev.Turn.ID
 		t.status = proto.StatusWorking
@@ -826,6 +863,9 @@ func (c *codexRemote) message(m codexMessage) {
 	c.mu.Unlock()
 	if refresh {
 		go func() {
+			if m.Method == "thread/reverted" {
+				_ = c.refresh()
+			}
 			if f, err := c.n.file(t.publicID); err == nil {
 				c.n.refresh(t.publicID, f)
 			}
@@ -834,7 +874,7 @@ func (c *codexRemote) message(m codexMessage) {
 	if emit {
 		c.n.emitDelta(t.publicID, delta)
 	}
-	if m.Method == "turn/started" || m.Method == "turn/completed" || m.Method == "thread/settings/updated" {
+	if m.Method == "turn/started" || m.Method == "turn/completed" || m.Method == "thread/settings/updated" || m.Method == "thread/reverted" {
 		c.n.notifyCodex()
 	}
 }

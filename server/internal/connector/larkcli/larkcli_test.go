@@ -302,6 +302,10 @@ func TestInboxPollKeepsRulesGroupsAndDetectsOwnReply(t *testing.T) {
 		group.Tags[1].Key != connector.TagSender || group.Tags[1].Value != "ou_example_peer" || group.Tags[1].Name != "Example Peer" {
 		t.Fatalf("group title/tag changed = %+v", group)
 	}
+	// ReplyTo says where the reply goes, not which message it answers (Last does that)
+	if group.ReplyTo != "以你的身份发到「Example Group」的这个话题里，群里的人都能看到" || group.Last == "" {
+		t.Fatalf("topic reply_to = %q, last = %q", group.ReplyTo, group.Last)
+	}
 	if topic := items["larkcli:chat:oc_example_group:thread:omt_topic_two"]; topic.Thread == "" {
 		t.Fatal("seeded topic reply was dropped")
 	}
@@ -323,6 +327,9 @@ func TestInboxP2PTitleUsesOtherSender(t *testing.T) {
 	if dm.Kind != "dm" || dm.Title != "Example Peer" || len(dm.Tags) != 2 || dm.Tags[0].Name != "Example Peer" ||
 		dm.Tags[1].Key != connector.TagSender || dm.Tags[1].Value != "ou_example_peer" || dm.Tags[1].Name != "Example Peer" {
 		t.Fatalf("direct title/tag = %+v", dm)
+	}
+	if dm.ReplyTo != "以你的身份发到「Example Peer」，会话里的人都能看到" {
+		t.Fatalf("direct reply_to = %q", dm.ReplyTo)
 	}
 	if dm.Done != connector.DoneReplied {
 		t.Fatalf("own reply was not observed = %+v", dm)
@@ -365,6 +372,20 @@ func TestP2PTitleUsesChatPartnerWhenBatchHasOnlyOwnMessages(t *testing.T) {
 	}}}
 	if got := p2pTitle(group, nil, "ou_example_user"); got != "Example Partner" {
 		t.Fatalf("title = %q", got)
+	}
+	// Only ids known: the title falls back to one, ReplyTo names no chat rather than an id
+	unnamed := &inboxGroup{chatID: "oc_example_dm", messages: []adapter.Message{{
+		MessageID: "om_example_mine", ChatID: "oc_example_dm", ChatType: "p2p", Sender: adapter.Sender{ID: "ou_example_user"},
+		ChatPartner: json.RawMessage(`{"open_id":"ou_example_peer","sender_type":"user"}`),
+	}}}
+	if title, name := p2pTitle(unnamed, nil, "ou_example_user"), p2pName(unnamed, nil, "ou_example_user"); title != "ou_example_peer" || name != "" {
+		t.Fatalf("title = %q, name = %q", title, name)
+	}
+	if got := replyTo(i18n.En, "", false); got != "sent as you to this chat (everyone in it sees it)" {
+		t.Fatalf("unnamed reply_to = %q", got)
+	}
+	if got := replyTo(i18n.En, "", true); got != "sent as you into this topic (everyone in the chat sees it)" {
+		t.Fatalf("unnamed topic reply_to = %q", got)
 	}
 }
 
@@ -449,7 +470,7 @@ func TestInboxDirectChatsSweepFindsWhatSearchMissed(t *testing.T) {
 	}
 	log := string(b)
 	if !strings.Contains(log, "+chat-list --types p2p --sort active_time") ||
-		!strings.Contains(log, "+chat-messages-list --chat-id oc_lag_dm --start 2029-12-31T23:00:00Z") {
+		!strings.Contains(log, "+chat-messages-list --chat-id oc_lag_dm --start 2029-12-31T22:00:00Z") {
 		t.Fatalf("direct chats were not read from history since the lookback: %q", log)
 	}
 	if strings.Contains(log, "--chat-id oc_lag_group --start") {

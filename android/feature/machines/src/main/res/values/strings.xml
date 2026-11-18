@@ -5,6 +5,15 @@
     <string name="machines_title">Machines</string>
     <string name="machines_title_detail">Machine details</string>
     <string name="machines_summary">%1$d of %2$d online · %3$d needing attention</string>
+    <string name="machines_summary_with_agents">%1$d of %2$d online · %3$s · %4$s</string>
+    <plurals name="machines_attention">
+        <item quantity="one">%d needing attention</item>
+        <item quantity="other">%d needing attention</item>
+    </plurals>
+    <plurals name="machines_agents_needs_you">
+        <item quantity="one">%d agent needs you</item>
+        <item quantity="other">%d agents need you</item>
+    </plurals>
     <string name="machines_refresh">Refresh</string>
     <string name="machines_sessions_failure">The machine and session lists haven\'t updated yet.</string>
     <string name="machines_empty_title">No computers yet</string>
@@ -61,6 +70,8 @@
     <string name="machines_disk_total">Disk (%1$s total)</string>
     <string name="machines_sessions_title">Running sessions</string>
     <string name="machines_no_sessions">No sessions running on this machine</string>
+    <string name="machines_agents_show_all">Show all %1$d</string>
+    <string name="machines_agents_show_less">Show less</string>
     <string name="machines_system_title">System</string>
     <string name="machines_system_os">System</string>
     <string name="machines_system_version">Version</string>
@@ -99,6 +110,7 @@
     <string name="machines_reconnecting">Reconnecting…</string>
     <string name="machines_reconnect">Reconnect</string>
     <string name="machines_engine_note">Only sessions in the chosen engine are shown.</string>
+    <string name="machines_engine_note_none">Shows the desktop apps\' sessions. Starting or continuing a session from your phone is off.</string>
     <string name="machines_botmux">Also show botmux sessions</string>
     <string name="machines_botmux_note">When botmux is installed on this computer, its sessions are listed with the chosen engine\'s. Off: they are not listed and botmux is not run.</string>
     <string name="machines_notice_botmux_failed">Couldn\'t save the botmux switch: %1$s</string>

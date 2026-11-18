@@ -170,11 +170,12 @@ func (e *routeEnv) settle() {
 	settleService(e.t, e.s)
 }
 
-// noDirectionsTimers keeps s's directions comparison from running at all: it is a timer of its own, and one left armed
+// noDirectionsTimers keeps s's directions comparisons from running at all: they are timers of their own, and one left armed
 // past its test logs through that test's T (a database already closed) after it ended. The route tests do not read
-// what it compares.
+// what they compare.
 func noDirectionsTimers(s *Service) {
 	s.directions.after = func(time.Duration, func()) {}
+	s.dtree.after = func(time.Duration, func()) {}
 }
 
 // supervisorState says what the apps see the two assistant conversations in: the main conversation and the leader in
@@ -193,7 +194,7 @@ func TestAskGoesToTheLeaderFirst(t *testing.T) {
 	e := newRouteEnv(t, nil, true)
 	e.raise(askQuestion("ix1", "worker-1"))
 	n := e.noticeWith("lead1", "interaction_id=ix1")
-	for _, want := range []string{"先交给你处理，用户还没收到", "用哪个分支？", "machine=Mac", "session_id=worker-1", "ask_escalate", "自动上交给主对话"} {
+	for _, want := range []string{"signal=ask", "先交给你处理，用户还没收到", "用哪个分支？", "machine=Mac", "session_id=worker-1"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("the leader's message lacks %q:\n%s", want, n)
 		}
@@ -256,6 +257,7 @@ func TestLeaderAnswersAnAsk(t *testing.T) {
 		t.Fatalf("decision = %+v", d)
 	}
 	e.settle()
+	e.s.askTick(time.Now().Add(24 * time.Hour)) // answered and claimed cards never ring on a later routing pass
 	if n := e.pushesOf("ix1", "ix2"); n != 0 {
 		t.Fatalf("the user was pushed %d times", n)
 	}
@@ -289,7 +291,7 @@ func TestLeaderEscalatesAnApproval(t *testing.T) {
 		t.Fatalf("the user's card: %+v %+v", shown, shown.Delegate)
 	}
 	m := e.noticeWith("conv1", "负责它的 leader 对话判断要用户决定")
-	for _, want := range []string{"它的 Agent 在等的卡片已经发给用户", "要推到远端分支", "leader 推荐：允许", "interaction_id=ix1", "leader 升级上来的"} {
+	for _, want := range []string{"它的 Agent 在等的卡片已经发给用户", "要推到远端分支", "leader 推荐：允许", "interaction_id=ix1", "signal=escalated"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("the main conversation's message lacks %q:\n%s", want, m)
 		}
@@ -346,11 +348,11 @@ func TestAsksOfOneTaskRingAsOne(t *testing.T) {
 // A card nobody handles goes up a rung at a time: from the leader to the main conversation, then to the user.
 func TestUnhandledAskGoesUp(t *testing.T) {
 	e := newRouteEnv(t, nil, true)
-	e.raise(askPermission("ix1", "worker-1"))
+	e.raise(askQuestion("ix1", "worker-1"))
 	e.noticeWith("lead1", "interaction_id=ix1")
 	e.s.askTick(time.Now().Add(2 * askHoldFor))
 	m := e.noticeWith("conv1", "interaction_id=ix1")
-	for _, want := range []string{"下一层没有及时处理，上交到你这里", "自动上交给用户"} {
+	for _, want := range []string{"signal=ask", "interaction_id=ix1", "下一层没有及时处理，上交到你这里"} {
 		if !strings.Contains(m, want) {
 			t.Errorf("the main conversation's message lacks %q:\n%s", want, m)
 		}
@@ -377,7 +379,7 @@ func TestAskHoldWaitsForABusySupervisor(t *testing.T) {
 	oldHold, oldBusy := askHoldFor, askBusyMax
 	askHoldFor, askBusyMax = time.Minute, 10*time.Minute
 	t.Cleanup(func() { askHoldFor, askBusyMax = oldHold, oldBusy })
-	e.raise(askPermission("ix1", "worker-1"))
+	e.raise(askQuestion("ix1", "worker-1"))
 	e.noticeWith("lead1", "interaction_id=ix1")
 	start := time.Now()
 
@@ -411,6 +413,122 @@ func TestAskHoldWaitsForABusySupervisor(t *testing.T) {
 	e.settle()
 }
 
+// Permission and plan cards have one absolute deadline from their first route. Busy pauses and moving rungs do not
+// add more time: at the deadline the card goes straight to the owner, still unanswered, and a real owner answer works.
+func TestOwnerOnlyAskHasOneAbsoluteDeadline(t *testing.T) {
+	for _, kind := range []string{proto.IxPermission, proto.IxPlan} {
+		t.Run(kind, func(t *testing.T) {
+			e := newRouteEnv(t, nil, true)
+			oldHold, oldBusy, oldDeadline := askHoldFor, askBusyMax, askOwnerOnlyDeadline
+			askHoldFor, askBusyMax, askOwnerOnlyDeadline = 5*time.Minute, time.Hour, 15*time.Minute
+			t.Cleanup(func() { askHoldFor, askBusyMax, askOwnerOnlyDeadline = oldHold, oldBusy, oldDeadline })
+			ix := askPermission("ix1", "worker-1")
+			if kind == proto.IxPlan {
+				ix.Kind, ix.ToolName, ix.ToolInput, ix.Plan = proto.IxPlan, "ExitPlanMode", nil, "Merge the branch, then run tests."
+			}
+			answered := e.raise(ix)
+			e.noticeWith("lead1", "interaction_id=ix1")
+			e.s.fleet.mu.Lock()
+			routedAt := e.s.fleet.interactions[ix.ID].route.routedAt
+			e.s.fleet.mu.Unlock()
+
+			e.supervisorState(proto.StatusIdle, proto.StatusWorking)
+			e.s.askTick(routedAt.Add(4 * time.Minute)) // the leader's busy pause does not consume the ordinary hold
+			e.supervisorState(proto.StatusIdle, proto.StatusIdle)
+			e.s.askTick(routedAt.Add(10 * time.Minute)) // six unpaused minutes: the leader gives it to the main chat
+			e.noticeWith("conv1", "interaction_id=ix1")
+
+			e.supervisorState(proto.StatusWorking, proto.StatusIdle)
+			e.s.askTick(routedAt.Add(12 * time.Minute))
+			e.s.askTick(routedAt.Add(askOwnerOnlyDeadline - time.Second))
+			e.settle()
+			if got := e.pushesOf(ix.ID); got != 0 {
+				t.Fatalf("the owner was told before the absolute deadline: %d", got)
+			}
+			if _, ok := e.s.routedTo(ix.ID, "conv1", false); !ok {
+				t.Fatal("the card left the main conversation before its deadline")
+			}
+
+			e.s.askTick(routedAt.Add(askOwnerOnlyDeadline)) // still busy: the absolute deadline wins
+			waitFor(t, "the owner's card", func() bool { return e.pushesOf(ix.ID) == 1 })
+			if e.lastShown(ix.ID).Delegating {
+				t.Fatal("the card is still shown as the supervisor's")
+			}
+			yes := true
+			resolution := proto.Resolution{Allow: &yes}
+			if kind == proto.IxPlan {
+				resolution = proto.Resolution{Approve: &yes, Mode: "default"}
+			}
+			if err := e.s.resolve(ix.ID, resolution); err != nil {
+				t.Fatalf("the owner could not answer after the deadline: %v", err)
+			}
+			got := answerOf(t, answered)
+			if kind == proto.IxPermission && (got.Allow == nil || !*got.Allow) {
+				t.Fatalf("the agent did not get the owner's answer: %+v", got)
+			}
+			if kind == proto.IxPlan && (got.Approve == nil || !*got.Approve || got.Mode != "default") {
+				t.Fatalf("the agent did not get the owner's answer: %+v", got)
+			}
+			e.s.askTick(routedAt.Add(2 * askOwnerOnlyDeadline))
+			if n := e.pushesOf(ix.ID); n != 1 {
+				t.Fatalf("the answered card rang %d times", n)
+			}
+			e.settle()
+		})
+	}
+}
+
+// A supervisor that needs the owner itself immediately gives an owner-only card to the next rung, and the main chat
+// gives it to the owner. Ordinary questions keep their existing hold while the supervisor needs the owner.
+func TestOwnerOnlyAskReleasesWhenSupervisorNeedsYou(t *testing.T) {
+	e := newRouteEnv(t, nil, true)
+	e.raise(askPermission("ix1", "worker-1"))
+	plan := askPermission("ix2", "worker-2")
+	plan.Kind, plan.ToolName, plan.ToolInput, plan.Plan = proto.IxPlan, "ExitPlanMode", nil, "Merge the branch, then run tests."
+	e.raise(plan)
+	e.noticeWith("lead1", "interaction_id=ix2")
+	e.supervisorState(proto.StatusIdle, proto.StatusBlocked)
+	e.s.askTick(time.Now())
+	e.noticeWith("conv1", "interaction_id=ix2")
+	if got := e.pushesOf("ix1", "ix2"); got != 0 {
+		t.Fatalf("the owner was pushed before the main chat needed them too: %d", got)
+	}
+	for _, id := range []string{"ix1", "ix2"} {
+		if _, ok := e.s.routedTo(id, "lead1", false); ok {
+			t.Fatalf("the leader kept owner-only card %s while needing the owner", id)
+		}
+	}
+
+	e.supervisorState(proto.StatusBlocked, proto.StatusIdle)
+	e.s.askTick(time.Now().Add(time.Second))
+	waitFor(t, "the owner told", func() bool { return e.pushesOf("ix1", "ix2") == 1 })
+	e.s.askTick(time.Now().Add(2 * time.Second))
+	if got := e.pushesOf("ix1", "ix2"); got != 1 {
+		t.Fatalf("the told cards rang %d times", got)
+	}
+	e.settle()
+}
+
+func TestQuestionKeepsItsHoldWhenSupervisorNeedsYou(t *testing.T) {
+	e := newRouteEnv(t, nil, true)
+	e.raise(askQuestion("ix1", "worker-1"))
+	e.noticeWith("lead1", "interaction_id=ix1")
+	e.supervisorState(proto.StatusIdle, proto.StatusBlocked)
+	e.s.askTick(time.Now())
+	if _, ok := e.s.routedTo("ix1", "lead1", false); !ok {
+		t.Fatal("a question left its supervisor before its ordinary hold")
+	}
+	for _, n := range e.f.noticesTo("conv1") {
+		if strings.Contains(n, "interaction_id=ix1") {
+			t.Fatalf("the main chat was given the question early:\n%s", n)
+		}
+	}
+	if got := e.pushesOf("ix1"); got != 0 {
+		t.Fatalf("the owner was pushed %d times", got)
+	}
+	e.settle()
+}
+
 // A manager that restarts finds the cards it left pending on their way to the task's supervisor again: the leader can
 // still answer one and escalate another.
 func TestRestoredAskFindsItsSupervisorAgain(t *testing.T) {
@@ -435,7 +553,7 @@ func TestRestoredAskFindsItsSupervisorAgain(t *testing.T) {
 	e.f.mu.Lock()
 	e.f.sends, e.f.told, e.f.pushes = nil, nil, nil // what the first manager told and pushed
 	e.f.mu.Unlock()
-	s2 := New(Options{Hub: e.f, Store: func() Store { return database }, Logf: t.Logf, Devices: e.d})
+	s2 := newRestartedService(t, Options{Hub: e.f, Store: func() Store { return database }, Logf: t.Logf, Devices: e.d})
 	shortSupervise(t, s2)
 	noDirectionsTimers(s2)
 
@@ -491,14 +609,14 @@ func TestRestoredAskFindsItsSupervisorAgain(t *testing.T) {
 	settleService(t, s2)
 }
 
-// An approval card restored after a restart that its supervisor does not settle rings the user when its time is up:
-// it is not left waiting on the apps for nobody. The timeout neither approves it nor makes it a decision, and the
-// supervisor still cannot answer it for the user.
+// An approval restored after a restart gets a fresh absolute deadline from restoration, not from the card's original
+// creation or its earlier route. When that deadline expires it rings the owner once, still unanswered and undecided.
 func TestRestoredApprovalReachingTheUserRings(t *testing.T) {
 	database := todoTestDB(t)
 	e := newRouteEnv(t, database, true)
 	ix := askPermission("ix1", "worker-1")
-	ix.Resumable, ix.ExpiresAt = true, time.Now().Add(time.Hour).UTC()
+	ix.Resumable, ix.ExpiresAt = true, time.Now().Add(2*time.Hour).UTC()
+	ix.CreatedAt = time.Now().Add(-time.Hour).UTC()
 	ctx, gone := context.WithCancel(context.Background())
 	wait := make(chan proto.Resolution, 1)
 	go func() { r, _ := e.s.waitInteraction(ctx, ix); wait <- r }()
@@ -506,15 +624,24 @@ func TestRestoredApprovalReachingTheUserRings(t *testing.T) {
 	gone()
 	<-wait
 
-	s2 := New(Options{Hub: e.f, Store: func() Store { return database }, Logf: t.Logf, Devices: e.d})
+	s2 := newRestartedService(t, Options{Hub: e.f, Store: func() Store { return database }, Logf: t.Logf, Devices: e.d})
 	shortSupervise(t, s2)
 	noDirectionsTimers(s2)
 	s2.FleetUp(context.Background())
 	if _, ok := s2.routedTo("ix1", "lead1", false); !ok {
 		t.Fatal("the restored card has no route to its leader")
 	}
-	s2.askTick(time.Now().Add(2 * askHoldFor)) // its leader has had its time
-	s2.askTick(time.Now().Add(3 * askHoldFor)) // the main conversation too
+	s2.fleet.mu.Lock()
+	restoredAt := s2.fleet.interactions[ix.ID].route.routedAt
+	s2.fleet.mu.Unlock()
+	s2.askTick(restoredAt.Add(askOwnerOnlyDeadline - time.Second))
+	if n := e.pushesOf("ix1"); n != 0 {
+		t.Fatalf("the restored approval reused its old route's elapsed time and rang %d times", n)
+	}
+	if _, ok := s2.routedTo("ix1", "lead1", false); !ok {
+		t.Fatal("the restored approval left its leader before the fresh deadline")
+	}
+	s2.askTick(restoredAt.Add(askOwnerOnlyDeadline))
 	waitFor(t, "the user told", func() bool { return e.pushesOf("ix1") == 1 })
 	if e.lastShown("ix1").Delegating {
 		t.Fatal("the card is still shown as the supervisor's")
@@ -529,7 +656,7 @@ func TestRestoredApprovalReachingTheUserRings(t *testing.T) {
 	if list, _ := database.ListTodoDecisions(context.Background(), e.todo.ID, false); len(list) != 0 {
 		t.Fatalf("the timeout became a decision: %+v", list)
 	}
-	s2.askTick(time.Now().Add(4 * askHoldFor)) // the user's now: no second ring
+	s2.askTick(restoredAt.Add(2 * askOwnerOnlyDeadline)) // the user's now: no second ring
 	if n := e.pushesOf("ix1"); n != 1 {
 		t.Fatalf("the card rang %d times", n)
 	}
@@ -550,7 +677,7 @@ func TestRestoredQuestionReachingTheUserDoesNotRing(t *testing.T) {
 	gone()
 	<-wait
 
-	s2 := New(Options{Hub: e.f, Store: func() Store { return database }, Logf: t.Logf, Devices: e.d})
+	s2 := newRestartedService(t, Options{Hub: e.f, Store: func() Store { return database }, Logf: t.Logf, Devices: e.d})
 	shortSupervise(t, s2)
 	noDirectionsTimers(s2)
 	s2.FleetUp(context.Background())
@@ -592,17 +719,27 @@ func TestAskWithoutLeadersIsTheUsers(t *testing.T) {
 
 // What a leader reads of the cards handed to it, and what the main conversation reads of the leader's escalation.
 func TestGoldenSuperviseAsk(t *testing.T) {
-	golden(t, "supervise.ask", prompts.RenderSupervise(prompts.Supervise{Leader: true, Asked: true, AskMinutes: 5,
+	got := prompts.RenderSupervise(prompts.Supervise{Leader: true, Asked: true, AskMinutes: 5,
 		Entries: []prompts.SuperviseEntry{{ID: "todo_1", Title: "修登录崩溃", Kind: sigAsk, DoneWhen: []string{"PR 合并到 main"},
 			Machine: "box", Session: "a1b2c3d4", Last: "改好了，要推到远端",
 			Asks: []prompts.SuperviseAsk{
 				{ID: "ix_1", Kind: proto.IxQuestion, Machine: "box", Session: "a1b2c3d4", Text: "- 用哪个分支？（选项：main / feat/x）"},
 				{ID: "ix_2", Kind: proto.IxPermission, Machine: "box", Session: "e5f6a7b8", Text: "允许运行 Bash：git push", Raised: true}},
-			Decisions: "- 用哪个分支？→ feat/x（用户在卡片上选的）"}}}))
-	golden(t, "supervise.ask_escalated", prompts.RenderSupervise(prompts.Supervise{Escalated: true,
+			Decisions: "- 用哪个分支？→ feat/x（用户在卡片上选的）"}}})
+	golden(t, "supervise.ask", got)
+	for _, fact := range []string{"Question routing: timeout_minutes=5", "signal=ask", "interaction_id=ix_1", "用哪个分支？", "machine=box", "session_id=a1b2c3d4"} {
+		if !strings.Contains(got, fact) {
+			t.Errorf("supervision payload lacks fact %q:\n%s", fact, got)
+		}
+	}
+	escalated := prompts.RenderSupervise(prompts.Supervise{Escalated: true,
 		Entries: []prompts.SuperviseEntry{{ID: "todo_1", Title: "修登录崩溃", Kind: sigEscalated, Detail: "要推到远端分支，需要你同意",
 			Recommend: "允许", Asks: []prompts.SuperviseAsk{{ID: "ix_2", Kind: proto.IxPermission, Machine: "box", Session: "e5f6a7b8",
-				Text: "允许运行 Bash：git push"}}}}}))
+				Text: "允许运行 Bash：git push"}}}}})
+	golden(t, "supervise.ask_escalated", escalated)
+	if !strings.Contains(escalated, "signal=escalated") || !strings.Contains(escalated, "要推到远端分支") {
+		t.Errorf("escalated payload lacks task facts:\n%s", escalated)
+	}
 }
 
 // With leaders configured, a quiet task of the main conversation's still has its card go to the main conversation
@@ -625,7 +762,7 @@ func TestQuietTaskAskIsNotPushedOnTimeout(t *testing.T) {
 	}
 	e.raise(askQuestion("ix1", "worker-3"))
 	n := e.noticeWith("conv1", "interaction_id=ix1")
-	if !strings.Contains(n, "自动上交给用户") {
+	if !strings.Contains(n, "signal=ask") {
 		t.Fatalf("the main conversation's message:\n%s", n)
 	}
 	e.s.askTick(time.Now().Add(2 * askHoldFor))
@@ -641,7 +778,9 @@ func TestQuietTaskAskIsNotPushedOnTimeout(t *testing.T) {
 func TestEscalateLeavesADelegatedCard(t *testing.T) {
 	e := newRouteEnv(t, nil, true)
 	on := true
+	e.f.mu.Lock()
 	e.f.hello.Agents.Delegate.Enabled = &on
+	e.f.mu.Unlock()
 	release := make(chan struct{})
 	e.s.delegateHook = func(context.Context, DelegateParams) (DelegateResult, error) {
 		<-release

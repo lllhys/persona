@@ -33,6 +33,7 @@ class RouteSourceCompatibilityTest {
         assertEquals("persona.core.navigation.AssistantRoute", AssistantRoute.serializer().descriptor.serialName)
         assertEquals("persona.core.navigation.ChatRoute", ChatRoute.serializer().descriptor.serialName)
         assertEquals("persona.core.navigation.MachineDetailRoute", MachineDetailRoute.serializer().descriptor.serialName)
+        assertEquals("persona.core.navigation.MachineSpacesRoute", MachineSpacesRoute.serializer().descriptor.serialName)
         assertEquals("persona.core.navigation.TerminalRoute", TerminalRoute.serializer().descriptor.serialName)
         assertEquals("Persona", AppTab.Persona.name)
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// The subscription accounts the hubs know (docs/server/usage-windows.md), shared by Machines' Subscription Usage card on the phone and the
 /// Mac's bars at the foot of the sections column. Empty until a hub answers, and when none has any (nothing is drawn).

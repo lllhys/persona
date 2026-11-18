@@ -153,7 +153,7 @@ export function channelSections(list: Channel[]): { title: string; footer?: stri
 export function channelsSummary(list: Channel[]): string {
   const on = list.filter((c) => c.kind !== "app" && c.state === "connected").length;
   const bad = list.filter((c) => c.state === "error").length;
-  return bad > 0 ? t("lib-channels.summary_with_errors", { on, bad }) : t("lib-channels.summary", { count: on });
+  return bad > 0 ? t("settings-channels.summary_with_errors", { on, bad }) : t("settings-channels.summary", { count: on });
 }
 
 export function targetText(target?: ChannelTarget): string {
@@ -182,7 +182,7 @@ export function capabilityText(c: ChannelCapabilities): string[] {
   return out;
 }
 
-export function bindTitle(c: Channel): string {
+export function bindTitle(c: Pick<Channel, "bind">): string {
   switch (c.bind) {
     case "qr":
       return t("lib-channels.bind_qr");

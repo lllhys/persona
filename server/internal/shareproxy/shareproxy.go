@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/osproc"
 	"github.com/nwverse/persona/server/internal/shareproof"
 	"golang.org/x/net/netutil"
 )
@@ -232,7 +233,7 @@ func Serve(ctx context.Context, c Config) error {
 	if err := probeIngress(ctx, c); err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", c.Listen)
+	listener, err := osproc.Listen("tcp", c.Listen)
 	if err != nil {
 		return errors.New("sharing HTTP listener unavailable")
 	}

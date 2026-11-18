@@ -98,6 +98,7 @@ export function parseQueued(raw: string, photosBeside = 0): QueuedParts {
   const contexts: QueuedContext[] = [];
   let rest = raw.replace(CONTEXT_RE, (_, attrs: string, body: string) => {
     const { kind = "context", title = "", url = "", ...extra } = tagAttrs(attrs);
+    if (kind === "skill-instructions") return "";
     contexts.push({ kind, title, url, text: body.trim(), ...(Object.keys(extra).length ? { attrs: extra } : {}) });
     return "";
   });
@@ -112,7 +113,8 @@ function isStandIn(text: string): boolean {
   return STAND_INS.includes(s) || s === t("lib-links.see_images") || s === t("lib-links.see_context");
 }
 
-/** What a pulled-back message puts in the box: its words, then each file's path, as this composer sends a file. */
+/** What a pulled-back message puts in the box: its words, then the path of each file that did not go back to its tile
+ *  (lib/composer-files.ts restoreFiles). */
 export function queuedDraft(p: Pick<QueuedParts, "text" | "files">): string {
   return [p.text, ...p.files.map((f) => quotePath(f.path))].filter(Boolean).join(" ");
 }

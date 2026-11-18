@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -40,6 +41,8 @@ type fleetBook struct {
 	// reportSent: assistant conversation -> when a scheduled run or a task notice was sent into it (noteReportTurn):
 	// the turn it starts is pushed however short it is.
 	reportSent map[string]time.Time
+	// cardTell serializes telling the hub a card with checking it is still held (fleet_ix.go tellCard).
+	cardTell sync.Mutex
 	// codexAnnounced: Codex card id -> when it was announced (fleet_ix_codex.go)
 	codexAnnounced map[string]time.Time
 	// codexEnded: Codex card id -> when the node stopped listing it (fleet_ix_codex.go)
@@ -59,6 +62,10 @@ type fleetBook struct {
 	// shorten them on their own Service before any session list comes, so an upgrade loop another test left running
 	// never reads what this one writes (#4554).
 	upgradeEvery, upgradeFor time.Duration
+	upgrades                 sync.WaitGroup // active screen-upgrade loops; database-backed fixtures wait during teardown
+	completionRuns           sync.WaitGroup // delayed turn completions already running when a fixture tears down
+	completionTimers         map[*time.Timer]struct{}
+	completionStopped        bool // test teardown only: no new delayed completion after the drain starts
 	// hooked: Persona's hooks run in the session (a hook event came since the manager started).
 	hooked map[[2]string]bool
 	// stopSig: the signature of the reply each session's latest Stop ended its turn with; pushedSig: the one a
@@ -68,14 +75,21 @@ type fleetBook struct {
 	clients            assistantwire.Clients
 	prev               map[string]map[string]turnPrev // each machine's list setSessions saw last, by session id
 
-	// sent: each machine's last session list told the hub (fleet.sessions), as JSON. sentMu is held while a list is
-	// decorated and told (publishList), so the lists reach the hub in the order they were made.
+	// sent: what is kept of each machine's last session list told the hub (fleet.sessions): its length and digest, not
+	// its bytes. sentMu is held while a list is decorated, encoded into enc and told (publishList), so the lists reach
+	// the hub in the order they were made; enc is the one buffer every list is encoded into, reused.
 	sentMu sync.Mutex
-	sent   map[string][]byte
+	sent   map[string]sentList
+	enc    bytes.Buffer
+	// archived is what was told of each machine's archived rows (fleet.archived, tellArchived), under sentMu.
+	archived map[string]archivedSent
 	// shown: the rows awaiting a reply of the list last told the hub for each machine, decorated (the reminders of
 	// agents awaiting a reply read them instead of decorating every list each minute, agents_reply.go).
 	shownMu sync.Mutex
 	shown   map[string][]proto.Session
+	// finishedDue: when the first Just finished row of each machine's list, as last decorated to be told, runs out
+	// of its window (#9751), under shownMu. Nothing else tells a list again when only time passes (republishFinished).
+	finishedDue map[string]time.Time
 	// asks: what each session's last words ask, while they stay the same (fleet_asks.go).
 	asks asksMemo
 	// folds: what each machine's last complete list folded its children under (fleet_fold.go), for the rows and
@@ -111,18 +125,19 @@ type fleetBook struct {
 
 // fleetReport is what the session lists are decorated with from the assistant's snapshot.
 type fleetReport struct {
-	mu       sync.RWMutex
-	got      bool
-	sessions map[string]SessionView // by session id
-	work     map[[2]string]proto.WorkState
-	workOn   bool
-	links    map[[2]string]TodoLink
-	quiet    map[[2]string]bool
-	marks    map[[2]string][]string  // conversation → the channels its messages came from, newest first
-	turns    map[[2]string]time.Time // conversation → when a channel's turn in it was answered (zero: followed now)
-	inbox    map[string]bool         // the inbox agents' conversations
-	tasks    []TaskView              // the scheduled tasks (nil: not read yet)
-	profile  *Profile                // its settings as the hub's features need them (nil: not read yet)
+	mu        sync.RWMutex
+	got       bool
+	sessions  map[string]SessionView // by session id
+	work      map[[2]string]proto.WorkState
+	workOn    bool
+	links     map[[2]string]TodoLink
+	completed map[[2]string]TodoLink
+	quiet     map[[2]string]bool
+	marks     map[[2]string][]string  // conversation → the channels its messages came from, newest first
+	turns     map[[2]string]time.Time // conversation → when a channel's turn in it was answered (zero: followed now)
+	inbox     map[string]bool         // the inbox agents' conversations
+	tasks     []TaskView              // the scheduled tasks (nil: not read yet)
+	profile   *Profile                // its settings as the hub's features need them (nil: not read yet)
 }
 
 // fleetStore is what of the store the fleet keeps (db.DB); a store without it keeps nothing.
@@ -175,6 +190,34 @@ func (g guardedStore) InteractionOutcome(ctx context.Context, id string) (status
 func (g guardedStore) Interactions(ctx context.Context, machine, session string, limit int) (out []db.InteractionRecord, err error) {
 	defer guard(&err)
 	return g.st.Interactions(ctx, machine, session, limit)
+}
+
+// lateAnswerer is a store that records an answer given after a card expired (db.DB); one without it records none.
+type lateAnswerer interface {
+	LateAnswer(ctx context.Context, id string, answers map[string]string, by, reason string) (bool, error)
+}
+
+func (g guardedStore) LateAnswer(ctx context.Context, id string, answers map[string]string, by, reason string) (ok bool, err error) {
+	defer guard(&err)
+	l, has := g.st.(lateAnswerer)
+	if !has {
+		return false, errNoTable
+	}
+	return l.LateAnswer(ctx, id, answers, by, reason)
+}
+
+// interactionPager is a store that pages the history by time (db.DB); one without it answers errNoTable.
+type interactionPager interface {
+	InteractionsPage(ctx context.Context, q db.InteractionQuery) (db.InteractionPage, error)
+}
+
+func (g guardedStore) InteractionsPage(ctx context.Context, q db.InteractionQuery) (out db.InteractionPage, err error) {
+	defer guard(&err)
+	p, ok := g.st.(interactionPager)
+	if !ok {
+		return out, errNoTable
+	}
+	return p.InteractionsPage(ctx, q)
 }
 
 func (g guardedStore) AllowAlways(ctx context.Context, session, tool string, keys []string) (err error) {
@@ -301,6 +344,10 @@ func turnErrorCode(text string) string {
 		return proto.TurnErrorNotLoggedIn
 	case strings.Contains(t, "There's an issue with the selected model"):
 		return proto.TurnErrorModelRoute
+	case assistantwire.ToolSearchRefused(t):
+		// Before the classes below: a gateway's words for it may say "not supported" next to "model". The node resent
+		// the turn once with every tool loaded and starts the conversation that way from now on (#10365).
+		return proto.TurnErrorToolSearchUnsupported
 	}
 	switch classifyLauncherError(t) { // the launcher health checks' classes (launcher_health.go)
 	case errKindUsageLimit:
@@ -336,6 +383,15 @@ func sessionTurnErrorCode(c proto.Session) string {
 		}
 	}
 	return code
+}
+
+// signedOut: conversation c's last turn ended "Not logged in". The node says so only in the turn's words: TurnError while
+// the conversation's process runs, and only its last words (LastText, Claude Code's own reply) once it is listed from
+// its transcript with no process, as a task's conversation between runs is (scanOffline). The lists work the error and
+// its code out of those (latestTurnError, sessionTurnErrorCode); session.get answers the node's session as it is.
+func signedOut(c proto.Session) bool {
+	text, _ := latestTurnError(c)
+	return c.TurnErrorCode == proto.TurnErrorNotLoggedIn || turnErrorCode(text) == proto.TurnErrorNotLoggedIn
 }
 
 // userTurnError: a turn error with code is the user's to fix; a rate limit passes (or is the user's when the

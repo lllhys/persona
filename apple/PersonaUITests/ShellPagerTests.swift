@@ -198,7 +198,8 @@ final class ShellPagerTests: XCTestCase {
 
     @MainActor func testPushedPagesSwipeBack() {
         launch()
-        // Assistant: Knowledge from the drawer, the edge swipe goes back to Assistant (not Agents, not the drawer).
+        // Assistant: a place root has no Back. Its left-edge swipe still pops to Assistant and never opens the drawer.
+        // The app's UINavigationController delegate keeps interactivePop enabled with Back hidden (SwipeBack.swift).
         app.buttons["assistant-sidebar-button"].firstMatch.tapCenter()
         XCTAssertTrue(app.buttons["sidebar-知识库"].firstMatch.waitForExistence(timeout: 5), "no 知识库 in the drawer")
         app.buttons["sidebar-知识库"].firstMatch.tap()

@@ -110,6 +110,33 @@ class HubRouteSelectorTest {
         assertEquals(HubError.ConnectionRefused, error(plan(ipv6 to HubError.Timeout, name to HubError.ConnectionRefused), listOf(name, ipv6)))
     }
 
+    @Test fun aPrivateAddressThatAnswersAsAnotherDeviceIsAnUnreachableRouteNotAChangedCertificate() = runTest {
+        // Away from home a LAN address can be another device: its certificate says nothing about the hub.
+        val home = Endpoint("https://[fd00::20]:18662", "lan")
+        val ula = Endpoint("https://[fd00::91]:18662", "unknown")
+        fun plan(vararg errors: Pair<Endpoint, HubError>) = Probes(testScheduler, errors.associate { (endpoint, error) -> endpoint to fails(10, error) })
+        suspend fun error(probes: Probes, order: List<Endpoint>) = failure { testScheduler.selector(probes).select(order) }
+        val away = error(plan(home to HubError.CertificateMismatch, name to HubError.Timeout), listOf(home, name))
+        assertEquals(HubError.Unreachable, away.kind)
+        assertEquals(PRIVATE_ADDRESS_MISMATCH, away.code)
+        assertTrue(away.retryable)
+        assertEquals(HubError.Unreachable, error(plan(ula to HubError.HubMismatch, ipv6 to HubError.ConnectionRefused), listOf(ula, ipv6)).kind)
+        // A public route with the wrong key is still a changed certificate, whatever the private one said.
+        assertEquals(HubError.CertificateMismatch, error(plan(home to HubError.CertificateMismatch, name to HubError.CertificateMismatch), listOf(home, name)).kind)
+        // Only private addresses tried: nothing else could say more, so the mismatch stands.
+        assertEquals(HubError.CertificateMismatch, error(plan(home to HubError.CertificateMismatch), listOf(home)).kind)
+        // A route that answers still wins over a private mismatch.
+        val probes = Probes(testScheduler, mapOf(home to fails(10, HubError.CertificateMismatch), name to answers(20)))
+        assertEquals(name, testScheduler.selector(probes).select(listOf(home, name)).endpoint)
+    }
+
+    @Test fun thePrivateRuleAlsoHoldsWhenACenterIsPreferred() = runTest {
+        val home = Endpoint("https://hub.local:18662", "lan")
+        val probes = Probes(testScheduler, mapOf(home to fails(10, HubError.CertificateMismatch), name to fails(20, HubError.Timeout)))
+        val error = failure { testScheduler.selector(probes).select(listOf(home, name), centerEndpoints = setOf(endpointKey(name.url))) }
+        assertEquals(HubError.Unreachable, error.kind)
+    }
+
     @Test fun eachKeyIsProbedOnceAndNoCandidateIsUnreachable() = runTest {
         val spelled = Endpoint("https://HUB.example.com:18662/", "name")
         val probes = Probes(testScheduler, mapOf(name to fails(10), ipv4 to answers(10)))

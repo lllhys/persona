@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 // The app's side of the voice extension's socket (docs/assistant/voice.md「Protocol changes」: protocol 2; protocol 1 is in
 // docs/extensions/extensions.md「Voice」). Pure data and parsing: it builds for every platform the Persona folder is
@@ -175,6 +176,9 @@ nonisolated struct VoiceRun: Equatable, Identifiable, Sendable {
     /// The hub's 409 `clearable` text: present only when the node can clear that line, and not always the same as `draft`
     /// (an IDE selection marker stays out of it). Clear and Send sends it back as `clear_draft` exactly (docs/assistant/voice.md 3.2).
     var clearable: String?
+    /// The extension keeps it for a resend (#5904): what the user-speech gate held back offers Send Anyway only then
+    /// (one longer than its quoted task, or from before it, is not kept).
+    var resendable = false
 }
 
 nonisolated enum VoiceAskState: Equatable, Sendable {
@@ -224,6 +228,10 @@ nonisolated enum VoiceErrorCode: Equatable, Sendable {
     case noUpstream, upstreamForbidden, upstreamUnavailable, upstreamFailed
     case targetGone, targetReadOnly, targetForbidden
     case machineOffline, modelUnavailable
+    /// A meeting call whose target is not that recording's room, or a room that isn't `ready` (#3862 phase 4).
+    case notMeetingRoom
+    /// An ordinary call bound to a room: a room takes only meeting calls (#3862 phase 4).
+    case meetingRoom
     case other(String)
 
     init(wire: String) {
@@ -237,6 +245,8 @@ nonisolated enum VoiceErrorCode: Equatable, Sendable {
         case "target_forbidden": self = .targetForbidden
         case "machine_offline": self = .machineOffline
         case "model_unavailable": self = .modelUnavailable
+        case "not_meeting_room": self = .notMeetingRoom
+        case "meeting_room": self = .meetingRoom
         default: self = .other(wire)
         }
     }
@@ -315,7 +325,8 @@ nonisolated enum VoiceFrame: Equatable, Sendable {
                                  msgIDs: (o["msg_ids"]?.array ?? []).compactMap { str($0) },
                                  baseSeq: whole(o["base_seq"]) ?? 0, startedAt: VoiceStamp(o["started_at"]),
                                  code: str(o["code"]), message: str(o["message"]), draft: str(o["draft"]),
-                                 clearable: str(o["clearable"]).flatMap { $0.isEmpty ? nil : $0 }))
+                                 clearable: str(o["clearable"]).flatMap { $0.isEmpty ? nil : $0 },
+                                 resendable: o["resendable"]?.bool ?? false))
         case "ask":
             guard let id = str(o["interaction_id"]), !id.isEmpty else { return .other(type: type) }
             return .ask(VoiceAsk(interactionID: id, state: VoiceAskState(wire: str(o["state"]) ?? ""), by: str(o["by"])))
@@ -367,16 +378,46 @@ nonisolated struct VoiceStart: Equatable, Sendable {
     var resume: [VoiceRun] = []
     /// False: the microphone records without echo cancellation, so a caption of the user's may be the voice's own.
     var echoCancellation: Bool?
+    /// False: the user turned the user-speech gate off on this device (Only Send What I Just Said, #5904); true: on.
+    /// An ordinary call always says it (`VoiceConversation.startFrame`): it also tells the extension this app has Send
+    /// Anyway, which an app from before it does not (nil, left out). An extension that does not know it ignores it. A
+    /// meeting call leaves it out: the meeting page has no Send Anyway, and the extension keeps the gate on for it.
+    var speechGate: Bool?
+    /// A meeting call (#3862 phase 4, docs/assistant/meeting-minutes.md「Phase 4: realtime voice in the meeting」):
+    /// `"meeting"`, with the recording whose room `target` is. nil for every other call.
+    var mode: String? = nil
+    var recordingID: String? = nil
+    /// `"call"` for a system call (a call to Persona, #9290); nil for in-app and CarPlay calls. Informational: the hub
+    /// writes it in the call log's start line, and an extension that does not know it ignores it.
+    var surface: String? = nil
+
+    /// The mode of a meeting call: bound to the recording's room, hearing only Talk spans.
+    static let meetingMode = "meeting"
+    /// The surface of a system call.
+    static let callSurface = "call"
 }
 
 /// Text frames the app sends.
 nonisolated enum VoiceMessage {
     static func start(_ s: VoiceStart) -> String {
         encode(StartFrame(model: nonEmpty(s.model), voice: nonEmpty(s.voice), protocolVersion: s.protocolVersion,
+                          mode: nonEmpty(s.mode), recordingID: nonEmpty(s.recordingID),
                           target: s.target.map { TargetFrame(machineID: $0.machineID, sessionID: $0.sessionID) },
                           recent: s.recent.isEmpty ? nil : s.recent, history: s.history.isEmpty ? nil : s.history,
                           resume: s.resume.isEmpty ? nil : ResumeFrame(runs: s.resume.map(ResumeRun.init)),
-                          echoCancellation: s.echoCancellation))
+                          echoCancellation: s.echoCancellation, speechGate: s.speechGate, surface: nonEmpty(s.surface)))
+    }
+
+    /// A system call went on hold (`true`) or off it (#9290): the extension pauses the realtime upstream at once and
+    /// nothing wakes it until the hold ends. Sent only to an extension whose `ready` lists `hold` (`VoiceHold.feature`).
+    static func hold(_ on: Bool) -> String {
+        encode(HoldFrame(on: on))
+    }
+
+    /// A meeting call's Talk span opens (`true`) or closes (#3862 phase 4): the app sends the microphone's audio only
+    /// between the two, and the extension feeds the upstream silence outside them whatever it receives.
+    static func talk(_ on: Bool) -> String {
+        encode(TalkFrame(on: on))
     }
 
     /// Stops what the voice is saying (not the agent).
@@ -387,8 +428,9 @@ nonisolated enum VoiceMessage {
         encode(TextFrame(text: text))
     }
 
-    /// Sends again a run a 409 refused, under the same id. `clearDraft`: the line in the agent's input box the node is to
-    /// clear first (`run.clearable`, checked against what is there).
+    /// Sends again a run a 409 refused, or one the user-speech gate held back (Send Anyway), under the same id.
+    /// `clearDraft`: the line in the agent's input box the node is to clear first (`run.clearable`, checked against
+    /// what is there).
     static func resend(id: String, clearDraft: String?) -> String {
         encode(ResendFrame(id: id, clearDraft: nonEmpty(clearDraft)))
     }
@@ -414,17 +456,33 @@ nonisolated enum VoiceMessage {
         var model: String?
         var voice: String?
         var protocolVersion: Int
+        var mode: String?
+        var recordingID: String?
         var target: TargetFrame?
         var recent: [VoiceLine]?
         var history: [VoiceLine]?
         var resume: ResumeFrame?
         var echoCancellation: Bool?
+        var speechGate: Bool?
+        var surface: String?
 
         enum CodingKeys: String, CodingKey {
-            case type, model, voice, target, recent, history, resume
+            case type, model, voice, mode, target, recent, history, resume, surface
             case protocolVersion = "protocol"
+            case recordingID = "recording_id"
             case echoCancellation = "echo_cancellation"
+            case speechGate = "speech_gate"
         }
+    }
+
+    private struct TalkFrame: Encodable {
+        let type = "talk"
+        var on: Bool
+    }
+
+    private struct HoldFrame: Encodable {
+        let type = "hold"
+        var on: Bool
     }
 
     private struct TargetFrame: Encodable {

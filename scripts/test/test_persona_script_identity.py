@@ -426,6 +426,14 @@ sys.exit(2)
         self.assertFalse((self.state / 'bin/personad').is_symlink())
         self.assertEqual(os.readlink(self.state / 'bin' / (FORMER_NAME + 'd')), 'personad')
 
+    def test_an_admin_option_without_a_value_is_refused_with_a_message(self):
+        for option in ('--admin-access', '--admin-cidrs'):
+            result = subprocess.run(['bash', str(self.repo / 'scripts/deploy/deploy.sh'), 'web', option], env=self.env,
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 2, option + '\n' + result.stdout + result.stderr)
+            self.assertIn(option + ' needs a value', result.stderr)
+            self.assertFalse((self.state / 'web/index.html').exists())
+
     def test_web_only_deploy_keeps_the_selected_remote_profile(self):
         self.run_script('scripts/deploy/deploy.sh', 'web')
         self.assertEqual((self.state / 'web/index.html').read_text(), 'Persona fixture web')
@@ -447,6 +455,29 @@ sys.exit(2)
         self.assertNotEqual(result.returncode, 0, result.stdout + '\n' + result.stderr)
         self.assertIn('does not run there', result.stderr)
         self.assertNotIn('hub restarted', result.stdout)
+
+    def test_failed_staged_check_preserves_the_installed_binary_direct_and_nested(self):
+        executable(self.commands / 'go', '#!' + sys.executable + '\n' + r'''
+import pathlib, sys
+if sys.argv[1] == 'generate': sys.exit(0)
+if sys.argv[1] == 'build':
+    p = pathlib.Path(sys.argv[sys.argv.index('-o')+1]); p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b'\x7fELF built for another platform'); p.chmod(0o755); sys.exit(0)
+sys.exit(2)
+''')
+        binary = self.state / 'bin/personad'
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        old = b'#!/bin/sh\nprintf "installed-old\\n"\n'
+        for target in ('node-fixture', 'via-fixture'):
+            with self.subTest(target=target):
+                binary.write_bytes(old)
+                binary.chmod(0o755)
+                result = subprocess.run(['bash', str(self.repo / 'scripts/deploy/deploy.sh'), target],
+                                        env=self.env, capture_output=True, text=True, timeout=DEPLOY_TIMEOUT)
+                self.assertEqual(result.returncode, 0, result.stdout + '\n' + result.stderr)
+                self.assertIn('not installed, skipped', result.stderr)
+                self.assertEqual(binary.read_bytes(), old, 'a failed staged check replaced the installed binary')
+                self.assertFalse(Path(str(binary) + '.new').exists(), 'the rejected staged binary was left behind')
 
     def test_a_checkout_missing_master_commits_deploys_nothing(self):
         # merge-base --is-ancestor fails: HEAD does not contain origin/master (#1314)

@@ -24,7 +24,6 @@ import {
   modifierTapped,
   modifiersActive,
   modifiersPressed,
-  terminalPalette,
   typedWithModifiers,
   withModifiers,
   type ModifierKey,
@@ -32,7 +31,8 @@ import {
   type TerminalPalette,
 } from "../../../lib/terminal";
 import { copyNotice, copyWith, osc52Text, transferFiles } from "../../../lib/terminal-clipboard";
-import { hex6, lineEditBytes, parseCursorStyle, parseFlag, webLink, type CursorStyle } from "../../../lib/terminal-details";
+import { lineEditBytes, parseCursorStyle, parseFlag, webLink, type CursorStyle } from "../../../lib/terminal-details";
+import { subscribeAppearance, terminalAppearance, terminalDark } from "../../../lib/terminal-appearance";
 import { FIND_LIMIT } from "../../../lib/terminal-search";
 import {
   AckTracker,
@@ -51,6 +51,7 @@ import {
 import { toast } from "../../../ui/atoms";
 import { cjkFontStack, terminalFontReady } from "./cjk";
 import { browserClipboard, clipboardFiles } from "./clipboard";
+import { findDecorations, pageDark, terminalColors } from "./colors";
 import { FileTransfer } from "./transfer";
 
 export interface FullView {
@@ -116,6 +117,8 @@ export class FullFeed {
   private openTimer = 0;
   /** The TUI turned on colour-scheme notifications (DEC 2031). */
   private schemeNotify = false;
+  /** What the TUI is told of the colors now (OSC 10/11 and CSI ? 997, colourReport). */
+  private told = "";
   private found = { query: "", cs: false, busy: false };
   private everLive = false;
   /** The link dropped under an open view: the screen stays, and the next view starts on a clean one. */
@@ -226,6 +229,7 @@ export class FullFeed {
     await terminalFontReady(size, family);
     if (this.disposed) return;
     const palette = this.theme();
+    this.told = this.colourReport(palette);
     const term = new Terminal({
       fontFamily: family,
       fontSize: size,
@@ -256,7 +260,8 @@ export class FullFeed {
 
     const parser = term.parser;
     const handlers = [
-      // what herdr asks of the terminal it draws in: the colour scheme (CSI ? 996 n), and to be told when it changes
+      // what herdr asks of the terminal it draws in: the colour scheme (CSI ? 996 n), and to be told when it changes; the
+      // terminal's scheme (its Appearance), which is the page's under "Match page"
       parser.registerCsiHandler({ prefix: "?", final: "n" }, (p) => (p.length === 1 && p[0] === 996 ? (this.raw(schemeReport(this.dark())), true) : false)),
       ...(["h", "l"] as const).map((final) =>
         parser.registerCsiHandler({ prefix: "?", final }, (p) => {
@@ -273,13 +278,19 @@ export class FullFeed {
     const selected = term.onSelectionChange(() => this.patch({ selection: term.hasSelection() }));
     const results = search.onDidChangeResults((r) => this.found.query && this.patch({ find: { index: r.resultIndex, count: r.resultCount } }));
     term.attachCustomKeyEventHandler(this.key);
+    // The page's scheme changed: under "Match page" the terminal's did too, and the TUI hears it if it asked; under
+    // "Light" / "Dark" the terminal's is the same as before, so it hears nothing.
     const colors = new MutationObserver(() => {
-      const next = this.theme();
-      this.patch({ palette: next });
-      if (this.term) this.term.options.theme = next;
-      if (this.schemeNotify) this.raw(colourReports(next.foreground, next.background) + schemeReport(this.dark()));
+      const report = this.recolor();
+      if (terminalAppearance() === "page" && this.schemeNotify) this.raw(report);
     });
     colors.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    // Appearance changed (Terminal settings): the TUI hears the new colors if it asked and they are not what it has
+    const appearance = subscribeAppearance(() => {
+      const before = this.told;
+      const report = this.recolor();
+      if (report !== before && this.schemeNotify) this.raw(report);
+    });
     const offs = [
       onHubEvent("herdr_state", this.onState),
       onHubEvent("herdr_data", this.onData),
@@ -296,6 +307,7 @@ export class FullFeed {
       () => results.dispose(),
       () => this.unbindHost(),
       () => colors.disconnect(),
+      appearance,
       ...offs,
     );
 
@@ -474,13 +486,26 @@ export class FullFeed {
     this.ack = null;
   }
 
+  /** The terminal's scheme: the page's, or the one its Appearance says. */
   private dark() {
-    return document.documentElement.classList.contains("dark");
+    return terminalDark(terminalAppearance(), pageDark());
   }
 
   private theme(): TerminalPalette {
-    const css = getComputedStyle(document.documentElement);
-    return terminalPalette((n) => css.getPropertyValue(n), this.dark());
+    return terminalColors();
+  }
+
+  /** What a terminal tells the TUI of its colors: the foreground and background (OSC 10/11) and the scheme (CSI ? 997). */
+  private colourReport(p: TerminalPalette) {
+    return colourReports(p.foreground, p.background) + schemeReport(this.dark());
+  }
+
+  /** Takes the terminal's colors again (xterm answers OSC 10/11 from them); returns what the TUI would be told of them. */
+  private recolor() {
+    const next = this.theme();
+    this.patch({ palette: next });
+    if (this.term) this.term.options.theme = next;
+    return (this.told = this.colourReport(next));
   }
 
   // ── the view on the hub ───────────────────────────────
@@ -820,14 +845,7 @@ export class FullFeed {
   // ── find ──────────────────────────────────────────────
 
   private searchOptions() {
-    const css = getComputedStyle(document.documentElement);
-    const c = (name: string) => hex6(css.getPropertyValue(name));
-    const border = c("--orange"), tint = c("--accent-tint"), accent = c("--accent");
-    const decorations =
-      border && tint && accent
-        ? { matchBorder: border, matchOverviewRuler: border, activeMatchBackground: tint, activeMatchBorder: accent, activeMatchColorOverviewRuler: accent }
-        : undefined;
-    return { caseSensitive: this.found.cs, decorations };
+    return { caseSensitive: this.found.cs, decorations: findDecorations() };
   }
 
   /** Looks for `query` in xterm's screen and scrollback. dir 0 starts afresh from the newest; 1 / -1 step, wrapping around. */

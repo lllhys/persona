@@ -199,3 +199,41 @@ func TestResignKeepsNewerToken(t *testing.T) {
 		t.Fatal("a second resign of the same stale token signed again")
 	}
 }
+
+// TestVoIPTopicAndExpiration: a voip push goes to the bundle's ".voip" topic (added once) with its expiration.
+func TestVoIPTopicAndExpiration(t *testing.T) {
+	var mu sync.Mutex
+	var topics, exps []string
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		topics = append(topics, r.Header.Get("apns-topic"))
+		exps = append(exps, r.Header.Get("apns-expiration"))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+	c := NewWithKey(Config{KeyID: "KEY1234567", TeamID: "TEAM123456", Topic: "app.test"}, k)
+	c.http, c.Base = srv.Client(), srv.URL
+	for _, r := range []Request{
+		{Token: "abcd", PushType: "voip", Priority: "10", Expiration: 1_800_000_030},
+		{Token: "abcd", Topic: "app.test.voip", PushType: "voip", Priority: "10"},
+		{Token: "abcd", PushType: "alert", Priority: "10"},
+	} {
+		if res, err := c.Send(context.Background(), r); err != nil || res.Status != 200 {
+			t.Fatalf("Send(%+v) = %+v, %v", r, res, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(topics, " ") != "app.test.voip app.test.voip app.test" {
+		t.Errorf("topics %q", topics)
+	}
+	if exps[0] != "1800000030" || exps[1] != "" || exps[2] != "" {
+		t.Errorf("expirations %q", exps)
+	}
+}

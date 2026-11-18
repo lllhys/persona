@@ -1,0 +1,17 @@
+{
+  "open_in_inbox": "在收件箱打开",
+  "summary": "总结",
+  "sent": "已以你的名义回复",
+  "self_replied": "你已在原会话回复",
+  "filed_not_sent": "已处理，这条回复没有发出",
+  "conclusion_filed": "结论 · 已处理",
+  "replaced": "已不是当前建议，没有发出",
+  "reply_as_you": "以你的名义回复「{title}」",
+  "conclusion": "结论",
+  "later_line": "在收件箱里等你：{title}",
+  "wrap_up": "收尾：{title}",
+  "wrap_up_ask": "可以收尾了：把最终的总结和回复写回这条收件箱事项。",
+  "wrap_up_failed": "收尾请求没发出去：{error}",
+  "wrap_up_to_send": "待发送",
+  "wrap_up_to_confirm": "待确认"
+}

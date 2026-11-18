@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/nwverse/persona/server/internal/proto"
@@ -89,16 +90,35 @@ const (
 	clipNoteRoom  = 48  // what clipTo's note adds to a cut string, as JSON
 )
 
-// clipJSON shortens long strings anywhere in a tool input object: a Write's content, but also push_files'
-// files[].content, MultiEdit's edits[].new_string or an MCP call's nested blocks, which went out whole in every page and
-// push. The shape stays, so the apps' renderers still find their fields. A value that is not an object is left as it is:
-// a Claude tool_use's input and an MCP call's arguments are always objects.
+// decodeInputObject keeps the ordinary float64 behavior, but retries with json.Number when a valid number exceeds its
+// range (for example 1e1000). Such an object still deserves the whole-input bound rather than an oversized pass-through.
+func decodeInputObject(raw []byte) (map[string]any, error) {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err == nil {
+		return m, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&m); err != nil {
+		return nil, err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("tool input has trailing JSON")
+	}
+	return m, nil
+}
+
+// clipJSON shortens a tool input object in three passes. Long strings anywhere are cut first: a Write's content, but also
+// push_files' files[].content, MultiEdit's edits[].new_string or an MCP call's nested blocks, which went out whole in
+// every page and push. If short values still keep the encoded object over budget, boundInputJSON drops array tails and
+// then object fields while preserving every surviving value's shape. A value that is not an object is left as it is: a
+// Claude tool_use's input and an MCP call's arguments are always objects.
 func clipJSON(raw json.RawMessage) json.RawMessage {
 	if len(raw) <= maxInputLen {
 		return raw
 	}
-	var m map[string]any
-	if json.Unmarshal(raw, &m) != nil {
+	m, err := decodeInputObject(raw)
+	if err != nil {
 		return raw
 	}
 	b := marshalPlain(mapStrings(m, func(s string) string { return clipTo(s, maxInputLen/2) }))
@@ -106,8 +126,8 @@ func clipJSON(raw json.RawMessage) json.RawMessage {
 		return b
 	}
 	// Still too long (many medium strings): the strings over minInputShare share evenly what the rest leaves. Shorter
-	// strings, keys and other values are never cut, and a share is never under minInputShare, so an input made mostly of
-	// those (thousands of short array items) or of a great many long strings still goes over maxInputLen.
+	// strings, keys and other values survive this pass, and a share is never under minInputShare. If their total still
+	// exceeds maxInputLen, the third pass removes whole values rather than cutting any string below that floor.
 	long, kept := 0, 0
 	rest := marshalPlain(mapStrings(m, func(s string) string {
 		if len(s) <= minInputShare {
@@ -117,12 +137,16 @@ func clipJSON(raw json.RawMessage) json.RawMessage {
 		return ""
 	}))
 	if long == 0 {
-		return b // nothing left that may be cut
+		return boundInputJSON(b, len(raw)) // short values and keys still need the whole-input bound
 	}
 	// JSON escapes make a kept byte cost more than one: scale the share by what the first pass's strings cost.
 	share := (maxInputLen - len(rest)) * kept / (len(b) - len(rest)) / long
 	share = min(max(share-clipNoteRoom, minInputShare), maxInputLen/2)
-	return marshalPlain(mapStrings(m, func(s string) string { return clipIfShorter(s, share) }))
+	b = marshalPlain(mapStrings(m, func(s string) string { return clipIfShorter(s, share) }))
+	if len(b) <= maxInputLen {
+		return b
+	}
+	return boundInputJSON(b, len(raw))
 }
 
 // marshalPlain is v as JSON with < > & as they are, as the input came: json.Marshal writes each as six bytes, and every

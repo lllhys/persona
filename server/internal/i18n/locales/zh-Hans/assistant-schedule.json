@@ -4,6 +4,7 @@
   "evening": "晚间回顾",
   "unavailable": "暂时读不到定时任务（数据库没有响应），过一会儿再试",
   "save_failed": "无法保存定时任务，更改未生效，请重试。",
+  "task_state_changed": "任务状态笔记已更新。请重新打开编辑器后再试。",
   "prompt_empty": "提示词不能为空",
   "time_format": "时间 {time} 要写成 HH:MM",
   "daily_title": "每天运行的任务要有标题",
@@ -27,6 +28,7 @@
   "streak_body": "最近一次：{reason}。在它成功跑成一次之前，这件事我不会再提醒。",
   "streak_unknown": "没有说明原因",
   "deleted_not_again": "{id}「{name}」在这一轮运行时已被主人删掉，不再安排。不要再安排它，把这一轮做完即可。",
+  "deleted_elsewhere_not_again": "{id}「{name}」在这一轮运行时已被另一个对话删掉，不再安排。不要再安排它，把这一轮做完即可。",
   "waiting_skipped": "「{name}」这次没跑：上一轮还在等你",
   "waiting_skipped_body": "上一轮在等你批准或回答，处理完下一次就会照常运行。点开看它在等什么。",
   "cron_empty": "请写一个 cron 表达式，比如 0 9 * * 1-5（分 时 日 月 周）",
@@ -41,5 +43,8 @@
   "cron_month": "月份（1–12 或 JAN–DEC）",
   "cron_day_of_week": "星期（0–7 或 SUN–SAT，0 和 7 都是周日）",
   "cron_often": "{cron} 两次运行只隔 {gap} 分钟。定时任务最多每 {min} 分钟运行一次。",
-  "cron_never": "{cron} 永远不会运行：未来 5 年里没有符合的日期。"
+  "cron_never": "{cron} 永远不会运行：未来 5 年里没有符合的日期。",
+  "run_if_approval": "允许在每次定时运行前，在任务电脑上执行此命令吗？",
+  "run_if_skipped": "运行前检查要求跳过本次运行。",
+  "run_if_failed": "运行前检查失败：{error}"
 }

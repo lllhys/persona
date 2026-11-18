@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// The cookie file reader (Shared/BrowserCookies.swift) on the cases the web's lib/cookies.test.ts holds lib/cookies.ts
 /// to (#1304): both clients read a file the same way.
@@ -54,5 +55,34 @@ struct BrowserCookiesTests {
         let data = try JSONEncoder().encode(BrowserCookie(name: "a", value: "b", domain: "c.d", httpOnly: true, sameSite: "Lax", hostOnly: true))
         let s = String(decoding: data, as: UTF8.self)
         #expect(s.contains(#""http_only":true"#) && s.contains(#""same_site":"Lax""#) && s.contains(#""host_only":true"#))
+    }
+
+    // MARK: A computer's sites on its page (#5821), as the web's lib/cookies.test.ts holds siteList / siteSummary
+
+    private static let now = Date(timeIntervalSince1970: 1_794_470_400) // 2026-11-12 08:00 UTC
+    private static let sites = [
+        BrowserCookieSite(domain: "maple.example", count: 2, expires: now.addingTimeInterval(50 * 86_400)),
+        BrowserCookieSite(domain: "aspen.example", count: 1),
+        BrowserCookieSite(domain: "cedar.example", count: 4, expires: now.addingTimeInterval(-11 * 86_400)),
+        BrowserCookieSite(domain: "birch.example", count: 3, expires: now.addingTimeInterval(19 * 86_400)),
+    ]
+
+    @Test func listsByNameOrTheSoonestToExpireFirst() {
+        #expect(BrowserSiteList.shown(Self.sites, query: "", order: .name).map(\.domain) == ["aspen.example", "birch.example", "cedar.example", "maple.example"])
+        #expect(BrowserSiteList.shown(Self.sites, query: "", order: .expiry).map(\.domain) == ["cedar.example", "birch.example", "maple.example", "aspen.example"])
+    }
+
+    @Test func filtersByDomainInAnyCase() {
+        #expect(BrowserSiteList.shown(Self.sites, query: " AR ", order: .name).map(\.domain) == ["cedar.example"])
+        #expect(BrowserSiteList.shown(Self.sites, query: "example", order: .name).count == 4)
+        #expect(BrowserSiteList.shown(Self.sites, query: "nothing", order: .name).isEmpty)
+    }
+
+    @Test func sumsUpTheFirstExpiryStillToComeAndTheExpired() {
+        let s = BrowserSiteList.summary(Self.sites, now: Self.now)
+        #expect(s == BrowserSiteList.Summary(count: 4, first: Self.now.addingTimeInterval(19 * 86_400), expired: 1))
+        #expect(BrowserSiteList.summary([BrowserCookieSite(domain: "a.example", count: 1)], now: Self.now) == BrowserSiteList.Summary(count: 1, first: nil, expired: 0))
+        #expect(Self.sites[2].expired(at: Self.now) && !Self.sites[1].expired(at: Self.now) && !Self.sites[0].expired(at: Self.now))
+        #expect(BrowserSiteList.inPlace == 3)
     }
 }

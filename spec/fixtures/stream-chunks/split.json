@@ -1,0 +1,207 @@
+{
+  "schema_version": 1,
+  "operation": "stream_chunks_split",
+  "cases": [
+    {
+      "name": "cuts_after_blank_line_once_next_block_starts",
+      "description": "A blank line cuts only after the following block has started.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/StreamChunksTests.swift: cutsAfterABlankLineOnceTheNextBlockStarts"
+      ],
+      "from_test": "StreamChunksTests.cutsAfterABlankLineOnceTheNextBlockStarts",
+      "input": { "text": "## 标题\n\n第一段。\n\n第二段还在写" },
+      "expected": { "done": ["## 标题", "第一段。"], "tail": "第二段还在写" }
+    },
+    {
+      "name": "blank_line_at_end_is_not_cut_yet",
+      "description": "A trailing blank line remains in the unfinished tail.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/StreamChunksTests.swift: aBlankLineAtTheEndIsNotACutYet"
+      ],
+      "from_test": "StreamChunksTests.aBlankLineAtTheEndIsNotACutYet",
+      "input": { "text": "第一段。\n\n" },
+      "expected": { "done": [], "tail": "第一段。\n\n" }
+    },
+    {
+      "name": "never_cuts_inside_code_fence",
+      "description": "Blank lines inside a code fence do not finish a block.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/StreamChunksTests.swift: neverCutsInsideACodeFence"
+      ],
+      "from_test": "StreamChunksTests.neverCutsInsideACodeFence",
+      "input": { "text": "看这段：\n\n```swift\nlet a = 1\n\nlet b = 2\n```\n\n后面" },
+      "expected": { "done": ["看这段：", "```swift\nlet a = 1\n\nlet b = 2\n```"], "tail": "后面" }
+    },
+    {
+      "name": "keeps_indented_continuation_with_block",
+      "description": "A space-indented continuation prevents a cut at the preceding blank line.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/StreamChunksTests.swift: keepsAnIndentedContinuationWithItsBlock"
+      ],
+      "from_test": "StreamChunksTests.keepsAnIndentedContinuationWithItsBlock",
+      "input": { "text": "1. 第一项\n\n   接着第一项\n\n2. 第二项" },
+      "expected": { "done": ["1. 第一项\n\n   接着第一项"], "tail": "2. 第二项" }
+    },
+    {
+      "name": "prewarm_uses_the_tail",
+      "description": "The unfinished second paragraph is the prewarm tail.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/PersonaTests/StreamPacingTests.swift: thePrewarmKeyIsTheTail"
+      ],
+      "from_test": "StreamPacingTests.thePrewarmKeyIsTheTail",
+      "input": { "text": "第一段。\n\n第二段正在写" },
+      "expected": { "done": ["第一段。"], "tail": "第二段正在写" }
+    },
+    {
+      "name": "longer_fence_ignores_shorter_inner_closer",
+      "description": "A shorter backtick run and a language-suffixed line do not close a longer fence.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/MarkdownFence.swift: opening and isClosed(by:)",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/MarkdownFenceTests.swift: streamChunksNeverCutsInsideALongerFence"
+      ],
+      "from_test": "MarkdownFenceTests.streamChunksNeverCutsInsideALongerFence",
+      "input": { "text": "前\n\n````md\n```html\na\n\n<p>x</p>\n```\n````\n\n后" },
+      "expected": { "done": ["前", "````md\n```html\na\n\n<p>x</p>\n```\n````"], "tail": "后" }
+    },
+    {
+      "name": "language_suffixed_line_does_not_close_fence",
+      "description": "A backtick line with a language suffix remains fence content.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/MarkdownFence.swift: isClosed(by:)",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/MarkdownFenceTests.swift: streamChunksNeverCutsInsideALongerFence"
+      ],
+      "derived": true,
+      "input": { "text": "前\n\n```\n```js\n\nlet a = 1\n```\n\n后" },
+      "expected": { "done": ["前", "```\n```js\n\nlet a = 1\n```"], "tail": "后" }
+    },
+    {
+      "name": "reassembles_full_text",
+      "description": "Joining the finished blocks and tail with two newlines reconstructs this Apple test input.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/StreamChunksTests.swift: whatIsCutStaysAsTheTextGrows"
+      ],
+      "derived": true,
+      "input": { "text": "## 看完了\n\n改动没问题。\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n要我留评论吗？" },
+      "expected": { "done": ["## 看完了", "改动没问题。", "| a | b |\n| --- | --- |\n| 1 | 2 |"], "tail": "要我留评论吗？" }
+    },
+    {
+      "name": "empty_input",
+      "description": "Empty input has no finished blocks and an empty tail.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: components(separatedBy:) and StreamChunks.split"],
+      "derived": true,
+      "input": { "text": "" },
+      "expected": { "done": [], "tail": "" }
+    },
+    {
+      "name": "consecutive_blank_lines_keep_their_newline",
+      "description": "Only the last blank line before the next block cuts, retaining the preceding empty line.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split lines 19-25"],
+      "derived": true,
+      "input": { "text": "A\n\n\nB" },
+      "expected": { "done": ["A\n"], "tail": "B" }
+    },
+    {
+      "name": "space_padded_separator_is_omitted",
+      "description": "A whitespace-only separator is removed while adjacent original lines are preserved.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: trimmingCharacters(in: .whitespaces) and StreamChunks.split"],
+      "derived": true,
+      "input": { "text": " A \n \t \nB" },
+      "expected": { "done": [" A "], "tail": "B" }
+    },
+    {
+      "name": "tab_indented_continuation_stays_with_block",
+      "description": "The raw next line's tab prefix prevents a cut.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: next.hasPrefix space and tab guards"],
+      "derived": true,
+      "input": { "text": "A\n\n\tB\n\nC" },
+      "expected": { "done": ["A\n\n\tB"], "tail": "C" }
+    },
+    {
+      "name": "non_ascii_space_is_not_raw_indentation",
+      "description": "Only a literal space or tab on the raw next line prevents a cut.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: next.hasPrefix space and tab guards"],
+      "derived": true,
+      "input": { "text": "A\n\n B" },
+      "expected": { "done": ["A"], "tail": " B" }
+    },
+    {
+      "name": "carriage_return_is_not_a_line_separator",
+      "description": "Bare carriage returns do not create lines.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: components(separatedBy: LF)"],
+      "derived": true,
+      "input": { "text": "A\r\rB" },
+      "expected": { "done": [], "tail": "A\r\rB" }
+    },
+    {
+      "name": "crlf_carriage_return_is_not_a_blank_line",
+      "description": "LF splits lines without treating a remaining carriage return as an empty separator.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: components(separatedBy: LF) and trimmingCharacters(in: .whitespaces)"],
+      "derived": true,
+      "input": { "text": "A\r\n\r\nB" },
+      "expected": { "done": [], "tail": "A\r\n\r\nB" }
+    },
+    {
+      "name": "crlf_fence_is_not_recognized",
+      "description": "A carriage return on an LF-delimited fence line prevents its recognition.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: components(separatedBy: LF) and trimmingCharacters(in: .whitespaces)",
+        "apple/Packages/PersonaKit/Sources/PersonaKit/MarkdownFence.swift: opening"
+      ],
+      "derived": true,
+      "input": { "text": "A\r\n\r\n```\r\nx\r\n\r\n```\r\n\r\nB" },
+      "expected": { "done": [], "tail": "A\r\n\r\n```\r\nx\r\n\r\n```\r\n\r\nB" }
+    },
+    {
+      "name": "inline_backticks_do_not_open_a_fence",
+      "description": "A backtick after the opening run rejects a fence opener.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/MarkdownFence.swift: opening",
+        "apple/Packages/PersonaKit/Tests/PersonaKitTests/MarkdownFenceTests.swift: opensOnThreeOrMoreBackticksOrTildes"
+      ],
+      "derived": true,
+      "input": { "text": "A\n\n```code```\n\nB" },
+      "expected": { "done": ["A", "```code```"], "tail": "B" }
+    },
+    {
+      "name": "unclosed_fence_keeps_remainder_in_tail",
+      "description": "An unterminated fence suppresses later cuts without synthesizing a closer.",
+      "source": [
+        "apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split",
+        "apple/Packages/PersonaKit/Sources/PersonaKit/MarkdownFence.swift: opening and isClosed(by:)"
+      ],
+      "derived": true,
+      "input": { "text": "A\n\n```\nx\n\nB" },
+      "expected": { "done": ["A"], "tail": "```\nx\n\nB" }
+    },
+    {
+      "name": "indented_fence_preserves_original_spaces",
+      "description": "Trimmed fence recognition does not trim the emitted text.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: trimmed candidate and original line slices"],
+      "derived": true,
+      "input": { "text": "   ```swift\nx\n\n   ```\n\nB" },
+      "expected": { "done": ["   ```swift\nx\n\n   ```"], "tail": "B" }
+    },
+    {
+      "name": "tilde_fence_requires_tilde_closer",
+      "description": "A tilde fence ignores backticks, rejects an info-suffixed closer and accepts a longer run with trailing spaces and tabs.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/MarkdownFence.swift: opening and isClosed(by:)"],
+      "derived": true,
+      "input": { "text": "A\n\n~~~lang\nx\n\n```\n\n~~~info\n\n~~~~\t \n\nB" },
+      "expected": { "done": ["A", "~~~lang\nx\n\n```\n\n~~~info\n\n~~~~\t "], "tail": "B" }
+    },
+    {
+      "name": "leading_blank_line_can_finish_an_empty_block",
+      "description": "The i-greater-than-start guard permits an empty first finished block.",
+      "source": ["apple/Packages/PersonaKit/Sources/PersonaKit/StreamChunks.swift: StreamChunks.split lines 19-25"],
+      "derived": true,
+      "input": { "text": "\n\nA" },
+      "expected": { "done": [""], "tail": "A" }
+    }
+  ]
+}

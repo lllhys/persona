@@ -9,7 +9,18 @@ android {
     namespace = "persona.feature.inbox"
     // The translation views and the triage banner are rendered on the JVM (Robolectric's native graphics) for their
     // screenshots.
-    testOptions { unitTests { isIncludeAndroidResources = true } }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all {
+                // The screenshot classes share one test process. Given 1 GB, main's full run already kept about 580 MiB
+                // in use after collections; with the section bar's page shots (#9053) it ran out of the 512 MB default
+                // near its end (510 MiB live, 255 MiB of it Robolectric resource/theme tables). Leave room, as the other
+                // screenshot modules do.
+                it.maxHeapSize = "1g"
+            }
+        }
+    }
 }
 
 dependencies {

@@ -2,11 +2,16 @@ package persona.feature.chat
 
 import android.view.View
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.LocalView
@@ -282,5 +287,73 @@ class ChatLinkHostManagerTest {
         val insetOffset = rule.onNode(hasText(second)).getUnclippedBoundsInRoot().top -
             rule.onNodeWithTag("chat_link_card").getUnclippedBoundsInRoot().top
         assertEquals(initialOffset.value, insetOffset.value, 0.01f)
+    }
+
+    /**
+     * The card's top follows where the host is in the window (its position, recorded in layout), both when the card opens
+     * and when the host moves while it is open: the safe top already above the host is not left over the card (#8334).
+     */
+    @Test fun cardTopFollowsTheHostsPositionInTheWindow() {
+        var above by mutableStateOf(0.dp)
+        rule.setContent {
+            PersonaTheme(reduceMotion = true) {
+                CompositionLocalProvider(LocalInboxRepository provides Paired(Documents())) {
+                    composeView = LocalView.current
+                    Column {
+                        Spacer(Modifier.height(above))
+                        ChatLinkHost(Modifier.height(400.dp)) { _ ->
+                            ManagerLinks("m-3") {
+                                val uri = LocalUriHandler.current
+                                Text("Open the first document", Modifier.clickable { uri.openUri("https://example.feishu.cn/docx/MovingHost") })
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        applyInsets(statusTop = 24)
+        rule.onNodeWithText("Open the first document").performClick()
+        rule.waitForIdle()
+        // At the window's top: the card starts below the status bar.
+        assertCardTop(24.dp)
+        // Moved below the status bar while open: the card starts at the host's top, with no safe top left to keep.
+        rule.runOnIdle { above = 100.dp }
+        rule.waitForIdle()
+        assertCardTop(100.dp)
+        // Back up to 10 dp: 14 dp of the status bar is still over the host.
+        rule.runOnIdle { above = 10.dp }
+        rule.waitForIdle()
+        assertCardTop(24.dp)
+    }
+
+    /** The host's bar growing while a card is open moves the card's anchors too, not only what composition reads. */
+    @Test fun aHostBarChangedWhileTheCardIsOpenMovesItsAnchors() {
+        var bar by mutableStateOf(16.dp)
+        rule.setContent {
+            composeView = LocalView.current
+            PersonaTheme(reduceMotion = true) {
+                CompositionLocalProvider(LocalInboxRepository provides Paired(Documents()), LocalChromeInsets provides ChromeInsets(top = bar)) {
+                    ChatLinkHost { _ ->
+                        ManagerLinks("m-3") {
+                            val uri = LocalUriHandler.current
+                            Text("Open the first document", Modifier.clickable { uri.openUri("https://example.feishu.cn/docx/GrowingBar") })
+                        }
+                    }
+                }
+            }
+        }
+        rule.onNodeWithText("Open the first document").performClick()
+        rule.waitForIdle()
+        assertCardTop(16.dp)
+        rule.runOnIdle { bar = 96.dp }
+        rule.waitForIdle()
+        assertCardTop(96.dp)
+        // And a drag target taken afterwards uses the new bar: Peek is 40% of the way down from it.
+        val root = rule.onRoot().getUnclippedBoundsInRoot()
+        rule.onNodeWithContentDescription("Shrink and keep chatting").performClick()
+        rule.waitForIdle()
+        // Within a pixel: the card's height is laid out in whole pixels (mdpi here).
+        val peek = 96.dp + (root.bottom - root.top - 96.dp) * 0.4f
+        assertEquals(peek.value, rule.onNodeWithTag("chat_link_card").getUnclippedBoundsInRoot().top.value, 1f)
     }
 }

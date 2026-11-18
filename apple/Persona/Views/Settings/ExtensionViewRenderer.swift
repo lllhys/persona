@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// An extension's View drawn with the app's design system (docs/extensions/extensions.md「Declarative UI」「UI 版本 3」): each section a
 /// section of the form (a divider starts another one), each component a row: text, Markdown, a number with what it is,
@@ -11,6 +12,9 @@ import SwiftUI
 /// nothing, fields, search, filter and more are not drawn; links open as usual.
 struct ExtensionViewRenderer: View {
     @Environment(\.assistantHTMLRendering) private var htmlContext
+    /// UI version 8: the page's width, where its page measured it (rows side by side need it), and the text size.
+    @Environment(\.extensionPageWidth) private var pageWidth
+    @Environment(\.dynamicTypeSize) private var typeSize
     var view: ExtensionView
     var model: (any ExtensionViewControlling)?
     /// The first section's title when it has none of its own (a launcher's section: what the extension calls it).
@@ -33,16 +37,46 @@ struct ExtensionViewRenderer: View {
         }
         ForEach(ExtensionParts.of(view, heading: heading, includeHTML: htmlContext != nil)) { g in
             Section {
-                ForEach(g.items) { item in
-                    ExtensionItemRow(item: item.component, model: model, link: $link)
+                if sideBySide(g) {
+                    // UI version 8: a run of rows side by side is one list row (no hairlines between them, as on the
+                    // web); each row's button is its own (borderless), and a swipe would move them all.
+                    ForEach(ExtensionPartsBlock.of(g.items, columns: g.columns)) { block in
+                        switch block.content {
+                        case .one(let item): ExtensionItemRow(item: item.component, model: model, link: $link)
+                        case .rows(let items):
+                            ExtensionColumnsLayout(most: g.columns, minimum: ExtensionColumns.minimum(typeSize)) {
+                                ForEach(items) { item in
+                                    ExtensionItemRow(item: item.component, model: model, link: $link)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .environment(\.extensionRowSwipes, false)
+                        }
+                    }
+                } else {
+                    ForEach(g.items) { item in
+                        ExtensionItemRow(item: item.component, model: model, link: $link)
+                    }
                 }
                 if let more = g.more, let model { ExtensionMoreRow(more: more, model: model, link: $link) }
             } header: {
-                if let t = g.title, !t.isEmpty { SettingsHeading(t) }
+                // UI version 8: a section's icon and link beside its title; one without them keeps its plain title.
+                if let s = g.head {
+                    ExtensionSectionHead(section: s, title: g.title, place: .list, model: model, link: $link)
+                } else if let t = g.title, !t.isEmpty { SettingsHeading(t) }
             } footer: {
                 if let f = g.footer, !f.isEmpty { Text(f) }
             }
         }
+    }
+
+    /// The part's rows go side by side: its section asks for it (`columns`) and its page is wide enough for two.
+    private func sideBySide(_ g: ExtensionParts) -> Bool {
+        guard g.columns > 1, let pageWidth else { return false }
+        return ExtensionColumns.count(width: ExtensionColumns.listRowWidth(pageWidth), minimum: ExtensionColumns.minimum(typeSize),
+                                      gap: Theme.Space.m, most: g.columns) > 1
     }
 }
 
@@ -65,24 +99,37 @@ struct ExtensionParts: Identifiable {
     var footer: String?
     var more: ExtensionMore?
     var items: [Item]
+    /// UI version 8: the section, on its first part, when its title has an icon or a link beside it.
+    var head: ExtensionSection? = nil
+    /// UI version 8: how many of its rows sit side by side where there is room (its section's `columns`).
+    var columns = 1
 
     static func of(_ view: ExtensionView, heading: String? = nil, includeHTML: Bool = false) -> [ExtensionParts] {
         var out: [ExtensionParts] = []
         for (i, s) in view.sections.enumerated() {
             var parts: [[Item]] = [[]]
+            var leftOut = false
             for (j, c) in s.items.enumerated() {
                 if case .divider = c { parts.append([]); continue }
-                if case .unknown = c { continue }
-                if case .html = c, !includeHTML { continue } // Extensions never receive the assistant sandbox context.
+                // Left out: a component this app doesn't know, and the assistant's HTML outside its chat (extensions never
+                // receive the assistant sandbox context).
+                if case .unknown = c { leftOut = true; continue }
+                if case .html = c, !includeHTML { leftOut = true; continue }
                 parts[parts.count - 1].append(Item(id: Item.id(c, section: i, index: j), component: c))
             }
             parts = parts.filter { !$0.isEmpty }
-            if parts.isEmpty { parts = [[]] }
+            if parts.isEmpty {
+                // Every component left out: the title would stand alone over nothing (#827), unless the footer or `more`
+                // has something to say. A section sent with no components at all keeps its title.
+                if leftOut, s.footer?.isEmpty != false, s.more == nil { continue }
+                parts = [[]]
+            }
             for (j, part) in parts.enumerated() {
-                let title = j == 0 ? (s.title?.isEmpty == false ? s.title : (i == 0 ? heading : nil)) : nil
+                let title = j == 0 ? (s.title?.isEmpty == false ? s.title : (out.isEmpty ? heading : nil)) : nil
                 let last = j == parts.count - 1
                 out.append(ExtensionParts(id: s.key.map { "k:" + $0 + ".part:\(j)" } ?? "\(out.count)", title: title, footer: last ? s.footer : nil, more: last ? s.more : nil,
-                                          items: part))
+                                          items: part, head: j == 0 && ExtensionSectionHead.wanted(s) ? s : nil,
+                                          columns: ExtensionColumns.rowColumns(s)))
             }
         }
         return out
@@ -128,8 +175,38 @@ enum ExtensionUIStyle {
         case "secondary": Theme.Font.secondary
         case "caption": Theme.Font.caption
         case "code": Theme.Font.code
+        // UI version 6: a section's big title and a small heading.
+        case "title": Theme.Font.title
+        case "headline": Theme.Font.heading
         default: Theme.Font.body
         }
+    }
+
+    /// A named color (UI version 6, schema `Color`) as the app's own hue, right in light and dark; nil for a name this
+    /// app does not know (the quiet ink then). Marks only: icons, badges' tints, tiles, chart series, never text.
+    static func color(_ name: String?) -> Color? {
+        switch name {
+        case "red": Theme.Hue.red
+        case "orange": Theme.Hue.orange
+        case "amber": Theme.Hue.amber
+        case "yellow": Theme.Hue.yellow
+        case "green": Theme.Hue.green
+        case "teal": Theme.Hue.teal
+        case "blue": Theme.Hue.blue
+        case "indigo": Theme.Hue.indigo
+        case "purple": Theme.Hue.purple
+        case "pink": Theme.Hue.pink
+        case "gray": Theme.Hue.gray
+        default: nil
+        }
+    }
+
+    /// A badge's look: its tone (words and fill in the role color); else its named color as a soft tint behind words
+    /// in the text's own color (UI version 6: a color is never on text); else neutral.
+    static func badge(_ b: ExtensionBadge) -> Chip.Look {
+        if let t = b.tone, t != "neutral" { return .tint(tone(t)) }
+        if let c = color(b.color) { return .tint(c.opacity(0.14), text: .primary) }
+        return .neutral
     }
 
     /// The icon set's names (docs/extensions/extensions.md「New components」: a row's `icon`, an empty state's, a nav_page's) as the app's
@@ -155,8 +232,60 @@ enum ExtensionUIStyle {
         case "tag": Theme.Icon.label
         case "search": Theme.Icon.search
         case "settings": Theme.Icon.settings
+        // UI version 4's code hosting.
+        case "branch": Theme.Icon.gitBranch
+        case "commit": Theme.Icon.pluginCommit
+        case "code": Theme.Icon.code
+        case "pull_request": Theme.Icon.pullRequest
+        case "merge": Theme.Icon.merged
+        case "file": Theme.Icon.file
+        // UI version 6: homes and markets; meanings the app has draw its own.
+        case "home": Theme.Icon.home
+        case "sofa": Theme.Icon.pluginSofa
+        case "light": Theme.Icon.pluginLight
+        case "power": Theme.Icon.pluginPower
+        case "fan": Theme.Icon.pluginFan
+        case "thermometer": Theme.Icon.pluginThermometer
+        case "droplet": Theme.Icon.pluginDroplet
+        case "lock": Theme.Icon.locked
+        case "unlock": Theme.Icon.pluginUnlock
+        case "door": Theme.Icon.pluginDoor
+        case "window": Theme.Icon.pluginWindow
+        case "camera": Theme.Icon.camera
+        case "video": Theme.Icon.video
+        case "play": Theme.Icon.run
+        case "pause": Theme.Icon.pause
+        case "stop": Theme.Icon.interrupt
         case "speaker": Theme.Icon.voiceSpeaking
         case "music": Theme.Icon.music
+        case "tv": Theme.Icon.pluginTV
+        case "plug": Theme.Icon.pluginPlug
+        case "battery": Theme.Icon.pluginBattery
+        case "bolt": Theme.Icon.pluginBolt
+        case "sun": Theme.Icon.lightMode
+        case "moon": Theme.Icon.darkMode
+        case "cloud": Theme.Icon.pluginCloud
+        case "rain": Theme.Icon.pluginRain
+        case "snow": Theme.Icon.pluginSnow
+        case "wind": Theme.Icon.pluginWind
+        case "leaf": Theme.Icon.pluginLeaf
+        case "car": Theme.Icon.pluginCar
+        case "location": Theme.Icon.currentLocation
+        case "robot": Theme.Icon.pluginRobot
+        case "wifi": Theme.Icon.pluginWifi
+        case "shield": Theme.Icon.protection
+        case "trend_up": Theme.Icon.pluginTrendUp
+        case "trend_down": Theme.Icon.pluginTrendDown
+        case "wallet": Theme.Icon.pluginWallet
+        case "bank": Theme.Icon.pluginBank
+        case "heart": Theme.Icon.health
+        case "plus": Theme.Icon.add
+        case "minus": Theme.Icon.pluginMinus
+        case "trash": Theme.Icon.delete
+        case "edit": Theme.Icon.edit
+        case "refresh": Theme.Icon.retry
+        case "share": Theme.Icon.share
+        case "info": Theme.Icon.info
         default: Theme.Icon.plugins
         }
     }
@@ -166,6 +295,7 @@ enum ExtensionUIStyle {
 struct ExtensionItemRow: View {
     var item: ExtensionComponent
     @Environment(\.assistantHTMLRendering) private var htmlContext
+    @Environment(\.extensionPicture) private var picture
     var model: (any ExtensionViewControlling)?
     @Binding var link: LinkTarget?
 
@@ -176,19 +306,28 @@ struct ExtensionItemRow: View {
                 .font(ExtensionUIStyle.font(t.style))
                 .foregroundStyle(t.style == "secondary" || t.style == "caption" ? Color.secondary : Color.primary)
                 .textSelection(.enabled)
+                .accessibilityAddTraits(t.style == "title" || t.style == "headline" ? .isHeader : [])
         case .markdown(let m): ExtensionMarkdown(text: m.text, link: $link)
         case .metric(let m): metric(m)
         case .progress(let p): progress(p)
         case .row(let r):
-            if let control = r.control, control.drawable {
-                // UI version 6: a switch, a slider or a stepper in the row (`ExtensionControlRow`).
-                ExtensionControlRow(row: r, control: control, model: model, link: $link)
-            } else if let action = r.action, let model {
-                ExtensionActionButton(action: action, title: r.title, model: model, link: $link) { ExtensionComponentRowLabel(row: r, model: model, chevron: true) }
-                    .foregroundStyle(Color.primary)
-            } else {
-                ExtensionComponentRowLabel(row: r, model: model, chevron: false)
+            Group {
+                if let control = r.control, control.drawable, picture {
+                    // In a picture its control as it looks (`ExtensionPictureControl`).
+                    ExtensionComponentRowLabel(row: r, model: model, chevron: false) { ExtensionPictureControl(control: control) }
+                } else if let control = r.control, control.drawable {
+                    // UI version 6: a switch, a slider or a stepper in the row (`ExtensionControlRow`).
+                    ExtensionControlRow(row: r, control: control, model: model, link: $link)
+                } else if let action = r.action, let model {
+                    ExtensionActionButton(action: action, title: r.title, model: model, link: $link) { ExtensionComponentRowLabel(row: r, model: model, chevron: true) }
+                        .foregroundStyle(Color.primary)
+                } else {
+                    // In a picture a row the chat lets you tap keeps its chevron.
+                    ExtensionComponentRowLabel(row: r, model: model, chevron: picture && r.action != nil)
+                }
             }
+            // UI version 6: its extra actions (`ExtensionRowActions.swift`).
+            .extensionRowActions(r.actions, model: model, link: $link)
         case .button(let b):
             if let model {
                 ExtensionActionButton(action: b.action, title: b.title, destructive: b.role == "destructive", model: model, link: $link) {
@@ -200,6 +339,8 @@ struct ExtensionItemRow: View {
                         if model.running == b.action.id { ProgressView().controlSize(.small) }
                     }
                 }
+            } else if picture {
+                ExtensionPictureButton(title: b.title, destructive: b.role == "destructive")
             }
         case .link(let l):
             if let url = URL(string: l.url), url.scheme == "https" {
@@ -208,15 +349,17 @@ struct ExtensionItemRow: View {
                 }
                 .accessibilityIdentifier("plugin-ui-link")
             }
-        case .field(let f): if let model { ExtensionFieldItem(field: f, model: model) }
+        case .field(let f):
+            if let model { ExtensionFieldItem(field: f, model: model) } else if picture { ExtensionPictureField(field: f) }
         case .chart(let c): ExtensionChartItem(item: c)
         case .statGrid(let g): ExtensionStatGrid(stats: g.stats)
-        case .segmented(let s): if let model { ExtensionSegmented(item: s, model: model, link: $link) }
+        case .segmented(let s):
+            if let model { ExtensionSegmented(item: s, model: model, link: $link) } else if picture { ExtensionPictureSegmented(item: s) }
         case .table(let t): ExtensionTable(table: t)
         case .empty(let e): ExtensionEmpty(empty: e, model: model, link: $link)
         case .loading(let l):
             HStack(spacing: Theme.Space.s) {
-                ProgressView().controlSize(.small)
+                if !picture { ProgressView().controlSize(.small) } // a spinner does not draw into a picture
                 Text(l.title?.isEmpty == false ? l.title! : String(localized: "Loading… [Personal Agent Session View 4927a5]")).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
             }
             .accessibilityIdentifier("plugin-ui-loading")
@@ -231,19 +374,41 @@ struct ExtensionItemRow: View {
                         return await context.onRequest(request, key, version)
                     })
             }
-        // UI version 6's picture, grid and carousel are not drawn yet (#827). Until all of version 6 is, the app asks
-        // for an older version, so the hub turns them into older components before they get here.
-        case .divider, .unknown, .image, .grid, .carousel: EmptyView()
-        // UI version 4's code-hosting components: a View with them is drawn by the code page (`ExtensionCodePage`, #2961).
-        case .header, .breadcrumb, .fileTree, .code, .diff, .commentThread, .composer: EmptyView()
+        // UI version 6's tiles (`ExtensionTiles.swift`): on the page's background, as wide as the sections.
+        case .grid(let g):
+            ExtensionGridItem(grid: g, model: model, link: $link)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.flush, bottom: Theme.Space.s, trailing: Theme.Space.flush))
+        case .carousel(let c):
+            ExtensionCarouselItem(carousel: c, model: model, link: $link)
+                .listRowBackground(Color.clear)
+                // Its own page margin lines its first tile up with the rows' words; it scrolls to the section's edges.
+                .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.flush, bottom: Theme.Space.s, trailing: Theme.Space.flush))
+        // UI version 6's picture (`ExtensionMedia.swift`).
+        case .image(let i): ExtensionImageItem(item: i, model: model)
+        case .divider, .unknown: EmptyView()
+        // UI version 4–5's code-hosting components: a whole page with them is drawn by the code page (`ExtensionCodePage`,
+        // #2961); a card or a section says what they say (`ExtensionCodeSummary`).
+        case .header, .breadcrumb, .fileTree, .code, .diff, .commentThread, .composer:
+            ExtensionCodeSummary(item: item, model: model, link: $link)
         }
     }
 
     private func metric(_ m: ExtensionMetricComponent) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-            Text(m.label).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: Theme.Space.xs) {
+                // UI version 6: an icon before the label, in its named color (else the quiet ink).
+                if let i = m.icon, !i.isEmpty {
+                    ThemedIcon(ExtensionUIStyle.icon(i)).foregroundStyle(ExtensionUIStyle.color(m.iconColor) ?? Color.secondary)
+                        .accessibilityHidden(true)
+                }
+                Text(m.label).lineLimit(1)
+            }
+            .font(Theme.Font.label).foregroundStyle(.secondary)
             ExtensionChangingText(m.value).font(Theme.Font.title.monospacedDigit()).foregroundStyle(ExtensionUIStyle.ink(m.tone)).lineLimit(1)
                 .minimumScaleFactor(0.6)
+            // UI version 6: its trend under the number, as wide as the metric.
+            if let spark = m.spark { ExtensionSparkLine(spark: spark, width: nil).frame(maxWidth: .infinity) }
             if let d = m.detail, !d.isEmpty { Text(d).font(Theme.Font.label).foregroundStyle(.secondary) }
         }
         .padding(.vertical, Theme.Space.xxs)
@@ -259,7 +424,11 @@ struct ExtensionItemRow: View {
                 Text("\(Int((ratio * 100).rounded()))%").font(Theme.Font.caption.monospacedDigit())
                     .foregroundStyle(p.tone == nil || p.tone == "neutral" ? Color.secondary : ExtensionUIStyle.tone(p.tone)).lineLimit(1)
             }
-            ProgressView(value: ratio).tint(ExtensionUIStyle.bar(p.tone))
+            if picture {
+                ExtensionPictureBar(ratio: ratio, tint: ExtensionUIStyle.bar(p.tone))
+            } else {
+                ProgressView(value: ratio).tint(ExtensionUIStyle.bar(p.tone))
+            }
             if let d = p.detail, !d.isEmpty { Text(d).font(Theme.Font.label).foregroundStyle(.secondary).lineLimit(2) }
         }
         .padding(.vertical, Theme.Space.xxs)
@@ -270,6 +439,14 @@ struct ExtensionItemRow: View {
 extension EnvironmentValues {
     /// An extension's View drawn as a card (`size: compact`): charts without axis text, the rest as usual.
     @Entry var pluginUICompact = false
+    /// Drawn into a picture (Share as Image of a reply with a card, #7261, `ShareCardViewCard`): without a model, buttons,
+    /// fields, segmented choices and row controls are drawn as they look instead of left out, progress bars as shapes,
+    /// tables and Markdown wrap (`ImageRenderer` draws no scroll views and no UIKit controls).
+    @Entry var extensionPicture = false
+    /// Drawn inside a card (a section of `ExtensionViewStack`, a code page, a columns view), its padding: a carousel
+    /// then scrolls to the card's edges and is cut there (#10233); nil on the page's list, where it scrolls to the
+    /// section's edges.
+    @Entry var extensionCardInset: CGFloat? = nil
 }
 
 /// An extension's View on a page that is not a list (a machine's page, a card, the assistant's reply): each section a
@@ -307,29 +484,19 @@ struct ExtensionViewStack: View {
                 let i = entry.index
                 let s = entry.section
                 VStack(alignment: .leading, spacing: Theme.Space.s) {
-                    if titles ?? cards, let t = (s.title?.isEmpty == false ? s.title : (i == 0 ? heading : nil)), !t.isEmpty {
+                    let title = titles ?? cards ? (s.title?.isEmpty == false ? s.title : (i == 0 ? heading : nil)) : nil
+                    if ExtensionSectionHead.wanted(s) {
+                        // UI version 8: its icon and link beside the title; with them, a card that draws no section
+                        // titles (an overview card) shows the section's own, so the link says where it goes.
+                        ExtensionSectionHead(section: s, title: title ?? s.title, place: .stack, model: model, link: $link)
+                            .padding(.horizontal, Theme.Space.xs)
+                    } else if let t = title, !t.isEmpty {
                         Text(t).font(Theme.Font.sectionHeader).foregroundStyle(.secondary).lineLimit(1)
                             .padding(.horizontal, Theme.Space.xs)
                     }
-                    let items = s.items.enumerated().compactMap { j, item -> ExtensionParts.Item? in
-                        if case .unknown = item { return nil }
-                        if case .html = item, htmlContext == nil { return nil }
-                        return ExtensionParts.Item(id: ExtensionParts.Item.id(item, section: i, index: j), component: item)
-                    }
-                    if !items.isEmpty || (s.more != nil && model != nil) {
-                        let body = VStack(alignment: .leading, spacing: Theme.Space.m) {
-                            ForEach(items) { entry in
-                                Group {
-                                    if case .divider = entry.component { Divider() } else {
-                                        ExtensionItemRow(item: entry.component, model: model, link: $link)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                }
-                                .transition(.opacity)
-                            }
-                            if let more = s.more, let model { ExtensionMoreRow(more: more, model: model, link: $link) }
-                        }
-                        if cards { body.card() } else { body }
+                    if s.items.contains(where: { !Self.leftOut($0, html: htmlContext != nil) }) || (s.more != nil && model != nil) {
+                        let body = ExtensionSectionItems(section: s, index: i, model: model, link: $link)
+                        if cards { body.environment(\.extensionCardInset, CardStyle.padding).card() } else { body }
                     }
                     if let f = s.footer, !f.isEmpty {
                         Text(f).font(Theme.Font.label).foregroundStyle(.secondary).padding(.horizontal, Theme.Space.xs)
@@ -341,6 +508,14 @@ struct ExtensionViewStack: View {
         // Drawn again with blocks that came or went, they fade in and out and the rest moves (#37); a model's redraw
         // comes animated already (`ExtensionMotion.redraw`), this covers a View changed by its caller (a card).
         .animation(reduceMotion ? nil : Theme.Motion.layout, value: ExtensionMotion.blocks(view))
+    }
+
+    /// A component left out of a section (`ExtensionSectionItems` draws the rest): one this app does not know, and the
+    /// assistant's HTML outside its chat.
+    nonisolated static func leftOut(_ c: ExtensionComponent, html: Bool) -> Bool {
+        if case .unknown = c { return true }
+        if case .html = c, !html { return true }
+        return false
     }
 }
 
@@ -479,6 +654,10 @@ struct ExtensionPageView: View {
                     // One container, so that the page's own identifier (extension-ui-ready) stays on it and does not
                     // replace its first control's (it took the back row's and the code's).
                     .accessibilityElement(children: .contain)
+            } else if let v = page.view, v.wantsPageWidth {
+                // UI version 8 (#9158): a columns view is a grid of cards once the page is wide enough, its list
+                // otherwise; a section's rows go side by side by the same width.
+                ExtensionWidthPage(view: v, model: page, link: $link) { form }
             } else {
                 form
             }
@@ -515,7 +694,9 @@ struct ExtensionPageView: View {
                 let outcome = await initial.start(page)
                 if let error = outcome.error { app.toast = Toast(error, style: .error) }
                 else if let toast = outcome.toast { app.toast = Toast(toast) }
-                if let url = outcome.url, !app.openIfExtensionSettings(url), !app.openIfAsk(url) { link = LinkTarget(url: url) }
+                if let url = outcome.url, !app.openIfExtensionSettings(url, from: outcome.settingsOwner), !app.openIfAsk(url), !app.openIfSourcesGraph(url) {
+                    link = LinkTarget(url: url)
+                }
             } else { await page.load() }
         }
         .pluginRefresh(page)

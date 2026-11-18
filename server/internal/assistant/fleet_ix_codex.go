@@ -134,14 +134,14 @@ func (s *Service) syncCodexInteractions(machine string, params json.RawMessage) 
 func (s *Service) codexPending(machine string, ix proto.Interaction) *pending {
 	ix.AlwaysHonored, ix.ToolTitle, ix.ToolNameTitle = nil, "", "" // the manager's word, never a node's (nodeCard)
 	p := &pending{ix: ix, codex: true}
-	p.local = func(r proto.Resolution) error {
+	p.local = func(answerCtx context.Context, r proto.Resolution) error {
 		if r.Dismiss { // handed back to the computer: the same question asked again later is announced (#3766)
 			s.fleet.mu.Lock()
 			delete(s.fleet.codexAnnounced, ix.ID)
 			delete(s.fleet.codexEnded, ix.ID)
 			s.fleet.mu.Unlock()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), codexAnswerTimeout)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(answerCtx), codexAnswerTimeout)
 		defer cancel()
 		err := s.nodeCall(ctx, machine, "codex.answer", map[string]any{"session_id": ix.SessionID, "id": ix.ID, "resolution": r}, nil)
 		var re *rpc.Error

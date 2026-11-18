@@ -1,0 +1,374 @@
+{
+  "id": "inbox-assistant-stack",
+  "manifestId": "android-large-window-inbox-assistant-stack",
+  "description": "Keep the Assistant sidebar beside one right-hand Inbox stack, then prove route, selection, reply draft and list-anchor continuity across Back, rotation, book posture, compact, wide-phone and regular window sizes.",
+  "requires": {
+    "mockEnv": {
+      "MOCK_INBOX_EVENTS": "1"
+    },
+    "stackProbe": true,
+    "fields": [
+      "pid",
+      "route",
+      "selectedKey"
+    ]
+  },
+  "steps": [
+    {
+      "step": "launch",
+      "page": "inbox",
+      "probePage": "Inbox"
+    },
+    {
+      "step": "rotate",
+      "orientation": "portrait"
+    },
+    {
+      "step": "wm-size",
+      "size": "900x1200",
+      "density": 160,
+      "widthDp": 900,
+      "heightDp": 1200
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "page": "Inbox",
+        "fields": ["firstVisibleKey", "firstVisibleOffsetPx"]
+      },
+      "checks": {
+        "route": {"equals": "inbox"},
+        "selectedKey": {"equals": null},
+        "window.widthDp": {"equals": 900},
+        "window.heightDp": {"equals": 1200}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "01-sidebar-inbox-list"
+    },
+    {
+      "step": "tap",
+      "text": "Direct",
+      "index": 0
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "02-sidebar-lark-detail"
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "page": "Inbox",
+        "fields": ["firstVisibleKey", "firstVisibleOffsetPx"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox"}
+      }
+    },
+    {
+      "step": "tap",
+      "text": "Weekly Digest"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {"equals": "inbox/mail"},
+        "selectedKey": {"equals": "mail:acc1:t3:503"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "03-sidebar-mail-detail"
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "tap",
+      "text": "发布群"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {"equals": "inbox/event"},
+        "selectedKey": {"matches": ".+"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "04-sidebar-event-detail"
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "tap",
+      "text": "Computers"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {"equals": "machines"},
+        "selectedKey": {"equals": null}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "05-sidebar-machines"
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "tap",
+      "text": "Knowledge"
+    },
+    {
+      "step": "assert",
+      "checks": {
+        "route": {"equals": "knowledge"},
+        "selectedKey": {"equals": null}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "06-sidebar-knowledge"
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "tap",
+      "text": "Inbox"
+    },
+    {
+      "step": "tap",
+      "text": "Direct",
+      "index": 0
+    },
+    {
+      "step": "tap",
+      "text": "Edit"
+    },
+    {
+      "step": "tap",
+      "resource-id": "inbox-reply-field"
+    },
+    {
+      "step": "text",
+      "text": "Summarize this event and propose a reply"
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "fields": ["draftHmac", "focused"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"},
+        "focused": {"equals": true}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "07-lark-reply-draft"
+    },
+    {
+      "step": "rotate",
+      "orientation": "landscape"
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "fields": ["draftHmac", "focused"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"},
+        "draftHmac": "unchanged",
+        "focused": {"equals": true},
+        "window.orientation": {"equals": "landscape"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "08-lark-reply-rotated"
+    },
+    {
+      "step": "posture",
+      "value": 2
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "fields": ["draftHmac", "focused"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"},
+        "draftHmac": "unchanged",
+        "deviceState": {"equals": "HALF_OPENED"},
+        "postureEvidenceType": {"equals": "folding-feature"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "09-lark-reply-book"
+    },
+    {
+      "step": "posture",
+      "value": 3
+    },
+    {
+      "step": "wm-size",
+      "size": "480x800",
+      "density": 160,
+      "widthDp": 480,
+      "heightDp": 800
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "fields": ["draftHmac", "focused"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"},
+        "draftHmac": "unchanged",
+        "window.widthDp": {"equals": 480},
+        "window.heightDp": {"equals": 800}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "10-lark-reply-compact"
+    },
+    {
+      "step": "wm-size",
+      "size": "760x400",
+      "density": 160,
+      "widthDp": 760,
+      "heightDp": 400
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "fields": ["draftHmac", "focused"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"},
+        "draftHmac": "unchanged",
+        "window.widthDp": {"equals": 760},
+        "window.heightDp": {"equals": 400}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "11-lark-wide-phone-list-detail"
+    },
+    {
+      "step": "wm-size",
+      "size": "600x480",
+      "density": 160,
+      "widthDp": 600,
+      "heightDp": 480
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "fields": ["draftHmac", "focused"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox/lark"},
+        "selectedKey": {"equals": "lark:f1:100"},
+        "draftHmac": "unchanged",
+        "window.widthDp": {"equals": 600},
+        "window.heightDp": {"equals": 480}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "12-lark-minimum-regular"
+    },
+    {
+      "step": "wm-size",
+      "size": "1200x900",
+      "density": 160,
+      "widthDp": 1200,
+      "heightDp": 900
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "page": "Inbox",
+        "fields": ["firstVisibleKey", "firstVisibleOffsetPx"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "13-back-restored-inbox-list"
+    },
+    {
+      "step": "rotate",
+      "orientation": "portrait"
+    },
+    {
+      "step": "assert",
+      "requires": {
+        "page": "Inbox",
+        "fields": ["firstVisibleKey", "firstVisibleOffsetPx"]
+      },
+      "checks": {
+        "pid": "unchanged",
+        "route": {"equals": "inbox"},
+        "firstVisibleKey": "unchanged",
+        "firstVisibleOffset": "unchanged",
+        "window.orientation": {"equals": "portrait"}
+      }
+    },
+    {
+      "step": "capture",
+      "name": "14-inbox-anchor-rotated"
+    },
+    {
+      "step": "key",
+      "keycombination": ["BACK"]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import org.junit.Test
 import persona.core.contracts.api.AgentTriage
 import persona.core.contracts.api.ChannelManagement
 import persona.core.contracts.api.ConnectorsManagement
+import persona.core.contracts.api.GitHubInboxOptions
 import persona.core.contracts.api.FeishuBotSettings
 import persona.core.contracts.api.HubSent
 import persona.core.contracts.api.RequestManager
@@ -42,11 +43,14 @@ class ManagerScopedApisTest {
             runCatching { api.mailAccounts() }
             runCatching { api.larkStatus() }
             runCatching { api.deleteMailAccount("a") }
+            runCatching { api.gitHubAuth() }
+            runCatching { api.setGitHubAuth(null) }
+            runCatching { api.setGitHubInboxOptions(GitHubInboxOptions()) }
         }
         recorder(ChannelManagement::class.java, seen).forManager("m-2").let { api -> runCatching { api.channels() }; runCatching { api.unbind("c") } }
         recorder(FeishuBotSettings::class.java, seen).forManager("m-2").let { runCatching { it.status() } }
         recorder(HubSent::class.java, seen).forManager("m-2").let { runCatching { it.page() } }
-        assertEquals(listOf("switches", "connectors", "mailAccounts", "larkStatus", "deleteMailAccount", "channels", "unbind", "status", "page"),
+        assertEquals(listOf("switches", "connectors", "mailAccounts", "larkStatus", "deleteMailAccount", "gitHubAuth", "setGitHubAuth", "setGitHubInboxOptions", "channels", "unbind", "status", "page"),
             seen.map { it.first })
         assertEquals(List(seen.size) { "m-2" }, seen.map { it.second })
     }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,11 +20,12 @@ const (
 	appDeleted  = "019a0000-0000-7000-8000-000000000003" // still in the sidebar's list, deleted from the database
 	appArchived = "019a0000-0000-7000-8000-000000000004"
 	appExec     = "019a0000-0000-7000-8000-000000000005" // in the database, not in the sidebar
+	appMigrated = "019a0000-0000-7000-8000-000000000006" // in the database only: the migrated App writes no legacy keys
 )
 
 const codexAppSchema = `CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL, source TEXT NOT NULL, cwd TEXT NOT NULL, title TEXT NOT NULL,
-	archived INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER, name TEXT);`
+	archived INTEGER NOT NULL DEFAULT 0, updated_at_ms INTEGER, name TEXT, originator TEXT);`
 
 // writeCodexApp writes the App's sidebar (appChat in project Alpha at project; appOld, appDeleted and appArchived without
 // one) and runs sql against its state database in home.
@@ -47,10 +49,14 @@ func writeCodexApp(t *testing.T, home, project, sql string) {
 	codexAppDBs.Unlock()
 }
 
-func codexAppRow(id, rollout, cwd, name string, updated time.Time, archived int) string {
+func codexAppRow(id, rollout, cwd, name string, updated time.Time, archived int, originator ...string) string {
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
-	return fmt.Sprintf("INSERT INTO threads VALUES (%s, %s, 0, %d, 'vscode', %s, 'auto title', %d, %d, %s);",
-		q(id), q(rollout), updated.Unix(), q(cwd), archived, updated.UnixMilli(), q(name))
+	o := "Codex Desktop"
+	if len(originator) > 0 {
+		o = originator[0]
+	}
+	return fmt.Sprintf("INSERT INTO threads VALUES (%s, %s, 0, %d, 'vscode', %s, 'auto title', %d, %d, %s, %s);",
+		q(id), q(rollout), updated.Unix(), q(cwd), archived, updated.UnixMilli(), q(name), q(o))
 }
 
 // writeAppRollout writes a Codex App rollout (originator Codex Desktop) under home, last written at written.
@@ -92,7 +98,7 @@ func TestCodexAppChatsAreListedLikeTheSidebar(t *testing.T) {
 		codexAppRow(appChat, filepath.Join(home, "sessions", "gone.jsonl"), filepath.Join(project, "sub"), "Alpha chat", updated, 0)+
 		codexAppRow(appOld, old, elsewhere, "Old chat", updated, 0)+
 		codexAppRow(appArchived, "", project, "Archived", updated, 1)+
-		codexAppRow(appExec, "", project, "A run", updated, 0))
+		codexAppRow(appExec, "", project, "A run", updated, 0, "codex_exec"))
 
 	rows := rowsByThread(n.codexSessions(map[string]bool{}))
 	if len(rows) != 2 {
@@ -118,8 +124,58 @@ func TestCodexAppChatsAreListedLikeTheSidebar(t *testing.T) {
 	if o := rows[appOld]; !strings.HasPrefix(o.SpaceID, "codex-chats:") || o.SpaceName != "Codex 对话" { // i18n-ignore: the node's space name
 		t.Fatalf("the chat in no project is placed in %q %q", o.SpaceID, o.SpaceName)
 	}
-	if src, _ := n.codexSource(rows[appOld].SessionID); src.path != old {
+	if src, _ := n.codexSource(rows[appOld].SessionID); src.path != resolved(t, old) { // the node names it resolved (#9138)
 		t.Fatalf("the old chat reads %q, want its rollout", src.path)
+	}
+}
+
+// One list reads the App's state once per home, not twice for each of its chats: each read globbed the home for the
+// App's state database, about 1,100 globs a second for 550 chats.
+func TestCodexAppStateReadOncePerList(t *testing.T) {
+	home, _ := startFakeCodexBus(t, "")
+	sqlite := sqlite3WithJSON(t)
+	project := t.TempDir()
+	var ids, quoted []string
+	sql := codexAppSchema
+	for i := range 20 {
+		id := fmt.Sprintf("019a0000-0000-7000-8000-%012d", 100+i)
+		ids, quoted = append(ids, id), append(quoted, fmt.Sprintf("%q", id))
+		// Its rollout is gone (Codex compressed it): listed from its row, placed through the App's state.
+		sql += codexAppRow(id, filepath.Join(home, "sessions", "rollout-"+id+".jsonl"), project, fmt.Sprintf("Chat %d", i), time.Now().Add(-time.Hour), 0)
+	}
+	state := `{"projectless-thread-ids": [` + strings.Join(quoted, ", ") + `]}`
+	if err := os.WriteFile(filepath.Join(home, ".codex-global-state.json"), []byte(state), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(sqlite, filepath.Join(home, "state_5.sqlite"), sql).CombinedOutput(); err != nil {
+		t.Fatalf("sqlite3: %v: %s", err, out)
+	}
+	codexAppDBs.Lock()
+	clear(codexAppDBs.byHome)
+	codexAppDBs.Unlock()
+	n := remoteTestNode(t)
+	n.configureCodex(proto.CodexConfig{Homes: []string{home}})
+	if rows := rowsByThread(n.codexSessions(map[string]bool{})); len(rows) != len(ids) {
+		t.Fatalf("rows = %v, want the %d chats", rows, len(ids))
+	}
+
+	var globs atomic.Int64
+	glob := codexAppDBGlob
+	codexAppDBGlob = func(pattern string) ([]string, error) {
+		if dir := filepath.Dir(pattern); dir == home || dir == realPath(home) { // the node keeps the home's real path
+			globs.Add(1)
+		}
+		return glob(pattern)
+	}
+	t.Cleanup(func() { codexAppDBGlob = glob })
+	rows := rowsByThread(n.codexSessions(map[string]bool{}))
+	if len(rows) != len(ids) || rows[ids[0]].SpaceKind != "codex_app" || !rows[ids[0]].Capabilities.Send {
+		t.Fatalf("rows = %v", rows)
+	}
+	// Once for the list; the App's database rows are looked at again every 5 s (codexAppThreads), twice more then.
+	// Before, every one of the 20 chats asked twice: 40.
+	if got := globs.Load(); got > 3 {
+		t.Fatalf("one list globbed the home %d times for the App's state database, want a few whatever the number of chats", got)
 	}
 }
 

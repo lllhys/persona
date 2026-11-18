@@ -20,6 +20,7 @@ import (
 	"github.com/nwverse/persona/server/internal/extension"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/lcuconfirm"
+	"github.com/nwverse/persona/server/internal/mcpwait"
 	"github.com/nwverse/persona/server/internal/protectedapps"
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -36,6 +37,7 @@ const cuaConfig = `{
     "confirm": {"type": "boolean", "title": "操作前在手机上确认", "description": "打开后，助手每次点击、输入、按键、打开或关闭 App 之前先在手机上问你；关着时直接做，记进 hub 的日志", "default": false},
     "app_approval": {"type": "boolean", "title": "第一次操作一个 App 时先问", "description": "助手第一次在一台 Mac 上操作某个 App（或看整个屏幕）时在手机上问一次，选「一直允许」后记住，在机器页可以移除；终端、系统设置、钥匙串访问、密码管理器和 Persona 每次都问", "default": true},
     "no_auto_lock": {"type": "array", "title": "扩展开着时不自动锁屏", "description": "打开的 Mac 在扩展开着时一直不因空闲锁屏（node 持有 caffeinate，不改系统设置）；和 hub 断开 30 分钟后自动恢复。手动锁屏、合盖照常", "items": {"type": "string", "format": "machine", "x-os": ["darwin"]}, "uniqueItems": true, "x-confirm": "打开后这台 Mac 在扩展开着时一直不会因为空闲锁屏，坐在它前面的人能直接用它。和 hub 断开 30 分钟后自动恢复。"},
+    "screen_x264": {"type": "array", "title": "实时屏幕用 x264 编码", "description": "打开的 Mac 在局域网直连时用你自己装的 ffmpeg（带 libx264，比如 Homebrew 的）编码实时屏幕：每帧快约 6 ms，多用一些 CPU。Persona 不带 x264 或 ffmpeg；没装、离开局域网或跟不上时用系统自带的编码器", "items": {"type": "string", "format": "machine", "x-os": ["darwin"]}, "uniqueItems": true, "x-confirm": "打开后，这台 Mac 在局域网直连时用你自己装的 ffmpeg 编码实时屏幕。x264 是 GPL 软件，Persona 不带它；它更费 CPU，跟不上时自动换回系统自带的编码器。"},
     "keep_awake": {"type": "boolean", "title": "操作或开着 VNC 时保持唤醒", "description": "助手操作那台 Mac、或有人在看它的画面时，它不睡、不因空闲锁屏；最后一次操作 10 分钟后、画面关掉后就撤掉，不改系统设置", "default": true},
     "click_sound": {"type": "string", "title": "点击音效", "description": "助手在 Mac 上点按时，那台 Mac 响一下系统提示音，坐在旁边的人听得到它在动。前台点击会把窗口提到前面、动真的鼠标；后台点击不动光标", "oneOf": [{"const": "none", "title": "无"}, {"const": "foreground", "title": "只前台点击"}, {"const": "all", "title": "前台和后台点击"}], "default": "none"},
     "show_cursor": {"type": "boolean", "title": "显示 Agent 的光标", "description": "助手和电脑上的 Agent 经 Cua Driver 操作时在屏幕上画一个光标，看 VNC 时知道它点在哪。改了会重启扩展打开的 Mac 上 Cua Driver 的后台进程，正在进行的操作会断一下", "default": true}
@@ -62,6 +64,9 @@ type cuaSettings struct {
 	AppApproval *bool `json:"app_approval"`
 	// NoAutoLock: the Macs "Don't auto-lock while the extension is on" is on for (computer_nolock.go).
 	NoAutoLock []string `json:"no_auto_lock"`
+	// ScreenX264: the Macs whose live screen may be encoded by the user's own ffmpeg with libx264 on a direct LAN
+	// (#8859, docs/extensions/computer-use.md "x264 on a direct LAN (#8859)"); the hub passes it in screen.dial.
+	ScreenX264 []string `json:"screen_x264"`
 	// ClickSound: "Click sound", none (or empty), foreground or all; the node plays it (node/cua_extras.go).
 	ClickSound string `json:"click_sound"`
 	// Backend: cua (Cua Driver, the default), lcu, or auto (lcu_status.go).
@@ -130,6 +135,7 @@ func (h *Manager) computerOf(m *Machine) *proto.Computer {
 	}
 	c.Enabled = slices.Contains(s.Machines, m.cfg.ID)
 	c.NoAutoLock = c.Enabled && slices.Contains(s.NoAutoLock, m.cfg.ID)
+	c.ScreenX264 = c.Enabled && slices.Contains(s.ScreenX264, m.cfg.ID)
 	return &c
 }
 
@@ -203,13 +209,15 @@ func (h *Manager) getComputer(w http.ResponseWriter, r *http.Request, m *Machine
 	writeJSON(w, i18n.ComputerStatus(h.requestLang(r), c))
 }
 
-// putComputer: PUT /api/v1/machines/{mid}/computer {"enabled": bool}, the machine page's switch: it goes into the
-// plugin's machines.
+// putComputer: PUT /api/v1/machines/{mid}/computer {"enabled"?, "no_auto_lock"?, "screen_x264"?}, the machine page's
+// switches: they go into the plugin's machines and per-Mac lists.
 func (h *Manager) putComputer(w http.ResponseWriter, r *http.Request, m *Machine) {
 	var in struct {
 		Enabled *bool `json:"enabled"`
 		// "Don't auto-lock while the extension is on" for this Mac (the app asked first).
 		NoAutoLock *bool `json:"no_auto_lock"`
+		// x264 for this Mac's live screen (#8859; the app asked first).
+		ScreenX264 *bool `json:"screen_x264"`
 	}
 	if err := decodeJSONBody(w, r, &in, 4<<10); err != nil {
 		h.writeComputerBodyErr(w, r, err)
@@ -231,6 +239,13 @@ func (h *Manager) putComputer(w http.ResponseWriter, r *http.Request, m *Machine
 			return
 		}
 		h.logf("[%s] no auto lock %v", m.cfg.ID, *in.NoAutoLock)
+	}
+	if in.ScreenX264 != nil {
+		if err := h.setExtensionList(r.Context(), cuaExtensionID, "screen_x264", m.cfg.ID, *in.ScreenX264); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		h.logf("[%s] live screen x264 %v", m.cfg.ID, *in.ScreenX264)
 	}
 	writeJSON(w, i18n.ComputerStatus(h.requestLang(r), h.refreshComputer(r.Context(), m)))
 }
@@ -354,6 +369,9 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 		Steps      json.RawMessage `json:"steps"`
 		Observe    json.RawMessage `json:"observe"`
 		TimeoutMS  int             `json:"timeout_ms"`
+		// PID and WindowID name the process and window when app has more than one (computer_window.go, #7591).
+		PID      int `json:"pid"`
+		WindowID int `json:"window_id"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return proto.TextResult("bad arguments: "+err.Error(), true)
@@ -362,8 +380,20 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 	if err != nil {
 		return proto.TextResult(err.Error(), true)
 	}
-	session := "persona-" + convID(sessionID)
+	session := cuaConversationLabel(sessionID)
 	lcu := h.callBackend(m) == "lcu"
+	if a.PID != 0 || a.WindowID != 0 {
+		switch {
+		case lcu:
+			return proto.TextResult("pid and window_id are Cua Driver's: this machine's computer-use backend is LCU; name the app", true)
+		case a.Script != "":
+			return proto.TextResult("pid and window_id go with steps, not a script (a script names its apps with cua.getApp(\"…\"))", true)
+		}
+		// The app they are, for the checks and approvals below, which go by app: never the model's word for it.
+		if a.App, a.PID, err = h.computerTarget(ctx, m, session, sessionID, a.App, a.PID, a.WindowID); err != nil {
+			return proto.TextResult(err.Error(), true)
+		}
+	}
 	declined := func(what string) proto.ToolResult {
 		h.logf("[%s] %s declined on the phone (%s)", m.cfg.ID, name, what)
 		return proto.TextResult("The user declined this on the phone. Do not retry it unless they ask.", true)
@@ -374,7 +404,7 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 			return declined("look")
 		}
 		shot := a.Screenshot == nil || *a.Screenshot
-		return h.computerState(ctx, m, session, sessionID, a.App, a.Query, shot)
+		return h.computerState(ctx, m, session, sessionID, a.App, a.Query, shot, a.PID, a.WindowID)
 	}
 	var tool string
 	in := map[string]any{}
@@ -402,8 +432,8 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 			tool, in["code"] = "js", code
 		} else {
 			tool, in["steps"] = "run_steps", a.Steps
-			if a.App != "" {
-				in["app"] = a.App
+			if res := h.pinSteps(ctx, m, session, sessionID, a.App, a.PID, a.WindowID, a.Steps, in); res != nil {
+				return *res
 			}
 			if len(a.Observe) > 0 {
 				in["observe"] = a.Observe
@@ -412,57 +442,61 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 	default:
 		return proto.TextResult("give script (run_script) or steps (run_steps)", true)
 	}
-	// Never System Settings or a permission prompt (#4336, computer_protected.go), before any card.
+	if tool == "run_script" {
+		if res := h.scriptProcesses(ctx, m, session, sessionID, a.Script); res != nil {
+			return *res
+		}
+	}
+	// Never System Settings or a permission prompt (#4336, #7560, computer_protected.go), before any card.
 	if a.Script != "" && !whole {
 		h.logf("[%s] computer_run refused: a script whose apps cannot all be read", m.cfg.ID)
 		return proto.TextResult(protectedapps.UnreadableScript, true)
 	}
 	var known []protectedapps.App
-	if !lcu {
-		known = h.knownApps(ctx, m)
-	}
-	for _, x := range h.appsOn(ctx, m, apps, known) {
-		if protectedApp(x) {
-			h.logf("[%s] computer_run refused: protected app %s", m.cfg.ID, strings.TrimPrefix(x.BundleID, "name:"))
-			return proto.TextResult(refusedText(m.cfg.Name, "it would operate "+x.Name), true)
+	// guard checks this call, or one of its steps alone, on the Mac as it is now (protectedapps.Look.Check). LCU asks
+	// before touching any app, and those questions are refused for these (computer_lcu.go): it only checks names here.
+	guard := func(string, map[string]any) protectedapps.Verdict { return protectedapps.Verdict{} }
+	if lcu {
+		for _, x := range h.appsOn(ctx, m, apps, nil) {
+			if protectedApp(x) {
+				h.logf("[%s] computer_run refused: protected app %s", m.cfg.ID, strings.TrimPrefix(x.BundleID, "name:"))
+				return proto.TextResult(refusedText(m.name(), "it would operate "+x.Name), true)
+			}
+		}
+	} else {
+		guard = func(tool string, in map[string]any) protectedapps.Verdict {
+			raw, _ := json.Marshal(in)
+			look := h.protectedLook(ctx, m, known)
+			v := look.Check(m.name(), tool, raw)
+			known = look.Apps()
+			return v
 		}
 	}
-	// LCU asks before touching any app, and those questions are refused for these (computer_lcu.go).
-	onScreen := func() *proto.ToolResult {
-		found, ok := h.protectedOnScreen(ctx, m, &known)
-		switch {
-		case !ok:
-			h.logf("[%s] computer_run refused: the windows could not be read", m.cfg.ID)
-			res := proto.TextResult(protectedapps.Unchecked, true)
-			return &res
-		case len(found) > 0:
-			h.logf("[%s] computer_run refused: protected app on screen", m.cfg.ID)
-			res := proto.TextResult(refusedText(m.cfg.Name, strings.Join(found, ", ")+" is open on its screen"), true)
-			return &res
-		}
-		return nil
+	refuse := func(v protectedapps.Verdict) proto.ToolResult {
+		h.logf("[%s] computer_run refused (%s): %s", m.cfg.ID, v.Rule, v.App)
+		return proto.TextResult(v.Why, true)
 	}
-	if !lcu {
-		if res := onScreen(); res != nil {
-			return *res
-		}
+	if v := guard(tool, in); v.Why != "" {
+		return refuse(v)
 	}
-	what := computerSummary(h.userLang(), m.cfg.Name, tool, a.Script, a.Steps)
+	what := computerSummary(h.userLang(), m.name(), tool, a.Script, a.Steps)
 	asked, ok := h.approveApps(ctx, m, h.assistantAsker(sessionID, m.cfg.ID), name, apps, whole, args, known)
 	refused := !ok || (h.cua().Confirm && !asked && !h.approve(ctx, h.assistantAsker(sessionID, m.cfg.ID), name, what, args))
 	if refused {
 		return declined(computerLogWhat(tool, a.Script, a.Steps))
 	}
-	if !lcu && (asked || h.cua().Confirm) { // a card may have waited minutes: look again
-		if res := onScreen(); res != nil {
-			return *res
+	if asked || h.cua().Confirm { // a card may have waited minutes: look again
+		if v := guard(tool, in); v.Why != "" {
+			return refuse(v)
 		}
 	}
 	start := time.Now()
 	var res *proto.ComputerResult
 	var stopped string
 	if !lcu && tool == "run_steps" && unnamedSteps(a.App, a.Steps) {
-		res, stopped, err = h.runStepsOneByOne(ctx, m, session, sessionID, a.Steps, a.Observe, &known)
+		res, stopped, err = h.runStepsOneByOne(ctx, m, session, sessionID, a.Steps, a.Observe, func(step json.RawMessage) protectedapps.Verdict {
+			return guard("run_steps", map[string]any{"steps": []json.RawMessage{step}})
+		})
 	} else {
 		res, err = h.computerCall(ctx, m, session, sessionID, tool, in)
 	}
@@ -472,8 +506,7 @@ func (h *Manager) callComputerTool(ctx context.Context, sessionID, name string, 
 		return proto.TextResult(err.Error(), true)
 	}
 	if stopped != "" {
-		h.logf("[%s] computer_run refused partway: protected app on screen", m.cfg.ID)
-		return proto.TextResult(refusedText(m.cfg.Name, stopped), true)
+		return proto.TextResult(stopped, true)
 	}
 	return computerResult(res)
 }
@@ -503,7 +536,7 @@ func (h *Manager) computerMachineIDs() string {
 
 // computerState: one window of app (its accessibility tree, and its screenshot), or without app the whole screen and
 // the apps and windows on it.
-func (h *Manager) computerState(ctx context.Context, m *Machine, session, conversation, app, query string, shot bool) proto.ToolResult {
+func (h *Manager) computerState(ctx context.Context, m *Machine, session, conversation, app, query string, shot bool, pid, windowID int) proto.ToolResult {
 	if h.callBackend(m) == "lcu" {
 		res, err := h.computerCall(ctx, m, session, conversation, "js", map[string]any{"code": lcuconfirm.StateJS(app, query)})
 		if err != nil {
@@ -515,7 +548,7 @@ func (h *Manager) computerState(ctx context.Context, m *Machine, session, conver
 		return computerResult(res)
 	}
 
-	if app == "" {
+	if app == "" && pid == 0 {
 		tree, err := h.computerCall(ctx, m, session, conversation, "get_accessibility_tree", map[string]any{})
 		if err != nil {
 			return proto.TextResult(err.Error(), true)
@@ -532,26 +565,44 @@ func (h *Manager) computerState(ctx context.Context, m *Machine, session, conver
 		}
 		return out
 	}
-	// The window cua-driver's own lookup picks (the app's frontmost), then its state under the same session label, so
-	// its element tokens work in computer_run.
-	script := "const a = await cua.getApp(" + jsString(app) + "); return {pid: a.pid, window_id: a.windowId};"
-	found, err := h.computerCall(ctx, m, session, conversation, "run_script", map[string]any{"script": script})
-	if err != nil {
-		return proto.TextResult(err.Error(), true)
+	// The window: the one given; of an app with several processes (or of the process given), the one chosen
+	// (computer_window.go); else the one Cua Driver's own lookup picks (the app's frontmost). Then its state under the
+	// same session label, so its element tokens work in computer_run.
+	if windowID == 0 {
+		pick, err := h.chooseWindow(ctx, m, session, conversation, app, pid)
+		switch {
+		case err != nil && pid != 0:
+			return proto.TextResult(err.Error(), true)
+		case err != nil: // the windows not read (an LCU machine on auto, say): Cua Driver's own lookup, as before
+		case len(pick.Candidates) > 0:
+			return ambiguousWindows(app, "computer_state", pick, false)
+		case pick.Processes > 1 || pid != 0 && pick.WindowID != 0:
+			pid, windowID = pick.PID, pick.WindowID
+		case pid != 0:
+			return proto.TextResult(fmt.Sprintf("pid %d (%s) has no window to read", pid, app), true)
+		}
 	}
-	var r struct {
-		OK    bool `json:"ok"`
-		Value struct {
-			PID      int `json:"pid"`
-			WindowID int `json:"window_id"`
-		} `json:"value"`
+	if windowID == 0 {
+		script := "const a = await cua.getApp(" + jsString(app) + "); return {pid: a.pid, window_id: a.windowId};"
+		found, err := h.computerCall(ctx, m, session, conversation, "run_script", map[string]any{"script": script})
+		if err != nil {
+			return proto.TextResult(err.Error(), true)
+		}
+		var r struct {
+			OK    bool `json:"ok"`
+			Value struct {
+				PID      int `json:"pid"`
+				WindowID int `json:"window_id"`
+			} `json:"value"`
+		}
+		if json.Unmarshal(found.Output, &r) != nil || !r.OK || r.Value.WindowID == 0 {
+			res := computerResult(found)
+			res.IsError = true
+			return res
+		}
+		pid, windowID = r.Value.PID, r.Value.WindowID
 	}
-	if json.Unmarshal(found.Output, &r) != nil || !r.OK || r.Value.WindowID == 0 {
-		res := computerResult(found)
-		res.IsError = true
-		return res
-	}
-	in := map[string]any{"pid": r.Value.PID, "window_id": r.Value.WindowID, "include_screenshot": shot}
+	in := map[string]any{"pid": pid, "window_id": windowID, "include_screenshot": shot}
 	if query != "" {
 		in["query"] = query
 	}
@@ -579,15 +630,25 @@ func (h *Manager) callBackend(m *Machine) string {
 	}
 }
 
-// computerCall runs one computer-use tool on m's node.
-func (h *Manager) computerCall(ctx context.Context, m *Machine, session, conversation, tool string, args map[string]any) (*proto.ComputerResult, error) {
+// computerCallOnce runs one computer-use tool on m's node, as it is (computerCall handles a session that ended).
+func (h *Manager) computerCallOnce(ctx context.Context, m *Machine, session, conversation, tool string, args map[string]any) (*proto.ComputerResult, error) {
 	var res proto.ComputerResult
 	s := h.cua()
 	backend := h.callBackend(m)
-	if err := m.callBuiltin(ctx, "computer.call", map[string]any{
+	params := map[string]any{
 		"session": session, "conversation": conversation, "tool": tool, "args": args,
 		"backend": backend, "keep_awake": s.awake(), "click_sound": s.ClickSound,
-	}, &res); err != nil {
+	}
+	capable := m.mcpWaitCapable()
+	if callID := mcpwait.CallFrom(ctx); capable && proto.ValidMCPWaitCallID(callID) {
+		params["call_id"] = callID
+	}
+	if !capable {
+		// The old target cannot echo call_id with a nested elicitation. While it owns the RPC, say only that the wait
+		// state is unknown; resolution restores whatever manager-owned card or base state is still open.
+		defer mcpwait.Push(ctx, proto.MCPWaitUnknown)()
+	}
+	if err := m.callBuiltin(ctx, "computer.call", params, &res); err != nil {
 		if backend == "lcu" && strings.Contains(err.Error(), "is not a tool") {
 			return nil, errors.New(i18n.T(h.userLang(), "hub-computer.err_outdated_lcu"))
 		}

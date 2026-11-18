@@ -8,6 +8,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -178,10 +179,12 @@ internal fun rememberExtensionView(model: ExtensionViewModel, appLink: (String) 
 
 /**
  * The view's sections and items, into a page's list: [key] keeps two views on one page apart. Rows, links, switches
- * and choices that follow each other form one group; the rest stand on their own.
+ * and choices that follow each other form one group; the rest stand on their own. [columns] is how many columns of
+ * cards the page has room for (UI version 8, [ExtensionColumns.count]): with two or more a columns view is a grid of
+ * cards, a row of them at a time; with one (a phone, and anywhere a page is not measured) it is the stack.
  */
 internal fun LazyListScope.extensionViewItems(key: String, state: ExtensionViewState, handle: ExtensionViewHandle, showTitles: Boolean = true,
-                                             streamSectionKeys: List<String>? = null) {
+                                             streamSectionKeys: List<String>? = null, columns: Int = 1) {
     val view = state.view ?: return
     view.tabs?.takeIf { it.items.size >= 2 && it.name.isNotEmpty() }?.let { tabs ->
         item("$key-tabs") { ExtensionTabs(tabs, state.values[tabs.name] ?: tabs.value, state, handle, Modifier.padding(bottom = Tokens.Space.s)) }
@@ -196,11 +199,28 @@ internal fun LazyListScope.extensionViewItems(key: String, state: ExtensionViewS
     val split = view.layout == "split"
     val side = if (split) view.sections.filter { it.pane == "side" } else emptyList()
     if (side.isNotEmpty()) item("$key-side") { SidePane(side, state, handle) }
-    view.sections.forEachIndexed { s, section ->
+    // UI version 8: a columns view with room for two columns or more, its cards a row at a time in the page's own list
+    if (ExtensionColumns.grid(view, columns)) {
+        val ids = view.sections.indices.map { s -> streamSectionKeys?.get(s) ?: "s$s" }
+        ExtensionColumns.rows(view.sections, columns).forEachIndexed { r, row ->
+            val full = row.size == 1 && view.sections[row[0]].span == "full"
+            item(row.joinToString("|", prefix = "$key-cards|") { ids[it] }) {
+                ExtensionCardRow(row.size, if (full) 1 else columns,
+                    Modifier.padding(top = if (r == 0) Tokens.Space.s else Tokens.Space.flush, bottom = Tokens.Space.m)) { index ->
+                    val s = row[index]
+                    val sectionHandle = handle.forNode?.invoke(streamSectionKeys?.get(s).orEmpty()) ?: handle
+                    ExtensionSectionCard(s, view.sections[s], state, handle, sectionHandle, stream = streamSectionKeys != null)
+                }
+            }
+        }
+    } else view.sections.forEachIndexed { s, section ->
         if (section in side) return@forEachIndexed
         val sectionKey = streamSectionKeys?.get(s)?.let { "$key-section-$it" } ?: "$key-s$s"
         val title = section.title?.takeIf { it.isNotBlank() }
-        if (title != null && showTitles) item("$sectionKey-title") { JSectionHeader(title) }
+        // UI version 8: the section's icon and link are drawn with its title; a section with neither, as before
+        if ((title != null || ExtensionColumns.head(section)) && showTitles) item("$sectionKey-title") {
+            SectionHead(section, state, handle.forNode?.invoke(streamSectionKeys?.get(s).orEmpty()) ?: handle)
+        }
         else if (s > 0) item("$sectionKey-gap") { Spacer(Modifier.padding(top = Tokens.Space.l)) }
         val items = if (streamSectionKeys != null) section.items else section.items.filter(ExtensionViewText::drawable)
         // The extension's keys keep a list's place when it is drawn again (a page's "Load more", a search).
@@ -210,6 +230,15 @@ internal fun LazyListScope.extensionViewItems(key: String, state: ExtensionViewS
             val start = i
             if (ExtensionViewText.grouped(items[i])) while (i < items.size && ExtensionViewText.grouped(items[i])) i++ else i++
             val run = items.subList(start, i)
+            // UI version 8: a section whose rows go side by side draws a run of them as one block of lines
+            if (ExtensionColumns.sideBySide(section) && ExtensionViewText.grouped(run.first())) {
+                val runKey = keys[start]?.let { if (streamSectionKeys != null) "$key-node-$it" else "$key-s$s-k-$it" } ?: "$key-s$s-i$start"
+                item("$runKey-lines") {
+                    val moving = Modifier.itemMotion(this, PersonaTheme.reduceMotion, PersonaTheme.motion.standard)
+                    SideBySideRows(section, run, state, handle, moving.then(if (start > 0) Modifier.padding(top = Tokens.Space.s) else Modifier))
+                }
+                continue
+            }
             run.forEachIndexed { index, item ->
                 val itemKey = keys[start + index]?.let { if (streamSectionKeys != null) "$key-node-$it" else "$key-s$s-k-$it" }
                     ?: "$key-s$s-i${start + index}"
@@ -348,7 +377,7 @@ internal fun StandaloneItem(item: ExtensionViewItem, state: ExtensionViewState, 
                 else -> Text(text, top.padding(horizontal = rowPadding), style = type.body, color = palette.ink)
             }
         }
-        "metric" -> JGroupItem(GroupPosition.Single, top) {
+        "metric" -> ItemPanel(top) {
             Column(Modifier.fillMaxWidth().padding(horizontal = rowPadding, vertical = Tokens.Space.m), verticalArrangement = Arrangement.spacedBy(Tokens.Space.xxs)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     item.icon?.takeIf { it.isNotBlank() }?.let {
@@ -363,7 +392,7 @@ internal fun StandaloneItem(item: ExtensionViewItem, state: ExtensionViewState, 
                 item.detail?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink3) }
             }
         }
-        "progress" -> JGroupItem(GroupPosition.Single, top) {
+        "progress" -> ItemPanel(top) {
             Column(Modifier.fillMaxWidth().padding(horizontal = rowPadding, vertical = Tokens.Space.m), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(item.label.orEmpty(), Modifier.weight(1f), style = type.body, color = palette.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -386,13 +415,13 @@ internal fun StandaloneItem(item: ExtensionViewItem, state: ExtensionViewState, 
         }
         "field" -> FieldBox(item, state, handle, top)
         "divider" -> JDivider(top.padding(vertical = Tokens.Space.s))
-        "chart" -> JGroupItem(GroupPosition.Single, top) { ChartItem(item, Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m), compact = false) }
-        "stat_grid" -> JGroupItem(GroupPosition.Single, top) {
+        "chart" -> ItemPanel(top) { ChartItem(item, Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m), compact = false) }
+        "stat_grid" -> ItemPanel(top) {
             JStatGrid(ExtensionViewText.stats(item), Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m))
         }
         "segmented" -> SegmentedItem(item, state, handle, top)
         "markdown" -> ExtensionMarkdown(item.text.orEmpty(), top.padding(horizontal = rowPadding))
-        "table" -> JGroupItem(GroupPosition.Single, top) { ExtensionTable(item, Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m), local = handle.nativeLocal) }
+        "table" -> ItemPanel(top) { ExtensionTable(item, Modifier.padding(horizontal = rowPadding, vertical = Tokens.Space.m), local = handle.nativeLocal) }
         "empty" -> JEmptyState(item.title.orEmpty(), item.detail.orEmpty(), top, icon = item.icon?.takeIf { it.isNotBlank() }?.let(ExtensionIcons::of),
             iconHue = ExtensionViewText.hue(item.iconColor),
             action = item.button?.takeIf { it.title.isNotBlank() && it.action.id.isNotEmpty() }?.let { b ->
@@ -433,14 +462,17 @@ internal fun ExtensionViewColumn(state: ExtensionViewState, handle: ExtensionVie
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.s)) {
         view.title?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.headline, color = palette.ink) }
         view.sections.forEach { section ->
-            section.title?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink2) }
+            // UI version 8: the section's icon and link beside its title, and its rows side by side where there is room
+            if (ExtensionColumns.head(section)) SectionCardHead(section, state, handle)
+            else section.title?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink2) }
             val items = section.items.filter(ExtensionViewText::drawable)
             var i = 0
             while (i < items.size) {
                 val start = i
                 if (ExtensionViewText.grouped(items[i])) while (i < items.size && ExtensionViewText.grouped(items[i])) i++ else i++
                 val run = items.subList(start, i)
-                if (ExtensionViewText.grouped(run.first())) JGroup(rows = run.map { item -> { GroupedItem(item, state, handle) } })
+                if (ExtensionViewText.grouped(run.first()) && ExtensionColumns.sideBySide(section)) SideBySideRows(section, run, state, handle)
+                else if (ExtensionViewText.grouped(run.first())) JGroup(rows = run.map { item -> { GroupedItem(item, state, handle) } })
                 else run.forEach { StandaloneItem(it, state, handle, first = true) }
             }
             section.footer?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink3) }
@@ -483,9 +515,29 @@ internal fun ExtensionCardContent(state: ExtensionViewState, handle: ExtensionVi
         view.sections.forEach { section ->
             val items = section.items.filter(ExtensionViewText::drawableOnCard)
             if (items.isEmpty() && section.footer.isNullOrBlank()) return@forEach
-            section.title?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-            items.forEach { item -> CardItem(item, state, handle) }
+            // UI version 8: the section's icon and link beside its title, and its rows side by side where there is room
+            if (ExtensionColumns.head(section)) SectionCardHead(section, state, handle)
+            else section.title?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink2, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            if (ExtensionColumns.sideBySide(section)) CardLines(section, items, state, handle)
+            else items.forEach { item -> CardItem(item, state, handle) }
             section.footer?.takeIf { it.isNotBlank() }?.let { Text(it, style = type.caption, color = palette.ink3) }
+        }
+    }
+}
+
+/** A compact card's items with its rows side by side where the card has room (UI version 8), each line one under another. */
+@Composable
+private fun CardLines(section: ExtensionViewSection, items: List<ExtensionViewItem>, state: ExtensionViewState, handle: ExtensionViewHandle) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val per = ExtensionColumns.perLine(section.columns, maxWidth)
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
+            ExtensionColumns.lines(items, per).forEach { line ->
+                if (line.size == 1 && (line.first().type != "row" || per == 1)) CardItem(line.first(), state, handle)
+                else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Tokens.Space.m)) {
+                    line.forEach { item -> Box(Modifier.weight(1f)) { CardItem(item, state, handle) } }
+                    repeat(per - line.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
         }
     }
 }

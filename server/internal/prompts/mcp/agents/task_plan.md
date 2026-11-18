@@ -1,8 +1,8 @@
-Hand the user a plan of one or more tasks for agents on their computers, instead of starting agents yourself. Use it for any work that takes an agent (code, research in a repo, anything longer than a few tool calls); one task per independent piece of work. Check machines_list for current machine resources and availability before choosing a machine. Fill in every field from what you know (the knowledge base, agents_list: which machine works in which directory, the user's habits); the user sees each choice as a chip they can change, with your one-line reason. Read-only tasks, tasks the user asked for themselves (user_requested), and kinds the user told you to start without asking, start at once; the rest wait as a card for the user's 开始. Either way this returns at once: don't wait, carry on. Each queued task is a todo (todo id) whose progress shows in your context snapshot; send to a task's agent with agent_send. Quick things you can do with a tool yourself (a reminder, an event) are not tasks. A task stays on its requested machine by default (machine_policy=fixed), including retries. An unavailable launcher fails there; do not reroute machine-local work. Use machine_policy=flexible only when the task may run on another computer: a failed health check can then move it, and its why says so. The response confirms queued dispatch, not a successful Agent start; inspect the task outcome. From a leader conversation (assistant.leaders) or any other side conversation you supervise what you hand out; you get a 督办 message when one needs you, and you close it with task_review, not by repeating its agent's words. What the main conversation hands out to no leader is followed up by the background supervisor by default (a built-in conversation: it gets the 督办 messages and reviews the tasks with task_review; the main conversation may still review them), and by the main conversation itself, in the same way as a leader, when assistant.main_supervises_own_tasks is on. A conversation that cannot be sent a 督办 message leaves what it hands out to that same follow-up (the background supervisor, or the main conversation), and gets a one-line notice with the task's link when each one ends. The answer says who follows the tasks up. The answer lists work already going on that looks like the same task: check it before you let both go on. A todo this conversation opened that has no agent yet (one opened from a Lark topic: the message that handed it to you names its id) is the task's own: give that id as the task's todo_id and the agent works on it, instead of a new todo being made; any other todo_id is refused with why. From the main conversation, supervisor hands the whole plan to a leader conversation (one of assistant.leaders): its tasks are that leader's to supervise and review, as if it had handed them out; leave it out for work of no direction, which is followed up as said above. Every task gets a brief, kept from the moment it starts and never rewritten: the hub records the owner's message that led to it (their words, from this conversation; work you start on your own after a 督办 message, a notice or a routine is recorded as yours, with started_why), and you supply the goal, done_when, expect_minutes and out_of_bounds. A writable task (readonly false) without done_when (at least one result that can be checked) and expect_minutes is refused, and so is a read-only task without goal and expect_minutes; the refusal says what is missing. The card shows the brief, so the owner's 开始 confirms it. A task that takes over from an earlier one (a retry on another computer, a rework round, a new agent after the first failed, a part split off) gives continues (that task's todo id) and continues_why: it keeps that task's brief (the owner's request, the criteria as they stand, the clock) while its prompt is its own, and the earlier task is linked as superseded; do not restate the request in a new brief. After a task started, done_when changes only with task_scope. A task that changes files takes the default permission mode unless you set one. A task that only reads sets readonly true, and its first message automatically includes the read-only constraint. Claude-family launchers always start in bypassPermissions mode for both read-only and writable tasks. Codex read-only tasks keep the plan-mode sandbox. role "leader" makes the task's agent a task leader, which can hand direct workers to its own task through its own restricted task_plan and task_review and receives their supervision messages; use it only for a task that splits into several agents' work; any conversation may set it. Depth stops there: the leader's workers cannot hand tasks on.
+Plan Agent work (code, repo research, or more than a few tool calls) instead of starting agents yourself: one task per independent piece. Check machines_list before choosing resources. Fill every field from the knowledge base, agents_list and user preferences; each choice is an editable chip with your one-line reason. Read-only tasks, tasks the user asked for themselves (user_requested), and kinds the user told you to start without asking, start at once; the rest wait as a card for the user's 开始. Returns immediately: carry on. Each queued task becomes a todo in your context snapshot; use agent_send to reach its Agent. Things a tool does for you (a reminder, an event) are not tasks. A task stays on its requested machine by default (machine_policy=fixed), including retries. An unavailable launcher fails there; do not reroute machine-local work. Use machine_policy=flexible only when the task may run on another computer: a failed health check can then move it, and its why says so. The response confirms queued dispatch, not an Agent start; check the task outcome. From a leader conversation (assistant.leaders) or any other side conversation you supervise what you hand out; you get a 督办 message when one needs you, and you close it with task_review, not by repeating its agent's words. What the main conversation hands out to no leader is followed up by the background supervisor by default (a built-in conversation that gets the 督办 messages and reviews with task_review; the main conversation may too), and by the main conversation itself, as a leader would, when assistant.main_supervises_own_tasks is on. A conversation that cannot be sent a 督办 message leaves what it hands out to that same follow-up, and gets a one-line notice with the task's link when each one ends. The answer says who follows up. The answer lists running work that looks like the same task: check it before letting both go on. A todo this conversation opened with no agent yet (a Lark topic's, named in the message that handed it over, a todo_create part_of piece, or a failed start) is the task's own: give it as todo_id and no new todo is made. From the main conversation, supervisor hands the whole plan to a leader conversation (one of assistant.leaders), which supervises and reviews its tasks as if it had handed them out; leave it out for work of no direction. Every task gets a brief, kept from the moment it starts and never rewritten: the hub records the owner's message that led to it (their words, from this conversation; work you start on your own after a 督办 message, a notice or a routine is recorded as yours, with started_why), and you supply the goal, done_when, expect_minutes and out_of_bounds. A writable task (readonly false) without done_when (at least one checkable result) and expect_minutes is refused, and so is a read-only task without goal and expect_minutes; the refusal says what is missing. The card shows the brief, so the owner's 开始 confirms it. For rework, replacement or a retry on another computer, give continues and continues_why (see continues); a start that did not come up is retried with task_retry, also on another launcher. Apply owner-authorized scope changes with task_scope before planning and pass its scope_revision to reject staleness. Supply goal, authorization bounds, and new information; the manager appends effective criteria. A task that changes files sets readonly false with explicitly authorized writable permission (for example, Codex bypassPermissions), which also lets a replacement Agent on the same todo implement fixes. A read-only Codex sandbox cannot be changed in place: use a fresh writable process; with no permission change, a plain agent_send follow-up to the live Agent is fine. A task that only reads sets readonly true; its first message includes the read-only constraint. Claude-family launchers use bypassPermissions for both read-only and writable tasks; Codex uses plan unless assistant.readonly_mode=prompt (normal runtime permissions, not a security boundary). pi, cursor and agy have no read-only mode and are refused in either setting. role "leader" makes the task's agent a task leader: it hands direct workers to its own task through its own restricted task_plan and task_review and gets their supervision messages; only for a task that splits into several agents' work. Its workers cannot hand tasks on.
 
-When repository identity needs resolving, consult repositories_list and retrieve repository_get details only when useful. The user's explicit repository URL or path takes precedence. A saved binding is a reference, not authorization or an allowlist; never infer a machine or checkout path from it. Non-repository tasks do not need a lookup, and retrieval is not a mandatory dispatch preflight.
+When repository identity needs resolving, consult repositories_list, and repository_get only when useful. The user's explicit repository URL or path takes precedence. A saved binding is a reference, not authorization or an allowlist; never infer a machine or checkout path from it. Non-repository tasks need no lookup; retrieval is not a mandatory dispatch preflight.
 
-Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch":"task/my-change"}} for an explicit branch, {"existing":"<cwd or workspace_id>"} for a named checkout, or "none" for no managed workspace. If omitted, readonly defaults to none; writable Git tasks use assistant.task_workspace_preference (prefer-existing by default, prefer-new for isolation); an occupied directory defaults to new. Explicit existing is never silently switched and is refused with the occupying task's id/title. The machine's herdr/Orca engine chooses the new path and registers it; never run git worktree add yourself. The plan card previews the resolved path and lets the user change the policy before Start. New branches default to task/<todo id>. A creation failure starts no agent. Workspaces are silently retained after acceptance.
+Workspace policy: "new" makes an isolated checkout; {"new":{"branch":"task/my-change"}} names its branch; {"existing":"<cwd or workspace_id>"} selects one; "none" creates nothing. Omitted: readonly uses none; writable Git follows assistant.task_workspace_preference (prefer-existing by default, prefer-new for isolation), and an occupied cwd uses new. Explicit existing never switches silently; refusal names its task owner. For an explicit new branch already checked out, reuse requires a clean checkout, no live Agent and no unfinished-task owner; otherwise refuse with its path and known owner. The machine's engine owns creation, location and registration; never run git worktree add. The card previews the path and is editable before Start. Default branch: task/<todo id>. Creation failure starts no Agent. Workspaces remain after acceptance. Organization read-only policy refusals include their reason: follow it, never retry unchanged.
 
 ```json
 {
@@ -62,11 +62,11 @@ Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch"
           },
           "launcher": {
             "type": "string",
-            "description": "launcher name, one that machine has (a name it lacks is refused, listing the ones it has); empty: the default, or one the machine has when it lacks the default (claude first; the why says so)"
+            "description": "launcher name, one that machine has (a name it lacks is refused, listing the ones it has): a Claude Code launcher, or pi, cursor or agy to start that agent in herdr; empty: the default, or one the machine has when it lacks the default (claude first; the why says so)"
           },
           "model": {
             "type": "string",
-            "description": "model id (an alias such as opus, or a gateway's own id; letters, digits and . _ - / : @ [ ] only, or a leading ~ as in ~vendor/model-latest); empty: the launcher's default"
+            "description": "model id the agent takes (an alias such as opus, a gateway's own id, or a provider/model such as ag-chat/cursor/grok-4.7 for pi; letters, digits and . _ - / : @ [ ] only, or a leading ~ as in ~vendor/model-latest); empty: the launcher's default"
           },
           "permission": {
             "type": "string",
@@ -77,7 +77,7 @@ Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch"
               "auto",
               "bypassPermissions"
             ],
-            "description": "permission mode; empty: the default for writable tasks (the user's default permission mode, else Claude Code's default mode on that computer). Claude-family launchers always use bypassPermissions; readonly=true adds a read-only constraint to the first prompt instead of forcing plan. Codex read-only tasks keep plan"
+            "description": "permission mode; empty: the default for writable tasks. Set an explicit writable mode (for example bypassPermissions) with readonly=false when a replacement Agent must implement fixes on the same todo. Read-only modes: see the description. traex and omp take none"
           },
           "role": {
             "type": "string",
@@ -90,7 +90,7 @@ Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch"
           },
           "readonly": {
             "type": "boolean",
-            "description": "true when the task only reads (looks things up, reads code, does not change project files). The first message automatically adds「本任务只读：不改项目文件、不提交、不对外写入」. Claude-family launchers still use bypassPermissions; Codex keeps its plan read-only sandbox"
+            "description": "true only for a task that must remain read-only; false for authorized file changes. A replacement on a Codex plan/read-only sandbox needs a fresh writable process: use readonly=false and explicit writable permission rather than mutating the running sandbox. The first message adds「本任务只读：不改项目文件、不提交、不对外写入」 only when true"
           },
           "user_requested": {
             "type": "boolean",
@@ -106,7 +106,7 @@ Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch"
             "items": {
               "type": "string"
             },
-            "description": "what done means: results you will check before you accept it (Chinese, one each), e.g. 「PR 合并到 master」「浅色 / 深色截图贴进 PR」「线上 hub 已部署并验证」; the agent is told them. Required for a writable task (at least one); with continues the earlier task's criteria apply and this is ignored"
+            "description": "what done means: results you will check before you accept it (Chinese, one each), e.g. 「PR 合并到 master」「浅色 / 深色截图贴进 PR」「线上 hub 已部署并验证」; the agent is told them. Required for a writable task (at least one); with continues the effective criteria from the original to-do apply and this is ignored"
           },
           "goal": {
             "type": "string",
@@ -122,11 +122,15 @@ Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch"
           },
           "continues": {
             "type": "string",
-            "description": "optional: the todo id of the task this one takes over from or was split off; it keeps that task's brief and criteria instead of getting new ones. Needs continues_why"
+            "description": "optional: the original todo id this task continues. Continuations always reuse this same todo and its original brief and effective criteria; never split work to a new todo. At Start, stop/release still-active prior Agents and reopen this todo if closed. Refuse unauthorized takeovers, an unreachable prior Agent that cannot be stopped, and legacy open successor duplicates. Failed starts keep this todo. Needs continues_why; if no permission change is wanted, agent_send can follow up the same live Agent"
+          },
+          "scope_revision": {
+            "type": "string",
+            "description": "with continues after a scope change: the exact scope_revision returned by task_scope; refuse planning if it is stale"
           },
           "continues_why": {
             "type": "string",
-            "description": "with continues: one line on why the earlier task stopped and this one takes over (shown in the task's lineage)"
+            "description": "with continues: one line on why the earlier task stopped or needs a replacement; kept on this continuation's plan"
           },
           "started_why": {
             "type": "string",
@@ -147,11 +151,26 @@ Workspace policy: set workspace="new" for an isolated checkout, {"new":{"branch"
           },
           "project": {
             "type": "string",
-            "description": "optional: the knowledge-base project it belongs to: the slug or name of an existing project, usually a long-term one for an area of the user's work (kb_list projects). Set it when the area is clear; never make up a near-duplicate of an existing project"
+            "description": "optional: its knowledge-base project, an existing one's slug or name (kb_list projects), set when the area of work is clear; never a near-duplicate"
+          },
+          "part_of": {
+            "type": "string",
+            "description": "optional: the request to-do this is a piece of"
+          },
+          "after": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "with part_of: the pieces it waits for"
           },
           "todo_id": {
             "type": "string",
-            "description": "optional: the todo this task runs on instead of a new one, when this conversation opened it and no agent is on it yet (the id the Lark-topic message gave you); at most one task per todo; leave it out for a task with no such todo"
+            "description": "optional: an open or failed-start todo this conversation opened or supervises, with no live Agent (stopped ones are released at Start). To stop a live Agent or reopen a done one use continues; given both, they name the same todo"
+          },
+          "inbox_item": {
+            "type": "string",
+            "description": "Exact handed-off Inbox id for related work only. Checked against this conversation and manager; links the task without filing or replying."
           },
           "tier": {
             "type": "string",

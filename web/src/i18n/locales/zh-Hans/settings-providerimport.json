@@ -5,6 +5,7 @@
   "computer": "电脑",
   "computer_hint": "读这台电脑 ~/.zshrc、~/.bashrc 和 ~/.bash_aliases 里调用 claude 的 alias，按地址和 Key 分组。Key 由 hub 从那台电脑读，不经过浏览器。",
   "offline_suffix": "（离线）",
+  "failed_from": "从 {computer} 导入失败：{error}",
   "empty": "这台电脑的 ~/.zshrc、~/.bashrc 和 ~/.bash_aliases 里没有能导入的 claude alias。",
   "list_label": "可以导入的供应商",
   "merge_note": "合并只把新的模型加进已有的供应商，其他设置不变。",

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Pages of long sessions come with the agent's work folded (`Item.fold`, docs/protocol/protocol.md「Folded work」): the work
 /// line counts what a fold stands for, a fold replaces the steps it covers, and opening it puts the steps back.
@@ -71,6 +72,22 @@ struct FoldedWorkTests {
         await rebuilt(s)
         guard case .turn(let t) = s.blocks.first else { Issue.record("no turn"); return }
         #expect(t.toolCount == 4)
+    }
+
+    @Test func narrationTextFollowsItsFoldInBothDirections() {
+        let s = store()
+        let prompt = item(1, .text, role: "user", text: "go"), answer = item(20, .text, text: "done")
+        let narration = [item(2, .text, text: "first"), item(3, .text, text: "second"), item(4, .text, text: "third")]
+        let f = fold(2, 4, tools: 0)
+        s.merge([prompt, f, answer], backlog: true, hasMore: false)
+
+        // An overlapping expanded page replaces the fold; the final answer outside its range stays.
+        s.merge(narration)
+        #expect(s.items.map(\.seq) == [1, 2, 3, 4, 20])
+
+        // A later folded page is authoritative too: no narration and fold may coexist.
+        s.merge([prompt, f, answer], backlog: true, hasMore: false)
+        #expect(s.items.map(\.id) == ["1#0", "fold:2#0", "20#0"])
     }
 
     /// Work opened here stays open when a page folds it again. As a chat opens, the latest page can come twice (over

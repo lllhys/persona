@@ -17,3 +17,13 @@ func updateProcessArgv(pid int) ([]string, error) {
 	}
 	return strings.Split(string(data[:len(data)-1]), "\x00"), nil
 }
+
+// processExecPath is the executable the kernel ran for pid: /proc/<pid>/exe (a file replaced on disk since keeps
+// its path, without the kernel's " (deleted)").
+func processExecPath(pid int) (string, error) {
+	p, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(p, " (deleted)"), nil
+}

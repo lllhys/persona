@@ -12,7 +12,7 @@ import (
 func TestConfigReadsTheManagerSectionsFromManagerJSON(t *testing.T) {
 	dir := t.TempDir()
 	hub := `{"listen":":18999","token":"hub-token","public_url":"http://hub.example.com:18999",
-		"google":{"client_id":"stale"},"extensions":[{"id":"stale"}],"lark":{"account":7},"inbox":{"rules":"hub rules"}}`
+		"google":{"client_id":"stale"},"extensions":[{"id":"stale"}],"extension_market":{"proxy":"http://stale.example:3128"},"lark":{"account":7},"inbox":{"rules":"hub rules"}}`
 	if err := os.WriteFile(filepath.Join(dir, "hub.json"), []byte(hub), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestConfigReadsTheManagerSectionsFromManagerJSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	mine := `{"token":"not-the-hub's","google":{"client_id":"mine"},"bots":{"feishu":{"app_id":"cli_example"}},"inbox":{"rules":"my rules"}}`
+	mine := `{"token":"not-the-hub's","google":{"client_id":"mine"},"bots":{"feishu":{"app_id":"cli_example"}},"extension_market":{"proxy":"socks5://proxy.example:1080"},"inbox":{"rules":"my rules"}}`
 	if err := os.WriteFile(file, []byte(mine), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -31,15 +31,15 @@ func TestConfigReadsTheManagerSectionsFromManagerJSON(t *testing.T) {
 	if cfg.Listen != ":18999" || cfg.Token != "hub-token" || cfg.PublicURL != "http://hub.example.com:18999" || cfg.Inbox.Rules != "my rules" {
 		t.Fatalf("hub.json's own keys: %+v", cfg)
 	}
-	if cfg.Google.ClientID != "mine" || cfg.Bots.Feishu.AppID != "cli_example" {
-		t.Fatalf("manager.json's sections: %+v %+v", cfg.Google, cfg.Bots)
+	if cfg.Google.ClientID != "mine" || cfg.Bots.Feishu.AppID != "cli_example" || cfg.ExtensionMarket.Proxy != "socks5://proxy.example:1080" {
+		t.Fatalf("manager.json's sections: %+v %+v %+v", cfg.Google, cfg.Bots, cfg.ExtensionMarket)
 	}
 	if len(cfg.Extensions) != 0 || cfg.Lark.Account != 0 {
 		t.Fatalf("read hub.json's stale copies: %+v %+v", cfg.Extensions, cfg.Lark)
 	}
 	// Without a manager.json yet everything moved stays empty (the move runs before, at start).
 	cfg, err = loadConfig(dir, filepath.Join(t.TempDir(), "manager.json"))
-	if err != nil || cfg.Google.ClientID != "" || cfg.Token != "hub-token" {
+	if err != nil || cfg.Google.ClientID != "" || cfg.ExtensionMarket.Proxy != "" || cfg.Token != "hub-token" {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 }

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// `Throttle` (#4684): the session snapshot is written once after a quiet spell, then at most once per gap, and at once
 /// when the app leaves.

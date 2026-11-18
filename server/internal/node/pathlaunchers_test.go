@@ -193,6 +193,8 @@ alias cc_alias="ls"
 cc_fn() { echo not claude; }
 `
 	list, _, settings, scripts := mergeLaunchers(asNodeIn(t, home, defs, launcherScript))
+	// pi, cursor-agent or agy installed on this machine are reported too; this test is about the script on PATH.
+	list = withoutInstalledWorkAgents(list)
 	if got := launcherNames(list); !slices.Equal(got, []string{"claude-demo:path"}) {
 		t.Fatalf("launchers %v", got)
 	}

@@ -24,7 +24,7 @@ func nameCmd(e *env, args []string) error {
 	case len(args) == 0:
 		c, err := link.Read(path)
 		if errors.Is(err, os.ErrNotExist) {
-			return errors.New("还没配对：先 persona-link pair")
+			return link.NewTextError("link-cli.name_not_paired", nil)
 		}
 		if err != nil {
 			return err
@@ -34,11 +34,11 @@ func nameCmd(e *env, args []string) error {
 			id, name = c.Passive.Machine, c.Passive.MachineName
 		}
 		if id == "" {
-			return errors.New("还没配对：先 persona-link pair")
+			return link.NewTextError("link-cli.name_not_paired", nil)
 		}
 		fmt.Fprintln(e.stdout, cmp.Or(name, id))
 		if name != "" && name != id {
-			fmt.Fprintf(e.stdout, "（id %s，不会变）\n", id)
+			fmt.Fprintln(e.stdout, terminalText("link-cli.name_id_stable", i18n.Args{"id": id}))
 		}
 		return nil
 	case len(args) > 1:
@@ -53,11 +53,11 @@ func nameCmd(e *env, args []string) error {
 	got, err := link.RequestRename(ctx, path, name)
 	var re *link.RenameError
 	if errors.As(err, &re) {
-		return errors.New(re.Text(i18n.ZhHans))
+		return errors.New(re.Text(i18n.Terminal()))
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(e.stdout, "好了：这台电脑在 hub 上叫「%s」，App、网页和管理界面里马上就会变。\n", strings.TrimSpace(got))
+	fmt.Fprintln(e.stdout, terminalText("link-cli.name_success", i18n.Args{"name": strings.TrimSpace(got)}))
 	return nil
 }

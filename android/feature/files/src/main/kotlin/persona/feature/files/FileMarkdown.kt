@@ -9,7 +9,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.painter.Painter
-import androidx.compose.ui.layout.FirstBaseline
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
@@ -164,11 +163,12 @@ private fun fileMarkdownTypography() = PersonaTheme.type.let { type ->
 @Composable
 private fun fileMarkdownComponents() = markdownComponents(
     orderedList = { model -> MarkdownOrderedList(model.content, model.node, depth = model.listDepth,
-        markerModifier = { Modifier.alignBy(FirstBaseline).padding(end = Tokens.Space.s) },
-        listModifier = { Modifier.weight(1f).alignBy(FirstBaseline) }) },
+        markerModifier = { firstBaselineAligned().padding(end = Tokens.Space.s) },
+        listModifier = { firstBaselineAligned(Modifier.weight(1f)) }) },
     unorderedList = { model -> MarkdownBulletList(model.content, model.node, depth = model.listDepth,
-        markerModifier = { Modifier.alignBy(FirstBaseline).padding(end = Tokens.Space.s) },
-        listModifier = { Modifier.weight(1f).alignBy(FirstBaseline) }) },
+        markerModifier = { firstBaselineAligned().padding(end = Tokens.Space.s) },
+        listModifier = { firstBaselineAligned(Modifier.weight(1f)) }) },
+    table = { model -> ReadableMarkdownTable(model.content, model.node, model.typography.table) },
     codeFence = { model ->
         MarkdownFence(model.content.substring(model.node.startOffset, model.node.endOffset)) { JCodeBlock(it.code, small = true) }
     },

@@ -227,7 +227,7 @@ class HttpChatActionsTest {
             val actions = actions(server)
             val session = Session(machineId = "m", sessionId = "s/1")
             server.enqueue(MockResponse().setBody("""{"queue":["先跑测试","再提交",1]}"""))
-            assertEquals(listOf("先跑测试", "再提交"), (actions.editQueue(session, listOf(1))).zhAny())
+            assertEquals(listOf("先跑测试", "再提交"), (actions.editQueue(session, listOf(1)).queue).zhAny())
             val edit = server.takeRequest()
             assertEquals("POST", (edit.method).zhAny())
             assertEquals("/api/v1/sessions/m/s%2F1/queue", (edit.path).zhAny())
@@ -240,6 +240,28 @@ class HttpChatActionsTest {
             val failure = runCatching { actions.editQueue(session, emptyList()) }.exceptionOrNull() as HubFailure
             assertEquals("queue_changed", (failure.code).zhAny())
             assertEquals(3, server.requestCount)
+        }
+    }
+
+    @Test fun aPersonaQueueEditReturnsEachMessagesPhotosBesideItsWords() = runBlocking {
+        MockWebServer().use { server ->
+            val actions = actions(server)
+            val session = Session(machineId = "m", sessionId = "a1", assistant = true)
+            // The hub's answer: images[i] are message i's photos, null for a message without (spec/fixtures/wire/queue.json).
+            server.enqueue(MockResponse().setBody("""{"queue":["看看这张","再查一遍"],"images":[[{"mime":"image/png","data":"AAEC"}],null]}"""))
+            val edit = actions.editQueue(session, listOf(1))
+            assertEquals(listOf("看看这张", "再查一遍"), edit.queue.zhAny())
+            assertEquals(listOf(ImagePayload("image/png", "AAEC")), edit.imagesOf(0))
+            assertEquals(emptyList<ImagePayload>(), edit.imagesOf(1))
+            assertEquals(emptyList<ImagePayload>(), edit.imagesOf(2))
+            // Words only (no photos at all, an Agent's queue, an older hub): the key is not there.
+            server.enqueue(MockResponse().setBody("""{"queue":["先跑测试"]}"""))
+            val plain = actions.editQueue(session, emptyList())
+            assertEquals(listOf("先跑测试"), plain.queue.zhAny())
+            assertEquals(emptyList<List<ImagePayload>?>(), plain.images)
+            // A photo list that is not one drops alone: the words still come back.
+            server.enqueue(MockResponse().setBody("""{"queue":["先跑测试"],"images":"none"}"""))
+            assertEquals(listOf("先跑测试"), actions.editQueue(session, emptyList()).queue.zhAny())
         }
     }
 
@@ -310,6 +332,24 @@ class HttpChatActionsTest {
             assertEquals(emptyList<InteractionRecord>(), actions.interactionHistory(Session(machineId = "m", sessionId = "s")))
             server.enqueue(MockResponse().setResponseCode(503).setBody("""{"error":"assistant offline","code":"assistant_offline"}"""))
             assertEquals(503, (runCatching { actions.interactionHistory(Session(machineId = "m", sessionId = "s")) }.exceptionOrNull() as HubFailure).status)
+        }
+    }
+
+    @Test fun catalogPricesPostsIdsAndKeepsAModelThatHasNone() = runBlocking {
+        MockWebServer().use { server ->
+            val actions = actions(server)
+            server.enqueue(MockResponse().setBody("""{"models":[{"id":"claude-opus-5-5","name":"Opus","price":{"input":4,"output":20,"cache_read":0.2}},{"id":"claude-haiku-5-5","name":"Haiku"}]}"""))
+            val prices = actions.catalogPrices(listOf("claude-opus-5-5", "claude-haiku-5-5"))
+            val request = server.takeRequest()
+            assertEquals("POST", request.method)
+            assertEquals("/api/v1/launchers/catalog", request.path)
+            assertEquals(listOf("claude-opus-5-5", "claude-haiku-5-5"),
+                JsonCodec.parseToJsonElement(request.body.readUtf8()).jsonObject["ids"]!!.jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(4.0, prices["claude-opus-5-5"]!!.input)
+            assertEquals(0.2, prices["claude-opus-5-5"]!!.cacheRead)
+            assertTrue(prices.containsKey("claude-haiku-5-5"))
+            assertNull(prices["claude-haiku-5-5"])
+            assertFalse(prices.containsKey("left-out"))
         }
     }
 }

@@ -249,8 +249,8 @@ export interface CardReply {
 const unescapeXML = (s: string) =>
   s.replace(/&(lt|gt|amp|quot|#34|#39|apos);/g, (_, e: string) => ({ lt: "<", gt: ">", amp: "&", quot: '"', "#34": '"', "#39": "'", apos: "'" })[e] ?? "");
 
-// Exactly what the hub writes (viewReplyMessage): a last line, nothing after it, attributes XML-escaped, a JSON object
-// whose only key is values (string → string).
+// Exactly what the hub writes (viewReplyMessage, and an HTML card's answer): a last line, nothing after it, attributes
+// XML-escaped, a JSON object whose keys are values (string → string) and, for an HTML card, html: true.
 const TAG = /\n<persona-action view="([^"<>]*)" action="([^"<>]*)">(\{[^<>]*\})<\/persona-action>$/;
 
 /** A message sent from a card: its text without the tag and what was answered; undefined for any other message. */
@@ -263,7 +263,8 @@ export function cardReply(message: string): CardReply | undefined {
   } catch {
     return undefined;
   }
-  if (!isObject(payload) || Object.keys(payload).some((k) => k !== "values")) return undefined;
+  // values, string → string; an HTML card's answer adds html: true and sends no values (view_actions.go, #6281)
+  if (!isObject(payload) || Object.keys(payload).some((k) => k !== "values" && k !== "html") || ("html" in payload && payload.html !== true)) return undefined;
   const values = payload.values ?? {};
   if (!isObject(values) || Object.values(values).some((v) => typeof v !== "string")) return undefined;
   const view = unescapeXML(m[1]);

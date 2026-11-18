@@ -34,6 +34,7 @@
   "waiting_auth": "{name}での承認を待っています…",
   "open_to_enter_code": "{name}を開いてコードを入力",
   "qr_label": "サインイン用QRコード",
+  "scan_to_authorize": "スマートフォンでスキャンして確認すると、自動的に続行します。このコンピュータでリンクを開くこともできます。",
   "bind_in_channels": "設定 › チャネル › {name} でも連携できます。",
   "verifying": "確認中…",
   "next": "次へ",

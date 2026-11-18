@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  homeShellHost,
   buildTerminalTree,
   filterTerminalTree,
   isPaneAddress,
@@ -223,5 +224,14 @@ describe("the page's address", () => {
     expect(parse("/terminal")).toEqual({ name: "terminal" });
     expect(href({ name: "terminal" })).toBe("/terminal");
     expect(parse("/terminal/mac")).toEqual({ name: "terminal" }); // half an address is the list
+  });
+});
+
+describe("New terminal with no workspace", () => {
+  const host = (kind: string, newTab: boolean) => ({ kind, stream: true, control: true, new_tab: newTab, workspaces: [], tabs: [], panes: [] });
+  it("opens in the first engine that opens tabs, none when no engine can", () => {
+    expect(homeShellHost({ hosts: [host("orca", false), host("herdr", true)] })).toBe("herdr");
+    expect(homeShellHost({ hosts: [host("orca", false)] })).toBeUndefined();
+    expect(homeShellHost(undefined)).toBeUndefined();
   });
 });

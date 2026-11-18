@@ -31,6 +31,8 @@ class AppUpdateStoreTest {
         val restored = persistentAppUpdateState(context, api, "hub-a")
         assertEquals(release, restored.state.value.latest)
         assertTrue(restored.state.value.notice)
+        assertEquals(AppUpdateState.Result.Available, restored.state.value.result)
+        assertNotNull(restored.state.value.lastChecked)
         restored.check()
         assertEquals(1, calls)
         restored.dismiss()
@@ -60,6 +62,7 @@ class AppUpdateStoreTest {
         blocked.complete(Unit)
         inFlight.join()
         assertNull(old.state.value.latest)
+        assertEquals(AppUpdateState.Result.Unknown, old.state.value.result)
         old.check(manual = true)
         assertEquals(1, checks)
         assertThrows(IllegalStateException::class.java) {

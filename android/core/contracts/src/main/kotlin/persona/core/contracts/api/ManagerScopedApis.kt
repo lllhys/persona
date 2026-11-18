@@ -1,6 +1,9 @@
 package persona.core.contracts.api
 
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 
 // Settings for the current assistant (docs/assistant/managers.md "Clients"): every request made through one of these
 // names [manager] (RequestManager), as ProviderSetup.forManager and ModelConfiguration.forManager do, so a page reads
@@ -8,6 +11,10 @@ import kotlinx.coroutines.withContext
 
 /** This triage API with every request for [manager]. */
 fun AgentTriage.forManager(manager: String): AgentTriage = ManagerAgentTriage(this, RequestManager(manager))
+
+/** This knowledge-selection API with every request and invalidation for [manager]. */
+fun KnowledgeSelection.forManager(manager: String): KnowledgeSelection =
+    ManagerKnowledgeSelection(this, manager, RequestManager(manager))
 
 /** This connectors API (connectors, mail accounts, Lark, Messages) with every request for [manager]. */
 fun ConnectorsManagement.forManager(manager: String): ConnectorsManagement = ManagerConnectors(this, RequestManager(manager))
@@ -21,9 +28,28 @@ fun FeishuBotSettings.forManager(manager: String): FeishuBotSettings = ManagerFe
 /** This sent-as-you ledger with every request for [manager]. */
 fun HubSent.forManager(manager: String): HubSent = ManagerSent(this, RequestManager(manager))
 
+/** This standing-authorizations list with every request for [manager]. */
+fun StandingAuthorizationsSource.forManager(manager: String): StandingAuthorizationsSource =
+    ManagerStandingAuthorizations(this, RequestManager(manager))
+
 private class ManagerAgentTriage(private val source: AgentTriage, private val owner: RequestManager) : AgentTriage {
     override suspend fun switches() = withContext(owner) { source.switches() }
     override suspend fun put(value: TriageSwitches) = withContext(owner) { source.put(value) }
+}
+
+private class ManagerKnowledgeSelection(
+    private val upstream: KnowledgeSelection,
+    private val manager: String,
+    private val owner: RequestManager,
+) : KnowledgeSelection {
+    override val changes = upstream.changes.filter { persona.core.contracts.pushManager(it.manager) == manager }
+    override suspend fun selection() = withContext(owner) { upstream.selection() }
+    override suspend fun put(document: JsonObject) = withContext(owner) { upstream.put(document) }
+    override suspend fun <T> withPinnedConnection(block: suspend KnowledgeSelection.() -> T): T =
+        withContext(owner) { upstream.withPinnedConnection(block) }
+    override suspend fun candidates(source: String) = withContext(owner) { upstream.candidates(source) }
+    override suspend fun documents() = withContext(owner) { upstream.documents() }
+    override suspend fun document(id: String) = withContext(owner) { upstream.document(id) }
 }
 
 private class ManagerChannels(private val source: ChannelManagement, private val owner: RequestManager) : ChannelManagement by source {
@@ -38,6 +64,16 @@ private class ManagerChannels(private val source: ChannelManagement, private val
 private class ManagerFeishuBot(private val source: FeishuBotSettings, private val owner: RequestManager) : FeishuBotSettings {
     override suspend fun status() = withContext(owner) { source.status() }
     override suspend fun update(update: FeishuBotUpdate) = withContext(owner) { source.update(update) }
+}
+
+private class ManagerStandingAuthorizations(
+    private val source: StandingAuthorizationsSource,
+    private val owner: RequestManager,
+) : StandingAuthorizationsSource {
+    override val hubIdentity: StateFlow<String> get() = source.hubIdentity
+    override fun pinned(): StandingAuthorizationsSource = ManagerStandingAuthorizations(source.pinned(), owner)
+    override suspend fun list() = withContext(owner) { source.list() }
+    override suspend fun revoke(id: String) = withContext(owner) { source.revoke(id) }
 }
 
 private class ManagerSent(private val source: HubSent, private val owner: RequestManager) : HubSent {
@@ -80,4 +116,7 @@ private class ManagerConnectors(private val source: ConnectorsManagement, privat
     override suspend fun deleteMessagesData() = withContext(owner) { source.deleteMessagesData() }
     override suspend fun messagesChats(before: String?) = withContext(owner) { source.messagesChats(before) }
     override suspend fun messagesThread(chatId: String, before: String?) = withContext(owner) { source.messagesThread(chatId, before) }
+    override suspend fun gitHubAuth() = withContext(owner) { source.gitHubAuth() }
+    override suspend fun setGitHubAuth(machine: String?) = withContext(owner) { source.setGitHubAuth(machine) }
+    override suspend fun setGitHubInboxOptions(options: GitHubInboxOptions) = withContext(owner) { source.setGitHubInboxOptions(options) }
 }

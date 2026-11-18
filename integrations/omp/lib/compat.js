@@ -21,7 +21,7 @@ export function ompConfigPath(dir = agentDir()) {
 export function oneShot(argv = process.argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
-    if (a === '-p' || a === '--print' || a === '--mode=json') return true
+    if (a === '-p' || a === '--print' || a.startsWith('--print=') || a === '--mode=json') return true
     if (a === '--mode' && argv[i + 1] === 'json') return true
   }
   return false

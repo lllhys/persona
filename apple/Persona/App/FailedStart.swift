@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonaWire
 
 /// A new conversation's first message that did not start one (#1368): it stays on the new-conversation page, drawn as
 /// the chat draws a message that did not go (`PendingBubble`, failed), with the reason, Resend and Delete, and the

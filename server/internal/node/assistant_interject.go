@@ -13,22 +13,23 @@ import (
 // Ctrl+B does in the terminal, so the model sees the message at once; the work goes on and its completion comes back
 // as a task notification (#3278).
 
-// backgroundTasksMinVersion is the first Claude Code whose stream-json control channel takes background_tasks
-// (Agent SDK 0.2.139).
+// backgroundTasksMinVersion is the first Claude Code whose stream-json control channel takes background_tasks.
 var backgroundTasksMinVersion = [3]int{2, 1, 139}
 
 // midTurn says whether a message to p now comes in the middle of a turn: it is Claude on the CLI, busy answering. Such
 // a message always carries interjectNote, whatever the background setting: without it the model went on with its tool
 // calls for minutes and never said a word to the user who asked what was going on (#4883). Called before the message
-// marks it busy.
+// marks it busy. A model recovery's resend is not such a message, though it finds p busy: that busy is the recovery's
+// hold on the failed turn the resend continues, and assistantSend asks neither midTurn nor interjects for it (#10178).
 func (p *assistantProc) midTurn() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.agent == "claude" && p.runtime == "" && p.busy
+	return p.agent == "claude" && p.busy
 }
 
 // interjects says whether a message to p now goes in as an interjection that moves foreground work to the background:
-// it comes mid-turn, and its init said a Claude Code that takes background_tasks. Called before the message marks it busy.
+// it comes mid-turn, and its init said a Claude Code that takes background_tasks. Called before the message marks it
+// busy; never for a model recovery's resend, which the user did not send (midTurn).
 func (p *assistantProc) interjects() bool {
 	if !p.midTurn() {
 		return false

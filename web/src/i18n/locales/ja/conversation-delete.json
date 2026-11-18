@@ -1,0 +1,10 @@
+{
+  "delete_confirm": "会話を削除",
+  "delete_title": "「{title}」を削除しますか？",
+  "delete_body": "この会話とメッセージを Persona から完全に削除します。元に戻すことはできません。関連タスク、Agent、保存済みの知識、コンピューター上の会話記録ファイルは保持されます。",
+  "delete_unavailable": "この会話は処理中または応答待ちのため、削除できません。",
+  "delete_unconfirmed": "削除を確認できませんでした。もう一度お試しください。",
+  "deleted_title": "会話は削除されました",
+  "deleted_body": "この会話は削除されたため、メッセージを表示できません。",
+  "all_chats": "すべての会話"
+}

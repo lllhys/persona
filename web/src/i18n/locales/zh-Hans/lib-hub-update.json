@@ -17,6 +17,9 @@
   "cannot_update": "这个 hub 不会自己更新。",
   "warning_bad": "这一版上次装完起不来，已经回滚过；自动更新不会再装它。",
   "warning_held": "自动更新不会装这一版：{why}。确认没问题可以手动更新。",
+  "warning_source_behind": "更新源 {url}（{from}）最新只有 {version}，比这个 hub 还旧，看起来已经不再发布了。在 hub.json 的 update.url 里换一个更新源。",
+  "source_from_build": "编译时写入",
+  "source_from_config": "hub.json 的 update.url",
   "new_image": "新镜像 {version}",
   "docker_set_image": "在 hub 所在的机器上，把 compose 文件旁边 .env 里的 PERSONA_IMAGE 改成：",
   "docker_then_run": "再在那个目录里运行：",
@@ -30,5 +33,8 @@
   "notice_turn_off": "关闭",
   "notice_got_it": "知道了",
   "notice_dismiss": "不再提示",
-  "notice_open": "打开设置 › hub"
+  "notice_open": "打开设置 › hub",
+  "state_building": "正在编译…",
+  "state_backing_up": "正在备份…",
+  "state_applying_backup": "正在准备备份程序…"
 }

@@ -132,7 +132,9 @@ describe("hand-off cards", () => {
     getFeedState().plans[plan.id] = plan;
     await show({ id: "plan-event", conversation, at, kind: "plan", ref: plan.id }, [linked("broken-task", "Broken task", [], { start_error: "launcher missing", done_at: at })], []);
     const [broken, removed] = cards();
-    expect(broken!.textContent).toContain(t("assistant-tasks.start_failed", { error: "launcher missing" }));
+    // a raw error that names no known cause says to open the task, where it is (#8237)
+    expect(broken!.textContent).toContain(t("assistant-tasks.start_failed_details"));
+    expect(broken!.textContent).not.toContain("launcher missing");
     expect(removed!.tagName).toBe("DIV");
     expect(removed!.textContent).toContain("Removed task");
     expect(removed!.textContent).toContain(t("assistant-tasks.handoff_gone"));

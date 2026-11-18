@@ -43,7 +43,34 @@ func handledHub(t *testing.T) (*inboxHub, *extensionLark, *InboxItem) {
 
 func suggestTool(t *testing.T, h *inboxHub, args string) (string, error) {
 	t.Helper()
+	turn := inboxTestProcessingTurn(h, "s1")
+	if turn != "" {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(args), &fields); err != nil {
+			t.Fatal(err)
+		}
+		fields["processing_turn"], _ = json.Marshal(turn)
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		args = string(raw)
+	}
 	return h.runTool(context.Background(), "server", "s1", "inbox_suggest", json.RawMessage(args))
+}
+
+func inboxTestProcessingTurn(h *inboxHub, session string) string {
+	h.inbox.mu.Lock()
+	defer h.inbox.mu.Unlock()
+	if it := h.inbox.itemOfAgent(session); it != nil {
+		return it.Agent.ProcessingTurn
+	}
+	return ""
+}
+
+func inboxTestNotificationText(prompt string) string {
+	text, _, _ := strings.Cut(prompt, "\n\n[Persona Inbox processing turn:")
+	return text
 }
 
 func suggestionCall(t *testing.T, h *inboxHub, id string, body string, role ...string) (int, map[string]any) {
@@ -70,6 +97,66 @@ func toldConv(t *testing.T, h *inboxHub, want string) string {
 			t.Fatalf("the conversation was not told %q:\n%s", want, all)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestInboxSuggestionRejectsSupersededProcessingTurn(t *testing.T) {
+	h, _, it := handledHub(t)
+	deliver := func() string {
+		t.Helper()
+		h.inbox.mu.Lock()
+		h.inbox.tell(it, inboxNote{Name: prompts.NoteNewMessages, Text: "A new message"}, true, time.Now())
+		h.inbox.mu.Unlock()
+		h.deliverNotes(t.Context(), it)
+		h.inbox.mu.Lock()
+		turn := it.Agent.ProcessingTurn
+		h.inbox.mu.Unlock()
+		if turn == "" || !strings.Contains(strings.Join(h.f.sentToAgents(), "\n"), fmt.Sprintf("processing_turn: %q", turn)) {
+			t.Fatal("processing prompt did not carry its write precondition")
+		}
+		return turn
+	}
+
+	first, latest := deliver(), deliver()
+	if first == latest {
+		t.Fatal("second delivery reused the first processing turn")
+	}
+	h.inbox.mu.Lock()
+	listed := it.listed()
+	h.inbox.mu.Unlock()
+	if listed.Agent.ProcessingTurn != "" {
+		t.Fatal("listed Inbox item exposed the internal processing turn")
+	}
+
+	for _, args := range []string{
+		fmt.Sprintf(`{"processing_turn":%q,"recap":"Current recap","follow":{"who":"Current contact","next":"Check response","check_in":"1h"}}`, latest),
+		fmt.Sprintf(`{"processing_turn":%q,"kind":"reply","text":"Current reply"}`, latest),
+	} {
+		if _, err := h.runTool(t.Context(), "server", "s1", "inbox_suggest", json.RawMessage(args)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.inbox.mu.Lock()
+	before := string(itemState(it))
+	h.inbox.mu.Unlock()
+	for _, args := range []string{
+		fmt.Sprintf(`{"processing_turn":%q,"kind":"reply","text":"Old reply","recap":"Old recap"}`, first),
+		fmt.Sprintf(`{"processing_turn":%q,"recap":"Old recap","follow":{"who":"Old contact","next":"Check again","check_in":"2h"}}`, first),
+		`{"recap":"Unidentified recap"}`,
+	} {
+		if _, err := h.runTool(t.Context(), "server", "s1", "inbox_suggest", json.RawMessage(args)); !errors.Is(err, errStaleInboxTurn) {
+			t.Fatalf("expected stale turn refusal for %s, got %v", args, err)
+		}
+	}
+	_, err := h.runTool(t.Context(), "server", "s1", "inbox_draft", json.RawMessage(fmt.Sprintf(`{"processing_turn":%q,"text":"Old legacy draft"}`, first)))
+	if !errors.Is(err, errStaleInboxTurn) {
+		t.Fatalf("expected legacy draft tool to refuse a stale turn, got %v", err)
+	}
+	h.inbox.mu.Lock()
+	after := string(itemState(it))
+	h.inbox.mu.Unlock()
+	if after != before {
+		t.Fatal("a refused call changed the current Inbox item")
 	}
 }
 
@@ -109,9 +196,9 @@ func TestInboxSuggestionConfirmReply(t *testing.T) {
 	}
 	h.inbox.mu.Lock()
 	kinds := chainKinds(it)
-	confirmed := it.Chain[len(it.Chain)-2]
+	confirmed := it.Chain[len(it.Chain)-3]
 	h.inbox.mu.Unlock()
-	if kinds[len(kinds)-2] != ChainConfirmed || kinds[len(kinds)-1] != ChainSent || !confirmed.Edited || confirmed.Detail != "可以，周五上午给你" ||
+	if kinds[len(kinds)-3] != ChainConfirmed || kinds[len(kinds)-2] != ChainSent || kinds[len(kinds)-1] != ChainWaiting || !confirmed.Edited || confirmed.Detail != "可以，周五上午给你" ||
 		confirmed.Text != "你确认了（改过文字）" {
 		t.Fatalf("chain: %v %+v", kinds, confirmed)
 	}
@@ -379,6 +466,49 @@ func TestInboxSuggestionToolRules(t *testing.T) {
 	}
 	if out, err := suggestTool(t, h, `{"recap":"只更新总结"}`); err != nil || !strings.Contains(out, "recap") {
 		t.Fatalf("recap only: %s %v", out, err)
+	}
+}
+
+// A late suggestion on a filed item is refused without changing anything; a recap alone is still kept.
+func TestInboxSuggestionOnFiledItem(t *testing.T) {
+	h, _, it := handledHub(t)
+	done := time.Now().Add(-time.Minute).UTC()
+	h.inbox.mu.Lock()
+	h.inbox.file(it, done, "user")
+	it.Recap = "Before filing"
+	before := string(itemState(it))
+	h.inbox.mu.Unlock()
+
+	assertUnchanged := func(t *testing.T) {
+		t.Helper()
+		h.inbox.mu.Lock()
+		after := string(itemState(it))
+		h.inbox.mu.Unlock()
+		if after != before {
+			t.Fatalf("the filed item changed:\nbefore: %s\nafter:  %s", before, after)
+		}
+	}
+	for _, kind := range []string{SuggestReply, SuggestAgent, SuggestConclusion} {
+		t.Run(kind, func(t *testing.T) {
+			args := fmt.Sprintf(`{"kind":%q,"text":"A late suggestion","recap":"Must not replace the recap"}`, kind)
+			if _, err := suggestTool(t, h, args); !errors.Is(err, errSuggestFiled) {
+				t.Fatalf("filed item accepted %s: %v", kind, err)
+			}
+			assertUnchanged(t)
+		})
+	}
+	if _, err := h.runTool(context.Background(), "server", "s1", "inbox_draft", json.RawMessage(`{"text":"A late draft"}`)); !errors.Is(err, errSuggestFiled) {
+		t.Fatalf("inbox_draft on a filed item: %v", err)
+	}
+	assertUnchanged(t)
+
+	if out, err := suggestTool(t, h, `{"recap":"After filing"}`); err != nil || out != "The recap is updated." {
+		t.Fatalf("recap only on a filed item: %q %v", out, err)
+	}
+	h.inbox.mu.Lock()
+	defer h.inbox.mu.Unlock()
+	if it.Recap != "After filing" || it.DoneAt == nil || !it.DoneAt.Equal(done) {
+		t.Fatalf("recap only: recap %q, done at %v", it.Recap, it.DoneAt)
 	}
 }
 

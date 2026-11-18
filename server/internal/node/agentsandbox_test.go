@@ -5,8 +5,10 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -93,14 +95,14 @@ func TestAssistantCLIInAgentSandbox(t *testing.T) {
 	profile := t.TempDir()
 	env := []string{"PATH=/usr/bin:/bin", "CLAUDE_CONFIG_DIR=" + profile}
 	plain := func(args []string) []string {
-		return append([]string{"/bin/zsh", "-ic", "CLAUDE_CONFIG_DIR=" + shellQuote(profile) + ` claude "$@"`, "persona"}, args...)
+		return append([]string{"/bin/zsh", "-ic", "echo " + assistantShellReady + "; CLAUDE_CONFIG_DIR=" + shellQuote(profile) + ` claude "$@"`, "persona"}, args...)
 	}
 
 	n := agentNode(t, false)
 	settings := filepath.Join(n.dir, "launcher-settings", "claude-claude-settings.json")
 	writeFile(t, settings, "{}")
 	args := []string{"-p", "--settings", settings}
-	cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), args, env)
+	cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), false, args, env)
 	if !slices.Equal(cmd.Args, plain(args)) || !slices.Equal(cmd.Env, env) {
 		t.Fatalf("off: %q %q", cmd.Args, cmd.Env)
 	}
@@ -112,7 +114,7 @@ func TestAssistantCLIInAgentSandbox(t *testing.T) {
 	settings = filepath.Join(n.dir, "launcher-settings", "claude-claude-settings.json")
 	writeFile(t, settings, "{}")
 	args = []string{"-p", "--settings", settings}
-	cmd = n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), args, env)
+	cmd = n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), false, args, env)
 	if !inSandbox(cmd.Args) || !slices.Equal(cmd.Args[3:], plain(args)) {
 		t.Fatalf("on: %q", cmd.Args)
 	}
@@ -129,17 +131,17 @@ func TestAssistantCLIInAgentSandbox(t *testing.T) {
 	// A managed launcher's shell runs `personad launch` outside the sandbox: it fetches the launcher's settings, then
 	// wraps the agent it execs itself (TestLaunchExec).
 	n.setManaged([]proto.ManagedLauncher{{Name: "work"}})
-	if cmd := n.assistantCLICommand("/bin/zsh", "work", filepath.Join(n.dir, "assistant"), args, env); inSandbox(cmd.Args) || cmd.Args[0] != "/bin/zsh" {
+	if cmd := n.assistantCLICommand("/bin/zsh", "work", filepath.Join(n.dir, "assistant"), false, args, env); inSandbox(cmd.Args) || cmd.Args[0] != "/bin/zsh" {
 		t.Errorf("managed launcher: the shell was wrapped: %q", cmd.Args)
 	}
 
 	t.Setenv("PERSONA_AGENT_SANDBOX", "off")
-	if cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), args, env); inSandbox(cmd.Args) {
+	if cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), false, args, env); inSandbox(cmd.Args) {
 		t.Errorf("PERSONA_AGENT_SANDBOX=off over the file: %q", cmd.Args)
 	}
 	t.Setenv("PERSONA_AGENT_SANDBOX", "on")
 	n = agentNode(t, false)
-	if cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), nil, env); !inSandbox(cmd.Args) {
+	if cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), false, nil, env); !inSandbox(cmd.Args) {
 		t.Errorf("PERSONA_AGENT_SANDBOX=on without the file: %q", cmd.Args)
 	}
 }
@@ -194,7 +196,7 @@ func TestAgentSandboxFallsBack(t *testing.T) {
 				args = append(args, c.prep(t, n, cwd)...)
 			}
 			env := []string{"PATH=/usr/bin"}
-			cmd := n.assistantCLICommand("/bin/zsh", "claude", cwd, args, env)
+			cmd := n.assistantCLICommand("/bin/zsh", "claude", cwd, false, args, env)
 			if inSandbox(cmd.Args) || cmd.Args[0] != "/bin/zsh" || !slices.Equal(cmd.Env, env) {
 				t.Fatalf("wrapped: %q %q", cmd.Args, cmd.Env)
 			}
@@ -202,16 +204,48 @@ func TestAgentSandboxFallsBack(t *testing.T) {
 			if st.State != c.state || st.Why == "" {
 				t.Errorf("status %+v, want %s with why", st, c.state)
 			}
+			if st.State == sandbox.AgentSkipped && st.Reason == nil {
+				t.Errorf("Persona-owned inner reason has no metadata: %+v", st)
+			}
 		})
 	}
 	t.Run("off says nothing", func(t *testing.T) {
 		agentSandboxFakes(t, macSandbox)
 		n := agentNode(t, true)
 		writeFile(t, filepath.Join(n.home, ".claude", "settings.json"), `{"sandbox": {"enabled": false, "autoAllowBashIfSandboxed": true}}`)
-		if cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), nil, nil); !inSandbox(cmd.Args) {
+		if cmd := n.assistantCLICommand("/bin/zsh", "claude", filepath.Join(n.dir, "assistant"), false, nil, nil); !inSandbox(cmd.Args) {
 			t.Errorf("sandbox.enabled false: not wrapped %q", cmd.Args)
 		}
 	})
+}
+
+func TestClaudeSandboxReasonKeepsLegacyText(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, key, want string
+	}{
+		{name: "invalid JSON", input: "{", key: "node-doctor.sandbox_claude_settings_invalid_json",
+			want: "Claude 的设置 --settings 不是合法的 JSON，判断不出它有没有开自带 sandbox"},
+		{name: "invalid sandbox", input: `{"sandbox":"unknown"}`, key: "node-doctor.sandbox_claude_settings_invalid_sandbox",
+			want: "Claude 的设置 --settings 里的 sandbox 看不懂，判断不出它有没有开自带 sandbox"},
+		{name: "enabled", input: `{"sandbox":{"enabled":true}}`, key: "node-doctor.sandbox_claude_own",
+			want: "Claude 在 --settings 里开了自带 sandbox（sandbox.enabled），和外层沙箱不能同时用"},
+		{name: "disabled", input: `{"sandbox":{"enabled":false}}`},
+		{name: "options only", input: `{"sandbox":{"autoAllowBashIfSandboxed":true}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reason := claudeSandboxInReason([]byte(tc.input), "--settings")
+			if got := claudeSandboxIn([]byte(tc.input), "--settings"); got != reason.Error() || got != tc.want {
+				t.Errorf("wrapper = %q, reason = %q, legacy text = %q", got, reason.Error(), tc.want)
+			}
+			if tc.key == "" {
+				if reason != nil {
+					t.Errorf("unexpected reason: %+v", reason)
+				}
+			} else if reason == nil || reason.Key != tc.key {
+				t.Errorf("reason = %+v, want key %q", reason, tc.key)
+			}
+		})
+	}
 }
 
 // A Codex is wrapped only when it surely runs its tools itself with no sandbox of its own: danger-full-access, in its
@@ -248,9 +282,10 @@ func TestCodexInner(t *testing.T) {
 			if c.config != "" {
 				writeFile(t, filepath.Join(home, ".codex", "config.toml"), c.config)
 			}
+			reason := codexInnerReason(c.argv, nil, filepath.Join(home, "proj"), home)
 			why := codexInner(c.argv, nil, filepath.Join(home, "proj"), home)
-			if (why == "") != c.wrap {
-				t.Errorf("wrap %v, why %q", c.wrap, why)
+			if (why == "") != c.wrap || (reason == nil) != c.wrap || why != reason.Error() {
+				t.Errorf("wrap %v, why %q, reason %+v", c.wrap, why, reason)
 			}
 		})
 	}
@@ -296,7 +331,7 @@ func TestCodexStartExec(t *testing.T) {
 	t.Chdir(proj)
 	for _, words := range [][]string{{"/x/personad", "launch", "codex-work"}, {"pi", "--session", "s1"}} {
 		path := "/bin/" + filepath.Base(words[0])
-		if p, argv, _, st := codexStartExec(path, words, nil); p != path || !slices.Equal(argv, words) || st.State != sandbox.AgentOff {
+		if p, argv, _, st := codexStartExec(path, words, nil, nil); p != path || !slices.Equal(argv, words) || st.State != sandbox.AgentOff {
 			t.Errorf("%v: %s %q %+v", words, p, argv, st)
 		}
 	}
@@ -304,12 +339,25 @@ func TestCodexStartExec(t *testing.T) {
 		t.Errorf("recorded %v", readAgentSandboxStatus(dir))
 	}
 	words := []string{"codex", "-c", `sandbox_mode="danger-full-access"`, "--", "hello"}
-	p, argv, env, st := codexStartExec("/opt/bin/codex", words, []string{"A=1"})
-	if st.State != sandbox.AgentActive || p != argv[0] || !inSandbox(argv) || argv[3] != "/opt/bin/codex" || !slices.Equal(argv[4:], words[1:]) || !slices.Contains(env, sandbox.AgentEnv+"=1") {
+	command := func(words []string) []string {
+		if runtime.GOOS != "windows" {
+			if shell, err := exec.LookPath(loginShellProgram()); err == nil {
+				return append([]string{shell, "-ic", codexNativeStartScript, "persona-codex-start", proj, "--"}, words...)
+			}
+		}
+		return append([]string{"/opt/bin/codex"}, words[1:]...)
+	}
+	p, argv, env, st := codexStartExec("/opt/bin/codex", words, []string{"A=1"}, nil)
+	if st.State != sandbox.AgentActive || p != argv[0] || !inSandbox(argv) || !slices.Equal(argv[3:], command(words)) || !slices.Contains(env, sandbox.AgentEnv+"=1") {
 		t.Errorf("danger-full-access: %s %q %q %+v", p, argv, env, st)
 	}
 	words = []string{"codex", "--", "hello"}
-	if p, argv, _, st := codexStartExec("/opt/bin/codex", words, nil); p != "/opt/bin/codex" || !slices.Equal(argv, words) || st.State != sandbox.AgentSkipped || st.Why == "" {
+	want := command(words)
+	wantPath := want[0]
+	if wantPath == "/opt/bin/codex" {
+		want = words
+	}
+	if p, argv, _, st := codexStartExec("/opt/bin/codex", words, nil, nil); p != wantPath || !slices.Equal(argv, want) || st.State != sandbox.AgentSkipped || st.Why == "" {
 		t.Errorf("plain codex: %s %q %+v", p, argv, st)
 	}
 	if st := readAgentSandboxStatus(dir)["codex-start"]; st.State != sandbox.AgentSkipped {
@@ -341,24 +389,6 @@ func TestLaunchExec(t *testing.T) {
 	all := readAgentSandboxStatus(dir)
 	if all["launch claude"].State != sandbox.AgentActive || all["launch agy"].State != sandbox.AgentSkipped {
 		t.Errorf("recorded %v", all)
-	}
-}
-
-// The Agent SDK's bridge runs in the sandbox when it is on (the claude it starts with it), as it was when off.
-func TestSDKBridgeInAgentSandbox(t *testing.T) {
-	agentSandboxFakes(t, macSandbox)
-	b := sdkBridge{js: jsRuntime{Path: "/opt/bin/node"}, script: "/x/bridge.mjs", claude: "/opt/bin/claude"}
-	for _, on := range []bool{false, true} {
-		n := agentNode(t, on)
-		s := sdkStart{id: "s1", cwd: filepath.Join(n.dir, "assistant"), mcp: map[string]any{}}
-		cmd, _, err := n.sdkCommand(b, "claude", s, []string{"PATH=/usr/bin"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		bridge := []string{"/opt/bin/node", "/x/bridge.mjs"}
-		if on && (!inSandbox(cmd.Args) || !slices.Equal(cmd.Args[3:], bridge)) || !on && !slices.Equal(cmd.Args, bridge) {
-			t.Errorf("on %v: %q", on, cmd.Args)
-		}
 	}
 }
 

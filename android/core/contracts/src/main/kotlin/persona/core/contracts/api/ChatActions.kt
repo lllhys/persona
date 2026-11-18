@@ -1,6 +1,8 @@
 package persona.core.contracts.api
 
 import persona.core.contracts.CoreText
+import persona.core.contracts.ModelPrice
+import persona.core.contracts.QueueEdit
 import persona.core.contracts.Session
 import persona.core.contracts.SessionInfo
 
@@ -41,10 +43,11 @@ interface ChatActions {
 
     /**
      * Pull everything queued while the agent works back out and re-queue the indexes in [keep], in order
-     * (POST …/queue, the node's session.queue.edit); returns what was queued before the edit. Not idempotent and
-     * not deduplicated by the hub: a failure is reported, never retried.
+     * (POST …/queue, the node's session.queue.edit); returns what was queued before the edit and, in a Persona conversation,
+     * the photos each message carried ([QueueEdit.images]). Not idempotent and not deduplicated by the hub: a failure is
+     * reported, never retried.
      */
-    suspend fun editQueue(session: Session, keep: List<Int>): List<String> =
+    suspend fun editQueue(session: Session, keep: List<Int>): QueueEdit =
         throw UnsupportedOperationException("Queued message management unavailable")
 
     /**
@@ -81,6 +84,13 @@ interface ChatActions {
      */
     suspend fun completeRow(session: Session): Session? = null
 
+    /** Every depth folded under this parent; callers gate on sessions_hierarchy. */
+    suspend fun childRows(session: Session): List<Session> = emptyList()
+
+    /** A complete baseline or delta for the same parent filter, including its committed checkpoint and removals. */
+    suspend fun childPage(session: Session, since: String? = null): SessionListPage =
+        SessionListPage(sessions = childRows(session))
+
     /**
      * The session's cards and how each ended (GET /api/v1/interactions/history, iOS `DelegatedHistoryModel`), for Session
      * info's questions the assistant answered. A hub that keeps the history from this device (403) or has none (404) gives none.
@@ -94,6 +104,13 @@ interface ChatActions {
      * restore_nothing, restore_unknown, restore_gone, node_outdated). Not retried.
      */
     suspend fun restoreModel(session: Session): Unit = throw UnsupportedOperationException("Restore model unavailable")
+
+    /**
+     * Reference prices for model ids (`POST /api/v1/launchers/catalog`, at most 100 ids). A model the catalog answers
+     * without a price is present and null; a model it leaves out is absent. Throws when the hub cannot be asked.
+     */
+    suspend fun catalogPrices(ids: List<String>): Map<String, ModelPrice?> =
+        throw UnsupportedOperationException("Catalog unavailable")
 }
 
 /** What "Rewind to here" restores: the conversation alone, or the files changed after the message too. */

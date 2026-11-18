@@ -526,3 +526,91 @@ func TestGoldenInboxHandoff(t *testing.T) {
 		golden(t, "inbox_handoff.note_"+name, renderHandoffNote(n, "示例用户", "lark:f1:100", "示例客户"))
 	}
 }
+
+// handoffCards are the write-back cards in conversation sid's feed, oldest first.
+func handoffCards(t *testing.T, h *inboxHub, sid string) []handoffCard {
+	t.Helper()
+	items, err := h.feedItems(context.Background(), sid, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []handoffCard
+	for _, it := range items {
+		if it.Kind != feedInboxSuggestion {
+			continue
+		}
+		if it.Ref != "lark:f1:100" {
+			t.Fatalf("a card about %q", it.Ref)
+		}
+		var c handoffCard
+		if err := json.Unmarshal(it.Body, &c); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// A reply or a conclusion from the conversation the item was handed to is also a card there (#5932): one per
+// suggestion, carrying its version and the recap. An Agent to start, a handback and a recap alone are not.
+func TestInboxHandoffCard(t *testing.T) {
+	h, _, it := handoffHub(t)
+	handOff(t, h, it)
+	steps := []struct{ args, kind string }{
+		{`{"item":"lark:f1:100","kind":"reply","text":"可以，周五上午给你","note":"上次报价 10 月","recap":"张三要报价"}`, SuggestReply},
+		{`{"item":"lark:f1:100","recap":"张三要报价，已定周五"}`, ""},
+		{`{"item":"lark:f1:100","kind":"agent","text":"查一下报价单"}`, ""},
+		{`{"item":"lark:f1:100","kind":"reply","text":"先问一下示例同事","handback":true}`, ""},
+		{`{"item":"lark:f1:100","kind":"reply","text":"周五上午发你报价"}`, SuggestReply},
+	}
+	want := 0
+	for _, s := range steps {
+		if _, err := mainSuggest(h, "m1", s.args); err != nil {
+			t.Fatalf("%s: %v", s.args, err)
+		}
+		if s.kind != "" {
+			want++
+		}
+		if got := handoffCards(t, h, "m1"); len(got) != want {
+			t.Fatalf("after %s: %d cards, want %d", s.args, len(got), want)
+		}
+	}
+	cards := handoffCards(t, h, "m1")
+	first, last := cards[0], cards[1]
+	if first.Version != 1 || first.Kind != SuggestReply || first.Text != "可以，周五上午给你" || first.Note != "上次报价 10 月" ||
+		first.Recap != "张三要报价" || first.Title != "张三" || first.Source != "lark" || first.Account != "飞书" || first.Sender != "张三" || first.Outcome != "" {
+		t.Fatalf("first card: %+v", first)
+	}
+	h.inbox.mu.Lock()
+	version := it.Suggestion.Version
+	h.inbox.mu.Unlock()
+	if last.Version != version || last.Version != 4 || last.Recap != "张三要报价，已定周五" {
+		t.Fatalf("last card: %+v, the item's suggestion is version %d", last, version)
+	}
+	// The card's version confirms the item's suggestion.
+	if code, out := suggestionCall(t, h, it.ID, `{"version":4,"action":"confirm"}`); code != 200 || out["done_by"] != "replied" {
+		t.Fatalf("confirm: %d %v", code, out)
+	}
+
+	h2, _, it2 := handoffHub(t)
+	handOff(t, h2, it2)
+	if _, err := mainSuggest(h2, "m1", `{"item":"lark:f1:100","kind":"conclusion","text":"只是通知，不用回","outcome":"done"}`); err != nil {
+		t.Fatal(err)
+	}
+	if got := handoffCards(t, h2, "m1"); len(got) != 1 || got[0].Kind != SuggestConclusion || got[0].Outcome != "done" || got[0].Text != "只是通知，不用回" {
+		t.Fatalf("conclusion card: %+v", got)
+	}
+}
+
+// The item's own processing conversation gets no write-back card: its suggestions are the item's alone.
+func TestInboxHandoffCardNotForTheProcessingConversation(t *testing.T) {
+	h, _, _ := handledHub(t)
+	if _, err := suggestTool(t, h, `{"kind":"reply","text":"好的"}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, sid := range []string{"s1", "m1"} {
+		if got := handoffCards(t, h, sid); len(got) != 0 {
+			t.Fatalf("%s: %+v", sid, got)
+		}
+	}
+}

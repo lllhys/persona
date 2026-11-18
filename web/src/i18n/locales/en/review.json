@@ -47,6 +47,7 @@
   "review_branch": "Review the branch",
   "review_uncommitted": "Review uncommitted",
   "not_git": "This folder isn't a Git repository",
+  "no_folder": "This folder is no longer there",
   "outdated": "Update this computer to review changes",
   "outdated_detail": "Its personad is from before reviews. Update it, then open this again.",
   "no_default_branch": "No default branch to compare with",

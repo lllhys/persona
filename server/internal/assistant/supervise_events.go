@@ -3,6 +3,7 @@ package assistant
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,9 +12,26 @@ import (
 
 // ---- what the task's events say ----
 
-// taskNotice is what happened to task t (state: done, needs, interrupted, failed; ask, text as quietNotify has them;
-// files: what a done turn handed over, in its conversation's computer, for the notice).
-func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, text string, files []taskFile) {
+// taskNotice is what happened to task t (state: done, needs, interrupted): a supervised task's supervisor gets a
+// signal, any other quiet task's conversation its notice.
+func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, text string) {
+	s.taskNoticeOf(ctx, t, machine, state, ask, text, 0, nil)
+}
+
+// taskStartFailed is taskNotice for task t's start that failed (reason) after start's retries (nil: none). Each
+// attempt's failure is news of its own, even with the error the one before had: task_retry promised the supervisor
+// how it ends (#6027).
+func (s *Service) taskStartFailed(ctx context.Context, t Todo, machine string, start *StartRemedy, reason string) {
+	attempt := 0
+	if start != nil {
+		attempt = start.Attempt
+	}
+	s.taskNoticeOf(ctx, t, machine, "failed", "", reason, attempt, nil)
+}
+
+// taskNoticeOf is taskNotice; attempt is a failed start's retries so far, and files what a done turn handed over to
+// its conversation's computer (task_files.go, #10511), which a notice lists outside its text's clip.
+func (s *Service) taskNoticeOf(ctx context.Context, t Todo, machine, state, ask, text string, attempt int, files []taskFile) {
 	if t.Supervision == nil {
 		if !t.Quiet {
 			if state == "failed" && t.Origin != "" {
@@ -35,6 +53,9 @@ func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, t
 	switch state {
 	case "failed":
 		g.Kind, g.Key = sigFailed, text
+		if attempt > 0 {
+			g.Key = fmt.Sprintf("retry %d: %s", attempt, text) // as the started signal names it (start_remedy.go)
+		}
 	case "interrupted":
 		g.Kind, g.Key = sigInterrupted, time.Now().UTC().Format(time.RFC3339)
 	case "needs":
@@ -56,6 +77,10 @@ func (s *Service) taskNotice(ctx context.Context, t Todo, machine, state, ask, t
 // superviseJudged: supervised task t's agents all stopped after work since work, and the judge said c (err: it could
 // not). Finished: the task waits for review. Not finished: the supervisor hears it stopped short.
 func (s *Service) superviseJudged(ctx context.Context, t Todo, work time.Time, c taskDoneCheck, err error) {
+	if s.closedSince(t.ID, work) {
+		s.logf("task %s: closed since the work judged began: judged %s, dropped", t.ID, cmp.Or(c.Verdict, "with an error"))
+		return
+	}
 	st := t.Supervision.state(t)
 	key := work.UTC().Format(time.RFC3339Nano)
 	if err == nil && c.Verdict == verdictDone {
@@ -72,7 +97,11 @@ func (s *Service) superviseJudged(ctx context.Context, t Todo, work time.Time, c
 				detail = "抽查：判官已逐条核对通过且已上线，" + c.Reason // i18n-ignore: the supervision message is the assistant's prompt
 			}
 		}
+		closed := false
 		v, _, uerr := s.updateSupervision(ctx, t.ID, func(v *Supervision) bool {
+			if closed = s.closedSince(t.ID, work) || reviewClosedSince(v, work); closed {
+				return false // accepted or cancelled meanwhile: with the ledger's lock, so no review is undone
+			}
 			if v.state(t) == reviewPending && v.Waits == nil {
 				return false
 			}
@@ -81,6 +110,10 @@ func (s *Service) superviseJudged(ctx context.Context, t Todo, work time.Time, c
 		})
 		if uerr != nil {
 			s.logf("task %s: pending review: %v", t.ID, uerr)
+			return
+		}
+		if closed {
+			s.logf("task %s: closed while judged done: no review asked", t.ID)
 			return
 		}
 		s.logf("task %s: waits for review: %s", t.ID, detail)
@@ -121,6 +154,24 @@ func (s *Service) superviseJudged(ctx context.Context, t Todo, work time.Time, c
 		detail += "）"
 	}
 	s.signal(superviseSignal{Todo: t.ID, Kind: sigIdle, Key: key, Detail: detail})
+}
+
+// closedSince: task id is closed now (accepted, cancelled, closed by hand), or a review accepted or cancelled it after
+// the stretch of work begun at work (task_review writes the ledger before it closes the to-do). A judgment of that
+// stretch is moot: it neither changes the ledger nor tells the supervisor (#7539). A task opened again is judged
+// again by the work after its reopening, which began after that review.
+func (s *Service) closedSince(id string, work time.Time) bool {
+	t, ok := s.todoNow(id)
+	return !ok || t.DoneAt != nil || reviewClosedSince(t.Supervision, work)
+}
+
+// reviewClosedSince: v's latest review accepted or cancelled its task after work.
+func reviewClosedSince(v *Supervision, work time.Time) bool {
+	if v == nil || len(v.Reviews) == 0 {
+		return false
+	}
+	r := v.Reviews[len(v.Reviews)-1]
+	return (r.Verdict == reviewAccepted || r.Verdict == reviewCancelled) && r.At.After(work)
 }
 
 var verdictWords = map[string]string{verdictNotDone: "没做完", verdictWaiting: "在等别人或别的事", verdictNeedsUser: "要用户决定",

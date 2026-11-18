@@ -160,7 +160,8 @@ describe("a voice call", () => {
     expect(call.getSnapshot().phase).toEqual({ kind: "connecting" });
     expect(last().binaryType).toBe("arraybuffer");
     last().open();
-    expect(last().texts()).toEqual([{ type: "start", protocol: 2, model: "rt/m1", voice: "soft", target: { machine_id: "m", session_id: "s" }, recent: [{ role: "user", text: "earlier" }], echo_cancellation: true }]);
+    // speech_gate (#5904): the gate on (the web has no switch), said so the extension knows this page has Send anyway
+    expect(last().texts()).toEqual([{ type: "start", protocol: 2, model: "rt/m1", voice: "soft", target: { machine_id: "m", session_id: "s" }, recent: [{ role: "user", text: "earlier" }], echo_cancellation: true, speech_gate: true }]);
   });
 
   it("holds what was said before ready, then sends it and the rest as PCM frames", async () => {
@@ -251,6 +252,47 @@ describe("a voice call", () => {
     expect(call.resend("voice-2")).toBe(false);
   });
 
+  it("sends anyway what the user-speech gate held back, only with an extension that keeps it (#5904)", async () => {
+    const held = { type: "run", id: "voice-3", task: "跑一下测试", state: "refused", code: "unprompted", resendable: true, msg_ids: ["voice-3"], base_seq: 1 };
+    const old = await connected();
+    old.last().frame(held);
+    expect(old.call.getSnapshot().resendable).toEqual([]);
+    expect(old.call.canResend("voice-3")).toBe(false);
+    expect(old.call.resend("voice-3")).toBe(false);
+    const t = setup();
+    await t.call.begin();
+    t.last().open();
+    t.last().frame({ ...READY, features: [...READY.features, "speak", "speech_gate"] });
+    t.last().frame(held);
+    expect(t.call.getSnapshot().resendable).toEqual(["voice-3"]);
+    expect(t.call.resend("voice-3")).toBe(true);
+    expect(t.last().texts().at(-1)).toEqual({ type: "resend", id: "voice-3" });
+  });
+
+  it("offers no Send anyway for a held-back run the extension did not keep (#5904)", async () => {
+    const t = setup();
+    await t.call.begin();
+    t.last().open();
+    t.last().frame({ ...READY, features: [...READY.features, "speak", "speech_gate"] });
+    t.last().frame({ type: "run", id: "voice-5", task: "把文档的拼写改一下…", state: "refused", code: "unprompted", msg_ids: ["voice-5"], base_seq: 1 });
+    expect(t.call.getSnapshot().resendable).toEqual([]);
+    expect(t.call.canResend("voice-5")).toBe(false);
+    expect(t.call.resend("voice-5")).toBe(false);
+  });
+
+  it("offers no Send anyway for a held-back run with no task: the extension keeps none (#5904)", async () => {
+    const t = setup();
+    await t.call.begin();
+    t.last().open();
+    t.last().frame({ ...READY, features: [...READY.features, "speak", "speech_gate"] });
+    t.last().frame({ type: "run", id: "voice-4", task: "", state: "refused", code: "unprompted", msg_ids: ["voice-4"], base_seq: 1 });
+    expect(t.call.getSnapshot().runs.map((r) => r.id)).toEqual(["voice-4"]);
+    expect(t.call.getSnapshot().resendable).toEqual([]);
+    expect(t.call.canResend("voice-4")).toBe(false);
+    expect(t.call.resend("voice-4")).toBe(false);
+    expect(t.last().texts().some((f) => f.type === "resend")).toBe(false);
+  });
+
   it("reconnects 1, 4 and 10 seconds after a drop, with history and the open runs", async () => {
     const { call, sockets, last, clock, audio } = await connected();
     last().frame({ type: "transcript", id: "u1", role: "user", text: "fix the tests", final: true });
@@ -270,7 +312,7 @@ describe("a voice call", () => {
     last().open();
     expect(last().texts()[0]).toEqual({
       type: "start", protocol: 2, model: "rt/m1", voice: "soft", target: { machine_id: "m", session_id: "s" }, recent: [{ role: "user", text: "earlier" }],
-      history: [{ role: "user", text: "fix the tests" }], echo_cancellation: true,
+      history: [{ role: "user", text: "fix the tests" }], echo_cancellation: true, speech_gate: true,
       resume: { runs: [{ id: "voice-1", msg_ids: ["voice-1"], task: "fix", base_seq: 7, started_at: 1793872800123, state: "working" }] },
     });
     last().frame(READY);

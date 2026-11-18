@@ -57,6 +57,12 @@ describe("快速筛选（iOS AgentFilter）", () => {
   it("全部标为已读只标完成未看的", () => {
     expect(ids(unreadOf([session("a", "unread"), session("b", "idle"), session("c", "needs_you"), session("d", "unread")]))).toEqual(["a", "d"]);
   });
+
+  it("Mark all as seen marks the Just finished ones too (#9751)", () => {
+    const finished = { ...session("e", "idle"), work: { phase: "done" as const, just_finished: true } };
+    const done = { ...session("f", "idle"), work: { phase: "done" as const } };
+    expect(ids(unreadOf([session("a", "unread"), finished, done]))).toEqual(["a", "e"]);
+  });
 });
 
 describe("待你回复的空间不收进「空闲的空间」（#5096）", () => {

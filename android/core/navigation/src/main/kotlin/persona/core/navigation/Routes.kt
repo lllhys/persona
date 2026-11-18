@@ -24,6 +24,14 @@ sealed interface RouteSource {
     val sessionId: String,
     val kind: ConversationKind? = null,
     val source: RouteSource? = null,
+    /**
+     * A side session (#7944) opened from its parent's chat: its own conversation, over the parent's page. Without it a
+     * route to a side opens the parent, which then shows the side this way. Written only when set, so routes saved
+     * before it keep their stored form.
+     */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault(kotlinx.serialization.EncodeDefault.Mode.NEVER)
+    val side: Boolean = false,
 ) : NavKey
 
 @Serializable @SerialName("persona.core.navigation.InboxItemRoute") data class InboxItemRoute(val itemId: String) : NavKey
@@ -42,7 +50,7 @@ data class InboxItemUiRoute(val itemId: String, val extensionId: String, val uiI
 /** The to-do list with "New to-do" open: the launcher's "New to-do" shortcut ([NewTodoLink], iOS AddTodoIntent). */
 @Serializable @SerialName("persona.core.navigation.NewTodoRoute") data object NewTodoRoute : NavKey
 @Serializable @SerialName("persona.core.navigation.TodoDetailRoute") data class TodoDetailRoute(val todoId: String) : NavKey
-@Serializable enum class SettingsPage { Diagnostics, Readiness, Notifications, PhoneData, Appearance, Devices, About, Pairing, ClaudeCode, ModelConfig, Hubs, Persona, Extensions, Mail, Feishu, Channels, HubUpdate, Translation, Triage, Capsule, Language, Codex, Providers, Storage, Desktops, Managers, FeishuBot, Sent, Connectors, AgentSettings, NotificationBackground }
+@Serializable enum class SettingsPage { Diagnostics, Readiness, Notifications, PhoneData, Appearance, Devices, About, Pairing, ClaudeCode, ModelConfig, Hubs, Persona, Extensions, Mail, Feishu, Channels, HubUpdate, Translation, Triage, Capsule, Language, Codex, Providers, Storage, Desktops, Managers, FeishuBot, Sent, Connectors, AgentSettings, NotificationBackground, KnowledgeSelection, StandingAuthorizations }
 @Serializable @SerialName("persona.core.navigation.SettingsPageRoute") data class SettingsPageRoute(val page: SettingsPage) : NavKey
 
 enum class AppTab { Persona, Agents }

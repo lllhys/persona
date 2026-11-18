@@ -97,25 +97,46 @@ func (c *linuxCollector) Sample(now time.Time) proto.MetricSample {
 	if b, err := c.read("/proc/net/dev"); err == nil {
 		s.NetRx, s.NetTx = c.netSample(parseNetDev(b), now)
 	}
-	mounts := []string{"/"}
-	if b, err := c.read("/proc/self/mountinfo"); err == nil {
-		if m := c.mounts.of(b); len(m) > 0 {
-			mounts = m
+	for _, v := range volumesOf(localMounts(c.read, &c.mounts)) {
+		s.DiskUsed += v.Used
+		s.DiskTotal += v.Total
+	}
+	return s
+}
+
+// localMounts is one mount point per local block device (diskMountinfo, or diskMounts without mountinfo), "/" when
+// neither can be read.
+func localMounts(read func(string) ([]byte, error), cache *mountCache) []string {
+	if b, err := read("/proc/self/mountinfo"); err == nil {
+		if m := cache.of(b); len(m) > 0 {
+			return m
 		}
-	} else if b, err := c.read("/proc/self/mounts"); err == nil {
+	} else if b, err := read("/proc/self/mounts"); err == nil {
 		if m := diskMounts(b); len(m) > 0 {
-			mounts = m
+			return m
 		}
 	}
+	return []string{"/"}
+}
+
+// volumesOf is each mount's use, like df; a mount statfs cannot read is left out.
+func volumesOf(mounts []string) []proto.DiskVolume {
+	var out []proto.DiskVolume
 	for _, m := range mounts {
 		var st syscall.Statfs_t
 		if syscall.Statfs(m, &st) == nil {
 			used, total := diskUsage(st.Blocks, st.Bfree, st.Bavail, uint64(st.Bsize))
-			s.DiskUsed += used
-			s.DiskTotal += total
+			out = append(out, proto.DiskVolume{Mount: m, Used: used, Total: total})
 		}
 	}
-	return s
+	return out
+}
+
+// Volumes are the local filesystems a sample adds up, one by one (a computer's diagnosis, docs/server/machines.md
+// "Diagnosis and cleanup").
+func Volumes() []proto.DiskVolume {
+	var cache mountCache
+	return volumesOf(localMounts(os.ReadFile, &cache))
 }
 
 // netSample is the network rates since the last call, from each interface's counters (parseNetDev): the physical

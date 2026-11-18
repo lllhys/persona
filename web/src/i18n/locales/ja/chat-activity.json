@@ -6,5 +6,12 @@
   "loop": "ループ",
   "stop_loop": "ループを停止",
   "stop_loop_explain": "エージェントにメッセージを送り、次の起動を予約しないようにします。実行中の回は最後まで続きます。",
-  "copy_command": "コマンドをコピー"
+  "copy_command": "コマンドをコピー",
+  "output_loading": "出力を読み込み中…",
+  "output_empty_running": "まだ出力はありません。",
+  "output_empty_ended": "出力はありません。",
+  "output_not_running": "実行中の一覧にはありません",
+  "output_failed": "出力を読み込めませんでした",
+  "open_output_file": "ファイルとして開く",
+  "output_tail": "以前の出力は省略されています。以前の出力はファイルを開いて確認できます。"
 }

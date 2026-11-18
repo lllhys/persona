@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 // The link is a WebSocket on the hub's TLS port (or under the path of the HTTPS reverse proxy in front of it); each node
@@ -181,6 +183,65 @@ func (c *Config) CurrentMode() string {
 	return ModeActive
 }
 
+// defaultText is canonical Link text. Errors and statuses keep this spelling on disk and on the wire; ErrorText and
+// StatusErrorText translate a copy only where a terminal shows it.
+func defaultText(key string, args ...i18n.Args) string { return i18n.T(i18n.Default, key, args...) }
+
+// textError retains its catalog key and cause, so a terminal can translate the whole error without changing Error's
+// canonical text or errors.Is / errors.As behavior.
+type textError struct {
+	key   string
+	args  i18n.Args
+	cause error
+}
+
+func newTextError(key string, cause error, args ...i18n.Args) error {
+	e := &textError{key: key, cause: cause}
+	if len(args) > 0 {
+		e.args = args[0]
+	}
+	if cause != nil {
+		if _, named := e.args["error"]; !named {
+			withCause := make(i18n.Args, len(e.args)+1)
+			for name, value := range e.args {
+				withCause[name] = value
+			}
+			withCause["error"] = cause
+			e.args = withCause
+		}
+	}
+	return e
+}
+
+// NewTextError is a command-facing Link error whose Error text stays canonical and whose Text follows the terminal.
+func NewTextError(key string, cause error, args ...i18n.Args) error {
+	return newTextError(key, cause, args...)
+}
+
+func (e *textError) Error() string { return e.Text(i18n.Default) }
+func (e *textError) Unwrap() error { return e.cause }
+func (e *textError) Text(l i18n.Lang) string {
+	args := i18n.Args{}
+	for name, value := range e.args {
+		switch value := value.(type) {
+		case error:
+			args[name] = ErrorText(l, value)
+		case interface{ Text(i18n.Lang) string }:
+			args[name] = value.Text(l)
+		default:
+			args[name] = value
+		}
+	}
+	return i18n.T(l, e.key, args)
+}
+
+// StatusText marks a canonical saved-status fragment that may be rendered by the closed StatusErrorText mapper when
+// nested inside another error. Its default-language text is always the original byte string.
+type StatusText string
+
+// Text renders only the marked fragment, never arbitrary surrounding peer or OS text.
+func (s StatusText) Text(l i18n.Lang) string { return StatusErrorText(l, string(s)) }
+
 // ErrUnpaired: link.json has no credential for active mode (never paired, or only for passive mode). It is an
 // fs.ErrNotExist, as a missing file is.
 var ErrUnpaired = fmt.Errorf("not paired for this mode: %w", os.ErrNotExist)
@@ -208,7 +269,7 @@ func Load(path string) (*Config, error) {
 		return nil, ErrUnpaired
 	}
 	if c.Token == "" || (c.FP == "" && c.Trust != TrustSystem) || c.Machine == "" {
-		return nil, fmt.Errorf("%s is incomplete: pair again (persona-link pair)", path)
+		return nil, newTextError("link-errors.config_incomplete", nil, i18n.Args{"path": path})
 	}
 	return c, nil
 }
@@ -222,7 +283,7 @@ func Read(path string) (*Config, error) {
 	}
 	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, newTextError("link-errors.config_read", err, i18n.Args{"path": path})
 	}
 	return &c, nil
 }
@@ -348,16 +409,16 @@ func normalize(raw string, have []Endpoint) (Endpoint, error) {
 			}
 		}
 		if port == "" {
-			return Endpoint{}, fmt.Errorf("%q 没有端口：写成 https://地址:端口", raw)
+			return Endpoint{}, newTextError("link-errors.address_port_missing", nil, i18n.Args{"address": strconv.Quote(raw)})
 		}
 		raw = "https://" + net.JoinHostPort(strings.Trim(host, "[]"), port)
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return Endpoint{}, fmt.Errorf("%q 不是 https 地址：链路只走 hub 的 TLS 端口", raw)
+		return Endpoint{}, newTextError("link-errors.address_https_required", nil, i18n.Args{"address": strconv.Quote(raw)})
 	}
 	if n, err := strconv.Atoi(u.Port()); u.Port() != "" && (err != nil || n < 1 || n > 65535) {
-		return Endpoint{}, fmt.Errorf("%q 的端口不对", raw)
+		return Endpoint{}, newTextError("link-errors.address_port_invalid", nil, i18n.Args{"address": strconv.Quote(raw)})
 	}
 	u.Path = strings.TrimRight(u.Path, "/")
 	return Endpoint{URL: u.String(), Kind: kindOf(u.String()), Manual: true}, nil

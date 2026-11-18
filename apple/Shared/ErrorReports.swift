@@ -1,4 +1,5 @@
 import Foundation
+import PersonaWire
 
 /// The app's errors and crashes for the hub's error reports (#5621, docs/protocol/protocol.md "Error reports"): sent only while
 /// the hub's `features` has `error_reports` (an extension such as Sentry takes them). A report says what failed where
@@ -155,7 +156,8 @@ nonisolated final class ErrorReportQueue: @unchecked Sendable {
     /// Writes `report` at once (the crash handler calls it right before the app dies); false when it could not.
     @discardableResult
     func write(_ report: ExtensionErrorReport) -> Bool {
-        lock.withLock {
+        DevProbe.error(report) // kept on the device too while Developing Persona is on (#9460)
+        return lock.withLock {
             guard let json = try? JSON.encoder.encode(report) else { return false }
             let ms = Int64(((ErrorReports.date(report.time) ?? now()).timeIntervalSince1970 * 1000).rounded(.down))
             let id = String(report.id.filter { $0.isLetter || $0.isNumber || $0 == "-" }.prefix(64))

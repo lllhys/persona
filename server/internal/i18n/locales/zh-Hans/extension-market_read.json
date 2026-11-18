@@ -6,7 +6,7 @@
   "newer_format": "这个市场的索引是第 {version} 版格式，要更新的 hub 才能读。先升级 hub 再试。",
   "no_name": "索引要有名字（最多 60 个字）。",
   "description_too_long": "索引的说明太长。",
-  "too_many": "索引里多于 {most} 个扩展。",
+  "catalog_over_limit": "索引里多于 {most} 个扩展。",
   "entry_skipped": "第 {n} 个扩展没有列出：{err}",
   "entry_duplicate": "扩展 {id} 出现了不止一次，只用第一个。",
   "entry_no_manifest": "没有 manifest。",

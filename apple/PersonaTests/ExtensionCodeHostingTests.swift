@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// UI version 4's code-hosting parts on Apple (#2961, docs/extensions/extensions.md「UI version 4: code hosting」): the schema's examples read
 /// with every component known, a diff's lines numbered and paired, a file tree built from paths, the page's blocks
@@ -121,7 +122,7 @@ struct ExtensionCodeHostingTests {
 
     @Test func theExamplesTreeOpensAtTheSelectedFile() throws {
         let v = try Self.view("View.code-review.json")
-        let state = CodePageState()
+        let state = CodePageState.scratch()
         let blocks = CodePageBlocks.of(v, sections: v.sections.indices.filter { v.sections[$0].pane == "side" }, state: state,
                                    look: .unified, canComment: true)
         let rows = blocks.compactMap { b -> String? in if case .treeRow(_, _, let r, _) = b { r.node.path } else { nil } }
@@ -132,7 +133,7 @@ struct ExtensionCodeHostingTests {
 
     @Test func threadsGoUnderTheirLinesAndTheCommentBoxWhereItWasOpened() throws {
         let v = try Self.view("View.code-review.json")
-        let state = CodePageState()
+        let state = CodePageState.scratch()
         let mains = v.sections.indices.filter { v.sections[$0].pane != "side" }
         var blocks = CodePageBlocks.of(v, sections: mains, state: state, look: .unified, canComment: true)
         let ids = blocks.map(\.id)
@@ -154,7 +155,7 @@ struct ExtensionCodeHostingTests {
         else { Issue.record("the comment box follows the line it was opened on") }
 
         // Folding a file leaves its header only.
-        state.toggle(diff: "diff:src/upload/retry.go", collapsed: false)
+        state.toggle(diff: "diff:src/upload/retry.go", initially: false)
         blocks = CodePageBlocks.of(v, sections: mains, state: state, look: .unified, canComment: true)
         #expect(!blocks.contains { if case .diffLine(_, _, let d, _, _, _) = $0 { d.path == "src/upload/retry.go" } else { false } })
         #expect(blocks.contains { if case .diffHeader(_, _, let d, true) = $0 { d.path == "src/upload/retry.go" } else { false } })
@@ -163,7 +164,7 @@ struct ExtensionCodeHostingTests {
     @Test func sideBySideLaysTheDiffOutInPairs() throws {
         let v = try Self.view("View.code-review.json")
         let mains = v.sections.indices.filter { v.sections[$0].pane != "side" }
-        let blocks = CodePageBlocks.of(v, sections: mains, state: CodePageState(), look: .split, canComment: true)
+        let blocks = CodePageBlocks.of(v, sections: mains, state: CodePageState.scratch(), look: .split, canComment: true)
         // client.go (modified): its removed lines face the added ones.
         #expect(blocks.contains { if case .diffPair(_, _, let d, let l?, let r?, _, _) = $0 { d.path == "src/upload/client.go" && l.kind == .del && r.kind == .add } else { false } })
         #expect(!blocks.contains { if case .diffLine(_, _, let d, _, _, _) = $0 { d.path == "src/upload/client.go" } else { false } })
@@ -177,7 +178,7 @@ struct ExtensionCodeHostingTests {
         let d = ExtensionDiffComponent(key: "big", path: "big.go", hunks: [ExtensionHunk(oldStart: 1, newStart: 1, lines: raw)])
         let v = ExtensionView(sections: [ExtensionSection(items: [.diff(d)])])
         let started = Date()
-        let blocks = CodePageBlocks.of(v, sections: [0], state: CodePageState(), look: .unified, canComment: true)
+        let blocks = CodePageBlocks.of(v, sections: [0], state: CodePageState.scratch(), look: .unified, canComment: true)
         #expect(blocks.count >= 20_000)
         #expect(Date().timeIntervalSince(started) < 2, "laying out 20 000 lines is quick (they are drawn lazily)")
     }
@@ -192,7 +193,7 @@ struct ExtensionCodeHostingTests {
         try hub.sent("POST", "/api/v1/plugins/github/-/ui/pr").map { try JSON.decoder.decode(JSONValue.self, from: $0.body ?? Data()) }
     }
 
-    @Test func anActionsOwnValuesWinOverTheComponentsAndTheAppSaysVersion4() async throws {
+    @Test func anActionsOwnValuesWinOverTheComponentsAndTheAppSaysVersion8() async throws {
         let hub = FakeHub()
         hub.on("POST", "/api/v1/plugins/github/-/ui/pr", json: #"{"view":\#(try Self.example("View.code-review.json"))}"#)
         let m = page(hub)
@@ -200,17 +201,18 @@ struct ExtensionCodeHostingTests {
         let reply = ExtensionAction(id: "reply", values: ["thread": "t1"])
         _ = await m.perform(reply, with: ["body": "ok", "thread": "other"])
         let sent = try bodies(hub)
-        #expect(sent.first?["context"]?["ui_version"] == .number(4))
+        #expect(sent.first?["context"]?["ui_version"] == .number(8))
         #expect(sent.last?["action"] == .string("reply"))
         #expect(sent.last?["values"] == .object(["body": .string("ok"), "thread": .string("t1")]))
     }
 
-    @Test func aWholePageSaysVersion4AndACardStaysOnTheSharedVersion() {
+    @Test func pagesAndCardsSayVersion8AndWidgetsStayOnTheSharedVersion() {
         #expect(ExtensionUIContext.here().forPage().uiVersion == ExtensionUIContext.pageVersion)
-        #expect(ExtensionUIContext.here(size: "full").forPage().uiVersion == 4)
-        #expect(ExtensionUIContext.here(size: "compact").forPage().uiVersion == ExtensionUIContext.version,
-                "a card (compact) draws none of the code components: the hub keeps sending it what it can draw")
-        #expect(ExtensionUIContext.here().uiVersion == ExtensionUIContext.version)
+        #expect(ExtensionUIContext.here(size: "full").forPage().uiVersion == 8)
+        // A card is drawn by the app's renderer too (version 4–5's code components read-only).
+        #expect(ExtensionViewModel(plugin: "p", ui: "u", context: .here(size: "compact")).context.uiVersion == 8)
+        // Widgets, the watch and the system extensions draw none of it: the Shared version.
+        #expect(ExtensionUIContext.here().uiVersion == ExtensionUIContext.version && ExtensionUIContext.version == 3)
     }
 
     @Test func aTabSendsItsValueAndTheSearch() async throws {
@@ -247,7 +249,7 @@ struct ExtensionCodeHostingTests {
         let json = #"{"sections":[{"items":[{"type":"hologram","key":"x"},{"type":"diff","path":"a.go","hunks":[{"old_start":1,"new_start":1,"lines":[" a"]}]}]}]}"#
         let v = try JSONDecoder().decode(ExtensionView.self, from: Data(json.utf8))
         #expect(v.wantsCodePage)
-        let blocks = CodePageBlocks.of(v, sections: [0], state: CodePageState(), look: .unified, canComment: false)
+        let blocks = CodePageBlocks.of(v, sections: [0], state: CodePageState.scratch(), look: .unified, canComment: false)
         #expect(!blocks.contains { if case .legacy = $0 { true } else { false } }, "the unknown component is not drawn")
         #expect(blocks.contains { if case .diffLine = $0 { true } else { false } })
     }
@@ -255,7 +257,7 @@ struct ExtensionCodeHostingTests {
     @Test func aDiffMissingItsPathIsLeftOut() throws {
         let json = #"{"sections":[{"items":[{"type":"diff","hunks":[]},{"type":"text","text":"still here"}]}]}"#
         let v = try JSONDecoder().decode(ExtensionView.self, from: Data(json.utf8))
-        let blocks = CodePageBlocks.of(v, sections: [0], state: CodePageState(), look: .unified, canComment: false)
+        let blocks = CodePageBlocks.of(v, sections: [0], state: CodePageState.scratch(), look: .unified, canComment: false)
         #expect(!blocks.contains { if case .diffHeader = $0 { true } else { false } }, "nothing to anchor a diff without a path to")
         #expect(blocks.contains { if case .legacy = $0 { true } else { false } }, "the rest of the section is drawn")
     }

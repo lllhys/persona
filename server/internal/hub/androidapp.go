@@ -12,13 +12,23 @@ import (
 	"github.com/nwverse/persona/server/internal/i18n"
 )
 
+// The stable directory keeps its existing on-disk layout. Beta has its own
+// signed-APK cache so version codes never keep a phone on the other channel.
+func (h *Hub) androidUpdateDir() string {
+	dir := filepath.Join(h.cfg.dir, "apps", "android")
+	if h.upd != nil && h.upd.selectedBeta() {
+		return filepath.Join(dir, "beta")
+	}
+	return dir
+}
+
 func (h *Hub) androidAppRoutes(api *http.ServeMux) {
 	api.HandleFunc("GET /api/v1/app/android/latest", h.androidAppLatest)
 	api.HandleFunc("GET /api/v1/app/android/apk", h.androidAppAPK)
 }
 
 func (h *Hub) androidAppManifest(w http.ResponseWriter) ([]byte, string, bool) {
-	dir := filepath.Join(h.cfg.dir, "apps", "android")
+	dir := h.androidUpdateDir()
 	b, err := os.ReadFile(filepath.Join(dir, "latest.json"))
 	if err != nil {
 		androidAppError(w, err)
@@ -53,7 +63,7 @@ func (h *Hub) androidAppLatest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) androidAppAPK(w http.ResponseWriter, r *http.Request) {
-	dir := filepath.Join(h.cfg.dir, "apps", "android")
+	dir := h.androidUpdateDir()
 	checksum := r.URL.Query().Get("sha256")
 	if checksum != "" {
 		if !validAPKDigest(checksum) {

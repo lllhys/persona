@@ -14,10 +14,45 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
 const modelHTTPTestKey = "sk-test-never-shown-0123456789"
+
+func TestModelHTTPUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+	}))
+	defer srv.Close()
+	for _, tc := range []struct {
+		name   string
+		header map[string][]string
+		want   string
+	}{
+		{"old manager", nil, modelhttp.UserAgent()},
+		{"empty headers", map[string][]string{}, modelhttp.UserAgent()},
+		{"forwarded", map[string][]string{"user-agent": {"provider/1"}}, "provider/1"},
+		{"empty forwarded", map[string][]string{"user-agent": {""}}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(proto.ModelHTTPParams{URL: srv.URL, Header: tc.header})
+			if tc.header != nil && len(tc.header) == 0 {
+				raw, err = json.Marshal(map[string]any{"url": srv.URL, "header": tc.header})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := modelHTTP(context.Background(), raw); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("User-Agent = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 // model.http sends the POST as given and brings back the whole streamed answer; the key appears in no log, no file
 // under the node's home and no error, whatever fails.

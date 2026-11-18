@@ -82,7 +82,7 @@ func (s *Service) storeTaskCheck(ctx context.Context, id string, check *TodoChec
 		return false
 	}
 	cur.Check = check
-	if cur == (todoStage{}) {
+	if cur.empty() {
 		delete(b.stages, id)
 	} else {
 		b.stages[id] = cur

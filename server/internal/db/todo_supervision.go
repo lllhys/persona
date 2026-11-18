@@ -26,8 +26,11 @@ type TodoSupervisionRow struct {
 	AutoReview json.RawMessage `json:"auto_review,omitempty"`
 	// Waits is the done judge's finding that the latest stretch of work stopped on the owner's decision (#1277), JSON the
 	// assistant owns; nil when it does not hold.
-	Waits     json.RawMessage `json:"waits,omitempty"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	Waits json.RawMessage `json:"waits,omitempty"`
+	// PendingSince is when the task entered pending_review; nil in every other state, and for a task that was already
+	// waiting for review with no time recorded.
+	PendingSince *time.Time `json:"pending_since,omitempty"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // TodoCriterion is the latest report or check of one done_when entry. At and By
@@ -65,7 +68,7 @@ func AlignTodoCriteria(doneWhen []string, criteria []TodoCriterion) []TodoCriter
 
 // ListTodoSupervision returns every supervised task's ledger.
 func (d *DB) ListTodoSupervision(ctx context.Context) ([]TodoSupervisionRow, error) {
-	rows, err := d.pool.Query(ctx, `SELECT todo_id, supervisor, done_when, expect_minutes, state, round, reviews, auto_review, waits, updated_at, criteria
+	rows, err := d.pool.Query(ctx, `SELECT todo_id, supervisor, done_when, expect_minutes, state, round, reviews, auto_review, waits, updated_at, criteria, pending_since
 		FROM todo_supervision`)
 	if err != nil {
 		return nil, err
@@ -75,7 +78,7 @@ func (d *DB) ListTodoSupervision(ctx context.Context) ([]TodoSupervisionRow, err
 	for rows.Next() {
 		var r TodoSupervisionRow
 		var when, auto, waits, criteria []byte
-		if err := rows.Scan(&r.TodoID, &r.Supervisor, &when, &r.ExpectMinutes, &r.State, &r.Round, &r.Reviews, &auto, &waits, &r.UpdatedAt, &criteria); err != nil {
+		if err := rows.Scan(&r.TodoID, &r.Supervisor, &when, &r.ExpectMinutes, &r.State, &r.Round, &r.Reviews, &auto, &waits, &r.UpdatedAt, &criteria, &r.PendingSince); err != nil {
 			return nil, err
 		}
 		if len(auto) > 0 {
@@ -114,12 +117,13 @@ func (d *DB) PutTodoSupervision(ctx context.Context, r TodoSupervisionRow) error
 	if len(r.Waits) > 0 {
 		waits = r.Waits
 	}
-	tag, err := d.pool.Exec(ctx, `INSERT INTO todo_supervision (todo_id, supervisor, done_when, expect_minutes, state, round, reviews, auto_review, waits, updated_at, criteria)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11 WHERE EXISTS (SELECT 1 FROM todos WHERE id = $1)
+	tag, err := d.pool.Exec(ctx, `INSERT INTO todo_supervision (todo_id, supervisor, done_when, expect_minutes, state, round, reviews, auto_review, waits, updated_at, criteria, pending_since)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12 WHERE EXISTS (SELECT 1 FROM todos WHERE id = $1)
 		ON CONFLICT (todo_id) DO UPDATE SET supervisor = EXCLUDED.supervisor, done_when = EXCLUDED.done_when,
 			expect_minutes = EXCLUDED.expect_minutes, state = EXCLUDED.state, round = EXCLUDED.round,
-			reviews = EXCLUDED.reviews, auto_review = EXCLUDED.auto_review, waits = EXCLUDED.waits, updated_at = EXCLUDED.updated_at, criteria = EXCLUDED.criteria`,
-		r.TodoID, r.Supervisor, when, r.ExpectMinutes, r.State, r.Round, reviews, auto, waits, r.UpdatedAt, criteria)
+			reviews = EXCLUDED.reviews, auto_review = EXCLUDED.auto_review, waits = EXCLUDED.waits, updated_at = EXCLUDED.updated_at, criteria = EXCLUDED.criteria,
+			pending_since = EXCLUDED.pending_since`,
+		r.TodoID, r.Supervisor, when, r.ExpectMinutes, r.State, r.Round, reviews, auto, waits, r.UpdatedAt, criteria, r.PendingSince)
 	if err != nil {
 		return err
 	}

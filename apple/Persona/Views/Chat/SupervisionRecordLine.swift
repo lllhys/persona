@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// A quiet round keeps its full transcript, but occupies only one muted line until requested. With a `source` it is a
-/// background round of the main conversation (docs/apple/ios.md "Background rounds"): "@<source> · Background round".
+/// background round of the main conversation (docs/apple/ios.md "Background rounds"): "@<source> · Reported from the
+/// background". The words say plainly what happened in the background (#6230), the same copy on every client.
 struct SupervisionRecordLine: View {
     var live: Bool
     var open: Bool

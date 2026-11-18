@@ -37,4 +37,7 @@
     <string name="chat_brief_stage_merge">Merge</string>
     <string name="chat_brief_stage_deploy">Deploy</string>
     <string name="chat_brief_stage_verify">Verified</string>
+    <string name="chat_brief_setup">Recommended setup</string>
+    <string name="chat_brief_setup_intro">From Persona\'s own records of the last 7 days, unless a line names its own period. Nothing was changed: each of these stays as it is until you change it yourself.</string>
+    <string name="chat_brief_setup_open">Open settings</string>
 </resources>

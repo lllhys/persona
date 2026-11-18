@@ -57,7 +57,10 @@ func TestSupervisorAcceptedPassesPleaseVerify(t *testing.T) {
 	updated := updatedCards(f)
 	deployedForReview(t, s, f, todo.ID)
 	res := reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "上线了",
-		"checks": []ReviewCheck{{Criterion: "PR 合并到 master", Met: true, Evidence: "https://github.com/o/r/pull/9 merged"}}})
+		"checks": []ReviewCheck{
+			{Criterion: "PR 合并到 master", Met: true, Evidence: "https://github.com/o/r/pull/9 merged"},
+			{Criterion: "浅色 / 深色截图贴进 PR", Met: true, Evidence: "both screenshots verified"},
+		}})
 	if !strings.Contains(res, "marked verified by you") {
 		t.Fatalf("the review's answer: %s", res)
 	}
@@ -98,7 +101,7 @@ func TestSupervisorAcceptedPassesPleaseVerify(t *testing.T) {
 func TestSupervisedBacklogIsPassedBySweep(t *testing.T) {
 	s, f, todo, _, _ := conclusionService(t, false)
 	deployedForReview(t, s, f, todo.ID)
-	reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "上线了"})
+	reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "上线了", "checks": completeReviewChecks(todoNow(s, todo.ID))})
 	s.accept.mu.Lock()
 	s.accept.asks[todo.ID].AcceptedAt, s.accept.asks[todo.ID].BySupervisor = time.Time{}, false // as the old hub left it
 	s.accept.mu.Unlock()
@@ -120,7 +123,7 @@ func TestSupervisorUserCheckStillAsksTheOwner(t *testing.T) {
 	t.Run("deployed", func(t *testing.T) {
 		s, f, todo, posts, _ := conclusionService(t, false)
 		deployedForReview(t, s, f, todo.ID)
-		res := reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "界面改好了", "user_check": true})
+		res := reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "界面改好了", "user_check": true, "checks": completeReviewChecks(todoNow(s, todo.ID))})
 		if !strings.Contains(res, "user_check") {
 			t.Fatalf("the review's answer: %s", res)
 		}
@@ -153,7 +156,7 @@ func TestSupervisorUserCheckStillAsksTheOwner(t *testing.T) {
 		agentTurn(s, f, proto.StatusDone, deployedReply, 0)
 		waitFor(t, "the review", func() bool { return todoNow(s, todo.ID).Supervision.State == reviewPending })
 		f.judge = `{"changed":"飞书机器人多了任务进展开关","link":"https://hub.example.com/settings?tab=feishu","how":"打开设置看开关"}`
-		reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "界面改好了", "user_check": true})
+		reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "界面改好了", "user_check": true, "checks": completeReviewChecks(todoNow(s, todo.ID))})
 		waitFor(t, "the 请验收 card", func() bool { a := askOf(s, todo.ID); return a != nil && a.MessageID != "" })
 		if a := askOf(s, todo.ID); !a.AcceptedAt.IsZero() || a.ByAssistant || a.BySupervisor {
 			t.Fatalf("ask %+v", a)
@@ -166,7 +169,7 @@ func TestSupervisorUserCheckStillAsksTheOwner(t *testing.T) {
 		s, f, todo, posts, _ := conclusionService(t, false)
 		waitsForReview(t, s, f, todo.ID, "改好了，截图贴在 PR 里")
 		f.judge = `{"changed":"登录页横屏不再崩溃","link":"","how":"iPad 横屏打开登录页"}`
-		reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "界面改好了", "user_check": true})
+		reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "界面改好了", "user_check": true, "checks": completeReviewChecks(todoNow(s, todo.ID))})
 		waitFor(t, "the 请验收 card", func() bool { a := askOf(s, todo.ID); return a != nil && a.MessageID != "" })
 		if n := countAcceptCards(posts()); n != 1 {
 			t.Fatalf("%d 请验收 cards", n)
@@ -196,7 +199,7 @@ func TestSupervisorAcceptedLeavesABigFeatureToTheOwner(t *testing.T) {
 	s.todos.todos[todo.ID].Priority = "high"
 	s.todos.mu.Unlock()
 	deployedForReview(t, s, f, todo.ID)
-	reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "上线了"})
+	reviewTask(t, s, todo.ID, map[string]any{"verdict": "accepted", "note": "上线了", "checks": completeReviewChecks(todoNow(s, todo.ID))})
 	s.verifySupervisedAsks(context.Background())
 	if a := askOf(s, todo.ID); a == nil || !a.AcceptedAt.IsZero() {
 		t.Fatalf("ask %+v", a)
@@ -208,7 +211,7 @@ func TestSupervisorAcceptedLeavesABigFeatureToTheOwner(t *testing.T) {
 	if got := s.todoStages(ctx)[todo.ID]; got.Stage != "deploy" || got.Verified {
 		t.Fatalf("waiting for owner: %+v", got)
 	}
-	if ok, err := s.acceptTry(ctx, todo.ID, ""); err != nil || !ok {
+	if ok, err := s.acceptTry(ctx, todo.ID, ""); err != nil || !ok.taken {
 		t.Fatalf("owner acceptance: %v %v", ok, err)
 	}
 	if got := s.todoStages(ctx)[todo.ID]; got.Stage != "verify" || !got.Verified {

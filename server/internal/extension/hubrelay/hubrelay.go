@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/extwire"
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // Options are the relay's.
@@ -140,9 +140,9 @@ func Start(ctx context.Context, o Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := osproc.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		if ln, err = net.Listen("tcp", "[::1]:0"); err != nil {
+		if ln, err = osproc.Listen("tcp", "[::1]:0"); err != nil {
 			return "", err
 		}
 	}

@@ -7,6 +7,9 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { parseAPIError } from "../../lib/api-errors";
+import { turnErrorFix } from "../../lib/readiness";
+import { recoveryExhausted } from "../../lib/model-fallback";
+import { usageLimitClock } from "../../lib/usage-limit";
 import type { ChatLine } from "../../lib/turns";
 import type { Item } from "../../lib/types";
 import { ChatLineView, ErrorBanner, errorKey } from "./Lines";
@@ -50,6 +53,52 @@ describe("a model error's fix", () => {
     expect(html).not.toContain(">重试</button>");
     expect(banner(text, false)).not.toContain("编辑上一条消息");
     expect(banner(text, true, { onEditLastMessage: () => {} })).not.toContain("编辑上一条消息");
+  });
+});
+
+describe("a gateway that refused on-demand tools (tool_search_unsupported)", () => {
+  // i18n-ignore: a gateway's words
+  const edge = "API Error: 400 request is not representable on this edge: ToolSearch is not supported on this endpoint (defer_loading:true, tool_search_*, tool_reference); resend with all tools loaded";
+
+  it("says so in a Persona conversation and offers Retry, not a provider to set up", () => {
+    const html = banner(edge, true);
+    expect(html).toContain("这个网关不支持按需加载工具");
+    expect(html).not.toContain("全部工具"); // an older computer's node keeps tool search on: no promise it can't keep
+    expect(html).toContain(">重试</button>");
+    expect(html).not.toContain("去修");
+    // the record in the chat says the same, with no button of its own
+    expect(inline(edge, true)).toContain("这个网关不支持按需加载工具");
+    expect(inline(edge, true)).not.toContain("去修");
+  });
+
+  it("is the hub's code too, and an Agent session's card keeps the rejected request without a Retry that would fail the same way", () => {
+    expect(banner("API Error: 400 Bad Request", true, { fix: turnErrorFix("tool_search_unsupported") })).toContain(">重试</button>");
+    const html = banner(edge, false);
+    expect(html).toContain("请求被拒绝");
+    expect(html).not.toContain("按需加载工具");
+    expect(html).not.toContain(">重试</button>");
+  });
+});
+
+describe("a model the chat can't run (model_route)", () => {
+  const route = "There's an issue with the selected model (x). It may not exist or you may not have access to it.";
+
+  it("offers Fix it, which opens the chat's picker, and the way back while the chat keeps a pick", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const onPickModel = vi.fn(() => true);
+    const run = vi.fn();
+    const fix = { ...turnErrorFix("model_route")!, onPickModel, back: { label: "恢复跟随默认", run } };
+    act(() => root.render(<ErrorBanner line={line(route)} assistant fix={fix} onRetry={() => {}} onDismiss={() => {}} />));
+    const buttons = [...host.querySelectorAll("button")];
+    expect(buttons.some((b) => b.textContent === "重试")).toBe(false);
+    act(() => buttons.find((b) => b.textContent === "去修")!.click());
+    expect(onPickModel).toHaveBeenCalledTimes(1);
+    act(() => buttons.find((b) => b.textContent === "恢复跟随默认")!.click());
+    expect(run).toHaveBeenCalledTimes(1);
+    act(() => root.unmount());
+    host.remove();
   });
 });
 
@@ -152,5 +201,73 @@ describe("the error the chat stopped on, over the composer (#5313)", () => {
 
   it("is a new error once the same one comes again after a retry (the line folds with a higher count)", () => {
     expect(errorKey(line(gpu))).not.toBe(errorKey({ ...line(gpu), count: 2 }));
+  });
+});
+
+// #7824: when every model of the recovery chain failed, the failure card offers Retry even for an error the parser
+// calls non-transient (a safeguards refusal), names the cause and the reset time, and keeps the tried models folded.
+describe("an exhausted recovery chain's failure card", () => {
+  const safeguards = "API Error: Opus 5.5's safeguards flagged this message. Details: [frontier_llm]";
+  const exhausted = recoveryExhausted(
+    {
+      model_fallback: {
+        subtype: "model_refusal_fallback",
+        category: "safeguards_refusal",
+        recovery_exhausted: true,
+        recovery_reset: "2026-11-15T07:30:00Z",
+        recovery_tried: "model-a -> model-b",
+      },
+    },
+    Date.parse("2026-11-15T06:00:00Z"),
+  )!;
+
+  const resetText = usageLimitClock("2026-11-15T07:30:00Z", Date.parse("2026-11-15T06:00:00Z"));
+
+  it("offers Retry on a safeguards error the parser treats as non-transient, with the cause and reset time", () => {
+    const html = banner(safeguards, false, { exhausted });
+    expect(html).toContain(">重试</button>");
+    expect(html).toContain("模型拒绝了这次请求");
+    expect(html).toContain(resetText);
+    expect(html).toMatch(/data-testid="recovery-exhausted"/);
+  });
+
+  it("keeps the models tried inside the folded error details, off the card's face", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => root.render(<ErrorBanner line={line(safeguards)} onRetry={() => {}} onDismiss={() => {}} exhausted={exhausted} />));
+    // before the fold opens, the card's face names the cause but not the tried models
+    expect(host.textContent).toContain("模型拒绝了这次请求");
+    expect(host.textContent).not.toContain("试过的模型");
+    act(() => [...host.querySelectorAll("button")].find((b) => b.textContent === "错误详情")!.click());
+    const details = host.querySelector("[data-error-details]")!;
+    expect(details.textContent).toContain("试过的模型：model-a -> model-b");
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("still hides Retry without the exhausted marker, so ordinary safeguards errors keep their old behavior", () => {
+    const html = banner(safeguards, false);
+    expect(html).not.toContain(">重试</button>");
+    expect(html).not.toContain("模型拒绝了这次请求");
+  });
+
+  it("shows the cause alone when the upstream gave no reset time", () => {
+    const noReset = recoveryExhausted({
+      model_fallback: { subtype: "model_refusal_fallback", category: "quota_exhausted", recovery_exhausted: true },
+    })!;
+    const html = banner("API Error: 429 rate_limited", false, { exhausted: noReset });
+    expect(html).toContain("额度用尽");
+    expect(html).not.toContain("恢复可用");
+    expect(html).toContain(">重试</button>");
+  });
+
+  it("reads the same on the record left in the chat, which keeps no Retry button of its own", () => {
+    const html = renderToStaticMarkup(
+      <ChatLineView line={line(safeguards)} mid="m" sid="s" expandFold={async () => {}} exhausted={exhausted} />,
+    );
+    expect(html).toContain("模型拒绝了这次请求");
+    expect(html).toContain(resetText);
+    expect(html).not.toContain(">重试</button>");
   });
 });

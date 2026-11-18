@@ -2,6 +2,8 @@
 
 Pitfalls hit while integrating DSH (`docs/integrations/dsh.md`) and node's runtime support (`server/internal/node/runtimes.go`, `integrations/runtime-sdk`, spec in `docs/integrations/runtimes.md`).
 
+- **A native rename can leave an earlier summary intact** (#8902). Grok's `_x.ai/session/rename` persists the current name in `generated_title` and marks it manual, but can keep the earlier `session_summary`. Register the SDK's rename handler, wait for native success, and prefer `generated_title` on every scan. Test a second rename followed by a fresh runtime, as a first rename alone can populate both fields and hide the bug.
+
 - **A session's directory does not attach it to a DSH workspace** (#5485). `sessionController.create({cwd})` leaves it ungrouped even when a workspace has that path. Use the registry's existing `resolveByPath` (exact canonical path, including symlinks), then pass only `{workspaceId}` for a match: DSH rejects both fields together. Only `ENOENT` keeps the controller's supported new-directory creation path; other lookup failures must not create an ungrouped session as if nothing matched. Verify the actual registry/controller and persisted `sessionIds`, not just a fake controller accepting a directory.
 - **DSH approvals / questions are a responder chain, not a broadcast** (`approval/request` and `user-questions/request` are Cordis waterfalls: they run in registration order and stop at whoever doesn't call `next()`).
   The browser link in the chain only withdraws its card when the request's own `signal` ends; the plugin can't withdraw it on the browser's behalf. So the phone and the Web GUI can't "both pop up, first answer wins". The plugin can only go to the phone first,

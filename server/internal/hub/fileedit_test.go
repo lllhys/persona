@@ -35,7 +35,7 @@ func fileEditHub(t *testing.T, answer func(method string, params map[string]any)
 	m.peer = hubPeer
 	h.byID["m1"] = m
 	mux := http.NewServeMux()
-	for _, op := range []string{"rename", "move", "trash", "restore"} {
+	for _, op := range []string{"rename", "move", "trash", "restore", "mkdir", "write", "zip", "copy", "chmod"} {
 		mux.HandleFunc("POST /api/v1/machines/{mid}/files/"+op, h.fileEdit(op))
 	}
 	return mux
@@ -125,5 +125,92 @@ func TestFileEditErrors(t *testing.T) {
 		if c.code == "exists" && out["name"] != "a.txt" {
 			t.Errorf("exists without the name: %v", out)
 		}
+	}
+}
+
+// #5828 / #5829: a new folder, a text file and a zip reach the node with their fields; what can't be one is 400 before
+// the node is asked; a write's conflict comes back as the node's file_changed.
+func TestFileMakeRoutes(t *testing.T) {
+	var got []string
+	mux := fileEditHub(t, func(method string, p map[string]any) (any, error) {
+		b, _ := json.Marshal(p)
+		got = append(got, method+" "+string(b))
+		if method == "file.write" && p["revision"] == "old" {
+			return nil, &rpc.Error{Code: proto.CodeFileChanged, Message: "changed", Data: json.RawMessage(`{"revision":"new"}`)}
+		}
+		return map[string]any{"ok": method}, nil
+	})
+	for _, c := range []struct{ op, body string }{
+		{"mkdir", `{"dir":"~/w","cwd":"/w","name":"new"}`},
+		{"write", `{"path":"~/w/a.txt","text":"","create":true}`},
+		{"write", `{"path":"~/w/a.txt","text":"x","revision":"r1","sha256":"ab","force":true}`},
+		{"zip", `{"paths":["~/w/a","~/w/b"],"cwd":"/w","name":"Archive.zip"}`},
+	} {
+		if code, out := postEdit(mux, c.op, c.body); code != 200 || out["ok"] != "file."+c.op {
+			t.Fatalf("%s: %d %v", c.op, code, out)
+		}
+	}
+	want := []string{
+		`file.mkdir {"cwd":"/w","dir":"~/w","name":"new"}`,
+		`file.write {"create":true,"path":"~/w/a.txt","text":""}`,
+		`file.write {"force":true,"path":"~/w/a.txt","revision":"r1","sha256":"ab","text":"x"}`,
+		`file.zip {"cwd":"/w","name":"Archive.zip","paths":["~/w/a","~/w/b"]}`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("node got:\n%s", strings.Join(got, "\n"))
+	}
+	for _, c := range []struct{ op, body string }{
+		{"mkdir", `{"dir":"~/w","name":"a/b"}`},
+		{"mkdir", `{"name":"x"}`},
+		{"write", `{"path":"~/w/a.txt"}`},
+		{"write", `{"text":"x"}`},
+		{"zip", `{"paths":[]}`},
+	} {
+		if code, _ := postEdit(mux, c.op, c.body); code != http.StatusBadRequest {
+			t.Fatalf("%s %s: %d, want 400", c.op, c.body, code)
+		}
+	}
+	if len(got) != 4 {
+		t.Fatalf("a refused request reached the node: %v", got[4:])
+	}
+	code, out := postEdit(mux, "write", `{"path":"~/w/a.txt","text":"x","revision":"old"}`)
+	if code != http.StatusConflict || out["code"] != proto.CodeFileChanged {
+		t.Fatalf("conflict: %d %v", code, out)
+	}
+}
+
+// #5831: chmod reaches the node with its bits; bits past 0777 (or none) are 400.
+func TestFileChmodRoute(t *testing.T) {
+	var got []string
+	mux := fileEditHub(t, func(method string, p map[string]any) (any, error) {
+		b, _ := json.Marshal(p)
+		got = append(got, method+" "+string(b))
+		return map[string]any{"mode": p["mode"]}, nil
+	})
+	if code, out := postEdit(mux, "chmod", `{"path":"~/w/run.sh","mode":493}`); code != 200 || out["mode"] != float64(493) {
+		t.Fatalf("chmod: %d %v", code, out)
+	}
+	for _, body := range []string{`{"path":"~/w/run.sh","mode":2541}`, `{"path":"~/w/run.sh"}`, `{"mode":420}`, `{"path":"~/w/run.sh","mode":-1}`} {
+		if code, _ := postEdit(mux, "chmod", body); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d, want 400", body, code)
+		}
+	}
+	if len(got) != 1 || got[0] != `file.chmod {"mode":493,"path":"~/w/run.sh"}` {
+		t.Fatalf("node got %v", got)
+	}
+}
+
+func TestFileCopyPassesOperationID(t *testing.T) {
+	var methods []string
+	mux := fileEditHub(t, func(method string, p map[string]any) (any, error) {
+		methods = append(methods, method)
+		return map[string]any{"id": p["operation_id"], "state": "running"}, nil
+	})
+	code, out := postEdit(mux, "copy", `{"paths":["~/a"],"dir":"~/dest","operation_id":"op-1"}`)
+	if code != 200 || out["id"] != "op-1" {
+		t.Fatalf("copy operation_id: %d %v", code, out)
+	}
+	if len(methods) != 1 || methods[0] != "file.copy" {
+		t.Fatalf("methods = %v", methods)
 	}
 }

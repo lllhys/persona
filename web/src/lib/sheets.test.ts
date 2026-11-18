@@ -56,6 +56,33 @@ describe("parseDelimited", () => {
     expect(separatorOf("x.csv", "single")).toBe(",");
     expect(delimitedSheet("t.tsv", "a\tb\n1\t2").rows[1]).toEqual(["1", "2"]);
   });
+
+  it.each([
+    ["name;notes\nAlice;\"one,two,three,four\"\n", ";", "one,two,three,four"],
+    ["name,notes\nAlice,\"one;two;three;four\"\n", ",", "one;two;three;four"],
+    ['name;notes\nAlice;"say ""hello, friend"", please"\n', ";", 'say "hello, friend", please'],
+    ['\uFEFF"name";"notes"\n"Alice";"one,two,three,four"\n', ";", "one,two,three,four"],
+    ['name;notes\r\nAlice;"one,two\r\nthree,four"\r\n', ";", "one,two\r\nthree,four"],
+  ])("does not count quoted punctuation as a separator in %j", (text, separator, note) => {
+    expect.soft(separatorOf("data.csv", text)).toBe(separator);
+    expect.soft(delimitedSheet("data.csv", text).rows).toEqual([["name", "notes"], ["Alice", note]]);
+  });
+
+  it("keeps literal quotes in unquoted fields and the existing format defaults", () => {
+    const literal = 'a;b,c\ninch";2';
+    expect(separatorOf("data.csv", literal)).toBe(";");
+    expect(delimitedSheet("data.csv", literal).rows).toEqual([["a", "b,c"], ['inch"', "2"]]);
+    expect(separatorOf("data.csv", "a,b;c")).toBe(",");
+    expect(separatorOf("data.csv", "single")).toBe(",");
+    expect(separatorOf("data.csv", "")).toBe(",");
+    for (const name of ["data.tsv", "data.tab"]) expect(separatorOf(name, 'a;b\n"c,d,e,f"')).toBe("\t");
+  });
+
+  it("keeps the 4096-code-unit and first-five-physical-line sampling bounds", () => {
+    expect(separatorOf("data.csv", "x".repeat(4095) + "," + ";".repeat(20))).toBe(",");
+    expect(separatorOf("data.csv", "😀".repeat(2047) + ",;" + "\t".repeat(20))).toBe(",");
+    expect(separatorOf("data.csv", "a,b\n".repeat(5) + ";".repeat(20))).toBe(",");
+  });
 });
 
 describe("workbookSheets", () => {
@@ -134,6 +161,43 @@ describe("selection", () => {
     expect(rangeSummary(rows, { r0: 1, c0: 0, r1: 2, c1: 1 })).toEqual({ count: 4, sum: 6, avg: 2 });
     expect(rangeSummary(rows, { r0: 0, c0: 0, r1: 0, c1: 2 })).toEqual({ count: 3 });
     expect(rangeSummary([["10%", "(5)"]], { r0: 0, c0: 0, r1: 0, c1: 1 }).sum).toBeCloseTo(-4.9);
+  });
+
+  it.each([
+    ["(5%)", 0.05],
+    [" (5.0%) ", 0.05],
+    ["(0%)", 0.1],
+    ["5%", 0.15],
+    ["-5%", 0.05],
+    ["(5)", -4.9],
+    ["5", 5.1],
+  ] as const)("keeps the percent scale when summarizing %j", (value, sum) => {
+    const rows = [["10%", value]];
+    const range = { r0: 0, c0: 0, r1: 0, c1: 1 };
+    const summary = rangeSummary(rows, range);
+    expect(summary.count).toBe(2);
+    expect(summary.sum).toBeCloseTo(sum);
+    expect(summary.avg).toBeCloseTo(sum / 2);
+    expect(rangeTSV(rows, range)).toBe(`10%\t${value}`);
+  });
+
+  it("summarizes the displayed accounting percentages from a real workbook", () => {
+    const source = XLSX.utils.aoa_to_sheet([[0.1, -0.05]]);
+    source.A1.z = source.B1.z = "0.0%;(0.0%)";
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, source, "Rates");
+    const bytes = XLSX.write(book, { type: "array", bookType: "xlsx" });
+    const sheet = workbookSheets(XLSX, XLSX.read(bytes, { type: "array", dense: true, cellStyles: true }))[0];
+    expect(sheet.rows).toEqual([["10.0%", "(5.0%)"]]);
+    const summary = rangeSummary(sheet.rows, { r0: 0, c0: 0, r1: 0, c1: 1 });
+    expect(summary.sum).toBeCloseTo(0.05);
+    expect(summary.avg).toBeCloseTo(0.025);
+  });
+
+  it("preserves nonnumeric counts, single-number and large-selection summaries", () => {
+    expect(rangeSummary([["(5%)", "note", ""]], { r0: 0, c0: 0, r1: 0, c1: 2 })).toEqual({ count: 2 });
+    expect(rangeSummary([["a", "b"]], { r0: 0, c0: 0, r1: 0, c1: 1 })).toEqual({ count: 2 });
+    expect(rangeSummary([["(5%)"]], { r0: 0, c0: 0, r1: 200_000, c1: 0 })).toEqual({ count: 200_001 });
   });
 
   it("grows a selection over the merges it touches", () => {

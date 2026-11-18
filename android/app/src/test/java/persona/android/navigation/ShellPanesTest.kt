@@ -2,12 +2,17 @@ package persona.android.navigation
 
 import androidx.navigation3.runtime.NavKey
 import persona.core.navigation.*
+import persona.feature.inbox.ConnectorThreadRoute
+import persona.feature.inbox.InboxEventRoute
+import persona.feature.inbox.InboxItemDetailRoute
 import persona.feature.inbox.LarkMomentRoute
 import persona.feature.inbox.LarkRoute
 import persona.feature.inbox.MailRoute
 import persona.platform.phonetools.PhoneToolsRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The list beside a detail pane marks the row of the page the detail shows, whichever way the page was opened. */
@@ -16,7 +21,18 @@ class ShellPanesTest {
         AppTab.Persona to mutableListOf(AssistantRoute), AppTab.Agents to mutableListOf(AgentsRoute),
     )
     private var selected = AppTab.Persona
-    private val navigator = AppNavigator(stacks, { selected }, { selected = it })
+    private val navigator = AppNavigator(stacks, { selected }, { selected = it }, chatTab = { route ->
+        route.kind?.let { if (it == ConversationKind.Assistant) AppTab.Persona else AppTab.Agents }
+    }, openAssistant = { chat, select ->
+        assistantHomeTarget(chat, embeddedAssistant = true) { null }?.let {
+            if (select) {
+                val stack = stacks.getValue(AppTab.Persona)
+                while (stack.size > 1) stack.removeAt(stack.lastIndex)
+                selected = AppTab.Persona
+            }
+            true
+        } ?: false
+    })
     private fun marked(tab: AppTab) = detailOf(stacks.getValue(tab))
 
     @Test fun deepLinkedSettingsPagesAreMarkedInTheList() {
@@ -50,6 +66,16 @@ class ShellPanesTest {
         assertEquals(SettingsPageRoute(SettingsPage.Notifications), marked(AppTab.Persona))
     }
 
+    @Test fun anInboxConversationIsTheDetailUntilBackReturnsToItsEvent() {
+        val event = InboxEventRoute("item")
+        val chat = ChatRoute("machine", "assistant", ConversationKind.Assistant, RouteSource.InboxItem("item"))
+        navigator.navigate(event)
+        navigator.navigate(chat)
+        assertEquals(chat, marked(AppTab.Persona))
+        navigator.back()
+        assertEquals(event, marked(AppTab.Persona))
+    }
+
     @Test fun pagesOpenedUnderAnotherKeyMarkTheirSettingsRow() {
         // debug.openPairing, pairing links and debug.openPage phone push these keys, not SettingsPageRoute.
         assertEquals(SettingsPageRoute(SettingsPage.Pairing), detailOf(listOf(SettingsRoute, PairingRoute)))
@@ -62,7 +88,8 @@ class ShellPanesTest {
         val chat = ChatRoute("machine", "session")
         listOf(
             chat, InteractionRoute(chat, "request"), TerminalRoute("machine", "session"), MachinesRoute, MachineDetailRoute("machine"),
-            LarkRoute("chat", "item", 1), LarkMomentRoute("post-1", "item"), MailRoute("item"), InboxItemRoute("item"), LarkChatRoute("chat"),
+            LarkRoute("chat", "item", 1), LarkMomentRoute("post-1", "item"), MailRoute("item"), MailRoute("item", 3),
+            InboxItemRoute("item"), LarkChatRoute("chat"),
             InboxItemUiRoute("item", "larkext", "event"),
         ).forEach { key -> assertEquals(key.toString(), key, detailOf(listOf(AgentsRoute, key))) }
         // Lists and pages that never sit beside a list mark nothing.
@@ -88,5 +115,37 @@ class ShellPanesTest {
         assertEquals(ChatRoute("machine", "session", ConversationKind.Agent), marked(AppTab.Agents))
         navigator.back()
         assertEquals("back returns to the space page", space, marked(AppTab.Agents))
+    }
+
+    @Test fun aComputersProjectsOpenBesideTheListAndItsSpacesAndAgentsGoOnTopOfIt() {
+        val projects = MachineSpacesRoute("machine")
+        selected = AppTab.Agents
+        // From a space page's computer: the projects replace the space as the detail, and back returns to the space.
+        val space = SpaceRoute("machine/space")
+        navigator.navigate(space)
+        navigator.navigate(projects)
+        assertEquals(listOf(AgentsRoute, space, projects), stacks.getValue(AppTab.Agents))
+        assertEquals(projects, marked(AppTab.Agents))
+        navigator.navigate(SpaceRoute("machine/other"))
+        assertEquals(SpaceRoute("machine/other"), marked(AppTab.Agents))
+        navigator.back()
+        assertEquals("back returns to the projects", projects, marked(AppTab.Agents))
+        navigator.navigate(MachineDetailRoute("machine"))
+        assertEquals(MachineDetailRoute("machine"), marked(AppTab.Agents))
+        navigator.back()
+        navigator.back()
+        assertEquals(space, marked(AppTab.Agents))
+    }
+
+    @Test fun inboxListAndEveryDetailBelongToTheSingleRightStack() {
+        val routes = listOf(
+            InboxRoute, LarkRoute("chat", "item"), LarkMomentRoute("post", "item"), MailRoute("item"),
+            InboxItemRoute("item"), LarkChatRoute("chat"), InboxItemUiRoute("item", "extension", "page"),
+            InboxItemDetailRoute("item"), InboxEventRoute("item"), ConnectorThreadRoute("item"),
+        )
+        routes.forEach { route -> assertTrue(route.toString(), isInboxDestination(route)) }
+        listOf<NavKey>(AssistantRoute, AgentsRoute, SettingsRoute, MachinesRoute, TodoDetailRoute("todo")).forEach { route ->
+            assertFalse(route.toString(), isInboxDestination(route))
+        }
     }
 }

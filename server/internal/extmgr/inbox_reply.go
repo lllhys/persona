@@ -8,6 +8,7 @@ import (
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
 	"github.com/nwverse/persona/server/internal/i18n"
+	adapter "github.com/nwverse/persona/server/internal/larkcli"
 	"github.com/nwverse/persona/server/internal/mail"
 	"github.com/nwverse/persona/server/internal/rpc"
 )
@@ -23,17 +24,20 @@ var errReplyInDoubt = &rpc.Error{Code: assistantwire.CodeAssistantInDoubt, Messa
 // (sent_messages, kept for good): the same id after it went out is already sent (nothing goes again), after a send that was
 // cut off it is in doubt (errReplyInDoubt). A send that failed is forgotten: asked again, it is sent. A send once
 // begun runs to its end (inboxSendWait) even when the manager stops waiting or drops: what it did is recorded for the
-// retry. Without an id or the database it is just sent.
+// retry. Without an id or the database it is just sent. A failure comes back coded (inboxSendFailure): in doubt, or
+// the reason it did not go out (#9125).
 func (h *Manager) sendInboxOnce(ctx context.Context, sendID, source string, send func(context.Context) error) (already bool, err error) {
 	st, _ := h.store.(sendStore)
 	if sendID == "" || st == nil {
-		return false, send(ctx)
+		err = send(ctx)
+		return false, h.inboxSendFailure(sendID, source, inboxSendOutcome(err), err)
 	}
 	id := "inbox:" + sendID
 	state, err := st.ClaimSend(ctx, id, "inbox", source)
 	switch {
-	case err != nil:
-		return false, err
+	case err != nil: // nothing was sent: without its record the send could go out twice
+		h.logf("inbox: reply %s through %s not sent: %s (claim: %T)", sendID, source, assistantwire.CodeInboxSendUnrecorded, err)
+		return false, inboxSendError(assistantwire.CodeInboxSendUnrecorded, 0)
 	case state == sendDelivered:
 		return true, nil
 	case state != "":
@@ -46,19 +50,39 @@ func (h *Manager) sendInboxOnce(ctx context.Context, sendID, source string, send
 	if serr := st.SettleSend(context.WithoutCancel(ctx), id, outcome); serr != nil {
 		h.logf("inbox: settle reply %s: %v", sendID, serr)
 	}
-	if outcome == sendUnknown {
-		return false, &rpc.Error{Code: assistantwire.CodeAssistantInDoubt, Message: err.Error()}
+	return false, h.inboxSendFailure(sendID, source, outcome, err)
+}
+
+// inboxSendFailure is what the manager is told of a send that ended in err (nil: it went out), its outcome
+// (inboxSendOutcome) taken first: one that may have gone out is assistant_in_doubt, whatever the source said; one the
+// source refused is a coded reason (inboxSendRefusal). Either is logged with an allowlisted cause only.
+func (h *Manager) inboxSendFailure(sendID, source, outcome string, err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case outcome == sendUnknown:
+		h.logf("inbox: reply %s through %s may have gone out: %s (%s)", sendID, source, assistantwire.CodeAssistantInDoubt, inboxSendLogKind(err))
+		return &rpc.Error{Code: assistantwire.CodeAssistantInDoubt, Message: errReplyInDoubt.Message}
 	}
-	return false, err
+	refusal := inboxSendRefusal(err) // nothing went out: its record is forgotten, so the same reply may be sent again
+	h.logf("inbox: reply %s through %s not sent: %s (%s)", sendID, source, refusal.Code, inboxSendLogKind(err))
+	return refusal
 }
 
 // inboxSendOutcome is what a reply's error says of it (sent_messages' state): cut off (the time ran out, a link on the
-// way dropped) it may have gone out; refused it did not ("": forgotten).
+// way dropped, a mail server that got the message and did not answer it) it may have gone out; refused it did not ("":
+// forgotten).
 func inboxSendOutcome(err error) string {
 	switch {
 	case err == nil:
 		return sendDelivered
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), errors.Is(err, rpc.ErrDropped):
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled), errors.Is(err, rpc.ErrDropped),
+		adapter.KindOf(err) == adapter.KindTimeout, // lark-cli stopped by its own deadline: the message may be out
+		errors.Is(err, mail.ErrMaybeSent):          // the SMTP server has the whole mail and never answered it (#9166)
+		return sendUnknown
+	}
+	var re *rpc.Error
+	if errors.As(err, &re) && re.Code == assistantwire.CodeAssistantInDoubt { // a manager further on was in doubt
 		return sendUnknown
 	}
 	return ""

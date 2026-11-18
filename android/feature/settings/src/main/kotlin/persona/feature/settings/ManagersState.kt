@@ -110,6 +110,8 @@ internal object ManagerText {
         return when {
             coded?.code == "default_manager" -> ResText.of(R.string.settings_managers_err_default)
             coded?.code == "builtin_manager" -> ResText.of(R.string.settings_managers_err_builtin)
+            coded?.code == "builtin_in_use" -> ResText.of(R.string.settings_managers_switcher_in_use)
+            error is HideUnsupported -> ResText.of(R.string.settings_managers_switcher_unsupported)
             coded?.code == "no_manager" -> ResText.of(R.string.settings_managers_err_gone)
             coded?.code == "installing" -> ResText.of(R.string.settings_managers_err_installing)
             coded?.status == 400 -> ResText.of(R.string.settings_managers_err_name)
@@ -120,6 +122,9 @@ internal object ManagerText {
 
     const val MaxName = 40
 }
+
+/** The hub took `{"hide": true}` and kept showing it: a hub from before the choice. */
+internal class HideUnsupported : Exception("This hub cannot hide its own assistant")
 
 /** An install code on screen, for [managerId] (named [name]). */
 internal data class ManagerCodeSheet(
@@ -208,6 +213,28 @@ internal class ManagersModel(private val api: HubManagers) {
         load()
     }
 
+    /**
+     * Show in the switcher (the hub's own assistant): off sends `{"hide": true}`, on `{"hide": false}`. The switch moves
+     * at once and goes back if the hub refuses (409 `builtin_in_use` while it is the default or has a computer); then
+     * the list is read again for what is in effect (`hidden`), and a hub that kept no choice says it cannot.
+     */
+    suspend fun showInSwitcher(id: String, show: Boolean): Boolean {
+        val before = state.value.manager(id) ?: return false
+        if (state.value.busy || before.hide == !show) return false
+        markHide(id, !show)
+        val done = change {
+            api.setHide(id, !show)
+            // Taken: a read that fails now leaves the switch where it is (the hub's push reads the list again).
+            val roster = try { api.roster() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { null }
+            if (roster != null) {
+                mutable.update { it.copy(roster = roster, error = null, unsupported = false) }
+                if (!show && roster.manager(id)?.hide != true) throw HideUnsupported()
+            }
+        }
+        if (!done) markHide(id, before.hide)
+        return done
+    }
+
     suspend fun delete(id: String): Boolean = change {
         api.delete(id)
         mutable.update { s -> s.copy(roster = s.roster?.let { r -> r.copy(managers = r.managers.filterNot { it.id == id }) }) }
@@ -216,6 +243,10 @@ internal class ManagersModel(private val api: HubManagers) {
     fun closeCode() = mutable.update { it.copy(code = null) }
 
     fun clearFailure() = mutable.update { it.copy(failure = null) }
+
+    private fun markHide(id: String, hide: Boolean) = mutable.update { s ->
+        s.copy(roster = s.roster?.let { r -> r.copy(managers = r.managers.map { if (it.id == id) it.copy(hide = hide) else it }) })
+    }
 
     private fun replace(manager: HubManager) = mutable.update { s ->
         s.copy(roster = s.roster?.let { r -> r.copy(managers = r.managers.map { if (it.id == manager.id) manager.copy(isDefault = manager.isDefault || it.isDefault) else it }) })

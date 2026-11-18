@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 @MainActor
 struct ExtensionManagementTests {
@@ -80,6 +81,167 @@ struct ExtensionManagementTests {
         let d = try JSON.decoder.decode(HubExtensionDetail.self, from: Data(#"{"id":"pack","name":"示例合集","kind":"extension_pack","status":"running","depends":[{"id":"base","name":"基础扩展","state":"old","version":">=2.0.0","installed":"1.0.0"}],"extension_pack":[{"id":"member","version":">=1.0.0"}]}"#.utf8))
         #expect(d.depends?.first?.description == "需要 >=2.0.0，当前 1.0.0")
         #expect(d.extensionPack?.first?.id == "member")
+    }
+
+    @Test func packSwitchFieldsDecodeForNewAndOlderHubs() throws {
+        let current = try packDetail(follow: true, on: [["id": "notes", "name": "示例笔记"], ["id": "helper", "name": ""]], off: ["notes"])
+        #expect(current.packMembersFollow == true)
+        #expect(current.packOn?.map(\.displayName) == ["示例笔记", "helper"])
+        #expect(current.packOff == ["notes"])
+        let older = try packDetail()
+        #expect(older.packMembersFollow == nil && !(older.packMembersFollow ?? false))
+        #expect(older.packOn == nil && older.packOff == nil)
+    }
+
+    @Test func packEnabledReasonMatchesEveryHubAndRecordedState() throws {
+        #expect(ExtensionText.enabledReason(for: try packDetail(pack: false), memberNames: [:]) == .ordinary)
+        #expect(ExtensionText.enabledReason(for: try packDetail(), memberNames: [:]) == .packAlone)
+        #expect(ExtensionText.enabledReason(for: try packDetail(follow: false, off: ["notes"]), memberNames: [:]) == .packAlone)
+        #expect(ExtensionText.enabledReason(for: try packDetail(follow: true, off: ["notes"]), memberNames: [:]) == .packFollows)
+        #expect(ExtensionText.enabledReason(for: try packDetail(follow: true), memberNames: [:]) == .packFollows)
+        #expect(ExtensionText.enabledReason(for: try packDetail(enabled: false, follow: true), memberNames: [:]) == .packFollows)
+        #expect(ExtensionText.enabledReason(for: try packDetail(enabled: false, follow: true, off: []), memberNames: [:]) == .packFollows)
+        #expect(ExtensionText.enabledReason(for: try packDetail(enabled: nil, follow: true, off: ["notes"]), memberNames: [:]) == .packFollows)
+        let restore = try packDetail(enabled: false, follow: true, off: ["notes", "missing"])
+        #expect(ExtensionText.enabledReason(for: restore, memberNames: ["notes": "示例笔记", "missing": ""]) == .packRestores(["示例笔记", "missing"]))
+        #expect(ExtensionEnabledReason.packRestores(["示例笔记", "Example Helper"]).text ==
+                "重新启用合集会重新启用 示例笔记、Example Helper。你自己单独启用或停用过的成员保持你的选择。")
+    }
+
+    @Test func packDisableWaitsForConfirmationThenRestoresWithoutAsking() async throws {
+        let hub = FakeHub()
+        let current = try packJSON(follow: true, on: enabledPackMembers)
+        hub.on("GET", packPath, json: current)
+        hub.on("GET", "/api/v1/plugins", json: #"{"plugins":[{"id":"notes","name":"示例笔记","kind":"ui","status":"running"},{"id":"helper","name":"Example Helper","kind":"ui","status":"running"}]}"#)
+        hub.on("PUT", packPath + "enabled") { request in
+            let body = try JSON.decoder.decode(JSONValue.self, from: request.body ?? Data())
+            let on = body["enabled"] == .bool(true)
+            return Data(try self.packJSON(enabled: on, follow: true, on: on ? self.enabledPackMembers : nil,
+                                          off: on ? nil : ["notes", "helper"]).utf8)
+        }
+        let m = ExtensionModel(id: "pack", deps: .init(api: { hub.client }))
+        await m.load()
+        await m.requestEnabled(false)
+        guard case .pack(let question)? = m.disableDialog else {
+            Issue.record("switching a following pack off did not ask first")
+            return
+        }
+        #expect(m.packDisablePresented && question.members == ["示例笔记", "Example Helper"])
+        #expect(question.message.contains("示例笔记、Example Helper"))
+        #expect(m.detail?.plugin.enabled == true && hub.sent("PUT", packPath + "enabled").isEmpty)
+        m.dismissDisableConfirmation(generation: m.disableDialogGeneration) // what Cancel and a tap outside do
+        #expect(!m.packDisablePresented && hub.sent("PUT", packPath + "enabled").isEmpty)
+
+        await m.requestEnabled(false)
+        #expect(m.packDisablePresented && m.detail?.plugin.enabled == true)
+        await m.confirmPackDisable()
+        #expect(!m.packDisablePresented && m.detail?.plugin.enabled == false)
+        #expect(ExtensionText.enabledReason(for: try #require(m.detail), memberNames: m.memberNames) ==
+                .packRestores(["示例笔记", "Example Helper"]))
+        var writes = hub.sent("PUT", packPath + "enabled")
+        #expect(writes.count == 1)
+        let disable = try JSON.decoder.decode(JSONValue.self, from: try #require(writes.first?.body))
+        #expect(disable == .object(["enabled": .bool(false)]))
+
+        await m.requestEnabled(true)
+        #expect(!m.packDisablePresented && m.detail?.plugin.enabled == true)
+        writes = hub.sent("PUT", packPath + "enabled")
+        #expect(writes.count == 2)
+        let enable = try JSON.decoder.decode(JSONValue.self, from: try #require(writes.last?.body))
+        #expect(enable == .object(["enabled": .bool(true)]))
+    }
+
+    @Test func packDisableWithoutMembersOnAnOlderHubOrNonPackDoesNotAsk() async throws {
+        let cases = [
+            try packJSON(follow: true),
+            try packJSON(follow: true, on: []),
+            try packJSON(on: enabledPackMembers),
+            try packJSON(pack: false, follow: true, on: enabledPackMembers),
+        ]
+        for detail in cases {
+            let hub = FakeHub()
+            hub.on("GET", packPath, json: detail)
+            hub.on("PUT", packPath + "enabled", json: detail)
+            let m = ExtensionModel(id: "pack", deps: .init(api: { hub.client }))
+            await m.load()
+            await m.requestEnabled(false)
+            #expect(!m.packDisablePresented)
+            #expect(hub.sent("PUT", packPath + "enabled").count == 1)
+        }
+    }
+
+    @Test func switchingAPackOnNeverAsksEvenWithAMemberOn() async throws {
+        // The pack is off and one member was turned on by hand, so `pack_on` is not empty: the question is only for off.
+        let hub = FakeHub()
+        hub.on("GET", packPath, json: try packJSON(enabled: false, follow: true, on: [["id": "helper", "name": "Example Helper"]], off: ["notes"]))
+        hub.on("PUT", packPath + "enabled", json: try packJSON(follow: true, on: enabledPackMembers))
+        let m = ExtensionModel(id: "pack", deps: .init(api: { hub.client }))
+        await m.load()
+        await m.requestEnabled(true)
+        #expect(!m.packDisablePresented && !m.disableDialogPresented && m.detail?.plugin.enabled == true)
+        let writes = hub.sent("PUT", packPath + "enabled")
+        #expect(writes.count == 1)
+        let enable = try JSON.decoder.decode(JSONValue.self, from: try #require(writes.first?.body))
+        #expect(enable == .object(["enabled": .bool(true)]))
+    }
+
+    @Test func packConfirmationStillAllowsTheOutsideDependentQuestion() async throws {
+        let hub = FakeHub()
+        hub.on("GET", packPath, json: try packJSON(follow: true, on: enabledPackMembers))
+        hub.on("PUT", packPath + "enabled") { request in
+            let body = try JSON.decoder.decode(JSONValue.self, from: request.body ?? Data())
+            guard body["cascade"] == .bool(true) else {
+                throw APIError(status: 409, message: "依赖的扩展要一起停用", fields: ["code": "has_dependents"],
+                               details: .object(["dependents": .array([.object(["id": .string("outside"), "name": .string("外部依赖者")])])]))
+            }
+            return Data(try self.packJSON(enabled: false, follow: true, off: ["notes", "helper"]).utf8)
+        }
+        let m = ExtensionModel(id: "pack", deps: .init(api: { hub.client }))
+        await m.load()
+        await m.requestEnabled(false)
+        #expect(m.packDisablePresented && hub.sent("PUT", packPath + "enabled").isEmpty)
+        let packGeneration = m.disableDialogGeneration
+        await m.confirmPackDisable()
+        m.dismissDisableConfirmation(generation: packGeneration) // the old sheet's dismissal arrives late
+        #expect(!m.packDisablePresented && m.disableDialogPresented && m.disableConfirmation?.dependents == ["外部依赖者"])
+        guard case .dependents(let dependentDialog)? = m.disableDialog else {
+            Issue.record("the dependent question did not replace the pack question")
+            return
+        }
+        #expect(dependentDialog.dependents == ["外部依赖者"])
+        #expect(m.detail?.plugin.enabled == true && hub.sent("PUT", packPath + "enabled").count == 1)
+        await m.confirmDisable()
+        #expect(m.disableConfirmation == nil && !m.disableDialogPresented && m.detail?.plugin.enabled == false)
+        guard case .dependents(let dismissedDialog)? = m.disableDialog else {
+            Issue.record("dismissal replaced the dependent dialog's captured content")
+            return
+        }
+        #expect(dismissedDialog.dependents == ["外部依赖者"])
+        let writes = hub.sent("PUT", packPath + "enabled")
+        #expect(writes.count == 2)
+        let cascade = try JSON.decoder.decode(JSONValue.self, from: try #require(writes.last?.body))
+        #expect(cascade == .object(["enabled": .bool(false), "cascade": .bool(true)]))
+    }
+
+    private var packPath: String { "/api/v1/plugins/pack/-/" }
+    private var enabledPackMembers: [[String: String]] {
+        [["id": "notes", "name": "示例笔记"], ["id": "helper", "name": "Example Helper"]]
+    }
+
+    private func packDetail(enabled: Bool? = true, pack: Bool = true, follow: Bool? = nil,
+                            on: [[String: String]]? = nil, off: [String]? = nil) throws -> HubExtensionDetail {
+        try JSON.decoder.decode(HubExtensionDetail.self, from: Data(packJSON(enabled: enabled, pack: pack, follow: follow, on: on, off: off).utf8))
+    }
+
+    private func packJSON(enabled: Bool? = true, pack: Bool = true, follow: Bool? = nil,
+                          on: [[String: String]]? = nil, off: [String]? = nil) throws -> String {
+        var json: [String: Any] = ["id": "pack", "name": "示例合集", "kind": pack ? "extension_pack" : "ui", "status": "running"]
+        if let enabled { json["enabled"] = enabled }
+        if pack { json["extension_pack"] = [["id": "notes"], ["id": "helper"]] }
+        if let follow { json["pack_members_follow"] = follow }
+        if let on { json["pack_on"] = on }
+        if let off { json["pack_off"] = off }
+        return String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self)
     }
 
     @Test func configDraftSurvivesViewReconstructionAndReload() async throws {

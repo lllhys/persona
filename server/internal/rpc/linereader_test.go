@@ -50,8 +50,9 @@ func (c *chunks) Read(p []byte) (int, error) {
 
 var errTest = errors.New("the connection broke")
 
-// scanned is the lines and the error of one way of reading r: a bufio.Scanner (as Serve had it) or a lineReader.
-func scanned(r io.Reader, size, maximum int, scanner bool) (lines []string, err error) {
+// scanned is the lines and the error of one way of reading r: a bufio.Scanner (as Serve had it) or a lineReader, which
+// reads a line in pieces from a buffer of piece bytes on (0: linePiece, as Serve).
+func scanned(r io.Reader, size, maximum, piece int, scanner bool) (lines []string, err error) {
 	if scanner {
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, size), maximum)
@@ -60,43 +61,86 @@ func scanned(r io.Reader, size, maximum int, scanner bool) (lines []string, err 
 		}
 		return lines, sc.Err()
 	}
-	sc := newLineReaderSize(r, size, maximum)
+	shapes := &readShapes{r: r}
+	sc := newLineReaderSize(shapes, size, maximum)
+	if piece > 0 {
+		sc.piece = piece
+	}
+	middles := 0
+	sc.middle = func() { middles++ }
 	for sc.Scan() {
 		lines = append(lines, string(sc.Bytes()))
 	}
-	if sc.Bytes() != nil {
+	if sc.Bytes() != nil || sc.Owned() {
 		return lines, errors.New("a line is left after the last")
+	}
+	if sc.held != 0 || sc.parts != nil {
+		return lines, errors.New("pieces of a line are left after the last")
+	}
+	if middles != shapes.middle {
+		return lines, fmt.Errorf("told of %d reads from the middle of a line, want %d", middles, shapes.middle)
 	}
 	return lines, sc.Err()
 }
 
-func sameAsAScanner(t *testing.T, data, sizes []byte, scale, size, maximum int, end error, withEnd bool) {
+// readShapes counts, from the reads alone, what a lineReader's middle hook is told of: the reads that go on with a
+// line begun in an earlier read, do not finish it, and have already grown past pingFrameMiddleBytes.
+type readShapes struct {
+	r       io.Reader
+	middle  int
+	open    bool // the reads so far end inside a line
+	openLen int  // bytes of the line still open
+}
+
+func (s *readShapes) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 && n <= len(p) { // a lineReader drops a bad count's bytes (bufio.ErrBadReadCount)
+		chunk := p[:n]
+		if s.open && bytes.IndexByte(chunk, '\n') < 0 {
+			s.openLen += n
+			if s.openLen > pingFrameMiddleBytes {
+				s.middle++
+			}
+		}
+		if i := bytes.LastIndexByte(chunk, '\n'); i >= 0 {
+			s.openLen = n - i - 1
+		} else if !s.open {
+			s.openLen = n
+		}
+		s.open = chunk[n-1] != '\n'
+	}
+	return n, err
+}
+
+func sameAsAScanner(t *testing.T, data, sizes []byte, scale, size, maximum, piece int, end error, withEnd bool) {
 	t.Helper()
 	read := func(scanner bool) ([]string, error) {
-		return scanned(&chunks{data: data, sizes: sizes, scale: scale, end: end, withEnd: withEnd}, size, maximum, scanner)
+		return scanned(&chunks{data: data, sizes: sizes, scale: scale, end: end, withEnd: withEnd}, size, maximum, piece, scanner)
 	}
 	want, werr := read(true)
 	got, err := read(false)
 	if !slices.Equal(got, want) || err != werr {
-		t.Fatalf("%d bytes in reads of %v times %d, buffer %d up to %d, ending %v (with the last bytes: %v):\n"+
+		t.Fatalf("%d bytes in reads of %v times %d, buffer %d up to %d, pieces of %d, ending %v (with the last bytes: %v):\n"+
 			"a lineReader read %d lines, %v\na bufio.Scanner %d lines, %v",
-			len(data), sizes, scale, size, maximum, end, withEnd, len(got), err, len(want), werr)
+			len(data), sizes, scale, size, maximum, piece, end, withEnd, len(got), err, len(want), werr)
 	}
 }
 
-// A lineReader reads what a bufio.Scanner with ScanLines does, whatever the reads and buffer sizes: the same lines,
-// then the same error (too long, the reader's own, none at EOF).
+// A lineReader reads what a bufio.Scanner with ScanLines does, whatever the reads, the buffer sizes and the size from
+// which a line is read in pieces: the same lines, then the same error (too long, the reader's own, none at EOF).
 func FuzzLineReaderIsAScanner(f *testing.F) {
-	f.Add([]byte("a\nb\r\n\n\r\nlast"), []byte{1, 0, 3}, uint8(1), uint16(0), uint8(0))
-	f.Add([]byte("\r\r\n\n\nx\r"), []byte{0, 0, 1}, uint8(2), uint16(3), uint8(1))
+	f.Add([]byte("a\nb\r\n\n\r\nlast"), []byte{1, 0, 3}, uint8(1), uint16(0), uint8(0), uint8(0))
+	f.Add([]byte("\r\r\n\n\nx\r"), []byte{0, 0, 1}, uint8(2), uint16(3), uint8(1), uint8(1))
 	f.Add([]byte(strings.Repeat("long line ", 40)+"\nshort\n"+strings.Repeat("y", 90)+"\n"), []byte{7, 50, 1}, uint8(3),
-		uint16(500), uint8(2))
-	f.Add([]byte(strings.Repeat("z", 64)+"\n"+strings.Repeat("z", 65)+"\n"), []byte{9}, uint8(4), uint16(61), uint8(3))
-	f.Add([]byte("over the limit\nok\n"), []byte{}, uint8(0), uint16(4), uint8(0))
-	f.Fuzz(func(t *testing.T, data, sizes []byte, size uint8, extra uint16, end uint8) {
+		uint16(500), uint8(2), uint8(15))
+	f.Add([]byte(strings.Repeat("z", 64)+"\n"+strings.Repeat("z", 65)+"\n"), []byte{9}, uint8(4), uint16(61), uint8(3), uint8(4))
+	f.Add([]byte("over the limit\nok\n"), []byte{}, uint8(0), uint16(4), uint8(0), uint8(2))
+	f.Add([]byte(strings.Repeat("p", 31)+"\r\n"+strings.Repeat("q", 32)+"\n\n"+strings.Repeat("r", 200)), []byte{5, 0, 64}, uint8(7),
+		uint16(180), uint8(1), uint8(7))
+	f.Fuzz(func(t *testing.T, data, sizes []byte, size uint8, extra uint16, end, piece uint8) {
 		n := int(size)%16 + 1
 		ends := []error{io.EOF, errTest}
-		sameAsAScanner(t, data, sizes, 1, n, n+int(extra)%400, ends[end%2], end&2 != 0)
+		sameAsAScanner(t, data, sizes, 1, n, n+int(extra)%400, int(piece)%96+1, ends[end%2], end&2 != 0)
 	})
 }
 
@@ -112,14 +156,14 @@ func TestLineReaderAtServesSizes(t *testing.T) {
 	} {
 		for _, sizes := range [][]byte{nil, {1, 7, 0, 200}} {
 			t.Run(fmt.Sprint(i, sizes), func(t *testing.T) {
-				sameAsAScanner(t, []byte(data), sizes, 1000, lineStart, 2<<20, io.EOF, false)
+				sameAsAScanner(t, []byte(data), sizes, 1000, lineStart, 2<<20, 0, io.EOF, false)
 			})
 		}
 	}
 	// A reader that says it read more than it was given.
 	bad := readerFunc(func(p []byte) (int, error) { return len(p) + 1, nil })
 	for _, scanner := range []bool{true, false} {
-		if lines, err := scanned(bad, lineStart, 2<<20, scanner); len(lines) != 0 || err != bufio.ErrBadReadCount {
+		if lines, err := scanned(bad, lineStart, 2<<20, 0, scanner); len(lines) != 0 || err != bufio.ErrBadReadCount {
 			t.Errorf("a bad read count (scanner %v): %q, %v", scanner, lines, err)
 		}
 	}

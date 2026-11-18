@@ -2,12 +2,9 @@ package extmgr
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,11 +29,21 @@ type ExtensionSkill struct {
 	Files     map[string][]byte `json:"files,omitempty"` // relative path → content
 }
 
-// extensionSkills are the skills of every plugin switched on, read from their packages.
+// extensionSkills are the skills of every plugin switched on, read from their packages, then those their programs
+// wrote in their data directories (dataSkillsOf). A name taken already (by another extension's skill) is left out.
 func (ps *extensions) extensionSkills() []ExtensionSkill {
 	var out []ExtensionSkill
 	if ps == nil {
 		return out
+	}
+	taken := map[string]string{}
+	add := func(s ExtensionSkill) {
+		if by, ok := taken[s.Name]; ok {
+			ps.logf("plugin %s: skill %s: not sent, %s has one with that name", s.Extension, s.Name, by)
+			return
+		}
+		taken[s.Name] = s.Extension
+		out = append(out, s)
 	}
 	for _, p := range ps.reg.List() {
 		if !p.Record.Enabled || p.Problem != "" || p.Dir == "" {
@@ -47,7 +54,6 @@ func (ps *extensions) extensionSkills() []ExtensionSkill {
 			for _, dir := range a.Skills {
 				root := filepath.Join(p.Dir, filepath.FromSlash(dir))
 				files := map[string][]byte{}
-				h := sha256.New()
 				err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 					if err != nil || d.IsDir() || !d.Type().IsRegular() {
 						return err
@@ -65,18 +71,17 @@ func (ps *extensions) extensionSkills() []ExtensionSkill {
 					ps.logf("plugin %s: skill %s: not sent (%v, %d bytes)", p.Record.ID, dir, err, total)
 					continue
 				}
-				names := make([]string, 0, len(files))
-				for n := range files {
-					names = append(names, n)
-				}
-				sort.Strings(names)
-				for _, n := range names {
-					h.Write([]byte(n))
-					h.Write([]byte{0})
-					h.Write(files[n])
-				}
-				out = append(out, ExtensionSkill{Name: filepath.Base(root), Extension: p.Record.ID, Digest: hex.EncodeToString(h.Sum(nil))[:16], Files: files})
+				add(ExtensionSkill{Name: filepath.Base(root), Extension: p.Record.ID, Digest: skillDigest(files), Files: files})
 			}
+		}
+	}
+	for _, p := range ps.reg.List() {
+		if !p.Record.Enabled || p.Problem != "" {
+			continue
+		}
+		skills, _ := ps.dataSkillsOf(p)
+		for _, s := range skills {
+			add(s)
 		}
 	}
 	return out
@@ -102,18 +107,21 @@ func (ps *extensions) extensionSkillsFor(machine string) []ExtensionSkill {
 	return out
 }
 
-// extensionInstructions are the plugins' parts of the assistant's CLAUDE.md, each under its plugin's name.
-func (ps *extensions) extensionInstructions() string {
+// extensionInstructions are the plugins' parts of the assistant's CLAUDE.md, each under its plugin's name: those of
+// their packages, then those of their data directories as adopted now (dataInstructions; base is the digest of the
+// hub's own part, "" when the caller renders none).
+func (ps *extensions) extensionInstructions(ctx context.Context, base string) string {
 	if ps == nil {
 		return ""
 	}
+	data := ps.dataInstructions(ctx, base)
 	var b strings.Builder
 	for _, p := range ps.reg.List() {
-		if !p.Record.Enabled || p.Problem != "" || p.Dir == "" {
+		if !p.Record.Enabled || p.Problem != "" {
 			continue
 		}
 		for _, a := range p.Manifest.AssistantParts() { // with the declarative instructions (contributes.prompts)
-			if a.Instructions == "" {
+			if a.Instructions == "" || p.Dir == "" {
 				continue
 			}
 			text, err := os.ReadFile(filepath.Join(p.Dir, filepath.FromSlash(a.Instructions)))
@@ -124,6 +132,7 @@ func (ps *extensions) extensionInstructions() string {
 			b.WriteString(strings.TrimSpace(string(text)))
 			b.WriteString("\n")
 		}
+		b.WriteString(data[p.Record.ID])
 	}
 	return b.String()
 }

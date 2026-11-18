@@ -13,6 +13,7 @@ export interface ZipEntry {
 /** Reads bytes [start, end) of the file. */
 export type ReadRange = (start: number, end: number) => Promise<Uint8Array>;
 
+const MAX_DIRECTORY = 64 << 20; // central-directory metadata is untrusted too
 const TAIL = 66 * 1024; // the end-of-central-directory record is within the last 64 KiB (+22 bytes) of a zip
 
 const u16 = (b: Uint8Array, i: number) => b[i] | (b[i + 1] << 8);
@@ -52,9 +53,32 @@ export function readDirectory(dir: Uint8Array, count: number): ZipEntry[] {
   return out;
 }
 
-async function inflate(data: Uint8Array): Promise<Uint8Array> {
+async function inflate(data: Uint8Array, maxSize: number): Promise<Uint8Array | null> {
   const stream = new Blob([data as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxSize) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+    const result = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return result;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /**
@@ -65,7 +89,7 @@ export async function readZipEntry(read: ReadRange, fileSize: number, wanted: st
   const tailStart = Math.max(0, fileSize - TAIL);
   const tail = await read(tailStart, fileSize);
   const where = findDirectory(tail);
-  if (!where || where.offset + where.size > fileSize) return null;
+  if (!where || where.size > MAX_DIRECTORY || where.offset + where.size > fileSize) return null;
   const dir = where.offset >= tailStart ? tail.subarray(where.offset - tailStart, where.offset - tailStart + where.size) : await read(where.offset, where.offset + where.size);
   const entries = readDirectory(dir, where.count);
   const lower = entries.map((e) => e.name.toLowerCase());
@@ -80,7 +104,8 @@ export async function readZipEntry(read: ReadRange, fileSize: number, wanted: st
     const start = 30 + u16(chunk, 26) + u16(chunk, 28);
     const raw = chunk.subarray(start, start + e.compSize);
     if (raw.length !== e.compSize) return null;
-    return { name: e.name, data: e.method === 8 ? await inflate(raw) : raw };
+    const data = e.method === 8 ? await inflate(raw, maxSize) : raw;
+    return data ? { name: e.name, data } : null;
   }
   return null;
 }

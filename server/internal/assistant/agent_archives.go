@@ -6,13 +6,16 @@ import (
 	"errors"
 	"maps"
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/i18n"
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -64,6 +67,33 @@ type agentArchiveBook struct {
 	pending map[string]bool
 	// writes counts the record writes (saveAgentArchivesLocked), which stamp each record they change.
 	writes atomic.Uint64
+	// tails are the machines' archive-only rows as keys (archiveTail), under the gate.
+	tails map[string]archiveTail
+}
+
+// archiveTail is the keys of a machine's records its node does not list, sorted: the rows its whole list appends
+// after the node's (#6836). It stays good while the record set (records, never changed once published) and the
+// listed keys that have a record are what it was made for: a list that changes in other rows, as on almost every
+// push, reuses it instead of going through every record of the machine and sorting their keys again.
+type archiveTail struct {
+	records *map[string]agentArchive
+	listed  string
+	keys    []string
+	// restored and archived are keys split by the record's Archived, in keys' order: the rows the apps see, and the
+	// ones a hub that takes them apart gets in fleet.archived.
+	restored, archived []string
+}
+
+// splitTail splits keys by their records' Archived (archiveTail).
+func splitTail(records map[string]agentArchive, keys []string) (restored, archived []string) {
+	for _, key := range keys {
+		if records[key].Archived {
+			archived = append(archived, key)
+		} else {
+			restored = append(restored, key)
+		}
+	}
+	return restored, archived
 }
 
 // archiveMark is taken before reading a list the archive is applied to (archivedSessions): the records written
@@ -154,6 +184,11 @@ func archiveSnapshot(s proto.Session) proto.Session {
 	if len(preview) > 180 {
 		preview = preview[:180]
 	}
+	caps := &proto.SessionCapabilities{Read: true}
+	if s.Capabilities != nil {
+		caps.StopCause = s.Capabilities.StopCause
+		caps.Terminal = s.Capabilities.Terminal
+	}
 	return proto.Session{
 		MachineID: s.MachineID, SessionID: s.SessionID, Title: s.Title,
 		Cwd: s.Cwd, WorkspaceCwd: s.WorkspaceCwd, RepoRoot: s.RepoRoot, Worktree: s.Worktree, Branch: s.Branch,
@@ -162,7 +197,7 @@ func archiveSnapshot(s proto.Session) proto.Session {
 		ParentThreadID: s.ParentThreadID, ParentSessionID: s.ParentSessionID, RootSessionID: s.RootSessionID, IsSubagent: s.IsSubagent,
 		UpdatedAt: s.UpdatedAt, LastText: string(preview),
 		Status: proto.StatusOffline, State: proto.StateOffline,
-		Capabilities: &proto.SessionCapabilities{Read: true},
+		Capabilities: caps,
 	}
 }
 
@@ -173,21 +208,73 @@ func archiveSnapshot(s proto.Session) proto.Session {
 // mark is archiveMark taken before list was read: a record changed after it is not
 // weighed against the list (agentArchive.active).
 func (svc *Service) archivedSessions(ctx context.Context, machine string, list []proto.Session, mark uint64) ([]proto.Session, bool, error) {
+	a, changed, err := svc.applyArchives(ctx, machine, list, mark, true)
+	return a.whole(), changed, err
+}
+
+// archivedListed is archivedSessions without the rows only the archive keeps: list's own rows with the archive's
+// marks, and its restores, for a reader of rows the node lists (listedSession, listedSessions). The records the
+// machine has gathered over months are not copied for it.
+func (svc *Service) archivedListed(ctx context.Context, machine string, list []proto.Session, mark uint64) ([]proto.Session, error) {
+	a, _, err := svc.applyArchives(ctx, machine, list, mark, false)
+	return a.list, err
+}
+
+// archiveApplied is the archive applied to a machine's list: the list's own rows with the archive's marks, and, when
+// asked for, the keys of the rows only the archive has (tail) with the records they are in. records is never changed
+// once published (saveAgentArchivesLocked replaces it), so it is read after the archive's lock is let go.
+type archiveApplied struct {
+	list    []proto.Session
+	records map[string]agentArchive
+	tail    []string
+	// restored and archived are tail split by the records' Archived (archiveTail).
+	restored, archived []string
+	// of and listed are what the tail was made for (archiveTail): the record set's identity and the listed keys with
+	// a record, in list order.
+	of     *map[string]agentArchive
+	listed string
+}
+
+// whole is the machine's whole list: its own rows, then the archive's rows in tail's order. It grows list once.
+func (a archiveApplied) whole() []proto.Session {
+	if len(a.tail) == 0 {
+		return a.list
+	}
+	list := slices.Grow(a.list, len(a.tail))
+	for _, key := range a.tail {
+		list = append(list, archiveRow(a.records[key]))
+	}
+	return list
+}
+
+// applyArchives applies the archive to list (archivedSessions); rest: the keys of the archive's rows list does not
+// have are wanted too.
+func (svc *Service) applyArchives(ctx context.Context, machine string, list []proto.Session, mark uint64, rest bool) (archiveApplied, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, agentArchiveTimeout)
 	defer cancel()
 	b := &svc.agentArchives
+	// listed stays a variable of its own until the result is made: escape analysis follows a struct as one, and
+	// listed leaks (tailKeys keeps parts of it), which would take the caller's list to the heap with it.
 	if err := b.lock(ctx); err != nil {
-		if records := b.snapshot.Load(); records != nil {
-			list = overlayAgentArchives(machine, list, *records, nil, mark)
+		records := b.snapshot.Load()
+		if records == nil {
+			return archiveApplied{list: list}, false, err
 		}
-		return list, false, err
+		listed := markAgentArchives(machine, list, *records, nil, mark)
+		var t archiveTail
+		if rest {
+			t.keys = tailKeys(machine, *records, listed)
+			t.restored, t.archived = splitTail(*records, t.keys)
+		}
+		return archiveApplied{list: list, records: *records, of: records, listed: listed, tail: t.keys, restored: t.restored,
+			archived: t.archived}, false, err
 	}
 	defer b.unlock()
 	if err := svc.loadAgentArchivesLocked(ctx); err != nil {
-		return list, false, err
+		return archiveApplied{list: list}, false, err
 	}
 	if len(b.records) == 0 {
-		return list, false, nil
+		return archiveApplied{list: list, of: b.snapshot.Load()}, false, nil
 	}
 	var next map[string]agentArchive
 	for _, s := range list {
@@ -220,7 +307,14 @@ func (svc *Service) archivedSessions(ctx context.Context, machine string, list [
 			}
 		}
 	}
-	return overlayAgentArchives(machine, list, b.records, b.pending, mark), next != nil && saveErr == nil, saveErr
+	of := b.snapshot.Load()
+	listed := markAgentArchives(machine, list, b.records, b.pending, mark)
+	var t archiveTail
+	if rest {
+		t = b.tailFor(machine, of, b.records, listed)
+	}
+	return archiveApplied{list: list, records: b.records, of: of, listed: listed, tail: t.keys, restored: t.restored,
+		archived: t.archived}, next != nil && saveErr == nil, saveErr
 }
 
 // archivedInventory is machine's whole list with the archive applied (archivedSessions), its children folded under
@@ -232,12 +326,68 @@ func (svc *Service) archivedInventory(ctx context.Context, machine string) ([]pr
 	return list, changed, err
 }
 
-func overlayAgentArchives(machine string, list []proto.Session, records map[string]agentArchive, pending map[string]bool, mark uint64) []proto.Session {
-	seen := make(map[string]bool, len(list))
+// archivedRow is the row machine's whole list (archivedInventory) has for session sid when its node does not list it:
+// its archive record's, found by its key instead of by building the list with every record of the machine. Its fold
+// is the caller's (foldSubset).
+func (svc *Service) archivedRow(ctx context.Context, machine, sid string) (proto.Session, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, agentArchiveTimeout)
+	defer cancel()
+	b := &svc.agentArchives
+	if err := b.lock(ctx); err != nil { // as archivedSessions: the records last published
+		if records := b.snapshot.Load(); records != nil {
+			row, ok := archiveRowOf(machine, sid, *records)
+			return row, ok, err
+		}
+		return proto.Session{}, false, err
+	}
+	defer b.unlock()
+	if err := svc.loadAgentArchivesLocked(ctx); err != nil {
+		return proto.Session{}, false, err
+	}
+	row, ok := archiveRowOf(machine, sid, b.records)
+	return row, ok, nil
+}
+
+// archiveRowOf is the row overlayAgentArchives appends for machine's session sid, when records has one.
+func archiveRowOf(machine, sid string, records map[string]agentArchive) (proto.Session, bool) {
+	rec, ok := records[runtimeListID(machine, sid)]
+	if !ok || rec.Session.MachineID != machine {
+		return proto.Session{}, false
+	}
+	return archiveRow(rec), true
+}
+
+// archiveRow is a record's row in its machine's list.
+func archiveRow(rec agentArchive) proto.Session {
+	s := rec.Session
+	s.Archived = rec.Archived
+	s.ArchiveChangedAt = archiveChangedAt(rec.ChangedAt)
+	return s
+}
+
+// markAgentArchives puts the archive's marks on list's rows. It returns the keys of list's rows that have a record,
+// and of the ids their conversations went by that have one (proto.Session.Aliases, #8131), in list order, one per
+// line: what the rows only the archive has depend on (tailKeys) besides the records. Paseo's conversations were
+// listed under their transcripts once, and an archive record kept then repeated the row listed under its own id
+// now; the record stays, and is shown again if no row names its id any more.
+func markAgentArchives(machine string, list []proto.Session, records map[string]agentArchive, pending map[string]bool, mark uint64) string {
+	var listed strings.Builder
 	for i := range list {
+		for _, alias := range list[i].Aliases() {
+			key := runtimeListID(machine, alias)
+			if _, ok := records[key]; ok {
+				listed.WriteString(key)
+				listed.WriteByte('\n')
+			}
+		}
 		key := runtimeListID(machine, list[i].SessionID)
-		seen[key] = true
-		if rec, ok := records[key]; ok && !list[i].Assistant {
+		rec, ok := records[key]
+		if !ok {
+			continue
+		}
+		listed.WriteString(key)
+		listed.WriteByte('\n')
+		if !list[i].Assistant {
 			// A storage timeout must neither reveal unrelated archived rows nor hide
 			// new work. The durable restore remains pending until its write succeeds.
 			active := rec.active(list[i], mark)
@@ -245,21 +395,75 @@ func overlayAgentArchives(machine string, list []proto.Session, records map[stri
 			list[i].ArchiveChangedAt = archiveChangedAt(rec.ChangedAt)
 		}
 	}
-	keys := make([]string, 0, len(records))
+	return listed.String()
+}
+
+// tailKeys are the keys of machine's records that are not among listed (markAgentArchives), sorted: stable
+// inventories avoid needless delta/list revisions.
+func tailKeys(machine string, records map[string]agentArchive, listed string) []string {
+	seen := map[string]bool{}
+	for key := range strings.Lines(listed) {
+		seen[strings.TrimSuffix(key, "\n")] = true
+	}
+	var keys []string
 	for key, rec := range records {
 		if !seen[key] && rec.Session.MachineID == machine {
 			keys = append(keys, key)
 		}
 	}
-	sort.Strings(keys) // stable inventories avoid needless delta/list revisions
-	for _, key := range keys {
-		rec := records[key]
-		s := rec.Session
-		s.Archived = rec.Archived
-		s.ArchiveChangedAt = archiveChangedAt(rec.ChangedAt)
-		list = append(list, s)
+	sort.Strings(keys)
+	return keys
+}
+
+// tailFor is machine's archiveTail, kept in b.tails while records (of) and listed are the same. The gate is held.
+func (b *agentArchiveBook) tailFor(machine string, of *map[string]agentArchive, records map[string]agentArchive, listed string) archiveTail {
+	if t, ok := b.tails[machine]; ok && t.records == of && t.listed == listed {
+		return t
 	}
-	return list
+	t := archiveTail{records: of, listed: listed, keys: tailKeys(machine, records, listed)}
+	t.restored, t.archived = splitTail(records, t.keys)
+	if b.tails == nil {
+		b.tails = map[string]archiveTail{}
+	}
+	b.tails[machine] = t
+	return t
+}
+
+// apart is the whole list told apart (Hello.ArchivedApart, #6836): the rows the apps see, in the order the whole list
+// has them (the list's own rows, then the archive's restored rows), and the archived ones (archivedPart). The hub's
+// Hub.shown leaves exactly those out of the whole list.
+func (a archiveApplied) apart() ([]proto.Session, archivedPart) {
+	part := archivedPart{records: a.records, keys: a.archived, of: a.of, listed: a.listed}
+	shown := a.list
+	for i := range a.list {
+		if a.list[i].Archived && !a.list[i].Assistant {
+			shown = make([]proto.Session, 0, len(a.list)-1+len(a.restored))
+			for j := range a.list {
+				if a.list[j].Archived && !a.list[j].Assistant {
+					part.rows = append(part.rows, a.list[j])
+				} else {
+					shown = append(shown, a.list[j])
+				}
+			}
+			break
+		}
+	}
+	shown = slices.Grow(shown, len(a.restored))
+	for _, key := range a.restored {
+		shown = append(shown, archiveRow(a.records[key]))
+	}
+	return shown, part
+}
+
+// archivedPart is a machine's archived rows told apart: the rows of its node's list marked archived (rows, in list
+// order), and the keys of the archive's own archived rows (keys, sorted), made into rows only when they are told
+// (tellArchived). of and listed are what keys were made for (archiveTail).
+type archivedPart struct {
+	rows    []proto.Session
+	records map[string]agentArchive
+	keys    []string
+	of      *map[string]agentArchive
+	listed  string
 }
 
 func (svc *Service) archiveStore() Store {
@@ -283,6 +487,24 @@ func (svc *Service) decorated(machine string) []proto.Session {
 	return list
 }
 
+// decoratedInto is decorated with the machine's rows copied into buf's array instead of a new one (liveLoop's own
+// list of the machine from its last round, fleetInputsInto). The node's rows overwrite the array's whole before they
+// are decorated, so nothing of its last decoration stays; the list returned is buf's array unless it outgrew it. Its
+// rows are folded as archivedInventory folds them, and the fold is kept for the machine the same way.
+func (svc *Service) decoratedInto(machine string, buf []proto.Session) []proto.Session {
+	mark := svc.archiveMark() // before the list is read, as archivedInventory
+	list := buf[:0]
+	if svc.devs != nil {
+		list, _ = svc.devs.AppendSessions(list, machine)
+	}
+	list, _, err := svc.archivedSessions(context.Background(), machine, svc.decorateInventory(machine, list, true), mark)
+	svc.foldInventory(machine, list)
+	if err != nil {
+		svc.logf("load agent archives: %v", err)
+	}
+	return list
+}
+
 func (svc *Service) listArchivedSessions(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), agentArchiveTimeout)
 	defer cancel()
@@ -296,6 +518,7 @@ func (svc *Service) listArchivedSessions(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	out := []proto.Session{}
+	ext := r.Header.Get(RoleHeader) == roleExtension // never a health-space conversation (docs/extensions/extensions.md)
 	for _, m := range svc.fleetMachines() {
 		if mid != "" && mid != m.ID {
 			continue
@@ -309,7 +532,7 @@ func (svc *Service) listArchivedSessions(w http.ResponseWriter, r *http.Request)
 			svc.publishList(m.ID)
 		}
 		for _, row := range list {
-			if row.Archived && !row.Assistant {
+			if row.Archived && !row.Assistant && !(ext && (row.Space == SpaceHealth || identity.InHealthSpace(row.Cwd))) {
 				row.Manager = svc.id
 				row.NativeArchive = svc.nativeArchiveView(m.ID, row.SessionID)
 				out = append(out, row)

@@ -1,35 +1,38 @@
 // The Agents list's menus (iOS AgentRowMenu / SpaceMenuItems): a row's ⋯ or right click, a space's ⋯ on its header,
 // and the confirmation of "Mark all as seen". What they do is in lib/agent-actions.ts.
-import { attachLive, flipMute, flipPin, flipSpaceMute, flipSpacePin, handToPersona } from "../lib/agent-actions";
-import { isSpaceMuted, unreadOf, type SpaceLike } from "../lib/agent-filter";
+import { flipMute, flipPin, handToPersona } from "../lib/agent-actions";
 import { errorText } from "../lib/api";
-import { resumeCommand, sessionCan, sessionDeletable, sessionMenuActions } from "../lib/format";
+import { resumeCommand, sessionCanRename, sessionDeletable, sessionMenuActions } from "../lib/format";
 import { appArchiveDeps, archiveAgent, archiveOffers, deleteInsteadOfArchive } from "../lib/agent-archives";
+import { closeAgentAction } from "../lib/close-agent";
 import { machineWithHub } from "../lib/mesh";
-import { isPinned, isSpacePinned } from "../lib/pins";
+import { isPinned } from "../lib/pins";
 import { isMuted } from "../lib/session-actions";
-import { getState, markSeen, refresh, refreshTodos, setSpacesSupported, useStore } from "../lib/store";
-import { findTodoForSpace, isLegacySpacesRouteError, unlinkAgentFromTodo, unlinkSpaceFromTodo } from "../lib/todos";
+import { getState, markSeen, refresh, refreshTodos, useStore } from "../lib/store";
+import { unlinkAgentFromTodo } from "../lib/todos";
 import type { Session } from "../lib/types";
-import { sessionNode, type MenuNode } from "../lib/node-actions";
-import { navigate } from "../lib/router";
+import { sessionNode } from "../lib/node-actions";
 import { Button, copyText, Dialog, toast, type MenuItem } from "../ui/atoms";
 import type { MenuAt } from "../ui/menu-model";
 import { NodeMenu } from "./NodeMenu";
+import { preloadSessionDialogs } from "./chat/SessionDialogs";
 import { t } from "../i18n";
 import { markAllSeenLabel } from "../lib/state-labels";
+import { lazy, Suspense, useEffect } from "react";
+import type { SpaceMenuProps } from "./SpaceMenu";
 
 /** What a row's ⋯ (and its right click) offers. `onLinkTodo`: the row can hang on a todo ("Link to to-do…"; "Move to another to-do…" and
  *  "Unlink" when it does). Everything a row offers is here, so a touch screen (no right click; iOS Safari sends no contextmenu on a
  *  long press) reaches it from the ⋯ (#1996). */
-export function agentRowMenuItems(s: Session, o: { pinned: boolean; muted: boolean; onRename: (s: Session) => void; onDelete: (s: Session) => void; onLinkTodo?: (s: Session) => void; onCloseAgent?: (s: Session) => void; onArchiveClose?: (s: Session) => void; features?: readonly string[] }): MenuItem[] {
-  const { onRename, onDelete, onLinkTodo, onCloseAgent, onArchiveClose } = o;
-  // "Live link" and "Close agent" show when the chat's ⋯ shows them (sessionMenuActions), and do the same (#3405)
+export function agentRowMenuItems(s: Session, o: { pinned: boolean; muted: boolean; onRename: (s: Session) => void; onDelete: (s: Session) => void; onLinkTodo?: (s: Session) => void; features?: readonly string[] }): MenuItem[] {
+  const { onRename, onDelete, onLinkTodo } = o;
+  // "Live link" shows when the chat's ⋯ shows it (sessionMenuActions), and does the same (#3405); so do Archive and Close…
   const allowed = sessionMenuActions(s);
   return [
-    ...(allowed.includes("attach") ? [{ key: "attach", label: t("chat-chatview.attach"), icon: "link" as const, onSelect: () => void attachLive(s) }] : []),
+    ...(allowed.includes("attach") ? [{ key: "attach", label: t("chat-chatview.attach"), icon: "link" as const, onSelect: () => void import("../lib/attach-live").then((m) => m.attachLive(s)) }] : []),
     { key: "pin", label: o.pinned ? t("agentmenus.unpin") : t("agentmenus.pin"), icon: "pin", accel: "p", onSelect: () => void flipPin(s) },
-    ...(sessionCan(s, "send") && !s.source_kind ? [{ key: "rename", label: t("agentmenus.rename"), icon: "pencil" as const, accel: "r", onSelect: () => onRename(s) }] : []),
+    // as the chat's ⋯: by capabilities.rename where the node says so (a runtime's session, #6294)
+    ...(sessionCanRename(s) ? [{ key: "rename", label: t("agentmenus.rename"), icon: "pencil" as const, accel: "r", onSelect: () => onRename(s) }] : []),
     { key: "mute", label: o.muted ? t("agentmenus.unmute") : t("agentmenus.mute"), icon: o.muted ? "bell" : "bellOff", onSelect: () => void flipMute(s) },
     { key: "persona", label: t("agentmenus.hand_to_persona"), icon: "spark", onSelect: () => void handToPersona(s, machineWithHub(s.machine_id, getState().machines)) },
     // on a todo, the same dialog moves it to another (the hub releases the old link), so it says so (#2348)
@@ -37,24 +40,29 @@ export function agentRowMenuItems(s: Session, o: { pinned: boolean; muted: boole
     ...(onLinkTodo && s.todo ? [{ key: "unlink-todo", label: t("agentmenus.unlink"), icon: "x" as const, onSelect: () => void unlinkTodo(s, s.todo!.id) }] : []),
     ...(s.cwd ? [{ key: "cwd", label: t("agentmenus.copy_folder"), icon: "folder" as const, accel: "c", onSelect: () => copyText(s.cwd) }] : []),
     ...(allowed.includes("resume") ? [{ key: "resume", label: t("agentmenus.copy_resume"), icon: "terminal" as const, onSelect: () => copyText(resumeCommand(s)) }] : []),
-    ...(onCloseAgent && allowed.includes("close") ? [{ key: "close", label: t("chat-chatview.close_agent_menu"), icon: "x" as const, danger: true, onSelect: () => onCloseAgent(s) }] : []),
-    ...archiveItems(s, o.features ?? getState().features, onArchiveClose),
+    ...archiveCloseItems(s, o.features ?? getState().features),
     ...(deleteInsteadOfArchive(o.features ?? getState().features) && sessionDeletable(s) ? [{ key: "delete", label: t("agentmenus.delete_chat"), icon: "trash" as const, danger: true, onSelect: () => onDelete(s) }] : []),
   ];
 }
 
-/** "Archive" and "Archive and close…" (lib/agent-archives.ts): a busy agent shows them disabled, saying why, so the
- *  user knows they exist and what to wait for. The chat's ⋯ offers the same. `onArchiveClose` asks first. */
-export function archiveItems(s: Session, features: readonly string[], onArchiveClose?: (s: Session) => void): MenuItem[] {
-  const offers = archiveOffers(s, features);
-  return [
-    ...(offers.archive !== "no"
-      ? [{ key: "archive", label: t("agentmenus.archive"), icon: "archive" as const, divider: true, disabled: offers.archive === "busy", detail: offers.archive === "busy" ? t("agentmenus.archive_busy") : undefined, onSelect: () => void archiveAgent(s, false, appArchiveDeps) }]
+/** "Archive" and "Close…" after a hairline (#7125). Archive (lib/agent-archives.ts) only hides the agent, so a busy one
+ *  shows it disabled, saying what to wait for. Close… (lib/close-agent.ts) asks, then archives and closes an agent that
+ *  is not busy, and says what closing interrupts before it closes a busy one. The chat's ⋯ offers the same. */
+export function archiveCloseItems(s: Session, features: readonly string[]): MenuItem[] {
+  const archive = archiveOffers(s, features).archive;
+  const items: MenuItem[] = [
+    ...(archive !== "no"
+      ? [{ key: "archive", label: t("agentmenus.archive"), icon: "archive" as const, disabled: archive === "busy", detail: archive === "busy" ? t("agentmenus.archive_busy") : undefined, onSelect: () => void archiveAgent(s, false, appArchiveDeps) }]
       : []),
-    ...(onArchiveClose && offers.close !== "no"
-      ? [{ key: "archive-close", label: t("agentmenus.archive_close"), icon: "archive" as const, disabled: offers.close === "busy", detail: offers.close === "busy" ? t("agentmenus.archive_close_busy") : undefined, onSelect: () => onArchiveClose(s) }]
-      : []),
+    ...closeItems(s, features),
   ];
+  return items.map((it, i) => (i === 0 ? { ...it, divider: true } : it));
+}
+
+/** "Close…" alone: an archived chat's ⋯ has it under Restore while its agent is still open on the computer. */
+export function closeItems(s: Session, features: readonly string[]): MenuItem[] {
+  const close = closeAgentAction(s, features);
+  return close ? [{ key: "close", label: t("agentmenus.close"), icon: "x" as const, danger: true, ...close }] : [];
 }
 
 async function unlinkTodo(s: Session, todo: string) {
@@ -68,103 +76,22 @@ async function unlinkTodo(s: Session, todo: string) {
   }
 }
 
-/** The row's menu, then what any pane offers (copy its ids, split, git, close): src/lib/node-actions.ts. The path and the
- *  rename are the row's own above. `at`: where a right click opened it (the pointer); without it, beside `anchor`. */
-export function AgentRowMenu({ s, anchor, at, onClose, ...o }: { s: Session; anchor: HTMLElement; at?: MenuAt; onClose: () => void; onRename: (s: Session) => void; onDelete: (s: Session) => void; onLinkTodo?: (s: Session) => void; onCloseAgent?: (s: Session) => void; onArchiveClose?: (s: Session) => void }) {
+/** The row's menu, then what any pane offers (split or close it, git, copy its ids): src/lib/node-actions.ts. The path
+ *  and the rename are the row's own above. `at`: where a right click opened it (the pointer); without it, beside `anchor`. */
+export function AgentRowMenu({ s, anchor, at, onClose, ...o }: { s: Session; anchor: HTMLElement; at?: MenuAt; onClose: () => void; onRename: (s: Session) => void; onDelete: (s: Session) => void; onLinkTodo?: (s: Session) => void }) {
   const pinned = useStore((st) => isPinned(s, st.pins));
   const muted = useStore((st) => isMuted(s, st.mutes));
   const features = useStore((st) => st.features);
   const online = useStore((st) => st.machines.find((m) => m.id === s.machine_id)?.online !== false);
+  // its Rename… and Delete… open dialogs from a chunk of their own: on its way while the pointer moves to them (#10382)
+  useEffect(preloadSessionDialogs, []);
   return <NodeMenu node={sessionNode(s, online)} at={at ?? { anchor }} onClose={onClose} before={agentRowMenuItems(s, { pinned, muted, features, ...o })} omit={["node-copy-path", "node-rename"]} />;
 }
 
-export function SpaceMenu({
-  sp,
-  anchor,
-  at,
-  fold,
-  onClose,
-  onRename,
-  onMarkSeen,
-  onLinkTodo,
-  openPage = true,
-}: {
-  sp: SpaceLike;
-  anchor: HTMLElement;
-  /** Where a right click opened it (the pointer); without it, beside `anchor`. */
-  at?: MenuAt;
-  /** The space's fold, when it has one to toggle. */
-  fold?: MenuNode["fold"];
-  onClose: () => void;
-  onRename: (s: Session) => void;
-  onMarkSeen: (list: Session[]) => void;
-  onLinkTodo?: (sp: SpaceLike) => void;
-  /** "Open space page" (/space/…) leads the menu; the space's own page leaves it out. */
-  openPage?: boolean;
-}) {
-  const pins = useStore((st) => st.pins);
-  const mutes = useStore((st) => st.mutes);
-  const todos = useStore((st) => st.todos);
-  const todosSupported = useStore((st) => st.todosSupported);
-  const todosLoaded = useStore((st) => st.todosLoaded);
-  const spacesSupported = useStore((st) => st.spacesSupported);
-  const pinned = isSpacePinned(sp.machineId, sp.name, pins);
-  const muted = isSpaceMuted(sp, mutes);
-  const unread = unreadOf(sp.sessions);
-  const first = sp.sessions[0];
-  const online = useStore((st) => st.machines.find((m) => m.id === sp.machineId)?.online !== false);
-
-  const supportSpaces = todosLoaded && todosSupported !== false && spacesSupported !== false;
-  const linkedTodo = supportSpaces ? findTodoForSpace(todos, sp.machineId, sp.name) : undefined;
-
-  const page = { name: "space" as const, mid: sp.machineId, space: sp.name };
-  const items: MenuItem[] = [
-    ...(openPage && first?.space_id ? [{ key: "open", label: t("agentmenus.open_space"), icon: "layers" as const, onSelect: () => navigate(page) }] : []),
-    ...(unread.length ? [{ key: "seen", label: markAllSeenLabel(unread.length), icon: "check" as const, onSelect: () => onMarkSeen(unread) }] : []),
-    ...(first?.space_id && !first.source_kind ? [{ key: "rename", label: t("agentmenus.rename_space"), icon: "pencil" as const, onSelect: () => onRename(first) }] : []),
-    ...(supportSpaces
-      ? linkedTodo
-        ? [
-            {
-              key: "relink-todo",
-              label: t("agentmenus.move_to_other_todo"),
-              icon: "todo" as const,
-              onSelect: () => onLinkTodo?.(sp),
-            },
-            {
-              key: "unlink-todo",
-              label: t("agentmenus.remove_from_todo"),
-              icon: "x" as const,
-              onSelect: async () => {
-                try {
-                  await unlinkSpaceFromTodo(linkedTodo.id, sp.machineId, sp.name);
-                  await refreshTodos();
-                  await refresh();
-                  toast(t("agentmenus.removed_from_todo"), "ok");
-                } catch (e) {
-                  if (isLegacySpacesRouteError(e)) {
-                    setSpacesSupported(false);
-                  }
-                  toast(t("agentmenus.remove_failed", { error: errorText(e) }), "error");
-                  void refreshTodos();
-                }
-              },
-            },
-          ]
-        : [
-            {
-              key: "link-todo",
-              label: t("agentmenus.attach_to_todo"),
-              icon: "todo" as const,
-              onSelect: () => onLinkTodo?.(sp),
-            },
-          ]
-      : []),
-    { key: "pin", label: pinned ? t("agentmenus.unpin_space") : t("agentmenus.pin_space"), icon: "pin", onSelect: () => void flipSpacePin(sp.machineId, sp.name) },
-    { key: "mute", label: muted ? t("agentmenus.unmute_space") : t("agentmenus.mute_space"), icon: muted ? "bell" : "bellOff", onSelect: () => void flipSpaceMute(sp.machineId, sp.name) },
-  ];
-  const node: MenuNode = { kind: "workspace", mid: sp.machineId, online, host: first?.space_kind, label: sp.name, workspaceId: first?.workspace_id ?? first?.space_id, paneId: first?.pane_id, cwd: first?.cwd, fold };
-  return <NodeMenu node={node} at={at ?? { anchor }} onClose={onClose} header={t("agentmenus.space_header", { name: sp.name })} before={items} omit={["node-rename"]} />;
+const LazySpaceMenu = lazy(() => import("./SpaceMenu").then((module) => ({ default: module.SpaceMenu })));
+export function SpaceMenu(props: SpaceMenuProps) {
+  useEffect(preloadSessionDialogs, []); // its Rename… opens a dialog from a chunk of its own (#10382)
+  return <Suspense fallback={null}><LazySpaceMenu {...props} /></Suspense>;
 }
 
 /** "Mark all as seen", asked first: it changes what the other devices show too. */

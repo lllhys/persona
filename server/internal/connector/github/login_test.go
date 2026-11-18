@@ -3,13 +3,17 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/nwverse/persona/server/internal/apierr"
 	"github.com/nwverse/persona/server/internal/connector"
+	"github.com/nwverse/persona/server/internal/i18n"
 )
 
 type memSecrets struct {
@@ -230,5 +234,43 @@ func TestReloadReadsTheSignInAgain(t *testing.T) {
 	c.Reload()
 	if d := c.deviceState(ctx); d.Token != "gho_new" {
 		t.Fatalf("after Reload: %+v", d)
+	}
+}
+
+// Both device-code requests use the web host; transport failures must identify the hub's egress and keep secrets private.
+func TestDeviceLoginNetworkFailure(t *testing.T) {
+	for _, step := range []string{"", "device"} {
+		for _, cause := range []error{context.DeadlineExceeded, errors.New("dial tcp: connection refused"),
+			errors.New("proxyconnect tcp: http://proxy-user:proxy-password@proxy.example.com:3128 " + oldToken)} {
+			t.Run(step+"/"+cause.Error(), func(t *testing.T) {
+				c := New(Config{}, "", nil)
+				c.source = SourceDevice
+				c.pending = &devicePending{code: "example-code", expires: time.Now().Add(time.Minute)}
+				c.client = &http.Client{Transport: responseTransport(func(r *http.Request) (*http.Response, error) {
+					if r.URL.Host != "github.com" {
+						t.Errorf("host = %s", r.URL.Host)
+					}
+					return nil, cause
+				})}
+				p, err := c.LoginStep(context.Background(), step, nil)
+				if err == nil || p.Done || p.UserCode != "" {
+					t.Fatalf("prompt = %+v, error = %v", p, err)
+				}
+				for _, lang := range i18n.Langs {
+					body := apierr.LocalizedBody(http.StatusBadGateway, "", err, lang)
+					message := body["error"].(string)
+					for _, want := range []string{"github.com", "github.proxy", "manager.json"} {
+						if !strings.Contains(message, want) {
+							t.Errorf("%s missing %s: %s", lang, want, message)
+						}
+					}
+					for _, secret := range []string{"proxy.example.com", "proxy-user", "proxy-password", "3128", oldToken} {
+						if strings.Contains(message, secret) {
+							t.Errorf("%s exposed network details", lang)
+						}
+					}
+				}
+			})
+		}
 	}
 }

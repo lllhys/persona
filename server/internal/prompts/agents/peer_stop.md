@@ -1,0 +1,1 @@
+The user pressed Stop on the phone. Stop what you were doing: do not go on with it, and do not start anything else. In one sentence, in the language of this conversation, say where you stopped, then wait for the user's next message.

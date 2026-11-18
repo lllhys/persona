@@ -146,9 +146,10 @@ describe("↑ in an empty box", () => {
     expect(box().value).toBe("");
   });
 
-  it("is not taken while the Ctrl+R search or a dialog is open", () => {
+  it("is not taken while the Ctrl+R search or a dialog is open", async () => {
     mount();
-    press("r", { ctrlKey: true });
+    // The search chunk loads on intent; keep the composer mounted while React resolves it.
+    await act(async () => { box().dispatchEvent(new KeyboardEvent("keydown", { key: "r", ctrlKey: true, bubbles: true, cancelable: true })); });
     expect(host.querySelector('[role="listbox"], [role="dialog"], input')).not.toBeNull();
     press("ArrowUp");
     expect(started).not.toHaveBeenCalled();
@@ -204,6 +205,8 @@ describe("while editing", () => {
     await act(async () => sendButton().click());
     expect(calls).toEqual(["commit", "send"]);
     expect(onSend.mock.calls[0][0].text).toBe("> Quoted text\n\nRevised paragraph");
+    // Restoring the old quote for an edit is not a new quote reply: its existing follow behavior stays unchanged (#10346).
+    expect(onSend.mock.calls[0][0].quoteReply).toBeUndefined();
     expect(box().value).toBe("");
     expect(bar()).toBeNull();
   });

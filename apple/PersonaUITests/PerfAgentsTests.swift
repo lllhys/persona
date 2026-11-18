@@ -5,6 +5,7 @@ import XCTest
 /// MOCK_FILES=1 MOCK_MACHINES=1 MOCK_TURN_IMAGES=many.
 final class PerfAgentsTests: PerfTestCase {
     static let weather = "macbook/a1f3c2d4-0000-4000-8000-000000000001" // long history, working
+    static let weatherTitle = "给天气 App 加主屏幕小组件" // i18n-ignore: the mock hub's title for `weather`
     static let big = "server/a1f3c2d4-0000-4000-8000-000000000008" // MOCK_BIG: 650 commands in one exchange
     static let lines = "macbook/a1f3c2d4-0000-4000-8000-0000000c1e01" // MOCK_CHAT_LINES: every kind of line
     static let subagents = "macbook/a1f3c2d4-0000-4000-8000-0000000c1e02" // MOCK_SUBAGENT_CARDS
@@ -15,9 +16,20 @@ final class PerfAgentsTests: PerfTestCase {
         launch(["-app.tab", "chats", "-tab", "dev", "-dev.openChat", "", "-openAgentsFresh", "YES"] + extra)
     }
 
-    @MainActor private func openChat(_ key: String, _ extra: [String] = []) {
-        launch(["-app.tab", "chats", "-tab", "dev", "-dev.openChat", "", "-openSession", key, "-holdChromeOpen", "YES"] + extra)
-        see(chatReady, "the chat \(key)", timeout: 30)
+    /// `title`: the session's own title, to wait for its header (`chat.title`). Opened before the session list is in, the
+    /// chat can stay a generic page (no tabs, nothing live) that measures about half the hitches of the real one (#8828):
+    /// launched again, up to three times, until the real page is there.
+    @MainActor private func openChat(_ key: String, _ extra: [String] = [], title: String? = nil) {
+        for attempt in 1...3 {
+            launch(["-app.tab", "chats", "-tab", "dev", "-dev.openChat", "", "-openSession", key, "-holdChromeOpen", "YES"] + extra)
+            see(chatReady, "the chat \(key)", timeout: 30)
+            guard let title else { break }
+            let header = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "chat.title", title)).firstMatch
+            if header.waitForExistence(timeout: 20) { break }
+            if attempt == 3 { XCTFail("the header of \(title) not found in three launches"); return }
+            app.terminate()
+        }
         sleep(2)
     }
 
@@ -40,11 +52,34 @@ final class PerfAgentsTests: PerfTestCase {
 
     // MARK: The Agents list
 
-    /// ~130 agents as cards, grouped by repository (the default).
+    /// ~130 agents as cards, grouped by repository (the default), with an app-driven frame window.
     @MainActor func testAgentsListScroll() throws {
         openList(["-dev.grouping", "repo"])
         see(app.buttons["agents.filter.all"], "the quick filters", timeout: 30)
-        measureScroll(list)
+        measureVerifiedGlide()
+    }
+
+    /// A query retained after a result opens and closes: the field stays reachable while the filtered list glides (#7332).
+    @MainActor func testAgentsListScrollWithRetainedQuery() throws {
+        openList(["-dev.grouping", "repo"])
+        see(app.buttons["agents.filter.all"], "the quick filters", timeout: 30)
+        let field = app.revealAgentsSearch()
+        field.tap()
+        field.typeText("a")
+        field.typeText("\n")
+        sleep(2)
+        let row = see(app.buttons.matching(identifier: "agents.row").firstMatch, "a query result")
+        row.tap()
+        see(chatReady, "the result chat", timeout: 15)
+        back()
+        XCTAssertTrue(chatReady.waitForNonExistence(timeout: 10), "the result chat still covers the retained list")
+        see(row, "the retained query results")
+        let retained = app.searchFields.firstMatch
+        XCTAssertTrue(retained.waitForExistence(timeout: 5) && retained.isHittable, "the retained field is not visible")
+        XCTAssertTrue(row.isHittable, "the retained result row is not visible")
+        XCTAssertEqual(retained.value as? String, "a")
+        sleep(1) // let the navigation transition finish before FrameProbe chooses the list to glide
+        measureVerifiedGlide()
     }
 
     /// Grouped by machine, then by state: other section structures over the same agents.
@@ -130,7 +165,7 @@ final class PerfAgentsTests: PerfTestCase {
 
     /// The long history of a working chat (texts, tool rows, Markdown).
     @MainActor func testAgentChatScrollLongHistory() throws {
-        openChat(Self.weather, ["-loadAll", "YES"])
+        openChat(Self.weather, ["-loadAll", "YES"], title: Self.weatherTitle)
         measureScroll(mainScroller(), first: .down)
     }
 

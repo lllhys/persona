@@ -1,6 +1,7 @@
 package persona.feature.chat
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.runner.RunWith
@@ -8,6 +9,7 @@ import org.robolectric.annotation.Config
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Locale
 
 @RunWith(AndroidJUnit4::class)
 @Config(sdk = [35])
@@ -21,6 +23,33 @@ class SlashCommandsTest {
         assertEquals(listOf("/compact", "/context"), words("/co"))
         assertEquals(listOf("/汇报"), words("/汇"))
         assertEquals(listOf("/compact", "/context", "/clear"), words("/C"))
+    }
+
+    @Test fun mainChatOffersOnlyItsOwnClearAndAgentCommandsStayUnchanged() {
+        assertEquals(listOf("/clear"), SlashCommand.mainSuggestions("/", clear = true, resources = res).map { it.word })
+        assertEquals(listOf("/clear"), SlashCommand.mainSuggestions("/c", clear = true, resources = res).map { it.word })
+        assertEquals(emptyList<SlashCommand>(), SlashCommand.mainSuggestions("/", clear = false, resources = res))
+        assertEquals(emptyList<SlashCommand>(), SlashCommand.mainSuggestions("/co", clear = true, resources = res))
+        assertEquals(emptyList<SlashCommand>(), SlashCommand.mainSuggestions("/clear now", clear = true, resources = res))
+        assertEquals(listOf("/继续", "/compact", "/context", "/提交", "/汇报", "/clear"),
+            SlashCommand.suggestions("/", clear = true, resources = res).map { it.word })
+    }
+
+    @Test fun mainClearUsesTheWebCopyInAllThreeLanguages() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        for ((language, expected) in listOf(
+            "en" to "Clear the chat and start over",
+            "zh" to "清空对话，从头开始",
+            "ja" to "チャットをクリアして最初から",
+        )) {
+            val configuration = Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }
+            val localized = context.createConfigurationContext(configuration).resources
+            val main = SlashCommand.mainClearCommand(localized)
+            assertEquals(expected, main.detail)
+            assertEquals("/clear", main.text)
+            assertTrue(main.clear)
+            assertTrue(main.detail != SlashCommand.clearCommand(localized).detail)
+        }
     }
 
     @Test fun onlyWhileTheDraftIsOneSlashWord() {

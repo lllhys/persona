@@ -103,6 +103,17 @@ JSON
       nonzero) printf '%s\n' 'message-body-example' >&2; exit 17 ;;
     esac
     case "$scenario:${2:-}" in
+      inbox_followup:+messages-search) cat "$LARKCLI_FAKE_SEARCH" ;;
+      inbox_followup:+chat-list)
+        if [ -n "${LARKCLI_FAKE_CHATS:-}" ]; then
+          cat "$LARKCLI_FAKE_CHATS"
+        else
+          printf '%s\n' '{"ok":true,"data":{"chats":[]}}'
+        fi
+        ;;
+      inbox_followup:+chat-messages-list|inbox_followup:+threads-messages-list)
+        cat "$LARKCLI_FAKE_CONTEXT"
+        ;;
       inbox:+messages-search)
         case " $* " in
           *" --sender "*) cat "$base/inbox_seed.json" ;;
@@ -141,7 +152,20 @@ JSON
         esac
         ;;
       *:+chat-list) cat "$base/chats.json" ;;
-      *:+chat-messages-list|*:+threads-messages-list) cat "$base/messages.json" ;;
+      *:chats)
+        # A chat's own record (`im chats get`): a direct chat's has no name; a chat the user has left is refused.
+        case " $* " in
+          *" oc_example_dm "*) cat "$base/chat_get_p2p.json" ;;
+          *" oc_example_left "*) cat "$base/error_permission.json"; exit 1 ;;
+          *) cat "$base/chat_get.json" ;;
+        esac
+        ;;
+      *:+chat-messages-list|*:+threads-messages-list)
+        case " $* " in
+          *" oc_example_dm "*) cat "$base/messages_dm.json" ;;
+          *) cat "$base/messages.json" ;;
+        esac
+        ;;
       *:+messages-search|*:+chat-search) cat "$base/search.json" ;;
       *) cat "$base/search.json" ;;
     esac

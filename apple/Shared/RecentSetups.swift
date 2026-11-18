@@ -1,30 +1,11 @@
 import Foundation
 import Observation
+import PersonaWire
 
-/// One setup that started an Agent from New Agent (#2134): the ids its fields held, never a message. Kept on this device
-/// only; the rules every client follows are in spec/fixtures/recents/README.md.
-nonisolated struct RecentSetup: Codable, Hashable, Sendable {
-    /// `MachineRef.path`: the machine id, "group|id" for another group of hubs.
-    var machine: String
-    /// The folder picked (not the worktree a start made in it).
-    var cwd: String
-    /// "": follows Model Configuration.
-    var launcher: String
-    /// "": the launcher's default model.
-    var model: String
-    /// "claude", "codex" or another runtime.
-    var agentType: String
-    /// Claude Code's permission mode and thinking effort; "" for Use Launcher's, and always for any other agent.
-    var mode: String
-    var effort: String
-    /// RFC 3339: when it started.
-    var at: String
-
-    enum CodingKeys: String, CodingKey {
-        case machine, cwd, launcher, model, mode, effort, at
-        case agentType = "agent_type"
-    }
-
+/// One setup that started an Agent from New Agent (#2134), kept on this device only; the rules every client follows are
+/// in spec/fixtures/recents/README.md.
+/// The shape is generated from schema/wire/recents.schema.json (`RecentSetup` in PersonaWire).
+nonisolated extension RecentSetup {
     /// The same setup: every field but when it started.
     func isSame(as other: Self) -> Bool {
         var o = other

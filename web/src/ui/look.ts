@@ -3,6 +3,7 @@
 // no style element, so the page is what it was before these existed. An extension theme (ExtensionThemePicker) still
 // lays its colors over whichever theme color is chosen: its tokens are inline on <html>, above any stylesheet.
 import { useSyncExternalStore } from "react";
+import { SCHEME_ATTR } from "../lib/terminal-appearance";
 import { meetContrast, MIN_ROLE_CONTRAST, MIN_TEXT_CONTRAST } from "./extension-theme";
 
 type Scheme = "light" | "dark";
@@ -60,6 +61,7 @@ export function personaAccent(colors: { light?: Record<string, string>; dark?: R
  * The stylesheet for a choice; empty for "Default", and for "Match avatar" while the persona brings no colors (then it is "Default").
  * Under an extension theme (`extension`) my bubble is left out: the extension owns the accent, so the bubble must not
  * carry the theme color's tint (on the app the extension theme is a theme color of its own, ColorSpec(extensionTheme:over:)).
+ * Each scheme's tokens also go on its terminal scope (SCHEME_ATTR), which a terminal of the other scheme reads.
  */
 export function accentCSS(choice: AccentChoice, persona: Pair | null, extension = false): string {
   const pair = choice === "persona" ? persona : choice === "default" ? null : PRESET_COLORS[choice]?.accent;
@@ -67,7 +69,8 @@ export function accentCSS(choice: AccentChoice, persona: Pair | null, extension 
   const t = accentTokens(pair, choice === "persona" || choice === "default" ? undefined : PRESET_COLORS[choice].bubble);
   if (extension) for (const scheme of ["light", "dark"] as const) delete t[scheme]["--user-bubble"];
   const block = (sel: string, tokens: Record<string, string>) => `${sel} { ${Object.entries(tokens).map(([k, v]) => `${k}: ${v};`).join(" ")} }`;
-  return `${block(":root[data-accent]", t.light)}\n${block(":root.dark[data-accent]", t.dark)}`;
+  const scoped = (scheme: Scheme) => `[data-accent] [${SCHEME_ATTR}="${scheme}"]`;
+  return [block(":root[data-accent]", t.light), block(":root.dark[data-accent]", t.dark), block(scoped("light"), t.light), block(scoped("dark"), t.dark)].join("\n");
 }
 
 // ── Text size ─────────────────────────────────────────────
@@ -157,6 +160,15 @@ export function applyLook(doc: Document = document) {
   if (size === "standard") delete root.dataset.textSize;
   else root.dataset.textSize = size;
 }
+
+// Another tab of this browser changed one (or its storage was cleared): this one follows at once, as with the appearance
+// (views/theme.ts), and its Settings show the choice it shows.
+if (typeof window !== "undefined")
+  addEventListener("storage", (e) => {
+    if (e.key !== null && e.key !== ACCENT_KEY && e.key !== PERSONA_ACCENT_KEY && e.key !== TEXT_SIZE_KEY) return;
+    applyLook();
+    notify();
+  });
 
 export function setAccentChoice(c: AccentChoice) {
   write(ACCENT_KEY, c === "default" ? null : c);

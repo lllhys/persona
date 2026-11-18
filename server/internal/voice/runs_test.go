@@ -323,14 +323,14 @@ func TestUnpromptedDelegationIsRefused(t *testing.T) {
 	a := dialApp(t, pl, map[string]any{"type": "start"})
 	a.until(ofType("ready"))
 	got := content(up.nextMatch(on("dlg0")))
-	if !strings.Contains(got, "这条不是你说的，我没发") {
+	if !strings.Contains(got, unpromptedWords) {
 		t.Fatalf("refusal: %s", got)
 	}
 	a.send(map[string]any{"type": "text", "text": "明天有什么会"})
 	if got := content(up.nextMatch(on("dlg1"))); !strings.Contains(got, "明天下午三点有会") {
 		t.Fatalf("result: %s", got)
 	}
-	if got := content(up.nextMatch(on("dlg2"))); !strings.Contains(got, "这条不是你说的，我没发") {
+	if got := content(up.nextMatch(on("dlg2"))); !strings.Contains(got, unpromptedWords) {
 		t.Fatalf("refusal: %s", got)
 	}
 	if msgs := hub.messages(); len(msgs) != 1 || !strings.HasPrefix(msgs[0].Text, "明天有什么会") {

@@ -431,7 +431,8 @@ var mapSchema = func() json.RawMessage {
 	}
 	return mustJSON(map[string]any{"type": "object", "additionalProperties": false, "required": []string{"mode", "fields", "kind", "group_by", "note"},
 		"properties": map[string]any{
-			"mode":       map[string]any{"type": "string", "enum": wire.ConnectorSubscriptionModes},
+			// A model maps a sample's fields: things recipes are a connector's own (#6296), never drafted.
+			"mode":       map[string]any{"type": "string", "enum": []string{wire.ConnectorSubscriptionModeItems, wire.ConnectorSubscriptionModeSnapshot}},
 			"items_path": str,
 			"fields":     map[string]any{"type": "object", "additionalProperties": false, "properties": fields},
 			"kind":       map[string]any{"type": "string", "enum": wire.ConnectorSubscriptionKinds},

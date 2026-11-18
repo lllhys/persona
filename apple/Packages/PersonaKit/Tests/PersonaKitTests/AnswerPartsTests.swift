@@ -22,6 +22,10 @@ struct AnswerPartsTests {
         let parts = AnswerParts.split(text)
         #expect(parts.count > 4)
         #expect(parts.map(\.text).joined(separator: "\n\n") == text)
+        // Each starts on the answer's line it says: the selected words' parts are found by it (`ReplyText`).
+        let lines = text.components(separatedBy: "\n")
+        #expect(parts.allSatisfy { lines[$0.line] == $0.text.components(separatedBy: "\n").first })
+        #expect(parts.first?.line == 0 && parts.map(\.line) == parts.map(\.line).sorted())
         #expect(parts.first?.gap == 0)
         // Paragraph after paragraph: the paragraph's bottom margin (10), the next one's top (0).
         #expect(parts.dropFirst().allSatisfy { $0.gap == 10 })

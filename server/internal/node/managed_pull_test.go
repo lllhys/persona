@@ -19,6 +19,9 @@ type pullHub struct {
 	mu     sync.Mutex
 	asked  []map[string]any
 	answer func(name string) (any, error)
+	// agentsDefault answers launchers.agents_default (Model Settings › Agents for pi, pi_providers.go); nil: an older
+	// manager that does not know it.
+	agentsDefault map[string]any
 }
 
 func withPullHub(t *testing.T, n *Node, h *pullHub) {
@@ -31,6 +34,9 @@ func withPullHub(t *testing.T, n *Node, h *pullHub) {
 	n.peer = peer
 	hub := rpc.New("h", h2nW)
 	hub.OnRequest = func(_ context.Context, method string, params json.RawMessage) (any, error) {
+		if method == "launchers.agents_default" && h.agentsDefault != nil {
+			return h.agentsDefault, nil
+		}
 		if method != "launchers.pull" {
 			return nil, errors.New("unknown method " + method)
 		}

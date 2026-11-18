@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -28,6 +29,75 @@ type inboxState struct {
 	ci           map[string]*ciMeta               // CI items, by thread (rules.go)
 	repos        map[string]repoMeta              // repositories' default branches (rules.go)
 	marks        map[string]*readMark             // by thread: whether its thing was read on GitHub
+	// epoch is the account epoch (account.go) everything above was read under: what a poll that began under
+	// another one read is dropped (enter).
+	epoch uint64
+	// unsettled: the account changed and the hub has not asked since which of its open items are over (Settle).
+	// Until it has, every open item the connector holds no thing of is the account before's. Kept across restarts
+	// (accountRecord). polled: the account in use has tried to read its inbox since (poll): only then does Settle
+	// close, so a thread both accounts have is held by the time the hub asks, and its item goes on as the new
+	// account's instead of being closed with the new account's thing left out. left says things were retired
+	// since Watch last looked.
+	unsettled bool
+	polled    bool
+	left      bool
+}
+
+// retire ends what was read as the account before, in one step, for the account of epoch: its things leave the
+// inbox, the notifications cursor and everything the polls kept start again, and the hub's items of them are
+// closed when it next asks (Settle). c.mu is held (adopt).
+func (st *inboxState) retire(epoch uint64) {
+	st.reset(epoch, true)
+}
+
+// reset empties the state for the account of epoch; unsettled says whether the hub may still hold items of the
+// account before (retire: yes; Connector.restore: what was kept). c.mu is held.
+func (st *inboxState) reset(epoch uint64, unsettled bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.epoch, st.unsettled, st.polled, st.left = epoch, unsettled, false, st.left || len(st.things) > 0 || unsettled
+	st.things, st.seen = map[string]*connector.InboxThing{}, map[string]string{}
+	st.ci, st.repos, st.marks = nil, nil, nil
+	st.lastModified, st.fullAt = "", time.Time{}
+}
+
+// isUnsettled says whether the hub may still hold items of the account before.
+func (st *inboxState) isUnsettled() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.unsettled
+}
+
+// enter locks the state for what was read under epoch; false, with the state not locked, when the connector reads
+// as another account by now: what was read is not this account's and is dropped.
+func (st *inboxState) enter(epoch uint64) bool {
+	st.mu.Lock()
+	if st.epoch != epoch {
+		st.mu.Unlock()
+		return false
+	}
+	return true
+}
+
+// bind is ctx bound to the epoch the state is read under (asEpoch), and that epoch: one poll's reads and what
+// they write back are all one account's. A context bound already (a poll's) keeps its epoch.
+func (st *inboxState) bind(ctx context.Context) (context.Context, uint64) {
+	if epoch, ok := boundEpoch(ctx); ok {
+		return ctx, epoch
+	}
+	st.mu.Lock()
+	epoch := st.epoch
+	st.mu.Unlock()
+	return asEpoch(ctx, epoch), epoch
+}
+
+// takeLeft says whether things were retired since it was last asked.
+func (st *inboxState) takeLeft() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	left := st.left
+	st.left = false
+	return left
 }
 
 // readMark is what says whether a thread's thing was read on GitHub (applyNotifications). It lives in memory only,
@@ -71,20 +141,22 @@ type notification struct {
 // Watch polls the notifications until ctx ends, saying ScopeInbox when a thing changed.
 func (c *Connector) Watch(ctx context.Context, changed func(connector.Scope)) error {
 	for {
-		wait := pollDefault
+		wait, moved := pollDefault, false
 		if c.signedIn() {
-			w, moved, err := c.poll(ctx)
+			w, m, err := c.poll(ctx)
 			if err != nil {
 				return err
 			}
-			if moved {
-				changed(connector.ScopeInbox)
-			}
-			wait = max(w, pollDefault)
+			wait, moved = max(w, pollDefault), m
+		}
+		// Another account's things left since the last look (retire): the hub closes their items.
+		if c.inbox.takeLeft() || moved {
+			changed(connector.ScopeInbox)
 		}
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-c.repoll:
 		case <-time.After(wait):
 		}
 	}
@@ -109,10 +181,22 @@ func (c *Connector) poll(ctx context.Context) (time.Duration, bool, error) {
 	if !full && st.lastModified != "" {
 		hdr.Set("If-Modified-Since", st.lastModified)
 	}
+	// The poll is one account's: the cursor above, every read below and what they write back (asEpoch, enter).
+	epoch := st.epoch
 	st.mu.Unlock()
+	ctx = asEpoch(ctx, epoch)
+	defer func() { // however it ends: an account that cannot read its inbox still has the old one's items closed
+		if st.enter(epoch) {
+			st.polled = true
+			st.mu.Unlock()
+		}
+	}()
 
 	var ns []notification
 	code, h, err := c.request(ctx, http.MethodGet, notificationsPath(1), hdr, nil, &ns)
+	if errors.Is(err, errAccountChanged) {
+		return 0, false, nil // the next poll reads as the account in use
+	}
 	if err != nil {
 		if left := c.pauseLeft(); left > 0 { // a rate limit (request records it: notePause)
 			return max(left, pollDefault), false, nil
@@ -126,7 +210,9 @@ func (c *Connector) poll(ctx context.Context) (time.Duration, bool, error) {
 	if code == http.StatusNotModified {
 		return wait, false, nil
 	}
-	st.mu.Lock()
+	if !st.enter(epoch) {
+		return 0, false, nil
+	}
 	st.lastModified = h.Get("Last-Modified")
 	if full {
 		st.fullAt = time.Now()
@@ -167,6 +253,7 @@ func (c *Connector) laterNotifications(ctx context.Context, ns []notification) (
 // for a pause) and marks those no longer in ns, the unread list newest first, as read elsewhere (missedAgain).
 func (c *Connector) applyNotifications(ctx context.Context, ns []notification, complete bool, now time.Time) bool {
 	st := &c.inbox
+	ctx, epoch := st.bind(ctx)
 	me := c.Status(ctx).Account
 	budget := maxDetails
 	var oldest time.Time
@@ -192,7 +279,9 @@ func (c *Connector) applyNotifications(ctx context.Context, ns []notification, c
 			continue
 		}
 		stamp := n.UpdatedAt.UTC().Format(time.RFC3339)
-		st.mu.Lock()
+		if !st.enter(epoch) {
+			return moved
+		}
 		known := st.seen[n.ID] == stamp
 		// Notifications come newest first and a CI thread gathers many: one older than the thread's thing is an
 		// earlier move, and the thing keeps the newest (InboxThing.At).
@@ -215,7 +304,9 @@ func (c *Connector) applyNotifications(ctx context.Context, ns []notification, c
 		case kind == "ci_failed" && !run.failed():
 			// A run of the branch that did not fail (succeeded, cancelled): after a success the follow-up checks in
 			// this poll whether the branch's item is over (followUpCI: every workflow's newest run).
-			st.mu.Lock()
+			if !st.enter(epoch) {
+				return moved
+			}
 			st.seen[n.ID] = stamp
 			if m := st.ci[thread]; m != nil && run.status == "succeeded" {
 				m.checked = time.Time{}
@@ -226,7 +317,9 @@ func (c *Connector) applyNotifications(ctx context.Context, ns []notification, c
 			var ok bool
 			thing, ok, err = c.describeCI(ctx, n, run, me, o)
 			if err == nil && !ok {
-				st.mu.Lock()
+				if !st.enter(epoch) {
+					return moved
+				}
 				st.seen[n.ID] = stamp
 				st.mu.Unlock()
 				continue
@@ -237,9 +330,19 @@ func (c *Connector) applyNotifications(ctx context.Context, ns []notification, c
 		if err != nil {
 			continue // read again next time
 		}
-		thing.Thread, thing.Kind, thing.Label, thing.Last = thread, kind, label, stamp
+		thing.Thread, thing.Kind, thing.Label = thread, kind, label
+		last := thing.Last // describe's newest comment or review names a PR's or issue's move; else the notification
+		if last == "" {
+			last = stamp
+		}
+		thing.Last = markLast(last, epoch)
+		if err := c.rememberMessageLast(ctx, thread, thing.Last, n.UpdatedAt); err != nil {
+			continue
+		}
 		thing.Tags = tagsOf(n, run, kind, thing.Sender)
-		st.mu.Lock()
+		if !st.enter(epoch) {
+			return moved
+		}
 		st.seen[n.ID] = stamp
 		st.things[thread] = &thing
 		if st.marks == nil {
@@ -249,7 +352,9 @@ func (c *Connector) applyNotifications(ctx context.Context, ns []notification, c
 		st.mu.Unlock()
 		moved = true
 	}
-	st.mu.Lock()
+	if !st.enter(epoch) {
+		return moved
+	}
 	defer st.mu.Unlock()
 	for thread, t := range st.things {
 		if now.Sub(t.At) > forgetAfter {
@@ -349,6 +454,7 @@ func threadOf(n notification) string {
 
 // move is a comment or a review, for the preview and the context.
 type move struct {
+	id              string
 	who, verb, text string
 	at              time.Time
 	bot             bool
@@ -400,30 +506,50 @@ func (c *Connector) describe(ctx context.Context, n notification, me string) (co
 		}
 		it.Comments = iss.Comments
 	}
-	var moves []move
-	var cs []comment
+	var moves, messages []move
+	var cs []remark
 	page := max(1, (it.Comments+99)/100)
 	if _, err := c.Get(ctx, fmt.Sprintf("/repos/%s/issues/%s/comments?per_page=100&page=%d", repo, number, page), &cs); err != nil {
 		return t, err
 	}
 	for _, cm := range cs {
-		moves = append(moves, move{who: who(cm.User), text: strings.TrimSpace(cm.Body), at: cm.CreatedAt, bot: isBot(cm.User)})
+		message := move{id: fmt.Sprintf("comment:%d", cm.ID), who: who(cm.User), text: strings.TrimSpace(cm.Body), at: cm.CreatedAt, bot: isBot(cm.User)}
+		moves = append(moves, message)
+		messages = append(messages, message)
 	}
 	reviewed := false
 	if pr {
-		var rs []comment
-		if _, err := c.Get(ctx, fmt.Sprintf("/repos/%s/pulls/%s/reviews?per_page=100", repo, number), &rs); err != nil {
+		// Reviews come oldest first with no count on the PR: the Link header names the last page, which holds the newest.
+		var rs []remark
+		h, err := c.Get(ctx, fmt.Sprintf("/repos/%s/pulls/%s/reviews?per_page=100", repo, number), &rs)
+		if err != nil {
 			return t, err
+		}
+		last, err := listLastPage(strings.Join(h.Values("Link"), ", "))
+		if err != nil {
+			return t, err
+		}
+		if last > 1 {
+			var tail []remark
+			if _, err := c.Get(ctx, fmt.Sprintf("/repos/%s/pulls/%s/reviews?per_page=100&page=%d", repo, number, last), &tail); err != nil {
+				return t, err
+			}
+			rs = append(rs, tail...)
 		}
 		for _, r := range rs {
 			verb := map[string]string{"APPROVED": "批准了", "CHANGES_REQUESTED": "要求修改", "COMMENTED": "评审了"}[r.State]
-			if verb == "" || r.State == "COMMENTED" && strings.TrimSpace(r.Body) == "" {
+			if verb == "" || r.SubmittedAt.IsZero() {
+				continue
+			}
+			message := move{id: fmt.Sprintf("review:%d", r.ID), who: who(r.User), verb: verb, text: strings.TrimSpace(r.Body), at: r.SubmittedAt, bot: isBot(r.User), state: r.State}
+			messages = append(messages, message)
+			if r.State == "COMMENTED" && strings.TrimSpace(r.Body) == "" {
 				continue
 			}
 			if strings.EqualFold(r.User.Login, me) {
 				reviewed = true
 			}
-			moves = append(moves, move{who: who(r.User), verb: verb, text: strings.TrimSpace(r.Body), at: r.SubmittedAt, bot: isBot(r.User), state: r.State})
+			moves = append(moves, message)
 		}
 	}
 	sort.SliceStable(moves, func(i, j int) bool { return moves[i].at.Before(moves[j].at) })
@@ -436,15 +562,24 @@ func (c *Connector) describe(ctx context.Context, n notification, me string) (co
 	t.Title, t.URL = it.Title, it.HTMLURL
 	t.ReplyTo, t.CanReply = "评论到 "+ref+"（仓库可见的人都能看到）", !it.Locked
 	t.Sender, t.Preview = it.User.String(), firstLine(it.Body)
+	lastStamp, newestID := newestMessageLast(messages, c.previousMessageLast(ctx, threadOf(n)))
+	t.Last = lastStamp
+	var last move
 	if len(moves) > 0 {
-		last := moves[len(moves)-1]
+		last = moves[len(moves)-1]
+		for i := len(moves) - 1; newestID != "" && i >= 0; i-- {
+			if moves[i].id == newestID {
+				last = moves[i]
+				break
+			}
+		}
 		t.Sender, t.Preview = last.who, strings.TrimSpace(last.verb+" "+firstLine(last.text))
 	}
 
 	switch {
 	case it.Merged || it.State == "closed":
 		t.Done = connector.DoneRead
-	case len(moves) > 0 && strings.EqualFold(strings.TrimSuffix(moves[len(moves)-1].who, " (bot)"), me):
+	case len(moves) > 0 && strings.EqualFold(strings.TrimSuffix(last.who, " (bot)"), me):
 		t.Done = connector.DoneReplied
 	case n.Reason == "review_requested" && len(it.Teams) == 0 && !hasLogin(it.Reviewers, me):
 		// no longer asked: reviewed (answered) or the request withdrawn
@@ -513,7 +648,13 @@ func (c *Connector) Collect(context.Context) ([]connector.InboxThing, error) {
 	for _, t := range st.things {
 		out = append(out, *t)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
+	// Oldest first; rows at the same time by thread, so reading again gives the same list (the map has no order).
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].At.Equal(out[j].At) {
+			return out[i].At.Before(out[j].At)
+		}
+		return out[i].Thread < out[j].Thread
+	})
 	return out, nil
 }
 
@@ -526,18 +667,31 @@ func (c *Connector) Reply(ctx context.Context, r connector.InboxReply) error {
 	if m == nil || !validRepo(m[1]) {
 		return fmt.Errorf("%s cannot be replied to", thread)
 	}
+	// The reply goes out as the account its item was read as, or not at all. The item's move says which that was
+	// (markLast), with or without the thing still held here, so the thread alone is never taken for it: both
+	// accounts may have it. Then the request is bound to the epoch (asEpoch): an account that changes before it
+	// is sent refuses it.
+	c.restore(ctx)
+	st := &c.inbox
+	st.mu.Lock()
+	epoch := st.epoch
+	st.mu.Unlock()
+	if lastEpoch(r.Last) != epoch {
+		return fmt.Errorf("%s was read as another GitHub account than the one in use: open it on GitHub", thread)
+	}
+	ctx = asEpoch(ctx, epoch)
 	body, _ := json.Marshal(map[string]string{"body": text})
 	if _, _, err := c.request(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%s/comments", m[1], m[2]), nil, body, nil); err != nil {
 		return err
 	}
 	n, _ := strconv.Atoi(m[2])
 	c.forget(m[1], n)
-	st := &c.inbox
-	st.mu.Lock()
-	if t := st.things[thread]; t != nil {
-		t.Done = connector.DoneReplied
+	if st.enter(epoch) {
+		if t := st.things[thread]; t != nil {
+			t.Done = connector.DoneReplied
+		}
+		st.mu.Unlock()
 	}
-	st.mu.Unlock()
 	return nil
 }
 

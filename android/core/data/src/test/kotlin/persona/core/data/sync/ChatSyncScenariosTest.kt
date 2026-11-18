@@ -25,6 +25,7 @@ import kotlin.time.Duration.Companion.seconds
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(Parameterized::class)
 class ChatSyncScenariosTest(private val name: String, private val case: JsonObject, private val device: String) {
+    @get:org.junit.Rule val shadowParity = persona.core.data.ShadowParityRule()
     @Test fun replay() = runTest(timeout = 60.seconds) {
         val failures = SyncRun(this, case, device).play()
         val known = KNOWN[name]

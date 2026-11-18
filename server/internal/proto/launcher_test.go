@@ -57,3 +57,24 @@ func TestMessagesBase(t *testing.T) {
 		}
 	}
 }
+
+func TestPiAPI(t *testing.T) {
+	for _, c := range []struct {
+		l    ManagedLauncher
+		want string
+	}{
+		{ManagedLauncher{}, "anthropic-messages"},
+		{ManagedLauncher{Agent: "omp"}, "anthropic-messages"},
+		{ManagedLauncher{Kind: "api", API: "messages"}, "anthropic-messages"},
+		{ManagedLauncher{Kind: "api"}, "anthropic-messages"},
+		{ManagedLauncher{Agent: "codex"}, "openai-responses"},
+		{ManagedLauncher{Agent: "agy"}, ""},
+		{ManagedLauncher{Kind: "api", API: "responses"}, ""},
+		{ManagedLauncher{Kind: "api", API: "chat"}, ""},
+		{ManagedLauncher{Proxy: "http://127.0.0.1:7890"}, ""}, // pi would not go through it
+	} {
+		if got := c.l.PiAPI(); got != c.want {
+			t.Errorf("%+v: PiAPI() = %q, want %q", c.l, got, c.want)
+		}
+	}
+}

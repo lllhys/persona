@@ -16,9 +16,10 @@ import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
-// The to-dos' month (#2046, docs/assistant/todos.md "Calendar"): which to-dos a day shows and in what order, the weeks
-// a month touches and the weekday they start on; where a to-do dragged onto another day lands (#2045). The rules of iOS apple/Shared/TodoCalendar.swift and the web's
-// web/src/lib/todo-calendar.ts; Android draws the month only, for now.
+// The to-dos' calendar (#2046, docs/assistant/todos.md "Calendar"): which to-dos a day shows and in what order, the days
+// a day, a week or a month shows and the weekday weeks start on; on the day's and the week's time axis (#4200), which
+// to-dos sit side by side and where a tap makes one; where a to-do dragged onto another day or moment lands (#2045).
+// The rules of iOS apple/Shared/TodoCalendar.swift and the web's web/src/lib/todo-calendar.ts.
 
 /** A to-do on the calendar: on [day], at [time] there, or all day when [time] is null. */
 data class CalendarEntry(
@@ -89,9 +90,81 @@ fun <T> fitDay(entries: List<T>, lines: Int): DayFit<T> {
 /** The time an all-day to-do takes when it is given one ("Change Due Date…" with All day off), as iOS `TodoPlanDraft`. */
 val DefaultDueTime: LocalTime = LocalTime.of(18, 0)
 
-/** A to-do dropped on [day] of the month (#2045): at the same time there in [zone]; an all-day one stays all day. */
-fun CalendarEntry.dropOnDay(day: LocalDate, zone: ZoneId): TodoDue =
-    time?.let { TodoDue.At(day.atTime(it).atZone(zone).toInstant()) } ?: TodoDue.Day(day)
+/**
+ * A to-do dropped on [day] as a whole (#2045): at the same time there in [zone] (the month), or all day there when
+ * [allDay] (a day's All Day row, or one that already was all day), as the web's `dropOnDay`.
+ */
+fun CalendarEntry.dropOnDay(day: LocalDate, zone: ZoneId, allDay: Boolean = this.allDay): TodoDue =
+    if (allDay) TodoDue.Day(day) else TodoDue.At(day.atTime(time ?: DefaultDueTime).atZone(zone).toInstant())
+
+/** How a drop on the time axis snaps: the block's top edge to the nearest quarter hour (the web's `DROP_SNAP`). */
+const val DropSnap = 15
+
+/** How a tap on the empty axis snaps: down to the half hour it is in (the web's `slotAt`, iOS `slot`). */
+const val TapSnap = 30
+
+/** A to-do dropped with its block's top edge [minutes] into [day] (#4200): at the nearest quarter hour, 00:00–23:45. */
+fun dropOnAxis(day: LocalDate, minutes: Float, zone: ZoneId): TodoDue =
+    TodoDue.At(day.atTime(dropTime(minutes)).atZone(zone).toInstant())
+
+/** [minutes] into a day rounded to the nearest [snap], within the day (the last [snap] its latest). */
+fun dropTime(minutes: Float, snap: Int = DropSnap): LocalTime {
+    val clamped = minutes.coerceIn(0f, (24 * 60 - snap).toFloat())
+    return LocalTime.MIN.plusMinutes((Math.round(clamped / snap) * snap).toLong())
+}
+
+/** The moment a tap [minutes] into a day means: snapped down to [snap], within the day. */
+fun slotTime(minutes: Float, snap: Int = TapSnap): LocalTime {
+    val clamped = minutes.coerceIn(0f, (24 * 60 - snap).toFloat())
+    return LocalTime.MIN.plusMinutes((kotlin.math.floor(clamped / snap).toInt() * snap).toLong())
+}
+
+/** Where a carried to-do would land on the day's or the week's view (#4200): a day's All Day row, or a moment on its axis. */
+sealed interface AxisTarget {
+    val day: LocalDate
+    data class AllDay(override val day: LocalDate) : AxisTarget
+    data class At(override val day: LocalDate, val time: LocalTime) : AxisTarget
+}
+
+/**
+ * The due date a drop on [target] sends: due that day all day, or at that moment in [zone]. A block let go where it
+ * snaps back to its own place keeps its own time ("14:07" stays, not "14:00"), so a drop in place sends nothing.
+ */
+fun CalendarEntry.dropOn(target: AxisTarget, zone: ZoneId): TodoDue = when (target) {
+    is AxisTarget.AllDay -> dropOnDay(target.day, zone, allDay = true)
+    is AxisTarget.At -> {
+        val own = time?.takeIf { target.day == day && dropTime(minutes) == target.time }
+        TodoDue.At(target.day.atTime(own ?: target.time).atZone(zone).toInstant())
+    }
+}
+
+/**
+ * Where a to-do carried over the day's or the week's view lands: the day of [days] whose column is under [x] (across
+ * the columns' [width], from the right when [rtl]); on its All Day row when [onAllDay], else at its block's top edge,
+ * [blockTop] down the axis of hours [hourHeight] high (the scrolled-away part counted), snapped as [dropTime] snaps.
+ * Null off the columns.
+ */
+fun axisDropTarget(
+    x: Float,
+    width: Float,
+    days: List<LocalDate>,
+    rtl: Boolean,
+    onAllDay: Boolean,
+    blockTop: Float,
+    hourHeight: Float,
+): AxisTarget? {
+    val day = axisColumn(x, width, days.size, rtl)?.let(days::getOrNull) ?: return null
+    if (onAllDay) return AxisTarget.AllDay(day)
+    if (hourHeight <= 0f) return null
+    return AxisTarget.At(day, dropTime(blockTop / hourHeight * 60))
+}
+
+/** The column of [columns] days side by side under [x] across [width] (the first at the right when [rtl]); null off them. */
+fun axisColumn(x: Float, width: Float, columns: Int, rtl: Boolean = false): Int? {
+    if (columns <= 0 || width <= 0f || x < 0f || x >= width) return null
+    val column = (x / (width / columns)).toInt().coerceIn(0, columns - 1)
+    return if (rtl) columns - 1 - column else column
+}
 
 /** The due date a drop sends: null when it lands where the to-do already is (nothing is sent). */
 fun Todo.moveTo(due: TodoDue): TodoDue? = due.takeIf { it != this.due }
@@ -114,6 +187,95 @@ fun edgeScroll(y: Float, height: Float, edge: Float): Int = when {
     y < edge -> -1
     y > height - edge -> 1
     else -> 0
+}
+
+/** The calendar's three spans (#4200), iOS `TodoCalendarMode`; each device keeps its choice. */
+enum class CalendarMode { Day, Week, Month }
+
+/** The days [mode] shows around [anchor]: the day; its week; the whole weeks its month touches. Weeks start on [first]. */
+fun calendarDays(mode: CalendarMode, anchor: LocalDate, first: DayOfWeek): List<LocalDate> = when (mode) {
+    CalendarMode.Day -> listOf(anchor)
+    CalendarMode.Week -> weekOf(anchor, first)
+    CalendarMode.Month -> monthDays(YearMonth.from(anchor), first)
+}
+
+/** The week [day] is in, weeks starting on [first] (the day view's strip and the week view's columns). */
+fun weekOf(day: LocalDate, first: DayOfWeek): List<LocalDate> {
+    val from = day.with(TemporalAdjusters.previousOrSame(first))
+    return List(7) { from.plusDays(it.toLong()) }
+}
+
+/**
+ * The anchor a page later ([n] 1) or earlier (-1): a day, a week or a month. A month keeps the day, the month's last
+ * when it is shorter (Jan 31 → Feb 28), as the web's `stepAnchor`.
+ */
+fun stepAnchor(anchor: LocalDate, mode: CalendarMode, n: Int): LocalDate = when (mode) {
+    CalendarMode.Day -> anchor.plusDays(n.toLong())
+    CalendarMode.Week -> anchor.plusWeeks(n.toLong())
+    CalendarMode.Month -> anchor.plusMonths(n.toLong())
+}
+
+/** A to-do on a day's axis: in lane [lane] of [lanes] side by side. */
+data class AxisPlaced(val entry: CalendarEntry, val lane: Int, val lanes: Int)
+
+/** Minutes from the start of its day to a timed entry (0 for an all-day one). */
+val CalendarEntry.minutes: Float get() = (time?.toSecondOfDay() ?: 0) / 60f
+
+/**
+ * The timed entries of one day whose blocks overlap, grouped, in [CalendarDrawOrder]: a to-do's block is [blockMinutes]
+ * long from its time (a fixed height, as iOS and the web draw it).
+ */
+fun calendarClusters(timed: List<CalendarEntry>, blockMinutes: Float): List<List<CalendarEntry>> {
+    val out = mutableListOf<List<CalendarEntry>>()
+    var group = mutableListOf<CalendarEntry>()
+    var groupEnd = Float.NEGATIVE_INFINITY
+    for (e in timed.sortedWith(CalendarDrawOrder)) {
+        if (group.isNotEmpty() && e.minutes >= groupEnd) {
+            out += group
+            group = mutableListOf()
+        }
+        group += e
+        groupEnd = maxOf(groupEnd, e.minutes + blockMinutes)
+    }
+    if (group.isNotEmpty()) out += group
+    return out
+}
+
+/** Side by side where blocks overlap: each entry in the first lane free at its time, every entry of a cluster as narrow as the cluster's lanes need. */
+fun calendarLanes(timed: List<CalendarEntry>, blockMinutes: Float): List<AxisPlaced> =
+    calendarClusters(timed, blockMinutes).flatMap { group ->
+        val ends = mutableListOf<Float>()
+        val laned = group.map { e ->
+            var lane = ends.indexOfFirst { it <= e.minutes }
+            if (lane < 0) {
+                ends += Float.NEGATIVE_INFINITY
+                lane = ends.lastIndex
+            }
+            ends[lane] = e.minutes + blockMinutes
+            e to lane
+        }
+        laned.map { (e, lane) -> AxisPlaced(e, lane, ends.size) }
+    }
+
+/** Where a day without anything on it starts (iOS `TodoCalendar.morning`). */
+const val CalendarMorning = 8
+
+/** Minutes either side of now where an hour's label gives way to the now line's (iOS `nowLabelRoom`). */
+const val NowLabelRoom = 15
+
+/**
+ * The hour the axis first scrolls to on [days]: the earlier of an hour and a half before now (when today is shown) and
+ * an hour before their first timed entry, so the morning's to-dos are in sight; [CalendarMorning] without either.
+ */
+fun firstHour(days: List<LocalDate>, timed: List<CalendarEntry>, now: Instant, zone: ZoneId): Int {
+    val hours = mutableListOf<Int>()
+    val here = now.atZone(zone)
+    if (here.toLocalDate() in days) {
+        val back = here.minusMinutes(90)
+        hours += if (back.toLocalDate() == here.toLocalDate()) back.hour else 0
+    }
+    timed.filter { it.time != null && it.day in days }.minByOrNull { it.time!! }?.let { hours += maxOf(0, it.time!!.hour - 1) }
+    return hours.minOrNull() ?: CalendarMorning
 }
 
 /** The days the month grid shows: the whole weeks [month] touches, weeks starting on [first]. */

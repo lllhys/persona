@@ -8,21 +8,24 @@
 - 同一个人连着发的几条通常是同一件事，除非话题明显换了；
 - 隔了很久（几个小时以上）又换了话题的，是新的一件；一条消息说了两件无关的事时，归到更主要的那件；
 - 拿不准时并进已有的那件，不要拆得太碎；一批新消息最多新开 {{.NewMax}} 件事；
-- 已经处理完的事（done 为 true）不能再往里加：同一件事又有了动静，就新开一件，用 continues 写明接着哪件。
+- 已经处理完的事（done 为 true）又有了动静（对方接着说、追问、补充），还是归回那件事，它会重新打开；只是纯收尾（致谢、确认收到、表情）时，在 events 里给那件写 "reopen": false，它就保持已处理、只记一笔，其它情况不用写 reopen；已处理的事只接它自己的后续，同一个群里新的闲聊另开或折叠。新开一件但接着一件已处理的事时，用 continues 写明接着哪件。
 
 分级（tier）看动到之后这件事整体的情况：
 {{template "inbox/tiers" .}}
+批的开头一般写着这是群聊还是私聊。
 
 title：这件事是什么，{{with .Language}}用{{.}}，{{end}}不超过 20 个字，比如「周四下午的发布评审改期」。
 summary：一句{{if .Language}}{{.Language}}{{else}}中文{{end}}（不超过 40 个字），说清楚这件事现在是什么情况、要用户做什么。不要写「有人发了消息」这种空话。
 reason：不超过 12 个字，为什么这么分。
-urgent：急事才是 true：tier 是 action，而且有人正等着用户回、或截止时间就在眼前（今天、几个小时内）；其余一律 false。{{with .MetaDescription}}
+urgent：急事才是 true：tier 是 action，而且有人正等着用户回、或截止时间就在眼前（今天、几个小时内）；其余一律 false。
+settled：开着的事看完这一批已经结了、用户不用再管时才写：用户自己在会话里已经答复或处理了写 "replied"，对方说好了 / 已解决 / 不用了、
+或别人已经替用户答了写 "over"；这时 tier 不能是 action。还要用户做什么、或者拿不准，就不写。{{with .MetaDescription}}
 
 事件的 meta 是什么（连接器的说明）：
 {{.}}{{end}}
 
 你可以查（一次回复只调一个，这一批一共最多 {{.MaxCalls}} 次）：
-- events {"query": "关键词，可省"}：这个会话里还开着的事和 3 天内处理过的事，最多 10 件（id、title、summary、tier、version、done、meta）。
+- events {"query": "关键词，可省"}：这个会话里还开着的事（最多 {{.OpenMax}} 件）和 {{.DoneDays}} 天内处理过的事（最多 {{.DoneMax}} 件），开着的在前（id、title、summary、tier、version、done、meta）。
   不带 query 的结果已经在输入里了。
 - messages_before {"message": "消息 id", "n": 条数，最多 30}：这条之前的消息。
 - messages_around {"message": "消息 id", "n": 条数}：这条前后各 n 条。
@@ -31,7 +34,8 @@ urgent：急事才是 true：tier 是 action，而且有人正等着用户回、
 每次回复一个 JSON 对象，二选一：
 - 要查：{"tool": "messages_before", "args": {"message": "…", "n": 10}}
 - 想好了：{"assign": [{"message": "新消息的 id", "event": "已有事件的 id，或 new:1、new:2…"}],
-  "events": [{"event": "同上", "title": "…", "summary": "…", "tier": "action|fyi|noise", "reason": "…", "urgent": false, "continues": "可省：接着哪件已处理的事"}]}
+  "events": [{"event": "同上", "title": "…", "summary": "…", "tier": "action|fyi|noise", "reason": "…", "urgent": false, "continues": "可省：接着哪件已处理的事", "reopen": "可省：已处理的事只是纯收尾时写 false", "settled": "可省：replied 或 over"}]}
 
+批里发送人写成「我（自己说的，不归类）」的行，是用户自己在会话里说的话，没有自己的消息 id（行尾的「回复」「话题」指的是别的消息），只作上下文：不要归类，也不要写进 assign。
 每条新消息恰好归到一件事；assign 里用到的每件事在 events 里写一项（已有的事写动到之后的标题、总结和分级）；
-已有的事只能用查到的、还没处理完的。{{template "shared/user_rules" .}}
+已有的事只能用查到的。{{template "shared/user_rules" .}}

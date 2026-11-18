@@ -8,8 +8,6 @@
   "offline": "离线",
   "reconnect": "重新连接",
   "memory": "内存",
-  "disk": "磁盘",
-  "disk_free": "剩 {size}",
   "waiting_node": "等待这台电脑重新连接",
   "unreachable": "连不上这台电脑",
   "agents_other": "{count} 个 Agent",
@@ -34,5 +32,12 @@
   "rejected": "已删掉「{name}」",
   "answer_failed": "没有成功：{error}",
   "never_connected": "还没连上来过",
-  "not_connected_yet": "还没连上"
+  "not_connected_yet": "还没连上",
+  "network": "网络",
+  "load_value": "负载 {value}",
+  "memory_last_hour": "最近一小时内存",
+  "network_last_hour": "最近一小时网络：下载（橙色）、上传（紫色）",
+  "view_label": "显示方式",
+  "view_cards": "卡片",
+  "view_capabilities": "能力"
 }

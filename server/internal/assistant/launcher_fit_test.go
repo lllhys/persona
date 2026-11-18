@@ -129,6 +129,31 @@ func TestTierLauncherTheComputerLacksIsSwapped(t *testing.T) {
 	}
 }
 
+func TestTaskPlanTierLauncherTheComputerLacksIsSwapped(t *testing.T) {
+	s, f := launcherFitHub(t)
+	ctx := context.Background()
+	saveTier(t, s, "standard", ModelTier{Launcher: "gateway", Model: "gw-big", Effort: "max"})
+	res, err := s.toolTaskPlan(ctx, "conv9", json.RawMessage(`{"tasks":[{"title":"Ping","permission":"bypassPermissions","prompt":"Reply with pong","machine":"l4","cwd":"~/code/app","tier":"standard"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := planID(t, res)
+	p, err := s.loadPlan(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task := p.Tasks[0]; task.Launcher != "claude" || task.Model != "" || task.Effort != "" || task.Tier != "" {
+		t.Fatalf("the plan kept the replaced preset: %+v", task)
+	}
+	if _, err := s.startPlan(ctx, id, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the tier's fallback start", func() bool { return len(startsOf(f)) == 1 })
+	if st := startsOf(f)[0]; st["launcher"] != "claude" || !unset(st["model"]) || !unset(st["effort"]) {
+		t.Fatalf("started with the replaced preset: %v", st)
+	}
+}
+
 // A launcher the caller named that the computer lacks starts nothing, and the refusal lists what that computer has.
 func TestNamedLauncherTheComputerLacksIsRefused(t *testing.T) {
 	s, f := launcherFitHub(t)

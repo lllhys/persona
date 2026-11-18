@@ -50,6 +50,8 @@ object PersonaIcons {
     val collapse: PhIcon get() = PhIcons.CaretUp
     /** SF Symbol `arrow.up.right.and.arrow.down.left`. */
     val collapseMessage: PhIcon get() = PhIcons.ArrowsInSimple
+    /** SF Symbol `arrow.down.and.line.horizontal.and.arrow.up`. */
+    val compactContext: PhIcon get() = PhIcons.ArrowsInLineVertical
     /** SF Symbol `square.and.pencil`. */
     val compose: PhIcon get() = PhIcons.NotePencil
     /** SF Symbol `gauge.with.dots.needle.33percent`. */
@@ -118,12 +120,16 @@ object PersonaIcons {
     val folder: PhIcon get() = PhIcons.Folder
     /** SF Symbol `folder.fill`. */
     val folderFilled: PhIcon get() = PhIcons.Folder
+    /** SF Symbol `arrow.turn.down.right`. */
+    val followOn: PhIcon get() = PhIcons.ArrowBendDownRight
     /** SF Symbol `arrow.branch`. */
     val forkChat: PhIcon get() = PhIcons.GitBranch
     /** SF Symbol `chevron.forward`. */
     val forward: PhIcon get() = PhIcons.CaretRight
     /** SF Symbol `arrow.triangle.branch`. */
     val gitBranch: PhIcon get() = PhIcons.GitBranch
+    /** SF Symbol `star`. */
+    val gitHubStar: PhIcon get() = PhIcons.Star
     /** SF Symbol `cloud`. */
     val gitUpstream: PhIcon get() = PhIcons.Cloud
     /** SF Symbol `target`. */
@@ -168,6 +174,8 @@ object PersonaIcons {
     val keyPoint: PhIcon get() = PhIcons.ChatTeardropText
     /** SF Symbol `keyboard`. */
     val keyboard: PhIcon get() = PhIcons.Keyboard
+    /** SF Symbol `books.vertical`. */
+    val knowledge: PhIcon get() = PhIcons.BookOpen
     /** SF Symbol `laptopcomputer`. */
     val laptop: PhIcon get() = PhIcons.Laptop
     /** SF Symbol `sun.max`. */
@@ -202,6 +210,8 @@ object PersonaIcons {
     val moreMenu: PhIcon get() = PhIcons.DotsThree
     /** SF Symbol `music.note`. */
     val music: PhIcon get() = PhIcons.MusicNote
+    /** SF Symbol `plus.bubble`. */
+    val newConversation: PhIcon get() = PhIcons.ChatCircleDots
     /** SF Symbol `minus`. */
     val notChecked: PhIcon get() = PhIcons.Minus
     /** SF Symbol `bell.fill`. */
@@ -210,6 +220,8 @@ object PersonaIcons {
     val notifications: PhIcon get() = PhIcons.BellSimple
     /** SF Symbol `wifi.exclamationmark`. */
     val offline: PhIcon get() = PhIcons.WifiSlash
+    /** SF Symbol `arrow.up.right`. */
+    val open: PhIcon get() = PhIcons.ArrowUpRight
     /** SF Symbol `arrow.up.forward.square`. */
     val openDocument: PhIcon get() = PhIcons.ArrowSquareOut
     /** SF Symbol `arrow.up.forward.app`. */
@@ -256,6 +268,8 @@ object PersonaIcons {
     val quietHours: PhIcon get() = PhIcons.MoonStars
     /** SF Symbol `text.quote`. */
     val quote: PhIcon get() = PhIcons.Quotes
+    /** SF Symbol `clock.arrow.circlepath`. */
+    val recent: PhIcon get() = PhIcons.ArrowCounterClockwise
     /** SF Symbol `waveform.circle`. */
     val recording: PhIcon get() = PhIcons.Waveform
     /** SF Symbol `bell.circle`. */
@@ -272,6 +286,8 @@ object PersonaIcons {
     val run: PhIcon get() = PhIcons.Play
     /** SF Symbol `safari`. */
     val safari: PhIcon get() = PhIcons.GlobeSimple
+    /** SF Symbol `qrcode.viewfinder`. */
+    val scanCode: PhIcon get() = PhIcons.QrCode
     /** SF Symbol `alarm`. */
     val schedule: PhIcon get() = PhIcons.Clock
     /** SF Symbol `display`. */
@@ -292,6 +308,8 @@ object PersonaIcons {
     val settings: PhIcon get() = PhIcons.Gear
     /** SF Symbol `square.and.arrow.up`. */
     val share: PhIcon get() = PhIcons.ShareNetwork
+    /** SF Symbol `rectangle.portrait.on.rectangle.portrait`. */
+    val sideSessions: PhIcon get() = PhIcons.Stack
     /** SF Symbol `sidebar.left`. */
     val sidebar: PhIcon get() = PhIcons.SidebarSimple
     /** SF Symbol `puzzlepiece.extension`. */
@@ -310,6 +328,8 @@ object PersonaIcons {
     val success: PhIcon get() = PhIcons.CheckCircle
     /** SF Symbol `checkmark.circle.fill`. */
     val successFilled: PhIcon get() = PhIcons.CheckCircle
+    /** SF Symbol `list.clipboard`. */
+    val taskPlan: PhIcon get() = PhIcons.ListChecks
     /** SF Symbol `terminal`. */
     val terminal: PhIcon get() = PhIcons.TerminalWindow
     /** SF Symbol `terminal.fill`. */
@@ -336,6 +356,8 @@ object PersonaIcons {
     val video: PhIcon get() = PhIcons.VideoCamera
     /** SF Symbol `eye`. */
     val view: PhIcon get() = PhIcons.Eye
+    /** SF Symbol `phone.fill`. */
+    val voiceChannel: PhIcon get() = PhIcons.Phone
     /** SF Symbol `antenna.radiowaves.left.and.right`. */
     val voiceConnecting: PhIcon get() = PhIcons.Broadcast
     /** SF Symbol `phone.down.fill`. */

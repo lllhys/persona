@@ -1,0 +1,10 @@
+{
+  "read_only": "This device can't look into or clean up this computer.",
+  "bad_section": "There is no diagnosis section called “{section}”.",
+  "need_ids": "Choose at least one cache to clean.",
+  "bad_cache": "“{id}” isn't a cache Persona can clean.",
+  "offline": "{name} is offline.",
+  "node_outdated": "Update Persona on this computer to see what is using it and to clean caches.",
+  "deadline": "{name} took too long to answer. Try again.",
+  "failed": "Couldn't get an answer from {name}."
+}

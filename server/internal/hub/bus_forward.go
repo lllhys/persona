@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nwverse/persona/server/internal/assistantwire"
+	"github.com/nwverse/persona/server/internal/devicewire"
 	"github.com/nwverse/persona/server/internal/i18n"
 	"github.com/nwverse/persona/server/internal/memtrim"
 	"github.com/nwverse/persona/server/internal/rpc"
@@ -155,6 +156,7 @@ func (h *Hub) relayHTTP(w http.ResponseWriter, r *http.Request, id string, send,
 	if p.Role == roleExtension && p.Extension != "" {
 		req.Header[assistantwire.ExtensionHeader] = []string{p.Extension}
 	}
+	req.OwnerAnswer = devicewire.IsOwnerAnswer(r.Context())
 	req.HandoffApprover = handoffApproverOf(r.Context()) // only the resolve route's gate sets it (secret_handoff.go)
 	req.Human = humanStartOf(r.Context())                // only a new conversation's start sets it (assistant_link.go)
 	ctx := r.Context()
@@ -170,7 +172,7 @@ func (h *Hub) relayHTTP(w http.ResponseWriter, r *http.Request, id string, send,
 		h.inboxAnswers.changed(id)
 	}
 	var res assistantwire.HTTPResponse
-	err = h.callBus(ctx, id, assistantwire.MethodHTTP, httpParams(req), &res)
+	err = h.callHTTP(ctx, id, req, &res) // a large body on a stream of its own (bus_body_stream.go)
 	if changes {
 		h.inboxAnswers.changed(id)
 	}
@@ -200,6 +202,26 @@ func (h *Hub) relayHTTP(w http.ResponseWriter, r *http.Request, id string, send,
 		h.logf("bus: [%s] http.request %s %s: answered HTTP status %d, the app gets 502", id, r.Method, r.URL.Path, res.Status)
 		writeErr(w, http.StatusBadGateway, fmt.Errorf("the manager answered HTTP status %d", res.Status))
 		return
+	}
+	if err := h.acceptConversationDeletionReply(id, r, body, res); err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	if h.writeAssistantSearchReply(w, r, id, res) {
+		return
+	}
+	if path, ok := strings.CutPrefix(r.URL.Path, "/api/v1/assistant/conversations/"); ok {
+		sid, child, _ := strings.Cut(path, "/")
+		if sid != "" && (r.Method != http.MethodDelete || child != "") {
+			for _, m := range h.machinesNow() {
+				if h.machineOwner(m.cfg.ID) == id {
+					if _, known := m.session(sid); known {
+						w = &conversationResponseWriter{ResponseWriter: w, machine: m, id: sid, header: w.Header().Clone()}
+						break
+					}
+				}
+			}
+		}
 	}
 	for k, v := range res.Header {
 		if !hopHeaders[http.CanonicalHeaderKey(k)] {

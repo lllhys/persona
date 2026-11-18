@@ -16,10 +16,11 @@ import (
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
-// displaysScript prints AppKit's screens as JSON: macOS's display number and the frame in points, in AppKit's
-// coordinates (origin at the bottom-left corner of the main display, y up). The first screen is the main one.
+// displaysScript prints AppKit's screens as JSON: macOS's display number, the frame in points, in AppKit's
+// coordinates (origin at the bottom-left corner of the main display, y up), and the pixels per point (#9314). The
+// first screen is the main one.
 const displaysScript = `ObjC.import("AppKit");
-JSON.stringify(ObjC.unwrap($.NSScreen.screens).map(s => ({id: ObjC.unwrap(s.deviceDescription.objectForKey("NSScreenNumber")), frame: s.frame})))`
+JSON.stringify(ObjC.unwrap($.NSScreen.screens).map(s => ({id: ObjC.unwrap(s.deviceDescription.objectForKey("NSScreenNumber")), frame: s.frame, scale: s.backingScaleFactor})))`
 
 // readDisplays asks AppKit for this Mac's displays (about 0.2 s). Nil off a Mac, without a window server session
 // (logged out, a node started as a daemon) or when osascript fails: the app then offers no display choice.
@@ -48,7 +49,8 @@ func screenDisplays(ctx context.Context, sharing bool) []proto.Display {
 // top-left corner, y down. AppKit's y is flipped about the main display's height.
 func parseDisplays(out []byte) []proto.Display {
 	var screens []struct {
-		ID    int `json:"id"`
+		ID    int     `json:"id"`
+		Scale float64 `json:"scale"`
 		Frame struct {
 			Origin struct {
 				X float64 `json:"x"`
@@ -77,7 +79,17 @@ func parseDisplays(out []byte) []proto.Display {
 			Width:  int(math.Round(f.Size.Width)),
 			Height: int(math.Round(f.Size.Height)),
 			Main:   i == 0,
+			Scale:  displayScale(s.Scale),
 		})
 	}
 	return displays
+}
+
+// displayScale is a display's pixels per point as the phone gets it: 0 (left out) when AppKit gave none, else rounded to
+// a quarter (1, 2, or a scaled mode's fraction).
+func displayScale(v float64) float64 {
+	if v <= 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return math.Round(v*4) / 4
 }

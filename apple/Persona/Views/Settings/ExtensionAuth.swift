@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import PersonaKit
+import PersonaWire
 
 // An extension's sign-in (docs/extensions/extensions.md「Sign-in」, #4507): the hub asks the extension's program for its
 // status and passes the steps of a sign-in on (the connectors' Prompt: fields, a device code, a QR code); what the
@@ -36,7 +37,8 @@ extension APIClient {
 /// the latest wins, so the list's row and the open page follow a sign-in finished elsewhere at once. Kept by id and
 /// manager (nil: the default's): each manager has its own copy of a built-in, signed in or not on its own.
 @MainActor @Observable final class ExtensionAuthStore {
-    static let shared = ExtensionAuthStore(hub: { AppModel.shared.config?.url.absoluteString })
+    static let shared = ExtensionAuthStore(hub: { AppModel.shared.config?.url.absoluteString },
+                                           defaultID: { AppModel.shared.managerRoster?.defaultID })
 
     struct Key: Hashable {
         var id: String
@@ -47,12 +49,21 @@ extension APIClient {
     /// The extension whose sign-in should open when its page shows (an install that ended with `next: "auth"`).
     var openSignIn: String?
     @ObservationIgnored private let hub: () -> String?
+    @ObservationIgnored private let defaultID: () -> String?
     @ObservationIgnored private var lastHub: String?
 
-    init(hub: @escaping () -> String? = { nil }) { self.hub = hub }
+    init(hub: @escaping () -> String? = { nil }, defaultID: @escaping () -> String? = { nil }) {
+        self.hub = hub
+        self.defaultID = defaultID
+    }
 
     /// The hub has sign-ins (`extension_auth`): the page draws its own section for them.
     static func available(_ features: Set<String>) -> Bool { features.hasExtensionFeature("auth") }
+
+    private func key(_ id: String, manager: String?) -> Key {
+        let stored = ManagerRoster.stored(manager, defaultID: defaultID())
+        return Key(id: id, manager: stored)
+    }
 
     /// `manager`: whose copy (nil: the default manager's).
     func received(_ id: String, _ auth: ExtensionAuth?, manager: String? = nil) {
@@ -60,13 +71,13 @@ extension APIClient {
             lastHub = hub()
             byKey = [:]
         }
-        let key = Key(id: id, manager: manager)
-        if byKey[key] != auth { byKey[key] = auth }
+        let storageKey = key(id, manager: manager)
+        if byKey[storageKey] != auth { byKey[storageKey] = auth }
     }
 
     /// What is known of id's sign-in in that manager's copy, else what the hub said with the extension.
     func auth(_ id: String, manager: String? = nil, else fallback: ExtensionAuth?) -> ExtensionAuth? {
-        lastHub == hub() ? byKey[Key(id: id, manager: manager)] ?? fallback : fallback
+        lastHub == hub() ? byKey[key(id, manager: manager)] ?? fallback : fallback
     }
 }
 

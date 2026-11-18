@@ -58,13 +58,17 @@ class DirectionTreeMockTests(unittest.TestCase):
         self.assertEqual(secretary["id"], get(base, "/api/v1/assistant")["main"])
         self.assertTrue(secretary["tasks"])
         states = {t["state"] for d in tree for t in d["tasks"]}
-        self.assertEqual(states, {"needs_you", "review", "stuck", "working"})
-        order = {"needs_you": 0, "review": 1, "stuck": 2, "working": 3}
+        self.assertEqual(states, {"needs_you", "review", "stuck", "working", "planned"})
+        order = {"needs_you": 0, "review": 1, "stuck": 2, "working": 3, "planned": 4}
         for d in tree:
             ranks = [order[t["state"]] for t in d["tasks"]]
             self.assertEqual(ranks, sorted(ranks))
-            for k in ("working", "needs_you", "stuck", "review"):
+            for k in ("working", "needs_you", "stuck", "review", "planned"):
                 self.assertEqual(d["counts"][k], sum(1 for t in d["tasks"] if t["state"] == k))
+            # running (#6626): an Agent under the direction at work, at any depth, not the working count
+            def at_work(agents):
+                return any(a["state"] == "working" or at_work(a["children"]) for a in agents)
+            self.assertIs(d["running"], any(at_work(t["agents"]) for t in d["tasks"]))
         # a spawned agent sits under the agent it came from, once
         weather = next(t for d in tree for t in d["tasks"] if t["id"] == "todo_weather")
         flat = [a["session_id"] for a in weather["agents"]] + [c["session_id"] for a in weather["agents"] for c in a["children"]]

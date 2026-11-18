@@ -219,7 +219,8 @@ struct ImageViewer: View {
 
     private var topBar: some View {
         ViewerTopBar {
-            Button { dismiss() } label: { ViewerIcon(symbol: Theme.Icon.back) }
+            // ✕, as the share card's viewer and every presented page (#9653); ‹ is for a page that was pushed.
+            Button { dismiss() } label: { ViewerIcon(symbol: Theme.Icon.close) }
                 .viewerRound()
                 .accessibilityLabel("Close")
                 .accessibilityIdentifier("viewer-close")
@@ -381,7 +382,7 @@ struct ImageViewer: View {
             return
         }
         do {
-            // `@Sendable`: Photos runs the block on its own queue, where main-actor code is a crash (BackgroundCallbackTests).
+            // `@Sendable`: Photos runs the block on its own queue, where main-actor code is a crash (test_apple_background_callbacks.py).
             try await PHPhotoLibrary.shared().performChanges { @Sendable in PHAssetChangeRequest.creationRequestForAsset(from: img) }
             Haptics.success()
             AppModel.shared.toast = Toast(String(localized: "Saved to Photos"), style: .success)
@@ -405,37 +406,6 @@ enum ViewerLoader {
             return await FileThumbnails.shared.thumbnail(f, size: 0, modified: nil, side: min(side ?? 1024, 1024), scale: 1, api: api)
         }
         return nil
-    }
-}
-
-/// A web picture in Markdown (`![](https://…)` in an answer, a message, a note): drawn through `LarkMedia`'s cache, a tap
-/// opens it in the viewer. Pages with their own pictures set their own provider (a file's relative images, Feishu
-/// documents); anything not on the web is left to MarkdownUI's default.
-struct WebMarkdownImages: ImageProvider {
-    func makeImage(url: URL?) -> some View { WebMarkdownImage(url: url) }
-}
-
-private struct WebMarkdownImage: View {
-    var url: URL?
-    @State private var open = false
-    @Namespace private var zoom
-
-    var body: some View {
-        if let url, let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" {
-            Button { open = true } label: {
-                LarkRemoteImage(url: url.absoluteString, maxPixel: 1600, contentMode: .fit)
-                    .scaledFrame(maxWidth: .infinity, minHeight: Theme.Size.box60, alignment: .leading)
-                    .clipShape(.rect(cornerRadius: Theme.Radius.control, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .matchedTransitionSource(id: "markdown-image", in: zoom)
-            .accessibilityLabel("Image, tap to enlarge")
-            .fullScreenCover(isPresented: $open) {
-                ImageViewer(urls: [url.absoluteString], index: 0).navigationTransition(.zoom(sourceID: "markdown-image", in: zoom))
-            }
-        } else {
-            DefaultImageProvider.default.makeImage(url: url)
-        }
     }
 }
 

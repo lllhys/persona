@@ -1,4 +1,4 @@
-import { type CSSProperties, Fragment, memo, type ReactNode, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, Fragment, lazy, memo, type ReactNode, Suspense, useContext, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clock } from "../../lib/format";
 import { stripCloseout } from "../../lib/closeout";
 import { getSession, getState, useStore } from "../../lib/store";
@@ -25,12 +25,13 @@ import { ModelChangeDivider } from "./ModelChangeDivider";
 import { EngineSwitchDivider } from "./EngineSwitchDivider";
 import { SourceMessage } from "./SourceMessage";
 import { ContextGroup } from "./ContextGroup";
-import { ForwardBlock } from "./ForwardCard";
+import { ForwardBlock, ForwardCards } from "./ForwardCard";
 import { AttachedPhotos } from "./AttachedPhotos";
 import { useFullText } from "./FullText";
 import { FileCards, ReplyFiles } from "./FileCards";
 import { ReplyPorts } from "./PortChips";
 import { MessageActions } from "./MessageActions";
+import { skillEditText } from "../../lib/skill-mentions";
 import { useIsLatestMessage } from "./latest-message-time";
 import { QuoteStack } from "./Quote";
 import { PathText } from "../../ui/PathLinks";
@@ -42,9 +43,13 @@ import { Icon } from "../../ui/icons";
 import { WorkGroup, WorkNodes, type WorkProps } from "./WorkGroup";
 import { TurnChanges, turnChangesHeight } from "./TurnChanges";
 import { turnChanges } from "../../lib/turn-changes";
+import type { Step } from "../../lib/turns";
 import { useCallSeeker } from "./jump";
 import { t } from "../../i18n";
 import { useMessageFeedback } from "../../lib/message-send";
+
+// a finished reply's Sources row (#9132): its chunk loads only for a turn that looked something up on the web
+const TurnSources = lazy(() => import("./TurnSources").then((m) => ({ default: m.TurnSources })));
 
 /** A message longer than this many lines folds to ten of them (FOLDED), with "Expand" under it (the reference client's UserMessage). */
 export const BUBBLE_MAX_LINES = 14;
@@ -99,11 +104,12 @@ export function UserBubble({ msg, mid, sid, pending, sendState, starting, onDele
   // the message an extension opened the conversation with (#3758)
   const { opening } = useChatContext();
   const openedBy = opening && opening.id === msg.id ? opening.origin : undefined;
-  // forwards (#3899) are cards at the top of the bubble; the other contexts fold in the row above it
+  // forwards (#3899) are cards at the top of the bubble (several at once, #3838: ForwardCards); the other contexts fold in
+  // the row above it
   const forwards = msg.contexts.filter((c) => c.kind === "forward");
   const contexts = forwards.length ? msg.contexts.filter((c) => c.kind !== "forward") : msg.contexts;
   return (
-    <div className="ml-auto flex max-w-[488px] min-w-0 flex-col items-end gap-1.5 pl-[12%]" style={pending ? { animation: `fade-up 300ms ${EASE} both` } : undefined} data-user-bubble data-send-state={sendState} data-items={pending || starting ? undefined : [msg.id, ...msg.images.map((i) => i.id)].join(" ")}>
+    <div className="ml-auto flex max-w-[min(100%,488px)] min-w-0 flex-col items-end gap-1.5 pl-[12%]" style={pending ? { animation: `fade-up 300ms ${EASE} both` } : undefined} data-user-bubble data-send-state={sendState} data-items={pending || starting ? undefined : [msg.id, ...msg.images.map((i) => i.id)].join(" ")}>
       {msg.images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {msg.images.map((im) => (
@@ -116,17 +122,19 @@ export function UserBubble({ msg, mid, sid, pending, sendState, starting, onDele
       {msg.files && <FileCards files={msg.files} mid={mid} />}
       {(msg.text || forwards.length > 0) &&
         (starting ? (
-          <BubbleText text={msg.text} forwards={forwards} mid={mid} sid={sid} own={own} />
+          <BubbleText text={msg.text} blocks={msg.contexts} mid={mid} sid={sid} own={own} />
         ) : pending ? (
-          <BubbleText text={msg.text} forwards={forwards} mid={mid} sid={sid} own={own} pending />
+          <BubbleText text={msg.text} blocks={msg.contexts} mid={mid} sid={sid} own={own} pending />
         ) : (
-          <MessageActions text={msg.text} isUser ts={msg.ts} side messageId={onDelete ? undefined : msg.id} onDelete={onDelete}
+          <MessageActions text={msg.text} editText={skillEditText(msg.contexts, msg.text)} isUser ts={msg.ts} side messageId={onDelete ? undefined : msg.id} onDelete={onDelete}
             images={msg.images} photos={msg.photos} className="max-w-full">
-            <BubbleText text={msg.text} forwards={forwards} ts={msg.ts} mid={mid} sid={sid} own={own} />
+            <BubbleText text={msg.text} blocks={msg.contexts} ts={msg.ts} mid={mid} sid={sid} own={own} />
           </MessageActions>
         ))}
       {pinned && <span className="text-[11px] text-ink-3 tabular-nums" data-latest-time>{clock(msg.ts)}</span>}
-      {(pending || starting || msg.queued) && feedback !== "" && <span className="text-[11px] text-ink-3 whitespace-nowrap">{feedback === "processing" ? t("chat-segmentview.processing") : feedback === "unknown" ? t("lib-outbox.delivery_unknown") : pending || starting ? t("chat-segmentview.sending") : t("chat-segmentview.queued")}</span>}
+      {/* a message waiting its turn says so under it; one on its way (Sending, Processing, delivery unknown) is said once,
+          by the chat's status line under the last message (ChatView's data-message-feedback), not here as well */}
+      {msg.queued && !pending && !starting && feedback !== "" && <span className="text-[11px] text-ink-3 whitespace-nowrap">{t("chat-segmentview.queued")}</span>}
       {!pending && !starting && <ChannelSource clientMsgId={msg.client_msg_id} openedBy={openedBy} />}
     </div>
   );
@@ -135,7 +143,8 @@ export function UserBubble({ msg, mid, sid, pending, sendState, starting, onDele
 /** The bubble's words, folded to ten lines past fourteen; the fold scrolls (the wheel, a trackpad, a finger), with a
  *  fade at its bottom while there is more (fold-scroll.ts). `pending` (still being sent): dimmed, the same fold. A
  *  leading `> ` block ("Quote") is a folded quote card at its top instead of `>` lines (Quote.tsx). */
-function BubbleText({ text: full, forwards, ts, mid, sid, own, pending }: { text: string; forwards?: Context[]; ts?: string; mid: string; sid: string; own: boolean; pending?: boolean }) {
+function BubbleText({ text: full, blocks, ts, mid, sid, own, pending }: { text: string; blocks: Context[]; ts?: string; mid: string; sid: string; own: boolean; pending?: boolean }) {
+  const forwards = blocks.filter((c) => c.kind === "forward");
   const fill = own ? "bg-user-bubble" : "bg-neutral-bubble";
   // a reply sent from a card (in an assistant conversation): its words, without the hub's tag, marked "From a card"
   const fromCard = useContext(CardConversation) ? cardReply(full) : undefined;
@@ -179,13 +188,13 @@ function BubbleText({ text: full, forwards, ts, mid, sid, own, pending }: { text
         </span>
       )}
       {split || forwards?.length ? (
-        <div className={`flex max-w-full flex-col gap-1.5 rounded-[12px] ${fill} px-4 py-2.5 text-ink ${pending ? "opacity-60" : ""}`} title={clock(ts)}>
-          {forwards?.map((c, i) => <ForwardBlock key={i} c={c} />)}
+        <div className={`flex max-w-full flex-col gap-1.5 rounded-[12px] ${fill} px-4 py-2.5 text-ink ${pending ? "opacity-60" : ""}`} title={clock(ts)} data-hit-target>
+          {forwards.length > 1 ? <ForwardCards blocks={blocks} count={forwards.length} /> : forwards.map((c, i) => <ForwardBlock key={i} c={c} />)}
           {split && <QuoteStack blocks={split.quotes} mid={mid} sid={sid} />}
           {words}
         </div>
       ) : (
-        <div className={`max-w-full rounded-[12px] ${fill} px-4 py-2.5 text-ink ${pending ? "opacity-60" : ""}`} title={clock(ts)}>
+        <div className={`max-w-full rounded-[12px] ${fill} px-4 py-2.5 text-ink ${pending ? "opacity-60" : ""}`} title={clock(ts)} data-hit-target>
           {words}
         </div>
       )}
@@ -306,7 +315,7 @@ export const SegmentView = memo(function SegmentView({
    *  of lines at a time, and still while a tool runs. The live work row stays under them; the headless assistant's
    *  words stream as they are written and stand for it. */
   batchedWords?: boolean;
-  expandFold: (f: Item) => Promise<void>;
+  expandFold: (f: Item) => Promise<boolean | void>;
   /** Drawn between the work and the agent's last words (the wakes chip, #3783); above the work while it is live. */
   beforeWords?: ReactNode;
   /** An opened supervision round shows its original input instead of the injected hint. */
@@ -373,12 +382,14 @@ export const SegmentView = memo(function SegmentView({
   // the session's folder from the store, so the card follows it when it comes in after the transcript
   const cwd = useStore(() => (counted ? getSession(mid, sid)?.cwd : undefined));
   const changes = useMemo(() => (counted ? turnChanges(own, cwd) : null), [counted, own, cwd]);
+  // the web pages the finished exchange used, in a Persona conversation and an Agent's alike (#9132)
+  const sourced = !live && !trace && Boolean(seg.user) && own.some(webStep);
   // what the finished exchange used, for its reply bar (#5426): the work summary's time when it has one summary
   const usage = !live && !trace ? usageKey(seg.usage) : undefined;
   const groups = usage ? nodes.filter((n) => n.kind === "group") : [];
   const usageMs = groups.length === 1 ? groups[0].durationMs : undefined;
   const switched = Boolean(seg.engineSwitch);
-  const guess = useMemo(() => (offscreen ? ({ "--seg-est": `${segmentHeight(seg.user, nodes, divided, switched) + (changes ? 12 + turnChangesHeight(changes) : 0)}px` } as CSSProperties) : undefined), [offscreen, seg.user, nodes, divided, switched, changes]);
+  const guess = useMemo(() => (offscreen ? ({ "--seg-est": `${segmentHeight(seg.user, nodes, divided, switched) + (changes ? 12 + turnChangesHeight(changes) : 0) + (sourced ? 14 + SOURCES_HEIGHT : 0)}px` } as CSSProperties) : undefined), [offscreen, seg.user, nodes, divided, switched, changes, sourced]);
   return (
     <section ref={box} className={offscreen ? "seg-cv flex flex-col gap-3.5" : "flex flex-col gap-3.5"} style={guess} data-segment>
       {/* the first message the conversation's new engine got (#5054): the switch divider above it, the user's words below */}
@@ -396,10 +407,19 @@ export const SegmentView = memo(function SegmentView({
       {!live && <Fragment key="before-words">{beforeWords}</Fragment>}
       {streaming !== undefined && liveRow}
       {(latestItem || streaming !== undefined) && !onlyCloseout && <div key="latest-text" data-latest-text><LatestAnswer item={latestItem} streaming={streaming} mid={mid} sid={sid} noCloseout={noCloseout || undefined} done={(!live && !busy) || undefined} cut={(!live && seg.cut) || undefined} usage={usage} usageMs={usageMs} /></div>}
+      {sourced && <Suspense key="turn-sources" fallback={null}><TurnSources steps={own} /></Suspense>}
       {changes && <TurnChanges key="turn-changes" changes={changes} mid={mid} sid={sid} cwd={cwd} />}
     </section>
   );
 });
+
+/** The Sources row's height as drawn (TurnSources.tsx: one line of chips), for an exchange's estimate. */
+const SOURCES_HEIGHT = 28;
+
+/** A step that may name web pages: a web call, or folded work that carries some (lib/turn-sources.ts reads them). */
+function webStep(s: Step): boolean {
+  return s.kind === "tool" ? s.use.tool_name === "WebSearch" || s.use.tool_name === "WebFetch" : s.kind === "fold" && Boolean(s.item.fold?.sources?.length);
+}
 
 /** The message's transcript item that carried the switch's block (its rest is fetched from it when the hub cut it). */
 function switchItem(seg: Segment): Item | undefined {

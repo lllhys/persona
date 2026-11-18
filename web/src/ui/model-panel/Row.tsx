@@ -2,8 +2,9 @@
 // the model's name, a star and Customize that show under the pointer (or on keyboard focus, or always on a touch screen),
 // and on the right what a pick applies: the Agent's mark, the effort, ⚡ for Fast. The second: where it comes from (All,
 // Recent, Favorites) or what the model is (a provider's own view). The model that runs now has a whole-row fill and no
-// check mark. Enter or Space picks it, ← or a right-click opens its setup flyout.
-import type { ButtonHTMLAttributes, KeyboardEvent, MouseEvent } from "react";
+// check mark. Enter or Space picks it, ← or a right-click opens its setup flyout. A name cut short shows the model's whole
+// ID as its second line (a touch screen has no tooltip), and a touch screen shows the ID instead of the provider's name.
+import { useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type MouseEvent } from "react";
 import { t } from "../../i18n";
 import { priceTier, shownEffort, type PanelRow } from "../../lib/model-panel";
 import { effortTitle } from "../../lib/session-actions";
@@ -63,15 +64,34 @@ export function Row({ row, second, describes, blocked, customizable, flyoutOpen,
   const name = row.kind === "typed" ? t("ui-modelpanel.use_typed", { id: model.id }) : row.preset ? row.preset.name : model.name;
   // a typed ID's "Use “…”" and a preset (a setup of the profile's, not a copy of one's own) have no star
   const stars = row.kind !== "typed" && row.kind !== "preset";
-  const effort = model.efforts.length ? shownEffort(row.setup, model) : "";
+  const effort = shownEffort(row.setup, model);
   const tier = priceTier(model.price);
   // what the right side says, in words: "Claude Code · High · Fast"
-  const setupTitle = [agentName(provider.engine), effort && effortTitle(effort), row.setup.fast && t("ui-modelpanel.fast_short")].filter(Boolean).join(" · ");
+  const setupTitle = [agentName(provider.engine, provider.engineLabel), effort && effortTitle(effort), row.setup.fast && t("ui-modelpanel.fast_short")].filter(Boolean).join(" · ");
   const off = Boolean(blocked) || Boolean(frozen);
   // the running model's row stays reachable while picks are off: its Customize still opens the flyout (effort, Fast), so it
   // is not announced as disabled (its pick is a no-op anyway, and Enter does nothing while blocked)
   const ariaOff = off && !(row.current && customizable && !frozen);
   const starOff = Boolean(frozen) || (Boolean(blocked) && !starRemoves) || row.kind === "typed";
+  // the name is cut short (measured again as the panel resizes): its second line becomes the whole ID
+  const nameEl = useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = nameEl.current;
+    if (!el) return;
+    const measure = () => {
+      const c = el.scrollWidth > el.clientWidth + 1;
+      setCut((v) => (v === c ? v : c));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [name]);
+  // a typed ID's row is its ID already; a preset's second line describes it
+  const hasId = row.kind !== "typed" && row.kind !== "preset";
+  const idLine = hasId && cut ? "always" : hasId && !describes && model.id !== name ? "touch" : null;
   const key = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || e.nativeEvent.isComposing) return;
     if (e.key === "ArrowLeft") {
@@ -82,7 +102,8 @@ export function Row({ row, second, describes, blocked, customizable, flyoutOpen,
     }
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
-    if (!off) onPick();
+    if (off && row.current && customizable && !frozen) onCustomizeKey(e.currentTarget);
+    else if (!off) onPick();
   };
   return (
     <div
@@ -96,7 +117,10 @@ export function Row({ row, second, describes, blocked, customizable, flyoutOpen,
       data-panel-row={row.key}
       data-current={row.current || undefined}
       data-open={flyoutOpen || undefined}
-      onClick={() => !off && onPick()}
+      onClick={(e) => {
+        if (off && row.current && customizable && !frozen) onCustomize(e.currentTarget, true);
+        else if (!off) onPick();
+      }}
       onContextMenu={(e) => {
         if (!customizable || frozen) return;
         e.preventDefault();
@@ -107,15 +131,16 @@ export function Row({ row, second, describes, blocked, customizable, flyoutOpen,
         "group/row relative z-[1] flex w-full flex-col rounded-control px-3 py-2 text-[14px] leading-[1.43] text-ink outline-none select-none [&+[data-panel-row]]:mt-1",
         "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent",
         row.current && "bg-hover-2 data-[glide]:bg-transparent",
-        off ? "cursor-not-allowed" : "cursor-pointer",
-        blocked && "opacity-50",
+        ariaOff || frozen ? "cursor-not-allowed" : "cursor-pointer",
+        ariaOff && "opacity-50",
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
         <span className="flex size-[18px] shrink-0 items-center justify-center text-ink-2">
           <ProviderMark name={provider.name} />
         </span>
-        <span title={row.kind === "typed" ? model.id : name} className={cx("min-w-0 truncate leading-5 font-medium", model.custom && stars && "font-mono")}>{name}</span>
+        <span ref={nameEl} title={row.kind === "typed" ? model.id : name} className={cx("min-w-0 truncate leading-5 font-medium", model.custom && stars && "font-mono")}>{name}</span>
+        {row.latest && <span data-row-latest className="shrink-0 text-submeta leading-5 text-ink-3">{t("ui-modelpanel.latest")}</span>}
         {tier && (
           <span data-price-tier={tier} aria-label={t("ui-modelpanel.price_tier", { tier })} title={t("ui-modelpanel.price_tier", { tier })} className="shrink-0 text-[11px] leading-none font-semibold tracking-[0.5px] text-ink-2">
             {"$".repeat(tier)}
@@ -151,16 +176,26 @@ export function Row({ row, second, describes, blocked, customizable, flyoutOpen,
         )}
         <span className="ml-auto flex shrink-0 items-center">
           <span title={setupTitle} data-row-setup className="flex max-w-[118px] shrink-0 items-center gap-1 truncate text-[12px] text-ink-3">
-            <AgentMark agent={provider.engine} size={12} decorative className="shrink-0" />
+            <AgentMark agent={provider.engine} label={provider.engineLabel} size={12} decorative className="shrink-0" />
             {effort && <span className="truncate">{effortTitle(effort)}</span>}
             {row.setup.fast && <Icon name="bolt" size={11} className="shrink-0 fill-current" />}
           </span>
         </span>
       </div>
-      {second && (
-        <div title={second} className={cx("min-w-0 truncate pt-px pl-[26px] text-[12px] leading-[1.4] text-ink-2", describes && "max-w-[30ch]")}>
+      {second && idLine !== "always" && (
+        <div title={second} className={cx("min-w-0 truncate pt-px pl-[26px] text-[12px] leading-[1.4] text-ink-2", describes && "max-w-[30ch]", idLine === "touch" && "[@media(hover:none)]:hidden")}>
           {second}
         </div>
+      )}
+      {idLine && (
+        <div data-row-id={idLine} className={cx("min-w-0 pt-px pl-[26px]", idLine === "touch" && "hidden [@media(hover:none)]:block")}>
+          <div title={model.id} className="line-clamp-2 font-mono text-xs leading-[1.4] break-all text-ink-2">
+            {model.id}
+          </div>
+        </div>
+      )}
+      {row.current && model.effortUnavailable && (
+        <div className="min-w-0 pt-1 pl-[26px] text-label leading-[1.4] text-ink-3">{model.effortUnavailable}</div>
       )}
     </div>
   );

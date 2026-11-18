@@ -28,6 +28,8 @@ import sys
 import tempfile
 import time
 
+from windows_release import check_windows_archives
+
 TAG = re.compile(r"v[0-9A-Za-z][0-9A-Za-z._-]*\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 ALLOWED_KEYS = {"repo", "worktree", "state_dir", "repository", "platform", "command", "receipt", "agent"}
@@ -215,6 +217,44 @@ def scan_gzip(path, token, out=None):
     return digest.hexdigest(), found
 
 
+def drop_missing_helpers(assets, state_dir):
+    """Helpers (persona-iphone-bridge, docs/extensions/iphone-bridge.md "Releases") are optional: a receipt whose
+    latest.json lists one it does not carry (a private upload command that names its files and predates them) goes up
+    with a copy of latest.json that leaves those out, with a warning, rather than failing the release. Hubs reading
+    this release then simply find no build of that helper. Returns the assets to upload."""
+    by_name = {item["name"]: item for item in assets}
+    if "latest.json" not in by_name:
+        return assets
+    try:
+        manifest = json.loads(Path(by_name["latest.json"]["path"]).read_text())
+    except (OSError, ValueError):
+        return assets  # check_release_manifest says why
+    helpers = manifest.get("helpers")
+    if not isinstance(helpers, dict):
+        return assets
+    if helpers:
+        kept, dropped = {}, []
+        for program, platforms in helpers.items():
+            for plat, item in (platforms or {}).items():
+                name = item.get("name") if isinstance(item, dict) else None
+                if name in by_name:
+                    kept.setdefault(program, {})[plat] = item
+                else:
+                    dropped.append(str(name))
+        if not dropped:
+            return assets
+    print("warning: latest.json lists helper builds this receipt does not carry; uploading it without them: "
+          + ", ".join(sorted(dropped)), file=sys.stderr, flush=True)
+    if kept:
+        manifest["helpers"] = kept
+    else:
+        manifest.pop("helpers", None)
+    path = Path(state_dir) / "latest.json"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_text(json.dumps(manifest, indent=2) + "\n")
+    return [dict(item, path=str(path)) if item["name"] == "latest.json" else item for item in assets]
+
+
 def check_release_manifest(assets):
     """A receipt with latest.json (the hub's) is what every release hub installs from once it is uploaded: latest.json
     must describe the downloads uploaded with it, each must be its build, and the personad among them that runs here
@@ -234,6 +274,13 @@ def check_release_manifest(assets):
     for group in ("programs", "nodes"):
         for program, platforms in (manifest.get(group) or {}).items():
             listed += [(program, plat, item) for plat, item in (platforms or {}).items()]
+    listed += [("persona-link", plat, item) for plat, item in (manifest.get("links") or {}).items()]
+    # Helpers (persona-iphone-bridge) carry their own version, not the build number: only their bytes are checked.
+    helpers = set()
+    for program, platforms in (manifest.get("helpers") or {}).items():
+        for plat, item in (platforms or {}).items():
+            listed.append((program, plat, item))
+            helpers.add((program, plat))
     here, ran = host_platform(), False
     if not any(program == "personad" for program, _, _ in listed):
         raise ConfigError("latest.json lists no personad")
@@ -254,7 +301,7 @@ def check_release_manifest(assets):
             if inner != item.get("binary_sha256"):
                 raise ConfigError("%s does not unpack to the binary latest.json lists" % name)
             if run is None:
-                if not stamped:
+                if not stamped and (program, plat) not in helpers:
                     raise ConfigError("%s is not build %d: latest.json was written for another build than it" % (name, build))
                 continue
             run.chmod(0o755)
@@ -291,6 +338,60 @@ def check_android_index(assets, version):
         raise ConfigError("%s is not the APK android.json describes (size or sha256)" % name)
 
 
+def verify_remote_assets(repository, tag, assets, listed, gh="gh", missing=False):
+    """Verify exact remote bytes, also on gh versions whose release view has no digest field.
+
+    GitHub CLI 2.23.0 omits digest from --json assets. Its REST response has the
+    digest; if an older GitHub API omits that too, download the asset instead of
+    accepting its name or size as proof.
+    """
+    actual = {}
+    for remote in listed:
+        if not isinstance(remote, dict) or not isinstance(remote.get("name"), str):
+            raise ConfigError("GitHub returned an invalid Release asset")
+        actual[remote["name"]] = remote
+    if missing and not actual:
+        raise ConfigError("uploaded asset digest verification failed: " + assets[0]["name"])
+    fallback = None
+    for item in assets:
+        path = Path(item["path"])
+        digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        remote = actual.get(item["name"])
+        if remote is not None and remote.get("digest") is not None:
+            if remote["digest"] != digest:
+                raise ConfigError("another artifact already owns Release asset name: " + item["name"])
+            continue
+        if remote is None and not missing:
+            # Before uploading, an absent asset is what pending is for. The
+            # post-upload view must contain it, through this REST fallback.
+            continue
+        if fallback is None:
+            fallback = {}
+            data = json.loads(subprocess.check_output(
+                [gh, "api", "repos/" + repository + "/releases/tags/" + tag], text=True, timeout=60))
+            if not isinstance(data, dict) or not isinstance(data.get("assets"), list):
+                raise ConfigError("GitHub REST returned no Release asset list")
+            fallback = {remote.get("name"): remote for remote in data["assets"] if isinstance(remote, dict)}
+        remote = fallback.get(item["name"])
+        if not isinstance(remote, dict) or remote.get("size") != path.stat().st_size:
+            raise ConfigError("uploaded asset digest verification failed: " + item["name"])
+        if remote.get("digest") is not None:
+            if remote["digest"] != digest:
+                raise ConfigError("uploaded asset digest verification failed: " + item["name"])
+            continue
+        url = remote.get("url")
+        prefix = "https://api.github.com/repos/" + repository + "/releases/assets/"
+        if not isinstance(url, str) or not url.startswith(prefix) or not url[len(prefix):].isdigit():
+            raise ConfigError("GitHub returned an invalid asset download URL: " + item["name"])
+        body = subprocess.check_output([gh, "api", "-H", "Accept: application/octet-stream", url], timeout=1800)
+        if hashlib.sha256(body).hexdigest() != digest.removeprefix("sha256:"):
+            raise ConfigError("uploaded asset digest verification failed: " + item["name"])
+
+
+def is_beta_tag(tag):
+    return bool(re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*", tag))
+
+
 def upload(repository, tag, assets, gh="gh"):
     # The workflow owns Release creation; never create a tag from this machine.
     release = json.loads(subprocess.check_output(
@@ -298,20 +399,18 @@ def upload(repository, tag, assets, gh="gh"):
         text=True, timeout=60))
     if release.get("tagName") != tag or release.get("isDraft") is not False:
         raise ConfigError("published GitHub Release for the exact tag is required")
+    if is_beta_tag(tag):
+        details = json.loads(subprocess.check_output(
+            [gh, "release", "view", tag, "--repo", repository, "--json", "isPrerelease"], text=True, timeout=60))
+        if details.get("isPrerelease") is not True:
+            raise ConfigError("beta tags require a prerelease, never the stable Release")
     if not assets:
         print("Store publication verified; this platform has no Release assets", flush=True)
         return
     if len({item["name"] for item in assets}) != len(assets):
         raise ConfigError("duplicate Release asset name in receipt")
-    remote_assets = {item["name"]: item for item in release["assets"]}
-    pending = []
-    for item in assets:
-        digest = "sha256:" + hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
-        existing = remote_assets.get(item["name"])
-        if existing and existing.get("digest") != digest:
-            raise ConfigError("another artifact already owns Release asset name: " + item["name"])
-        if not existing:
-            pending.append(item)
+    verify_remote_assets(repository, tag, assets, release["assets"], gh)
+    pending = [item for item in assets if item["name"] not in {remote["name"] for remote in release["assets"]}]
     if not pending:
         print("Release assets already have the verified digests", flush=True)
         return
@@ -336,14 +435,9 @@ def upload(repository, tag, assets, gh="gh"):
         [gh, "release", "view", tag, "--repo", repository, "--json", "assets"], text=True, timeout=60))
     # gh returns {"assets": [...]}; older callers may return the bare list.
     listed = remote if isinstance(remote, list) else remote.get("assets") if isinstance(remote, dict) else None
-    if not isinstance(listed, list):
+    if not isinstance(listed, list) or not all(isinstance(item, dict) and isinstance(item.get("name"), str) for item in listed):
         raise ConfigError("gh release view returned no asset list")
-    actual = {item["name"]: item for item in listed}
-    for item in assets:
-        digest = hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
-        remote_asset = actual.get(item["name"])
-        if not remote_asset or remote_asset.get("digest") != "sha256:" + digest:
-            raise ConfigError("uploaded asset digest verification failed: " + item["name"])
+    verify_remote_assets(repository, tag, assets, listed, gh, missing=True)
 
 
 def write_state(path, state):
@@ -352,6 +446,18 @@ def write_state(path, state):
     temporary.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
     temporary.chmod(0o600)
     temporary.replace(path)
+
+
+def check_beta_manifest(assets, version):
+    """Independent beta platforms need no hub manifest; a supplied one must be this exact beta."""
+    manifests = [Path(item["path"]) for item in assets if item["name"] == "latest.json"]
+    if len(manifests) > 1:
+        raise ConfigError("beta publication requires at most one latest.json")
+    if not manifests:
+        return
+    manifest = json.loads(manifests[0].read_text())
+    if manifest.get("channel") != "beta" or manifest.get("version") != version:
+        raise ConfigError("beta latest.json must carry this beta version/channel")
 
 
 def publish_once(config, tag, commit):
@@ -372,6 +478,15 @@ def publish_once(config, tag, commit):
                PERSONA_RELEASE_PLATFORM=platform, PERSONA_RELEASE_WORKTREE=str(config["worktree"]))
     subprocess.run(command, cwd=config["worktree"], env=env, check=True)
     assets = read_receipt(Path(config["receipt"]).expanduser(), commit)
+    assets = drop_missing_helpers(assets, config["state_dir"])
+    try:
+        check_windows_archives(assets, tag[1:])
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+    if is_beta_tag(tag):
+        # A platform receipt is independent: Android has its signed APK and index, iOS only its store receipt.
+        # Only the hub worker has latest.json; if present it can never point beta at a stable or another version.
+        check_beta_manifest(assets, tag[1:])
     check_release_manifest(assets)
     check_android_index(assets, tag[1:])
     upload(config["repository"], tag, assets)

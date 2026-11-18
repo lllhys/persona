@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/nwverse/persona/server/internal/modelhttp"
 	"github.com/nwverse/persona/server/internal/nodecmd"
 	"github.com/nwverse/persona/server/internal/nodeproto"
 	"github.com/nwverse/persona/server/internal/update"
@@ -33,6 +34,7 @@ const usage = `usage:
   personad version [-v]     the version; -v adds the channel and build number`
 
 func main() {
+	modelhttp.SetVersion(version)
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, nodecmd.Named(usage))
 		os.Exit(2)

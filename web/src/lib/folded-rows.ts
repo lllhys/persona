@@ -1,18 +1,25 @@
 // The lists' side of child sessions folded into their parent (#5120, lib/child-sessions.ts): every list and count the
 // web draws takes its rows through foldRows, so a child is never a row, a dock entry or a count of its own, and each
-// parent is drawn and counted once in its folded state. A child's card belongs to the parent too (homeKey).
-import { foldedState, isFoldedIn, listedKeys, requestHome } from "./child-sessions";
+// parent is drawn and counted once in its folded state. A child's card belongs to the parent too (homeKey). Side
+// sessions fold the same way while the hub folds them (#7944, lib/side-fold.ts); a list that holds them works out its
+// parents' side part from those rows, so a side seen here shows at once.
+import { foldedState, isFoldedIn, listedKeys, requestHome, rowKey } from "./child-sessions";
 import { stateOf } from "./format";
+import { countSides, foldedStateWith, isSide, sideFoldOn, type SideRollup } from "./side-fold";
 import type { Interaction, Session } from "./types";
 
 // One folded copy per row object: selectors and memoized rows compare by identity, so the same row gives back the same
 // copy until the hub sends a new one.
 const copies = new WeakMap<Session, Session>();
+// The rows foldRows gave out, in their folded state already (their side part from the side rows the list held): drawn
+// again, they keep it, and are not folded a second time from the hub's rollup alone.
+const settled = new WeakSet<Session>();
 
-/** A row as the lists draw and count it: in its folded state, `s` itself when that is its own state. */
-export function foldedRow(s: Session): Session {
-  if (!s.children) return s;
-  const state = foldedState(s);
+/** A row as the lists draw and count it: in its folded state, `s` itself when that is its own state. `sides`: the
+ *  rollup of its side rows the caller holds (else the hub's, `children.sides*`). */
+export function foldedRow(s: Session, sides?: SideRollup): Session {
+  if (!s.children || (!sides && settled.has(s))) return s;
+  const state = sides ? foldedStateWith(s, sides) : foldedState(s);
   if (state === stateOf(s)) return s;
   let copy = copies.get(s);
   if (copy?.state !== state) {
@@ -24,15 +31,25 @@ export function foldedRow(s: Session): Session {
 
 // One folded list per list object: a store selector folding a machine's rows (`sessions[mid]`, replaced only when that
 // machine's rows change) gets the same array back on every other push.
-const folds = new WeakMap<Session[], Session[]>();
+// (and the same side rule: hello can turn side folding on or off for the same rows)
+const folds = new WeakMap<Session[], { sides: boolean; out: Session[] }>();
 
 /** A list as the web shows and counts it: without the children folded under a row the list holds, each parent in its
- *  folded state (foldedRow); `rows` itself when nothing changes. */
+ *  folded state (foldedRow, its side part from the side rows in `rows`); `rows` itself when nothing changes. */
 export function foldRows(rows: Session[]): Session[] {
   const known = folds.get(rows);
-  if (known) return known;
+  if (known?.sides === sideFoldOn()) return known.out;
   if (!rows.some((s) => s.folded_under || s.children)) return rows;
   const listed = listedKeys(rows);
+  // the side rows this list holds, by their parent
+  const sides = new Map<string, Session[]>();
+  for (const s of rows) {
+    if (!isSide(s) || !isFoldedIn(s, listed)) continue;
+    const k = rowKey(s.machine_id, s.folded_under!);
+    const held = sides.get(k);
+    if (held) held.push(s);
+    else sides.set(k, [s]);
+  }
   let changed = false;
   const out: Session[] = [];
   for (const s of rows) {
@@ -40,24 +57,26 @@ export function foldRows(rows: Session[]): Session[] {
       changed = true;
       continue;
     }
-    const shown = foldedRow(s);
+    const mine = s.children?.sides ? sides.get(rowKey(s.machine_id, s.session_id)) : undefined;
+    const shown = foldedRow(s, mine && countSides(mine));
     if (shown !== s) changed = true;
+    if (shown.children) settled.add(shown);
     out.push(shown);
   }
   if (!changed) return rows;
-  folds.set(rows, out);
+  folds.set(rows, { sides: sideFoldOn(), out });
   return out;
 }
 
 /** The agentKey (`<machine>/<session>`) of the session a card belongs to in lists and counts: the parent a child's
  *  card folds under, else its own. */
-export function homeKey(ix: Pick<Interaction, "machine_id" | "session_id" | "folded_under">): string {
+export function homeKey(ix: Pick<Interaction, "machine_id" | "session_id" | "folded_under" | "folded_as" | "folded_side">): string {
   return `${ix.machine_id}/${requestHome(ix)}`;
 }
 
 /** The cards waiting for the user from the sessions folded under mid/sid (its children's questions and approvals). */
 export function childCards(interactions: readonly Interaction[], mid: string, sid: string): Interaction[] {
-  return interactions.filter((ix) => ix.machine_id === mid && ix.folded_under === sid && ix.session_id !== sid);
+  return interactions.filter((ix) => ix.machine_id === mid && ix.session_id !== sid && requestHome(ix) === sid);
 }
 
 /** The card a session's row or task speaks for: its own, else one its child sessions wait on (their home is its page). */

@@ -170,6 +170,7 @@ func withLarkGates(t *testing.T, h *Manager, commands ...string) {
 func chatRuleManager(t *testing.T, hand []connector.Rule, st *memRuleStore) (*Manager, *chatGitHub) {
 	t.Helper()
 	h := newTestManager(t)
+	keepSessions(t, h) // the devices keep the computers' sessions (listSessions)
 	h.store = newSentLedgerStore()
 	box := newMachine(h, MachineConfig{ID: "box", Name: "box"}) // a computer whose node gate can tell of a write
 	h.machines, h.byID["box"] = append(h.machines, box), box

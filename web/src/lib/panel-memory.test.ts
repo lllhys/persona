@@ -14,6 +14,7 @@ const A = { mid: "m1", sid: "a" };
 const B = { mid: "m1", sid: "b" };
 const gitA: SessionPanel = { kind: "git", mid: "m1", sid: "a", cwd: "/work/web" };
 const filesA: SessionPanel = { kind: "files", mid: "m1", sid: "a", cwd: "/work/web" };
+const changesA = { kind: "changes", mid: "m1", sid: "a", at: { path: "/work/web/a.ts", call: "c1" } } as SessionPanel;
 
 describe("the memory", () => {
   it("keeps the panel a session was left with, and gives it back once", () => {
@@ -46,6 +47,14 @@ describe("the memory", () => {
   it("keeps the Background tasks panel at its list, not the run it showed (#5421)", () => {
     const bg: SessionPanel = { kind: "background", mid: "m1", sid: "a", run: "w1" };
     expect(leaving({}, "m1/a", bg)["m1/a"]).toEqual({ kind: "background", mid: "m1", sid: "a" });
+  });
+
+  it("keeps the Changes panel at the selected file", () => {
+    const m = leaving({}, "m1/a", changesA);
+    expect(m["m1/a"]).toEqual(changesA);
+    expect(belongsTo(changesA, A)).toBe(true);
+    expect(belongsTo(changesA, B)).toBe(false);
+    expect(arriving(m, "m1/a", null).back).toEqual(changesA);
   });
 
   it("keeps the last few sessions only", () => {
@@ -96,6 +105,15 @@ describe("moving between sessions", () => {
     expect(getPanel()).toBeNull();
     show(A); // the sidebar, or the browser's Back
     expect(getPanel()).toEqual(gitA);
+  });
+
+  it("brings Changes back at the same file", () => {
+    show(A);
+    act(() => openPanel(changesA));
+    show(B);
+    expect(getPanel()).toBeNull();
+    show(A);
+    expect(getPanel()).toEqual(changesA);
   });
 
   it("brings the Files panel back in its folder, with its file", () => {

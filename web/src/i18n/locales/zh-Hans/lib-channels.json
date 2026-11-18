@@ -9,8 +9,6 @@
   "section_installed_footer": "这些地方发给机器人的消息会交给 Persona，回答和 Agent 的提问发回原处。只认绑定的那一个人。",
   "section_market": "可以安装",
   "section_market_footer": "扩展市场里提供渠道的扩展：装好后在这里绑定。",
-  "summary": "{count} 个已连接",
-  "summary_with_errors": "{on} 个已连接 · {bad} 个出错",
   "target_new": "新对话（下一条消息开）",
   "target_conversation": "一段对话",
   "target_agent_titled": "Agent · {title}",

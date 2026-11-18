@@ -12,8 +12,8 @@ outside the repo, e.g. `~/.appstoreconnect/`), `app_store.app_id` (the app recor
 
 | Item | Notes |
 | --- | --- |
-| Bundle ID | iOS `<bundle_id>`, watch `<bundle_id>.watchkitapp`, Live Activity `<bundle_id>.liveactivity`, notification service extension `<bundle_id>.notify` (push relay, `docs/operations/push-relay.md`), share extension `<bundle_id>.share` (#4586); new watch widget `app.watch_widget_bundle_id` (default `<bundle_id>.watchkitapp.widgets`, #1147). `scripts/release/asc_signing.py` covers these targets; #1147 did not register the new resources |
-| App ID capabilities | iOS: `PUSH_NOTIFICATIONS`, `USERNOTIFICATIONS_TIMESENSITIVE` (time-sensitive notifications, #1572), `HEALTHKIT`, `APP_GROUPS`; Live Activity: `APP_GROUPS`; watch app and watch widget: `APP_GROUPS` using the separate configured watch group. The App Group itself can only be created on the website and attached to App IDs ("App Group" below) |
+| Bundle ID | iOS `<bundle_id>`, watch `<bundle_id>.watchkitapp`, Live Activity `<bundle_id>.liveactivity`, notification service extension `<bundle_id>.notify` (push relay, `docs/operations/push-relay.md`), share extension `<bundle_id>.share` (#4586); new watch widget `app.watch_widget_bundle_id` (default `<bundle_id>.watchkitapp.widgets`, #1147); with `app.siri_calls` only, the SiriKit extension `<bundle_id>.callintents` ("Siri calls" below). `scripts/release/asc_signing.py` covers these targets; #1147 did not register the new resources |
+| App ID capabilities | iOS: `PUSH_NOTIFICATIONS`, `USERNOTIFICATIONS_TIMESENSITIVE` (time-sensitive notifications, #1572), `HEALTHKIT`, `APP_GROUPS`, and `SIRIKIT` with `app.siri_calls` only; Live Activity: `APP_GROUPS`; watch app and watch widget: `APP_GROUPS` using the separate configured watch group. The App Group itself can only be created on the website and attached to App IDs ("App Group" below) |
 | Provisioning profiles | "Persona App Store", "Persona Watch App Store", "Persona Share App Store", etc. (`IOS_APP_STORE`; the share extension's was added 2026-11-06, so run `asc_signing.py` once before its first release to register its Bundle ID and profile); `asc_signing.py` deletes and recreates them and installs them into `~/Library/MobileDevice/Provisioning Profiles/` |
 | Signing identity | `Apple Distribution: … (team_id)` in the login keychain |
 | App Store Connect App ID | After creating the app record on the website, put it in the config's `app_store.app_id` |
@@ -65,7 +65,7 @@ What `release.sh` does:
    the archive uses automatically signed development profiles (so `aps-environment` in the archive is `development`), and export re-signs with the App Store profiles to
    `production`. With `NO_UPLOAD=1`, `destination` changes from `upload` to `export`, and it additionally checks that `aps-environment` in the exported ipa
    really is `production`.
-6. `scripts/release/entitlements.py check`: in the archive (plus the exported ipa with `NO_UPLOAD=1`), every bundle carries its target's keychain groups, and the group name in Info.plist is among them; see "entitlements" below.
+6. `scripts/release/entitlements.py check`: in the archive (plus the exported ipa with `NO_UPLOAD=1`), every bundle carries its target's keychain groups, and the group name in Info.plist is among them; see "entitlements" below. It also fails when any binary in the app links CallKit; see "No CallKit" below.
 7. `git tag -f testflight/<build number>`.
 
 A build shows up in TestFlight about 10–30 minutes after archiving. `asc_testflight.py wait [minutes] [build number]` checks every 30 seconds until
@@ -198,6 +198,12 @@ The App Group ID itself has no team prefix, so the Info.plist writes `$(PERSONA_
 - **Check after export**: `python3 scripts/release/entitlements.py check <ipa>` lists every problem and exits non-zero; it reports 9 issues on build 92's ipa.
   App Groups are checked the same way: every bundle's signature has its target's group, and the Info.plist's `PersonaAppGroup` is one of them.
   In the exported ipa / pkg, the push entitlement (`aps-environment`; on Mac `com.apple.developer.aps-environment`) must be `production`. A Mac .pkg can be checked too.
+- **HealthKit background delivery** (`com.apple.developer.healthkit.background-delivery`, #2526): signed in only with config.json
+  `app.health_background_delivery: true`, so that workout reports come right after a workout (`docs/assistant/health.md`,
+  "Automatic workout reports (iOS)"). The App ID's HealthKit capability covers it. If the profiles predate it, rerun
+  `asc_signing.py` before turning the switch on. `entitlements.py check` errors if an exported App built with the switch lacks
+  it, because the Settings page would promise reports that wait for Persona to open. Check the first such build on a device:
+  finish a workout on the Watch with Persona closed, and the report should arrive.
 - **Time-sensitive notifications** (`com.apple.developer.usernotifications.time-sensitive`, #1572): the hub's "Needs you" pushes and plugins' urgent alerts carry `interruption-level: time-sensitive`.
   If the App's signature lacks this entitlement, the system shows them all as `active`: they don't break through Focus, so with Focus on the phone doesn't ring and the watch doesn't get them either, and nothing reports an error. The App ID must first enable `USERNOTIFICATIONS_TIMESENSITIVE`
   (`asc_signing.py` enables it; afterwards the old profiles are invalid and need one rerun to rebuild); `entitlements.py check` errors if the exported App lacks it.
@@ -231,6 +237,44 @@ Steps on the developer website (developer.apple.com › Account › Certificates
 5. After a release export, `scripts/release/entitlements.py check` verifies the App Groups of the app and its extensions, including both watch bundles.
 
 The #1147 system-surface store is independent of Fleet's avatar files, because it contains per-device credentials. Validate first unlock, offline expiry, pairing/rotation/removal, WidgetCenter full reports (including removal of the last configuration), paired-watch direct requests, and real background `extension_widget` pushes on devices before claiming acceptance. Simulator-only unsigned builds cannot validate App Group signing or background APNs delivery. No build, screenshots or device acceptance were run for #1147 while builds were paused.
+
+## No CallKit (#9290)
+
+App Review rejects a build offered in China when **any** binary in it links `CallKit.framework`, even weakly and even when the only use is a `CXCallObserver` inside an SDK. Calls go through LiveCommunicationKit (LCK). The system LCK framework links CallKit itself; that is Apple's binary, not the app's, and does not count. Only the Mach-O files inside `Persona.app` count. LCK reports its errors in CallKit's domains (`com.apple.CallKit.error.…`). Compare those as strings, and never `import CallKit` for a constant.
+
+Two checks:
+
+- **Sources** (`scripts/test/test_apple_no_callkit.py`, no build needed): every Swift and Objective-C file under `apple/` (all targets and their tests, `Shared`, the local packages) must not import CallKit or name a `CX…` type, outside comments and strings. An unused import counts, in any spelling: ``import `CallKit` ``, `import` and the name on different lines, `@import CallKit;`. The XcodeGen specs, `Package.swift` manifests, module maps, xcconfig files and the xcconfig `scripts/persona_config.py` writes must not mention CallKit outside a comment (`sdk: CallKit.framework`, `-framework` / `-weak_framework CallKit`, `-lswiftCallKit`, `.linkedFramework("CallKit")`, a Call Directory extension). It runs in `scripts/ci/guards.sh`, at the start of `scripts/ci/apple.sh`, and in `scripts/check-fast.sh` for `apple/` changes.
+- **Binaries** (`scripts/release/check_no_callkit.py <.app | .ipa | .xcarchive>`): every file in the bundle that starts with a Mach-O magic number is checked, whatever its name (the main binary, `*.debug.dylib`, `Frameworks/*`, `PlugIns/*.appex`, the Watch app and its extensions), in every architecture. `otool -arch all -L` lists the dylib load commands, and any install name with CallKit in it fails the check (`CallKit.framework`, `libswiftCallKit.dylib`, weak or re-exported). The check prints `binary [arch] → dependency` for each one. An otool error, or a bundle with no Mach-O in it, also fails. On success it prints `no CallKit: N Mach-O files checked`. Only the binaries show what a remote package or a prebuilt framework links. `scripts/ci/apple.sh` runs it on the device build and on the simulator build-for-testing app. `entitlements.py check` runs it on the release archive, and with `NO_UPLOAD=1` or `UPLOADER=asc` on the exported ipa too. Export re-signs the binaries but does not change their load commands, so the archive check also covers the default upload.
+
+Run them by hand:
+
+```sh
+python3 scripts/test/test_apple_no_callkit.py
+python3 scripts/release/check_no_callkit.py <Persona.app | .ipa | .xcarchive>
+```
+
+## Siri calls (#9290, off by default)
+
+"Call Persona using Persona" goes through SiriKit (`docs/apple/siri.md`, "Calling Persona"). The app is single-scene, so the intent needs an Intents extension (`PersonaCallIntents`, bundle ID `<bundle_id>.callintents`) with its own App ID and App Store profile, and the app needs the Siri entitlement (`com.apple.developer.siri`) with `SIRIKIT` on its App ID. That is account work, so it is behind config.json `app.siri_calls` (default `false`, `docs/operations/config.md`). The App Shortcut **Call Persona** ("Hey Siri, call Persona") needs none of it and ships in every build.
+
+With the switch off, the project, the signing preflight (`asc_signing.py --check`), the export options and `entitlements.py check` are exactly what they were. With it on:
+
+- `persona_config.py env` exports `PERSONA_SIRI_CALLS=YES`, so xcodegen merges `apple/siri-calls.yml`: the extension target embedded in the app; the app signed with `apple/PersonaSiriCalls.entitlements` (its entitlements plus `com.apple.developer.siri`, written by xcodegen, git-ignored); `NSSiriUsageDescription` (translated in `InfoPlist.xcstrings`) and `PersonaSiriCalls` put into the built Info.plist before signing, as the commit stamp is; and Siri's example phrases (`AppIntentVocabulary.plist`, en / zh-Hans / ja; without them App Store Connect refuses the upload with ITMS-90626). No tracked file is rewritten, so the release worktree stays clean, which the unattended worker checks after every step. That is also why the app's entitlements path is in `apple/app-entitlements.yml`: in an XcodeGen merge `project.yml`'s own values win over every include's, while a later include's win over an earlier one's, so only a path set in an include can be moved by the overlay.
+- The export options name the extension's profile, "Persona Call Intents App Store" (`persona_config.py export-options`), and `persona_config.py xcconfig` lists the entitlement in `apple/PersonaOptIn.entitlements` too.
+- `asc_signing.py` asks for `SIRIKIT` on the iPhone App ID and for the extension's Bundle ID ("Persona Call Intents") and profile. `--check` (the start of every `release.sh`, the unattended worker's included) fails until both are there: that is why the switch must not be turned on first.
+- `entitlements.py check` fails when the exported app lacks the Siri entitlement.
+
+Enabling it, once, by the account's maintainer (Account Holder or Admin, or the App Manager API key the scripts use), in this order:
+
+1. Make a copy of the config with `"siri_calls": true` under `app` (outside the repository, like the config itself) and prepare the app's App ID with it: `PERSONA_CONFIG=<copy> python3 scripts/release/asc_signing.py --only <bundle_id>`. This turns `SIRIKIT` on and rebuilds "Persona App Store" (changing a capability invalidates the old profile anyway). The other targets' profiles are left alone. Releases from the real config, still off, go on working: a profile that allows Siri signs an app that doesn't ask for it.
+2. Register the extension and make its profile: `PERSONA_CONFIG=<copy> python3 scripts/release/asc_signing.py --only <bundle_id>.callintents`. It needs no capability (Siri's entitlement is the app's).
+3. Signing development builds with these profiles: run both again with `--dev`.
+4. `PERSONA_CONFIG=<copy> python3 scripts/release/asc_signing.py --check` must pass, then `PERSONA_CONFIG=<copy> NO_UPLOAD=1 ./scripts/release/release.sh`: archive, export with the extension's profile, and `entitlements.py check` on the ipa (the Siri entitlement, no CallKit in the extension either).
+5. Turn `app.siri_calls` on in the real config, and in the unattended release worker's config if it has its own. The next release carries the extension.
+6. On a phone, from TestFlight: Persona asks once whether it may use Siri (allow it; Settings › Apps › Persona › Siri changes it later). Say "Call Persona using Persona" and, in those languages, "用 Persona 打给 Persona" and "PersonaでPersonaに電話して": the call page opens and the call connects. Check it locked (Siri asks to unlock first, also with AirPods) and with AirPods.
+
+Not known yet: how App Review in China treats a SiriKit call extension (it is Intents, not CallKit, so `check_no_callkit.py` passes; no report either way was found), and whether Beta App Review asks why a call intent is there (the #8734 review notes on calls apply). To turn it off again, set the switch to `false`; SIRIKIT and the extension's App ID can stay on the account.
 
 ## Changing the store name
 
@@ -314,7 +358,9 @@ python3 scripts/release/asc_testflight.py external   # create the group, enable/
   (`docs/apple/ios.md`, "Demo mode"). Review notes (`review.notes`) must give that entry and its limits, and explain that full use
   requires the user's own self-hosted hub. Never give reviewers access to a developer's personal hub or private data.
 
-## Mac version (2026-11-02)
+## Retired native Mac version (2026-11-02)
+
+**This native `PersonaMac` distribution path is retired (#6770). Do not run it for new desktop releases.** The Electron desktop's universal macOS DMG/ZIP, unsigned development configuration and separate signing/notarization gates are in [desktop.md](../desktop/desktop.md). The former TestFlight Mac build process is retained below only as a historical record; it is not evidence that an Electron Developer ID or Windows signing identity exists.
 
 The Mac App (target and scheme `PersonaMac`) shares the iPhone's bundle id, so it is **the same app record** in App Store Connect (macOS platform added, version 1.0),
 and uses the same TestFlight: the same Internal / Friends groups and public link. Testers install TestFlight on a Mac to see Mac builds.
@@ -331,7 +377,7 @@ and uses the same TestFlight: the same Internal / Friends groups and public link
 - **Info.plist**: `LSApplicationCategoryType` (productivity) and all permission descriptions are defined in the `PersonaMac` target in `apple/project.yml`.
 - **Sandbox**: `com.apple.security.app-sandbox`, plus networking (client and local server for port forwarding), user-selected files, contacts / calendar / location / photos,
   microphone / camera (entitlements in `project.yml`).
-- **Push** (since 2026-11-02, `docs/apple/mac.md` ("Remote push (Mac)")): `com.apple.developer.aps-environment` (the macOS name; iOS uses `aps-environment`).
+- **Push** (historical, since 2026-11-02): `com.apple.developer.aps-environment` (the macOS name; iOS uses `aps-environment`).
   The App ID is UNIVERSAL and already has Push Notifications enabled, so no developer-account change is needed; the archive has `development`, and cloud signing at App Store export changes it to `production`.
   The package also includes notification service extension `PersonaNotify.appex` (target `PersonaMacNotify`, module / notification main class still `PersonaNotify`, in `Contents/PlugIns/`, sandbox + `.push` keychain group, #432).
   Its bundle id is the same as the iPhone extension's (UNIVERSAL App ID); cloud signing creates its Mac profile at export. `entitlements.py sign / check` signs and checks it too.
@@ -345,8 +391,8 @@ and uses the same TestFlight: the same Internal / Friends groups and public link
   "files that are only readable by the root user" (macOS verifies signatures as the user running the App). auto-tf's umask is 077;
   the script's `cp -R` made the copied archive entirely 0700 / 0600, which never showed up when testing in an interactive shell (umask 022). The release script now starts with `umask 022` and copies archives with `ditto` (preserves permissions).
   It checks the `.app` before export and the App unpacked from the `.pkg` afterwards: every file a+r, every directory a+rx, otherwise no upload. The iPhone script was changed too (ipas aren't checked for this; 110 passed there).
-- **Automatic release**: after releasing the iPhone build, if this commit includes changes used by the Mac App (`apple/Mac`, `apple/Shared`, `apple/Persona` except a few iOS-only
-  files, `apple/Packages`, `project.yml`, `Package.resolved`), release Mac next with the same number. Report the Mac result separately; its failure doesn't affect the iPhone release.
+- **Automatic release (historical)**: after releasing the iPhone build, if a commit included changes used by the Mac App (its native-Mac source directory, `apple/Shared`, `apple/Persona` except a few iOS-only
+  files, `apple/Packages`, `project.yml`, `Package.resolved`), the former process released Mac next with the same number. This step is retired with `PersonaMac`; use the Electron packaging workflow.
 
 ## Publishing personad (`scripts/release/publish.sh`, 2026-10-31)
 
@@ -384,7 +430,8 @@ curl -fsSL <publish.site_url>/install.sh | sh   # install to ~/.persona/bin/pers
   - Before upload, run `check_bundle_privacy.py --whole-short`: binaries must contain none of the configured values (except Go module paths; values of four characters or fewer match whole words,
     since Unicode tables and compressed JS contain short letter combinations everywhere). A few protocol names, official contact links and standard network constants in public dependencies are classified by exact context, without allowing whole domains or private network ranges;
     it requires the binary's `public` marker, unreplaced dependencies and checksums matching `server/go.sum`, and `go mod verify` before building. Registered personal values always take precedence and are blocked; see `docs/lessons/testing.md`.
-- Build the connector `persona-link-<os>-<arch>` for the same four platforms too (2026-11-02, node service, `install.sh --node`, see `docs/operations/link.md` ("Installing the node service")), with the same privacy scan and compression, included in `SHA256SUMS`.
+- Build the iPhone helper `persona-iphone-bridge-<os>-<arch>` for the four platforms when this computer can (`native/iphone-bridge/release.sh`; macOS needs `rustup target add aarch64-apple-darwin x86_64-apple-darwin`, Linux needs `zig` and `cargo install cargo-zigbuild` plus `rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu`). Cargo keeps its build directory at `PERSONA_BRIDGE_TARGET` (default `~/.cache/persona/iphone-bridge-target`). A platform it can't build, or whose build fails, is left out with a `note:` line; the release goes on without it. `latest.json` lists only the builds that are there under `helpers`, and they are kept with the node builds under `dl/<version>/` ([iphone-bridge.md](../extensions/iphone-bridge.md), "Releases"). A version-tag upload should carry `persona-iphone-bridge-<os>-<arch>.gz` with the other downloads; when it doesn't, `tag_release.py` warns and uploads `latest.json` without those helpers instead of failing.
+- Build the connector `persona-link-<os>-<arch>` for the same four platforms too (2026-11-02, node service, `install.sh --node`, see `docs/operations/link.md` ("Installing the node service")), plus `persona-link-windows-amd64.exe` and `persona-link-windows-arm64.exe`, with the same privacy scan and gzip compression, included in `SHA256SUMS`. `latest.json` lists all six connectors under `links`; hub updates never swap them. `persona-link version -v` reports the same version, channel and build as personad so the manifest verifier can identify every connector. Windows download and scheduled-task installation commands are in [windows.md](windows.md) ("Install and start at logon"). The POSIX `install.sh` remains Linux/macOS-only.
 - Build the device's own program `persona-node-<os>-<arch>` (`server/cmd/persona-node`) for the same four platforms, scanned, compressed and included in `SHA256SUMS` the same way (it must report the same `version -v` as personad). `install.sh --node` installs it at `~/.persona/bin/persona-node` and the node service runs it ([link.md](link.md) "The device's program"). `latest.json` lists it under `nodes` (old hubs ignore that): hub self-update still brings `personad-*` alone, and the manager fetches persona-node from `dl/<version>/` for a device that runs it (`docs/operations/node-update.md` ("Node packages")).
 - Downloads are `personad-<os>-<arch>.gz`: scan the raw binary first, then compress with `gzip -n -9`; `SHA256SUMS` verifies the archive. The installer verifies it before unpacking and installing; failed verification / decompression never overwrites the old version. Public artifacts and their index use only Persona names, including `persona-link-<os>-<arch>.gz`; old-name aliases remain inside installed runtime compatibility, not new downloads. The installer still reads historical manifests with older names.
   **Archives go in R2 bucket `persona-dl`, not the site** (#2541): Workers static assets have a 25 MiB per-file limit ([official limit](https://developers.cloudflare.com/workers/platform/limits/#static-assets));
@@ -409,7 +456,11 @@ curl -fsSL <publish.site_url>/install.sh | sh   # install to ~/.persona/bin/pers
 
 ## Publishing a release (`.github/workflows/release.yml`)
 
-A `v*` tag publishes the hub container image and creates a GitHub Release. Docker hubs (`docs/operations/docker.md`) use the ghcr image, linux/amd64 + linux/arm64:
+A `v*` tag publishes the hub container image and creates a GitHub Release. **Only `chyroc` may create, update or delete a `v*` tag, dispatch an image release or rerun its jobs.** The repository's `Release tags: administrators only` ruleset permits only the administrator role to bypass its create/update/delete restrictions; other collaborators cannot publish a version tag. The workflow independently requires both the run's actor and its triggering actor to be `chyroc` before any checkout, build or upload, including manual dispatches and reruns. The Release's `github-actions[bot]` author identifies the workflow that created it, not the person who pushed the tag; the Actions run records that triggering actor.
+
+This boundary covers automated publication; collaborators retain their existing write permissions. GitHub does not offer a separate release-only permission on this organization, so those permissions still allow a manual GitHub Release from an existing ref. Restricting manual releases too would require a separate collaborator-permission change, outside this policy.
+
+Docker hubs (`docs/operations/docker.md`) use the ghcr image, linux/amd64 + linux/arm64:
 
 ```sh
 git tag v1.2.0 && git push origin v1.2.0
@@ -418,12 +469,23 @@ git tag v1.2.0 && git push origin v1.2.0
 ```
 
 - Smoke-test first (amd64 + compose), then build and push both architectures only after it passes. Once image publication succeeds, the same job creates a GitHub Release named for the full tag with automatically generated notes. Prerelease tags containing `-` (`v1.3.0-rc1`) only push the version image, without touching `latest`, and mark the GitHub Release as a prerelease. Creating the Release does not push another tag.
-- To get an image of the current branch without a tag or GitHub Release: manually run release in Actions (`edge`, `sha-<commit>`).
+- To get an image of the current branch without a tag or GitHub Release, `chyroc` can manually run release in Actions (`edge`, `sha-<commit>`).
 - Image smoke tests run through an explicit workflow dispatch; only the documented `v*` release-tag event starts image and GitHub Release publication automatically (`packages: write` and `contents: write` are granted only to the publish job). This exception supplies the version and `latest` images used by Docker installations; no branch push or PR starts it. A manual dispatch never creates a GitHub Release.
 - If Release creation fails after the images were pushed, rerun the failed job for the same tag. Rebuilding and pushing the same immutable image tags does not advance `latest` to another source revision; fix any reported tag or Release conflict rather than creating a replacement tag.
 - The image's personad uses the tag minus `v` as its version (`personad version`); when node differs, the App prompts to redeploy, using the image's own builds or the release's (`docs/operations/docker.md` ("Node builds")).
 - The image's personad is on the `docker` channel: no skills (like all binaries), no self-update; a new image prompts you to pull it (`docs/operations/hub-update.md`).
 - When the repository is private, the package is private too; NAS installs need `docker login ghcr.io` (`docs/operations/docker.md` ("Image")).
+
+### Desktop packages on version tags
+
+The same workflow attaches the Electron desktop packages to the Release (`docs/desktop/desktop.md`, "Updates"); installed desktop apps update from them.
+
+- Nothing extra to run: push the stable tag as above. After the `authorize` job, `desktop-gate` checks which signing secrets are configured, `desktop-mac` and `desktop-win` build and verify signed packages on native runners with the tag's version, and `desktop-publish` attaches them after the Release exists: packages and block maps first, `latest-mac.yml` and `latest.yml` last.
+- **Without the signing secrets the release still succeeds and has no desktop packages.** The run's summary says which platform was skipped and which secrets are missing. This is the state today: no Developer ID or Windows code-signing certificate has been supplied (`docs/desktop/desktop.md`, "What the owner must provide", lists the eight secrets and what each must contain).
+- Each platform stands alone: with only the macOS secrets configured, the Release gets the macOS packages and the summary says Windows was skipped.
+- Prerelease tags (`v1.3.0-rc1`) and manual dispatches publish no desktop packages.
+- If a desktop job fails after the Release was created, rerun the failed jobs for the same tag; uploads replace assets of the same name. The hub image and the Release itself are not affected by a desktop failure.
+- After the first signed release, check on a real Mac and a real Windows PC that an installed older version offers "Restart to update" and reopens as the new one. That path is not covered by any automated test (the update test uses an unsigned build and a local feed).
 
 ### Private version-tag consumers
 
@@ -500,6 +562,21 @@ A private configuration has only these fields, with no secrets:
   `releases/latest/download` never sees a manifest whose files are not there yet.
 - A receipt that carries `android.json` (the Android platform's) must ship the
   APK it names, at its size and sha256, for the tag's version.
+- Windows CLI bundles (`Persona-<version>-windows-<arch>.zip`) also require a
+  native verification report before upload (#8338). On Windows of that
+  architecture, run `python scripts/operations/windows_release.py --archive
+  <archive.zip> --version <version> --build <build>`. It runs the bundled
+  `persona-link version`, `personad version -v`, and `personad node-update-check`
+  with time limits, without installing or starting services. Success writes
+  `<archive-stem>.verification.json` beside the ZIP; failure removes a previous
+  report. Include the ZIP, report and `BUILD.json` or `latest.json` in the
+  private artifact receipt. The coordinator checks the requested version,
+  build, command results, ZIP digest and executable digests before any upload.
+  This report is output from the trusted release pipeline, preventing stale or
+  mismatched verification; it is not a signed attestation against a malicious
+  publisher. Cross-compilation or a matching build number alone does not prove
+  the Windows programs report the intended version. A missing Windows runner
+  is an explicit publication prerequisite, not a passed or skipped check.
 
 For the first release, merge this consumer's PR before pushing `v0.1.0` from
 the merged `main` commit. The public workflow creates the Release and image;
@@ -544,6 +621,20 @@ version codes and update each other:
   A hub reads it beside `latest.json` to offer the APK to its phones (#5563). A prerelease tag's APK is attached to
   its Release, but `releases/latest/download` never points at a prerelease.
 
+### Android build commit
+
+Settings › About shows the commit an Android APK was built from ([android.md](../android/android.md) "Build commit"). Release
+builds pass it explicitly: `android_release_worker.py` adds `-PpersonaBuildCommit=<sha>` with the full sha it checked out (the
+same value as the receipt's `source_sha`, for main-branch and version-tag builds), and `scripts/app/android.sh release` passes
+this repository's `HEAD`. Version names, version codes, signing and R8 are unchanged.
+
+- **Receipt reuse**: `build.json` records `build_commit` (the full sha). A run directory whose `unsigned.apk` receipt has no
+  `build_commit`, or one that is not the source sha, is built again; an `unsigned.apk` made before this metadata existed is never
+  published, and nobody has to delete the directory by hand.
+- **Check before keeping the APK**: after `:app:assembleRelease` and the R8 check, and before `unsigned.apk` is copied,
+  `scripts/release/check_android_build_commit.py` reads `persona_build_commit` with `aapt2 dump resources` and fails unless it equals
+  the source sha. A build without the injection, with a wrong value, or one that left an old APK behind stops there and writes no receipt.
+
 ## Android publisher repository migration and status retries
 
 `scripts/release/android_release_worker.py` uses a private configuration file. Its `repository`, `git_url`, `branch` and
@@ -563,7 +654,11 @@ removes `app/build/outputs/apk/release` and `mapping/release` before the build, 
 signed. After `:app:assembleRelease` and before the APK is copied for signing, it runs `scripts/release/check_android_shrink.py`
 on it and on R8's output in `app/build/outputs/mapping/release`; any class, constructor or method that Android or the app
 reaches only by name and that R8 removed, and any exception, the app's or a library's, that R8 merged into another class,
-fails the build, so nothing is signed or published. It then keeps R8's `mapping.txt` gzipped as
+fails the build, so nothing is signed or published. It also fails when any method grows past 10,000 dex code units,
+which ART would then leave interpreted, the libraries' included because R8 merges classes across packages; a method in
+`scripts/release/known_oversized_methods.txt` (one full signature per line) only warns while it stays at or below the
+size recorded there, and one between 9,000 and 10,000 warns as the next split's deadline
+(docs/android/android.md "Release shrinking"). It then keeps R8's `mapping.txt` gzipped as
 `runs/<source>/mapping-<unsigned sha256>.txt.gz` (about 12 MB), which `retrace` needs for frames from optimized code. Before
 the first shrunk or optimized release, install it on a phone and
 open pairing, a chat with a formula, the Inbox, Settings, a notification action, the home-screen widget and the Quick Settings

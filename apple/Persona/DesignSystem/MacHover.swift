@@ -5,7 +5,10 @@ import SwiftUI
 extension View {
     /// A shade in `shape` under the view while the pointer is over it (Mac only), `outset` past its edges (a list row
     /// whose content sits inside the row's insets).
-    func macHoverShade(in shape: some Shape, outset: CGFloat = 0) -> some View { modifier(MacHoverShade(shape: shape, outset: outset)) }
+    /// `isEnabled` false leaves the shade to a view around this one (a row with an accessory beside it).
+    func macHoverShade(in shape: some Shape, outset: CGFloat = 0, isEnabled: Bool = true) -> some View {
+        modifier(MacHoverShade(shape: shape, outset: outset, isEnabled: isEnabled))
+    }
 
     /// `actions` in a row under the view, shown while the pointer is over either (Mac only): an answer's Copy / Quote,
     /// as Codex's desktop app shows them under its replies. The row's room is always there, so nothing moves.
@@ -24,12 +27,13 @@ extension View {
 private struct MacHoverShade<S: Shape>: ViewModifier {
     var shape: S
     var outset: CGFloat
+    var isEnabled = true
     @State private var hovering = false
 
     func body(content: Content) -> some View {
         #if os(macOS)
         content
-            .background { if hovering || MacHover.showAll { shape.fill(Theme.Fill.macHover).padding(-outset) } }
+            .background { if isEnabled && (hovering || MacHover.showAll) { shape.fill(Theme.Fill.macHover).padding(-outset) } }
             .onHover { hovering = $0 }
         #else
         content

@@ -39,6 +39,7 @@ private class FakeMarket : ExtensionApiStub() {
     val calls = mutableListOf<String>()
     var gate: CompletableDeferred<Unit>? = null
     var preview = ExtensionPreview("pv1", PreviewManifest("example-calendar", "Example 日历", "0.9.0"), listOf(runs), "d-1")
+    var removal = ExtensionRemoval()
     var installed = ExtensionDetail(HubExtension("example-calendar", "Example 日历", "connectors", "needs_setup", version = "0.9.0",
         needsSetup = listOf("密钥「API Key」")))
 
@@ -52,7 +53,7 @@ private class FakeMarket : ExtensionApiStub() {
     override suspend fun previewFromMarket(market: String, extension: String): ExtensionPreview { calls += "preview $market/$extension"; check(); return preview }
     override suspend fun install(preview: ExtensionPreview): ExtensionDetail { calls += "install ${preview.previewId} ${preview.permissionsDigest}"; check(); return installed }
     override suspend fun upgrade(id: String, preview: ExtensionPreview): ExtensionDetail { calls += "upgrade $id ${preview.previewId}"; check(); return installed }
-    override suspend fun uninstall(id: String, keepData: Boolean, cascade: Boolean, members: Boolean): ExtensionRemoval { calls += "uninstall $id keep=$keepData"; check(); return ExtensionRemoval() }
+    override suspend fun uninstall(id: String, keepData: Boolean, cascade: Boolean, members: Boolean): ExtensionRemoval { calls += "uninstall $id keep=$keepData"; check(); return removal }
     override suspend fun markets(): List<ExtensionMarket> { check(); return markets }
     override suspend fun addMarket(spec: String, token: String?): ExtensionMarket {
         calls += "add $spec token=${token != null}"; check()
@@ -376,6 +377,39 @@ class ExtensionMarketStateTest {
         api.catalog = emptyList()
         model.load()
         assertTrue(model.state.value.missing)
+    }
+
+    @Test fun cleanupWarningsAreHeldUntilTheirOkAndBlankResultsStayQuiet() = runBlocking {
+        val warnings = listOf("请手动删除数据目录", "缓存清理失败，请手动处理")
+        val api = FakeMarket().apply { removal = ExtensionRemoval(warnings = warnings) }
+        val model = CatalogExtensionModel(api, marketA.id, "example-gateway", res)
+        model.load()
+        assertTrue(model.uninstall(keepData = true))
+        val notice = model.state.value.removalNotice!!
+        assertEquals("已卸载 Example 网关面板", notice.title)
+        assertEquals(warnings, notice.warnings)
+        model.dismissRemovalNotice()
+        assertNull(model.state.value.removalNotice)
+        assertNull(model.removal)
+
+        api.removal = ExtensionRemoval(warnings = listOf(" ", "\n"))
+        assertTrue(model.uninstall(keepData = true))
+        assertNull(model.state.value.removalNotice)
+    }
+
+    @Test fun cleanupWarningsDecodeFromDirectAndSteppedSuccessfulRemovals() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val warnings = listOf("data directory cleanup failed", "cache cleanup failed")
+        val direct = json.decodeFromString(ExtensionRemoval.serializer(),
+            """{"removed_members":["example-member"],"warnings":["data directory cleanup failed","cache cleanup failed"]}""")
+        assertEquals(listOf("example-member"), direct.removedMembers)
+        assertEquals(warnings, direct.warnings)
+        val stepped = json.decodeFromString(ExtensionOperation.serializer(),
+            """{"id":"remove","kind":"uninstall","state":"succeeded","warnings":["data directory cleanup failed","cache cleanup failed"]}""")
+        assertEquals(warnings, stepped.warnings)
+        val old = json.decodeFromString(ExtensionRemoval.serializer(), """{"removed_members":[]}""")
+        assertNull(old.warnings)
+        assertNull(extensionRemovalNotice(res, "Example", members = false, removal = old))
     }
 
     @Test fun managesTheMarkets() = runBlocking {

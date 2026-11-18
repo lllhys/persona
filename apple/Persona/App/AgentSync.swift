@@ -1,5 +1,6 @@
 import Foundation
 import PersonaKit
+import PersonaWire
 
 /// Keeps the recent agents' conversations current while the app is open and online, the way an IM client syncs:
 /// the hub pushes a tiny "this transcript changed" (each session's `rev`, in the session list and the `revs` event)
@@ -298,7 +299,7 @@ final class AgentSync {
         guard shouldApply() else { throw CancellationError() }
         let r = try await api.items(key, afterSeq: store.covered)
         guard shouldApply() else { throw CancellationError() }
-        let gap = store.apply(r.items, span: r.span, moreAfter: r.moreAfter == true)
+        let gap = model.applyPrefetch(store, items: r.items, span: r.span, moreAfter: r.moreAfter == true)
         switch gap {
         case .none: break
         case .fill: await model.fill(key, shouldApply: shouldApply)

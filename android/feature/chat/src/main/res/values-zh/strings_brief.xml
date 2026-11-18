@@ -37,4 +37,7 @@
     <string name="chat_brief_stage_merge">合并</string>
     <string name="chat_brief_stage_deploy">部署</string>
     <string name="chat_brief_stage_verify">已验证</string>
+    <string name="chat_brief_setup">建议的设置</string>
+    <string name="chat_brief_setup_intro">根据 Persona 自己过去 7 天的记录算出，写明了自己时间范围的那一项除外。什么都没有改动：下面每一项在你自己改动之前都保持原样。</string>
+    <string name="chat_brief_setup_open">打开设置</string>
 </resources>

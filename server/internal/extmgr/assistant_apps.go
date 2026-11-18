@@ -19,6 +19,11 @@ func (h *Manager) assistantAppCall(ctx context.Context, p assistantwire.AppCall)
 		MachineID string   `json:"machine_id"`
 		Names     []string `json:"names"`
 		TZ        string   `json:"tz"`
+		// BaseDigest: the digest of the hub's own part of the CLAUDE.md the instructions go with (plugins.assistant for
+		// the assistant's own space; extension_assistant_data.go).
+		BaseDigest string `json:"base_digest"`
+		// Projects: plugins.project_context's project slugs.
+		Projects []string `json:"projects"`
 	}
 	if len(p.Params) > 0 {
 		if err := json.Unmarshal(p.Params, &a); err != nil {
@@ -37,8 +42,14 @@ func (h *Manager) assistantAppCall(ctx context.Context, p assistantwire.AppCall)
 		return map[string]any{"connectors": signedIn, "clis": clis, "lark_cli": h.cfg != nil && h.cfg.Lark.CLI != nil}, nil
 	case assistantwire.AppConnectors + " " + assistantwire.ConnectorsSnapshots:
 		return map[string]any{"snapshots": h.connectorSnapshots(ctx, a.TZ)}, nil
+	case assistantwire.AppConnectors + " " + assistantwire.ConnectorsLarkReply:
+		return h.observeLarkReply(ctx, p.Params)
 	case assistantwire.AppPlugins + " " + assistantwire.PluginsAssistant:
-		return map[string]any{"instructions": h.extensions.extensionInstructions(), "skills": h.extensions.extensionSkillsFor(a.MachineID)}, nil
+		return map[string]any{"instructions": h.extensions.extensionInstructions(ctx, a.BaseDigest), "skills": h.extensions.extensionSkillsFor(a.MachineID)}, nil
+	case assistantwire.AppPlugins + " " + assistantwire.PluginsProjectContext: // extension_prompt_context.go
+		return assistantwire.ExtensionContextResult{Blocks: h.extensions.projectContext(a.Projects)}, nil
+	case assistantwire.AppPlugins + " " + assistantwire.PluginsInboxContext:
+		return h.extensions.inboxContext(), nil
 	case assistantwire.AppPlugins + " " + assistantwire.PluginsSkillsNeed:
 		if v, ok := h.extensions.skillsSent.Load(a.MachineID); ok {
 			for _, n := range a.Names {

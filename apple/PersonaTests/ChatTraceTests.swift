@@ -12,21 +12,22 @@ struct ChatTraceTests {
     private let secret = "不该出现在诊断里的话"
 
     @Test func theEndOfTheChatTellsTheAnswerFromItsExecutionSummary() {
-        var wake = item(4, .notice, role: "system", text: "后台任务完成")
+        var wake = item(7, .notice, role: "system", text: "后台任务完成")
         wake.wake = true
         let long = String(repeating: secret, count: 20)
-        // The reply after the wake is the answer (the newest words, #3783), the longer words before it in the work.
-        let items = [item(1, .text, role: "user", text: secret), item(2, .toolUse, tool: "Bash", id: "a"), item(3, .text, text: long),
-                     wake, item(5, .toolUse, tool: "Bash", id: "b"), item(6, .text, text: "好了")]
+        // Narration, then the turn's last words; a wake then opens its own exchange with its own work and reply (#9140).
+        let items = [item(1, .text, role: "user", text: secret), item(2, .text, text: long), item(3, .toolUse, tool: "Bash", id: "a"),
+                     item(4, .text, text: long), item(5, .toolUse, tool: "Bash", id: "c"), item(6, .text, text: "好了"),
+                     wake, item(8, .toolUse, tool: "Bash", id: "b"), item(9, .text, text: "又好了")]
         let lines = ChatLines(openWork: []).build(ChatBlock.build(ChatStore.buildRows(items)), live: nil)
         let screen = ChatTrace.screen(lines, live: 0, streaming: false, running: false, frozen: false, withheld: 0)
-        #expect(screen.contains("a6"))
-        #expect(screen.contains("work(4)"))
-        #expect(!screen.contains("a3"))
+        #expect(screen.contains("a6") && screen.contains("a9"))
+        #expect(screen.contains("work(4)") && screen.contains("work(1)"))
+        #expect(!screen.contains("a2") && !screen.contains("a4"))
         #expect(!screen.contains(secret) && !screen.contains("好了"))
 
-        let batch = ChatTrace.batch(items, span: ItemSpan(history: "h", from: 0, to: 6), backlog: false, gap: .none, resets: 0, covered: 6)
-        #expect(batch == "items n=6 seq=1-6 [a2,tool_use2,u1,wake1] span=0..6 gap=none covered=6 resets=0")
+        let batch = ChatTrace.batch(items, span: ItemSpan(history: "h", from: 0, to: 9), backlog: false, gap: .none, resets: 0, covered: 9)
+        #expect(batch == "items n=9 seq=1-9 [a4,tool_use3,u1,wake1] span=0..9 gap=none covered=9 resets=0")
         #expect(!batch.contains(secret))
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import PersonaWire
 
 /// Capabilities follow provenance, never the extension's current running state.
 /// Raw origins may contain local paths or credentials and must not be shown.
@@ -348,8 +349,8 @@ nonisolated struct ExtensionSettingsPolicy {
         await operations.dismiss(op.id, manager: op.manager)
     }
 
-    /// What the hub has going on, when the page opens (one started earlier shows its steps).
-    func loadOperations() async { await operations.reload() }
+    /// What the hub has going on for this page's manager, when the page opens (one started earlier shows its steps).
+    func loadOperations() async { await operations.reload(manager: manager) }
 
     private func record(_ error: Error) {
         if let apiError = error as? APIError, [404, 405, 501].contains(apiError.status) {

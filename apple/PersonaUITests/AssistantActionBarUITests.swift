@@ -99,4 +99,68 @@ final class AssistantActionBarUITests: XCTestCase {
     @MainActor private func rowLabels(_ app: XCUIApplication) -> [String] {
         (app.trayTasks.allElementsBoundByIndex + app.trayAgents.allElementsBoundByIndex).map(\.label)
     }
+
+    /// The entries at every text size (#5702): side by side at the largest size they made the row, and with it the whole
+    /// chat page, wider than the screen, the header's avatar and the composer's buttons cut off at the edges. Now they go
+    /// on to the next line when they don't fit. zh-Hans, English and Japanese, the default and the largest size, light
+    /// and dark; `PERSONA_SHOTS` keeps `actionbar-width-<language>-<size>-<scheme>.png`. `PERSONA_PHASE=before` takes
+    /// the same screenshots on an older build, checking nothing.
+    @MainActor func testEntriesStayOnScreenAtEveryTextSize() throws {
+        let env = ProcessInfo.processInfo.environment
+        let before = env["PERSONA_PHASE"] == "before"
+        let url = "persona://pair?url=" + hub.addingPercentEncoding(withAllowedCharacters: .alphanumerics)! + "&token=mock"
+        let languages: [(String, [String])] = [
+            ("zh-Hans", []),
+            ("en", ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]),
+            ("ja", ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]),
+        ]
+        for (language, languageArgs) in languages {
+            for size in ["default", "largest"] {
+                for scheme in ["light", "dark"] {
+                    let name = "\(language)-\(size)-\(scheme)"
+                    let app = XCUIApplication()
+                    let largest = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+                    app.launchArguments = ["-pairURL", url, "-tab", "assistant", "-dev.openChat", "", "-ui.scheme", scheme,
+                                           "-openAssistant", "server/b2e4d6f8-0000-4000-8000-000000000001"]
+                        + languageArgs + (size == "largest" ? largest : [])
+                    app.launchPinned()
+                    let board = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+                    for label in ["允许", "Allow"] where board.buttons[label].waitForExistence(timeout: 3) { board.buttons[label].tap() }
+
+                    let needs = app.buttons["action-bar.needs-you"]
+                    let running = app.buttons["action-bar.running"]
+                    XCTAssertTrue(running.waitForExistence(timeout: 20), "\(name): no action bar:\n\(app.debugDescription)")
+                    let deadline = Date.now.addingTimeInterval(20)
+                    while !(needs.label.contains(where: \.isNumber) && running.label.contains(where: \.isNumber)) && Date.now < deadline {
+                        usleep(200_000)
+                    }
+                    sleep(2) // the conversation above settles
+                    if !before {
+                        let window = app.windows.firstMatch.frame
+                        let bar = app.descendants(matching: .any)["action-bar"].firstMatch
+                        let avatar = app.descendants(matching: .any)["persona-avatar"].firstMatch
+                        XCTAssertTrue(bar.exists, "\(name): \(app.debugDescription)")
+                        for (what, element) in [("the bar", bar), ("Needs You", needs), ("In Progress", running), ("the avatar", avatar)]
+                        where element.exists {
+                            XCTAssertGreaterThanOrEqual(element.frame.minX, window.minX - 0.5, "\(name): \(what) starts left of the screen")
+                            XCTAssertLessThanOrEqual(element.frame.maxX, window.maxX + 0.5, "\(name): \(what) ends right of the screen")
+                        }
+                        if size == "default" {
+                            XCTAssertEqual(needs.frame.midY, running.frame.midY, accuracy: 0.5, "\(name): not one row")
+                        }
+                    }
+                    if let dir = env["PERSONA_SHOTS"] {
+                        // The app icon follows the color scheme, and the system says so in an alert over the page: closed first.
+                        if board.alerts.firstMatch.waitForExistence(timeout: 2) {
+                            for label in ["OK", "好"] where board.alerts.buttons[label].exists { // i18n-ignore: the system's own button
+                                board.alerts.buttons[label].tap(); sleep(1); break
+                            }
+                        }
+                        try app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dir)/actionbar-width-\(name).png"))
+                    }
+                    app.terminate()
+                }
+            }
+        }
+    }
 }

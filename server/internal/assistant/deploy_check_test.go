@@ -16,12 +16,20 @@ import (
 // fakeForge is GitHub as a deploy check sees it: one PR (merged or not, its merge commit) and which hub commits
 // contain it.
 type fakeForge struct {
-	mu       sync.Mutex
-	merged   bool
-	sha      string
-	contains map[string]bool // by hub commit; a commit not in it is not in the repository
-	err      error
-	calls    int
+	mu        sync.Mutex
+	merged    bool
+	sha       string
+	contains  map[string]bool // by hub commit; a commit not in it is not in the repository
+	err       error
+	issueOnly bool
+	issueErr  error
+	calls     int
+}
+
+func (f *fakeForge) IsPR(context.Context, string, int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.issueOnly, f.issueErr
 }
 
 func (f *fakeForge) PRMerge(_ context.Context, repo string, number int) (bool, string, error) {

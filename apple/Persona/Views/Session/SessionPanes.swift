@@ -184,6 +184,9 @@ struct TerminalPanel: View {
     @State private var dropping = false
     /// Resume Session is on its way (the node opens a tab and waits for Claude, up to a couple of minutes).
     @State private var resuming = false
+    /// Resume in Terminal (#5521): resume the stopped Agent once, as the panel comes up.
+    var resumeOnOpen = false
+    @State private var resumedOnOpen = false
     /// Switches the page to another session (two-finger swipes); nil where the panel cannot (the full-screen sheet).
     var switchTo: ((SessionKey) -> Void)?
     /// The keyboard came up on the terminal or went down (the page folds its header meanwhile).
@@ -197,10 +200,11 @@ struct TerminalPanel: View {
     /// Older than this without a fresh screen counts as stale even before anything fails (a request may hang).
     static let staleAfter: TimeInterval = 4
 
-    init(key: SessionKey, switchTo: ((SessionKey) -> Void)? = nil, onKeyboard: ((Bool) -> Void)? = nil, grab: TerminalGrab? = nil,
-         active: Bool? = nil) {
+    init(key: SessionKey, switchTo: ((SessionKey) -> Void)? = nil, resumeOnOpen: Bool = false, onKeyboard: ((Bool) -> Void)? = nil,
+         grab: TerminalGrab? = nil, active: Bool? = nil) {
         self.key = key
         self.switchTo = switchTo
+        self.resumeOnOpen = resumeOnOpen
         self.onKeyboard = onKeyboard
         self.grab = grab
         self.active = active
@@ -229,6 +233,12 @@ struct TerminalPanel: View {
         .animation(Theme.Motion.standard, value: typing)
         .animation(Theme.Motion.standard, value: keyboardUp)
         .onChange(of: keyboardUp) { _, up in onKeyboard?(up) }
+        .task {
+            // Resume in Terminal (#5521): once, the way its Resume Session does, so the progress and the Agent show here.
+            guard resumeOnOpen, !resumedOnOpen, canResume else { return }
+            resumedOnOpen = true
+            resumeSession()
+        }
         .onChange(of: active, initial: true) { _, on in
             guard let on else { return }
             if on { if direct { keyboardUp = true } else { typing = true } } else { keyboardUp = false; typing = false }
@@ -404,6 +414,11 @@ struct TerminalPanel: View {
             EmptyStateView(symbol: Theme.Icon.terminal, title: String(localized: "No Terminal"),
                            message: String(localized: "This Agent has stopped. Resume runs it again in a terminal on its computer."),
                            action: (title: String(localized: "Resume Session"), run: resumeSession))
+        } else if let s = model.session(key), s.terminalResume(on: model.machine(s.machineRef)) == .noEngine {
+            // Nothing could host a resume there (#5521): say so instead of offering one that can only fail.
+            EmptyStateView(symbol: Theme.Icon.terminal, title: String(localized: "No Terminal"),
+                           message: String(localized: "This session isn't running, and \(model.machine(s.machineRef)?.name ?? s.machineID) has no terminal engine to resume it in.",
+                                           comment: "The terminal of a session that isn't running, on a computer that enables no terminal engine"))
         } else {
             EmptyStateView(symbol: Theme.Icon.terminal, title: String(localized: "No Terminal"),
                            message: String(localized: "This session isn't running on its computer."))
@@ -415,6 +430,9 @@ struct TerminalPanel: View {
     /// not being started.
     private var canResume: Bool {
         guard let s = model.session(key), !s.assistant, s.starting != true else { return false }
+        // Nothing to resume it in (#5521): the same rule as ⋯'s Resume in Terminal. Its computer is read only for a
+        // session that isn't running, so a live terminal never watches the machines (P5).
+        if s.status == .offline || s.status == .unknown, s.terminalResume(on: model.machine(s.machineRef)) == .noEngine { return false }
         return s.isStopped || (s.sourceKind == "codex_history" && s.canTerminal) || (!s.hasSource && s.isClaude)
     }
 
@@ -562,9 +580,10 @@ struct TerminalPanel: View {
         }
     }
 
-    /// Over the page (TerminalCover): a bar on top in every state — its size on the left, the handle, settings and Close
-    /// on the right. Dragged down it takes the terminal with it (far or fast enough: closed); a tap on the handle or on
+    /// Over the page (TerminalCover): a bar on top in every state — Close and its size on the left (#9653), the handle,
+    /// settings on the right. Dragged down it takes the terminal with it (far or fast enough: closed); a tap on the handle or on
     /// Close closes it. With no terminal (#4328) only the handle and Close: size and settings have nothing to act on.
+    /// A terminal that can be renamed (#6996) has ⋯ in the settings button's place: Rename… and Terminal Settings.
     private func grabBar(_ g: TerminalGrab) -> some View {
         let fg = Color(hex: side.foreground)
         return ZStack {
@@ -574,19 +593,7 @@ struct TerminalPanel: View {
                 .onTapGesture { Haptics.tap(); g.close() }
                 .accessibilityHidden(true) // Close says it
             HStack(spacing: Theme.Space.sm) {
-                if !noTerminal {
-                    if feed.wantsControl, feed.control != .off { sizeChip } else { wrapToggle }
-                    if feed.loading { ProgressView().controlSize(.mini).tint(fg) }
-                }
-                Spacer(minLength: 0)
-                if !noTerminal {
-                    Button { Haptics.tap(); showSettings = true } label: {
-                        ThemedIcon(Theme.Icon.options).font(Theme.Font.captionStrong).scaledFrame(width: Theme.Size.well, height: Theme.Size.iconL)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(fg.opacity(0.75))
-                    .accessibilityLabel("Terminal Settings")
-                }
+                // The way out first, at the leading corner, as on every presented page (#9653).
                 Button { Haptics.tap(); g.close() } label: {
                     ThemedIcon(Theme.Icon.clear).symbolRenderingMode(.hierarchical).font(Theme.Font.title)
                         .scaledFrame(width: Theme.Size.tapTarget, height: Theme.Size.tapTarget)
@@ -596,10 +603,35 @@ struct TerminalPanel: View {
                 .foregroundStyle(fg.opacity(0.75))
                 .accessibilityLabel("Close Terminal")
                 .accessibilityIdentifier("terminal-close")
+                if !noTerminal {
+                    if feed.wantsControl, feed.control != .off { sizeChip } else { wrapToggle }
+                    if feed.loading { ProgressView().controlSize(.mini).tint(fg) }
+                }
+                Spacer(minLength: 0)
+                if !noTerminal, let rename = g.rename {
+                    Menu {
+                        Button(action: rename) { Label("Rename… [Assistant Sidebar ec4cd0]", systemImage: Theme.Icon.edit) }
+                        Button { showSettings = true } label: { Label("Terminal Settings", systemImage: Theme.Icon.options) }
+                    } label: {
+                        ThemedIcon(Theme.Icon.more).font(Theme.Font.captionStrong).foregroundStyle(fg.opacity(0.75))
+                            .scaledFrame(width: Theme.Size.well, height: Theme.Size.iconL)
+                            .contentShape(.rect)
+                    }
+                    .labelOnlyMenu()
+                    .accessibilityLabel("Terminal actions")
+                    .accessibilityIdentifier("terminal-more")
+                } else if !noTerminal {
+                    Button { Haptics.tap(); showSettings = true } label: {
+                        ThemedIcon(Theme.Icon.options).font(Theme.Font.captionStrong).scaledFrame(width: Theme.Size.well, height: Theme.Size.iconL)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(fg.opacity(0.75))
+                    .accessibilityLabel("Terminal Settings")
+                }
             }
         }
-        .padding(.leading, Theme.Space.m)
-        .padding(.trailing, Theme.Space.xs)
+        .padding(.leading, Theme.Space.xs)
+        .padding(.trailing, Theme.Space.m)
         .scaledFrame(height: Theme.Size.tapTarget)
         .contentShape(.rect)
         .modifier(TerminalGrabDrag(grab: g))
@@ -903,7 +935,7 @@ private struct TerminalFeedLink: View {
         #if DEBUG || PERF_SIGNPOST
         let _ = PerfTrace.body("TerminalFeedLink")
         #endif
-        TerminalLinkStatus(lastOK: feed.lastOK, failure: feed.failure, nextTry: feed.nextTry) {
+        TerminalLinkStatus(lastOK: feed.lastOK, failure: feed.failure, nextTry: feed.nextTry, waitingSince: feed.waitingSince) {
             Haptics.tap()
             feed.retryNow(model)
         }
@@ -976,18 +1008,20 @@ struct TerminalTips: View {
 }
 
 /// Atop the terminal while what it shows may be old: how long since the last fresh screen, why, when the
-/// next try is — and a button to try now. Hidden while refreshes keep arriving.
+/// next try is — and a button to try now. Hidden while refreshes keep arriving. Before the first screen it counts from
+/// when the terminal asked for it (waitingSince), as the web does: a wait never goes unexplained (#6327).
 struct TerminalLinkStatus: View {
     var lastOK: Date?
     var failure: String?
     var nextTry: Date
+    var waitingSince: Date? = nil
     var retry: () -> Void
 
     private var tint: Color { failure != nil ? Theme.danger : Theme.caution }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
-            let stale = lastOK.map { ctx.date.timeIntervalSince($0) > TerminalPanel.staleAfter } ?? false
+            let stale = (lastOK ?? waitingSince).map { ctx.date.timeIntervalSince($0) > TerminalPanel.staleAfter } ?? false
             if failure != nil || stale {
                 HStack(spacing: Theme.Space.s) {
                     ThemedIcon(failure != nil ? Theme.Icon.offline : Theme.Icon.recent)
@@ -1261,7 +1295,7 @@ struct ActivitySheet: View {
             .background(Theme.pageBackground)
             .navigationTitle(loop != nil && background.isEmpty ? String(localized: "Loop") : loop == nil ? String(localized: "Background Task") : String(localized: "Loop & Background Tasks"))
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } }
+            .toolbar { SheetClose { dismiss() } }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -1563,7 +1597,7 @@ struct SubagentTreeSheet: View {
             .background(Theme.pageBackground)
             .navigationTitle("All Subagents")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done [Extension System Presentation c0b3fb]") { dismiss() } } }
+            .toolbar { SheetClose { dismiss() } }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
@@ -1655,6 +1689,8 @@ struct TerminalGrab {
     var dragged: (CGFloat) -> Void
     var released: (_ distance: CGFloat, _ predicted: CGFloat) -> Void
     var close: () -> Void
+    /// Rename… (#6996): the bar's settings button becomes ⋯ with Rename… and Terminal Settings.
+    var rename: (() -> Void)? = nil
 }
 
 /// The cover's drag down, on its bar and on the no-terminal state (#4328): the terminal follows the finger, and goes

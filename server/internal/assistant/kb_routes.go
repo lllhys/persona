@@ -164,6 +164,7 @@ func (s *Service) kbRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
+		ignored := kb.Unsupported(r.PathValue("kind"), u.Update) // not applied: said, not dropped silently
 		id, err := e.ApplyUser(r.PathValue("kind"), r.PathValue("id"), u)
 		if errors.Is(err, kb.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, err)
@@ -172,7 +173,11 @@ func (s *Service) kbRoutes() {
 			apierr.Write(w, http.StatusBadRequest, err)
 			return
 		}
-		apierr.WriteJSON(w, map[string]any{"id": id})
+		out := map[string]any{"id": id}
+		if len(ignored) > 0 {
+			out["ignored"] = ignored
+		}
+		apierr.WriteJSON(w, out)
 	})
 	// A project's soft delete and its Undo (#4412, docs/assistant/knowledge.md "Deleting a project").
 	s.handle("DELETE /api/v1/kb/projects/{id}", func(w http.ResponseWriter, r *http.Request) {

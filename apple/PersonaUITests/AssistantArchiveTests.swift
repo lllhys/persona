@@ -63,7 +63,7 @@ final class AssistantArchiveTests: XCTestCase {
         XCTAssertTrue(archived.waitForNonExistence(timeout: 5), "\(layout): still archived")
         XCTAssertTrue(app.staticTexts["没有归档的对话"].waitForExistence(timeout: 3), "\(layout): no empty state")
         shot("\(layout) archived empty")
-        app.buttons["完成"].firstMatch.tap()
+        app.buttons["sheet-close"].firstMatch.tap()
         XCTAssertTrue(conversation("帮我约周五").waitForExistence(timeout: 5), "\(layout): not back in the list")
         XCTAssertFalse(app.buttons["sidebar-archived"].exists, "\(layout): 已归档 with nothing in it")
     }

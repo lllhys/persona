@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Persona
+import PersonaWire
 
 /// Settings › Connectors › Telegram: the sign-in a step at a time against the hub (docs/archive/extensions/plan-telegram.md), the switch, deleting
 /// what it brought in. Made-up values only.
@@ -54,6 +55,46 @@ struct ConnectorSignInTests {
         #expect(m.prompt == nil) // done
         let sent = hub.sent("POST", "/api/v1/connectors/telegram/login").map { step($0).0 }
         #expect(sent == ["", "credentials", "phone", "code", "code"])
+    }
+
+    /// A 502 whose diagnostic contains a timeout used to be swallowed by AppModel.show's isQuiet filter.
+    @Test func deviceCodeFailureStaysVisibleAndCanBeRetried() async throws {
+        let hub = FakeHub()
+        let failure = APIError(status: 502, message: "The hub cannot reach github.com: context deadline exceeded. Configure github.proxy in manager.json.",
+                               fields: ["code": "internal"])
+        #expect(failure.isQuiet, "the global reporter would suppress this failure")
+        hub.on("POST", "/api/v1/connectors/github/login") { _ in throw failure }
+        var reported = false
+        let m = ConnectorSignInModel(id: "github", deps: ConnectorDeps(api: { hub.client }, report: { _ in reported = true }))
+        await m.start()
+        #expect(m.signInError == failure.message, "keep the hub's reason instead of a generic 502")
+        #expect(m.prompt == nil && !m.busy)
+        #expect(!reported, "the login region owns the error")
+
+        hub.onAsync("POST", "/api/v1/connectors/github/login") { _ in
+            #expect(m.busy && m.signInError == nil, "retry shows progress and clears the previous failure")
+            return Data(#"{"step":"device","kind":"device_code","user_code":"ABCD-1234","url":"https://github.com/login/device"}"#.utf8)
+        }
+        await m.start()
+        #expect(m.prompt?.userCode == "ABCD-1234" && m.signInError == nil && !m.busy)
+        #expect(hub.sent("POST", "/api/v1/connectors/github/login").count == 2)
+    }
+
+    @Test func aFailedStepKeepsInputAndCancellationStaysQuiet() async throws {
+        let hub = FakeHub()
+        hub.on("POST", "/api/v1/connectors/telegram/login", json: #"{"step":"code","fields":[{"name":"code","label":"Code"}]}"#)
+        let m = model(hub)
+        await m.start()
+        m.values["code"] = "12345"
+        hub.on("POST", "/api/v1/connectors/telegram/login") { _ in throw URLError(.timedOut) }
+        await m.next()
+        #expect(m.signInError != nil && m.prompt?.step == "code")
+        #expect(m.values["code"] == "12345" && m.canSend && !m.busy)
+        m.cancel()
+        #expect(m.signInError == nil && m.prompt == nil)
+        hub.on("POST", "/api/v1/connectors/telegram/login") { _ in throw CancellationError() }
+        await m.start()
+        #expect(m.signInError == nil && !m.busy)
     }
 
     @Test func switchAndDelete() async throws {

@@ -8,5 +8,12 @@
   "agent_profile_refused": "sandbox-exec 不接受这次的规则：{err}",
   "agent_too_many_args": "Linux agent 命令有 {count} 个 bwrap 参数，超过 {limit} 的上限；减少数据目录顶层条目或显式别名",
   "agent_unsupported": "agent 沙箱支持 macOS 和 Linux，这个系统（{os}）上不支持",
-  "probe_tmp": "探测沙箱无法创建临时目录：{err}"
+  "probe_tmp": "探测沙箱无法创建临时目录：{err}",
+  "allow_empty": "请填要放行的地址。",
+  "allow_wildcard": "只能放行具体的地址，不能用 *。",
+  "allow_form": "写主机名或 IP 地址，需要时带端口：rss.example.org 或 rss.example.org:8443。",
+  "allow_port": "端口是 1 到 65535 的数字。",
+  "allow_loopback": "本机的服务不在这里放行：扩展用 {name} 连它们，要在它的 manifest 里申请。",
+  "allow_unreachable": "这个地址不能放行：它是链路本地、组播或云服务器的元数据地址。",
+  "allow_too_many_other": "一个扩展最多放行 {count} 个地址。"
 }

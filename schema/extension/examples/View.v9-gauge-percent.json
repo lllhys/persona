@@ -1,0 +1,12 @@
+{
+  "sections": [
+    {
+      "items": [
+        {"type": "carousel", "key": "disks", "width": "narrow", "tiles": [
+          {"key": "disk.root", "title": "Disk", "subtitle": "of 512 GB", "icon": "folder", "gauge": {"ratio": 0}},
+          {"key": "disk.data", "title": "Data", "color": "indigo", "gauge": {"ratio": 1}}
+        ]}
+      ]
+    }
+  ]
+}

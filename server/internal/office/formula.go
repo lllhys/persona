@@ -46,7 +46,13 @@ type xsheet struct {
 
 type xbook struct {
 	sheets map[string]*xsheet // by lower-cased name
+	// Range evaluation is opportunistic: leave remaining caches empty for Excel when the shared budget is spent.
+	rangeCells int
 }
+
+// Large ranges of empty cells must not expand into an unbounded slice; a workbook can contain many ranges too.
+const maxCachedRangeCells = 65536
+const maxCachedWorkbookRangeCells = 262144
 
 // eval is the value of a cell, working its formula out the first time; ok false when it cannot be worked out here.
 func (b *xbook) eval(sh *xsheet, col, row int) (value, bool) {
@@ -140,6 +146,12 @@ func (e refExpr) cells(b *xbook, sh *xsheet) ([]value, error) {
 	if target == nil {
 		return []value{errv("#REF!")}, nil
 	}
+	cols, rows := max(e.c1, e.c2)-min(e.c1, e.c2)+1, max(e.r1, e.r2)-min(e.r1, e.r2)+1
+	// Check by division before multiplying so even malformed coordinates cannot overflow.
+	if cols <= 0 || rows <= 0 || cols > maxCachedRangeCells/rows || cols*rows > maxCachedWorkbookRangeCells-b.rangeCells {
+		return nil, errUnsupported
+	}
+	b.rangeCells += cols * rows
 	var out []value
 	for c := min(e.c1, e.c2); c <= max(e.c1, e.c2); c++ {
 		for r := min(e.r1, e.r2); r <= max(e.r1, e.r2); r++ {
@@ -703,8 +715,9 @@ func parseRef(s string) (int, int, bool) {
 		return 0, 0, false
 	}
 	row, err := strconv.Atoi(s[i:])
-	if err != nil || row < 1 {
+	col := colNumber(s[:i])
+	if err != nil || row < 1 || row > maxRows || col < 1 || col > maxCols {
 		return 0, 0, false
 	}
-	return colNumber(s[:i]) - 1, row - 1, true
+	return col - 1, row - 1, true
 }

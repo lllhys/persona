@@ -6,15 +6,34 @@
     <plurals name="chat_assistant_checked">
         <item quantity="other">查了 %1$d 处</item>
     </plurals>
-    <plurals name="chat_assistant_dispatched">
-        <item quantity="other">派出 %1$d 件</item>
-    </plurals>
-    <string name="chat_assistant_dispatched_one">派出 1 件：%1$s</string>
-    <string name="chat_assistant_dispatch_open">打开</string>
-    <string name="chat_assistant_dispatch_open_line">· %1$s</string>
+    <string name="chat_handoff_wake_active">已在运行</string>
+    <string name="chat_handoff_wake_resumed">已恢复</string>
+    <string name="chat_handoff_last_active">%1$s活跃过</string>
+    <string name="chat_handoff_active_now">刚刚活跃过</string>
+    <string name="chat_handoff_not_active">还没有动静</string>
+    <string name="chat_handoff_not_started">没开起来</string>
+    <string name="chat_start_failed_details">没能开始。打开任务可看原因。</string>
+    <string name="chat_start_cause_connection">和这台电脑的连接断了</string>
+    <string name="chat_start_cause_offline">这台电脑不在线</string>
+    <string name="chat_start_cause_timeout">启动花的时间太久了</string>
+    <string name="chat_start_cause_denied">这台电脑没有允许</string>
+    <string name="chat_start_cause_update">这台电脑上的 Persona 需要更新</string>
+    <string name="chat_handoff_interrupted">中断了 · %1$s</string>
+    <string name="chat_usage_limit">用量到上限</string>
+    <string name="chat_usage_limit_resets">用量到上限 · %1$s 重置</string>
+    <string name="chat_usage_limit_resumes">用量到上限 · %1$s 继续</string>
+    <string name="chat_usage_limit_resumes_after">用量到上限 · 重置后继续</string>
+    <string name="chat_usage_resets">%1$s 重置</string>
+    <string name="chat_usage_resumes">%1$s 继续</string>
+    <string name="chat_usage_resumes_after">重置后继续</string>
+    <string name="chat_handoff_gone">没有这个任务了</string>
+    <string name="chat_handoff_closed">还没开 Agent 就结束了</string>
+    <string name="chat_handoff_minutes_ago">%1$d 分钟前</string>
+    <string name="chat_handoff_hours_ago">%1$d 小时前</string>
+    <string name="chat_handoff_days_ago">%1$d 天前</string>
     <!-- #4314: a background round of the main conversation folded into one line. -->
-    <string name="chat_background_round">%1$s · 后台轮次</string>
-    <string name="chat_background_round_live">%1$s · 后台运行中</string>
+    <string name="chat_background_round">%1$s · 后台回报</string>
+    <string name="chat_background_round_live">%1$s · 后台处理中…</string>
     <!-- Needs you grouped by supervising conversation: a conversation without a title. -->
     <string name="chat_tray_other_conversation">其他对话</string>
 </resources>

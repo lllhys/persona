@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="chat_rule_always">Always</string>
+    <string name="chat_rule_not_now">Not now</string>
+    <string name="chat_rule_scope">Applies to %1$s</string>
+    <string name="chat_rule_creates_trust">Always remembers this kind of task: Persona starts ones like it directly, without a plan card.</string>
+    <string name="chat_rule_creates_standing">Always creates a standing authorization: %1$s.</string>
+    <string name="chat_rule_action_merge">merge</string>
+    <string name="chat_rule_action_push">push</string>
+    <string name="chat_rule_action_deploy_test">deploy to the test environment</string>
+    <string name="chat_rule_conditions">Only when: %1$s</string>
+    <string name="chat_rule_condition_ci_green">checks pass</string>
+    <string name="chat_rule_condition_no_conflicts">no conflicts</string>
+    <string name="chat_rule_quote">Kept as your words: “%1$s”</string>
+    <string name="chat_rule_creates_none">Always stores no rule and puts this line away.</string>
+    <string name="chat_rule_creates_none_setting">Always stores no rule and puts this line away. Persona answers such questions first only once %1$s is turned on in the assistant\'s configuration file on the hub\'s computer.</string>
+    <string name="chat_rule_made_trust">Rule made: tasks like this now start directly. It is listed, and can be removed, under Remembered auto-start rules in Persona\'s settings in the web app.</string>
+    <string name="chat_rule_made_standing">Standing authorization added. It is listed, and revoked, in the assistant\'s profile under Standing Authorizations.</string>
+    <string name="chat_rule_made_none">No rule was stored.</string>
+    <string name="chat_rule_made_none_setting">No rule was stored. To let Persona answer such questions first, turn on %1$s in the assistant\'s configuration file on the hub\'s computer.</string>
+    <string name="chat_rule_made_other">Rule made.</string>
+    <string name="chat_decision_for_briefing">Comes with the next briefing</string>
+</resources>

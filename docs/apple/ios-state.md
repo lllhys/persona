@@ -85,7 +85,8 @@ Step 6 (#270) made the hub send `sessions_delta`: it remembers the sessions sent
 
 The most expensive part of a push is the Agents list body (grouping, sorting, folding, counting), so its `AgentsFeed` publishes structure separately from rows:
 - One `AgentsFeed.Row` (`@Observable`) per Agent; rows (`SlotRow` / `CompactSlotRow`) read it, and a push updates only the changed `Row`s;
-- `sessions`, read by list body, is replaced only when structure changes: compare `AgentsFeed.shape`, i.e. sessions with row-only fields removed (`rev`, last line, ports, queue, suggestions, modes, model, seen time; time rounded to minutes; sub-Agents and background tasks reduced to whether any are running);
+- `sessions`, read by list body, is replaced only when structure changes: compare `AgentsFeed.shape`, i.e. sessions with row-only fields removed (`rev`, last line, ports, queue, suggestion text and its risk flag, modes, model, seen time; time rounded to minutes; sub-Agents and background tasks reduced to whether any are running);
+  a bounded summary merge preserves both suggestion fields with the other chat-only details, while the open-chat comparison still sees a risk-only change and redraws the pill;
 - during search the list filters by last line, so last line becomes structural (`searching`);
 - holding and critical bypass stay: `Row`s and structure land together, and critical updates update only listed rows too (`landCritical`);
 - `probe.agents-list` reads each row (`AgentsListProbe`), measuring what's drawn, not the list structure.
@@ -157,7 +158,7 @@ Two checks preserve steps 1–3; regressions turn tests red:
 - `RenderBudgetTests` fails above budget: with the page at rest, a push changes one field in one session (average of 5 per type); views recomputed per push must stay within budget.
   Budgets are the numbers in "Cost of one push" above: Agents list `rev` 1 (that row's time), `last` 2 (that row and its time), Agent chat and Persona chat both 0;
   one extra call across 5 pushes is allowed (0.2, a row's time happens to cross its refresh boundary); two extra calls count as regression.
-- `AllSessionsReadersTests` (PersonaTests, source scan): only Agent-listing views under `Persona/Views` and `Mac` may read `allSessions`; each file's read count and reason are registered in the test,
+- `AllSessionsReadersTests` (PersonaTests, source scan): only Agent-listing views under `Persona/Views` may read `allSessions`; each file's read count and reason are registered in the test,
   and adding or removing a read requires updating the registration:
   - single-session displays read `model.session(_:)` cells;
   - actions needing all sessions only when tapped (@ menus, quoting another session, next / previous Agent, terminal space switching) read `model.sessionsNow`: the same data as `allSessions`, unobserved,
@@ -214,7 +215,7 @@ After any push sequence combined with any actions ends, the screen returns to hu
 
 ### Snapshot refresh ownership (#1634)
 
-Todo and session invalidations use `apple/Persona/App/CoalescedRefresh.swift`: one active read and one latest dirty follow-up, without a fixed cooldown or a new freshness delay. Hints received during a read merge; the trailing read reconciles them. A fast read that finishes before the next hint may still produce one GET per hint. Single-flight is not a request-rate quota, and reducing full todo bodies further depends on a compatibility-preserving manager-side delta/conditional protocol.
+Todo and session invalidations use `apple/Persona/App/CoalescedRefresh.swift`: one active read and one latest dirty follow-up, without a fixed cooldown or a new freshness delay. The hub's session lists add one bound while no Agents list is in sight (#9487, the web's #9042): their hint reads go at most once per 2 s window (`apple/Persona/App/HintWindow.swift`); the first hint after a quiet window reads at once, the hints inside a window share one read at its end, and a list coming into sight reads what waits at once (`RuntimeSessionLists.listInSight`, from `AgentsCoverWatch`). A list in sight reads every hint as before, so the timeliness table holds for what is on screen. A busy hub sends about one hint a second; out of sight that was a list read and a counts read for each. Hints received during a read merge; the trailing read reconciles them. A fast read that finishes before the next hint may still produce one GET per hint. Single-flight is not a request-rate quota, and reducing full todo bodies further depends on a compatibility-preserving manager-side delta/conditional protocol.
 
 Manual reads share an eligible active or queued read. Post-write confirmation cannot join a GET started before the write; todo publication is fenced by hub generation and local mutation revision. A cancelled UI waiter does not cancel another owner's shared read. Reset ends old waits and rejects late old-generation data. Session refresh preserves its frozen paging window and delta checkpoint; a manual refresh absorbs the existing short hint-merging task without swallowing its last invalidation.
 
@@ -442,7 +443,7 @@ Why it works this way:
 Measurement: decode simulator recordings frame by frame, calculate content displacement relative to the previous frame, last-row distance from the composer, and "large change then reversal within a frame" jumps. In the App, `-scrollTrace YES`
 records UIKit / AppKit offset, content height, finger / inertia, and follow state each frame (`ScrollTrace`). Cases: `StreamingScrollTests` (mock `/mock/say?preset=markdown`:
 code blocks, tables, lists, delta every 80 ms like the hub; `&late=600` clears first and sends the committed message 600 ms later). A locked Mac can't record the screen and has no real trackpad:
-`MacScrollLab` sends synthetic two-finger scroll and inertia to the list, rendering the window every 0.1 s (`docs/apple/mac.md`). Tools live in `scripts/diag/stream-scroll/`.
+`MacScrollLab` sent synthetic two-finger scroll and inertia to the list, rendering the window every 0.1 s (`docs/archive/apple/mac.md`). Tools live in `scripts/diag/stream-scroll/`.
 
 | Symptom (before the fix) | Cause | Fix |
 | --- | --- | --- |

@@ -105,7 +105,7 @@ func (b *inboxBook) applyConnector(id, name string, things []connector.InboxThin
 			if open.Last != t.Last && (t.At.IsZero() || !t.At.Before(open.UpdatedAt)) {
 				prev := seenOf(open)
 				b.roundWrite(open)
-				open.Count++
+				open.Count += moveCount(t)
 				fillConnectorItem(open, t)
 				b.noteReceived(open, prev, nil)
 				if t.Tier != "" {
@@ -144,7 +144,7 @@ func (b *inboxBook) applyConnector(id, name string, things []connector.InboxThin
 		if b.has(itemID) {
 			continue // this move started an item already (one handled since): adding it again would replace that item
 		}
-		it := &InboxItem{ID: itemID, Source: id, Account: id, AccountName: name, StartedAt: t.At, Count: 1}
+		it := &InboxItem{ID: itemID, Source: id, Account: id, AccountName: name, StartedAt: t.At, Count: moveCount(t)}
 		fillConnectorItem(it, t)
 		b.noteReceived(it, inboxSeen{}, nil)
 		if t.Tier != "" {
@@ -187,6 +187,15 @@ func (b *inboxBook) settleThing(open *InboxItem, t connector.InboxThing, now tim
 	return true
 }
 
+// moveCount is how many messages a thing's move brings: its extra.count where its source says what that is
+// (InboxSource.Counts; collectSource clears it elsewhere), else one.
+func moveCount(t connector.InboxThing) int {
+	if t.Extra != nil && t.Extra.Count > 1 {
+		return t.Extra.Count
+	}
+	return 1
+}
+
 func fillConnectorItem(it *InboxItem, t connector.InboxThing) {
 	it.Kind, it.Title, it.Sender, it.Preview, it.Context = t.Kind, t.Title, t.Sender, t.Preview, t.Context
 	it.UpdatedAt, it.Last, it.Rules = t.At, t.Last, t.Rules
@@ -203,6 +212,9 @@ func fillConnectorItem(it *InboxItem, t connector.InboxThing) {
 		rule = connector.Tier(t.Extra.RuleTier) // its fallback (capability fallback): the model still sorts it first
 	}
 	it.Connector = &InboxConnector{Thread: t.Thread, Label: t.Label, URL: t.URL, OpenURL: t.OpenURL, ReplyTo: t.ReplyTo, CanReply: t.CanReply, RuleTier: string(rule), Tags: t.Tags}
+	if where := whereOf(t.Tags); where != "" {
+		it.Where = where
+	}
 	if t.Tier != "" {
 		setRuleTier(it, t)
 	}
@@ -211,7 +223,7 @@ func fillConnectorItem(it *InboxItem, t connector.InboxThing) {
 // setRuleTier gives an item the tier its connector's rules decided: triage leaves it alone (it is triaged at this
 // move), the reason is the rule.
 func setRuleTier(it *InboxItem, t connector.InboxThing) {
-	it.Tier, it.Reason, it.TriagedAt = string(t.Tier), t.Why, it.Last
+	it.Tier, it.Reason, it.TriagedAt, it.TriageRev = string(t.Tier), t.Why, it.Last, inboxTriageRev
 	if it.Connector != nil {
 		it.Connector.RuleTier = string(t.Tier)
 	}

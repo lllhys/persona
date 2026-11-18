@@ -20,6 +20,7 @@
   "ask_busy": "いま 2 件の質問に回答中です。どちらかの回答が終わってから聞いてください。",
   "meeting_ended": "この会議は終わりました。続きは会議後の会話でどうぞ。",
   "bad_private": "private は true か false にしてください。",
+  "bad_title": "タイトルは 1 行、200 文字以内にしてください。",
   "not_meeting": "この録音は会議ではありません。",
   "text_too_long": "テキストが {max} 文字を超えています。",
   "too_many_images": "画像は {max} 枚までです。",
@@ -38,5 +39,13 @@
   "photo_not_found": "この会議にその写真はありません。",
   "photo_deleted": "この写真は削除されたため、もう一度追加できません。",
   "photo_id_reused": "この id はすでに別の写真に使われています。",
-  "photos_full": "この会議にはすでに {max} 枚の写真があります。"
+  "photos_full": "この会議にはすでに {max} 枚の写真があります。",
+  "hub_transcribes": "この会議はハブで文字起こし中です。リアルタイムの文ではなく音声を送信してください。",
+  "not_hub": "この会議はデバイス上で文字起こししています。ハブに音声を送信することはできません。",
+  "transcription_final": "この会議の最終的な文字起こしが始まったため、音声はこれ以上追加できません。",
+  "audio_full": "この会議の音声が上限に達しました。音声は追加できません。",
+  "bad_audio": "音声が正しくありません。有効な開始時刻を指定し、16 kHzのモノラルPCM16音声を送信してください。",
+  "bad_transcription_mode": "meeting_transcription_defaultはdeviceまたはhubにしてください。",
+  "bad_glossary": "meeting_glossaryは文字列のリストにしてください。最大200語、各語は40文字以内です。",
+  "bad_transcription_extension": "インストール済みの文字起こし拡張をextension-id/contribution-idで指定してください。空欄にすると内蔵サービスを使います。"
 }

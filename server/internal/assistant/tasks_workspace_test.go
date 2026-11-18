@@ -122,18 +122,18 @@ func TestTaskWorkspaceOwnershipIsMachineLocalAndOnlyActiveLinks(t *testing.T) {
 	if err := s.linkTodoAgent(ctx, owner.ID, "box", "writer", "", "/code/app", ""); err != nil {
 		t.Fatal(err)
 	}
-	if s.taskWorkspaceOwner(ctx, "another-machine", "/code/app", "") != nil ||
-		s.taskWorkspaceOwner(ctx, "box", "/code/other", "") != nil ||
-		s.taskWorkspaceOwner(ctx, "box", "/code/app", owner.ID) != nil {
+	if s.taskWorkspaceOwner(ctx, "another-machine", "/code/app", "", false) != nil ||
+		s.taskWorkspaceOwner(ctx, "box", "/code/other", "", false) != nil ||
+		s.taskWorkspaceOwner(ctx, "box", "/code/app", owner.ID, false) != nil {
 		t.Fatal("ownership leaked across machine, path, or the same task")
 	}
-	if s.taskWorkspaceOwner(ctx, "box", "/code/app/", "") == nil {
+	if s.taskWorkspaceOwner(ctx, "box", "/code/app/", "", false) == nil {
 		t.Fatal("active canonical path was not occupied")
 	}
 	s.todos.mu.Lock()
 	s.todos.todos[owner.ID].Agents[0].ReleasedAt = &owner.CreatedAt
 	s.todos.mu.Unlock()
-	if s.taskWorkspaceOwner(ctx, "box", "/code/app", "") != nil {
+	if s.taskWorkspaceOwner(ctx, "box", "/code/app", "", false) != nil {
 		t.Fatal("released task still occupies the checkout")
 	}
 }

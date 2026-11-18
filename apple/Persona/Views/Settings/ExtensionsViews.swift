@@ -1,4 +1,5 @@
 import SwiftUI
+import PersonaWire
 
 /// Settings › Extensions: every plugin of the hub's (built in, from hub.json, installed on the hub's machine), its state, and
 /// the way to its page. Extensions are installed on the hub's side only (docs/extensions/extensions.md「Install, upgrade, roll back, uninstall」): with `personad plugin` on
@@ -170,9 +171,9 @@ private struct ExtensionStateDot: View {
 /// looked at here.
 struct ExtensionDetailView: View {
     @State private var page: ExtensionModel
+    @FocusState private var focusedNumber: String?
     @State private var editingSecret: ExtensionSecret?
     /// An Always rule the user asked to remove: confirmed first.
-    @State private var removingRule: HandoffRule?
     @State private var declarations = ExtensionTextContributions()
     @State private var connectorInbox: ExtensionConnectorsModel
     /// Its connectors' source subscriptions (#2041): the entry row's counts, nil while it is hidden.
@@ -199,6 +200,21 @@ struct ExtensionDetailView: View {
     private var auth: ExtensionAuth? {
         guard ExtensionAuthStore.available(AppModel.shared.hubFeatures), let d = page.detail else { return nil }
         return authStore.auth(d.plugin.id, manager: page.manager, else: d.plugin.auth)
+    }
+
+    private var disableDialogTitle: String {
+        switch page.disableDialog {
+        case .some(.dependents): return String(localized: "Also Turn Off Extensions That Depend on It?")
+        case .some(.pack(let confirmation)): return confirmation.title
+        case .none: return ""
+        }
+    }
+
+    private var disableDialogPresented: Binding<Bool> {
+        let generation = page.disableDialogGeneration
+        return Binding(get: { page.disableDialogPresented }, set: {
+            if !$0 { page.dismissDisableConfirmation(generation: generation) }
+        })
     }
 
     private struct ConnectorSectionsKey: Equatable {
@@ -231,14 +247,42 @@ struct ExtensionDetailView: View {
         .themedPage()
         .detailTitle(page.detail?.plugin.name ?? String(localized: "Extensions"))
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Also Turn Off Extensions That Depend on It?", isPresented: Binding(
-            get: { page.disableConfirmation != nil },
-            set: { if !$0 { page.disableConfirmation = nil } }), titleVisibility: .visible) {
-            Button(role: .destructive) { Task { await page.confirmDisable() } } label: { Text("Turn Off All").lineLimit(1) }
-                .accessibilityIdentifier("extension-cascade-confirm")
-            Button("Cancel", role: .cancel) {}
+        #if os(iOS)
+        .toolbar {
+            NumberKeyboardActions(focused: focusedNumber != nil, canSave: page.canSave, saving: page.saving,
+                                  configurationBusy: lifecycle.busy,
+                                  save: {
+                                      // A successful save ends editing, unless another field took focus while it ran; a refused one keeps the field focused.
+                                      let editing = focusedNumber
+                                      Task { if await page.save(), focusedNumber == editing { focusedNumber = nil } }
+                                  }, done: { focusedNumber = nil })
+        }
+        #endif
+        .confirmationDialog(disableDialogTitle, isPresented: disableDialogPresented, titleVisibility: .visible) {
+            switch page.disableDialog {
+            case .some(.dependents):
+                Button(role: .destructive) { Task { await page.confirmDisable() } } label: { Text("Turn Off All").lineLimit(1) }
+                    .accessibilityIdentifier("extension-cascade-confirm")
+                Button("Cancel", role: .cancel) {}
+            case .some(.pack):
+                Button(role: .destructive) { Task { await page.confirmPackDisable() } } label: {
+                    Text("Turn Off All [Extension Pack]").lineLimit(1)
+                }
+                .accessibilityIdentifier("extension-pack-disable-confirm")
+                Button(role: .cancel) {} label: { Text("Cancel").lineLimit(1) }
+                    .accessibilityIdentifier("extension-pack-disable-cancel")
+            case .none:
+                EmptyView()
+            }
         } message: {
-            Text(page.disableConfirmation?.message ?? "")
+            switch page.disableDialog {
+            case .some(.dependents(let confirmation)):
+                Text(confirmation.message)
+            case .some(.pack(let confirmation)):
+                Text(confirmation.message)
+            case .none:
+                EmptyView()
+            }
         }
         .sheet(item: $editingSecret) { secret in
             // Closed by clearing the item it is shown for, so the page and the sheet cannot disagree about whether it is
@@ -247,18 +291,11 @@ struct ExtensionDetailView: View {
                               saveReference: { await page.setSecretReference(secret.name, reference: $0) },
                               clear: { await page.clearSecret(secret.name) }, close: { editingSecret = nil })
         }
-        .confirmationDialog(String(localized: "Remove this rule?"), isPresented: Binding(get: { removingRule != nil }, set: { if !$0 { removingRule = nil } }),
-                            titleVisibility: .visible, presenting: removingRule) { rule in
-            Button(role: .destructive) { Task { await page.removeHandoffRule(rule.id) } } label: { Text("Remove [Handoff Rule]").lineLimit(1) }
-                .accessibilityIdentifier("handoff-rule-remove-confirm")
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("The next time an Agent asks for it, you approve it again.")
-        }
         .task { await page.load() }
         // A launcher field's choices (format launcher): the hub asks every machine for them, so apart from the page.
         .task(id: page.detail?.plugin.id) { await page.loadLaunchersIfNeeded() }
-        .subscriptionCounts($subscriptions, enabled: page.manager == nil) { [id = page.id] in $0.extensionID == id }
+        // Its own manager's subscriptions (the current assistant's in Settings), as everything else on the page.
+        .subscriptionCounts($subscriptions, manager: page.manager) { [id = page.id] in $0.extensionID == id }
         // Again when the connector's page closes (its switch may have changed there) or the extension is switched.
         // Also once paired (opened at launch, before the hub's address is known) or paired to another hub.
         .task(id: ConnectorSectionsKey(ids: connectorIDs, depth: AppModel.shared.settingsPath.count,
@@ -314,7 +351,21 @@ struct ExtensionDetailView: View {
                 }
             }
             if let needs = page.detail?.plugin.needsSetup, !needs.isEmpty {
-                Text(String(localized: "Still needs: \(ExtensionText.list(needs))")).font(Theme.Font.label).foregroundStyle(Theme.caution)
+                let line = Text(String(localized: "Still needs: \(ExtensionText.list(needs))")).font(Theme.Font.label).foregroundStyle(Theme.caution)
+                if let d = page.detail, !d.readOnly, let target = ExtensionText.setupSecret(needs: needs, secrets: d.secrets) {
+                    // What is missing is a secret to set here: the line opens it (#8853).
+                    Button { editingSecret = target } label: {
+                        HStack(spacing: Theme.Space.xs) {
+                            line
+                            ThemedIcon(Theme.Icon.disclosure).font(Theme.Font.captionStrong).foregroundStyle(Theme.caution)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("plugin-needs-setup")
+                } else {
+                    line
+                }
             }
             if let e = page.detail?.plugin.error ?? page.error, !e.isEmpty {
                 Text(e).font(Theme.Font.label).foregroundStyle(Theme.danger).textSelection(.enabled)
@@ -349,12 +400,12 @@ struct ExtensionDetailView: View {
         }
         pages(d)
         if d.plugin.enabled ?? true {
-            SubscriptionsEntrySection(counts: subscriptions, state: SubscriptionsUI.state(extension: d.plugin.id))
+            SubscriptionsEntrySection(counts: subscriptions, state: SubscriptionsUI.state(extension: d.plugin.id), manager: page.manager)
         }
         connectorSections(d)
         if !d.readOnly && !d.form.isEmpty { form(d) }
         if !d.readOnly && !d.secrets.isEmpty { secrets(d) }
-        SecretProviderSections(users: d.secretUsers, rules: d.handoffRules, editable: !d.readOnly) { removingRule = $0 }
+        SecretProviderSections(users: d.secretUsers, rules: d.handoffRules, editable: !d.readOnly) { await page.removeHandoffRule($0.id) }
         if !d.readOnly && !d.form.isEmpty {
             Section {
                 FormAction {
@@ -434,7 +485,9 @@ struct ExtensionDetailView: View {
     private func form(_ d: HubExtensionDetail) -> some View {
         Group {
             Section {
-                ForEach(d.form.filter { $0.type != "object" }) { f in ExtensionFieldRow(field: f, path: [f.name], page: page, templates: declarations.templates) }
+                ForEach(d.form.filter { $0.type != "object" }) { f in
+                    ExtensionFieldRow(field: f, path: [f.name], page: page, templates: declarations.templates, numberFocus: $focusedNumber)
+                }
             } header: {
                 SettingsHeading(String(localized: "Settings"))
             } footer: {
@@ -450,7 +503,9 @@ struct ExtensionDetailView: View {
             }
             ForEach(d.form.filter { $0.type == "object" }) { group in
                 Section {
-                    ForEach(group.fields ?? []) { f in ExtensionFieldRow(field: f, path: [group.name, f.name], page: page, templates: declarations.templates) }
+                    ForEach(group.fields ?? []) { f in
+                        ExtensionFieldRow(field: f, path: [group.name, f.name], page: page, templates: declarations.templates, numberFocus: $focusedNumber)
+                    }
                 } header: {
                     SettingsHeading(group.label)
                 } footer: {
@@ -578,6 +633,7 @@ private struct ExtensionFieldRow: View {
     var path: [String]
     @Bindable var page: ExtensionModel
     var templates: [ExtensionTextTemplate]
+    var numberFocus: FocusState<String?>.Binding
     /// A switch with x-confirm waiting on its alert before it is turned on.
     @State private var asking = false
 
@@ -649,9 +705,12 @@ private struct ExtensionFieldRow: View {
                     HStack(spacing: Theme.Space.s) {
                         TextField(placeholder, text: numberBinding)
                             .keyboardType(field.type == "integer" ? .numberPad : .decimalPad)
+                            #if os(iOS)
+                            .focused(numberFocus, equals: path.joined(separator: "."))
+                            #endif
                         if field.type == "integer" {
-                            // A step at a time within its bounds (#2385); typing still works for a far value.
-                            Stepper(value: stepperBinding, in: stepperRange) { Text(title) }
+                            // The hub's step only affects these buttons; typing keeps its own value.
+                            Stepper(onIncrement: stepperAction(up: true), onDecrement: stepperAction(up: false)) { Text(title) }
                                 .labelsHidden()
                                 .fixedSize()
                         }
@@ -694,18 +753,14 @@ private struct ExtensionFieldRow: View {
         return String(localized: "Not set")
     }
 
-    /// The stepper's value: what is set, else the default, else the lowest it may be. A step drops what was typed.
-    private var stepperBinding: Binding<Double> {
-        let key = path.joined(separator: ".")
-        return Binding(get: { page.value(path)?.double ?? field.default?.double ?? field.minimum ?? 0 }, set: { n in
-            page.numberText[key] = nil
-            page.set(.number(n.rounded()), at: path)
-        })
-    }
-
-    private var stepperRange: ClosedRange<Double> {
-        let low = field.minimum ?? -1_000_000_000
-        return low...max(low, field.maximum ?? 1_000_000_000)
+    /// A nil action disables just that direction at its bound. A step drops the typed draft.
+    private func stepperAction(up: Bool) -> (() -> Void)? {
+        guard ExtensionIntegerStepper.canStep(field, current: page.value(path)?.double, up: up) else { return nil }
+        return {
+            let next = ExtensionIntegerStepper.next(field, current: page.value(path)?.double, up: up)
+            page.numberText[path.joined(separator: ".")] = nil
+            page.set(.number(next), at: path)
+        }
     }
 
     /// A number as typed: kept as text until it reads as one (ExtensionModel.numberProblems), then the value.
@@ -1029,25 +1084,20 @@ private struct ExtensionSecretSheet: View {
             .onChange(of: value) { if refusal != nil { refusal = nil } }
             .sheetCancel(unsaved: !value.isEmpty) { close() }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task {
-                            busy = true
-                            switch await (byReference ? saveReference(value) : save(value)) {
-                            case .saved:
-                                value = ""
-                                refusal = nil
-                                close()
-                            case .refused(let words): refusal = words
-                            case .failed: refusal = nil
-                            }
-                            busy = false
+                SheetConfirm(id: "plugin-secret-save", disabled: value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                             busy: busy) {
+                    Task {
+                        busy = true
+                        switch await (byReference ? saveReference(value) : save(value)) {
+                        case .saved:
+                            value = ""
+                            refusal = nil
+                            close()
+                        case .refused(let words): refusal = words
+                        case .failed: refusal = nil
                         }
-                    } label: {
-                        if busy { ProgressView() } else { Text("Save").lineLimit(1) }
+                        busy = false
                     }
-                    .disabled(busy || value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("plugin-secret-save")
                 }
             }
         }
@@ -1059,14 +1109,16 @@ private struct ExtensionSecretSheet: View {
 }
 
 /// A secret provider's page (docs/extensions/secret-providers.md): the settings that hold its references, each the
-/// user's standing approval, and its Always rules for hand-offs to Agents, each removable after a confirm (the page's
-/// `removingRule`). Nothing shows for an extension that is no provider.
+/// user's standing approval, and its Always rules for hand-offs to Agents, each removable after a confirm that comes
+/// from its own row (on iOS 26 a popover pointing at the rule swiped). Nothing shows for an extension that is no provider.
 private struct SecretProviderSections: View {
     @Environment(AppModel.self) private var model
     var users: [ExtensionSecretUser]
     var rules: [HandoffRule]
     var editable: Bool
-    var remove: (HandoffRule) -> Void
+    var remove: (HandoffRule) async -> Void
+    /// The rule whose removal is being confirmed.
+    @State private var confirming: HandoffRule.ID?
 
     var body: some View {
         if !users.isEmpty {
@@ -1095,18 +1147,29 @@ private struct SecretProviderSections: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("handoff-rule")
                     // Row actions as everywhere (DESIGN_SYSTEM 3.4): a swipe and the same in the context menu, and a
-                    // named action for VoiceOver; the page confirms before anything goes.
+                    // named action for VoiceOver; the row confirms before anything goes.
                     .swipeActions(edge: .trailing) {
                         if editable {
-                            Button(role: .destructive) { remove(r) } label: { Text("Remove [Handoff Rule]") }
+                            // Tinted, not `.destructive`: that role folds the row away at once, and the dialog it anchors
+                            // went with it, closing Settings' cover instead.
+                            Button { confirming = r.id } label: { Text("Remove [Handoff Rule]") }.tint(Theme.danger)
                         }
                     }
                     .contextMenu {
                         if editable {
-                            Button(role: .destructive) { remove(r) } label: { Text("Remove [Handoff Rule]") }
+                            Button(role: .destructive) { confirming = r.id } label: { Text("Remove [Handoff Rule]") }
                         }
                     }
-                    .accessibilityAction(named: Text("Remove [Handoff Rule]")) { if editable { remove(r) } }
+                    .accessibilityAction(named: Text("Remove [Handoff Rule]")) { if editable { confirming = r.id } }
+                    .confirmationDialog(String(localized: "Remove this rule?"),
+                                        isPresented: Binding(get: { confirming == r.id }, set: { if !$0 { confirming = nil } }),
+                                        titleVisibility: .visible) {
+                        Button(role: .destructive) { Task { await remove(r) } } label: { Text("Remove [Handoff Rule]").lineLimit(1) }
+                            .accessibilityIdentifier("handoff-rule-remove-confirm")
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("The next time an Agent asks for it, you approve it again.")
+                    }
                 }
             } header: {
                 SettingsHeading(String(localized: "Always for Agents"))

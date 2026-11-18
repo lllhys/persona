@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/nwverse/persona/server/internal/osproc"
 )
 
 // relayBench measures the hub's port relay itself, with an echo server of its own on this machine: the round trip of
@@ -25,7 +27,7 @@ import (
 // expects one already there.
 func relayBench(ctx context.Context, t target, port int, echoOnly, noEcho bool) error {
 	if !noEcho {
-		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		l, err := osproc.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			return err
 		}

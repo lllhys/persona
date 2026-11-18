@@ -5,7 +5,7 @@
 // settings" row on top goes back to the default, the profile's presets are a group of their own, the thinking effort and
 // Claude Code's ultracode switch are in the chosen model's flyout. The panel's data is lib/new-agent-panel.ts.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import type { PickerTier } from "../lib/launcher-models";
+import type { PickerTier, UnavailableLauncher } from "../lib/launcher-models";
 import type { ModelBinding } from "../lib/model-config";
 import type { PanelConfig } from "../lib/model-panel";
 import { formChoice, newAgentPanel, newAgentPill, type ModelChoice } from "../lib/new-agent-panel";
@@ -41,6 +41,8 @@ export interface NewAgentModelProps {
   /** Model settings › New agent as it applies now; null: not followed. */
   configured: ModelBinding | null;
   tiers: PickerTier[];
+  /** Persona-managed providers left out on this computer, with why (#8109): listed off in the panel. */
+  unavailable?: UnavailableLauncher[];
   /** The "Follow Model settings" row; absent without model settings to follow (an older hub). */
   follow?: { active: boolean; detail?: string; warning?: string; label: string };
   /** What the pill says while no launcher is known to run (the model settings run something else, or none is read). */
@@ -52,7 +54,7 @@ export interface NewAgentModelProps {
   onChoice: (choice: ModelChoice) => void;
   onPreset: (name: string) => void;
   onFollow: () => void;
-  /** "How to fix" of a launcher that failed its check here (#1643). */
+  /** "How to fix" of a launcher that failed its check here (#1643), or of a provider in `unavailable`. */
   onHelp: (launcher: string) => void;
   /** "Configure models": the dialog closes, Settings › Model providers opens. */
   onConfigure: () => void;
@@ -89,16 +91,16 @@ export function NewAgentModel(props: NewAgentModelProps) {
 /** The panel while it is open: the computer's launchers with their lists, read again behind the ones shown once per
  *  opening (the one that runs first; not the ones that can't start here, whose rows are off anyway; at most three at a
  *  time, as each may start its agent's CLI on the computer). */
-function NewAgentPanel({ mid, launchers, choice, runs, configured, tiers, follow, ultracode, onChoice, onPreset, onFollow, onHelp, onConfigure, anchor, onClose }: NewAgentModelProps & { anchor: HTMLElement; onClose: () => void }) {
+function NewAgentPanel({ mid, launchers, choice, runs, configured, tiers, unavailable, follow, ultracode, onChoice, onPreset, onFollow, onHelp, onConfigure, anchor, onClose }: NewAgentModelProps & { anchor: HTMLElement; onClose: () => void }) {
   const version = useModelLists();
   useEffect(() => {
     for (const l of launchers) if (l.name === runs || !launcherBlock(l)) void readModels(mid, l.name, { again: true, first: l.name === runs });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per opening, for the computer it opened on
   }, []);
   const { providers, state, presets } = useMemo(
-    () => newAgentPanel({ launchers, listOf: (name) => modelList(mid, name), choice, configured, runs, tiers }),
+    () => newAgentPanel({ launchers, listOf: (name) => modelList(mid, name), choice, configured, runs, tiers, unavailable }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `version` stands for what was read
-    [launchers, mid, choice.launcher, choice.model, choice.effort, configured, runs, tiers, version],
+    [launchers, mid, choice.launcher, choice.model, choice.effort, configured, runs, tiers, unavailable, version],
   );
 
   const onPick = async (config: PanelConfig) => {

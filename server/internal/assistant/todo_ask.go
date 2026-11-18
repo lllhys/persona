@@ -59,12 +59,14 @@ const (
 )
 
 // listedTodo is a to-do as GET /api/v1/todos lists it: with its ask while one waits (none: no `ask`, which a client that
-// does not know it never reads), and, while it is open and nobody works on it, why (`orphaned`, tasks_orphan.go).
+// does not know it never reads), and, while it is open and nobody works on it, why (`orphaned`, tasks_orphan.go); on
+// the routes, its view (todo_view_routes.go).
 type listedTodo struct {
 	Todo
-	Ask            *todoAsk        `json:"ask,omitempty"`
-	DecisionReview *decisionReview `json:"decision_review,omitempty"`
-	Orphaned       *TodoOrphan     `json:"orphaned,omitempty"`
+	Ask            *todoAsk                   `json:"ask,omitempty"`
+	DecisionReview *decisionReview            `json:"decision_review,omitempty"`
+	Orphaned       *TodoOrphan                `json:"orphaned,omitempty"`
+	View           *assistantwire.TodoSummary `json:"view,omitempty"`
 }
 
 // todoAsks are the open asks by to-do id, in the request's language: the ones the briefing lists (not passed, not ended,
@@ -101,8 +103,8 @@ func (s *Service) todoAsks(ctx context.Context) map[string]todoAsk {
 
 // askChanged: a to-do's ask came up, was taken or ended: the apps read the to-dos again ({"type":"todos"}) and the board
 // follows.
-func (s *Service) askChanged(ctx context.Context) {
-	s.event(ctx, map[string]any{"type": "todos"})
+func (s *Service) askChanged(context.Context) {
+	s.todosPushSoon() // with the rest of the write that changed it
 	s.boardChanged()
 }
 
@@ -131,18 +133,21 @@ func (s *Service) pushDecisionErr(ctx context.Context, id string) (bool, error) 
 	n := Notification{ID: "ntf_" + randomHex(8), Kind: assistantwire.NotifyDecide, Subtitle: "Persona", DeviceID: here, SessionID: t.Origin,
 		Title: i18n.T(l, "assistant-reports.verdict_title", i18n.Args{"task": clip(oneLine(t.Title), 30)}),
 		Body:  verdictText(l, &a) + "\n" + recommendText(l, &a),
+		// A decision the owner must take now: P0 interrupts even with the hub's push tiering on, every time it is
+		// pushed (its reminders too); the hub keys it by to-do and round.
+		Level: assistantwire.LevelP0,
 		Todo:  &assistantwire.NotifyTodo{ID: id, AskedAt: a.AskedAt, Recommend: a.Recommend, Responses: ownerResponses}}
 	for _, o := range a.Options {
 		n.Todo.Options = append(n.Todo.Options, o.Label)
 	}
-	if d := deadlineText(l, s.location(ctx), a.Deadline, a.Reversible, time.Now()); d != "" {
+	if d := deadlineText(l, s.location(ctx), a.Deadline, a.Reversible, time.Now()); d != "" && a.AgentReply == nil {
 		n.Body += "\n" + d
 	}
 	// Self-contained (#3804): where it came from and stands, what each option leads to, what waiting costs.
 	if lines := decisionLines(l, s.location(ctx), &a); len(lines) > 0 {
 		n.Body += "\n" + strings.Join(lines, "\n")
 	}
-	if err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: n}); err != nil {
+	if _, err := s.hub.NotifyRequest(ctx, NotifyRequest{Notification: n}); err != nil {
 		s.logf("task %s: decision push: %v", id, err)
 		return false, err
 	}

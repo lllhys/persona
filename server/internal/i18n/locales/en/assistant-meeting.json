@@ -20,6 +20,7 @@
   "ask_busy": "Two questions are being answered now. Ask again once one is answered.",
   "meeting_ended": "This meeting has ended. Write in its follow-up instead.",
   "bad_private": "private must be true or false.",
+  "bad_title": "A title must be one line of at most 200 characters.",
   "not_meeting": "This recording isn’t a meeting.",
   "text_too_long": "The text is over {max} characters.",
   "too_many_images": "At most {max} images.",
@@ -38,5 +39,13 @@
   "photo_not_found": "This meeting has no such photo.",
   "photo_deleted": "This photo was deleted, so it can’t be added again.",
   "photo_id_reused": "This id was already used for another photo.",
-  "photos_full": "This meeting already has {max} photos."
+  "photos_full": "This meeting already has {max} photos.",
+  "hub_transcribes": "The hub is transcribing this meeting. Send audio instead of live sentences.",
+  "not_hub": "This meeting uses on-device transcription. It can’t receive audio on the hub.",
+  "transcription_final": "The final transcription of this meeting has started, so no more audio can be added.",
+  "audio_full": "This meeting has reached the audio limit. No more audio can be added.",
+  "bad_audio": "The audio isn’t valid. Send PCM16 mono audio at 16 kHz with a valid start time.",
+  "bad_transcription_mode": "meeting_transcription_default must be device or hub.",
+  "bad_glossary": "meeting_glossary must be a list of up to 200 terms, each at most 40 characters.",
+  "bad_transcription_extension": "Choose an installed transcription contribution as extension-id/contribution-id, or leave it empty for the built-in service."
 }

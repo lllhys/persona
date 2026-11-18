@@ -14,7 +14,7 @@ import (
 // The main conversation asks for its configured model with every message. After a refusal moved it to a fallback that
 // answered, the next message stays on that fallback: no restart onto the model that refused it (#3788).
 func TestAssistantStaysOnTheFallbackThatAnswered(t *testing.T) {
-	f := sdkTest(t)
+	f := cliTest(t)
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "bin", "claude"), []byte("#!/bin/sh\n"+claudeLikeCLI), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -24,13 +24,13 @@ func TestAssistantStaysOnTheFallbackThatAnswered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sdkWait(t, "the refusal to move to the fallback", func() bool { return strings.Count(f.file("user.jsonl"), `"type":"user"`) == 3 })
+	cliWait(t, "the refusal to move to the fallback", func() bool { return strings.Count(f.file("user.jsonl"), `"type":"user"`) == 3 })
 	f.idle(t, id)
 	starts := strings.Count(f.file("cli-argv"), "\n")
 	if _, err := f.n.assistantSend(context.Background(), id, cwd, "claude", "next message", nil, "", "", configured); err != nil {
 		t.Fatal(err)
 	}
-	sdkWait(t, "the next message to be answered", func() bool { return strings.Count(f.file("user.jsonl"), `"type":"user"`) == 4 })
+	cliWait(t, "the next message to be answered", func() bool { return strings.Count(f.file("user.jsonl"), `"type":"user"`) == 4 })
 	f.idle(t, id)
 	if got := strings.Count(f.file("cli-argv"), "\n"); got != starts {
 		t.Fatalf("the next message restarted the conversation (%d starts, was %d): %s", got, starts, f.file("cli-argv"))
@@ -72,7 +72,7 @@ func TestAssistantFallbackHoldBounds(t *testing.T) {
 		t.Fatalf("the hold outlived its time: %+v", got)
 	}
 	n.mu.Lock()
-	r := n.newAssistantRecovery(id, "claude", from, "primary-model", "primary-model")
+	r := n.newAssistantRecovery(id, "claude", from, "primary-model", "primary-model", "")
 	n.mu.Unlock()
 	if !r.retried["primary-model"] {
 		t.Fatal("a refusal soon after a fallback answered still retries on the same model")
@@ -80,7 +80,7 @@ func TestAssistantFallbackHoldBounds(t *testing.T) {
 	n = hold()
 	n.contextCompacted(id)
 	n.mu.Lock()
-	r = n.newAssistantRecovery(id, "claude", from, "primary-model", "primary-model")
+	r = n.newAssistantRecovery(id, "claude", from, "primary-model", "primary-model", "")
 	n.mu.Unlock()
 	if r.retried["primary-model"] || n.heldFallback(id, "claude", from).Model != "primary-model" {
 		t.Fatal("a compaction left the hold or its sticky window")
@@ -88,7 +88,7 @@ func TestAssistantFallbackHoldBounds(t *testing.T) {
 	n = hold()
 	n.fallbacks[id].at = time.Now().Add(-assistantRefusalSticky - time.Minute)
 	n.mu.Lock()
-	r = n.newAssistantRecovery(id, "claude", from, "primary-model", "primary-model")
+	r = n.newAssistantRecovery(id, "claude", from, "primary-model", "primary-model", "")
 	n.mu.Unlock()
 	if r.retried["primary-model"] {
 		t.Fatal("a refusal long after the last fallback skipped the same-model retry")

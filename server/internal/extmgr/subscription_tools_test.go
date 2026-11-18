@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -70,6 +71,7 @@ type toolEnv struct {
 	t     *testing.T
 	h     *Manager
 	conn  *toolConn
+	store *subscriptions.MemStore
 	mu    sync.Mutex
 	cards []proto.Interaction
 	reply func(proto.Interaction) proto.Resolution
@@ -78,9 +80,9 @@ type toolEnv struct {
 func allowCard(proto.Interaction) proto.Resolution { yes := true; return proto.Resolution{Allow: &yes} }
 
 func newToolEnv(t *testing.T) *toolEnv {
-	e := &toolEnv{t: t, h: newTestManager(t), conn: &toolConn{answer: toolNotices(2)}, reply: allowCard}
+	e := &toolEnv{t: t, h: newTestManager(t), conn: &toolConn{answer: toolNotices(2)}, store: subscriptions.NewMemStore(), reply: allowCard}
 	e.h.opts.Lang = func() i18n.Lang { return i18n.En } // the card is in the user's language
-	e.h.subs = subscriptions.New(subscriptions.Options{Store: subscriptions.NewMemStore(), Connectors: toolConns{e.conn},
+	e.h.subs = subscriptions.New(subscriptions.Options{Store: e.store, Connectors: toolConns{e.conn},
 		Lang: func() i18n.Lang { return i18n.En }})
 	e.h.opts.Ask = func(_ context.Context, ix proto.Interaction) (proto.Resolution, error) {
 		e.mu.Lock()
@@ -183,9 +185,15 @@ func TestSubscriptionListGetAndSources(t *testing.T) {
 		t.Fatalf("sources of a connector: %s", b)
 	}
 	format := out["recipe_format"].(map[string]any)
-	if fmt.Sprint(format["fields"]) != "[id thread title sender time body link due_date]" || format["template_vars"].(map[string]any)["{{since_date}}"] == nil ||
-		fmt.Sprint(format["modes"].(map[string]any)["snapshot"]) == "" {
+	if fmt.Sprint(format["fields"]) != "[id thread title sender time body link due_date sender_id chat chat_name seen reply_to]" || format["template_vars"].(map[string]any)["{{since_date}}"] == nil ||
+		fmt.Sprint(format["modes"].(map[string]any)["snapshot"]) == "" || len(format["group_by"].(map[string]any)) != 2 {
 		t.Fatalf("the recipe format: %v", format)
+	}
+	meanings, _ := format["field_meaning"].(map[string]any)
+	for _, k := range format["fields"].([]any) {
+		if s, _ := meanings[k.(string)].(string); s == "" {
+			t.Errorf("field %v has no meaning in the recipe format", k)
+		}
 	}
 	out, _ = e.call("subscription_sources", `{}`)
 	b, _ = json.Marshal(out["connectors"])
@@ -338,26 +346,78 @@ func TestSubscriptionSaveCreatesPausesAndDeletes(t *testing.T) {
 	}
 }
 
+func TestSubscriptionSaveFallbackTierSchemaAndEmptyReset(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Enum        []string `json:"enum"`
+			Description string   `json:"description"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(mcpTool("subscription_save").InputSchema, &schema); err != nil {
+		t.Fatalf("subscription_save schema: %v", err)
+	}
+	ft := schema.Properties["fallback_tier"]
+	if !slices.Equal(ft.Enum, []string{"fyi", "action", "wait"}) {
+		t.Fatalf("fallback_tier enum = %q, want [fyi action wait]", ft.Enum)
+	}
+	if !strings.Contains(ft.Description, `""`) {
+		t.Fatalf("fallback_tier description should explain empty-string clearing: %q", ft.Description)
+	}
+
+	e := newToolEnv(t)
+	s := e.made()
+	out, isErr := e.call("subscription_save", fmt.Sprintf(`{"action":"update","id":%q,"revision":%d,"fallback_tier":"wait"}`, s.ID, s.Revision))
+	if isErr || out["saved"] != true {
+		t.Fatalf("set fallback_tier: %v", out)
+	}
+	if prev := out["previous"].(map[string]any); prev["fallback_tier"] != "" {
+		t.Fatalf("previous fallback_tier: %v", prev)
+	}
+	cur, _, err := e.h.subs.Get(context.Background(), s.ID)
+	if err != nil || cur.FallbackTier != "wait" {
+		t.Fatalf("stored fallback_tier = %q, err = %v", cur.FallbackTier, err)
+	}
+
+	// Clearing fallback_tier with "" remains supported at runtime even though "" is not in the schema enum.
+	out, isErr = e.call("subscription_save", fmt.Sprintf(`{"action":"update","id":%q,"revision":%d,"fallback_tier":""}`, s.ID, cur.Revision))
+	if isErr || out["saved"] != true {
+		t.Fatalf("clear fallback_tier: %v", out)
+	}
+	if prev := out["previous"].(map[string]any); prev["fallback_tier"] != "wait" {
+		t.Fatalf("previous fallback_tier after clear: %v", prev)
+	}
+	cleared, _, err := e.h.subs.Get(context.Background(), s.ID)
+	if err != nil || cleared.FallbackTier != "" {
+		t.Fatalf("cleared fallback_tier = %q, err = %v", cleared.FallbackTier, err)
+	}
+
+	cards := e.cardCount()
+	if out, isErr := e.call("subscription_save", fmt.Sprintf(`{"action":"update","id":%q,"revision":%d,"fallback_tier":"unknown"}`, s.ID, cleared.Revision)); !isErr || out["code"] != "bad_request" || e.cardCount() != cards {
+		t.Fatalf("invalid fallback_tier: %v (cards=%d, want %d)", out, e.cardCount(), cards)
+	}
+}
+
 func TestSubscriptionRunWaitsForTheRun(t *testing.T) {
 	poll := subscriptionRunPoll
 	subscriptionRunPoll = 10 * time.Millisecond
 	t.Cleanup(func() { subscriptionRunPoll = poll })
 	e := newToolEnv(t)
 	s := e.made()
+	runNow := make(chan struct{})
+	var recorded sync.Once
+	e.h.subs = toolRunService(e, e.store, func(action string) {
+		if action == "subscription_run_now" {
+			recorded.Do(func() { close(runNow) })
+		}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	ticks := time.NewTicker(5 * time.Millisecond)
-	defer ticks.Stop()
 	done := make(chan struct{})
-	go func() { // bounded polling, as the runner's own ticker provides in production
+	go func() {
 		defer close(done)
-		for {
+		select {
+		case <-runNow:
 			e.h.subs.RunDue(ctx)
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticks.C:
-			}
+		case <-ctx.Done():
 		}
 	}()
 	t.Cleanup(func() {

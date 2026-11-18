@@ -80,7 +80,7 @@ func TestOwnerWaitEndsWhenTheAgentGoesOn(t *testing.T) {
 	agentTurn(s, f, proto.StatusDone, "按你选的 A 版发出去了，PR https://github.com/o/r/pull/7 已合并", 0)
 	waitFor(t, "waits for review", func() bool { return todoNow(s, todo.ID).Supervision.State == reviewPending })
 
-	raw, _ := json.Marshal(map[string]any{"todo_id": todo.ID, "verdict": "accepted", "note": "A 版已发"})
+	raw, _ := json.Marshal(map[string]any{"todo_id": todo.ID, "verdict": "accepted", "note": "A 版已发", "checks": completeReviewChecks(todoNow(s, todo.ID))})
 	if res, err := s.runTool(ctx, "server", "conv1", "task_review", raw); err != nil || !strings.Contains(res, "accepted and closed") {
 		t.Fatalf("accepted after the agent went on: %s %v", res, err)
 	}

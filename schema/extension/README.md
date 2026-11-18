@@ -15,10 +15,13 @@ from them instead of being written once per platform:
 | `channel.schema.json` | **Plugin-side.** The `channel` extension point's calls (`docs/extensions/channels.md` "4. Contributing a channel"): `channel.receive` and `channel.status` from the program, `channel.send`, `channel.typing` and `channel.edit` from the hub, `cannot_send` |
 | `kb.schema.json` | **Plugin-side.** The knowledge base an extension reads and writes directly (`docs/extensions/extensions.md` "Knowledge base RPC"): `kb.list`, `kb.get`, `kb.day`, `kb.search`, `kb.update`, `kb.owner`, and the events `event.kb.changed` / `event.kb.forgotten` |
 | `assistant.schema.json` | **Plugin-side.** Reading the user's conversations with the assistant (`docs/extensions/extensions.md` "Assistant conversations"): `assistant.conversations`, `assistant.messages` with the permission `assistant.read` |
+| `assistant_data.schema.json` | **Plugin-side.** The assistant content an extension writes in its data directory (`docs/extensions/extensions.md` "Assistant content from the data directory"): `assistant.data_status`, what the assistant reads now of the calling extension's data contributions |
 | `models.schema.json` | **Plugin-side.** Calling a model through the hub (`docs/extensions/extensions.md` "Model calls"): `model.complete` with the permission `models` |
+| `transcription.schema.json` | **Plugin-side.** An extension's own audio turned into text with the transcription the owner chose (`docs/extensions/extensions.md` "Transcription for extensions"): `transcription.start`, `transcription.audio`, `transcription.finish`, `transcription.cancel` with the permission `transcription` |
 | `storage.schema.json` | **Plugin-side.** Default-deny installation-owned business storage (#1187): CAS/atomic transactions, bounded request receipts and queues, and opaque chunked blobs; manager-owned authentication/retention/restore are not guest RPC methods. See `docs/extensions/extensions.md` ("Installation-owned business storage") |
 | `todos.schema.json` | **Plugin-side.** The to-do events an extension subscribed to and was granted `todos.read` is told of (`docs/extensions/extensions.md` "Events"): `event.todo.changed`, `event.todo.decision` |
 | `leaders.schema.json` | **Plugin-side.** The leader events an extension subscribed to and was granted `leaders.read` is told of (`docs/extensions/extensions.md` "Leader events"): `event.leader.changed`, `event.leader.report` |
+| `repository.schema.json` | **Plugin-side.** The `repository_providers` extension point's calls (#10330): the manager asks a code-hosting source's program `repo.parse` (what repository an address on its hosts names), `repo.check` (it exists and is visible), `repo.link` (an issue or pull request of a repository, by address or by kind and number) and the optional `repo.describe` (a stored link's title and state), and re-checks every answer; `RepoErrorCode`. The manifest's item (`RepositoryProviderItem`, `RepositoryLinkLabel`, `RepositoryLinkKind`) is in `manifest.schema.json` |
 | `examples/` | Examples: `<definition>.<name>.json` must hold to the schema; those under `examples/invalid/` must not. The plugin-side schemas' are in `examples/plugin/` (and `examples/plugin/invalid/`) |
 
 ## Generating
@@ -34,13 +37,14 @@ python3 scripts/test/test_extension_schema.py     # --check, and the examples ho
 | --- | --- | --- |
 | Go | `sdk/go/wire/wire_gen.go` (its own module `github.com/nwverse/persona/sdk/go`, without dependencies) | Structs; a union is **one flat struct** (every variant's fields together, all optional, `Type` says which), like the hub's `UIElem`; an enum is string constants and a list (`Tones`); `ComponentSince` is the UI version each component came with; `Calls` is the calls and events of the extension points (below) |
 | TypeScript | `sdk/ts/src/wire.ts`; the web app has a copy without the plugin-side schemas, `web/src/lib/extension-wire.ts` | Interfaces; a union is the union of its variants (`Component = TextComponent \| …`); an enum is a union of literals plus `string & {}` (values from a newer hub still read); `CALLS` as in Go |
-| Swift | `apple/Shared/Generated/ExtensionWire.swift` | Type names with an `Extension` prefix (`ExtensionView`), `nonisolated`, `Codable`, `Hashable`, `Sendable`; legacy models take zero/nil for missing or mistyped fields, while stream envelopes reject missing required and mistyped present fields; a union is an enum, an unknown or unreadable component is `.unknown(type:)`; free JSON is `JSONValue` |
+| Swift | `apple/Packages/PersonaWire/Sources/PersonaWire/ExtensionWire.swift` | Type names with an `Extension` prefix (`ExtensionView`), `public nonisolated`, `Codable`, `Hashable`, `Sendable`; legacy models take zero/nil for missing or mistyped fields, while stream envelopes reject missing required and mistyped present fields; a union is an enum, an unknown or unreadable component is `.unknown(type:)`; free JSON is `JSONValue` |
 | Kotlin | `android/core/contracts/src/main/kotlin/persona/core/contracts/generated/ExtensionWire.kt` | kotlinx.serialization data classes, also with the `Extension` prefix, every field with a default; a union is a sealed interface plus a serializer reading `type`, an unknown or unreadable one is `Unknown(type, raw)` and written back as it was. Unlike Swift, an object other than a component with a field of the wrong type does not read at all (the hub checks Views against the schema first, so what the apps get holds) |
 
-The generator also copies the schemas as they are to `sdk/go/wire/schema/` (`go:embed` cannot reach outside the
-module): `wire.Validate(<definition>, value)` checks against them. The hub checks extensions' Views with it
-(`extension.CheckView`), the conformance tests check `initialize`'s answer and every connector call with it, and it
-knows the same subset as the validator in `scripts/test/test_extension_schema.py`.
+The same generator also writes the hub wire types of `schema/wire/` (TypeScript, Swift, Go and Kotlin, each where its
+schema's `x-out` says; `schema/wire/README.md`). It also copies the schemas here as they are to `sdk/go/wire/schema/`
+(`go:embed` cannot reach outside the module): `wire.Validate(<definition>, value)` checks against them. The hub checks
+extensions' Views with it (`extension.CheckView`), the conformance tests check `initialize`'s answer and every connector
+call with it, and it knows the same subset as the validator in `scripts/test/test_extension_schema.py`.
 The View semantics both extensions and the assistant check (charts, tables, fields) are in `sdk/go/wire/viewcheck.go`.
 
 ## Native UI stream protocol 1
@@ -48,8 +52,9 @@ The View semantics both extensions and the assistant check (charts, tables, fiel
 Stage 1 of #5956 defined the contracts for **server-only TSX execution, native client rendering and WebSocket
 deltas**. Later stages add the immutable keyed-tree core, process page bridge and manager-owned lifecycle below.
 Runtime activation still requires independent sandbox, resource-isolation and egress verification. Existing
-process extensions and HTTP render/action/invalidation behavior remain compatible. The hub still advertises UI
-version 6; generated client models and transport forwarding do not alone enable client or source-runtime support.
+process extensions and HTTP render/action/invalidation behavior remain compatible. The hub's UI version (9 since
+#9337) does not turn the stream on; generated client models and transport forwarding do not alone enable client or
+source-runtime support.
 
 ### Negotiation and messages
 
@@ -57,6 +62,8 @@ version 6; generated client models and transport forwarding do not alone enable 
 Missing `stream`, even with UI version 7, means snapshot-only. Future handlers must authorize the contribution and
 fit the complete View to supported components and UI version. Widgets/system surfaces continue using snapshots.
 `Section.key` is optional for legacy Views (`x-since: 7`); stream sections and components require bounded keys.
+Snapshot Views accept `progress.style` (`bar` or `ring`, omitted means `bar`) as an unversioned drawing hint;
+the closed native stream progress overlay does not accept it, including an explicit `bar`.
 
 - `UIStreamRequest` has a required `request` discriminator, `protocol: 1` and `request_id`. Requests are `open`,
   `close`, `suspend`, `resume`, `event` and `snapshot`. Open carries extension/contribution, context and bounded
@@ -261,7 +268,8 @@ The generator understands only what is below; anything else stops it with an err
     `additionalProperties: true` or a sub-schema also keeps extra keys (see "Custom contributions" below); one that
     says nothing or `false` is generated as before.
   - **A string enum**: `"type": "string"` + `enum`. The field stays a string in every language (an unknown value
-    still reads), with constants and a list besides.
+    still reads), with constants and a list besides. A value named like the list (`all`) is the constant `allValue`
+    in Swift and `ALL_VALUE` in Kotlin.
   - **A named scalar**: `"type": "string"` (or integer / number / boolean) without `enum`, such as `ID` or `Host`:
     where it is referenced it is that scalar; `pattern` and the like only validate.
   - **A union told apart by a field**: `oneOf` of `$ref`s only, with `"x-discriminator": "type"`; each variant is a
@@ -279,10 +287,13 @@ The generator understands only what is below; anything else stops it with an err
   (`"x-go-type": "int64"` is 64 bits: Go `int64`, Swift `Int64`, Kotlin `Long`; `Int` on the watch is 32 bits and
   cannot hold a build number), `number`, `boolean`, `array` + `items`, an `object` **without** `properties` +
   `additionalProperties` (a map whose values are `additionalProperties`), `$ref`, or nothing (free JSON).
+  On a map, `propertyNames` and `required` only validate: every language still generates a plain map, so the producer
+  writes each required key itself (and Go allocates the map, or writes `null`).
   A field that is an object with `properties` must be a definition of its own, referenced.
 - Optional fields are those not in `required`. Go adds `omitempty` (`omitzero` for a time) and makes an object a
   pointer; a scalar whose absence means something other than its zero value gets `"x-go-pointer": true` (a
-  progress's `ratio`, `kb.update`'s `relevance` and `pinned`).
+  progress's `ratio`, `kb.update`'s `relevance` and `pinned`). A required number Go would otherwise read back as 0 when
+  it is missing gets it too, so the hub's check still refuses it (a gauge's `ratio`).
 - A component has `"x-since": <UI version>`: it generates tables like `ComponentSince`, by which the hub takes new
   components out for older apps (`Fit`).
 - In one union, same-named fields of several variants become one field of Go's flat struct, so their types must be
@@ -372,6 +383,13 @@ UI version 6 (#5464) was added the same way: the `image` / `grid` / `carousel` c
 `ChartPoint`) rather than in `Component`'s flat struct; `Thumbnail.url` is optional now (exactly one of it and `ref`),
 which Swift reads as `String?`. Its examples are `examples/View.v6-*.json`; the showcase's version 6 pages come from
 the extensions repository (#5477), and until then `SHOWCASE_UI` in `test_extension_schema.py` stays at 5.
+UI version 8 (#9158) adds no component, only fields: `View.layout: "columns"` and a section's `span`, `icon`,
+`icon_color`, `link` (`SectionLink`) and `columns`, each `x-since: 8`. The hub's `downgrade8`
+(`server/internal/extension/ui_v8.go`) takes them out for an older app; `UIStreamSection` lists them too, so a native
+stream's source may draw them. Its examples are `examples/View.v8-*.json`.
+UI version 9 (#9337) adds one field: a tile's `gauge` (`Gauge`: `ratio`, `unit`, `color`), `x-since: 9`, a ring with the tile's
+value in its centre. The hub's `downgrade9` (`server/internal/extension/ui_v9.go`) leaves it out for an older app and puts the unit,
+the percentage and the color on the tile instead. Its examples are `examples/View.v9-*.json`.
 
 ## Adding a call
 

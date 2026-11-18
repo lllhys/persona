@@ -7,12 +7,15 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 import persona.core.contracts.HubScope
 import persona.core.contracts.JsonCodec
 import persona.core.contracts.SessionKey
 import persona.core.contracts.api.*
+import persona.core.domain.AttachedFile
 import kotlinx.serialization.encodeToString
 
 @RunWith(AndroidJUnit4::class)
@@ -45,7 +48,7 @@ class ChatComposerStateTest {
         assertEquals(version, state.draft.sessionVersion)
         state.attachments = state.attachments.filter { it.id == "file" }
         assertTrue(state.ready)
-        assertTrue(state.message().endsWith("/tmp/notes.txt"))
+        assertEquals("检查附件 补充\n\n<persona-file kind=\"file\" path=\"/tmp/notes.txt\" name=\"notes.txt\" size=\"456\"/>", state.message())
         state.clearIfUnchanged(state.draft)
         state.insert("新草稿", false)
         assertFalse(state.oldVersion)
@@ -82,16 +85,102 @@ class ChatComposerStateTest {
         assertEquals("请看图片$tag", ChatComposerState(ChatComposerDraft("", listOf(photo))).apply { photosOnlyText = "请看图片" }.message())
         assertEquals("请看图片$tag", ChatComposerState(ChatComposerDraft("  \n", listOf(photo))).apply { photosOnlyText = "请看图片" }.message())
         assertEquals("看这里$tag", ChatComposerState(ChatComposerDraft("看这里", listOf(photo))).message())
-        // A file is something to say already; nothing but text is unchanged.
-        val file = ComposerAttachment("file", "notes.txt", "content://example.com/file", false, "/tmp/notes.txt",
+        // Photos keep their stand-in; the file is a tag, not a quoted path on the words' line.
+        val file = ComposerAttachment("file", "notes.txt", "content://example.com/file", false, "/tmp/notes.txt", size = 12,
             uploadState = DraftUploadState.Uploaded)
-        assertEquals("/tmp/notes.txt$tag", ChatComposerState(ChatComposerDraft("", listOf(file, photo))).message())
+        assertEquals("请看图片\n\n${file.attachedFile()!!.toXml()}$tag",
+            ChatComposerState(ChatComposerDraft("", listOf(file, photo))).apply {
+                photosOnlyText = "请看图片"; filesOnlyText = "请看附件"
+            }.message())
         assertEquals("只有字", ChatComposerState(ChatComposerDraft("只有字")).message())
         // Editing it again keeps the same message, words and photo.
         val sent = ChatComposerState(ChatComposerDraft("", listOf(photo))).apply { photosOnlyText = "请看图片" }.message()
         val restored = ChatComposerState().apply { editMessage(sent) }
         assertEquals("请看图片", restored.value.text)
         assertEquals(sent, restored.message())
+    }
+
+    @Test fun fileTagsRoundTripThroughEditQueuedTakeBackAndStoredDrafts() {
+        val file = ComposerAttachment("file", "a & b.txt", "content://example.com/file", false,
+            "/up/a & b.txt", size = 86, uploadState = DraftUploadState.Uploaded)
+        val sent = ChatComposerState(ChatComposerDraft("Read exactly", listOf(file))).message()
+        assertEquals("Read exactly\n\n<persona-file kind=\"file\" path=\"/up/a &amp; b.txt\" name=\"a &amp; b.txt\" size=\"86\"/>", sent)
+        for (restore in listOf<(ChatComposerState, String) -> Unit>(
+            { state, text -> state.editMessage(text) },
+            { state, text -> state.restoreMessage(text) },
+            { state, text -> state.load(ChatComposerDraft(text)) },
+        )) {
+            val edited = ChatComposerState()
+            restore(edited, sent)
+            assertEquals("Read exactly", edited.value.text)
+            assertFalse(edited.value.text.contains("persona-file"))
+            assertEquals(file.attachedFile(), edited.attachments.single().attachedFile())
+            assertTrue(edited.ready)
+            assertEquals(sent, edited.message())
+        }
+        val alone = ChatComposerState(ChatComposerDraft("", listOf(file))).apply { filesOnlyText = "Please look at the attached files" }.message()
+        val queued = ChatComposerState().apply {
+            filesOnlyText = "Please look at the attached files"; restoreQueued(alone)
+        }
+        assertEquals("", queued.value.text)
+        assertEquals(file.attachedFile(), queued.attachments.single().attachedFile())
+        assertEquals("a & b.txt", composerMessagePreview(alone, "[Photo]", "[Video]"))
+    }
+
+    @Test fun forwardedContextKeepsItsOwnFileTagsOutOfTheNewAttachments() {
+        val nested = AttachedFile("file", "/up/quoted.txt", "quoted.txt", 10).toXml()
+        val own = AttachedFile("file", "/up/own.txt", "own.txt", 20).toXml()
+        val raw = "Review\n\n<persona-context kind=\"quote\">\n$nested\n</persona-context>\n\n$own"
+        val edited = ChatComposerState().apply { editMessage(raw) }
+        assertEquals(listOf("/up/own.txt"), edited.attachments.map { it.path })
+        assertTrue(edited.value.text.contains(nested))
+        assertFalse(edited.value.text.contains(own))
+        assertEquals(raw, edited.message())
+    }
+
+    @Test fun tenFilesFitButTheEleventhHasNoPlace() {
+        val files = List(10) { index ->
+            ComposerAttachment("f$index", "$index.txt", "content://docs/$index", false)
+        }
+        assertEquals(1, composerFileRoom(files.take(9)))
+        assertEquals(0, composerFileRoom(files))
+        val retained = files.take(9).toMutableList()
+        val picked = listOf(files[9].copy(id = "invalid", uploadState = DraftUploadState.Invalid), files[9],
+            ComposerAttachment("eleventh", "11.txt", "content://docs/11", false))
+        picked.forEach { pick -> if (composerFileRoom(retained) > 0) retained += pick }
+        assertTrue(retained.any { it.id == "invalid" })
+        assertEquals(1, retained.count { it.id == "f9" })
+        assertFalse(retained.any { it.id == "eleventh" })
+        assertEquals(0, composerFileRoom(retained))
+    }
+
+    @Test fun uploadDestinationAppliesOnlyToOrdinaryFilesAndHealthKeepsItsOwn() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        useChatFileProvider(context)
+        val folder = java.io.File(context.cacheDir, "chat-captures").apply { mkdirs() }
+        val source = java.io.File(folder, "destination.txt").apply { writeText("abc") }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.chat.files", source)
+        val service = object : ChatComposerService {
+            override val deliveries = kotlinx.coroutines.flow.MutableStateFlow(emptyMap<String, ComposerDelivery>())
+            val destinations = mutableListOf<String?>()
+            override suspend fun upload(session: SessionKey, name: String, file: java.io.File): String {
+                destinations += null; return "/tmp/$name"
+            }
+            override suspend fun upload(session: SessionKey, name: String, file: java.io.File, destination: String): String {
+                destinations += destination; return "/up/$name"
+            }
+            override suspend fun interrupt(session: SessionKey) = Unit
+            override suspend fun retryRefused(clientMessageId: String, clearDraft: Boolean) = ComposerDelivery(DeliveryState.Sending)
+        }
+        val session = SessionKey("machine", "session")
+        val video = ComposerAttachment("video", "clip.mov", uri.toString(), false, video = true)
+        val document = ComposerAttachment("file", "notes.txt", uri.toString(), false)
+        uploadAttachment(context, service, session, video)
+        var stagedSize: Long? = null
+        uploadAttachment(context, service, session, document.copy(size = null), onStaged = { stagedSize = it })
+        uploadAttachment(context, service, session, document, destination = "health")
+        assertEquals(listOf(null, "attachment", "health"), service.destinations)
+        assertEquals(3L, stagedSize)
     }
 
     @Test fun filesOverTheLimitAreRefusedWhenPicked() {

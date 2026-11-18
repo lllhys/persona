@@ -24,8 +24,15 @@ import (
 // is not honoured by an interactive claude (tried 2026-11-05), so the node makes the copy itself.
 
 // forkable: the session is a Claude Code conversation whose transcript the node can copy. Codex, a compatible CLI, runtimes and
-// other tools' sources have their own ids and files; the client hides "Branch to New Chat" for them.
+// other tools' sources have their own ids and files; the client hides "Branch to New Chat" for them. A runtime's session
+// whose conversation is a Claude transcript on this machine (Paseo's agents running Claude Code, #6298) is copied from that
+// transcript (forkRuntime).
 func (n *Node) forkable(s proto.Session) bool {
+	if s.SourceKind == proto.SourceRuntime {
+		t := n.runtimes.transcriptOf(s.SessionID)
+		return t != "" && !s.IsSubagent && !strings.Contains(s.SessionID, subagentSep) && (s.Agent == "" || s.Agent == "claude") &&
+			!n.runtimeAssistant(s.SessionID) && !s.Starting && n.claudeTranscript(t, false) != ""
+	}
 	if _, codex := n.codexSource(s.SessionID); codex || s.SourceKind != "" || (s.Agent != "" && s.Agent != "claude") || !validID(s.SessionID) || n.runtimeAssistant(s.SessionID) || s.Starting {
 		return false
 	}
@@ -52,6 +59,9 @@ func (n *Node) claudeTranscript(id string, look bool) string {
 // fork copies session id's transcript up to the turn of item at (a transcript item id, "<uuid>#<n>"; empty: all of
 // it) into a new session and returns the new session's id.
 func (n *Node) fork(ctx context.Context, id, at string) (string, error) {
+	if s, _, ok := n.runtimes.rowOf(id); ok {
+		return n.forkRuntime(s, at)
+	}
 	if !validID(id) {
 		return "", fmt.Errorf("invalid session id %q", id)
 	}
@@ -81,6 +91,49 @@ func (n *Node) fork(ctx context.Context, id, at string) (string, error) {
 		// A guest conversation's branch is one too (assistant_guest.go).
 		n.state.put(newID, sessionState{Launcher: st.Launcher, Cwd: st.Cwd, Model: st.Model, ModelFingerprint: st.ModelFingerprint, ModelEffort: st.ModelEffort, Guest: st.Guest})
 	}
+	n.forkMade(newID, dst)
+	return newID, nil
+}
+
+// forkRuntime branches a runtime's session from the Claude transcript its runtime names (#6298): the copy is of that
+// transcript, under a new Claude session id, named after the session. Like any branch it is an offline Claude session;
+// its first message continues it with the machine's engine (on a Paseo machine Paseo takes it over, runtimecontrol.go).
+// The node keeps state for it (its directory, model and launcher): the copy reads like the runtime's own runs of Claude
+// Code's command line, which the offline list leaves out, and a session the node keeps state for is listed
+// (claude_oneshot.go). The launcher is the one the session ran on (Paseo: its provider), which the takeover asks for:
+// without it Paseo went on with whichever Claude provider ran last, maybe another account's (#8130).
+func (n *Node) forkRuntime(s proto.Session, at string) (string, error) {
+	t := n.runtimes.transcriptOf(s.SessionID)
+	src := ""
+	if t != "" {
+		src = n.claudeTranscript(t, true)
+	}
+	if src == "" || !n.forkable(s) {
+		return "", refusal("fork_unsupported", "这个会话不能分支：只支持 Claude Code 的会话", nil)
+	}
+	uuid, _, _ := strings.Cut(at, "#")
+	newID := newUUID()
+	dst := filepath.Join(filepath.Dir(src), newID+".jsonl")
+	var first string
+	if st, err := os.Stat(src); err == nil {
+		first = n.meta(src, st).first
+	}
+	whole, err := copyTranscriptUntil(src, dst, t, newID, uuid, forkTitle(s.Title, first))
+	if err != nil {
+		return "", err
+	}
+	if whole && (s.Status == proto.StatusWorking || s.Status == proto.StatusBlocked) {
+		// The turn is still being written: the copy could end on a tool call without its result.
+		_ = os.Remove(dst)
+		return "", refusal("fork_turn_running", "这一轮还没做完，等它停下再分支", nil)
+	}
+	n.state.put(newID, sessionState{Launcher: s.Launcher, Cwd: s.Cwd, Model: s.Model})
+	n.forkMade(newID, dst)
+	return newID, nil
+}
+
+// forkMade lists a new branch at once: its transcript, however short, and its first message starting it.
+func (n *Node) forkMade(newID, dst string) {
 	n.setPath(newID, dst)
 	n.mu.Lock()
 	if n.forked == nil {
@@ -96,7 +149,6 @@ func (n *Node) fork(ctx context.Context, id, at string) (string, error) {
 	offlineCache.at = time.Time{} // listed at once, not with the next scan
 	offlineCache.Unlock()
 	n.notifySessions()
-	return newID, nil
 }
 
 // forkTitle is the copy's name: the original's (else its first prompt, cut to 40 characters) with the Chinese "Branch · " prefix in front,

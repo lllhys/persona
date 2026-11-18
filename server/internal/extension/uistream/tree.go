@@ -47,6 +47,23 @@ type node struct {
 type Tree struct {
 	header wire.UIStreamSnapshot
 	root   *node
+	// view is root's serialization, filled once check accepts the tree; a
+	// checked tree never changes, so every later reader shares these bytes.
+	view json.RawMessage
+	// ownFrame: DecodeSnapshot made the tree from its own frame (MarshalJSON),
+	// byte for byte, so decoding that frame again gives the same tree.
+	ownFrame bool
+}
+
+// Decodes reports whether DecodeSnapshot(raw) gives t again: t was decoded
+// from its own frame and raw is that frame byte for byte. DecodeSnapshot reads
+// only raw, so a caller holding t need not decode and check raw again.
+func (t *Tree) Decodes(raw []byte) bool {
+	if t == nil || !t.ownFrame {
+		return false
+	}
+	frame, err := t.MarshalJSON()
+	return err == nil && bytes.Equal(frame, raw)
 }
 
 // Delta retains the validated raw presence of operation payloads alongside the
@@ -64,10 +81,19 @@ func (t *Tree) RootKey() string { return t.header.RootKey }
 
 // ViewJSON returns a detached lossless native View. Snapshot returns the generated
 // DTO projection for reading/fitting; serialize Tree itself, never this projection.
-func (t *Tree) ViewJSON() json.RawMessage { return t.root.json() }
+func (t *Tree) ViewJSON() json.RawMessage { return bytes.Clone(t.viewJSON()) }
+
+// viewJSON is ViewJSON without the defensive copy, for readers in this
+// package that never modify or retain the bytes.
+func (t *Tree) viewJSON() json.RawMessage {
+	if t.view != nil {
+		return t.view
+	}
+	return t.root.json()
+}
 func (t *Tree) Snapshot() wire.UIStreamSnapshot {
 	out := t.header
-	_ = decodeDTO(t.ViewJSON(), &out.View)
+	_ = decodeDTO(t.viewJSON(), &out.View)
 	return out
 }
 func (t *Tree) MarshalJSON() ([]byte, error) {
@@ -80,7 +106,7 @@ func (t *Tree) MarshalJSON() ([]byte, error) {
 	}
 	var obj map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &obj)
-	obj["view"] = t.ViewJSON()
+	obj["view"] = t.viewJSON()
 	return json.Marshal(obj)
 }
 func (d *Delta) Frame() wire.UIStreamDelta {
@@ -119,7 +145,7 @@ func DecodeSnapshot(raw []byte) (*Tree, error) {
 	root := parseNode(obj["view"], "view", frame.RootKey)
 	frame.View = wire.View{} // never retain a mutable DTO tree internally
 	t := &Tree{header: frame, root: root}
-	if err := t.check(); err != nil {
+	if err := t.check(raw); err != nil { // raw passed validateRaw above
 		return nil, rejected(err)
 	}
 	return t, nil
@@ -139,7 +165,7 @@ func (t *Tree) AcceptSnapshot(raw []byte) (*Tree, error) {
 	if next.Session() != t.Session() || next.Epoch() != t.Epoch() || next.RootKey() != t.RootKey() || next.Version() < t.Version() {
 		return nil, rejected(errors.New("snapshot identity or version mismatch"))
 	}
-	if next.Version() == t.Version() && !bytes.Equal(next.ViewJSON(), t.ViewJSON()) {
+	if next.Version() == t.Version() && !bytes.Equal(next.viewJSON(), t.viewJSON()) {
 		return nil, rejected(errors.New("conflicting same-version snapshot"))
 	}
 	return next, nil
@@ -342,22 +368,29 @@ func integerProjection(v any) any {
 	return v
 }
 func decodeDTO(raw []byte, out any) error {
+	_, err := decodeNormalizedDTO(raw, out)
+	return err
+}
+
+// decodeNormalizedDTO is decodeDTO that also gives the normalized bytes it
+// decoded out from, which are canonical(raw, true) once it succeeds.
+func decodeNormalizedDTO(raw []byte, out any) (json.RawMessage, error) {
 	var source any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&source); err != nil {
-		return err
+		return nil, err
 	}
 	if err := exactShape(source, reflect.TypeOf(out)); err != nil {
-		return err
+		return nil, err
 	}
 	normalized, err := json.Marshal(integerProjection(source))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dec = json.NewDecoder(bytes.NewReader(normalized))
 	dec.DisallowUnknownFields()
-	return dec.Decode(out)
+	return normalized, dec.Decode(out)
 }
 
 var shapeFields sync.Map // reflect.Type -> exact generated JSON name/type map
@@ -424,18 +457,23 @@ func exactShape(source any, typ reflect.Type) error {
 func parseNode(raw []byte, kind, rootKey string) *node {
 	var props map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &props)
+	n := &node{kind: kind, props: props, key: rootKey}
+	// The children's field comes out before the other properties are made
+	// canonical: each child makes its own properties canonical, and canonical
+	// is idempotent, so the subtree is not encoded again at every level.
+	field := n.childField()
+	var children []json.RawMessage
+	if field != "" {
+		_ = json.Unmarshal(props[field], &children)
+		delete(props, field)
+	}
 	for k, v := range props {
 		props[k] = canonical(v, false)
 	}
-	n := &node{kind: kind, props: props, key: rootKey}
 	if kind != "view" {
 		_ = json.Unmarshal(props["key"], &n.key)
 	}
-	field := n.childField()
 	if field != "" {
-		var children []json.RawMessage
-		_ = json.Unmarshal(props[field], &children)
-		delete(props, field)
 		childKind := map[string]string{"view": "section", "section": "item", "item": "tile"}[kind]
 		for _, child := range children {
 			n.children = append(n.children, parseNode(child, childKind, ""))
@@ -494,29 +532,46 @@ func (n *node) find(key string) (found, parent *node, index int) {
 	}
 	return nil, nil, 0
 }
-func (t *Tree) check() error {
+
+// check checks the whole tree. validated is a frame the caller already put
+// through validateRaw as a UIStreamSnapshot (nil: none); validateRaw reads
+// only the bytes, so the tree's own frame is not validated again when it is
+// the same frame.
+func (t *Tree) check(validated []byte) error {
+	// Serialize the finished tree once; the frame check below and every
+	// accessor after it reuse these bytes.
+	t.view = t.root.json()
 	frame, err := t.MarshalJSON()
 	if err != nil {
 		return err
 	}
-	if err := validateRaw("UIStreamSnapshot", frame, FrameMost); err != nil {
-		return err
+	if validated == nil || !bytes.Equal(frame, validated) {
+		if err := validateRaw("UIStreamSnapshot", frame, FrameMost); err != nil {
+			return err
+		}
+	} else {
+		t.ownFrame = true // only a tree check accepts is returned
 	}
-	raw := t.ViewJSON()
+	raw := t.view
 	// Unknown native nested fields must not hide code/config behind legacy schemas
 	// that intentionally tolerate additional properties on snapshot-only models.
 	var v wire.View
-	if err := decodeDTO(raw, &v); err != nil {
+	normalized, err := decodeNormalizedDTO(raw, &v)
+	if err != nil {
 		return err
 	}
-	// CheckViewJSON uses the source, not Component.MarshalJSON.
-	if err := wire.CheckViewJSON(canonical(raw, true)); err != nil {
+	// CheckViewJSON's checks on the source, not Component.MarshalJSON:
+	// normalized is canonical(raw, true), made by the same decode, projection
+	// and encoding. The frame above held to UIStreamSnapshot, whose view is
+	// View narrowed, and normalized only writes integral numbers as integers,
+	// so its View schema walk is not repeated.
+	if err := wire.CheckValidatedViewJSON(normalized); err != nil {
 		return err
 	}
 	if err := checkBindings(&v); err != nil {
 		return err
 	}
-	if err := checkSourcePresence(t.root); err != nil {
+	if err := checkSourcePresence(t.view); err != nil { // t.view is t.root.json(), made above
 		return err
 	}
 	seen := map[string]bool{}

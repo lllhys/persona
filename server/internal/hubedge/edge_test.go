@@ -4,6 +4,7 @@ package hubedge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -266,6 +267,47 @@ func TestSwitchToABinaryThatDoesNotStart(t *testing.T) {
 	}
 }
 
+// Failed switches in a row leave the serving slot reachable: a standby never takes its name, so it never takes (or
+// deletes, as it exits) its sockets. A switch after them still hands over.
+func TestFailedSwitchesInARowKeepTheServingSlot(t *testing.T) {
+	te := startEdge(t, "v1", func(o *Options) { o.HoldMax = 3 * time.Second })
+	slot := strings.Fields(te.waitFor("v1"))[1]
+	for i := 1; i <= 3; i++ {
+		if _, err := Switch(te.control, te.binary("bad-standby"), "", time.Minute, nil); err == nil {
+			t.Fatalf("switch %d to a binary that exits: no error", i)
+		}
+		if body, err := te.get("/"); err != nil || !strings.HasPrefix(body, "v1 "+slot+" ") {
+			t.Fatalf("after failed switch %d: GET / = %q %v, want slot %s's v1 to answer", i, body, err, slot)
+		}
+		if got := te.sockets(); len(got) != 1 || !strings.HasPrefix(got[0], "slot-"+slot+"-") {
+			t.Fatalf("after failed switch %d the sockets are %v, want slot %s's only", i, got, slot)
+		}
+	}
+	if _, err := Switch(te.control, te.binary("v2"), "", time.Minute, nil); err != nil {
+		t.Fatalf("switch after the failed ones: %v", err)
+	}
+	next := strings.Fields(te.waitFor("v2"))[1]
+	if next == slot {
+		t.Fatalf("v2 serves as slot %s, the name v1 had", next)
+	}
+	if got := te.sockets(); len(got) != 1 || !strings.HasPrefix(got[0], "slot-"+next+"-") {
+		t.Fatalf("after the switch the sockets are %v, want slot %s's only", got, next)
+	}
+}
+
+// sockets are the slots' socket files in the edge's run directory.
+func (te *testEdge) sockets() []string {
+	te.t.Helper()
+	paths, err := filepath.Glob(filepath.Join(te.dir, "run", "slot-*.sock"))
+	if err != nil {
+		te.t.Fatal(err)
+	}
+	for i := range paths {
+		paths[i] = filepath.Base(paths[i])
+	}
+	return paths
+}
+
 // One that fails while taking over is replaced by the binary to go back to.
 func TestSwitchFailingToTakeOverGoesBack(t *testing.T) {
 	te := startEdge(t, "v1", nil)
@@ -295,9 +337,9 @@ func TestUnconfirmedUpdateGoesBack(t *testing.T) {
 	var te *testEdge
 	te = startEdge(t, "v1", func(o *Options) {
 		o.ConfirmWait = time.Second
-		o.RestoreUpdate = func(build int64, cause error) (string, bool) {
+		o.RestoreUpdate = func(build int64, cause error) (string, bool, error) {
 			restored <- build
-			return te.binary("v1"), true
+			return te.binary("v1"), true, nil
 		}
 	})
 	q := url.Values{"to": {te.binary("v2")}, "expect": {"2"}, "kind": {KindUpdate}}
@@ -320,7 +362,7 @@ func TestConfirmedUpdateStays(t *testing.T) {
 	var te *testEdge
 	te = startEdge(t, "v1", func(o *Options) {
 		o.ConfirmWait = 2 * time.Second
-		o.RestoreUpdate = func(int64, error) (string, bool) { calls.Add(1); return te.binary("v1"), true }
+		o.RestoreUpdate = func(int64, error) (string, bool, error) { calls.Add(1); return te.binary("v1"), true, nil }
 	})
 	q := url.Values{"to": {te.binary("v2")}, "expect": {"2"}, "kind": {KindUpdate}}
 	go func() { _, _ = te.get("/switch?" + q.Encode()) }()
@@ -486,4 +528,65 @@ func tcpPair(t *testing.T) (*net.TCPConn, *net.TCPConn) {
 	}
 	t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
 	return a.(*net.TCPConn), b.(*net.TCPConn)
+}
+
+// A restoration error is not an absent update: neither failed activation nor
+// confirmation timeout may fall back to a binary whose files can be mixed.
+func TestUpdateRestoreFailureStopsEdge(t *testing.T) {
+	for _, mode := range []string{"activation-slot", "activation-control", "confirmation"} {
+		t.Run(mode, func(t *testing.T) {
+			failure := errors.New("fixture recovery preimage missing")
+			var calls atomic.Int32
+			te := startEdge(t, "v1", func(o *Options) {
+				o.ConfirmWait = time.Second
+				o.RestoreUpdate = func(build int64, cause error) (string, bool, error) {
+					calls.Add(1)
+					expected := int64(0)
+					if mode == "confirmation" {
+						expected = 2
+					}
+					if build != expected || (cause == nil) != (mode == "confirmation") {
+						t.Errorf("wrong recovery identity/cause: build=%d cause=%v", build, cause)
+					}
+					return "/must-not-restart", true, failure
+				}
+			})
+			to := "bad-activate"
+			if mode == "confirmation" {
+				to = "v2"
+			}
+			binary := te.binary(to)
+			triggered := make(chan struct{})
+			go func() {
+				defer close(triggered)
+				if mode == "activation-control" {
+					_, _ = call(te.control, Msg{T: MsgSwitch, Binary: binary, Kind: KindUpdate}, 10*time.Second, nil)
+				} else {
+					q := url.Values{"to": {binary}, "kind": {KindUpdate}, "expect": {}}
+					// bad-activate has no build number, while v2 reports 2.
+					if mode == "confirmation" {
+						q.Set("expect", "2")
+					}
+					_, _ = te.get("/switch?" + q.Encode())
+				}
+			}()
+			select {
+			case err := <-te.done:
+				te.done <- err // retain the terminal receipt for startEdge cleanup
+				if !errors.Is(err, failure) {
+					t.Fatalf("edge continued after failed restore: %v", err)
+				}
+			case <-time.After(8 * time.Second):
+				t.Fatal("edge did not stop after failed restoration")
+			}
+			select {
+			case <-triggered:
+			case <-time.After(time.Second):
+				t.Fatal("switch caller did not finish")
+			}
+			if calls.Load() != 1 {
+				t.Fatal("replayed failed restoration", calls.Load())
+			}
+		})
+	}
 }

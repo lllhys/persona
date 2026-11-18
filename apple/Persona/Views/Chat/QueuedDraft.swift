@@ -20,6 +20,7 @@ nonisolated struct QueuedDraft: Sendable {
     /// videos or quotes back in their bars, the box stays empty.
     static let standIns: Set<String> = [String(localized: "Please look at the image [Assistant View 5ad878]"),
                                         String(localized: "Please look at the image [Assistant View a3e0a0]"),
+                                        String(localized: "Please look at the attached files"),
                                         String(localized: "See the context above.")]
 
     private static let imageBlock = try! NSRegularExpression(pattern: #"\s*<attached_images>([\s\S]*?)</attached_images>\s*"#)
