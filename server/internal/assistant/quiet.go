@@ -336,7 +336,7 @@ func (s *Service) InteractionRaised(ctx context.Context, r InteractionRaised) {
 	if m, ok := s.device(ctx, ix.MachineID); ok {
 		name = m.Name
 	}
-	s.taskNotice(ctx, t, name, "needs", noticeAsk(ix), "", nil)
+	s.taskNotice(ctx, t, name, "needs", noticeAsk(ix), "")
 	if t.Quiet { // any other task's card is in the next report already (taskAsks)
 		s.taskReport(t, reportNeeds, name, [2]string{ix.MachineID, ix.SessionID}, noticeAsk(ix), &ix)
 	}
