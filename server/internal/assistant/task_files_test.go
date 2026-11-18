@@ -175,31 +175,6 @@ func TestDeliverTaskFilesOldNode(t *testing.T) {
 	}
 }
 
-func TestToolTaskFile(t *testing.T) {
-	f := newFakeHub().withMachine()
-	f.settings = &Settings{MachineID: "server", Main: "conv1"}
-	f.sessions["box"] = []proto.Session{{SessionID: "s1", MachineID: "box"}}
-	newTaskFileFake(f, map[string][]byte{"/home/me/manual.md": []byte("manual")})
-	f.answerNode("file.upload.end", func(string, json.RawMessage) (any, error) {
-		return proto.UploadedFile{Path: "/home/me/.persona/uploads/files/2026-11-18/ab12-manual.md"}, nil
-	})
-	s := newStorelessService(t, f)
-	putTodo(s, Todo{ID: "todo_5", Title: "手册", Origin: "conv1", Agents: []TodoAgent{{MachineID: "box", SessionID: "s1"}}})
-
-	out, err := s.toolTaskFile(context.Background(), "server", "conv1", json.RawMessage(`{"todo_id":"todo_5","path":"/home/me/manual.md"}`))
-	if err != nil || !strings.Contains(out, "/home/me/.persona/uploads/files/2026-11-18/ab12-manual.md") {
-		t.Fatalf("tool: %q %v", out, err)
-	}
-	// Another conversation's task is refused.
-	if _, err := s.toolTaskFile(context.Background(), "server", "conv2", json.RawMessage(`{"todo_id":"todo_5","path":"/home/me/manual.md"}`)); err == nil {
-		t.Fatal("a task of another conversation was read")
-	}
-	// The same file again: the copy is reused, not repeated.
-	if out, err := s.toolTaskFile(context.Background(), "server", "conv1", json.RawMessage(`{"todo_id":"todo_5","path":"/home/me/manual.md"}`)); err != nil || !strings.Contains(out, "ab12-manual.md") {
-		t.Fatalf("tool again: %q %v", out, err)
-	}
-}
-
 func TestTaskFileLineInNotice(t *testing.T) {
 	got := taskFileLines([]taskFile{{Name: "manual.md", Path: "/home/me/manual.md", Local: "/x/uploads/files/2026-11-18/ab12-manual.md"}})
 	if len(got) != 1 || !strings.Contains(got[0], "manual.md：/x/uploads/files/") {

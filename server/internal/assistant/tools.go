@@ -36,7 +36,7 @@ var toolNames = []string{"ask_user", "notify_user", "supervision_finish", "sched
 	"repositories_list", "repository_get", "repository_add", "view_show", "view_update", "view_get",
 	"conversations_list", "conversation_read", "conversation_rename", "conversation_archive", "conversation_unarchive",
 	"conversation_tags_set",
-	"conversation_new", "conversation_send", "task_plan", "task_plan_withdraw", "task_review", "task_scope", "task_decided", "task_start_screen", "task_start_keys", "task_retry", "task_file",
+	"conversation_new", "conversation_send", "task_plan", "task_plan_withdraw", "task_review", "task_scope", "task_decided", "task_start_screen", "task_start_keys", "task_retry",
 	"todo_repositories_get", "todo_repositories_set", "todo_repository_links_set", "todo_repository_links_add", "todo_list", "todo_get", "todo_create", "todo_update", "todo_complete", "todo_reopen", "todo_delete", "concern_report",
 	"direction_name", "leader_progress"}
 
@@ -152,8 +152,6 @@ func (s *Service) runTool(ctx context.Context, machine, self, name string, args 
 		return s.toolTaskStartKeys(ctx, self, args)
 	case "task_retry":
 		return s.toolTaskRetry(ctx, self, args)
-	case "task_file": // a file a task's Agent made, copied here (task_files.go, #10511)
-		return s.toolTaskFile(ctx, machine, self, args)
 	case "task_scope":
 		return s.toolTaskScope(ctx, self, args) // task_brief_scope.go
 	case "task_decided":

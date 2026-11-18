@@ -2,8 +2,6 @@ package assistant
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -289,96 +287,4 @@ func (s *Service) lastTurnAnswer(ctx context.Context, machine, sid string) strin
 	}
 	_, answer := turnExchange(items)
 	return s.taskAnswer(ctx, machine, sid, items, answer)
-}
-
-// ---- task_file: a file pulled on demand, for a task that did not hand it over ----
-
-// toolTaskFile copies one file a task's Agent made from its computer to this conversation's computer, and answers the
-// path there (prompts/mcp/assistant/task_file.md). The file is only taken from the computer of a task this
-// conversation opened or supervises, so the tool cannot fetch a file from any machine.
-func (s *Service) toolTaskFile(ctx context.Context, machine, self string, args json.RawMessage) (string, error) {
-	var a struct {
-		Path      string `json:"path"`
-		TodoID    string `json:"todo_id"`
-		Machine   string `json:"machine"`
-		SessionID string `json:"session_id"`
-	}
-	if err := json.Unmarshal(args, &a); err != nil {
-		return "", fmt.Errorf("arguments: %v", err)
-	}
-	p := taskFilePath(a.Path)
-	if p == "" {
-		return "", errors.New("path must be an absolute path on the Agent's computer, or start with ~/")
-	}
-	t, from, err := s.taskFileSource(ctx, self, a.TodoID, a.Machine, a.SessionID)
-	if err != nil {
-		return "", err
-	}
-	to := s.conversationMachine(ctx, self, "")
-	files := s.keepTaskFiles(t.ID, s.copyTaskFiles(ctx, t, from, to, []string{p}))
-	for _, f := range files {
-		if f.Path != p {
-			continue
-		}
-		if f.Error != "" {
-			return "", errors.New(f.Error)
-		}
-		if f.Local == "" { // the same computer: the path is already here
-			return fmt.Sprintf("%s is at %s on this computer (%d bytes). Read it there, or give the path to the user in backticks; never ask the Agent to paste the file's content.",
-				f.Name, f.local(), f.Size), nil
-		}
-		return fmt.Sprintf("Copied %s to %s (%d bytes). Read it there, or give the path to the user in backticks; never ask the Agent to paste the file's content.",
-			f.Name, f.Local, f.Size), nil
-	}
-	return "", fmt.Errorf("the file could not be copied")
-}
-
-// taskFileSource finds the task a file belongs to and the computer its Agent runs on: the task named by todo id, else
-// the agent of machine/session. Only this conversation's own tasks (opened by it, or supervised by it) count.
-func (s *Service) taskFileSource(ctx context.Context, self, todoID, machine, session string) (Todo, string, error) {
-	if err := s.ensureTodosLoaded(ctx); err != nil {
-		return Todo{}, "", err
-	}
-	var t Todo
-	var ok bool
-	if todoID != "" {
-		t, ok = s.todoNow(todoID)
-		if !ok {
-			return Todo{}, "", fmt.Errorf("no task %s", todoID)
-		}
-	} else {
-		if machine == "" || session == "" {
-			return Todo{}, "", errors.New("name the task with todo_id, or its Agent with machine and session_id")
-		}
-		if t, ok = s.taskOf(ctx, machine, session); !ok {
-			t, ok = s.superviseOpenTodoOf(ctx, machine, session)
-		}
-		if !ok {
-			return Todo{}, "", errors.New("no task's Agent works there")
-		}
-	}
-	if t.Origin != self && (t.Supervision == nil || t.Supervision.Supervisor != self) {
-		return Todo{}, "", fmt.Errorf("task %s is not this conversation's", t.ID)
-	}
-	// The computer of its Agent, from the task's own record: the session may have stopped or gone since.
-	from := ""
-	for _, a := range t.Agents {
-		if a.ReleasedAt != nil || a.DismissedAt != nil {
-			continue
-		}
-		if machine != "" && a.MachineID != machine {
-			continue
-		}
-		if session != "" && a.SessionID != session {
-			continue
-		}
-		from = a.MachineID
-	}
-	if from == "" {
-		if len(t.Agents) == 0 {
-			return Todo{}, "", fmt.Errorf("task %s has no Agent", t.ID)
-		}
-		return Todo{}, "", fmt.Errorf("that Agent does not work on task %s", t.ID)
-	}
-	return t, from, nil
 }
