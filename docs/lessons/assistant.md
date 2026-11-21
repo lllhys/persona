@@ -1,5 +1,7 @@
 # Lessons: assistant (headless Claude / Codex)
 
+- The node process's PATH is not the assistant's shell PATH (#12483, 2026-11-21). A node started by a service manager has a minimal PATH, while the assistant's Bash runs through the user's login shell, whose PATH restores version-manager directories. `trustedPATH` then saw every `export PATH="<version manager>/bin:$PATH"; lark-cli …` as replacing the executable and asked for a whole-command card, one per call, even for `--help` reads. Ask the login shell for its PATH once (a marked line, cached; retried after a failed ask) and trust those directories; a directory outside that set and every write still ask. Tests seed the Node's login-shell directories instead of starting a shell.
+
 - `--allowedTools` and `--disallowedTools` govern approval, not a reliable tool-visibility boundary (#11736). Per-conversation MCP narrowing must filter the actual `sessionMCPTools` response and repeat the same decision at the assistant's call entry (`guardRefusal`). Changing only launch flags can leave stale clients or direct calls with the old tool set; hiding a tool is not a substitute for call admission.
 
 - Automatic-continuation triage and channel mirrors observe the same finished turn concurrently (#11848). The retry wake timestamp is not yet durable when the first mirror runs; gate Feishu and extension mirrors on the session's transient classification and the transient-retry switch instead. Cover several transient attempts, the later terminal error, and delivery with retry disabled.

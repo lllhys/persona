@@ -96,7 +96,7 @@ func (n *Node) larkCheck(ctx context.Context, session, cwd, command string, ix p
 		n.gates() // the proxy goes by this Node's config from now on (a resident node's next connection)
 	}
 	analysisCommand := normalizeLarkCommand(command, cwd, cfg.Gates)
-	v := classifyLark(command, cfg.Gates, cwd, n.larkCLIRisk(cfg))
+	v := classifyLarkWith(command, cfg.Gates, cwd, n.larkCLIRisk(cfg), n.larkLoginPATH)
 	origin, launchCwd := n.assistantOriginCwd(session)
 	if origin == originInbox && inboxLarkOutbound(cfg, v, analysisCommand) {
 		return "deny", inboxLarkRefusal, nil

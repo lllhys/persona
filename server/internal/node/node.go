@@ -357,9 +357,12 @@ type Node struct {
 	secrets *secretStage
 	// gp is the proxy that adds the gates' credentials, made at its first use (gateproxy.go, #1317).
 	gp *gateProxy
-	// lark-cli (larkcligate.go): each command's risk level as lark-cli reported it, and where the binary is.
+	// lark-cli (larkcligate.go): each command's risk level as lark-cli reported it, where the binary is, and the login
+	// shell's PATH directories (larkLoginPATH, trustedPATH).
 	larkRisks    map[string]string
 	larkCLIPaths map[string]string
+	larkPATH     []string
+	larkPATHAt   time.Time
 
 	// assistantPrepared keeps each assistant directory's last prepare state (clicall.go).
 	assistantPrepared map[string]assistantPrepareState
